@@ -32,39 +32,11 @@ export default async function TripsPage() {
         isAdmin={admin}
       />
 
-      <main
-        style={{
-          flex: 1,
-          padding: '32px 24px',
-          maxWidth: 980,
-          margin: '0 auto',
-          width: '100%',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            marginBottom: 24,
-            gap: 16,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.15em',
-                color: 'rgba(255,255,255,0.3)',
-                fontFamily: "'JetBrains Mono', monospace",
-                marginBottom: 4,
-              }}
-            >
-              YOUR TRIPS
-            </div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Trips</h1>
+      <main className="page-main">
+        <div className="page-header">
+          <div style={{ minWidth: 0 }}>
+            <div className="page-eyebrow">YOUR TRIPS</div>
+            <h1 className="page-title">Trips</h1>
           </div>
           <NewTripButton />
         </div>
@@ -72,19 +44,20 @@ export default async function TripsPage() {
         {myTrips.length === 0 && (
           <div
             style={{
-              padding: 24,
+              padding: 20,
               border: '1px dashed rgba(255,255,255,0.12)',
               borderRadius: 10,
               color: 'rgba(255,255,255,0.5)',
               fontSize: 14,
-              marginBottom: 24,
+              marginBottom: 20,
+              lineHeight: 1.5,
             }}
           >
             You don&apos;t have any trips yet. Create a new one above, or clone the demo trip below.
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+        <div className="card-grid">
           {myTrips.map((trip) => (
             <TripCard
               key={trip.id}
@@ -98,20 +71,11 @@ export default async function TripsPage() {
         </div>
 
         {templates.length > 0 && (
-          <div style={{ marginTop: 36 }}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.15em',
-                color: 'rgba(255,255,255,0.3)',
-                fontFamily: "'JetBrains Mono', monospace",
-                marginBottom: 10,
-              }}
-            >
+          <div style={{ marginTop: 32 }}>
+            <div className="page-eyebrow" style={{ marginBottom: 10 }}>
               DEMO / TEMPLATES
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+            <div className="card-grid">
               {templates.map((trip) => (
                 <div
                   key={trip.id}
@@ -122,7 +86,17 @@ export default async function TripsPage() {
                     borderRadius: 10,
                   }}
                 >
-                  <div style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>{trip.name}</div>
+                  <div
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 600,
+                      color: '#fff',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {trip.name}
+                  </div>
                   <div
                     style={{
                       fontSize: 12,
@@ -133,16 +107,20 @@ export default async function TripsPage() {
                   >
                     {[trip.start_date, trip.end_date].filter(Boolean).join(' → ') || 'No dates set'}
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <div
+                    className="mobile-wrap"
+                    style={{ display: 'flex', gap: 8, marginTop: 12 }}
+                  >
                     <Link
                       href={`/trips/${trip.id}`}
                       style={{
                         fontSize: 12,
                         color: '#7CB5E8',
                         textDecoration: 'none',
-                        padding: '5px 10px',
-                        borderRadius: 5,
+                        padding: '6px 12px',
+                        borderRadius: 6,
                         border: '1px solid rgba(124,181,232,0.3)',
+                        whiteSpace: 'nowrap',
                       }}
                     >
                       View →

@@ -48,6 +48,51 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             }
           }
           img, svg, canvas { max-width: 100%; }
+
+          /* ---- Trips / list pages responsive layout ---- */
+          .page-main {
+            flex: 1;
+            max-width: 980px;
+            margin: 0 auto;
+            width: 100%;
+            padding: 32px 24px;
+            box-sizing: border-box;
+          }
+          .page-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+          }
+          .page-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0;
+          }
+          .page-eyebrow {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: rgba(255,255,255,0.3);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+          }
+          .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 12px;
+          }
+          @media (max-width: 767px) {
+            .page-main { padding: 20px 14px 96px; }
+            .page-title { font-size: 22px; }
+            .page-header { margin-bottom: 16px; gap: 10px; }
+            .card-grid { grid-template-columns: 1fr; gap: 10px; }
+            .mobile-full { width: 100%; }
+            .mobile-wrap { flex-wrap: wrap; }
+          }
         `}</style>
       </head>
       <body
