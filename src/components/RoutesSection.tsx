@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RouteWithLinks, RouteLinkType } from '@/types/trip';
 import { tripApi } from '@/lib/api';
+import { rewriteMapsUrlForNav, type LegCoords } from '@/lib/maps';
 
 interface RoutesSectionProps {
   tripId: number;
   legId: number;
+  legCoords: LegCoords;
   initialRoutes: RouteWithLinks[];
   onChanged?: () => void;
   onTrailsChanged?: () => void;
@@ -59,12 +61,13 @@ function linkIcon(type: string) {
 export default function RoutesSection({
   tripId,
   legId,
+  legCoords,
   initialRoutes,
   onChanged,
   onTrailsChanged,
   readonly = false,
 }: RoutesSectionProps) {
-  const api = tripApi(tripId);
+  const api = useMemo(() => tripApi(tripId), [tripId]);
   const [routes, setRoutes] = useState<RouteWithLinks[]>(initialRoutes);
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState('');
@@ -248,6 +251,7 @@ export default function RoutesSection({
           key={route.id}
           route={route}
           legId={legId}
+          legCoords={legCoords}
           readonly={readonly}
           linkPopoverOpen={linkPopoverFor === route.id}
           onToggleLinkPopover={() =>
@@ -266,6 +270,7 @@ export default function RoutesSection({
 interface RouteRowProps {
   route: RouteWithLinks;
   legId: number;
+  legCoords: LegCoords;
   readonly?: boolean;
   linkPopoverOpen: boolean;
   onToggleLinkPopover: () => void;
@@ -277,6 +282,7 @@ interface RouteRowProps {
 
 function RouteRow({
   route,
+  legCoords,
   readonly = false,
   linkPopoverOpen,
   onToggleLinkPopover,
@@ -380,13 +386,26 @@ function RouteRow({
 
       {/* Link pills */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, alignItems: 'center' }}>
-        {route.links.map((link) => (
+        {route.links.map((link) => {
+          // For Google Maps links, rewrite to launch turn-by-turn navigation
+          // mode (using leg coords if the original is a preview/place URL).
+          const href =
+            link.type === 'google_maps'
+              ? rewriteMapsUrlForNav(link.url, legCoords)
+              : link.url;
+          const isNav = link.type === 'google_maps' && href !== link.url;
+          return (
           <a
             key={link.id}
-            href={link.url}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
+            title={
+              link.type === 'google_maps'
+                ? 'Open in Google Maps and start navigation'
+                : link.url
+            }
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -400,8 +419,10 @@ function RouteRow({
               background: 'rgba(124,181,232,0.08)',
             }}
           >
-            <span style={{ fontSize: 10 }}>{linkIcon(link.type)}</span>
-            {link.label}
+            <span style={{ fontSize: 10 }}>
+              {link.type === 'google_maps' ? '▶' : linkIcon(link.type)}
+            </span>
+            {link.type === 'google_maps' ? (isNav ? 'Go' : link.label) : link.label}
             {!readonly && (
               <button
                 onClick={(e) => {
@@ -425,7 +446,8 @@ function RouteRow({
               </button>
             )}
           </a>
-        ))}
+          );
+        })}
         {!readonly && (
           <>
             <button

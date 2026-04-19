@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import StatusBadge from './StatusBadge';
@@ -37,7 +37,7 @@ export default function LegCard({
   onChanged,
   readonly = false,
 }: LegCardProps) {
-  const api = tripApi(tripId);
+  const api = useMemo(() => tripApi(tripId), [tripId]);
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
@@ -241,6 +241,12 @@ export default function LegCard({
           <RoutesSection
             tripId={tripId}
             legId={leg.id}
+            legCoords={{
+              start_lat: leg.start_lat,
+              start_lng: leg.start_lng,
+              end_lat: leg.end_lat,
+              end_lng: leg.end_lng,
+            }}
             initialRoutes={leg.routes}
             onChanged={onChanged}
             onTrailsChanged={onTrailsChanged}

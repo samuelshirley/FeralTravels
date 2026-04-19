@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Task, TaskPriority, TaskStatus } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 
@@ -25,7 +25,7 @@ const STATUS_BADGE: Record<TaskStatus, { label: string; bg: string; fg: string }
 };
 
 export default function TasksSection({ tripId, legId, initialTasks, onChanged, readonly = false }: TasksSectionProps) {
-  const api = tripApi(tripId);
+  const api = useMemo(() => tripApi(tripId), [tripId]);
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');

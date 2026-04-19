@@ -14,6 +14,12 @@ import {
 import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
+import { getUserUsageSummary, microcentsToDollars } from '@/server/repos/usage';
+
+// Per-user spend cap and request cap on Anthropic replans.
+// Update via env at any time.
+const REPLAN_USD_CAP_PER_DAY = parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5');
+const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '40', 10);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,8 +53,31 @@ export async function POST(req: Request) {
 
     await assertTripOwnedByUser(tripId, userId);
 
+    // Soft per-user spend / request guardrails to prevent runaway cost.
+    const [hourly, daily] = await Promise.all([
+      getUserUsageSummary(userId, 1),
+      getUserUsageSummary(userId, 24),
+    ]);
+    if (hourly.requests >= REPLAN_REQUESTS_PER_HOUR) {
+      return Response.json(
+        {
+          error: `Hourly Penny request limit reached (${REPLAN_REQUESTS_PER_HOUR}). Try again later.`,
+        },
+        { status: 429 }
+      );
+    }
+    const dailyUsd = microcentsToDollars(daily.microcents);
+    if (dailyUsd >= REPLAN_USD_CAP_PER_DAY) {
+      return Response.json(
+        {
+          error: `Daily AI spend cap reached ($${REPLAN_USD_CAP_PER_DAY.toFixed(2)}). Resets in 24h.`,
+        },
+        { status: 429 }
+      );
+    }
+
     await addChatMessage(tripId, 'user', message || '(image only)');
-    const result = await replan(message, tripId, images);
+    const result = await replan(message, tripId, images, userId);
 
     if (result.changes?.changes) {
       for (const change of result.changes.changes) {

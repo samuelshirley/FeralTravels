@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
+import { isAdmin } from '@/server/auth/guards';
 import { listTripsForUser } from '@/server/repos/trips';
 import AppNavbar from '@/components/AppNavbar';
 import NewTripButton from './NewTripButton';
@@ -12,7 +13,10 @@ export default async function TripsPage() {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
-  const allTrips = await listTripsForUser(session.user.id);
+  const [allTrips, admin] = await Promise.all([
+    listTripsForUser(session.user.id),
+    isAdmin(session.user.email),
+  ]);
   const myTrips = allTrips.filter((t) => t.user_id === session.user.id);
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== session.user.id);
 
@@ -24,6 +28,7 @@ export default async function TripsPage() {
           email: session.user.email,
           image: session.user.image,
         }}
+        isAdmin={admin}
       />
 
       <main

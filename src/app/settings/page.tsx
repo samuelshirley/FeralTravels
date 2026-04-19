@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
+import { isAdmin } from '@/server/auth/guards';
 import AppNavbar from '@/components/AppNavbar';
 
 export const dynamic = 'force-dynamic';
@@ -7,6 +8,7 @@ export const dynamic = 'force-dynamic';
 export default async function SettingsPage() {
   const session = await auth();
   if (!session?.user) redirect('/login');
+  const admin = await isAdmin(session.user.email);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -16,6 +18,7 @@ export default async function SettingsPage() {
           email: session.user.email,
           image: session.user.image,
         }}
+        isAdmin={admin}
       />
       <div
         style={{

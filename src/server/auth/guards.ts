@@ -36,6 +36,24 @@ export async function requireUserId(): Promise<string> {
   return session.user.id;
 }
 
+// Admin authorization lives in src/server/auth/admin.ts — hardcoded allowlist
+// + env restriction + DB flag + verified email. Re-exported here for callers
+// that already import from guards.
+
+import { isAdminEmail } from './admin';
+
+export async function requireAdmin(): Promise<{ id: string; email: string }> {
+  const session = await auth();
+  if (!session?.user?.id || !session.user.email) throw new UnauthorizedError();
+  const ok = await isAdminEmail(session.user.email);
+  if (!ok) throw new ForbiddenError();
+  return { id: session.user.id, email: session.user.email };
+}
+
+export async function isAdmin(email?: string | null): Promise<boolean> {
+  return isAdminEmail(email);
+}
+
 export async function assertTripOwnedByUser(tripId: number, userId: string): Promise<void> {
   const row = await db
     .select({ userId: trips.userId })

@@ -26,6 +26,10 @@ export const users = pgTable('users', {
   email: text('email').unique(),
   emailVerified: timestamp('emailVerified', { mode: 'date' }),
   image: text('image'),
+  // Silently set at sign-in for the hardcoded admin allowlist. Never trust
+  // session.user.email alone — always cross-check this flag against the
+  // hardcoded ADMIN_ALLOWLIST in src/server/auth/admin.ts.
+  isAdmin: boolean('is_admin').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -321,3 +325,28 @@ export const appMeta = pgTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value'),
 });
+
+// Records every billable external API call (Anthropic, etc.) so we can surface
+// a usage + cost estimate in the admin dashboard and rate-limit per user.
+export const usageEvents = pgTable(
+  'usage_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    tripId: integer('trip_id').references(() => trips.id, { onDelete: 'set null' }),
+    provider: text('provider').notNull(), // 'anthropic' | 'google_directions' | etc
+    model: text('model'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    requests: integer('requests').default(1).notNull(),
+    costMicrocents: bigint('cost_microcents', { mode: 'number' }), // 1¢ = 1,000,000 microcents
+    success: boolean('success').default(true).notNull(),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    userIdx: index('usage_user_idx').on(t.userId),
+    createdIdx: index('usage_created_idx').on(t.createdAt),
+    providerIdx: index('usage_provider_idx').on(t.provider),
+  })
+);

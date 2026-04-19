@@ -1,8 +1,11 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
 import { getTripFull } from '@/server/repos/trips';
+import { logAnthropicUsage } from '@/server/repos/usage';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const MODEL = 'claude-sonnet-4-20250514';
 
 const SYSTEM_PROMPT = `You are Penny, the trip planner AI for an overlanding trip.
 
@@ -36,6 +39,7 @@ For update_leg, only include the fields that changed. Valid fields:
 Routes & tasks rules — follow strictly:
 - When the user (or you) describes multi-option routes (e.g. "Route A / B / C"), emit them as separate \`add_route\` actions. DO NOT bury route options inside the leg's \`notes\` array. Notes should only contain general observations — never things the user would want to click.
 - For each route, attach \`links[]\` with the most useful canonical URLs you know of (Google Maps directions URL, Wikiloc track, Komoot tour, Gaia track, official trail page). If you don't have a canonical URL, leave \`links\` empty — the user can paste one in the UI.
+- For \`type: "google_maps"\` links, ALWAYS use the Maps URLs API directions format with \`dir_action=navigate\`, e.g. \`https://www.google.com/maps/dir/?api=1&origin=LAT,LNG&destination=LAT,LNG&travelmode=driving&dir_action=navigate\`. Do NOT use \`maps/place\` preview URLs or \`maps.app.goo.gl\` short links — they open a preview, not turn-by-turn nav.
 - Whenever the trip plan calls for a verification step (e.g. "check the pass is open", "confirm campsite is bookable", "verify ferry schedule"), emit an \`add_task\` instead of putting it in \`notes\`. Set \`reference_url\` (and \`reference_phone\` when available) to the official source. Default \`priority\` to "normal", use "high" for blockers (closed pass, expiring booking).
 - Don't recreate routes or tasks that already exist in the current trip state — update them instead.
 
@@ -52,7 +56,12 @@ interface InputImage {
   mediaType: string;
 }
 
-export async function replan(userMessage: string, tripId: number, images: InputImage[] = []) {
+export async function replan(
+  userMessage: string,
+  tripId: number,
+  images: InputImage[] = [],
+  userId?: string
+) {
   const trip = await getTripFull(tripId);
   if (!trip) throw new Error('Trip not found');
 
@@ -76,12 +85,39 @@ export async function replan(userMessage: string, tripId: number, images: InputI
     text: `Current trip state:\n\`\`\`json\n${tripContext}\n\`\`\`\n\nUser request: ${userMessage || '(no text — see attached image(s))'}`,
   });
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content }],
-  });
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }],
+    });
+  } catch (err: any) {
+    if (userId) {
+      await logAnthropicUsage({
+        userId,
+        tripId,
+        model: MODEL,
+        inputTokens: 0,
+        outputTokens: 0,
+        success: false,
+        errorMessage: String(err?.message ?? err).slice(0, 500),
+      }).catch(() => {});
+    }
+    throw err;
+  }
+
+  if (userId) {
+    await logAnthropicUsage({
+      userId,
+      tripId,
+      model: MODEL,
+      inputTokens: response.usage?.input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+      success: true,
+    }).catch((e) => console.warn('logAnthropicUsage failed:', e));
+  }
 
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')

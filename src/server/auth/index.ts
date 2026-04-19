@@ -6,6 +6,7 @@ import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
 import { eq } from 'drizzle-orm';
+import { syncAdminFlagOnSignIn } from './admin';
 
 declare module 'next-auth' {
   interface Session {
@@ -52,6 +53,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           isDefault: true,
         });
       }
+      // Set admin flag on first creation if email is on the hardcoded allowlist.
+      await syncAdminFlagOnSignIn(user.email).catch(() => {});
+    },
+    async signIn({ user }) {
+      // Re-sync silently on every sign-in: protects against a row being
+      // tampered with manually, and ensures admin status is reflected even on
+      // users created before the flag was added.
+      await syncAdminFlagOnSignIn(user?.email).catch(() => {});
     },
   },
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import Itinerary from '@/components/Itinerary';
@@ -19,6 +19,7 @@ interface Props {
   tripId: number;
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
+  isAdmin?: boolean;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -56,8 +57,11 @@ function ResizeHandle() {
   );
 }
 
-export default function TripWorkspace({ tripId, readonly, user }: Props) {
-  const api = tripApi(tripId);
+export default function TripWorkspace({ tripId, readonly, user, isAdmin = false }: Props) {
+  // Memoize so a fresh re-render doesn't yield a new api object reference and
+  // re-fire effects that depend on it. This was previously causing an infinite
+  // re-fetch loop hammering /api/trip and /api/pois.
+  const api = useMemo(() => tripApi(tripId), [tripId]);
   const viewport = useViewport();
 
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
@@ -107,7 +111,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <AppNavbar user={user} />
+        <AppNavbar user={user} isAdmin={isAdmin} />
         <div
           style={{
             flex: 1,
@@ -128,7 +132,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
   if (!trip) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <AppNavbar user={user} />
+        <AppNavbar user={user} isAdmin={isAdmin} />
         <div
           style={{
             flex: 1,
@@ -199,7 +203,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
           overflow: 'hidden',
         }}
       >
-        <AppNavbar user={user} tripName={trip.name} />
+        <AppNavbar user={user} tripName={trip.name} isAdmin={isAdmin} />
         <div
           style={{
             flex: 1,
@@ -263,6 +267,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
         <AppNavbar
           user={user}
           tripName={trip.name}
+          isAdmin={isAdmin}
           rightSlot={
             <ChatToggleButton
               open={chatOpen}
@@ -305,6 +310,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
       <AppNavbar
         user={user}
         tripName={trip.name}
+        isAdmin={isAdmin}
         rightSlot={
           <ChatToggleButton
             open={chatOpen}

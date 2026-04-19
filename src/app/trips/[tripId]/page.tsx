@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
+import { isAdmin } from '@/server/auth/guards';
 import { getTripFull } from '@/server/repos/trips';
 import TripWorkspace from './TripWorkspace';
 
@@ -23,6 +24,8 @@ export default async function TripPage({ params }: Props) {
   const isOwner = trip.user_id === session.user.id;
   if (!isOwner && !trip.is_template) notFound();
 
+  const admin = await isAdmin(session.user.email);
+
   return (
     <TripWorkspace
       tripId={tripId}
@@ -32,6 +35,7 @@ export default async function TripPage({ params }: Props) {
         email: session.user.email,
         image: session.user.image,
       }}
+      isAdmin={admin}
     />
   );
 }

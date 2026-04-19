@@ -9,9 +9,10 @@ interface AppNavbarProps {
   tripName?: string;
   tripsHref?: string;
   rightSlot?: React.ReactNode;
+  isAdmin?: boolean;
 }
 
-export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightSlot }: AppNavbarProps) {
+export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightSlot, isAdmin = false }: AppNavbarProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -162,6 +163,24 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               >
                 Settings
               </Link>
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  onClick={() => setOpen(false)}
+                  style={{
+                    display: 'block',
+                    padding: '10px 14px',
+                    fontSize: 13,
+                    color: '#E8C17C',
+                    textDecoration: 'none',
+                    borderTop: '1px solid rgba(255,255,255,0.04)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  Admin
+                </Link>
+              )}
               <button
                 onClick={() => signOut({ callbackUrl: '/login' })}
                 style={{
