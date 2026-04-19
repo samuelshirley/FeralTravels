@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
+import Spinner, { LoadingOverlay } from '@/components/Spinner';
 
 export default function NewTripButton() {
   const router = useRouter();
@@ -23,7 +24,6 @@ export default function NewTripButton() {
       router.push(`/trips/${trip.id}`);
     } catch (e: any) {
       setErr(e?.message || 'Failed to create trip');
-    } finally {
       setBusy(false);
     }
   }
@@ -75,15 +75,19 @@ export default function NewTripButton() {
         style={{
           padding: '8px 14px',
           background: busy ? 'rgba(255,255,255,0.1)' : '#7CB5E8',
-          color: '#000',
+          color: busy ? '#fff' : '#000',
           border: 'none',
           borderRadius: 6,
           fontSize: 13,
           fontWeight: 600,
           cursor: busy ? 'default' : 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
         }}
       >
-        {busy ? '…' : 'Create'}
+        {busy && <Spinner size={11} color="#7CB5E8" thickness={2} />}
+        {busy ? 'Creating…' : 'Create'}
       </button>
       <button
         onClick={() => {
@@ -103,6 +107,7 @@ export default function NewTripButton() {
         Cancel
       </button>
       {err && <span style={{ fontSize: 12, color: '#E8927C' }}>{err}</span>}
+      {busy && <LoadingOverlay message="Creating trip…" />}
     </div>
   );
 }

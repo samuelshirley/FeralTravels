@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
+import Spinner, { LoadingOverlay } from '@/components/Spinner';
 
 interface Props {
   tripId: number;
@@ -38,11 +39,17 @@ export default function CloneTripButton({ tripId }: Props) {
           padding: '5px 10px',
           borderRadius: 5,
           cursor: busy ? 'default' : 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          opacity: busy ? 0.7 : 1,
         }}
       >
+        {busy && <Spinner size={11} color="#7CE8A3" thickness={2} />}
         {busy ? 'Cloning…' : 'Clone to my trips'}
       </button>
       {err && <span style={{ fontSize: 11, color: '#E8927C', marginLeft: 8 }}>{err}</span>}
+      {busy && <LoadingOverlay message="Cloning trip…" />}
     </>
   );
 }
