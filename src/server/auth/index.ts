@@ -5,7 +5,7 @@ import Resend from 'next-auth/providers/resend';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
 
 declare module 'next-auth' {
@@ -56,11 +56,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Set admin flag on first creation if email is on the hardcoded allowlist.
       await syncAdminFlagOnSignIn(user.email).catch(() => {});
     },
-    async signIn({ user }) {
+    async signIn({ user, account, profile }) {
       // Re-sync silently on every sign-in: protects against a row being
       // tampered with manually, and ensures admin status is reflected even on
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
+
+      // Trusted-OAuth email verification: Google (and any OIDC provider) ships
+      // an `email_verified` claim on the ID token. When that claim is true we
+      // can safely mark the local `emailVerified` column, which our admin
+      // guard requires. Without this, Google OAuth users never pass the
+      // "emailVerified IS NOT NULL" check. We only touch rows that haven't
+      // already been verified through some other flow (e.g. magic link).
+      try {
+        const trustedOAuthProviders = new Set(['google']);
+        if (
+          user?.email &&
+          account?.provider &&
+          trustedOAuthProviders.has(account.provider) &&
+          profile?.email_verified === true
+        ) {
+          await db
+            .update(users)
+            .set({ emailVerified: new Date() })
+            .where(and(eq(users.email, user.email.toLowerCase()), isNull(users.emailVerified)));
+        }
+      } catch {
+        // Non-fatal: sign-in should still succeed even if this bookkeeping
+        // fails; admin access just won't flip on until the next sign-in.
+      }
     },
   },
 });
