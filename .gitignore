@@ -1,0 +1,28 @@
+node_modules/
+.next/
+out/
+build/
+tmp/
+
+# database / data
+db/
+src/data/gpx/*
+!src/data/gpx/.gitkeep
+
+# env
+.env
+.env.local
+.env.*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# editor / OS
+.DS_Store
+*.log
+.idea/
+.vscode/
