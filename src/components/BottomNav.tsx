@@ -52,16 +52,17 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
   return (
     <nav
       style={{
-        position: 'sticky',
+        position: 'fixed',
         bottom: 0,
         left: 0,
         right: 0,
-        background: 'rgba(13,13,13,0.95)',
-        backdropFilter: 'blur(12px)',
+        background: 'rgba(13,13,13,0.92)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
         borderTop: '1px solid rgba(255,255,255,0.08)',
         paddingBottom: 'env(safe-area-inset-bottom)',
-        flexShrink: 0,
         zIndex: 1000,
+        boxShadow: '0 -4px 16px rgba(0,0,0,0.25)',
       }}
     >
       <div

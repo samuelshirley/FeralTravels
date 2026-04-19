@@ -7,7 +7,9 @@ import Itinerary from '@/components/Itinerary';
 import ChatPanel from '@/components/ChatPanel';
 import AppNavbar from '@/components/AppNavbar';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
-import { useIsMobile } from '@/lib/useMediaQuery';
+import ChatDrawer from '@/components/ChatDrawer';
+import ChatToggleButton from '@/components/ChatToggleButton';
+import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI } from '@/types/trip';
 
@@ -18,6 +20,11 @@ interface Props {
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
 }
+
+// Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
+// don't end up under the nav. Equals nav height (~62px) plus iPhone home
+// indicator safe area.
+const MOBILE_BOTTOM_NAV_HEIGHT = 62;
 
 function ResizeHandle() {
   return (
@@ -51,21 +58,22 @@ function ResizeHandle() {
 
 export default function TripWorkspace({ tripId, readonly, user }: Props) {
   const api = tripApi(tripId);
-  const isMobile = useIsMobile();
+  const viewport = useViewport();
 
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
   const [selectedLegId, setSelectedLegId] = useState<number | null>(null);
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(viewport === 'desktop');
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
 
-  // Mobile-only state
   const [mobileTab, setMobileTab] = useState<MobileTab>('list');
   const [thinking, setThinking] = useState(false);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
 
   const loadTrip = useCallback(async () => {
     try {
@@ -85,10 +93,16 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
     loadTrip();
   }, [loadTrip]);
 
-  // When user opens chat tab on mobile, clear unread
+  // Default chat open on desktop, closed on tablet, controlled by mobileTab on phone
   useEffect(() => {
-    if (mobileTab === 'chat') setUnread(0);
-  }, [mobileTab]);
+    if (viewport === 'desktop') setChatOpen(true);
+    else if (viewport === 'tablet') setChatOpen(false);
+  }, [viewport]);
+
+  useEffect(() => {
+    if (viewport === 'mobile' && mobileTab === 'chat') setUnread(0);
+    if (viewport !== 'mobile' && chatOpen) setUnread(0);
+  }, [mobileTab, viewport, chatOpen]);
 
   if (loading) {
     return (
@@ -130,6 +144,15 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
     );
   }
 
+  const handleChatActivity = (evt: 'thinking' | 'response' | 'error') => {
+    setThinking(evt === 'thinking');
+    if (evt === 'response' || evt === 'error') {
+      const isOnChat =
+        viewport === 'mobile' ? mobileTabRef.current === 'chat' : chatOpenRef.current;
+      if (!isOnChat) setUnread((u) => u + 1);
+    }
+  };
+
   const mapPane = (
     <TripMap
       legs={trip.legs}
@@ -147,7 +170,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
       trip={trip}
       onLegSelect={(id) => {
         setSelectedLegId(id);
-        if (isMobile) setMobileTab('map');
+        if (viewport === 'mobile') setMobileTab('map');
       }}
       onTrailsChanged={() => setTrailsVersion((v) => v + 1)}
       onChanged={loadTrip}
@@ -160,17 +183,13 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
       tripId={tripId}
       initialMessages={[]}
       onTripUpdated={loadTrip}
-      onActivity={(evt) => {
-        setThinking(evt === 'thinking');
-        if (evt === 'response' && mobileTabRef.current !== 'chat') {
-          setUnread((u) => u + 1);
-        }
-      }}
+      onActivity={handleChatActivity}
       readonly={readonly}
     />
   );
 
-  if (isMobile) {
+  // ───────── MOBILE (<768px): single pane + fixed bottom nav ─────────
+  if (viewport === 'mobile') {
     return (
       <div
         style={{
@@ -181,11 +200,20 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
         }}
       >
         <AppNavbar user={user} tripName={trip.name} />
-        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            position: 'relative',
+            paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+            boxSizing: 'border-box',
+          }}
+        >
           <div
             style={{
               position: 'absolute',
               inset: 0,
+              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'map' ? 'block' : 'none',
             }}
           >
@@ -197,6 +225,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
               inset: 0,
               overflowY: 'auto',
               padding: '16px 12px',
+              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom) + 16px)`,
               background: 'rgba(13,13,13,0.6)',
               display: mobileTab === 'list' ? 'block' : 'none',
               WebkitOverflowScrolling: 'touch',
@@ -208,6 +237,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
             style={{
               position: 'absolute',
               inset: 0,
+              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'chat' ? 'flex' : 'none',
               flexDirection: 'column',
               background: '#0D0D0D',
@@ -226,28 +256,62 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
     );
   }
 
+  // ───────── TABLET (768–1023px): two panes + slide-in chat drawer ─────────
+  if (viewport === 'tablet') {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <AppNavbar
+          user={user}
+          tripName={trip.name}
+          rightSlot={
+            <ChatToggleButton
+              open={chatOpen}
+              onClick={() => setChatOpen((v) => !v)}
+              thinking={thinking}
+              unread={unread}
+            />
+          }
+        />
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-tablet`}>
+            <Panel defaultSize={45} minSize={25} order={1}>
+              <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+            </Panel>
+            <ResizeHandle />
+            <Panel defaultSize={55} minSize={30} order={2}>
+              <div
+                style={{
+                  height: '100%',
+                  overflowY: 'auto',
+                  padding: '20px 16px',
+                  background: 'rgba(13,13,13,0.6)',
+                }}
+              >
+                {itineraryPane}
+              </div>
+            </Panel>
+          </PanelGroup>
+        </div>
+        <ChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} widthPct={50}>
+          {chatPane}
+        </ChatDrawer>
+      </div>
+    );
+  }
+
+  // ───────── DESKTOP (>=1024px): three resizable panes ─────────
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}
         tripName={trip.name}
         rightSlot={
-          <button
+          <ChatToggleButton
+            open={chatOpen}
             onClick={() => setChatOpen((v) => !v)}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: 'none',
-              background: chatOpen ? 'rgba(124,232,163,0.2)' : 'rgba(255,255,255,0.06)',
-              color: chatOpen ? '#7CE8A3' : 'rgba(255,255,255,0.5)',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-            title="Toggle chat panel"
-          >
-            {chatOpen ? 'Chat ×' : 'Chat +'}
-          </button>
+            thinking={thinking}
+            unread={unread}
+          />
         }
       />
 
