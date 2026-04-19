@@ -38,12 +38,13 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // Auto-grow textarea
+  // Auto-grow textarea (single-line by default, max ~8 lines)
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    const next = Math.min(ta.scrollHeight, 200);
+    ta.style.height = next + 'px';
   }, [input]);
 
   function fileToDataUrl(file: File): Promise<string> {
@@ -427,9 +428,6 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
         style={{
           padding: '12px 16px',
           borderTop: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          gap: 8,
-          alignItems: 'flex-end',
         }}
       >
         <input
@@ -443,63 +441,116 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
             e.target.value = '';
           }}
         />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach image"
+        <div
           style={{
-            padding: '10px 12px',
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: 6,
             background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 8,
-            color: 'rgba(255,255,255,0.6)',
-            fontSize: 14,
-            cursor: 'pointer',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 12,
+            padding: 6,
+            transition: 'border-color 0.15s',
           }}
         >
-          📎
-        </button>
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Ask Penny to change the plan...  (Enter to send, Shift+Enter for newline)"
-          disabled={loading}
-          rows={1}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach image"
+            aria-label="Attach image"
+            style={{
+              width: 32,
+              height: 32,
+              flexShrink: 0,
+              padding: 0,
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 8,
+              color: 'rgba(255,255,255,0.55)',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+              e.currentTarget.style.color = 'rgba(255,255,255,0.85)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = 'rgba(255,255,255,0.55)';
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder="Ask Penny to change the plan…"
+            disabled={loading}
+            rows={1}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              boxSizing: 'border-box',
+              padding: '7px 4px',
+              background: 'transparent',
+              border: 'none',
+              color: '#fff',
+              fontSize: 14,
+              outline: 'none',
+              fontFamily: 'inherit',
+              resize: 'none',
+              lineHeight: 1.4,
+              maxHeight: 200,
+              overflowY: 'auto',
+              display: 'block',
+            }}
+          />
+          <button
+            onClick={sendMessage}
+            disabled={loading || (!input.trim() && images.length === 0)}
+            aria-label="Send"
+            title="Send"
+            style={{
+              width: 32,
+              height: 32,
+              flexShrink: 0,
+              padding: 0,
+              background: input.trim() || images.length > 0 ? '#7CB5E8' : 'rgba(255,255,255,0.08)',
+              border: 'none',
+              borderRadius: 8,
+              color: input.trim() || images.length > 0 ? '#000' : 'rgba(255,255,255,0.3)',
+              cursor: input.trim() || images.length > 0 ? 'pointer' : 'default',
+              transition: 'background 0.15s, color 0.15s',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 19V5" />
+              <path d="m5 12 7-7 7 7" />
+            </svg>
+          </button>
+        </div>
+        <div
           style={{
-            flex: 1,
-            padding: '10px 14px',
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 8,
-            color: '#fff',
-            fontSize: 14,
-            outline: 'none',
-            fontFamily: 'inherit',
-            resize: 'none',
-            lineHeight: 1.4,
-            maxHeight: 200,
-            overflowY: 'auto',
-          }}
-        />
-        <button
-          onClick={sendMessage}
-          disabled={loading || (!input.trim() && images.length === 0)}
-          style={{
-            padding: '10px 20px',
-            background: input.trim() || images.length > 0 ? '#7CB5E8' : 'rgba(255,255,255,0.06)',
-            border: 'none',
-            borderRadius: 8,
-            color: input.trim() || images.length > 0 ? '#000' : 'rgba(255,255,255,0.3)',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: input.trim() || images.length > 0 ? 'pointer' : 'default',
-            transition: 'background 0.2s',
+            marginTop: 6,
+            fontSize: 10,
+            color: 'rgba(255,255,255,0.25)',
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: '0.04em',
+            textAlign: 'center',
           }}
         >
-          Send
-        </button>
+          Enter to send · Shift+Enter for newline · drag/paste to attach
+        </div>
       </div>
       )}
     </div>
