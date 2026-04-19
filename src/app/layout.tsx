@@ -39,6 +39,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             background: #7CB5E8 !important;
             height: 48px !important;
           }
+          html, body { overflow-x: hidden; }
+          * { -webkit-tap-highlight-color: transparent; }
+          /* Prevent iOS Safari from zooming on input focus */
+          @supports (-webkit-touch-callout: none) {
+            @media (max-width: 767px) {
+              input, textarea, select { font-size: 16px !important; }
+            }
+          }
+          img, svg, canvas { max-width: 100%; }
         `}</style>
       </head>
       <body

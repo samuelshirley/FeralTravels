@@ -8,6 +8,7 @@ interface ChatPanelProps {
   tripId: number;
   initialMessages: ChatMessage[];
   onTripUpdated: () => void;
+  onActivity?: (event: 'thinking' | 'response' | 'error') => void;
   readonly?: boolean;
 }
 
@@ -24,7 +25,7 @@ interface UIMessage extends ChatMessage {
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-export default function ChatPanel({ tripId, initialMessages, onTripUpdated, readonly = false }: ChatPanelProps) {
+export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onActivity, readonly = false }: ChatPanelProps) {
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -99,6 +100,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
     };
     setMessages((prev) => [...prev, tempUserMsg]);
     setLoading(true);
+    onActivity?.('thinking');
 
     try {
       const data: any = await tripApi(tripId).replan(
@@ -118,6 +120,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
             created_at: new Date().toISOString(),
           },
         ]);
+        onActivity?.('error');
       } else {
         setMessages((prev) => [
           ...prev,
@@ -131,6 +134,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
           },
         ]);
         if (data.changes) onTripUpdated();
+        onActivity?.('response');
       }
     } catch (err) {
       setMessages((prev) => [
@@ -144,6 +148,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, read
           created_at: new Date().toISOString(),
         },
       ]);
+      onActivity?.('error');
     } finally {
       setLoading(false);
     }

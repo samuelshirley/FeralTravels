@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import Itinerary from '@/components/Itinerary';
 import ChatPanel from '@/components/ChatPanel';
 import AppNavbar from '@/components/AppNavbar';
+import BottomNav, { type MobileTab } from '@/components/BottomNav';
+import { useIsMobile } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI } from '@/types/trip';
 
@@ -49,6 +51,7 @@ function ResizeHandle() {
 
 export default function TripWorkspace({ tripId, readonly, user }: Props) {
   const api = tripApi(tripId);
+  const isMobile = useIsMobile();
 
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
@@ -56,6 +59,13 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
   const [chatOpen, setChatOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
+
+  // Mobile-only state
+  const [mobileTab, setMobileTab] = useState<MobileTab>('list');
+  const [thinking, setThinking] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const mobileTabRef = useRef<MobileTab>(mobileTab);
+  mobileTabRef.current = mobileTab;
 
   const loadTrip = useCallback(async () => {
     try {
@@ -74,6 +84,11 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
   useEffect(() => {
     loadTrip();
   }, [loadTrip]);
+
+  // When user opens chat tab on mobile, clear unread
+  useEffect(() => {
+    if (mobileTab === 'chat') setUnread(0);
+  }, [mobileTab]);
 
   if (loading) {
     return (
@@ -115,6 +130,102 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
     );
   }
 
+  const mapPane = (
+    <TripMap
+      legs={trip.legs}
+      pois={pois}
+      selectedLegId={selectedLegId}
+      onLegSelect={setSelectedLegId}
+      trailsVersion={trailsVersion}
+      tripId={tripId}
+    />
+  );
+
+  const itineraryPane = (
+    <Itinerary
+      tripId={tripId}
+      trip={trip}
+      onLegSelect={(id) => {
+        setSelectedLegId(id);
+        if (isMobile) setMobileTab('map');
+      }}
+      onTrailsChanged={() => setTrailsVersion((v) => v + 1)}
+      onChanged={loadTrip}
+      readonly={readonly}
+    />
+  );
+
+  const chatPane = (
+    <ChatPanel
+      tripId={tripId}
+      initialMessages={[]}
+      onTripUpdated={loadTrip}
+      onActivity={(evt) => {
+        setThinking(evt === 'thinking');
+        if (evt === 'response' && mobileTabRef.current !== 'chat') {
+          setUnread((u) => u + 1);
+        }
+      }}
+      readonly={readonly}
+    />
+  );
+
+  if (isMobile) {
+    return (
+      <div
+        style={{
+          height: '100dvh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <AppNavbar user={user} tripName={trip.name} />
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: mobileTab === 'map' ? 'block' : 'none',
+            }}
+          >
+            {mapPane}
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              overflowY: 'auto',
+              padding: '16px 12px',
+              background: 'rgba(13,13,13,0.6)',
+              display: mobileTab === 'list' ? 'block' : 'none',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            {itineraryPane}
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: mobileTab === 'chat' ? 'flex' : 'none',
+              flexDirection: 'column',
+              background: '#0D0D0D',
+            }}
+          >
+            {chatPane}
+          </div>
+        </div>
+        <BottomNav
+          active={mobileTab}
+          onChange={setMobileTab}
+          thinking={thinking}
+          unread={unread}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
@@ -146,16 +257,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
           autoSaveId={chatOpen ? `trip-${tripId}-panes-3` : `trip-${tripId}-panes-2`}
         >
           <Panel defaultSize={30} minSize={15} order={1}>
-            <div style={{ height: '100%', width: '100%' }}>
-              <TripMap
-                legs={trip.legs}
-                pois={pois}
-                selectedLegId={selectedLegId}
-                onLegSelect={setSelectedLegId}
-                trailsVersion={trailsVersion}
-                tripId={tripId}
-              />
-            </div>
+            <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
           </Panel>
 
           <ResizeHandle />
@@ -169,14 +271,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
                 background: 'rgba(13,13,13,0.6)',
               }}
             >
-              <Itinerary
-                tripId={tripId}
-                trip={trip}
-                onLegSelect={setSelectedLegId}
-                onTrailsChanged={() => setTrailsVersion((v) => v + 1)}
-                onChanged={loadTrip}
-                readonly={readonly}
-              />
+              {itineraryPane}
             </div>
           </Panel>
 
@@ -192,12 +287,7 @@ export default function TripWorkspace({ tripId, readonly, user }: Props) {
                     flexDirection: 'column',
                   }}
                 >
-                  <ChatPanel
-                    tripId={tripId}
-                    initialMessages={[]}
-                    onTripUpdated={loadTrip}
-                    readonly={readonly}
-                  />
+                  {chatPane}
                 </div>
               </Panel>
             </>

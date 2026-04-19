@@ -148,6 +148,20 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               >
                 Trips
               </Link>
+              <Link
+                href="/settings"
+                onClick={() => setOpen(false)}
+                style={{
+                  display: 'block',
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  color: 'rgba(255,255,255,0.85)',
+                  textDecoration: 'none',
+                  borderTop: '1px solid rgba(255,255,255,0.04)',
+                }}
+              >
+                Settings
+              </Link>
               <button
                 onClick={() => signOut({ callbackUrl: '/login' })}
                 style={{
