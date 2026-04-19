@@ -93,6 +93,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             .mobile-full { width: 100%; }
             .mobile-wrap { flex-wrap: wrap; }
           }
+
+          /* ---- Animated loading dots ---- */
+          @keyframes tp-dot-pulse {
+            0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+            40% { opacity: 1; transform: translateY(-2px); }
+          }
+          .loading-dot {
+            display: inline-block;
+            animation: tp-dot-pulse 1.2s infinite ease-in-out both;
+          }
         `}</style>
       </head>
       <body
@@ -112,7 +122,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', () => {
-                  navigator.serviceWorker.register('/sw.js').catch(() => {});
+                  navigator.serviceWorker.register('/sw.js').then((reg) => {
+                    // Check for a new SW on every page load so a deploy propagates
+                    // without the user having to fully close the tab.
+                    reg.update().catch(() => {});
+                    reg.addEventListener('updatefound', () => {
+                      const sw = reg.installing;
+                      if (!sw) return;
+                      sw.addEventListener('statechange', () => {
+                        // New worker is ready but waiting because the old one is
+                        // still controlling the page. Tell it to activate now
+                        // and reload so the user sees the new build immediately.
+                        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+                          sw.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                      });
+                    });
+                    let reloaded = false;
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                      if (reloaded) return;
+                      reloaded = true;
+                      window.location.reload();
+                    });
+                  }).catch(() => {});
                 });
               }
             `,

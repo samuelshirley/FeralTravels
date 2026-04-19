@@ -6,6 +6,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import Itinerary from '@/components/Itinerary';
 import ChatPanel from '@/components/ChatPanel';
 import AppNavbar from '@/components/AppNavbar';
+import Spinner from '@/components/Spinner';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import ChatDrawer from '@/components/ChatDrawer';
 import ChatToggleButton from '@/components/ChatToggleButton';
@@ -118,12 +119,28 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'rgba(255,255,255,0.4)',
-            fontSize: 14,
-            fontFamily: "'JetBrains Mono', monospace",
+            flexDirection: 'column',
+            gap: 16,
           }}
         >
-          Loading trip…
+          <Spinner size={36} color="#7CE8A3" thickness={3} />
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: 2,
+              color: 'rgba(255,255,255,0.55)',
+              fontSize: 13,
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+            }}
+          >
+            <span>Loading trip</span>
+            <span className="loading-dot" style={{ animationDelay: '0ms' }}>.</span>
+            <span className="loading-dot" style={{ animationDelay: '160ms' }}>.</span>
+            <span className="loading-dot" style={{ animationDelay: '320ms' }}>.</span>
+          </div>
         </div>
       </div>
     );
