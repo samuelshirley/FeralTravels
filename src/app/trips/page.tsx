@@ -6,6 +6,7 @@ import { listTripsForUser } from '@/server/repos/trips';
 import AppNavbar from '@/components/AppNavbar';
 import NewTripButton from './NewTripButton';
 import CloneTripButton from './CloneTripButton';
+import TripCard from './TripCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,35 +86,14 @@ export default async function TripsPage() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
           {myTrips.map((trip) => (
-            <Link
+            <TripCard
               key={trip.id}
-              href={`/trips/${trip.id}`}
-              style={{
-                display: 'block',
-                padding: 16,
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 10,
-                color: '#fff',
-                textDecoration: 'none',
-                transition: 'background 120ms',
-              }}
-            >
-              <div style={{ fontSize: 16, fontWeight: 600 }}>{trip.name}</div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: 'rgba(255,255,255,0.45)',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  marginTop: 4,
-                }}
-              >
-                {[trip.start_date, trip.end_date].filter(Boolean).join(' → ') || 'No dates set'}
-              </div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 8, fontFamily: "'JetBrains Mono', monospace" }}>
-                status: {trip.status}
-              </div>
-            </Link>
+              id={trip.id}
+              name={trip.name}
+              startDate={trip.start_date ?? null}
+              endDate={trip.end_date ?? null}
+              status={trip.status}
+            />
           ))}
         </div>
 
