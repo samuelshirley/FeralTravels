@@ -1,5 +1,5 @@
 // Bump this on every deploy that changes SW strategy so old SWs purge.
-const CACHE_NAME = 'trip-planner-v3';
+const CACHE_NAME = 'trip-planner-v4';
 
 // We deliberately do NOT precache HTML. Next.js ships hashed bundles and the
 // HTML shell references them by hash; caching stale HTML makes the app point

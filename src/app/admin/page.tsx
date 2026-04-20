@@ -103,10 +103,7 @@ export default async function AdminPage() {
   ];
 
   return (
-    // Plain block — see settings/page.tsx for the rationale (iOS Safari
-    // flex-column outer wrapper traps tall content and breaks document
-    // scrolling).
-    <div style={{ minHeight: '100dvh' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={{
           name: session.user.name,
@@ -117,6 +114,7 @@ export default async function AdminPage() {
 
       <main
         style={{
+          flex: 1,
           maxWidth: 1240,
           width: '100%',
           margin: '0 auto',

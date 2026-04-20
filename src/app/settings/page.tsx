@@ -32,13 +32,7 @@ export default async function SettingsPage() {
     : 0;
 
   return (
-    // NOTE: plain block layout (not flex column). On iOS Safari a
-    // `min-height: 100vh; display: flex; flex-direction: column` outer
-    // wrapper with a `flex: 1` inner content div was preventing the page
-    // from scrolling when content overflowed the viewport — flex grows
-    // the item visually but doesn't extend document height in some
-    // WebKit configurations. Block layout sidesteps the bug entirely.
-    <div style={{ minHeight: '100dvh' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={{
           name: session.user.name,
@@ -49,6 +43,7 @@ export default async function SettingsPage() {
       />
       <div
         style={{
+          flex: 1,
           maxWidth: 720,
           width: '100%',
           margin: '0 auto',
