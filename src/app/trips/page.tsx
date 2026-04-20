@@ -20,7 +20,9 @@ export default async function TripsPage() {
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== session.user.id);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    // Plain block layout — see settings/page.tsx for why we don't use
+    // flex-column with min-height: 100vh here (iOS Safari scroll bug).
+    <div style={{ minHeight: '100dvh' }}>
       <AppNavbar
         user={{
           name: session.user.name,
