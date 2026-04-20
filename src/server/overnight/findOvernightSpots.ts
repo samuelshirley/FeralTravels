@@ -28,9 +28,20 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-interface CachedQueryResult {
+interface SourceResult {
+  source: OvernightSource;
   spots: OvernightSpot[];
-  fromCache: boolean;
+  error: string | null;
+}
+
+export interface FindSpotsResult {
+  spots: OvernightSpot[];
+  /**
+   * null = source succeeded (or was served from cache), string = upstream error.
+   * Lets the UI show "iOverlander unreachable" while still rendering results
+   * that came back from other sources.
+   */
+  sourceErrors: Record<OvernightSource, string | null>;
 }
 
 /**
@@ -41,7 +52,7 @@ interface CachedQueryResult {
  * fresh rows (< FRESHNESS_HOURS old) covering the requested grid bucket, we
  * skip the upstream call entirely. Otherwise we fetch and upsert.
  */
-export async function findOvernightSpots(input: FindSpotsInput): Promise<OvernightSpot[]> {
+export async function findOvernightSpots(input: FindSpotsInput): Promise<FindSpotsResult> {
   const { lat, lng } = input;
   const radiusKm = Math.max(1, input.radiusKm);
   const perSourceLimit = input.perSourceLimit ?? 25;
@@ -76,7 +87,13 @@ export async function findOvernightSpots(input: FindSpotsInput): Promise<Overnig
     freshBySource.set(s, newest >= cutoff);
   }
 
-  const fetchTasks: Array<Promise<CachedQueryResult>> = [];
+  const sourceErrors: Record<OvernightSource, string | null> = {
+    ioverlander: null,
+    google_places: null,
+    park4night: null,
+  };
+
+  const fetchTasks: Array<Promise<SourceResult>> = [];
   if (!freshBySource.get('ioverlander')) {
     fetchTasks.push(
       runSource('ioverlander', () =>
@@ -100,6 +117,7 @@ export async function findOvernightSpots(input: FindSpotsInput): Promise<Overnig
   }
 
   const fetchResults = await Promise.all(fetchTasks);
+  for (const r of fetchResults) sourceErrors[r.source] = r.error;
   const fetched = fetchResults.flatMap((r) => r.spots);
   if (fetched.length > 0) await persistSpots(fetched);
 
@@ -127,13 +145,13 @@ export async function findOvernightSpots(input: FindSpotsInput): Promise<Overnig
     .filter((s) => (s.distanceKm ?? 0) <= radiusKm)
     .sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
 
-  return spots;
+  return { spots, sourceErrors };
 }
 
 async function runSource(
   source: OvernightSource,
   fn: () => Promise<OvernightSpot[]>
-): Promise<CachedQueryResult> {
+): Promise<SourceResult> {
   const start = Date.now();
   try {
     const spots = await fn();
@@ -145,16 +163,17 @@ async function runSource(
     if (process.env.NODE_ENV !== 'production') {
       console.log(`[overnight/${source}] ${spots.length} spots in ${Date.now() - start}ms`);
     }
-    return { spots, fromCache: false };
+    return { source, spots, error: null };
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`[overnight/${source}] failed`, err);
     await logUsageEvent({
       provider: `overnight:${source}`,
       requests: 1,
       success: false,
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage,
     }).catch(() => {});
-    return { spots: [], fromCache: false };
+    return { source, spots: [], error: errorMessage };
   }
 }
 

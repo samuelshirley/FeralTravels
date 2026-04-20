@@ -220,7 +220,7 @@ async function renderOvernightCandidates(trip: TripWithLegs): Promise<string> {
   const blocks: string[] = [];
   for (const leg of candidatesNeeded) {
     try {
-      const spots = await findOvernightSpots({
+      const { spots } = await findOvernightSpots({
         lat: leg.start_lat as number,
         lng: leg.start_lng as number,
         radiusKm: 420,

@@ -74,21 +74,20 @@ export async function fetchIoverlanderSpots(input: FindSpotsInput): Promise<Over
 
   const fullUrl = `${IOVERLANDER_BASE}?${qs.toString()}`;
 
-  let raw: unknown;
-  try {
-    const res = await fetch(fullUrl, {
-      headers: {
-        'user-agent': 'trip-planner/1.0 (overnight-spot-finder)',
-        accept: 'application/json',
-      },
-      // Don't let upstream hang the request indefinitely.
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    raw = await res.json();
-  } catch {
-    return [];
+  // Let fetch/parse errors propagate to the orchestrator so usage_events logs a
+  // real success=false row. Callers higher up catch and fallback gracefully.
+  const res = await fetch(fullUrl, {
+    headers: {
+      'user-agent': 'trip-planner/1.0 (overnight-spot-finder)',
+      accept: 'application/json',
+    },
+    // Don't let upstream hang the request indefinitely.
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    throw new Error(`iOverlander HTTP ${res.status} ${res.statusText}`);
   }
+  const raw: unknown = await res.json();
 
   const places: IoPlace[] = Array.isArray(raw)
     ? (raw as IoPlace[])

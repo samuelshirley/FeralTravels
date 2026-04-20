@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import ErrorNotifier from '@/components/ErrorNotifier';
 
 export const metadata: Metadata = {
   title: 'Nordkapp Trip Planner',
@@ -123,6 +124,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         }}
       >
         {children}
+        <ErrorNotifier />
         <script
           dangerouslySetInnerHTML={{
             __html: `

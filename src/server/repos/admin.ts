@@ -93,6 +93,25 @@ export async function getRecentChatActivity(limit = 30) {
     .limit(limit);
 }
 
+export async function getRecentErrors(limit = 50) {
+  return db
+    .select({
+      id: usageEvents.id,
+      createdAt: usageEvents.createdAt,
+      provider: usageEvents.provider,
+      errorMessage: usageEvents.errorMessage,
+      tripId: usageEvents.tripId,
+      userId: usageEvents.userId,
+      userEmail: users.email,
+      userName: users.name,
+    })
+    .from(usageEvents)
+    .leftJoin(users, eq(users.id, usageEvents.userId))
+    .where(eq(usageEvents.success, false))
+    .orderBy(desc(usageEvents.createdAt))
+    .limit(limit);
+}
+
 export async function getTopUsageUsers(hours: number, limit = 25) {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   return db

@@ -15,7 +15,7 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
 import { addLeg, deleteLeg } from '@/server/repos/trips';
-import { getUserUsageSummary, microcentsToDollars } from '@/server/repos/usage';
+import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 
 // Per-user spend cap and request cap on Anthropic replans.
 // Update via env at any time.
@@ -35,9 +35,15 @@ const inputSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Hoisted so the catch can attribute the failure to the right user/trip in
+  // usage_events even when the failure happens mid-Anthropic-call.
+  let userIdForLog: string | null = null;
+  let tripIdForLog: number | null = null;
   try {
     const userId = await requireUserId();
+    userIdForLog = userId;
     const body = inputSchema.parse(await req.json());
+    tripIdForLog = body.tripId;
     const tripId = body.tripId;
     const message = body.message ?? '';
     const images = body.images ?? [];
@@ -250,6 +256,17 @@ export async function POST(req: Request) {
       failedActions,
     });
   } catch (err) {
+    // Log fatal replan failures to usage_events so they show up in the admin
+    // Recent errors log. Per-action failures (add_leg etc) are already handled
+    // inline above with failedActions/failedCount.
+    await logUsageEvent({
+      userId: userIdForLog,
+      tripId: tripIdForLog,
+      provider: 'anthropic:replan',
+      requests: 1,
+      success: false,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    }).catch(() => {});
     return errorResponse(err);
   }
 }

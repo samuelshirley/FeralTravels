@@ -61,6 +61,7 @@ export async function POST(req: Request) {
 
     let originLat: number;
     let originLng: number;
+    let originName: string | null = null;
     if (body.mode === 'leg') {
       const legId = body.legId!;
       await assertLegOwnedByUser(legId, userId);
@@ -69,29 +70,47 @@ export async function POST(req: Request) {
         return Response.json({ error: 'Leg does not belong to trip' }, { status: 400 });
       }
       const [leg] = await db
-        .select({ startLat: legs.startLat, startLng: legs.startLng })
+        .select({
+          startLat: legs.startLat,
+          startLng: legs.startLng,
+          endLat: legs.endLat,
+          endLng: legs.endLng,
+          startName: legs.startName,
+          endName: legs.endName,
+        })
         .from(legs)
         .where(eq(legs.id, legId))
         .limit(1);
-      if (!leg || leg.startLat == null || leg.startLng == null) {
+      if (!leg) {
+        return Response.json({ error: 'Leg not found' }, { status: 404 });
+      }
+      // Prefer destination — that's where people actually park for the night.
+      // Fall back to start so planning still works for legs with no end coords.
+      if (leg.endLat != null && leg.endLng != null) {
+        originLat = leg.endLat;
+        originLng = leg.endLng;
+        originName = leg.endName;
+      } else if (leg.startLat != null && leg.startLng != null) {
+        originLat = leg.startLat;
+        originLng = leg.startLng;
+        originName = leg.startName;
+      } else {
         return Response.json(
-          { error: 'Leg is missing start coordinates' },
+          { error: 'Leg is missing both start and end coordinates' },
           { status: 400 }
         );
       }
-      originLat = leg.startLat;
-      originLng = leg.startLng;
     } else {
       originLat = body.lat!;
       originLng = body.lng!;
     }
 
-    // Default radius: large enough to catch ~6h of driving (≈420km at avg 70km/h),
-    // but the cache key is the small grid bucket so re-queries near the same
-    // origin are cheap.
-    const radiusKm = body.radiusKm ?? (body.mode === 'leg' ? 420 : 60);
+    // Client picks the radius via the drawer's 10/50/100 km chips. Fall back
+    // to a useful default if not supplied: tight 25 km so we don't waste a
+    // Places quota request on a giant disc.
+    const radiusKm = body.radiusKm ?? 25;
 
-    const spots = await findOvernightSpots({
+    const { spots, sourceErrors } = await findOvernightSpots({
       lat: originLat,
       lng: originLng,
       radiusKm,
@@ -102,18 +121,21 @@ export async function POST(req: Request) {
     if (body.mode === 'here') {
       // Tight radius — return everything sorted by distance.
       return Response.json({
-        origin: { lat: originLat, lng: originLng },
+        origin: { lat: originLat, lng: originLng, name: originName },
         spots: spots.slice(0, 30),
+        sourceErrors,
       });
     }
 
     const banded = bandSpotsByDriveTime(spots, originLat, originLng);
     const best = pickBestPerBand(banded);
     return Response.json({
-      origin: { lat: originLat, lng: originLng },
-      candidates: best,
-      banded: body.bandsOnly ? undefined : banded.slice(0, 30),
+      origin: { lat: originLat, lng: originLng, name: originName },
+      candidates: body.bandsOnly ? best : [],
+      banded: body.bandsOnly ? banded.slice(0, 30) : undefined,
+      spots: body.bandsOnly ? undefined : spots.slice(0, 50),
       raw: body.bandsOnly ? undefined : (spots.slice(0, 50) satisfies OvernightSpot[]),
+      sourceErrors,
     });
   } catch (err) {
     return errorResponse(err);

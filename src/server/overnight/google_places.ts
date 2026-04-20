@@ -49,18 +49,19 @@ function metresFromKm(km: number): number {
 async function nearbySearch(params: URLSearchParams, key: string): Promise<PlacesResult[]> {
   params.set('key', key);
   const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?${params.toString()}`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return [];
-    const json = (await res.json()) as PlacesResponse;
-    if (json.status && json.status !== 'OK' && json.status !== 'ZERO_RESULTS') {
-      console.warn('[overnight/google] Places error', json.status, json.error_message);
-      return [];
-    }
-    return json.results ?? [];
-  } catch {
-    return [];
+  // Propagate errors — the orchestrator catches per-source and logs
+  // usage_events rows with success=false. Returning [] silently hides real
+  // outages (key restricted to referrers, billing disabled, etc).
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) {
+    throw new Error(`Google Places HTTP ${res.status} ${res.statusText}`);
   }
+  const json = (await res.json()) as PlacesResponse;
+  if (json.status && json.status !== 'OK' && json.status !== 'ZERO_RESULTS') {
+    const detail = json.error_message ? `: ${json.error_message}` : '';
+    throw new Error(`Google Places ${json.status}${detail}`);
+  }
+  return json.results ?? [];
 }
 
 export async function fetchGooglePlacesSpots(input: FindSpotsInput): Promise<OvernightSpot[]> {

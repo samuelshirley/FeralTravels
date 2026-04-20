@@ -290,6 +290,7 @@ export default function LegCard({
                 end_lat: leg.end_lat,
                 end_lng: leg.end_lng,
               }}
+              legEndName={leg.end_name}
               onClose={() => setOvernightOpen(false)}
               onAdded={() => {
                 onChanged?.();

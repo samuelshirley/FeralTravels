@@ -6,10 +6,13 @@ import {
   getAdminOverview,
   getRecentUsers,
   getRecentChatActivity,
+  getRecentErrors,
   getTopUsageUsers,
 } from '@/server/repos/admin';
 import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
+import AdminErrorLog from './AdminErrorLog';
+import AdminTestErrorButton from './AdminTestErrorButton';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -68,15 +71,17 @@ export default async function AdminPage() {
   // Silent redirect — no error page, no info leak that /admin even exists.
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
-  const [overview, recentUsers, recentChat, top24, top7d, usage24, usage7d] = await Promise.all([
-    getAdminOverview(),
-    getRecentUsers(15),
-    getRecentChatActivity(20),
-    getTopUsageUsers(24, 10),
-    getTopUsageUsers(24 * 7, 10),
-    getGlobalUsage(24),
-    getGlobalUsage(24 * 7),
-  ]);
+  const [overview, recentUsers, recentChat, recentErrors, top24, top7d, usage24, usage7d] =
+    await Promise.all([
+      getAdminOverview(),
+      getRecentUsers(15),
+      getRecentChatActivity(20),
+      getRecentErrors(50),
+      getTopUsageUsers(24, 10),
+      getTopUsageUsers(24 * 7, 10),
+      getGlobalUsage(24),
+      getGlobalUsage(24 * 7),
+    ]);
 
   const usd24 = usage24
     .filter((u) => u.provider === 'anthropic')
@@ -170,6 +175,50 @@ export default async function AdminPage() {
             </div>
           ))}
         </div>
+
+        <section style={{ ...card, marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 12,
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
+              Recent errors
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 11,
+                  color: 'rgba(255,255,255,0.45)',
+                  fontWeight: 500,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {recentErrors.length === 50 ? '50+' : recentErrors.length}
+              </span>
+            </h2>
+            <AdminTestErrorButton />
+          </div>
+          <AdminErrorLog
+            rows={recentErrors.map((e) => ({
+              id: e.id,
+              createdAt: (e.createdAt instanceof Date
+                ? e.createdAt
+                : new Date(e.createdAt)
+              ).toISOString(),
+              provider: e.provider,
+              errorMessage: e.errorMessage,
+              tripId: e.tripId,
+              userId: e.userId,
+              userEmail: e.userEmail,
+              userName: e.userName,
+            }))}
+          />
+        </section>
 
         <div
           style={{

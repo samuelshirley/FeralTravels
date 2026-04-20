@@ -6,6 +6,12 @@ interface ApiOptions {
   query?: Record<string, string | number | undefined | null>;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * Opt a specific call out of the global ErrorNotifier toast/modal.
+   * Use for components that render their own inline error UI (e.g. the
+   * overnight-spot drawer) and don't want a double-notification.
+   */
+  skipGlobalErrorReport?: boolean;
 }
 
 export class ApiError extends Error {
@@ -16,6 +22,20 @@ export class ApiError extends Error {
     this.status = status;
     this.payload = payload;
   }
+}
+
+// --- Global error reporter hook ---------------------------------------------
+// The ErrorNotifier component (rendered once in the root layout) registers a
+// callback here on mount. apiFetch invokes it after every failed request so
+// toast / modal surfaces fire without every caller having to wire them up.
+//
+// Kept as a module-level binding rather than a React context so non-component
+// code (e.g. Spinner fallbacks, service-worker messages) can trigger it too.
+type GlobalErrorReporter = (err: unknown, context: { path: string; status: number | null }) => void;
+let globalErrorReporter: GlobalErrorReporter | null = null;
+
+export function registerGlobalErrorReporter(fn: GlobalErrorReporter | null): void {
+  globalErrorReporter = fn;
 }
 
 function buildUrl(path: string, query?: ApiOptions['query']): string {
@@ -31,20 +51,30 @@ function buildUrl(path: string, query?: ApiOptions['query']): string {
 
 export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {}): Promise<T> {
   const isFormData = opts.body instanceof FormData;
-  const res = await fetch(buildUrl(path, opts.query), {
-    method: opts.method || (opts.body ? 'POST' : 'GET'),
-    headers: {
-      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(opts.headers || {}),
-    },
-    body: opts.body == null
-      ? undefined
-      : isFormData
-        ? (opts.body as FormData)
-        : JSON.stringify(opts.body),
-    signal: opts.signal,
-    credentials: 'same-origin',
-  });
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts.query), {
+      method: opts.method || (opts.body ? 'POST' : 'GET'),
+      headers: {
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(opts.headers || {}),
+      },
+      body: opts.body == null
+        ? undefined
+        : isFormData
+          ? (opts.body as FormData)
+          : JSON.stringify(opts.body),
+      signal: opts.signal,
+      credentials: 'same-origin',
+    });
+  } catch (err) {
+    // Network failure (offline, DNS, certificate, aborted by user). Treat
+    // as a 5xx-equivalent so ErrorNotifier surfaces the silly modal.
+    if (!opts.skipGlobalErrorReport && globalErrorReporter) {
+      globalErrorReporter(err, { path, status: null });
+    }
+    throw err;
+  }
 
   let data: unknown = null;
   const text = await res.text();
@@ -61,7 +91,11 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
       (data && typeof data === 'object' && 'error' in data && typeof (data as any).error === 'string'
         ? (data as any).error
         : null) || res.statusText || `HTTP ${res.status}`;
-    throw new ApiError(res.status, message, data);
+    const err = new ApiError(res.status, message, data);
+    if (!opts.skipGlobalErrorReport && globalErrorReporter) {
+      globalErrorReporter(err, { path, status: res.status });
+    }
+    throw err;
   }
 
   return data as T;
@@ -92,6 +126,8 @@ export function tripApi(tripId: number) {
     ) =>
       apiFetch(`/api/trip/find-overnight`, {
         body: { tripId, mode: 'leg', legId, ...(opts || {}) },
+        // Caller owns inline error display for this one — don't double-notify.
+        skipGlobalErrorReport: true,
       }),
     findOvernightHere: (
       lat: number,
@@ -100,6 +136,7 @@ export function tripApi(tripId: number) {
     ) =>
       apiFetch(`/api/trip/find-overnight`, {
         body: { tripId, mode: 'here', lat, lng, ...(opts || {}) },
+        skipGlobalErrorReport: true,
       }),
     addRouteLink: (routeId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/routes/${routeId}/links`, { body: { tripId, ...payload } }),
