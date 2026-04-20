@@ -17,8 +17,16 @@ export interface LegCoords {
   end_lng?: number | null;
 }
 
-/** Construct a fresh nav-mode directions URL from raw lat/lng. */
-export function buildNavUrl(coords: LegCoords): string | null {
+/**
+ * Construct a fresh nav-mode directions URL from raw lat/lng.
+ *
+ * `waypoints` is optional; when provided, each `[lat, lng]` becomes a
+ * pipe-delimited stop on the way (Google Maps URLs API supports `&waypoints=`).
+ */
+export function buildNavUrl(
+  coords: LegCoords,
+  waypoints?: Array<[number, number]>
+): string | null {
   const { start_lat, start_lng, end_lat, end_lng } = coords;
   if (end_lat == null || end_lng == null) return null;
   const params = new URLSearchParams({
@@ -30,6 +38,17 @@ export function buildNavUrl(coords: LegCoords): string | null {
   if (start_lat != null && start_lng != null) {
     params.set('origin', `${start_lat},${start_lng}`);
   }
+  if (waypoints && waypoints.length > 0) {
+    const valid = waypoints.filter(
+      ([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng)
+    );
+    if (valid.length > 0) {
+      params.set(
+        'waypoints',
+        valid.map(([lat, lng]) => `${lat},${lng}`).join('|')
+      );
+    }
+  }
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
@@ -37,12 +56,16 @@ export function buildNavUrl(coords: LegCoords): string | null {
  * Return a "Go" URL for a Google Maps link.
  *
  * Strategy:
- * 1. If the original URL is already a Maps directions URL, ensure it has
- *    `dir_action=navigate` and `travelmode=driving` and pass through.
- * 2. If the original URL is a Maps short link / place URL, fall back to
- *    constructing a fresh nav URL from the leg's start/end coords.
- * 3. If we can't do either, return the original (so users at least get
- *    *something*).
+ * 1. If the URL is already in the **API-style** directions format
+ *    (`/maps/dir/?api=1&origin=...&destination=...`) just inject
+ *    `dir_action=navigate` so it launches turn-by-turn directly.
+ * 2. If the URL is **path-style** (`/maps/dir/Girona/Genoa`), DON'T just
+ *    append `?api=1` — Google Maps mobile cannot mix the two formats and
+ *    will fall back to navigating only to the first path segment. Rebuild
+ *    a fresh API-style URL from the leg coords instead.
+ * 3. For Maps short links / place URLs, fall back to building from coords.
+ * 4. If coords are unavailable, return the original URL untouched (better
+ *    than no link at all).
  */
 export function rewriteMapsUrlForNav(originalUrl: string, coords: LegCoords): string {
   try {
@@ -58,11 +81,24 @@ export function rewriteMapsUrlForNav(originalUrl: string, coords: LegCoords): st
 
     const isDirections = u.pathname.includes('/maps/dir');
     if (isDirections) {
-      // Ensure nav params are present without overwriting an explicit travelmode.
-      if (!u.searchParams.has('api')) u.searchParams.set('api', '1');
-      if (!u.searchParams.has('travelmode')) u.searchParams.set('travelmode', 'driving');
-      u.searchParams.set('dir_action', 'navigate');
-      return u.toString();
+      // API-style directions URL: pathname is exactly /maps/dir or /maps/dir/
+      // and the route is encoded in `?origin=...&destination=...`. We can
+      // safely pass through after upgrading to nav mode.
+      const isApiStyle =
+        u.searchParams.has('origin') ||
+        u.searchParams.has('destination') ||
+        /^\/maps\/dir\/?$/.test(u.pathname);
+      if (isApiStyle) {
+        if (!u.searchParams.has('api')) u.searchParams.set('api', '1');
+        if (!u.searchParams.has('travelmode')) u.searchParams.set('travelmode', 'driving');
+        u.searchParams.set('dir_action', 'navigate');
+        return u.toString();
+      }
+      // Path-style like `/maps/dir/Girona/Genoa` — rebuild from coords if we
+      // can, otherwise fall back to the original (still better than a broken
+      // hybrid URL).
+      const fromCoords = buildNavUrl(coords);
+      return fromCoords ?? originalUrl;
     }
 
     // Place / preview / short link — rebuild from leg coords if we can.

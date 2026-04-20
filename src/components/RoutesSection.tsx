@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RouteWithLinks, RouteLinkType } from '@/types/trip';
 import { tripApi } from '@/lib/api';
-import { rewriteMapsUrlForNav, type LegCoords } from '@/lib/maps';
+import { buildNavUrl, rewriteMapsUrlForNav, type LegCoords } from '@/lib/maps';
 
 interface RoutesSectionProps {
   tripId: number;
@@ -21,8 +21,26 @@ const LINK_TYPES: { id: RouteLinkType; label: string; icon: string }[] = [
   { id: 'wikiloc', label: 'Wikiloc', icon: '⛰' },
   { id: 'komoot', label: 'Komoot', icon: '⛰' },
   { id: 'gaia', label: 'Gaia', icon: '⛰' },
+  { id: 'park4night', label: 'Park4Night', icon: '⌂' },
+  { id: 'ioverlander', label: 'iOverlander', icon: '⌂' },
+  { id: 'dog_park', label: 'Dog park', icon: '✦' },
   { id: 'other', label: 'Link', icon: '↗' },
 ];
+
+const SOURCE_LABELS: Record<string, string> = {
+  ioverlander: 'iOverlander',
+  park4night: 'Park4Night',
+  google_places: 'Google Places',
+  manual: 'Manual',
+};
+
+function formatDriveTime(minutes: number | null | undefined): string | null {
+  if (minutes == null) return null;
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h}h` : `${h}h${m}m`;
+}
 
 const SURFACE_COLORS: Record<string, { bg: string; fg: string }> = {
   paved: { bg: 'rgba(124,181,232,0.15)', fg: '#7CB5E8' },
@@ -107,6 +125,20 @@ export default function RoutesSection({
       reload();
     } catch {
       /* ignore */
+    }
+  }
+
+  async function handleSelectRoute(id: number) {
+    // Optimistic: flip status locally so the radio dot moves immediately,
+    // then reconcile with server response.
+    setRoutes((prev) =>
+      prev.map((r) => ({ ...r, status: r.id === id ? 'selected' : r.status === 'selected' ? 'option' : r.status }))
+    );
+    try {
+      await api.selectRoute(id);
+      reload();
+    } catch {
+      reload();
     }
   }
 
@@ -258,6 +290,7 @@ export default function RoutesSection({
             setLinkPopoverFor(linkPopoverFor === route.id ? null : route.id)
           }
           onDelete={() => handleDeleteRoute(route.id)}
+          onSelect={() => handleSelectRoute(route.id)}
           onAddLink={(url, type, label) => handleAddLink(route.id, url, type, label)}
           onDeleteLink={(linkId) => handleDeleteLink(route.id, linkId)}
           onGpxDrop={(file) => handleGpxDrop(route.id, file)}
@@ -275,6 +308,7 @@ interface RouteRowProps {
   linkPopoverOpen: boolean;
   onToggleLinkPopover: () => void;
   onDelete: () => void;
+  onSelect: () => void;
   onAddLink: (url: string, type: RouteLinkType, label: string) => void;
   onDeleteLink: (linkId: number) => void;
   onGpxDrop: (file: File) => void;
@@ -287,6 +321,7 @@ function RouteRow({
   linkPopoverOpen,
   onToggleLinkPopover,
   onDelete,
+  onSelect,
   onAddLink,
   onDeleteLink,
   onGpxDrop,
@@ -295,6 +330,24 @@ function RouteRow({
   const [type, setType] = useState<RouteLinkType>('google_maps');
   const [label, setLabel] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // When a route has its own end coords (e.g. an overnight option from
+  // iOverlander), Go links should target that spot — not the leg's default
+  // destination. We compose `effectiveCoords` here once and pass it to all
+  // children that build nav URLs.
+  const hasOwnEnd = route.end_lat != null && route.end_lng != null;
+  const effectiveCoords: LegCoords = hasOwnEnd
+    ? {
+        start_lat: legCoords.start_lat,
+        start_lng: legCoords.start_lng,
+        end_lat: route.end_lat,
+        end_lng: route.end_lng,
+      }
+    : legCoords;
+
+  const isSelected = route.status === 'selected';
+  const driveTimeLabel = formatDriveTime(route.drive_time_minutes);
+  const sourceLabel = route.end_source ? SOURCE_LABELS[route.end_source] : null;
 
   return (
     <div
@@ -312,9 +365,11 @@ function RouteRow({
       }}
       style={{
         padding: '8px 10px',
-        background: 'rgba(0,0,0,0.2)',
+        background: isSelected ? 'rgba(124,232,163,0.08)' : 'rgba(0,0,0,0.2)',
         borderRadius: 5,
-        border: '1px solid rgba(255,255,255,0.05)',
+        border: isSelected
+          ? '1px solid rgba(124,232,163,0.45)'
+          : '1px solid rgba(255,255,255,0.05)',
         marginTop: 6,
       }}
     >
@@ -326,72 +381,241 @@ function RouteRow({
           gap: 8,
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          {!readonly ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isSelected) onSelect();
+              }}
+              aria-pressed={isSelected}
+              title={isSelected ? "Tonight's pick" : 'Pick this route as tonight\u2019s stop'}
+              style={{
+                marginTop: 2,
+                width: 16,
+                height: 16,
+                borderRadius: 999,
+                border: isSelected
+                  ? '4px solid #7CE8A3'
+                  : '1px solid rgba(255,255,255,0.4)',
+                background: isSelected ? '#7CE8A3' : 'transparent',
+                cursor: isSelected ? 'default' : 'pointer',
+                flexShrink: 0,
+                padding: 0,
+              }}
+            />
+          ) : (
             <span
               style={{
-                fontSize: 13,
-                color: 'rgba(255,255,255,0.85)',
-                fontWeight: 500,
+                marginTop: 2,
+                width: 16,
+                height: 16,
+                borderRadius: 999,
+                border: isSelected
+                  ? '4px solid #7CE8A3'
+                  : '1px solid rgba(255,255,255,0.4)',
+                background: isSelected ? '#7CE8A3' : 'transparent',
+                display: 'inline-block',
+                flexShrink: 0,
               }}
-            >
-              {route.label}
-            </span>
-            {surfaceChip(route.surface)}
-            {route.distance_km != null && (
+            />
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span
                 style={{
-                  fontSize: 10,
-                  color: 'rgba(255,255,255,0.4)',
+                  fontSize: 13,
+                  color: isSelected ? '#7CE8A3' : 'rgba(255,255,255,0.85)',
+                  fontWeight: isSelected ? 600 : 500,
+                }}
+              >
+                {route.label}
+              </span>
+              {driveTimeLabel && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    background: 'rgba(124,181,232,0.15)',
+                    color: '#7CB5E8',
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                  title="Estimated drive time from leg start"
+                >
+                  {driveTimeLabel}
+                </span>
+              )}
+              {sourceLabel && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    background: 'rgba(232,213,124,0.12)',
+                    color: '#E8D57C',
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {sourceLabel}
+                </span>
+              )}
+              {surfaceChip(route.surface)}
+              {route.distance_km != null && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: 'rgba(255,255,255,0.4)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {route.distance_km} km
+                </span>
+              )}
+            </div>
+            {route.end_name && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'rgba(255,255,255,0.55)',
+                  marginTop: 3,
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
-                {route.distance_km} km
-              </span>
+                → {route.end_name}
+              </div>
+            )}
+            {route.description && (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'rgba(255,255,255,0.5)',
+                  marginTop: 4,
+                  lineHeight: 1.4,
+                }}
+              >
+                {route.description}
+              </div>
             )}
           </div>
-          {route.description && (
-            <div
-              style={{
-                fontSize: 12,
-                color: 'rgba(255,255,255,0.5)',
-                marginTop: 4,
-                lineHeight: 1.4,
-              }}
-            >
-              {route.description}
-            </div>
-          )}
         </div>
         {!readonly && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            style={{
-              fontSize: 12,
-              background: 'transparent',
-              border: 'none',
-              color: 'rgba(255,255,255,0.35)',
-              cursor: 'pointer',
-              padding: '2px 6px',
-            }}
-            title="Delete route"
-          >
-            ×
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            {!isSelected && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect();
+                }}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  background: 'rgba(124,232,163,0.12)',
+                  border: '1px solid rgba(124,232,163,0.35)',
+                  color: '#7CE8A3',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  textTransform: 'uppercase',
+                }}
+                title="Pick this route as tonight\u2019s stop"
+              >
+                Pick this
+              </button>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              style={{
+                fontSize: 12,
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.35)',
+                cursor: 'pointer',
+                padding: '2px 6px',
+              }}
+              title="Delete route"
+            >
+              ×
+            </button>
+          </div>
         )}
       </div>
 
       {/* Link pills */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, alignItems: 'center' }}>
+        {/* Auto-generated Go pill when the route has its own destination but
+            no explicit google_maps link — saves the user a click. */}
+        {hasOwnEnd && !route.links.some((l) => l.type === 'google_maps') && (
+          (() => {
+            const navUrl = buildNavUrl(effectiveCoords);
+            if (!navUrl) return null;
+            return (
+              <a
+                href={navUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title="Open in Google Maps and start navigation"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 11,
+                  color: '#7CB5E8',
+                  textDecoration: 'none',
+                  padding: '3px 8px',
+                  border: '1px solid rgba(124,181,232,0.3)',
+                  borderRadius: 12,
+                  background: 'rgba(124,181,232,0.08)',
+                }}
+              >
+                <span style={{ fontSize: 10 }}>▶</span>
+                Go
+              </a>
+            );
+          })()
+        )}
+        {/* Source link pill — gives the user the original iOverlander/P4N page */}
+        {route.end_source_url && !route.links.some((l) => l.url === route.end_source_url) && (
+          <a
+            href={route.end_source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={`Open ${sourceLabel || 'source'} page`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: 11,
+              color: '#E8D57C',
+              textDecoration: 'none',
+              padding: '3px 8px',
+              border: '1px solid rgba(232,213,124,0.3)',
+              borderRadius: 12,
+              background: 'rgba(232,213,124,0.08)',
+            }}
+          >
+            <span style={{ fontSize: 10 }}>↗</span>
+            {sourceLabel || 'Source'}
+          </a>
+        )}
         {route.links.map((link) => {
           // For Google Maps links, rewrite to launch turn-by-turn navigation
           // mode (using leg coords if the original is a preview/place URL).
           const href =
             link.type === 'google_maps'
-              ? rewriteMapsUrlForNav(link.url, legCoords)
+              ? rewriteMapsUrlForNav(link.url, effectiveCoords)
               : link.url;
           const isNav = link.type === 'google_maps' && href !== link.url;
           return (

@@ -14,6 +14,7 @@ import {
 import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
+import { addLeg, deleteLeg } from '@/server/repos/trips';
 import { getUserUsageSummary, microcentsToDollars } from '@/server/repos/usage';
 
 // Per-user spend cap and request cap on Anthropic replans.
@@ -79,10 +80,47 @@ export async function POST(req: Request) {
     await addChatMessage(tripId, 'user', message || '(image only)');
     const result = await replan(message, tripId, images, userId);
 
+    let appliedCount = 0;
+    let failedCount = 0;
+    const failedActions: Array<{ action: string; error: string }> = [];
     if (result.changes?.changes) {
       for (const change of result.changes.changes) {
         try {
-          if (change.action === 'update_leg' && change.leg_id && change.data) {
+          if (change.action === 'add_leg' && change.data) {
+            // Penny can propose brand-new legs when the user asks for a plan
+            // from scratch (e.g. "route me from Girona to Berlin"). Without
+            // this branch, the change was silently dropped while the UI still
+            // showed "Changes applied to trip" — root cause of the Berlin bug.
+            const d = change.data || {};
+            if (!d.title || typeof d.title !== 'string') {
+              throw new Error('add_leg requires a title');
+            }
+            await addLeg({
+              tripId,
+              title: d.title,
+              label: d.label ?? null,
+              startName: d.start_name ?? null,
+              endName: d.end_name ?? null,
+              startLat: d.start_lat ?? null,
+              startLng: d.start_lng ?? null,
+              endLat: d.end_lat ?? null,
+              endLng: d.end_lng ?? null,
+              dates: d.dates ?? null,
+              distanceKm: d.distance_km ?? null,
+              driveTimeMinutes: d.drive_time_minutes ?? null,
+              terrain: d.terrain ?? null,
+              overnight: d.overnight ?? null,
+              status: d.status ?? null,
+              color: d.color ?? null,
+              notes: Array.isArray(d.notes) ? JSON.stringify(d.notes) : (d.notes ?? null),
+              sortOrder: typeof d.sort_order === 'number' ? d.sort_order : null,
+            });
+            appliedCount += 1;
+          } else if (change.action === 'delete_leg' && change.leg_id) {
+            await assertLegOwnedByUser(change.leg_id, userId);
+            await deleteLeg(change.leg_id);
+            appliedCount += 1;
+          } else if (change.action === 'update_leg' && change.leg_id && change.data) {
             await assertLegOwnedByUser(change.leg_id, userId);
 
             const legUpdate: Record<string, unknown> = { updatedAt: new Date() };
@@ -130,6 +168,7 @@ export async function POST(req: Request) {
                 );
               }
             }
+            appliedCount += 1;
           } else if (change.action === 'add_route' && change.leg_id && change.data) {
             await assertLegOwnedByUser(change.leg_id, userId);
             const d = change.data || {};
@@ -141,14 +180,23 @@ export async function POST(req: Request) {
               surface: d.surface ?? null,
               status: d.status ?? null,
               gpx_trail_id: d.gpx_trail_id ?? null,
+              end_lat: d.end_lat ?? null,
+              end_lng: d.end_lng ?? null,
+              end_name: d.end_name ?? null,
+              end_source: d.end_source ?? null,
+              end_source_url: d.end_source_url ?? null,
+              drive_time_minutes: d.drive_time_minutes ?? null,
               links: Array.isArray(d.links) ? d.links : undefined,
             });
+            appliedCount += 1;
           } else if (change.action === 'update_route' && change.route_id && change.data) {
             await assertRouteOwnedByUser(change.route_id, userId);
             await updateRoute(change.route_id, change.data);
+            appliedCount += 1;
           } else if (change.action === 'delete_route' && change.route_id) {
             await assertRouteOwnedByUser(change.route_id, userId);
             await deleteRoute(change.route_id);
+            appliedCount += 1;
           } else if (change.action === 'add_task' && change.data) {
             const d = change.data || {};
             const legId: number | null = change.leg_id ?? null;
@@ -168,24 +216,39 @@ export async function POST(req: Request) {
               created_by: 'penny',
               due_at: d.due_at ?? null,
             });
+            appliedCount += 1;
           } else if (change.action === 'update_task' && change.task_id && change.data) {
             await assertTaskOwnedByUser(change.task_id, userId);
             await updateTask(change.task_id, change.data);
+            appliedCount += 1;
+          } else {
+            // Unknown action or missing required fields — count it as failed
+            // so the client can surface a real error instead of a false
+            // "Changes applied" badge.
+            throw new Error(
+              `Unknown or incomplete action: ${(change as any)?.action ?? 'unknown'}`
+            );
           }
         } catch (e) {
+          failedCount += 1;
+          const msg = e instanceof Error ? e.message : String(e);
+          failedActions.push({ action: (change as any)?.action ?? 'unknown', error: msg });
           console.error('Failed to apply change', change, e);
         }
       }
     }
 
-    await addChatMessage(
-      tripId,
-      'assistant',
-      result.response,
-      result.changes ? JSON.stringify(result.changes) : undefined
-    );
+    const assistantChangesMade =
+      result.changes && appliedCount > 0 ? JSON.stringify(result.changes) : null;
+    await addChatMessage(tripId, 'assistant', result.response, assistantChangesMade);
 
-    return Response.json({ response: result.response, changes: result.changes });
+    return Response.json({
+      response: result.response,
+      changes: result.changes,
+      appliedCount,
+      failedCount,
+      failedActions,
+    });
   } catch (err) {
     return errorResponse(err);
   }

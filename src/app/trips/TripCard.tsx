@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
@@ -12,84 +12,41 @@ interface Props {
   startDate: string | null;
   endDate: string | null;
   status: string;
+  /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
+  isTemplate?: boolean;
+  /**
+   * When true, the card reveals a persistent × delete button in the corner.
+   * Driven by the parent's Edit-trips toggle. Replaces the old
+   * hover-to-reveal / long-press-to-reveal pattern, which mis-fired on
+   * mobile because iOS synthesizes mouseenter events on tap.
+   */
+  editMode?: boolean;
+  /**
+   * When set, renders a "Clone to my trips" action next to "View". Only
+   * meaningful for template cards where the user hasn't started editing
+   * their own copy yet.
+   */
+  showClone?: boolean;
+  onCloneClick?: (id: number) => void;
+  cloneBusy?: boolean;
 }
 
-// How long a user has to press-and-hold on a trip card before the delete
-// affordance appears on touch devices. 500ms lines up with the iOS/Android
-// long-press convention and avoids triggering on normal taps.
-const LONG_PRESS_MS = 500;
-
-// How far (in CSS px) the finger is allowed to drift before we abort the
-// long-press. Prevents the reveal from firing on a scroll.
-const LONG_PRESS_MOVE_TOLERANCE = 10;
-
-export default function TripCard({ id, name, startDate, endDate, status }: Props) {
+export default function TripCard({
+  id,
+  name,
+  startDate,
+  endDate,
+  status,
+  isTemplate = false,
+  editMode = false,
+  showClone = false,
+  onCloneClick,
+  cloneBusy = false,
+}: Props) {
   const router = useRouter();
-  const [hover, setHover] = useState(false);
-  const [pressed, setPressed] = useState(false); // revealed by long-press on touch
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const suppressClickRef = useRef(false);
-  const pressOrigin = useRef<{ x: number; y: number } | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  const revealed = hover || pressed || confirming || busy;
-
-  function clearLongPress() {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    pressOrigin.current = null;
-  }
-
-  // Dismiss the revealed state when the user taps outside the card.
-  useEffect(() => {
-    if (!pressed && !confirming) return;
-    function onDocPointerDown(e: PointerEvent) {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) {
-        setPressed(false);
-        setConfirming(false);
-      }
-    }
-    document.addEventListener('pointerdown', onDocPointerDown);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [pressed, confirming]);
-
-  function handlePointerDown(e: React.PointerEvent) {
-    // Desktop mouse: we already show the X on hover, skip long-press logic.
-    if (e.pointerType === 'mouse') return;
-    pressOrigin.current = { x: e.clientX, y: e.clientY };
-    clearLongPress();
-    longPressTimer.current = setTimeout(() => {
-      longPressTimer.current = null;
-      suppressClickRef.current = true;
-      setPressed(true);
-      // Light haptic feedback on supported devices; no-op elsewhere.
-      if ('vibrate' in navigator) {
-        try {
-          navigator.vibrate?.(12);
-        } catch {
-          /* ignore */
-        }
-      }
-    }, LONG_PRESS_MS);
-  }
-
-  function handlePointerMove(e: React.PointerEvent) {
-    if (!longPressTimer.current || !pressOrigin.current) return;
-    const dx = e.clientX - pressOrigin.current.x;
-    const dy = e.clientY - pressOrigin.current.y;
-    if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_TOLERANCE) clearLongPress();
-  }
-
-  function handlePointerEnd() {
-    clearLongPress();
-  }
 
   async function handleDelete(e: React.MouseEvent) {
     e.preventDefault();
@@ -113,25 +70,10 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
 
   return (
     <div
-      ref={rootRef}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => {
-        setHover(false);
-        if (!pressed) setConfirming(false);
-      }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
-      onPointerLeave={handlePointerEnd}
-      // Prevent the iOS/Android browser context menu (image/link "save",
-      // "copy link", etc.) from fighting our long-press UX.
-      onContextMenu={(e) => {
-        if (pressed) e.preventDefault();
-      }}
       style={{
         position: 'relative',
-        // Stops long-press on iOS Safari from selecting the card text.
+        // Still nice to suppress text selection on press-and-hold; the old
+        // long-press UX is gone but this keeps card taps feeling crisp.
         WebkitUserSelect: 'none',
         WebkitTouchCallout: 'none',
       }}
@@ -139,19 +81,22 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
       <Link
         href={`/trips/${id}`}
         onClick={(e) => {
-          if (suppressClickRef.current) {
+          // In edit mode we treat card taps as "stay here so the user can
+          // click the delete X" — navigating would be confusing.
+          if (editMode) {
             e.preventDefault();
             e.stopPropagation();
-            suppressClickRef.current = false;
           }
         }}
         style={{
           display: 'block',
           padding: 16,
-          background: pressed ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
-          border: pressed
-            ? '1px solid rgba(232,146,124,0.35)'
-            : '1px solid rgba(255,255,255,0.08)',
+          background: isTemplate ? 'rgba(124,181,232,0.05)' : 'rgba(255,255,255,0.04)',
+          border: isTemplate
+            ? '1px solid rgba(124,181,232,0.2)'
+            : editMode
+              ? '1px solid rgba(232,146,124,0.35)'
+              : '1px solid rgba(255,255,255,0.08)',
           borderRadius: 10,
           color: '#fff',
           textDecoration: 'none',
@@ -160,7 +105,9 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
           opacity: busy ? 0.5 : 1,
         }}
       >
-        <div style={{ fontSize: 16, fontWeight: 600, paddingRight: 28 }}>{name}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, paddingRight: editMode ? 40 : 28 }}>
+          {name}
+        </div>
         <div
           style={{
             fontSize: 12,
@@ -181,9 +128,55 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
         >
           status: {status}
         </div>
+
+        {showClone && !editMode && (
+          <div
+            className="mobile-wrap"
+            style={{ display: 'flex', gap: 8, marginTop: 12 }}
+          >
+            <span
+              style={{
+                fontSize: 12,
+                color: '#7CB5E8',
+                textDecoration: 'none',
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: '1px solid rgba(124,181,232,0.3)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              View →
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onCloneClick?.(id);
+              }}
+              disabled={cloneBusy}
+              style={{
+                fontSize: 12,
+                background: 'rgba(124,232,163,0.15)',
+                border: '1px solid rgba(124,232,163,0.3)',
+                color: '#7CE8A3',
+                padding: '5px 10px',
+                borderRadius: 5,
+                cursor: cloneBusy ? 'default' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                opacity: cloneBusy ? 0.7 : 1,
+              }}
+            >
+              {cloneBusy && <Spinner size={11} color="#7CE8A3" thickness={2} />}
+              {cloneBusy ? 'Cloning…' : 'Clone to my trips'}
+            </button>
+          </div>
+        )}
       </Link>
 
-      {revealed && (
+      {editMode && (
         <button
           type="button"
           onClick={handleDelete}
@@ -199,12 +192,12 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
             minWidth: 28,
             padding: confirming ? '0 10px' : 0,
             borderRadius: 14,
-            background: confirming ? '#E8927C' : 'rgba(0,0,0,0.6)',
+            background: confirming ? '#E8927C' : 'rgba(0,0,0,0.65)',
             border: confirming
               ? '1px solid #E8927C'
-              : '1px solid rgba(255,255,255,0.2)',
-            color: confirming ? '#0D0D0D' : 'rgba(255,255,255,0.9)',
-            fontSize: confirming ? 11 : 16,
+              : '1px solid rgba(232,146,124,0.55)',
+            color: confirming ? '#0D0D0D' : '#E8927C',
+            fontSize: confirming ? 11 : 18,
             fontWeight: confirming ? 700 : 400,
             lineHeight: 1,
             cursor: busy ? 'default' : 'pointer',
@@ -214,7 +207,7 @@ export default function TripCard({ id, name, startDate, endDate, status }: Props
             gap: 4,
             transition: 'all 120ms',
             backdropFilter: 'blur(6px)',
-            boxShadow: pressed ? '0 4px 12px rgba(0,0,0,0.4)' : 'none',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }}
         >
           {busy ? (

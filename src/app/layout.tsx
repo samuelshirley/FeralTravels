@@ -6,10 +6,12 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
 };
 
+// Note: width / initialScale / maximumScale are intentionally NOT set here
+// because we render an explicit <meta name="viewport"> below that adds
+// `interactive-widget=resizes-content` (iOS 17+ Safari soft-keyboard hint).
+// The Next.js `viewport` export doesn't expose interactive-widget, so we
+// emit the meta tag manually and limit this export to themeColor.
 export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 1,
   themeColor: '#7CB5E8',
 };
 
@@ -17,6 +19,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=resizes-content"
+        />
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
           rel="stylesheet"

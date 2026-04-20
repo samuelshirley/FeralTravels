@@ -2,11 +2,13 @@ import 'server-only';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Resend from 'next-auth/providers/resend';
+import { Resend as ResendClient } from 'resend';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
+import { renderMagicEmail } from './magic-email';
 
 declare module 'next-auth' {
   interface Session {
@@ -34,6 +36,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Resend({
       apiKey: process.env.AUTH_RESEND_KEY,
       from: process.env.AUTH_EMAIL_FROM || 'onboarding@resend.dev',
+      // Wrap the Resend send call so we can: (a) brand the email,
+      // (b) catch + log the Resend API error so users see a real message
+      // instead of an opaque 500, and (c) surface common configuration
+      // pitfalls (test sender locked to account-owner email, etc.).
+      async sendVerificationRequest({ identifier: to, url, provider }) {
+        const apiKey = (provider as { apiKey?: string }).apiKey ?? process.env.AUTH_RESEND_KEY;
+        const from = (provider as { from?: string }).from ?? process.env.AUTH_EMAIL_FROM ?? 'onboarding@resend.dev';
+        if (!apiKey) {
+          throw new Error('Email sign-in is not configured (missing AUTH_RESEND_KEY).');
+        }
+        const resend = new ResendClient(apiKey);
+        const subject = 'Sign in to Trip Planner';
+        const result = await resend.emails.send({
+          from,
+          to,
+          subject,
+          html: renderMagicEmail({ url, to }),
+          text: `Sign in to Trip Planner: ${url}\n\nIf you didn't request this, you can ignore this email.`,
+        });
+        if (result.error) {
+          // Resend's most common pitfall: `onboarding@resend.dev` can only
+          // send to the account-owner's email. Translate that into a clear
+          // operator message in the server log; the user sees a generic
+          // "couldn't send" banner via the /login error page mapping.
+          const msg = result.error.message || 'Unknown Resend error';
+          console.error('[auth] Resend send failed', { to, from, error: result.error });
+          throw new Error(`EmailSendFailed: ${msg}`);
+        }
+      },
     }),
   ],
   callbacks: {

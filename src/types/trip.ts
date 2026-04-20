@@ -96,7 +96,12 @@ export type RouteLinkType =
   | 'wikiloc'
   | 'komoot'
   | 'gaia'
+  | 'park4night'
+  | 'ioverlander'
+  | 'dog_park'
   | 'other';
+
+export type RouteEndSource = 'ioverlander' | 'park4night' | 'google_places' | 'manual';
 
 export interface Route {
   id: number;
@@ -108,6 +113,14 @@ export interface Route {
   surface: string | null;
   status: string;
   gpx_trail_id: number | null;
+  // Per-route destination (for overnight options). When set, "Go" navigates
+  // to this point instead of the leg's end coords.
+  end_lat: number | null;
+  end_lng: number | null;
+  end_name: string | null;
+  end_source: RouteEndSource | null;
+  end_source_url: string | null;
+  drive_time_minutes: number | null;
 }
 
 export interface RouteLink {

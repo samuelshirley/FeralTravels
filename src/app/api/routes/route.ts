@@ -39,6 +39,12 @@ const createSchema = z.object({
   status: z.string().nullish(),
   gpx_trail_id: z.number().int().positive().nullish(),
   sort_order: z.number().int().nullish(),
+  end_lat: z.number().min(-90).max(90).nullish(),
+  end_lng: z.number().min(-180).max(180).nullish(),
+  end_name: z.string().nullish(),
+  end_source: z.enum(['ioverlander', 'park4night', 'google_places', 'manual']).nullish(),
+  end_source_url: z.string().nullish(),
+  drive_time_minutes: z.number().int().nullish(),
   links: z
     .array(
       z.object({
@@ -64,6 +70,12 @@ export async function POST(request: Request) {
       status: body.status ?? null,
       gpx_trail_id: body.gpx_trail_id ?? null,
       sort_order: body.sort_order ?? null,
+      end_lat: body.end_lat ?? null,
+      end_lng: body.end_lng ?? null,
+      end_name: body.end_name ?? null,
+      end_source: body.end_source ?? null,
+      end_source_url: body.end_source_url ?? null,
+      drive_time_minutes: body.drive_time_minutes ?? null,
       links: body.links,
     });
     return Response.json(route);

@@ -88,11 +88,23 @@ export const vehicles = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     isDefault: boolean('is_default').default(false).notNull(),
+    // Identity / classification
+    vehicleType: text('vehicle_type'), // '4x4_suv'|'pickup'|'van'|'motorcycle'|'sedan'|'other'
+    notes: text('notes'),
+    // Dimensions
     heightCm: integer('height_cm'),
+    lengthM: doublePrecision('length_m'),
+    weightKg: doublePrecision('weight_kg'),
+    // Fuel
     fuelEconomyKmpl: doublePrecision('fuel_economy_kmpl'),
     fuelTankL: doublePrecision('fuel_tank_l'),
+    // Drive limits
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
+    maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
+    // Water (capacity in liters + how many days of usage between refills/dumps)
+    freshwaterCapacityL: doublePrecision('freshwater_capacity_l'),
+    blackwaterCapacityL: doublePrecision('blackwater_capacity_l'),
     waterRefillDays: integer('water_refill_days'),
     blackwaterRefillDays: integer('blackwater_refill_days'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -253,6 +265,16 @@ export const routes = pgTable(
     surface: text('surface'),
     status: text('status').default('option').notNull(),
     gpxTrailId: integer('gpx_trail_id').references(() => gpxTrails.id, { onDelete: 'set null' }),
+    // Per-route destination: when a route represents an overnight option, the
+    // end coords here override the leg's end_lat/end_lng so tapping "Go"
+    // navigates to that specific spot. Null for routes that share the leg
+    // destination (e.g. plain road-route options).
+    endLat: doublePrecision('end_lat'),
+    endLng: doublePrecision('end_lng'),
+    endName: text('end_name'),
+    endSource: text('end_source'), // 'ioverlander'|'park4night'|'google_places'|'manual'
+    endSourceUrl: text('end_source_url'),
+    driveTimeMinutes: integer('drive_time_minutes'),
   },
   (t) => ({
     legIdx: index('routes_leg_idx').on(t.legId),
@@ -325,6 +347,35 @@ export const appMeta = pgTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value'),
 });
+
+// Lightweight cache of free overnight parking POIs aggregated from
+// iOverlander, Park4Night, and Google Places (dog parks / rest areas with
+// parking). Refreshed on demand; no ETL job required for first ship.
+export const overnightSpots = pgTable(
+  'overnight_spots',
+  {
+    id: serial('id').primaryKey(),
+    source: text('source').notNull(), // 'ioverlander' | 'park4night' | 'google_places'
+    sourceId: text('source_id'), // upstream id (or place_id for google)
+    name: text('name').notNull(),
+    lat: doublePrecision('lat').notNull(),
+    lng: doublePrecision('lng').notNull(),
+    category: text('category'), // 'wild_camping'|'rest_area'|'aire'|'dog_park'|...
+    isFree: boolean('is_free').default(true).notNull(),
+    description: text('description'),
+    sourceUrl: text('source_url'),
+    // Coarse 0.05° grid (~5km) for cheap radius pre-filter without a PostGIS index.
+    latGrid: doublePrecision('lat_grid'),
+    lngGrid: doublePrecision('lng_grid'),
+    fetchedAt: timestamp('fetched_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceUniq: uniqueIndex('overnight_source_uniq').on(t.source, t.sourceId),
+    gridIdx: index('overnight_grid_idx').on(t.latGrid, t.lngGrid),
+    sourceIdx: index('overnight_source_idx').on(t.source),
+  })
+);
 
 // Records every billable external API call (Anthropic, etc.) so we can surface
 // a usage + cost estimate in the admin dashboard and rate-limit per user.

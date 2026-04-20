@@ -18,6 +18,12 @@ const patchSchema = z.object({
   status: z.string().optional(),
   gpx_trail_id: z.number().int().positive().nullish(),
   sort_order: z.number().int().optional(),
+  end_lat: z.number().min(-90).max(90).nullish(),
+  end_lng: z.number().min(-180).max(180).nullish(),
+  end_name: z.string().nullish(),
+  end_source: z.enum(['ioverlander', 'park4night', 'google_places', 'manual']).nullish(),
+  end_source_url: z.string().nullish(),
+  drive_time_minutes: z.number().int().nullish(),
 });
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {

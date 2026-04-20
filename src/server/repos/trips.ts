@@ -109,6 +109,12 @@ function routeRow(r: typeof routes.$inferSelect): RouteWithLinks {
     surface: r.surface,
     status: r.status,
     gpx_trail_id: r.gpxTrailId,
+    end_lat: r.endLat,
+    end_lng: r.endLng,
+    end_name: r.endName,
+    end_source: (r.endSource as RouteWithLinks['end_source']) ?? null,
+    end_source_url: r.endSourceUrl,
+    drive_time_minutes: r.driveTimeMinutes,
     links: [],
   };
 }
@@ -300,6 +306,71 @@ export async function deleteTrip(tripId: number) {
 }
 
 /**
+ * Append a new leg to the end of a trip. Used by Penny's `add_leg` action and
+ * can be called directly from an API route when we need to build a trip from
+ * scratch (e.g. "plan me a route from Girona to Berlin"). Returns the new
+ * leg's id.
+ */
+export async function addLeg(input: {
+  tripId: number;
+  title: string;
+  label?: string | null;
+  startName?: string | null;
+  endName?: string | null;
+  startLat?: number | null;
+  startLng?: number | null;
+  endLat?: number | null;
+  endLng?: number | null;
+  dates?: string | null;
+  distanceKm?: number | null;
+  driveTimeMinutes?: number | null;
+  terrain?: string | null;
+  overnight?: string | null;
+  status?: string | null;
+  color?: string | null;
+  notes?: string | null;
+  sortOrder?: number | null;
+}): Promise<number> {
+  let sortOrder = input.sortOrder;
+  if (sortOrder == null) {
+    const existing = await db
+      .select({ sortOrder: legs.sortOrder })
+      .from(legs)
+      .where(eq(legs.tripId, input.tripId));
+    sortOrder = (existing.reduce((m, r) => Math.max(m, r.sortOrder), -1) ?? -1) + 1;
+  }
+
+  const [row] = await db
+    .insert(legs)
+    .values({
+      tripId: input.tripId,
+      sortOrder,
+      title: input.title,
+      label: input.label ?? null,
+      startName: input.startName ?? null,
+      endName: input.endName ?? null,
+      startLat: input.startLat ?? null,
+      startLng: input.startLng ?? null,
+      endLat: input.endLat ?? null,
+      endLng: input.endLng ?? null,
+      dates: input.dates ?? null,
+      distanceKm: input.distanceKm ?? null,
+      driveTimeMinutes: input.driveTimeMinutes ?? null,
+      terrain: input.terrain ?? null,
+      overnight: input.overnight ?? null,
+      status: input.status ?? 'planning',
+      color: input.color ?? null,
+      notes: input.notes ?? null,
+    })
+    .returning({ id: legs.id });
+  return row.id;
+}
+
+export async function deleteLeg(legId: number): Promise<void> {
+  await db.delete(legs).where(eq(legs.id, legId));
+}
+
+/**
  * Deep-copy a template trip into a new trip owned by `userId`. Returns the new trip id.
  * Copies legs, costs, links, routes, route_links, tasks, gpx trails, pois.
  * Chat history is NOT copied.
@@ -406,6 +477,12 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
             surface: r.surface,
             status: r.status,
             gpxTrailId: null, // gpx not copied yet
+            endLat: r.endLat,
+            endLng: r.endLng,
+            endName: r.endName,
+            endSource: r.endSource,
+            endSourceUrl: r.endSourceUrl,
+            driveTimeMinutes: r.driveTimeMinutes,
           })
           .returning({ id: routes.id });
         routeIdMap.set(r.id, nr.id);

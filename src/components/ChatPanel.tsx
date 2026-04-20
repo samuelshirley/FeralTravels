@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage } from '@/types/trip';
-import { tripApi } from '@/lib/api';
+import { tripApi, apiFetch } from '@/lib/api';
 
 interface ChatPanelProps {
   tripId: number;
   initialMessages: ChatMessage[];
+  initialHasMore?: boolean;
   onTripUpdated: () => void;
   onActivity?: (event: 'thinking' | 'response' | 'error') => void;
   readonly?: boolean;
@@ -21,23 +22,94 @@ interface AttachedImage {
 
 interface UIMessage extends ChatMessage {
   imageDataUrls?: string[];
+  // Populated when Penny proposed changes but the server couldn't apply them
+  // (unknown action, owner mismatch, DB error). We surface this so the user
+  // doesn't see a misleading "Changes applied to trip" badge.
+  applyError?: string | null;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onActivity, readonly = false }: ChatPanelProps) {
+export default function ChatPanel({
+  tripId,
+  initialMessages,
+  initialHasMore = false,
+  onTripUpdated,
+  onActivity,
+  readonly = false,
+}: ChatPanelProps) {
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const didInitialScroll = useRef(false);
+  const pendingRestoreScroll = useRef<{ prevHeight: number } | null>(null);
 
+  // Jump to the bottom on first render (so the last message is visible) and
+  // smooth-scroll on every subsequent new message or loading toggle. We only
+  // snap instantly the first time because smooth-scrolling on first mount
+  // visibly "falls" the chat in which looks janky.
   useEffect(() => {
+    if (!didInitialScroll.current) {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+      didInitialScroll.current = true;
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages.length, loading]);
+
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder || !hasMore || messages.length === 0) return;
+    // Optimistic messages have `Date.now()` ids (13-digit ms timestamps) which
+    // are always higher than any real DB id, so we walk up from the front to
+    // find the earliest persisted id — that's our "before" cursor.
+    const earliest = messages.find((m) => m.id < 1_000_000_000_000);
+    if (!earliest) return;
+    setLoadingOlder(true);
+    const scrollEl = scrollRef.current;
+    pendingRestoreScroll.current = scrollEl
+      ? { prevHeight: scrollEl.scrollHeight }
+      : null;
+    try {
+      const data = await apiFetch<{ messages: ChatMessage[]; hasMore: boolean }>(
+        `/api/chat`,
+        { query: { tripId, before: earliest.id } }
+      );
+      setMessages((prev) => [...data.messages, ...prev]);
+      setHasMore(data.hasMore);
+    } catch (e) {
+      console.warn('Failed to load older chat:', e);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [hasMore, loadingOlder, messages, tripId]);
+
+  // Restore scroll position after prepending older messages so the viewport
+  // stays anchored to where the user was reading.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const restore = pendingRestoreScroll.current;
+    if (!el || !restore) return;
+    const diff = el.scrollHeight - restore.prevHeight;
+    el.scrollTop = diff;
+    pendingRestoreScroll.current = null;
+  }, [messages]);
+
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      // ~40px threshold feels natural on both trackpads and touch.
+      if (el.scrollTop < 40 && hasMore && !loadingOlder) loadOlder();
+    },
+    [hasMore, loadingOlder, loadOlder]
+  );
 
   // Auto-grow textarea (single-line by default, max ~8 lines)
   useEffect(() => {
@@ -122,6 +194,20 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
         ]);
         onActivity?.('error');
       } else {
+        const appliedCount: number = typeof data?.appliedCount === 'number' ? data.appliedCount : 0;
+        const failedCount: number = typeof data?.failedCount === 'number' ? data.failedCount : 0;
+        const hadProposedChanges = Array.isArray(data?.changes?.changes)
+          ? data.changes.changes.length > 0
+          : false;
+        let applyError: string | null = null;
+        if (hadProposedChanges && appliedCount === 0) {
+          applyError =
+            'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
+        } else if (failedCount > 0 && Array.isArray(data?.failedActions)) {
+          applyError = `Some changes failed: ${data.failedActions
+            .map((f: any) => f.action)
+            .join(', ')}`;
+        }
         setMessages((prev) => [
           ...prev,
           {
@@ -129,12 +215,15 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
             trip_id: tripId,
             role: 'assistant',
             content: data.response,
-            changes_made: data.changes ? JSON.stringify(data.changes) : null,
+            // Only keep changes_made when something was actually applied, so
+            // the "Changes applied to trip" pill is truthful.
+            changes_made: appliedCount > 0 && data.changes ? JSON.stringify(data.changes) : null,
             created_at: new Date().toISOString(),
+            applyError,
           },
         ]);
-        if (data.changes) onTripUpdated();
-        onActivity?.('response');
+        if (appliedCount > 0) onTripUpdated();
+        onActivity?.(applyError ? 'error' : 'response');
       }
     } catch (err) {
       setMessages((prev) => [
@@ -190,6 +279,14 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
       style={{
         display: 'flex',
         flexDirection: 'column',
+        // Fill whatever space the parent flex container gives us. `min-height: 0`
+        // is required so the inner messages-scroll area can shrink and leave
+        // real layout space for the input row at the bottom (a Safari foot-gun
+        // — without it the input renders below the visible viewport on mobile
+        // and disappears behind the bottom nav).
+        flex: 1,
+        minHeight: 0,
+        // Fallback for parents that lay this out as a non-flex item.
         height: '100%',
         background: '#0D0D0D',
         position: 'relative',
@@ -263,15 +360,54 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
       </div>
 
       <div
+        ref={scrollRef}
+        onScroll={handleScroll}
         style={{
           flex: 1,
+          minHeight: 0,
           overflowY: 'auto',
           padding: '16px',
           display: 'flex',
           flexDirection: 'column',
           gap: 12,
+          WebkitOverflowScrolling: 'touch',
         }}
       >
+        {hasMore && (
+          <div
+            style={{
+              textAlign: 'center',
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.35)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              padding: '4px 0 6px',
+            }}
+          >
+            {loadingOlder ? (
+              'Loading older messages…'
+            ) : (
+              <button
+                onClick={() => loadOlder()}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.55)',
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Load older
+              </button>
+            )}
+          </div>
+        )}
         {messages.length === 0 && (
           <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
             Ask Penny to modify your trip plan. For example:
@@ -324,7 +460,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
               </div>
             )}
             {msg.content}
-            {msg.changes_made && (
+            {msg.changes_made && !msg.applyError && (
               <div
                 style={{
                   marginTop: 8,
@@ -338,6 +474,23 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
                 }}
               >
                 Changes applied to trip
+              </div>
+            )}
+            {msg.applyError && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '6px 8px',
+                  background: 'rgba(232,146,124,0.1)',
+                  borderRadius: 4,
+                  border: '1px solid rgba(232,146,124,0.25)',
+                  fontSize: 11,
+                  color: '#E8927C',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  lineHeight: 1.45,
+                }}
+              >
+                {msg.applyError}
               </div>
             )}
           </div>
@@ -369,6 +522,7 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
             gap: 8,
             padding: '8px 16px 0',
             flexWrap: 'wrap',
+            flexShrink: 0,
           }}
         >
           {images.map((img) => (
@@ -424,6 +578,8 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
             fontSize: 12,
             textAlign: 'center',
             fontFamily: "'JetBrains Mono', monospace",
+            flexShrink: 0,
+            paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
           }}
         >
           Demo trip — clone it from the trips list to chat with Penny.
@@ -433,6 +589,15 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
         style={{
           padding: '12px 16px',
           borderTop: '1px solid rgba(255,255,255,0.08)',
+          // Without this, the input block can compress to zero height on
+          // mobile Safari when the flex container is short (e.g. inside a
+          // position:absolute mobile tab pane) — leaving the user with no
+          // textbox to type in.
+          flexShrink: 0,
+          background: '#0D0D0D',
+          // Respect iOS home-indicator / Android gesture-bar safe area so
+          // the send button isn't hidden behind the OS affordance.
+          paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
         }}
       >
         <input
@@ -496,6 +661,19 @@ export default function ChatPanel({ tripId, initialMessages, onTripUpdated, onAc
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onFocus={(e) => {
+              // iOS Safari slides the soft keyboard up over absolutely-positioned
+              // bottom UI; nudge the textarea into view after the keyboard
+              // animation has settled (~250ms) so the user sees what they type.
+              const el = e.currentTarget;
+              setTimeout(() => {
+                try {
+                  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                } catch {
+                  /* ignore — older Safari throws on smooth */
+                }
+              }, 250);
+            }}
             placeholder="Ask Penny to change the plan…"
             disabled={loading}
             rows={1}

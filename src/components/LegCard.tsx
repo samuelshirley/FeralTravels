@@ -6,6 +6,7 @@ import { tripApi } from '@/lib/api';
 import StatusBadge from './StatusBadge';
 import RoutesSection from './RoutesSection';
 import TasksSection from './TasksSection';
+import FindOvernightDrawer from './FindOvernightDrawer';
 
 interface LegCardProps {
   tripId: number;
@@ -46,6 +47,7 @@ export default function LegCard({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [overnightOpen, setOvernightOpen] = useState(false);
 
   const loadTrails = async () => {
     try {
@@ -252,6 +254,48 @@ export default function LegCard({
             onTrailsChanged={onTrailsChanged}
             readonly={readonly}
           />
+
+          {!readonly && leg.start_lat != null && leg.start_lng != null && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setOvernightOpen(true);
+              }}
+              style={{
+                marginTop: 8,
+                width: '100%',
+                fontSize: 12,
+                background: 'rgba(232,213,124,0.08)',
+                border: '1px dashed rgba(232,213,124,0.35)',
+                color: '#E8D57C',
+                padding: '8px 12px',
+                borderRadius: 5,
+                cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.05em',
+              }}
+              title="Search iOverlander, Park4Night, and Google for free overnight spots near this leg"
+            >
+              ⌂ Find a spot near here
+            </button>
+          )}
+
+          {overnightOpen && (
+            <FindOvernightDrawer
+              tripId={tripId}
+              legId={leg.id}
+              legCoords={{
+                start_lat: leg.start_lat,
+                start_lng: leg.start_lng,
+                end_lat: leg.end_lat,
+                end_lng: leg.end_lng,
+              }}
+              onClose={() => setOvernightOpen(false)}
+              onAdded={() => {
+                onChanged?.();
+              }}
+            />
+          )}
 
           <div
             style={{

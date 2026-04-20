@@ -10,9 +10,10 @@ import Spinner from '@/components/Spinner';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import ChatDrawer from '@/components/ChatDrawer';
 import ChatToggleButton from '@/components/ChatToggleButton';
+import TripVehicleChip from '@/components/TripVehicleChip';
 import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
-import type { TripWithLegs, POI } from '@/types/trip';
+import type { TripWithLegs, POI, ChatMessage } from '@/types/trip';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
@@ -21,6 +22,7 @@ interface Props {
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin?: boolean;
+  initialChat?: { messages: ChatMessage[]; hasMore: boolean };
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -58,7 +60,13 @@ function ResizeHandle() {
   );
 }
 
-export default function TripWorkspace({ tripId, readonly, user, isAdmin = false }: Props) {
+export default function TripWorkspace({
+  tripId,
+  readonly,
+  user,
+  isAdmin = false,
+  initialChat,
+}: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
   // re-fetch loop hammering /api/trip and /api/pois.
@@ -202,12 +210,21 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
   const chatPane = (
     <ChatPanel
       tripId={tripId}
-      initialMessages={[]}
+      initialMessages={initialChat?.messages ?? []}
+      initialHasMore={initialChat?.hasMore ?? false}
       onTripUpdated={loadTrip}
       onActivity={handleChatActivity}
       readonly={readonly}
     />
   );
+
+  const vehicleChip = !readonly ? (
+    <TripVehicleChip
+      tripId={tripId}
+      initialVehicleId={trip.vehicle_id ?? null}
+      readonly={readonly}
+    />
+  ) : null;
 
   // ───────── MOBILE (<768px): single pane + fixed bottom nav ─────────
   if (viewport === 'mobile') {
@@ -220,21 +237,29 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
           overflow: 'hidden',
         }}
       >
-        <AppNavbar user={user} tripName={trip.name} isAdmin={isAdmin} />
+        <AppNavbar user={user} tripName={trip.name} isAdmin={isAdmin} rightSlot={vehicleChip} />
         <div
           style={{
             flex: 1,
             minHeight: 0,
             position: 'relative',
-            paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
             boxSizing: 'border-box',
           }}
         >
+          {/*
+            Each tab pane uses an explicit `bottom` offset (not paddingBottom)
+            so an absolutely-positioned child with height:100% truly fits
+            ABOVE the fixed bottom nav. Previous version used paddingBottom,
+            which left the chat textarea rendered behind the nav and
+            unreachable on mobile.
+          */}
           <div
             style={{
               position: 'absolute',
-              inset: 0,
-              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'map' ? 'block' : 'none',
             }}
           >
@@ -243,10 +268,12 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
           <div
             style={{
               position: 'absolute',
-              inset: 0,
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               overflowY: 'auto',
               padding: '16px 12px',
-              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom) + 16px)`,
               background: 'rgba(13,13,13,0.6)',
               display: mobileTab === 'list' ? 'block' : 'none',
               WebkitOverflowScrolling: 'touch',
@@ -257,11 +284,14 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
           <div
             style={{
               position: 'absolute',
-              inset: 0,
-              paddingBottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'chat' ? 'flex' : 'none',
               flexDirection: 'column',
               background: '#0D0D0D',
+              minHeight: 0,
             }}
           >
             {chatPane}
@@ -286,12 +316,15 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
           tripName={trip.name}
           isAdmin={isAdmin}
           rightSlot={
-            <ChatToggleButton
-              open={chatOpen}
-              onClick={() => setChatOpen((v) => !v)}
-              thinking={thinking}
-              unread={unread}
-            />
+            <>
+              {vehicleChip}
+              <ChatToggleButton
+                open={chatOpen}
+                onClick={() => setChatOpen((v) => !v)}
+                thinking={thinking}
+                unread={unread}
+              />
+            </>
           }
         />
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -329,12 +362,15 @@ export default function TripWorkspace({ tripId, readonly, user, isAdmin = false 
         tripName={trip.name}
         isAdmin={isAdmin}
         rightSlot={
-          <ChatToggleButton
-            open={chatOpen}
-            onClick={() => setChatOpen((v) => !v)}
-            thinking={thinking}
-            unread={unread}
-          />
+          <>
+            {vehicleChip}
+            <ChatToggleButton
+              open={chatOpen}
+              onClick={() => setChatOpen((v) => !v)}
+              thinking={thinking}
+              unread={unread}
+            />
+          </>
         }
       />
 

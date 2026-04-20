@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { getTripFull } from '@/server/repos/trips';
+import { getChatPage } from '@/server/repos/chat';
 import TripWorkspace from './TripWorkspace';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,9 @@ export default async function TripPage({ params }: Props) {
   if (!isOwner && !trip.is_template) notFound();
 
   const admin = await isAdmin(session.user.email);
+  // Ship the most-recent page of chat with the HTML so the chat panel isn't
+  // empty on hard refresh. Older messages are loaded lazily via GET /api/chat.
+  const initialChat = await getChatPage({ tripId });
 
   return (
     <TripWorkspace
@@ -36,6 +40,7 @@ export default async function TripPage({ params }: Props) {
         image: session.user.image,
       }}
       isAdmin={admin}
+      initialChat={initialChat}
     />
   );
 }

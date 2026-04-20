@@ -49,6 +49,12 @@ export async function addRoute(input: {
   status?: string | null;
   gpx_trail_id?: number | null;
   sort_order?: number | null;
+  end_lat?: number | null;
+  end_lng?: number | null;
+  end_name?: string | null;
+  end_source?: string | null;
+  end_source_url?: string | null;
+  drive_time_minutes?: number | null;
   links?: Array<{ label?: string; url: string; type?: string }>;
 }): Promise<RouteWithLinks> {
   const next = await db
@@ -68,6 +74,12 @@ export async function addRoute(input: {
       surface: input.surface ?? null,
       status: input.status ?? 'option',
       gpxTrailId: input.gpx_trail_id ?? null,
+      endLat: input.end_lat ?? null,
+      endLng: input.end_lng ?? null,
+      endName: input.end_name ?? null,
+      endSource: input.end_source ?? null,
+      endSourceUrl: input.end_source_url ?? null,
+      driveTimeMinutes: input.drive_time_minutes ?? null,
     })
     .returning();
 
@@ -97,6 +109,12 @@ export async function updateRoute(
     status: string;
     gpx_trail_id: number | null;
     sort_order: number;
+    end_lat: number | null;
+    end_lng: number | null;
+    end_name: string | null;
+    end_source: string | null;
+    end_source_url: string | null;
+    drive_time_minutes: number | null;
   }>
 ): Promise<RouteWithLinks | null> {
   const update: Record<string, unknown> = {};
@@ -107,10 +125,44 @@ export async function updateRoute(
   if (data.status !== undefined) update.status = data.status;
   if (data.gpx_trail_id !== undefined) update.gpxTrailId = data.gpx_trail_id;
   if (data.sort_order !== undefined) update.sortOrder = data.sort_order;
+  if (data.end_lat !== undefined) update.endLat = data.end_lat;
+  if (data.end_lng !== undefined) update.endLng = data.end_lng;
+  if (data.end_name !== undefined) update.endName = data.end_name;
+  if (data.end_source !== undefined) update.endSource = data.end_source;
+  if (data.end_source_url !== undefined) update.endSourceUrl = data.end_source_url;
+  if (data.drive_time_minutes !== undefined) update.driveTimeMinutes = data.drive_time_minutes;
   if (Object.keys(update).length > 0) {
     await db.update(routes).set(update).where(eq(routes.id, id));
   }
   return getRoute(id);
+}
+
+/**
+ * Mark this route as the selected option on its leg, demoting all sibling
+ * options to status='option'. Returns the updated route plus the leg id so
+ * callers can react (e.g. mark a "Pick tonight's stop" task as answered).
+ */
+export async function selectRoute(
+  routeId: number
+): Promise<{ route: RouteWithLinks; legId: number } | null> {
+  const existing = await db
+    .select({ legId: routes.legId })
+    .from(routes)
+    .where(eq(routes.id, routeId))
+    .limit(1);
+  if (existing.length === 0) return null;
+  const legId = existing[0].legId;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(routes)
+      .set({ status: 'option' })
+      .where(and(eq(routes.legId, legId), sql`${routes.status} = 'selected'`));
+    await tx.update(routes).set({ status: 'selected' }).where(eq(routes.id, routeId));
+  });
+  const route = await getRoute(routeId);
+  if (!route) return null;
+  return { route, legId };
 }
 
 export async function deleteRoute(id: number): Promise<boolean> {

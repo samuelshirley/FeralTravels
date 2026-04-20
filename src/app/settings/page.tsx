@@ -5,6 +5,7 @@ import { isAdmin } from '@/server/auth/guards';
 import { getAdminOverview } from '@/server/repos/admin';
 import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
+import VehicleProfileSection from '@/components/VehicleProfileSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,11 +104,11 @@ export default async function SettingsPage() {
           <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700 }}>
             Vehicle profile
           </h2>
-          <p style={{ margin: 0, fontSize: 13, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
-            Coming soon — height, fuel economy, max driving hours per day/week, fuel tank size, and
-            water/black-water refill intervals. Penny will use these constraints to keep your plan
-            realistic and flag any leg that goes out of spec.
+          <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+            Penny uses these constraints to keep your plan realistic — max drive hours/day, fuel
+            range, vehicle clearance, and water/black-water intervals.
           </p>
+          <VehicleProfileSection />
         </section>
 
         {admin && overview && (

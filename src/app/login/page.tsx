@@ -2,13 +2,37 @@ import { redirect } from 'next/navigation';
 import { auth, signIn } from '@/server/auth';
 
 interface LoginPageProps {
-  searchParams: { callbackUrl?: string; error?: string };
+  searchParams: { callbackUrl?: string; error?: string; emailError?: string };
+}
+
+// Auth.js v5 routes provider failures to /api/auth/error?error=<code>. Map
+// the codes we actually see into copy users can act on instead of showing
+// raw machine codes.
+function describeError(code?: string): string | null {
+  if (!code) return null;
+  switch (code) {
+    case 'OAuthAccountNotLinked':
+      return 'This email is already linked to another sign-in method.';
+    case 'EmailSignin':
+    case 'EmailSendFailed':
+    case 'Configuration':
+      return "Couldn't send the sign-in email. Try Google sign-in or contact support.";
+    case 'AccessDenied':
+      return 'Access denied. If you think this is a mistake, contact support.';
+    case 'Verification':
+      return 'That sign-in link has expired or already been used. Request a new one.';
+    default:
+      return `Sign-in failed: ${code}`;
+  }
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const session = await auth();
   const callbackUrl = searchParams.callbackUrl || '/trips';
   if (session?.user) redirect(callbackUrl);
+
+  const errorMessage = describeError(searchParams.error)
+    || (searchParams.emailError ? describeError(searchParams.emailError) : null);
 
   return (
     <div
@@ -57,7 +81,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           Sign in with Google or get a magic link by email.
         </p>
 
-        {searchParams.error && (
+        {errorMessage && (
           <div
             style={{
               padding: '8px 12px',
@@ -69,9 +93,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               marginBottom: 16,
             }}
           >
-            {searchParams.error === 'OAuthAccountNotLinked'
-              ? 'This email is already linked to another sign-in method.'
-              : `Sign-in failed: ${searchParams.error}`}
+            {errorMessage}
           </div>
         )}
 
@@ -126,7 +148,22 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             'use server';
             const email = String(formData.get('email') || '').trim();
             if (!email) return;
-            await signIn('resend', { email, redirectTo: callbackUrl });
+            try {
+              await signIn('resend', { email, redirectTo: callbackUrl });
+            } catch (err) {
+              // Auth.js intentionally throws a `redirect` error after a
+              // successful sign-in start to perform the navigation; let
+              // that bubble. Anything else is a real failure (Resend 403,
+              // missing API key, etc.) — bounce back to /login with a
+              // friendly error code we map in describeError().
+              if (err && typeof err === 'object' && 'digest' in err && String((err as { digest?: string }).digest).startsWith('NEXT_REDIRECT')) {
+                throw err;
+              }
+              const message = err instanceof Error ? err.message : String(err);
+              const code = message.startsWith('EmailSendFailed') ? 'EmailSendFailed' : 'EmailSignin';
+              console.error('[login] email sign-in failed:', message);
+              redirect(`/login?emailError=${encodeURIComponent(code)}&callbackUrl=${encodeURIComponent(callbackUrl)}`);
+            }
           }}
           style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
         >

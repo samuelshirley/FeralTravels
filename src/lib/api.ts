@@ -84,6 +84,23 @@ export function tripApi(tripId: number) {
       apiFetch(`/api/routes/${routeId}`, { method: 'PATCH', body: { tripId, ...data } }),
     deleteRoute: (routeId: number) =>
       apiFetch(`/api/routes/${routeId}`, { method: 'DELETE', query: { tripId } }),
+    selectRoute: (routeId: number) =>
+      apiFetch(`/api/routes/${routeId}/select`, { method: 'POST', body: {} }),
+    findOvernightForLeg: (
+      legId: number,
+      opts?: { radiusKm?: number; bandsOnly?: boolean }
+    ) =>
+      apiFetch(`/api/trip/find-overnight`, {
+        body: { tripId, mode: 'leg', legId, ...(opts || {}) },
+      }),
+    findOvernightHere: (
+      lat: number,
+      lng: number,
+      opts?: { radiusKm?: number }
+    ) =>
+      apiFetch(`/api/trip/find-overnight`, {
+        body: { tripId, mode: 'here', lat, lng, ...(opts || {}) },
+      }),
     addRouteLink: (routeId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/routes/${routeId}/links`, { body: { tripId, ...payload } }),
     deleteRouteLink: (routeId: number, linkId: number) =>
