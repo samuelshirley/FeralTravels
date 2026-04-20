@@ -12,7 +12,8 @@
     "db:studio": "drizzle-kit studio",
     "seed": "tsx scripts/seed-demo-trip.ts",
     "migrate-sqlite": "tsx scripts/migrate-sqlite-to-neon.ts",
-    "backfill-maps-nav": "tsx scripts/backfill-google-maps-nav.ts"
+    "backfill-maps-nav": "tsx scripts/backfill-google-maps-nav.ts",
+    "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
