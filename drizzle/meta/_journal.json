@@ -22,6 +22,13 @@
       "when": 1777017600000,
       "tag": "0002_onboarding_and_fuel_status",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777708800000,
+      "tag": "0003_drop_legacy_spot_sources",
+      "breakpoints": true
     }
   ]
 }

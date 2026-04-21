@@ -2,13 +2,17 @@
  * Coordinate parsing utilities.
  *
  * Handles the formats users copy out of the wild — decimal degrees, DMS,
- * Google Maps URLs, Apple Maps URLs, and iOverlander/Park4Night place URLs
- * with embedded coords in the path or query string.
+ * Google Maps URLs, Apple Maps URLs.
  *
- * Pure + synchronous. For formats that require a network round trip
- * (maps.app.goo.gl short links, iOverlander place-ID lookups that don't
- * include coords in the URL), use POST /api/coords/parse which falls back to
- * server-side expansion.
+ * Pure + synchronous. For maps.app.goo.gl short links that need redirect
+ * expansion, use POST /api/coords/parse which falls back to server-side
+ * resolution.
+ *
+ * iOverlander / Park4Night URL parsing was removed: their public pages
+ * don't expose coords on the URL or in a stable HTML shape, and scraping
+ * their site crosses their terms. The UI now only accepts Google/Apple
+ * Maps URLs or raw lat/lng — users pasting a P4N/iOverlander URL get a
+ * clear error telling them to copy the coords instead.
  */
 
 export interface ParsedCoords {
@@ -17,7 +21,7 @@ export interface ParsedCoords {
   /** Optional place name extracted from the URL or string. */
   name?: string;
   /** Rough provenance for debugging / seeding the stop `source` column. */
-  source?: 'google_maps' | 'apple_maps' | 'ioverlander' | 'park4night' | 'manual';
+  source?: 'google_maps' | 'apple_maps' | 'manual';
   /** The original URL, if the input was a URL. */
   source_url?: string;
 }
@@ -160,48 +164,6 @@ function parseAppleMapsUrl(url: URL): ParsedCoords | null {
   };
 }
 
-/**
- * iOverlander — the public place URL (e.g.
- *   https://ioverlander.com/places/12345-name
- * ) doesn't include coordinates, so this parser will return null for that
- * shape and the caller should fall back to the server-side expansion which
- * fetches the page HTML. The "Export to GPS" or "View on map" links on the
- * site produce `?lat=...&lng=...` query strings that we CAN parse client-side.
- */
-function parseIOverlanderUrl(url: URL): ParsedCoords | null {
-  if (!/(^|\.)ioverlander\.com$/.test(url.hostname)) return null;
-  const lat = url.searchParams.get('lat');
-  const lng = url.searchParams.get('lng') || url.searchParams.get('lon');
-  if (lat && lng) {
-    const pair = parseDecimalPair(`${lat},${lng}`);
-    if (pair)
-      return {
-        ...pair,
-        name: decodeName(url.searchParams.get('name')),
-        source: 'ioverlander',
-        source_url: url.toString(),
-      };
-  }
-  return null;
-}
-
-/**
- * Park4Night — the mobile app exposes "park4night://spot/{id}" deep links,
- * but web URLs of the form /en/place/{id}-name don't carry coords in the URL.
- * When coords ARE present (rare), we parse them; otherwise return null so the
- * caller knows to fall back to server-side scraping.
- */
-function parsePark4NightUrl(url: URL): ParsedCoords | null {
-  if (!/(^|\.)park4night\.com$/.test(url.hostname)) return null;
-  const lat = url.searchParams.get('lat');
-  const lng = url.searchParams.get('lng') || url.searchParams.get('lon');
-  if (lat && lng) {
-    const pair = parseDecimalPair(`${lat},${lng}`);
-    if (pair) return { ...pair, source: 'park4night', source_url: url.toString() };
-  }
-  return null;
-}
-
 function parseUrl(input: string): ParsedCoords | null {
   let url: URL;
   try {
@@ -209,18 +171,13 @@ function parseUrl(input: string): ParsedCoords | null {
   } catch {
     return null;
   }
-  return (
-    parseGoogleMapsUrl(url) ||
-    parseAppleMapsUrl(url) ||
-    parseIOverlanderUrl(url) ||
-    parsePark4NightUrl(url)
-  );
+  return parseGoogleMapsUrl(url) || parseAppleMapsUrl(url);
 }
 
 /**
  * Top-level synchronous parser. Returns null for URLs that require server-side
- * redirect expansion (maps.app.goo.gl, iOverlander place pages without coords
- * in the querystring). Those will be handled by POST /api/coords/parse.
+ * redirect expansion (maps.app.goo.gl short links that hide their canonical
+ * lat/lng behind a 30x). Those are handled by POST /api/coords/parse.
  */
 export function parseCoords(input: string): ParsedCoords | null {
   if (!input || typeof input !== 'string') return null;
@@ -234,19 +191,15 @@ export function parseCoords(input: string): ParsedCoords | null {
 
 /**
  * Hosts that require a network round trip to resolve. The `/api/coords/parse`
- * endpoint follows redirects (so short links expand to their canonical Google
- * Maps URL) and scrapes HTML when necessary.
+ * endpoint follows redirects so short links expand to their canonical Google
+ * Maps URL.
  */
 export function needsServerResolution(input: string): boolean {
   if (!/^https?:\/\//i.test(input)) return false;
   try {
     const url = new URL(input.trim());
     const host = url.hostname.replace(/^www\./, '');
-    if (host === 'maps.app.goo.gl' || host === 'goo.gl' || host === 'g.co') return true;
-    // iOverlander / Park4Night place pages without coords in the URL.
-    if (host.endsWith('ioverlander.com') && !url.searchParams.get('lat')) return true;
-    if (host.endsWith('park4night.com') && !url.searchParams.get('lat')) return true;
-    return false;
+    return host === 'maps.app.goo.gl' || host === 'goo.gl' || host === 'g.co';
   } catch {
     return false;
   }

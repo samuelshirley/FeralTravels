@@ -73,9 +73,9 @@ Valid actions:
   { "action": "add_route",     "leg_id": <int>,   "data": { "label": "Route A", "description": "…",
                                                               "distance_km": 120, "surface": "paved|gravel|mix",
                                                               "end_lat": <number?>, "end_lng": <number?>,
-                                                              "end_name": "…", "end_source": "ioverlander|park4night|google_places|manual",
+                                                              "end_name": "…", "end_source": "google_places|manual",
                                                               "end_source_url": "https://…", "drive_time_minutes": <int?>,
-                                                              "links": [{ "type": "google_maps|gpx|wikiloc|komoot|gaia|park4night|ioverlander|dog_park|other",
+                                                              "links": [{ "type": "google_maps|gpx|wikiloc|komoot|gaia|dog_park|park|other",
                                                                            "label": "…", "url": "https://…" }] } }
   { "action": "update_route",  "route_id": <int>, "data": { /* any add_route fields + status: option|selected|dismissed */ } }
   { "action": "delete_route",  "route_id": <int> }
@@ -120,7 +120,7 @@ Valid actions:
 </leg_planning_rules>
 
 <spot_discovery_note>
-You do NOT have access to iOverlander / Park4Night / Google Places at query time. The UI now exposes "Open in …" chips that let the user discover spots themselves and paste GPS back in. When the user asks "find me a spot near X", remind them of those chips in one short sentence rather than guessing URLs.
+You do NOT have access to live spot databases or Google Places at query time. For overnight stops, emit add_stop actions with stop_type="overnight", coords, and a plausible town/park name (source="penny" so the user knows to verify). The UI automatically attaches "🐕 Dog parks nearby" and "🌳 Parks nearby" Google Maps search chips at the leg's end coords, plus a "Copy GPS" button on each stop — users discover the actual spot themselves and paste the coords back. When the user asks "find me a spot near X", propose a town/park near their route and mention those chips in one short sentence rather than inventing URLs.
 </spot_discovery_note>`;
 
 // ---------------------------------------------------------------------------

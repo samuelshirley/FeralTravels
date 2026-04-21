@@ -7,7 +7,7 @@ Headline features:
 - **Triple-pane workspace** (map · itinerary · chat) with drag-resizable panes on desktop and a sticky bottom nav on mobile.
 - **Penny**, a Claude-powered planner that emits structured JSON change actions and respects per-trip **vehicle constraints** (drive limits, height, water cadence, fuel range).
 - **Routes per leg** with multiple options, surface badges, drive-time chips, GPX/Google Maps/Wikiloc/Komoot/Gaia link types, and a one-click **Pick this** that becomes the leg's selected stop.
-- **Stops per leg** (fuel / overnight / water / food / rest) with deep-link buttons that open iOverlander, Park4Night or Apple Maps at the leg's coordinates, plus a paste-GPS input that turns any lat/lng or Maps URL into a selected waypoint on the leg's one-click Google Maps route.
+- **Stops per leg** (fuel / overnight / water / food / rest) with Copy GPS buttons on each stop and "🐕 Dog parks nearby" / "🌳 Parks nearby" Google Maps search chips at the leg's end coords, plus a paste-GPS input that turns any lat/lng or Maps URL into a selected waypoint on the leg's one-click Google Maps route.
 - **Google Maps "Go" links** that open turn-by-turn navigation directly (`dir_action=navigate`), not the preview.
 - **Multi-trip / multi-vehicle** with per-trip vehicle picker in the navbar and a settings page for vehicle profiles.
 - **Admin dashboard** at `/admin` with a hardcoded allowlist + DB flag + verified-email guard for cost/usage monitoring.
@@ -82,7 +82,7 @@ The script writes a marker into `app_meta` so re-running is a no-op. After a suc
 - **Database**: Postgres via Neon, accessed through Drizzle ORM (`postgres-js` driver). Schema in `src/server/db/schema.ts`.
 - **Map**: Google Maps JavaScript API (dark theme) with Directions API for road-following routes. The `lib/maps.ts` helpers always emit `?api=1&dir_action=navigate` URLs so "Go" links open turn-by-turn nav, not preview.
 - **AI**: Anthropic Claude (Penny) for chat-based replanning with structured JSON change actions. Per-user rate + spend caps live in `src/app/api/trip/replan/route.ts`; usage is logged to `usage_events` and aggregated in the admin dashboard.
-- **Stops**: `stops` table holds per-leg waypoints (fuel / overnight / water / food / rest / other). The leg card's Stops section deep-links into iOverlander, Park4Night and Apple Maps preloaded with the leg's coordinates, and accepts pasted GPS coordinates / Google Maps URLs (short links expanded via `POST /api/coords/parse`). Selected stops become waypoints in the leg's one "Open in Google Maps" button. Penny proposes fuel stops from the vehicle's effective range (`km/L × tank − reserve_km`).
+- **Stops**: `stops` table holds per-leg waypoints (fuel / overnight / water / food / rest / other). The leg card's Stops section surfaces a "🐕 Dog parks nearby" and "🌳 Parks nearby" Google Maps search centered on the leg's end coords (overnight spot discovery), a Copy GPS button on each stop (paste into any external spot-finder app), and a paste-GPS input that accepts raw lat/lng or Google/Apple Maps URLs (short links expanded via `POST /api/coords/parse`). Selected stops become waypoints in the leg's one "Open in Google Maps" button. Penny proposes fuel stops from the vehicle's effective range (`km/L × tank × 0.8`).
 - **GPX overlays**: stored in `src/data/gpx/`, parsed via `@tmcw/togeojson`.
 - **Routing**: `/trips` (list), `/trips/[tripId]` (single trip workspace), `/settings` (profile + vehicles + admin), `/admin` (cost & user dashboard, allowlist-gated), `/login`.
 
@@ -131,7 +131,6 @@ src/
 │       ├── coords/parse/         expand short Maps links / parse spot URLs
 │       ├── tasks/                Penny + user tasks
 │       ├── gpx/                  upload, fetch as GeoJSON
-│       ├── pois/                 Park4Night / iOverlander overlays
 │       └── directions/           OSRM fallback
 ├── components/                   UI: TripMap, Itinerary, LegCard,
 │                                 RoutesSection, StopsSection, TasksSection,

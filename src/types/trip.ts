@@ -126,12 +126,11 @@ export type RouteLinkType =
   | 'wikiloc'
   | 'komoot'
   | 'gaia'
-  | 'park4night'
-  | 'ioverlander'
   | 'dog_park'
+  | 'park'
   | 'other';
 
-export type RouteEndSource = 'ioverlander' | 'park4night' | 'google_places' | 'manual';
+export type RouteEndSource = 'google_places' | 'manual';
 
 export interface Route {
   id: number;
@@ -172,8 +171,6 @@ export type StopSource =
   | 'user'
   | 'google_places'
   | 'osm'
-  | 'ioverlander'
-  | 'park4night'
   | 'manual';
 export type FuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
 

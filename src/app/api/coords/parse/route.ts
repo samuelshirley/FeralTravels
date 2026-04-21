@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { requireUserId, errorResponse, HttpError } from '@/server/auth/guards';
+import { requireUserId, errorResponse } from '@/server/auth/guards';
 import { parseCoords, needsServerResolution, type ParsedCoords } from '@/lib/coords';
 
 export const runtime = 'nodejs';
@@ -8,14 +8,17 @@ export const dynamic = 'force-dynamic';
 const schema = z.object({ input: z.string().min(1).max(2000) });
 
 /**
- * Client-first coordinate parser with a server-side fallback for URL shapes
- * that require a network round trip:
+ * Client-first coordinate parser with a server-side fallback for the only
+ * URL shape that still needs redirect resolution: Google's Maps share
+ * short links (maps.app.goo.gl / goo.gl / g.co). We follow redirects
+ * manually so we can read the Location header of the canonical
+ * google.com/maps/... URL and re-parse it with the pure client parser.
  *
- *   - maps.app.goo.gl / goo.gl / g.co short links  → follow redirects, then
- *     re-parse the canonical URL with the pure client parser.
- *   - ioverlander.com/places/{id}-name             → fetch HTML, extract lat
- *     and lng from the page's embedded leaflet config or <meta> tags.
- *   - park4night.com/en/place/{id}-name            → same approach.
+ * iOverlander and Park4Night HTML scraping was intentionally removed: the
+ * UX of pasting one of those URLs was brittle (pages redirect through
+ * login walls on mobile, the HTML shape changes) and scraping their site
+ * is uncomfortably close to their terms of service. Users paste raw
+ * lat/lng from those apps now.
  *
  * Auth is required so anonymous scrapers can't turn this into a URL-expansion
  * proxy. Keeping the timeout short (5s) and the response small (just a lat/lng
@@ -77,15 +80,8 @@ async function resolveUrl(input: string): Promise<ParsedCoords | null> {
     return null;
   }
   const host = url.hostname.replace(/^www\./, '');
-
   if (host === 'maps.app.goo.gl' || host === 'goo.gl' || host === 'g.co') {
     return resolveShortLink(url.toString());
-  }
-  if (host.endsWith('ioverlander.com')) {
-    return scrapeIOverlander(url.toString());
-  }
-  if (host.endsWith('park4night.com')) {
-    return scrapePark4Night(url.toString());
   }
   return null;
 }
@@ -120,75 +116,20 @@ async function resolveShortLink(url: string): Promise<ParsedCoords | null> {
   return null;
 }
 
-async function scrapeIOverlander(url: string): Promise<ParsedCoords | null> {
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) {
-    throw new HttpError(502, `iOverlander fetch failed: ${res.status}`);
-  }
-  const html = await res.text();
-  const coords = extractCoordsFromHtml(html, url, 'ioverlander');
-  return coords;
-}
-
-async function scrapePark4Night(url: string): Promise<ParsedCoords | null> {
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) {
-    throw new HttpError(502, `Park4Night fetch failed: ${res.status}`);
-  }
-  const html = await res.text();
-  const coords = extractCoordsFromHtml(html, url, 'park4night');
-  return coords;
-}
-
 /**
- * Heuristic HTML coordinate extraction. We look for, in order:
- *   1. <meta property="place:location:latitude" content="..."> (OpenGraph)
- *   2. <meta name="geo.position" content="lat;lng">
- *   3. `"latitude":12.34,"longitude":56.78` JSON fragments (schema.org /
- *      leaflet config)
- *   4. `L.marker([lat, lng])` / `setView([lat, lng]` leaflet calls
- *   5. Any lat/lng-looking pair inside a `data-lat` / `data-lng` attribute.
+ * HTML coord extraction, currently used only by the short-link fallback
+ * when Google returns a full HTML page instead of a 30x redirect (happens
+ * when the short link points at a place preview rather than a coord URL).
+ * Kept minimal — just enough to surface coords from Google's own canonical
+ * <link> / og:url when they include them.
  */
-function extractCoordsFromHtml(
-  html: string,
-  sourceUrl: string,
-  source?: ParsedCoords['source']
-): ParsedCoords | null {
-  const name = (html.match(/<title>([^<]+)<\/title>/i)?.[1] || '')
-    .replace(/\s*[-|·•]\s*(iOverlander|Park4Night|Google Maps).*$/i, '')
-    .trim() || undefined;
-
-  const candidates: Array<[RegExp, number, number]> = [
-    [
-      /<meta\s+property=["']place:location:latitude["']\s+content=["'](-?\d+(?:\.\d+)?)["'][\s\S]*?<meta\s+property=["']place:location:longitude["']\s+content=["'](-?\d+(?:\.\d+)?)["']/i,
-      1,
-      2,
-    ],
-    [/<meta[^>]*name=["']geo\.position["'][^>]*content=["'](-?\d+(?:\.\d+)?)[;,\s]+(-?\d+(?:\.\d+)?)["']/i, 1, 2],
-    [/"latitude"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*(-?\d+(?:\.\d+)?)/i, 1, 2],
-    [/L\.marker\(\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/i, 1, 2],
-    [/setView\(\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/i, 1, 2],
-    [/data-lat(?:itude)?=["'](-?\d+(?:\.\d+)?)["'][\s\S]{0,200}?data-l(?:ng|on|ongitude)=["'](-?\d+(?:\.\d+)?)["']/i, 1, 2],
-  ];
-
-  for (const [regex, latGroup, lngGroup] of candidates) {
-    const m = html.match(regex);
-    if (!m) continue;
-    const lat = parseFloat(m[latGroup]);
-    const lng = parseFloat(m[lngGroup]);
-    if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-      return { lat, lng, name, source: source ?? 'manual', source_url: sourceUrl };
-    }
-  }
-
-  // Last resort: a canonical or og:url link that happens to include coords.
+function extractCoordsFromHtml(html: string, sourceUrl: string): ParsedCoords | null {
   const canonicalMatch =
     html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] ||
     html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i)?.[1];
   if (canonicalMatch) {
     const parsed = parseCoords(canonicalMatch);
-    if (parsed) return { ...parsed, source: source ?? parsed.source, source_url: sourceUrl };
+    if (parsed) return { ...parsed, source_url: sourceUrl };
   }
-
   return null;
 }

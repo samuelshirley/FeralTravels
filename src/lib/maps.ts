@@ -53,34 +53,39 @@ export function buildNavUrl(
 }
 
 /**
- * Build spot-discovery URLs centered on a given lat/lng, with a ~10km radius.
+ * Build a Google Maps "search near a point" URL using the path-style
+ * /maps/search/<query>/@lat,lng,Nz form.
  *
- * We intentionally use the public https URLs rather than custom schemes
- * (`park4night://`, `ioverlander://`) because:
- *   - The undocumented schemes aren't guaranteed to exist or be stable.
- *   - Browsers on iOS/Android hand these https URLs off to the installed
- *     native app via Universal Links / App Links when the apps are installed.
- *     If not installed, the user gets the mobile web view instead of a broken
- *     `unknown://` link.
+ * This is the shape Google's web maps has supported for years and is the
+ * most reliable cross-device way to land centered on a coordinate with a
+ * search overlay: on iOS with the Google Maps app installed the browser
+ * universal-links it, on Android it opens the app via intent filters, and
+ * on desktop it opens maps.google.com centered exactly there.
  *
- * `name` is currently unused but kept in the signature so callers can pass
- * leg-end labels without changing plumbing.
+ * The official Maps URLs API `/maps/search/?api=1&query=...` format does
+ * not accept a center hint, so we can't use it for near-point searches.
+ *
+ * `zoom` 13 is a neighborhood-scale view — wide enough to see the next
+ * town but tight enough to see individual parks.
  */
-export function buildExternalSpotUrls(lat: number, lng: number, _name?: string): {
-  iOverlander: string;
-  park4Night: string;
-} {
-  const ll = `${lat},${lng}`;
-  return {
-    // iOverlander: `search[location]=lat,lng&distance=10` yields a map view
-    // around the point. `distance` is in kilometers.
-    iOverlander: `https://ioverlander.com/places?utf8=%E2%9C%93&search%5Blocation%5D=${encodeURIComponent(
-      ll
-    )}&distance=10`,
-    // Park4Night's search endpoint accepts lat/lng directly and lands on a
-    // map centered on that point.
-    park4Night: `https://park4night.com/en/search?lat=${lat}&lng=${lng}`,
-  };
+export function buildMapsSearchUrl(
+  lat: number,
+  lng: number,
+  query: string,
+  zoom = 13
+): string {
+  const q = encodeURIComponent(query);
+  return `https://www.google.com/maps/search/${q}/@${lat},${lng},${zoom}z`;
+}
+
+/** "Dog parks near this point" Google Maps search. */
+export function buildDogParkSearchUrl(lat: number, lng: number): string {
+  return buildMapsSearchUrl(lat, lng, 'dog park');
+}
+
+/** "Parks near this point" Google Maps search (covers regular parks too). */
+export function buildParkSearchUrl(lat: number, lng: number): string {
+  return buildMapsSearchUrl(lat, lng, 'park');
 }
 
 /**

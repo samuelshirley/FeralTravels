@@ -21,7 +21,7 @@ const patchSchema = z.object({
   end_lat: z.number().min(-90).max(90).nullish(),
   end_lng: z.number().min(-180).max(180).nullish(),
   end_name: z.string().nullish(),
-  end_source: z.enum(['ioverlander', 'park4night', 'google_places', 'manual']).nullish(),
+  end_source: z.enum(['google_places', 'manual']).nullish(),
   end_source_url: z.string().nullish(),
   drive_time_minutes: z.number().int().nullish(),
 });

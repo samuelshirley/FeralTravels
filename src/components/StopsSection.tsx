@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { tripApi, ApiError } from '@/lib/api';
-import { buildExternalSpotUrls } from '@/lib/maps';
+import { buildDogParkSearchUrl, buildParkSearchUrl } from '@/lib/maps';
 import { parseCoords, needsServerResolution } from '@/lib/coords';
 import Spinner from './Spinner';
 
@@ -98,9 +98,20 @@ export default function StopsSection({
   }
 
   const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
-  const externalUrls = hasEndCoords
-    ? buildExternalSpotUrls(legEndCoords.lat as number, legEndCoords.lng as number, legEndName ?? undefined)
+  // Overnight-spot discovery chips on the leg header point at the *leg end*
+  // coords — that's where the user will be when they need to park for the
+  // night. Individual overnight stops further down the list each get their
+  // own chips centered on that stop's coords.
+  const dogParkNearEnd = hasEndCoords
+    ? buildDogParkSearchUrl(legEndCoords.lat as number, legEndCoords.lng as number)
     : null;
+  const parkNearEnd = hasEndCoords
+    ? buildParkSearchUrl(legEndCoords.lat as number, legEndCoords.lng as number)
+    : null;
+  // `legEndName` is kept in props for callers that might want to label
+  // chips with the destination town in a future change; unused here for
+  // now since the search term doesn't include it.
+  void legEndName;
 
   async function reload() {
     try {
@@ -125,7 +136,7 @@ export default function StopsSection({
       }
       if (!coords) {
         setPasteError(
-          'Could not read coordinates from that — try decimal "lat, lng" or a Google Maps / iOverlander / Park4Night URL.'
+          'Could not read coordinates from that — try decimal "lat, lng" or a Google Maps URL. (For iOverlander / Park4Night spots, copy the coords from their app and paste them here.)'
         );
         return;
       }
@@ -288,17 +299,17 @@ export default function StopsSection({
         </div>
       )}
 
-      {hasEndCoords && externalUrls && !readonly && (
+      {hasEndCoords && dogParkNearEnd && parkNearEnd && !readonly && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           <ExternalChip
-            href={externalUrls.iOverlander}
-            label="iOverlander"
-            hint="Find overnight spots within 10km of this leg's end"
+            href={dogParkNearEnd}
+            label="🐕 Dog parks nearby"
+            hint="Open Google Maps centered on the leg end, searching for dog parks"
           />
           <ExternalChip
-            href={externalUrls.park4Night}
-            label="Park4Night"
-            hint="Find overnight spots within 10km of this leg's end"
+            href={parkNearEnd}
+            label="🌳 Parks nearby"
+            hint="Open Google Maps centered on the leg end, searching for parks"
           />
         </div>
       )}
@@ -338,7 +349,7 @@ export default function StopsSection({
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAddFromPaste();
             }}
-            placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps / iOverlander URL"
+            placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
             disabled={pasteBusy}
             style={{
               flex: '1 1 280px',
@@ -387,8 +398,8 @@ export default function StopsSection({
           {readonly
             ? 'No stops yet.'
             : hasEndCoords
-              ? 'No stops yet. Tap an app above, then paste the GPS of what you find.'
-              : 'No destination coords yet — add lat/lng to the leg to unlock external search.'}
+              ? 'No stops yet. Tap the park search chips to find an overnight spot, then paste its coords here.'
+              : 'No destination coords yet — add lat/lng to the leg to unlock park search chips.'}
         </div>
       )}
 
@@ -521,6 +532,37 @@ function StopRow({
   const selected = stop.status === 'selected';
   const dismissed = stop.status === 'dismissed';
   const hasCoords = stop.lat != null && stop.lng != null;
+  const [copied, setCopied] = useState(false);
+
+  // Reset the "Copied!" label after a short delay so repeated clicks work.
+  async function handleCopyCoords() {
+    if (!hasCoords) return;
+    const text = `${stop.lat},${stop.lng}`;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers — use a hidden textarea + execCommand.
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'fixed';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // Swallow — permissions denied in some contexts. The user can still
+      // read the coords from the stop name if they care.
+    }
+  }
+
+  // Only overnight stops get the "park near this point" enrichment — fuel
+  // and water stops are just utility stops, no park link adds value.
+  const showParkChips = stop.stop_type === 'overnight' && hasCoords;
 
   return (
     <div
@@ -627,6 +669,25 @@ function StopRow({
         )}
       </div>
       {hasCoords && (
+        <button
+          onClick={handleCopyCoords}
+          title="Copy GPS coordinates to clipboard (paste into iOverlander, Park4Night, or any map app)"
+          style={{
+            fontSize: 10,
+            background: 'transparent',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: copied ? '#7CE8A3' : 'rgba(255,255,255,0.55)',
+            cursor: 'pointer',
+            padding: '2px 6px',
+            fontFamily: MONO,
+            borderRadius: 3,
+            flexShrink: 0,
+          }}
+        >
+          {copied ? '✓ Copied' : '📋 GPS'}
+        </button>
+      )}
+      {hasCoords && (
         <a
           href={`https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`}
           target="_blank"
@@ -676,6 +737,46 @@ function StopRow({
         >
           ×
         </button>
+      )}
+      {showParkChips && (
+        <div style={{ flexBasis: '100%', display: 'flex', gap: 6, paddingLeft: 22, marginTop: 4 }}>
+          <a
+            href={buildDogParkSearchUrl(stop.lat as number, stop.lng as number)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Search Google Maps for dog parks near this stop"
+            style={{
+              fontSize: 10,
+              color: 'rgba(124,232,163,0.85)',
+              background: 'rgba(124,232,163,0.08)',
+              border: '1px solid rgba(124,232,163,0.2)',
+              padding: '2px 8px',
+              borderRadius: 3,
+              textDecoration: 'none',
+              fontFamily: MONO,
+            }}
+          >
+            🐕 dog parks
+          </a>
+          <a
+            href={buildParkSearchUrl(stop.lat as number, stop.lng as number)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Search Google Maps for parks near this stop"
+            style={{
+              fontSize: 10,
+              color: 'rgba(181,124,232,0.85)',
+              background: 'rgba(181,124,232,0.08)',
+              border: '1px solid rgba(181,124,232,0.2)',
+              padding: '2px 8px',
+              borderRadius: 3,
+              textDecoration: 'none',
+              fontFamily: MONO,
+            }}
+          >
+            🌳 parks
+          </a>
+        </div>
       )}
     </div>
   );

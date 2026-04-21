@@ -13,8 +13,6 @@ interface RoutesSectionProps {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
-  ioverlander: 'iOverlander',
-  park4night: 'Park4Night',
   google_places: 'Google Places',
   manual: 'Manual',
 };
@@ -391,8 +389,8 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                 {route.description}
               </div>
             )}
-            {/* Provenance pill — e.g. "iOverlander ↗" — lets the user open the
-                source page this overnight option was pulled from. It's
+            {/* Provenance pill — e.g. "Google Places ↗" — lets the user open
+                the source page this overnight option was pulled from. It's
                 informational, not a nav link, and is intentionally kept after
                 the main card body was stripped down. */}
             {route.end_source_url && (

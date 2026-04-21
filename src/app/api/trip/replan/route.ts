@@ -245,8 +245,6 @@ export async function POST(req: Request) {
                   | 'user'
                   | 'google_places'
                   | 'osm'
-                  | 'ioverlander'
-                  | 'park4night'
                   | 'manual'
                   | undefined) ?? 'penny',
               source_url: typeof d.source_url === 'string' ? d.source_url : null,

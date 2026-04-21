@@ -95,7 +95,7 @@ export const DEMO_LEGS: DemoLeg[] = [
     status: 'confirmed',
     notes: [
       '2 nights in Innsbruck with your friend',
-      'Park4Night or Stellplatz if not staying in driveway',
+      'Stellplatz or a nearby park if not staying in driveway',
       'Explore city, brewery, alpine views',
       'Good chance to resupply, do laundry, charge up',
     ],
@@ -214,7 +214,7 @@ export const DEMO_LEGS: DemoLeg[] = [
     distance_km: 600,
     drive_time_minutes: 420,
     terrain: 'Highway / Ferry',
-    overnight: 'Van parking / Park4Night near Oslo center',
+    overnight: 'Van parking / city park near Oslo center',
     color: '#A3E87C',
     status: 'planning',
     notes: [
