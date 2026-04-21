@@ -135,6 +135,37 @@ export interface RouteWithLinks extends Route {
   links: RouteLink[];
 }
 
+export type StopType = 'fuel' | 'water' | 'food' | 'overnight' | 'rest' | 'other';
+export type StopStatus = 'option' | 'selected' | 'dismissed';
+export type StopSource =
+  | 'penny'
+  | 'user'
+  | 'google_places'
+  | 'osm'
+  | 'ioverlander'
+  | 'park4night'
+  | 'manual';
+export type FuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
+
+export interface Stop {
+  id: number;
+  leg_id: number;
+  sort_order: number;
+  stop_type: StopType;
+  status: StopStatus;
+  name: string;
+  lat: number | null;
+  lng: number | null;
+  distance_from_start_km: number | null;
+  notes: string | null;
+  fuel_type: FuelType | null;
+  fuel_amount_l: number | null;
+  source: StopSource | null;
+  source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type TaskStatus = 'open' | 'answered' | 'dismissed';
 export type TaskPriority = 'low' | 'normal' | 'high';
 export type TaskCreator = 'user' | 'penny';
@@ -164,6 +195,7 @@ export interface LegWithDetails extends Leg {
   costs: Cost[];
   links: Link[];
   routes: RouteWithLinks[];
+  stops: Stop[];
   tasks: Task[];
   parsedNotes: string[];
 }

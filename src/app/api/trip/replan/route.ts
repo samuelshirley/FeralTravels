@@ -8,13 +8,18 @@ import {
   assertTripOwnedByUser,
   assertLegOwnedByUser,
   assertRouteOwnedByUser,
+  assertStopOwnedByUser,
   assertTaskOwnedByUser,
   errorResponse,
 } from '@/server/auth/guards';
 import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
+import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
 import { addLeg, deleteLeg } from '@/server/repos/trips';
+import { getDefaultVehicleForUser, getVehicleForUser } from '@/server/repos/vehicles';
+import { computeEffectiveRangeKm } from '@/lib/penny/context';
+import { getTripFull } from '@/server/repos/trips';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 
 // Per-user spend cap and request cap on Anthropic replans.
@@ -89,8 +94,17 @@ export async function POST(req: Request) {
     let appliedCount = 0;
     let failedCount = 0;
     const failedActions: Array<{ action: string; error: string }> = [];
-    if (result.changes?.changes) {
-      for (const change of result.changes.changes) {
+
+    // Penny returns `changes` as `unknown` — narrow the envelope here so we
+    // can iterate. Individual branches still coerce `change.data` fields ad
+    // hoc because Claude is known to send stringly-typed numbers, undefined
+    // vs null, etc.
+    const changesEnvelope = result.changes as
+      | { changes?: Array<Record<string, any>> }
+      | null
+      | undefined;
+    if (changesEnvelope?.changes) {
+      for (const change of changesEnvelope.changes as any[]) {
         try {
           if (change.action === 'add_leg' && change.data) {
             // Penny can propose brand-new legs when the user asks for a plan
@@ -203,6 +217,62 @@ export async function POST(req: Request) {
             await assertRouteOwnedByUser(change.route_id, userId);
             await deleteRoute(change.route_id);
             appliedCount += 1;
+          } else if (change.action === 'add_stop' && change.leg_id && change.data) {
+            await assertLegOwnedByUser(change.leg_id, userId);
+            const d = change.data as Record<string, unknown>;
+            if (typeof d.name !== 'string' || !d.name.trim()) {
+              throw new Error('add_stop requires a name');
+            }
+            if (typeof d.stop_type !== 'string') {
+              throw new Error('add_stop requires stop_type');
+            }
+            await addStop({
+              leg_id: change.leg_id,
+              stop_type: d.stop_type as 'fuel' | 'water' | 'food' | 'overnight' | 'rest' | 'other',
+              name: d.name,
+              status: (d.status as 'option' | 'selected' | 'dismissed' | undefined) ?? 'option',
+              lat: typeof d.lat === 'number' ? d.lat : null,
+              lng: typeof d.lng === 'number' ? d.lng : null,
+              distance_from_start_km:
+                typeof d.distance_from_start_km === 'number' ? d.distance_from_start_km : null,
+              notes: typeof d.notes === 'string' ? d.notes : null,
+              fuel_type:
+                (d.fuel_type as 'diesel' | 'petrol' | 'premium' | 'lpg' | undefined) ?? null,
+              fuel_amount_l: typeof d.fuel_amount_l === 'number' ? d.fuel_amount_l : null,
+              source:
+                (d.source as
+                  | 'penny'
+                  | 'user'
+                  | 'google_places'
+                  | 'osm'
+                  | 'ioverlander'
+                  | 'park4night'
+                  | 'manual'
+                  | undefined) ?? 'penny',
+              source_url: typeof d.source_url === 'string' ? d.source_url : null,
+            });
+            appliedCount += 1;
+          } else if (change.action === 'update_stop' && change.stop_id && change.data) {
+            await assertStopOwnedByUser(change.stop_id, userId);
+            await updateStop(change.stop_id, change.data as Parameters<typeof updateStop>[1]);
+            appliedCount += 1;
+          } else if (change.action === 'delete_stop' && change.stop_id) {
+            await assertStopOwnedByUser(change.stop_id, userId);
+            await deleteStop(change.stop_id);
+            appliedCount += 1;
+          } else if (change.action === 'plan_fuel_stops' && change.leg_id) {
+            // Expand "plan_fuel_stops" into N add_stop inserts sized by the
+            // vehicle's effective range. Penny emits this when a leg's
+            // distance exceeds the effective range and it doesn't want to
+            // guess specific stations itself.
+            await assertLegOwnedByUser(change.leg_id, userId);
+            const applied = await planFuelStopsForLeg(change.leg_id, tripId, userId);
+            if (applied === 0) {
+              throw new Error(
+                'plan_fuel_stops: leg is within effective range or missing vehicle data'
+              );
+            }
+            appliedCount += applied;
           } else if (change.action === 'add_task' && change.data) {
             const d = change.data || {};
             const legId: number | null = change.leg_id ?? null;
@@ -269,4 +339,73 @@ export async function POST(req: Request) {
     }).catch(() => {});
     return errorResponse(err);
   }
+}
+
+/**
+ * Expand a `plan_fuel_stops` action into concrete add_stop inserts.
+ *
+ * Strategy: look up the leg's distance and the driver's vehicle, derive the
+ * effective range (tank × economy − reserve), and place fuel stops at
+ * `effective_range_km` intervals along the leg. We don't know real station
+ * locations, so we seed placeholder stops named "Refuel near km N" with
+ * source='penny' so the user knows to replace them. Interpolation uses
+ * straight-line coordinates between the leg start and end — good enough for
+ * the UI to render pins; the user will refine when they swap in real stops.
+ */
+async function planFuelStopsForLeg(
+  legId: number,
+  tripId: number,
+  userId: string
+): Promise<number> {
+  const trip = await getTripFull(tripId);
+  if (!trip) return 0;
+  const leg = trip.legs.find((l) => l.id === legId);
+  if (!leg || leg.distance_km == null) return 0;
+
+  const vehicle =
+    (trip.vehicle_id != null
+      ? await getVehicleForUser(userId, trip.vehicle_id).catch(() => null)
+      : null) ?? (await getDefaultVehicleForUser(userId).catch(() => null));
+  if (!vehicle) return 0;
+
+  const effectiveRangeKm = computeEffectiveRangeKm(
+    vehicle.fuel_economy_kmpl,
+    vehicle.fuel_tank_l,
+    vehicle.fuel_reserve_km
+  );
+  if (effectiveRangeKm == null || effectiveRangeKm <= 0) return 0;
+  if (leg.distance_km <= effectiveRangeKm) return 0;
+
+  const stops: number[] = [];
+  for (let km = effectiveRangeKm; km < leg.distance_km; km += effectiveRangeKm) {
+    stops.push(km);
+  }
+  if (stops.length === 0) return 0;
+
+  let applied = 0;
+  for (const km of stops) {
+    const fraction = km / leg.distance_km;
+    const lat =
+      leg.start_lat != null && leg.end_lat != null
+        ? leg.start_lat + (leg.end_lat - leg.start_lat) * fraction
+        : null;
+    const lng =
+      leg.start_lng != null && leg.end_lng != null
+        ? leg.start_lng + (leg.end_lng - leg.start_lng) * fraction
+        : null;
+    await addStop({
+      leg_id: legId,
+      stop_type: 'fuel',
+      name: `Refuel near km ${Math.round(km)}`,
+      status: 'option',
+      lat,
+      lng,
+      distance_from_start_km: km,
+      fuel_type: (vehicle.fuel_type as 'diesel' | 'petrol' | 'premium' | 'lpg' | null) ?? null,
+      source: 'penny',
+      notes: 'Placeholder — swap in a real station once picked on the map.',
+    });
+    applied += 1;
+  }
+  return applied;
 }

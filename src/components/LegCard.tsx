@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
+import { buildLegDirectionsUrl } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
 import RoutesSection from './RoutesSection';
+import StopsSection from './StopsSection';
 import TasksSection from './TasksSection';
-import FindOvernightDrawer from './FindOvernightDrawer';
 
 interface LegCardProps {
   tripId: number;
@@ -43,11 +44,23 @@ export default function LegCard({
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
+  const selectedRoute = leg.routes.find((r) => r.status === 'selected') ?? null;
+  const selectedStops = leg.stops.filter((s) => s.status === 'selected');
+  const directionsUrl = buildLegDirectionsUrl({
+    legCoords: {
+      start_lat: leg.start_lat,
+      start_lng: leg.start_lng,
+      end_lat: leg.end_lat,
+      end_lng: leg.end_lng,
+    },
+    selectedRoute,
+    selectedStops,
+  });
+
   const [trails, setTrails] = useState<AttachedTrail[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [overnightOpen, setOvernightOpen] = useState(false);
 
   const loadTrails = async () => {
     try {
@@ -240,6 +253,55 @@ export default function LegCard({
             ))}
           </div>
 
+          {directionsUrl && (
+            <div style={{ marginTop: 10 }}>
+              <a
+                href={directionsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title={
+                  selectedStops.length > 0
+                    ? `Open leg in Google Maps with ${selectedStops.length} waypoint${
+                        selectedStops.length === 1 ? '' : 's'
+                      }`
+                    : 'Open leg in Google Maps'
+                }
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.04em',
+                  color: '#000',
+                  background: '#7CB5E8',
+                  padding: '7px 14px',
+                  borderRadius: 6,
+                  textDecoration: 'none',
+                  boxShadow: '0 2px 8px rgba(124,181,232,0.2)',
+                }}
+              >
+                <span>▶</span>
+                Open in Google Maps
+                {selectedStops.length > 0 && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      background: 'rgba(0,0,0,0.2)',
+                      padding: '1px 6px',
+                      borderRadius: 10,
+                    }}
+                  >
+                    +{selectedStops.length} stop{selectedStops.length === 1 ? '' : 's'}
+                  </span>
+                )}
+              </a>
+            </div>
+          )}
+
           <RoutesSection
             tripId={tripId}
             legId={leg.id}
@@ -255,48 +317,15 @@ export default function LegCard({
             readonly={readonly}
           />
 
-          {!readonly && leg.start_lat != null && leg.start_lng != null && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setOvernightOpen(true);
-              }}
-              style={{
-                marginTop: 8,
-                width: '100%',
-                fontSize: 12,
-                background: 'rgba(232,213,124,0.08)',
-                border: '1px dashed rgba(232,213,124,0.35)',
-                color: '#E8D57C',
-                padding: '8px 12px',
-                borderRadius: 5,
-                cursor: 'pointer',
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: '0.05em',
-              }}
-              title="Search iOverlander, Park4Night, and Google for free overnight spots near this leg"
-            >
-              ⌂ Find a spot near here
-            </button>
-          )}
-
-          {overnightOpen && (
-            <FindOvernightDrawer
-              tripId={tripId}
-              legId={leg.id}
-              legCoords={{
-                start_lat: leg.start_lat,
-                start_lng: leg.start_lng,
-                end_lat: leg.end_lat,
-                end_lng: leg.end_lng,
-              }}
-              legEndName={leg.end_name}
-              onClose={() => setOvernightOpen(false)}
-              onAdded={() => {
-                onChanged?.();
-              }}
-            />
-          )}
+          <StopsSection
+            tripId={tripId}
+            legId={leg.id}
+            legEndName={leg.end_name}
+            legEndCoords={{ lat: leg.end_lat, lng: leg.end_lng }}
+            initialStops={leg.stops}
+            onChanged={onChanged}
+            readonly={readonly}
+          />
 
           <div
             style={{

@@ -53,6 +53,76 @@ export function buildNavUrl(
 }
 
 /**
+ * Build universal links that drop the user into external spot-discovery apps
+ * centered on a given lat/lng. On iOS/Android these typically redirect into
+ * the native app if installed; otherwise they land on the mobile web view.
+ *
+ * We intentionally use the public https URLs rather than custom `park4night://`
+ * / `ioverlander://` schemes so desktop users still get something useful.
+ */
+export function buildExternalSpotUrls(lat: number, lng: number, name?: string): {
+  iOverlander: string;
+  park4Night: string;
+  appleMaps: string;
+} {
+  const ll = `${lat},${lng}`;
+  return {
+    iOverlander: `https://ioverlander.com/places?utf8=%E2%9C%93&search%5Blocation%5D=${encodeURIComponent(
+      ll
+    )}&distance=20`,
+    park4Night: `https://park4night.com/en/search?location=${encodeURIComponent(ll)}`,
+    appleMaps: `https://maps.apple.com/?ll=${encodeURIComponent(ll)}${
+      name ? `&q=${encodeURIComponent(name)}` : ''
+    }`,
+  };
+}
+
+/**
+ * Build the unified "Open in Google Maps" URL for a leg. Combines the leg's
+ * start/end coords with (a) the selected route's end-override (if any) and
+ * (b) any user-selected stops (fuel, water, overnight, etc) as waypoints.
+ *
+ * Waypoints are sorted by `distance_from_start_km` when available, falling
+ * back to `sort_order` so the nav route follows the intended driving sequence.
+ */
+export function buildLegDirectionsUrl(input: {
+  legCoords: LegCoords;
+  selectedRoute?: {
+    end_lat: number | null;
+    end_lng: number | null;
+  } | null;
+  selectedStops?: Array<{
+    lat: number | null;
+    lng: number | null;
+    distance_from_start_km?: number | null;
+    sort_order?: number | null;
+  }>;
+}): string | null {
+  const { legCoords, selectedRoute, selectedStops } = input;
+  const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
+  const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
+  if (destLat == null || destLng == null) return null;
+
+  const waypoints = (selectedStops ?? [])
+    .filter((s): s is { lat: number; lng: number; distance_from_start_km?: number | null; sort_order?: number | null } =>
+      s.lat != null && s.lng != null
+    )
+    .slice()
+    .sort((a, b) => {
+      const ad = a.distance_from_start_km ?? Number.POSITIVE_INFINITY;
+      const bd = b.distance_from_start_km ?? Number.POSITIVE_INFINITY;
+      if (ad !== bd) return ad - bd;
+      return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+    })
+    .map((s) => [s.lat, s.lng] as [number, number]);
+
+  return buildNavUrl(
+    { ...legCoords, end_lat: destLat, end_lng: destLng },
+    waypoints.length > 0 ? waypoints : undefined
+  );
+}
+
+/**
  * Return a "Go" URL for a Google Maps link.
  *
  * Strategy:

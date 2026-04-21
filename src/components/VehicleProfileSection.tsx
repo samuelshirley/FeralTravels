@@ -11,6 +11,15 @@ export type VehicleType =
   | 'sedan'
   | 'other';
 
+export type VehicleFuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
+
+const FUEL_TYPE_LABELS: Record<VehicleFuelType, string> = {
+  diesel: 'Diesel',
+  petrol: 'Petrol / Unleaded',
+  premium: 'Premium',
+  lpg: 'LPG',
+};
+
 export interface Vehicle {
   id: number;
   user_id: string;
@@ -23,6 +32,8 @@ export interface Vehicle {
   weight_kg: number | null;
   fuel_economy_kmpl: number | null;
   fuel_tank_l: number | null;
+  fuel_reserve_km: number | null;
+  fuel_type: VehicleFuelType | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
@@ -32,6 +43,23 @@ export interface Vehicle {
   blackwater_refill_days: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Effective range = (tank × economy) − safety reserve. This is the distance
+ * between fuel stops Penny should target; it's NOT the theoretical range. If
+ * reserve isn't set we assume a conservative 50km buffer so Penny never plans
+ * a leg that tops out at zero fuel.
+ */
+export function effectiveRangeKm(
+  fuel_economy_kmpl: number | null,
+  fuel_tank_l: number | null,
+  fuel_reserve_km: number | null
+): number | null {
+  if (!fuel_economy_kmpl || !fuel_tank_l) return null;
+  const theoretical = fuel_economy_kmpl * fuel_tank_l;
+  const reserve = fuel_reserve_km ?? 50;
+  return Math.max(0, Math.round(theoretical - reserve));
 }
 
 type Draft = Partial<Vehicle> & { name: string };
@@ -55,6 +83,8 @@ function emptyDraft(): Draft {
     weight_kg: null,
     fuel_economy_kmpl: null,
     fuel_tank_l: null,
+    fuel_reserve_km: null,
+    fuel_type: null,
     max_drive_hours_per_day: null,
     max_drive_hours_per_week: null,
     max_consecutive_drive_days: null,
@@ -229,10 +259,11 @@ function VehicleCard({
   onDelete: () => void;
   onSetDefault: () => void;
 }) {
-  const range =
-    vehicle.fuel_economy_kmpl && vehicle.fuel_tank_l
-      ? Math.round(vehicle.fuel_economy_kmpl * vehicle.fuel_tank_l)
-      : null;
+  const range = effectiveRangeKm(
+    vehicle.fuel_economy_kmpl,
+    vehicle.fuel_tank_l,
+    vehicle.fuel_reserve_km
+  );
   return (
     <div
       style={{
@@ -303,6 +334,7 @@ function VehicleCard({
         {vehicle.length_m != null && <Stat label="Length" value={`${vehicle.length_m} m`} />}
         {vehicle.weight_kg != null && <Stat label="Weight" value={`${vehicle.weight_kg} kg`} />}
         {range != null && <Stat label="Range" value={`~${range} km`} />}
+        {vehicle.fuel_type && <Stat label="Fuel" value={FUEL_TYPE_LABELS[vehicle.fuel_type]} /> }
         {vehicle.max_drive_hours_per_day != null && (
           <Stat label="Drive/day" value={`${vehicle.max_drive_hours_per_day}h`} />
         )}
@@ -419,14 +451,7 @@ function VehicleForm({
         </Field>
       </FieldGroup>
 
-      <FieldGroup title="Fuel">
-        <Field label="Economy (km/L)">
-          <input type="number" step="0.1" value={d.fuel_economy_kmpl ?? ''} onChange={num('fuel_economy_kmpl')} style={inputStyle} />
-        </Field>
-        <Field label="Tank (L)">
-          <input type="number" step="0.1" value={d.fuel_tank_l ?? ''} onChange={num('fuel_tank_l')} style={inputStyle} />
-        </Field>
-      </FieldGroup>
+      <FuelFieldGroup d={d} setD={setD} />
 
       <FieldGroup title="Drive limits">
         <Field label="Hours / day">
@@ -471,6 +496,183 @@ function VehicleForm({
         <button onClick={() => onSave(d)} disabled={saving} style={{ ...primaryBtn, opacity: saving ? 0.6 : 1 }}>
           {saving ? 'Saving…' : 'Save'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fuel block with:
+ *   - km/L ↔ L/100km unit toggle (non-persistent; DB always stores km/L)
+ *   - Fuel type dropdown (so Penny can bias fuel stop suggestions to
+ *     diesel-friendly stations etc.)
+ *   - Safety reserve in km — how much range we want to have left when we
+ *     refuel. Defaults to 50km if left blank.
+ *   - Derived "Effective range" readout = (economy × tank) − reserve.
+ */
+function FuelFieldGroup({
+  d,
+  setD,
+}: {
+  d: Draft;
+  setD: React.Dispatch<React.SetStateAction<Draft>>;
+}) {
+  const [unit, setUnit] = useState<'kmpl' | 'l100km'>('kmpl');
+  const displayedEconomy = (() => {
+    if (d.fuel_economy_kmpl == null) return '';
+    if (unit === 'kmpl') return String(d.fuel_economy_kmpl);
+    // L/100km = 100 / (km/L)
+    return (100 / d.fuel_economy_kmpl).toFixed(1);
+  })();
+
+  function handleEconomyChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.trim();
+    if (raw === '') {
+      setD((p) => ({ ...p, fuel_economy_kmpl: null }));
+      return;
+    }
+    const val = Number(raw);
+    if (!Number.isFinite(val) || val <= 0) return;
+    const kmpl = unit === 'kmpl' ? val : 100 / val;
+    setD((p) => ({ ...p, fuel_economy_kmpl: Number(kmpl.toFixed(3)) }));
+  }
+
+  const range = effectiveRangeKm(
+    d.fuel_economy_kmpl ?? null,
+    d.fuel_tank_l ?? null,
+    d.fuel_reserve_km ?? null
+  );
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 10,
+          marginBottom: 6,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.4)',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Fuel
+        </div>
+        <div
+          role="tablist"
+          style={{
+            display: 'inline-flex',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 4,
+            overflow: 'hidden',
+          }}
+        >
+          {(['kmpl', 'l100km'] as const).map((u) => (
+            <button
+              key={u}
+              type="button"
+              role="tab"
+              aria-selected={unit === u}
+              onClick={() => setUnit(u)}
+              style={{
+                fontSize: 10,
+                padding: '3px 8px',
+                background: unit === u ? 'rgba(124,181,232,0.2)' : 'transparent',
+                color: unit === u ? '#7CB5E8' : 'rgba(255,255,255,0.55)',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.04em',
+              }}
+            >
+              {u === 'kmpl' ? 'km/L' : 'L/100km'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+        <Field label={unit === 'kmpl' ? 'Economy (km/L)' : 'Economy (L/100km)'}>
+          <input
+            type="number"
+            step="0.1"
+            value={displayedEconomy}
+            onChange={handleEconomyChange}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Tank (L)">
+          <input
+            type="number"
+            step="0.1"
+            value={d.fuel_tank_l ?? ''}
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              setD((p) => ({ ...p, fuel_tank_l: v === '' ? null : Number(v) }));
+            }}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Fuel reserve (km)">
+          <input
+            type="number"
+            step="10"
+            value={d.fuel_reserve_km ?? ''}
+            placeholder="50"
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              setD((p) => ({ ...p, fuel_reserve_km: v === '' ? null : Number(v) }));
+            }}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Fuel type">
+          <select
+            value={d.fuel_type ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              setD((p) => ({
+                ...p,
+                fuel_type: v === '' ? null : (v as VehicleFuelType),
+              }));
+            }}
+            style={inputStyle}
+          >
+            <option value="">—</option>
+            {Object.entries(FUEL_TYPE_LABELS).map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <div
+        style={{
+          marginTop: 8,
+          padding: '6px 10px',
+          background: range != null ? 'rgba(124,232,163,0.08)' : 'rgba(255,255,255,0.04)',
+          border:
+            range != null
+              ? '1px solid rgba(124,232,163,0.25)'
+              : '1px dashed rgba(255,255,255,0.12)',
+          borderRadius: 6,
+          fontSize: 11,
+          color: range != null ? '#7CE8A3' : 'rgba(255,255,255,0.4)',
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: '0.02em',
+        }}
+      >
+        {range != null
+          ? `Effective range ≈ ${range} km (tank × economy − ${d.fuel_reserve_km ?? 50} km reserve)`
+          : 'Effective range: set tank + economy to compute'}
       </div>
     </div>
   );

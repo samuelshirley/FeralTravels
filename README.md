@@ -7,7 +7,7 @@ Headline features:
 - **Triple-pane workspace** (map · itinerary · chat) with drag-resizable panes on desktop and a sticky bottom nav on mobile.
 - **Penny**, a Claude-powered planner that emits structured JSON change actions and respects per-trip **vehicle constraints** (drive limits, height, water cadence, fuel range).
 - **Routes per leg** with multiple options, surface badges, drive-time chips, GPX/Google Maps/Wikiloc/Komoot/Gaia link types, and a one-click **Pick this** that becomes the leg's selected stop.
-- **Overnight spot finder** that aggregates iOverlander, Park4Night and Google Places (rest areas, dog parks) — Penny pre-fetches ~3 candidates per leg in different drive-time bands; users can also tap **Find a spot near here** mid-trip.
+- **Stops per leg** (fuel / overnight / water / food / rest) with deep-link buttons that open iOverlander, Park4Night or Apple Maps at the leg's coordinates, plus a paste-GPS input that turns any lat/lng or Maps URL into a selected waypoint on the leg's one-click Google Maps route.
 - **Google Maps "Go" links** that open turn-by-turn navigation directly (`dir_action=navigate`), not the preview.
 - **Multi-trip / multi-vehicle** with per-trip vehicle picker in the navbar and a settings page for vehicle profiles.
 - **Admin dashboard** at `/admin` with a hardcoded allowlist + DB flag + verified-email guard for cost/usage monitoring.
@@ -32,8 +32,6 @@ cp .env.example .env
 #                                      anyone else)
 #   ANTHROPIC_API_KEY               – Penny / chat replanning
 #   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY – Maps JS + Directions (browser, referrer-locked)
-#   GOOGLE_PLACES_API_KEY           – optional: server-only key for the overnight
-#                                      finder (falls back to NEXT_PUBLIC key in dev)
 #   ADMIN_EMAILS                    – optional whitelist subset (must already be in
 #                                      the hardcoded ADMIN_ALLOWLIST in admin.ts)
 #   REPLAN_REQUESTS_PER_HOUR        – per-user Penny rate limit (default 40)
@@ -84,7 +82,7 @@ The script writes a marker into `app_meta` so re-running is a no-op. After a suc
 - **Database**: Postgres via Neon, accessed through Drizzle ORM (`postgres-js` driver). Schema in `src/server/db/schema.ts`.
 - **Map**: Google Maps JavaScript API (dark theme) with Directions API for road-following routes. The `lib/maps.ts` helpers always emit `?api=1&dir_action=navigate` URLs so "Go" links open turn-by-turn nav, not preview.
 - **AI**: Anthropic Claude (Penny) for chat-based replanning with structured JSON change actions. Per-user rate + spend caps live in `src/app/api/trip/replan/route.ts`; usage is logged to `usage_events` and aggregated in the admin dashboard.
-- **Overnight spots**: `src/server/overnight/` aggregates iOverlander, Park4Night (stub — opt-in), and Google Places (rest areas, dog parks). Results are cached per source × ~5km grid bucket in `overnight_spots`. Penny pre-fetches up to 3 legs per replan; users can also tap **Find a spot near here** on a leg card.
+- **Stops**: `stops` table holds per-leg waypoints (fuel / overnight / water / food / rest / other). The leg card's Stops section deep-links into iOverlander, Park4Night and Apple Maps preloaded with the leg's coordinates, and accepts pasted GPS coordinates / Google Maps URLs (short links expanded via `POST /api/coords/parse`). Selected stops become waypoints in the leg's one "Open in Google Maps" button. Penny proposes fuel stops from the vehicle's effective range (`km/L × tank − reserve_km`).
 - **GPX overlays**: stored in `src/data/gpx/`, parsed via `@tmcw/togeojson`.
 - **Routing**: `/trips` (list), `/trips/[tripId]` (single trip workspace), `/settings` (profile + vehicles + admin), `/admin` (cost & user dashboard, allowlist-gated), `/login`.
 
@@ -104,7 +102,7 @@ The script writes a marker into `app_meta` so re-running is a no-op. After a suc
 3. The `users.is_admin` DB flag is `true` for that user
 4. `users.emailVerified` is not null (Google OAuth backfills this on sign-in)
 
-Usage events for Anthropic + the overnight providers are logged to `usage_events` so the admin dashboard can show per-user and per-provider cost.
+Usage events for Anthropic are logged to `usage_events` so the admin dashboard can show per-user and per-provider cost.
 
 ## Project structure
 
@@ -126,34 +124,35 @@ src/
 │       ├── auth/[...nextauth]/   Auth.js handlers
 │       ├── trips/                list / create / clone / delete (DELETE) /
 │       │                         PATCH (rename, vehicle_id assignment)
-│       ├── trip/                 get full trip, replan (POST → Penny),
-│       │                         find-overnight (POST → overnight finder)
+│       ├── trip/                 get full trip, replan (POST → Penny)
 │       ├── vehicles/             CRUD + setDefault for user vehicles
 │       ├── routes/               route options + links + select (POST)
+│       ├── stops/                CRUD + select for per-leg stops
+│       ├── coords/parse/         expand short Maps links / parse spot URLs
 │       ├── tasks/                Penny + user tasks
 │       ├── gpx/                  upload, fetch as GeoJSON
 │       ├── pois/                 Park4Night / iOverlander overlays
 │       └── directions/           OSRM fallback
 ├── components/                   UI: TripMap, Itinerary, LegCard,
-│                                 RoutesSection, TasksSection, ChatPanel,
-│                                 AppNavbar, StatusBadge, VehicleProfileSection,
-│                                 TripVehicleChip, FindOvernightDrawer
+│                                 RoutesSection, StopsSection, TasksSection,
+│                                 ChatPanel, AppNavbar, StatusBadge,
+│                                 VehicleProfileSection, TripVehicleChip
 ├── lib/
 │   ├── api.ts                    client-side `tripApi(tripId)` factory
-│   ├── claude.ts                 Anthropic + Penny system prompt + vehicle &
-│   │                             overnight context injection
+│   ├── claude.ts                 Anthropic + Penny system prompt + vehicle
+│   │                             context injection
+│   ├── coords.ts                 Parse lat/lng, DMS, and Google Maps URLs
 │   ├── maps.ts                   Google Maps URL helpers (buildNavUrl,
-│   │                             rewriteMapsUrlForNav)
+│   │                             buildLegDirectionsUrl, rewriteMapsUrlForNav)
+│   ├── penny/context.ts          Build Penny's trip/vehicle/stops context
 │   ├── directions.ts             OSRM client
 │   └── gpx.ts                    GPX file IO + GeoJSON parsing
 ├── server/
 │   ├── auth/                     Auth.js config + ownership + admin guards
 │   ├── db/                       Drizzle schema + client singleton
-│   ├── overnight/                iOverlander / Park4Night / Google Places
-│   │                             aggregator + drive-time banding + cache
 │   └── repos/                    typed data-access layer (trips, routes,
-│                                 tasks, gpx, pois, vehicles, chat, usage,
-│                                 admin)
+│                                 stops, tasks, gpx, pois, vehicles, chat,
+│                                 usage, admin)
 ├── data/
 │   ├── demo-trip.ts              seed data for the public demo
 │   └── gpx/                      uploaded .gpx files
@@ -174,5 +173,5 @@ The service worker is `network-first` for HTML, so a deploy is picked up on the 
 1. Connect the GitHub repo. Vercel auto-detects Next.js.
 2. In the project settings, set every env var listed above. Notably `AUTH_URL` must be the canonical production URL (e.g. `https://trip-planner.vercel.app`) and `AUTH_TRUST_HOST=true`.
 3. Add the production callback to Google OAuth (`https://<your-domain>/api/auth/callback/google`).
-4. After the first deploy, run `npm run db:push` against your Neon prod URL to apply any new schema columns (or set up `db:migrate` in CI). The overnight cache + vehicles + admin tables are required.
+4. After the first deploy, run `npm run db:push` against your Neon prod URL to apply any new schema columns (or set up `db:migrate` in CI). The stops + vehicles + admin tables are required.
 5. If you have legacy Google Maps links in routes that were built before the URL rewriter shipped, run `npm run backfill-maps-nav` once to upgrade them to the API-style nav format.

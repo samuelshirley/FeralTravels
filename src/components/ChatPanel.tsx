@@ -414,7 +414,7 @@ export default function ChatPanel({
             <br />
             <em>&quot;Move the Nürburgring day to after Denmark&quot;</em>
             <br />
-            <em>&quot;Find overnight spots near Trondheim&quot;</em>
+            <em>&quot;Plan fuel stops for the drive to Trondheim&quot;</em>
             <br />
             <em>&quot;Add a rest day in Hamburg&quot;</em>
             <br />

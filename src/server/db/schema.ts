@@ -10,7 +10,6 @@ import {
   timestamp,
   primaryKey,
   index,
-  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
@@ -98,6 +97,12 @@ export const vehicles = pgTable(
     // Fuel
     fuelEconomyKmpl: doublePrecision('fuel_economy_kmpl'),
     fuelTankL: doublePrecision('fuel_tank_l'),
+    // Refuel when less than this many km of range remain. Lets Penny plan
+    // stops with a safety margin the user actually wants.
+    fuelReserveKm: doublePrecision('fuel_reserve_km'),
+    // 'diesel' | 'petrol' | 'premium' | 'lpg' | null. Used by Penny to
+    // pick appropriate fuel stations and by the UI for nicer copy.
+    fuelType: text('fuel_type'),
     // Drive limits
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
@@ -297,6 +302,42 @@ export const routeLinks = pgTable(
   })
 );
 
+// First-class per-leg stops (fuel, water, food, overnight, rest, other). Routes
+// describe HOW you drive the leg; stops describe WHERE you pause along it. The
+// selected stops (status='selected') become waypoints in the leg's generated
+// Google Maps directions URL.
+export const stops = pgTable(
+  'stops',
+  {
+    id: serial('id').primaryKey(),
+    legId: integer('leg_id')
+      .notNull()
+      .references(() => legs.id, { onDelete: 'cascade' }),
+    sortOrder: integer('sort_order').default(0).notNull(),
+    stopType: text('stop_type').notNull(), // 'fuel'|'water'|'food'|'overnight'|'rest'|'other'
+    status: text('status').default('option').notNull(), // 'option'|'selected'|'dismissed'
+    name: text('name').notNull(),
+    lat: doublePrecision('lat'),
+    lng: doublePrecision('lng'),
+    // Kilometers from the start of the leg (not from the previous stop).
+    // Computed by Penny or the caller; used to sort waypoints and to display
+    // fuel stops along the vehicle's effective range.
+    distanceFromStartKm: doublePrecision('distance_from_start_km'),
+    notes: text('notes'),
+    // Fuel-specific helpers (ignored for non-fuel stops).
+    fuelType: text('fuel_type'), // 'diesel'|'petrol'|'premium'|'lpg'|null
+    fuelAmountL: doublePrecision('fuel_amount_l'),
+    // Provenance
+    source: text('source'), // 'penny'|'user'|'google_places'|'osm'|'ioverlander'|'park4night'
+    sourceUrl: text('source_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    legIdx: index('stops_leg_idx').on(t.legId),
+  })
+);
+
 export const tasks = pgTable(
   'tasks',
   {
@@ -347,35 +388,6 @@ export const appMeta = pgTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value'),
 });
-
-// Lightweight cache of free overnight parking POIs aggregated from
-// iOverlander, Park4Night, and Google Places (dog parks / rest areas with
-// parking). Refreshed on demand; no ETL job required for first ship.
-export const overnightSpots = pgTable(
-  'overnight_spots',
-  {
-    id: serial('id').primaryKey(),
-    source: text('source').notNull(), // 'ioverlander' | 'park4night' | 'google_places'
-    sourceId: text('source_id'), // upstream id (or place_id for google)
-    name: text('name').notNull(),
-    lat: doublePrecision('lat').notNull(),
-    lng: doublePrecision('lng').notNull(),
-    category: text('category'), // 'wild_camping'|'rest_area'|'aire'|'dog_park'|...
-    isFree: boolean('is_free').default(true).notNull(),
-    description: text('description'),
-    sourceUrl: text('source_url'),
-    // Coarse 0.05° grid (~5km) for cheap radius pre-filter without a PostGIS index.
-    latGrid: doublePrecision('lat_grid'),
-    lngGrid: doublePrecision('lng_grid'),
-    fetchedAt: timestamp('fetched_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
-  },
-  (t) => ({
-    sourceUniq: uniqueIndex('overnight_source_uniq').on(t.source, t.sourceId),
-    gridIdx: index('overnight_grid_idx').on(t.latGrid, t.lngGrid),
-    sourceIdx: index('overnight_source_idx').on(t.source),
-  })
-);
 
 // Records every billable external API call (Anthropic, etc.) so we can surface
 // a usage + cost estimate in the admin dashboard and rate-limit per user.

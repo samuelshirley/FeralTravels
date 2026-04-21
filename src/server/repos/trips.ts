@@ -8,6 +8,7 @@ import {
   links,
   routes,
   routeLinks,
+  stops,
   tasks,
   pois,
 } from '@/server/db/schema';
@@ -20,6 +21,11 @@ import type {
   RouteWithLinks,
   RouteLink,
   RouteLinkType,
+  Stop,
+  StopSource,
+  StopStatus,
+  StopType,
+  FuelType,
   Task,
   TaskPriority,
   TaskStatus,
@@ -119,6 +125,27 @@ function routeRow(r: typeof routes.$inferSelect): RouteWithLinks {
   };
 }
 
+function stopRow(r: typeof stops.$inferSelect): Stop {
+  return {
+    id: r.id,
+    leg_id: r.legId,
+    sort_order: r.sortOrder,
+    stop_type: r.stopType as StopType,
+    status: (r.status as StopStatus) ?? 'option',
+    name: r.name,
+    lat: r.lat,
+    lng: r.lng,
+    distance_from_start_km: r.distanceFromStartKm,
+    notes: r.notes,
+    fuel_type: (r.fuelType as FuelType | null) ?? null,
+    fuel_amount_l: r.fuelAmountL,
+    source: (r.source as StopSource | null) ?? null,
+    source_url: r.sourceUrl,
+    created_at: r.createdAt.toISOString(),
+    updated_at: r.updatedAt.toISOString(),
+  };
+}
+
 function taskRow(r: typeof tasks.$inferSelect): Task {
   return {
     id: r.id,
@@ -160,7 +187,17 @@ function poiRow(r: typeof pois.$inferSelect): POI {
   };
 }
 
-export const rowMappers = { tripRow, legRow, costRow, linkRow, routeRow, routeLinkRow, taskRow, poiRow };
+export const rowMappers = {
+  tripRow,
+  legRow,
+  costRow,
+  linkRow,
+  routeRow,
+  routeLinkRow,
+  stopRow,
+  taskRow,
+  poiRow,
+};
 
 // ---------------------------------------------------------------------------
 
@@ -178,33 +215,40 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
   if (tripRows.length === 0) return null;
   const trip = tripRow(tripRows[0]);
 
-  const [legRows, costRows, linkRows, routeRows, routeLinkRows, taskRows] = await Promise.all([
-    db.select().from(legs).where(eq(legs.tripId, tripId)).orderBy(asc(legs.sortOrder)),
-    db
-      .select({ c: costs })
-      .from(costs)
-      .innerJoin(legs, eq(costs.legId, legs.id))
-      .where(eq(legs.tripId, tripId)),
-    db
-      .select({ l: links })
-      .from(links)
-      .innerJoin(legs, eq(links.legId, legs.id))
-      .where(eq(legs.tripId, tripId)),
-    db
-      .select({ r: routes })
-      .from(routes)
-      .innerJoin(legs, eq(routes.legId, legs.id))
-      .where(eq(legs.tripId, tripId))
-      .orderBy(asc(routes.sortOrder), asc(routes.id)),
-    db
-      .select({ rl: routeLinks })
-      .from(routeLinks)
-      .innerJoin(routes, eq(routeLinks.routeId, routes.id))
-      .innerJoin(legs, eq(routes.legId, legs.id))
-      .where(eq(legs.tripId, tripId))
-      .orderBy(asc(routeLinks.id)),
-    db.select().from(tasks).where(eq(tasks.tripId, tripId)).orderBy(asc(tasks.createdAt)),
-  ]);
+  const [legRows, costRows, linkRows, routeRows, routeLinkRows, stopRows, taskRows] =
+    await Promise.all([
+      db.select().from(legs).where(eq(legs.tripId, tripId)).orderBy(asc(legs.sortOrder)),
+      db
+        .select({ c: costs })
+        .from(costs)
+        .innerJoin(legs, eq(costs.legId, legs.id))
+        .where(eq(legs.tripId, tripId)),
+      db
+        .select({ l: links })
+        .from(links)
+        .innerJoin(legs, eq(links.legId, legs.id))
+        .where(eq(legs.tripId, tripId)),
+      db
+        .select({ r: routes })
+        .from(routes)
+        .innerJoin(legs, eq(routes.legId, legs.id))
+        .where(eq(legs.tripId, tripId))
+        .orderBy(asc(routes.sortOrder), asc(routes.id)),
+      db
+        .select({ rl: routeLinks })
+        .from(routeLinks)
+        .innerJoin(routes, eq(routeLinks.routeId, routes.id))
+        .innerJoin(legs, eq(routes.legId, legs.id))
+        .where(eq(legs.tripId, tripId))
+        .orderBy(asc(routeLinks.id)),
+      db
+        .select({ s: stops })
+        .from(stops)
+        .innerJoin(legs, eq(stops.legId, legs.id))
+        .where(eq(legs.tripId, tripId))
+        .orderBy(asc(stops.sortOrder), asc(stops.id)),
+      db.select().from(tasks).where(eq(tasks.tripId, tripId)).orderBy(asc(tasks.createdAt)),
+    ]);
 
   const costsByLeg = new Map<number, Cost[]>();
   costRows.forEach(({ c }) => {
@@ -232,6 +276,13 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
   routeLinkRows.forEach(({ rl }) => {
     const route = routesById.get(rl.routeId);
     if (route) route.links.push(routeLinkRow(rl));
+  });
+
+  const stopsByLeg = new Map<number, Stop[]>();
+  stopRows.forEach(({ s }) => {
+    const arr = stopsByLeg.get(s.legId) || [];
+    arr.push(stopRow(s));
+    stopsByLeg.set(s.legId, arr);
   });
 
   const tasksByLeg = new Map<number, Task[]>();
@@ -269,6 +320,7 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
       costs: costsByLeg.get(leg.id) || [],
       links: linksByLeg.get(leg.id) || [],
       routes: routesByLeg.get(leg.id) || [],
+      stops: stopsByLeg.get(leg.id) || [],
       tasks: legTasks,
       parsedNotes,
     };
@@ -502,6 +554,31 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
           label: rl.label,
           url: rl.url,
           type: rl.type,
+        });
+      }
+
+      const srcStops = await tx
+        .select()
+        .from(stops)
+        .innerJoin(legs, eq(stops.legId, legs.id))
+        .where(eq(legs.tripId, sourceTripId));
+      for (const { stops: s } of srcStops) {
+        const newLegId = legIdMap.get(s.legId);
+        if (!newLegId) continue;
+        await tx.insert(stops).values({
+          legId: newLegId,
+          sortOrder: s.sortOrder,
+          stopType: s.stopType,
+          status: s.status,
+          name: s.name,
+          lat: s.lat,
+          lng: s.lng,
+          distanceFromStartKm: s.distanceFromStartKm,
+          notes: s.notes,
+          fuelType: s.fuelType,
+          fuelAmountL: s.fuelAmountL,
+          source: s.source,
+          sourceUrl: s.sourceUrl,
         });
       }
 

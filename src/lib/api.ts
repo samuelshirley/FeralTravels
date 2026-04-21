@@ -8,8 +8,8 @@ interface ApiOptions {
   signal?: AbortSignal;
   /**
    * Opt a specific call out of the global ErrorNotifier toast/modal.
-   * Use for components that render their own inline error UI (e.g. the
-   * overnight-spot drawer) and don't want a double-notification.
+   * Use for components that render their own inline error UI and don't
+   * want a double-notification.
    */
   skipGlobalErrorReport?: boolean;
 }
@@ -120,24 +120,6 @@ export function tripApi(tripId: number) {
       apiFetch(`/api/routes/${routeId}`, { method: 'DELETE', query: { tripId } }),
     selectRoute: (routeId: number) =>
       apiFetch(`/api/routes/${routeId}/select`, { method: 'POST', body: {} }),
-    findOvernightForLeg: (
-      legId: number,
-      opts?: { radiusKm?: number; bandsOnly?: boolean }
-    ) =>
-      apiFetch(`/api/trip/find-overnight`, {
-        body: { tripId, mode: 'leg', legId, ...(opts || {}) },
-        // Caller owns inline error display for this one — don't double-notify.
-        skipGlobalErrorReport: true,
-      }),
-    findOvernightHere: (
-      lat: number,
-      lng: number,
-      opts?: { radiusKm?: number }
-    ) =>
-      apiFetch(`/api/trip/find-overnight`, {
-        body: { tripId, mode: 'here', lat, lng, ...(opts || {}) },
-        skipGlobalErrorReport: true,
-      }),
     addRouteLink: (routeId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/routes/${routeId}/links`, { body: { tripId, ...payload } }),
     deleteRouteLink: (routeId: number, linkId: number) =>
@@ -145,6 +127,25 @@ export function tripApi(tripId: number) {
         method: 'DELETE',
         query: { tripId, linkId },
       }),
+
+    listStopsForLeg: (legId: number) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
+    addStop: (legId: number, payload: Record<string, unknown>) =>
+      apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),
+    updateStop: (stopId: number, data: Record<string, unknown>) =>
+      apiFetch(`/api/stops/${stopId}`, { method: 'PATCH', body: { tripId, ...data } }),
+    deleteStop: (stopId: number) =>
+      apiFetch(`/api/stops/${stopId}`, { method: 'DELETE', query: { tripId } }),
+    selectStop: (stopId: number) =>
+      apiFetch(`/api/stops/${stopId}/select`, { method: 'POST', body: {} }),
+    /** Parse GPS coordinates / URLs pasted by the user. See /api/coords/parse. */
+    parseCoords: (input: string) =>
+      apiFetch<{
+        lat: number;
+        lng: number;
+        name?: string;
+        source?: string;
+        source_url?: string;
+      }>(`/api/coords/parse`, { body: { input } }),
 
     listTasksForLeg: (legId: number) => apiFetch(`/api/tasks`, { query: { tripId, legId } }),
     listTasksForTrip: () => apiFetch(`/api/tasks`, { query: { tripId } }),

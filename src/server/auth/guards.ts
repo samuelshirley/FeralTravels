@@ -1,7 +1,7 @@
 import 'server-only';
 import { eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { trips, legs, routes, tasks, gpxTrails } from '@/server/db/schema';
+import { trips, legs, routes, stops, tasks, gpxTrails } from '@/server/db/schema';
 import { auth } from './index';
 
 export class HttpError extends Error {
@@ -101,6 +101,19 @@ export async function assertRouteOwnedByUser(routeId: number, userId: string): P
     .where(eq(routes.id, routeId))
     .limit(1);
   if (row.length === 0) throw new NotFoundError('Route not found');
+  if (row[0].userId !== userId) throw new ForbiddenError();
+  return row[0].legId;
+}
+
+export async function assertStopOwnedByUser(stopId: number, userId: string): Promise<number> {
+  const row = await db
+    .select({ legId: stops.legId, userId: trips.userId })
+    .from(stops)
+    .innerJoin(legs, eq(stops.legId, legs.id))
+    .innerJoin(trips, eq(legs.tripId, trips.id))
+    .where(eq(stops.id, stopId))
+    .limit(1);
+  if (row.length === 0) throw new NotFoundError('Stop not found');
   if (row[0].userId !== userId) throw new ForbiddenError();
   return row[0].legId;
 }

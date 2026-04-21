@@ -8,6 +8,13 @@
       "when": 1776604495022,
       "tag": "0000_medical_silver_samurai",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776765394257,
+      "tag": "0001_stops_and_vehicle_fuel",
+      "breakpoints": true
     }
   ]
 }

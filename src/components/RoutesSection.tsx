@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RouteWithLinks, RouteLinkType } from '@/types/trip';
 import { tripApi } from '@/lib/api';
-import { buildNavUrl, rewriteMapsUrlForNav, type LegCoords } from '@/lib/maps';
+import { rewriteMapsUrlForNav, type LegCoords } from '@/lib/maps';
 
 interface RoutesSectionProps {
   tripId: number;
@@ -332,18 +332,17 @@ function RouteRow({
   const fileRef = useRef<HTMLInputElement>(null);
 
   // When a route has its own end coords (e.g. an overnight option from
-  // iOverlander), Go links should target that spot — not the leg's default
-  // destination. We compose `effectiveCoords` here once and pass it to all
-  // children that build nav URLs.
-  const hasOwnEnd = route.end_lat != null && route.end_lng != null;
-  const effectiveCoords: LegCoords = hasOwnEnd
-    ? {
-        start_lat: legCoords.start_lat,
-        start_lng: legCoords.start_lng,
-        end_lat: route.end_lat,
-        end_lng: route.end_lng,
-      }
-    : legCoords;
+  // iOverlander), any route-level Google Maps pill should target that spot
+  // — not the leg's default destination.
+  const effectiveCoords: LegCoords =
+    route.end_lat != null && route.end_lng != null
+      ? {
+          start_lat: legCoords.start_lat,
+          start_lng: legCoords.start_lng,
+          end_lat: route.end_lat,
+          end_lng: route.end_lng,
+        }
+      : legCoords;
 
   const isSelected = route.status === 'selected';
   const driveTimeLabel = formatDriveTime(route.drive_time_minutes);
@@ -551,40 +550,11 @@ function RouteRow({
         )}
       </div>
 
-      {/* Link pills */}
+      {/* Link pills — note: per-route "Go" button was removed in favor of a
+          single unified "Open in Google Maps" button at the leg level that
+          composes the selected route's end override with any selected stops
+          as waypoints. See LegCard → buildLegDirectionsUrl. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, alignItems: 'center' }}>
-        {/* Auto-generated Go pill when the route has its own destination but
-            no explicit google_maps link — saves the user a click. */}
-        {hasOwnEnd && !route.links.some((l) => l.type === 'google_maps') && (
-          (() => {
-            const navUrl = buildNavUrl(effectiveCoords);
-            if (!navUrl) return null;
-            return (
-              <a
-                href={navUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                title="Open in Google Maps and start navigation"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  fontSize: 11,
-                  color: '#7CB5E8',
-                  textDecoration: 'none',
-                  padding: '3px 8px',
-                  border: '1px solid rgba(124,181,232,0.3)',
-                  borderRadius: 12,
-                  background: 'rgba(124,181,232,0.08)',
-                }}
-              >
-                <span style={{ fontSize: 10 }}>▶</span>
-                Go
-              </a>
-            );
-          })()
-        )}
         {/* Source link pill — gives the user the original iOverlander/P4N page */}
         {route.end_source_url && !route.links.some((l) => l.url === route.end_source_url) && (
           <a
