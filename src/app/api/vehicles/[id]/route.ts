@@ -22,7 +22,6 @@ const patchSchema = z.object({
   weight_kg: z.number().positive().nullish(),
   fuel_economy_kmpl: z.number().positive().nullish(),
   fuel_tank_l: z.number().positive().nullish(),
-  fuel_reserve_km: z.number().nonnegative().nullish(),
   fuel_type: z.enum(FUEL_TYPES).nullish(),
   max_drive_hours_per_day: z.number().positive().nullish(),
   max_drive_hours_per_week: z.number().positive().nullish(),

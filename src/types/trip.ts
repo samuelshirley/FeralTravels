@@ -1,15 +1,36 @@
+export type OnboardingState =
+  | 'not_started'
+  | 'vehicle_pick'
+  | 'vehicle_new'
+  | 'preferences'
+  | 'ready'
+  | 'done';
+
 export interface Trip {
   id: number;
   name: string;
   start_date: string | null;
   end_date: string | null;
   status: string;
+  onboarding_state: OnboardingState;
   created_at: string;
   updated_at: string;
   user_id: string;
   vehicle_id: number | null;
   is_template: boolean;
 }
+
+/**
+ * Lifecycle of the per-leg auto fuel-stop computation. See schema.ts for
+ * the authoritative comments; kept here so UI can show a spinner without
+ * a server round-trip for meaning.
+ */
+export type FuelStatus =
+  | 'none'
+  | 'pending'
+  | 'computing'
+  | 'ready'
+  | 'failed';
 
 export interface Leg {
   id: number;
@@ -31,6 +52,7 @@ export interface Leg {
   status: string;
   color: string | null;
   notes: string | null; // JSON array
+  fuel_status: FuelStatus;
   created_at: string;
   updated_at: string;
 }
@@ -81,11 +103,19 @@ export interface Link {
   type: string;
 }
 
+/**
+ * Distinguishes deterministic onboarding-form turns from live Anthropic chat.
+ * The UI renders them identically (chat bubbles) but the client-side form
+ * submitter needs to know the current row is a question it should respond to.
+ */
+export type ChatKind = 'ai' | 'form_question' | 'form_answer';
+
 export interface ChatMessage {
   id: number;
   trip_id: number;
   role: 'user' | 'assistant';
   content: string;
+  kind: ChatKind;
   changes_made: string | null;
   created_at: string;
 }

@@ -1,17 +1,25 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { Stop, StopType } from '@/types/trip';
+import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { tripApi, ApiError } from '@/lib/api';
 import { buildExternalSpotUrls } from '@/lib/maps';
 import { parseCoords, needsServerResolution } from '@/lib/coords';
+import Spinner from './Spinner';
 
 interface StopsSectionProps {
   tripId: number;
   legId: number;
   legEndName: string | null;
   legEndCoords: { lat: number | null; lng: number | null };
+  legStartCoords?: { lat: number | null; lng: number | null };
   initialStops: Stop[];
+  /**
+   * Current lifecycle of the auto fuel-stop computation for this leg.
+   * Drives the "Plan fuel" button label and whether we show a spinner
+   * vs a retry affordance.
+   */
+  fuelStatus?: FuelStatus;
   onChanged?: () => void;
   readonly?: boolean;
 }
@@ -34,7 +42,9 @@ export default function StopsSection({
   legId,
   legEndName,
   legEndCoords,
+  legStartCoords,
   initialStops,
+  fuelStatus = 'none',
   onChanged,
   readonly = false,
 }: StopsSectionProps) {
@@ -44,10 +54,48 @@ export default function StopsSection({
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [addingType, setAddingType] = useState<StopType>('overnight');
+  // Drives the fuel-stops button. We treat the server-reported
+  // `fuelStatus` as the source of truth, but fall back to a local
+  // 'computing' while a POST is in flight so the spinner is responsive
+  // even before the parent re-fetches the trip.
+  const [localFuelStatus, setLocalFuelStatus] = useState<FuelStatus>(fuelStatus);
+  const [fuelError, setFuelError] = useState<string | null>(null);
 
   useEffect(() => {
     setStops(initialStops);
   }, [initialStops]);
+
+  useEffect(() => {
+    // Server state wins when it changes — clears any stale local override.
+    setLocalFuelStatus(fuelStatus);
+  }, [fuelStatus]);
+
+  const hasStartAndEnd =
+    legEndCoords.lat != null &&
+    legEndCoords.lng != null &&
+    legStartCoords?.lat != null &&
+    legStartCoords?.lng != null;
+
+  async function handlePlanFuel() {
+    if (!hasStartAndEnd || localFuelStatus === 'computing') return;
+    setLocalFuelStatus('computing');
+    setFuelError(null);
+    try {
+      const res = await api.planFuelStops(legId);
+      if (res.status === 'failed') {
+        setLocalFuelStatus('failed');
+        setFuelError(res.reason ?? 'Could not plan fuel stops.');
+      } else {
+        // Re-fetch stops so the newly inserted ones render; the parent
+        // trip refresh picks up the new fuel_status.
+        await reload();
+        setLocalFuelStatus('ready');
+      }
+    } catch (err) {
+      setLocalFuelStatus('failed');
+      setFuelError(err instanceof Error ? err.message : 'Could not plan fuel stops.');
+    }
+  }
 
   const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
   const externalUrls = hasEndCoords
@@ -165,22 +213,92 @@ export default function StopsSection({
         STOPS
       </div>
 
+      {!readonly && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <button
+            onClick={handlePlanFuel}
+            disabled={!hasStartAndEnd || localFuelStatus === 'computing'}
+            title={
+              hasStartAndEnd
+                ? 'Find gas stations along this leg using your vehicle range'
+                : 'Set start and end coordinates first'
+            }
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              fontFamily: MONO,
+              padding: '6px 10px',
+              background:
+                localFuelStatus === 'computing'
+                  ? 'rgba(232,213,124,0.1)'
+                  : localFuelStatus === 'ready'
+                    ? 'rgba(124,232,163,0.1)'
+                    : 'rgba(255,255,255,0.04)',
+              color:
+                localFuelStatus === 'ready'
+                  ? '#7CE8A3'
+                  : localFuelStatus === 'failed'
+                    ? '#E8927C'
+                    : 'rgba(255,255,255,0.75)',
+              border: `1px solid ${
+                localFuelStatus === 'ready'
+                  ? 'rgba(124,232,163,0.25)'
+                  : localFuelStatus === 'failed'
+                    ? 'rgba(232,146,124,0.3)'
+                    : 'rgba(255,255,255,0.12)'
+              }`,
+              borderRadius: 4,
+              cursor: hasStartAndEnd && localFuelStatus !== 'computing' ? 'pointer' : 'default',
+              opacity: hasStartAndEnd ? 1 : 0.45,
+            }}
+          >
+            {localFuelStatus === 'computing' && (
+              <Spinner size={10} thickness={2} color="#E8D57C" />
+            )}
+            <span>⛽</span>
+            {localFuelStatus === 'computing'
+              ? 'Planning fuel…'
+              : localFuelStatus === 'ready'
+                ? 'Replan fuel'
+                : localFuelStatus === 'failed'
+                  ? 'Retry fuel plan'
+                  : 'Plan fuel stops'}
+          </button>
+          {fuelError && (
+            <span
+              style={{
+                fontSize: 11,
+                color: '#E8927C',
+                maxWidth: 360,
+              }}
+            >
+              {fuelError}
+            </span>
+          )}
+        </div>
+      )}
+
       {hasEndCoords && externalUrls && !readonly && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           <ExternalChip
             href={externalUrls.iOverlander}
             label="iOverlander"
-            hint="Find overnight spots near the end of this leg"
+            hint="Find overnight spots within 10km of this leg's end"
           />
           <ExternalChip
             href={externalUrls.park4Night}
             label="Park4Night"
-            hint="Find overnight spots near the end of this leg"
-          />
-          <ExternalChip
-            href={externalUrls.appleMaps}
-            label="Apple Maps"
-            hint="Preview the leg destination in Apple Maps"
+            hint="Find overnight spots within 10km of this leg's end"
           />
         </div>
       )}

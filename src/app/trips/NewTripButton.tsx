@@ -21,6 +21,12 @@ export default function NewTripButton() {
         method: 'POST',
         body: { name: name.trim() },
       });
+      // Invalidate the /trips RSC cache so when the user navigates back from
+      // the new trip's workspace, the list reflects the new row. Without this,
+      // Next's client-side navigation cache serves the pre-create render and
+      // the list looks stale until an unrelated mutation (e.g. delete) forces
+      // a refresh.
+      router.refresh();
       router.push(`/trips/${trip.id}`);
     } catch (e: any) {
       setErr(e?.message || 'Failed to create trip');

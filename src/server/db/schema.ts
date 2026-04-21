@@ -97,9 +97,11 @@ export const vehicles = pgTable(
     // Fuel
     fuelEconomyKmpl: doublePrecision('fuel_economy_kmpl'),
     fuelTankL: doublePrecision('fuel_tank_l'),
-    // Refuel when less than this many km of range remain. Lets Penny plan
-    // stops with a safety margin the user actually wants.
-    fuelReserveKm: doublePrecision('fuel_reserve_km'),
+    // NOTE: `fuel_reserve_km` was removed in favor of a flat 20% buffer rule
+    // applied everywhere: effective_range_km = fuel_economy_kmpl × fuel_tank_l × 0.8.
+    // Reasoning: users don't reliably know their reserve in km, and the 20%
+    // rule is what overlanders actually teach. Keep the column out of the
+    // model so UI / Penny / fuel-planner all share the same formula.
     // 'diesel' | 'petrol' | 'premium' | 'lpg' | null. Used by Penny to
     // pick appropriate fuel stations and by the UI for nicer copy.
     fuelType: text('fuel_type'),
@@ -133,6 +135,14 @@ export const trips = pgTable(
     endDate: text('end_date'),
     status: text('status').default('planning').notNull(),
     isTemplate: boolean('is_template').default(false).notNull(),
+    // Tracks where the user is in the pre-Penny vehicle/preferences setup.
+    // 'not_started' — trip just created, nothing asked yet
+    // 'vehicle_pick' — user has vehicles on file; chat is asking "which one?"
+    // 'vehicle_new' — collecting new-vehicle fields in chat
+    // 'preferences' — collecting trip-level prefs (pace, fuel-stop cadence, etc.)
+    // 'ready' — last static question ("where do you want to go?") is active
+    // 'done' — handed off to Anthropic; chat is live replanning
+    onboardingState: text('onboarding_state').default('not_started').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -166,6 +176,13 @@ export const legs = pgTable(
     status: text('status').default('planning').notNull(),
     color: text('color'),
     notes: text('notes'),
+    // Lifecycle of the auto-fuel-stop computation for this leg.
+    // 'none'     — no fuel planning requested (e.g. short leg, or vehicle has no fuel data)
+    // 'pending'  — queued, waiting for the worker
+    // 'computing'— Google Places lookup in flight (UI shows a spinner)
+    // 'ready'    — fuel stops have been inserted into `stops`
+    // 'failed'   — lookup errored; UI should surface a retry affordance
+    fuelStatus: text('fuel_status').default('none').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -377,6 +394,13 @@ export const chatHistory = pgTable(
     role: text('role').notNull(),
     content: text('content').notNull(),
     changesMade: text('changes_made'),
+    // Distinguishes the deterministic onboarding form from live Anthropic
+    // chat, so the UI can render them differently and so we don't accidentally
+    // feed form-question/answer rows back into Anthropic as conversation history.
+    // 'form_question' — static Penny question during onboarding
+    // 'form_answer'   — user's typed/selected answer to a form_question
+    // 'ai'            — live Anthropic chat (both user + assistant turns)
+    kind: text('kind').default('ai').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => ({

@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { routes, routeLinks } from '@/server/db/schema';
 import type { RouteWithLinks, RouteLink, RouteLinkType, Route } from '@/types/trip';
@@ -14,10 +14,14 @@ export async function getRoutesForLeg(legId: number): Promise<RouteWithLinks[]> 
   if (routeRows.length === 0) return [];
 
   const routeIds = routeRows.map((r) => r.id);
+  // Note: `sql\`... = ANY(${routeIds})\`` doesn't work with postgres-js — the
+  // driver spreads JS arrays into separate placeholders (`ANY($1,$2,$3)`),
+  // which Postgres rejects with "op ANY/ALL (array) requires array on right
+  // side". `inArray` produces a proper `IN (...)` clause.
   const linkRows = await db
     .select()
     .from(routeLinks)
-    .where(sql`${routeLinks.routeId} = ANY(${routeIds})`)
+    .where(inArray(routeLinks.routeId, routeIds))
     .orderBy(asc(routeLinks.id));
 
   const linksById = new Map<number, RouteLink[]>();

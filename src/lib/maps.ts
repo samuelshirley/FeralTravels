@@ -53,27 +53,33 @@ export function buildNavUrl(
 }
 
 /**
- * Build universal links that drop the user into external spot-discovery apps
- * centered on a given lat/lng. On iOS/Android these typically redirect into
- * the native app if installed; otherwise they land on the mobile web view.
+ * Build spot-discovery URLs centered on a given lat/lng, with a ~10km radius.
  *
- * We intentionally use the public https URLs rather than custom `park4night://`
- * / `ioverlander://` schemes so desktop users still get something useful.
+ * We intentionally use the public https URLs rather than custom schemes
+ * (`park4night://`, `ioverlander://`) because:
+ *   - The undocumented schemes aren't guaranteed to exist or be stable.
+ *   - Browsers on iOS/Android hand these https URLs off to the installed
+ *     native app via Universal Links / App Links when the apps are installed.
+ *     If not installed, the user gets the mobile web view instead of a broken
+ *     `unknown://` link.
+ *
+ * `name` is currently unused but kept in the signature so callers can pass
+ * leg-end labels without changing plumbing.
  */
-export function buildExternalSpotUrls(lat: number, lng: number, name?: string): {
+export function buildExternalSpotUrls(lat: number, lng: number, _name?: string): {
   iOverlander: string;
   park4Night: string;
-  appleMaps: string;
 } {
   const ll = `${lat},${lng}`;
   return {
+    // iOverlander: `search[location]=lat,lng&distance=10` yields a map view
+    // around the point. `distance` is in kilometers.
     iOverlander: `https://ioverlander.com/places?utf8=%E2%9C%93&search%5Blocation%5D=${encodeURIComponent(
       ll
-    )}&distance=20`,
-    park4Night: `https://park4night.com/en/search?location=${encodeURIComponent(ll)}`,
-    appleMaps: `https://maps.apple.com/?ll=${encodeURIComponent(ll)}${
-      name ? `&q=${encodeURIComponent(name)}` : ''
-    }`,
+    )}&distance=10`,
+    // Park4Night's search endpoint accepts lat/lng directly and lands on a
+    // map centered on that point.
+    park4Night: `https://park4night.com/en/search?lat=${lat}&lng=${lng}`,
   };
 }
 

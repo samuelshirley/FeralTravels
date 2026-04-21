@@ -11,6 +11,7 @@ import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import ChatDrawer from '@/components/ChatDrawer';
 import ChatToggleButton from '@/components/ChatToggleButton';
 import TripVehicleChip from '@/components/TripVehicleChip';
+import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage } from '@/types/trip';
@@ -87,6 +88,10 @@ export default function TripWorkspace({
   mobileTabRef.current = mobileTab;
   const chatOpenRef = useRef(chatOpen);
   chatOpenRef.current = chatOpen;
+  // Host for the mobile itinerary scroller — passed to PullToRefresh so
+  // the pull gesture only engages when the itinerary tab is actually at
+  // scrollTop=0 (vs the window, which is pinned on mobile).
+  const [mobileListEl, setMobileListEl] = useState<HTMLDivElement | null>(null);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -106,11 +111,34 @@ export default function TripWorkspace({
     loadTrip();
   }, [loadTrip]);
 
-  // Default chat open on desktop, closed on tablet, controlled by mobileTab on phone
+  // Handler for pull-to-refresh on mobile. We pad the resolution slightly
+  // so the "Refreshing" chip is visible even when the fetch is instant.
+  const refreshFromPull = useCallback(async () => {
+    await loadTrip();
+    await new Promise((r) => setTimeout(r, 250));
+  }, [loadTrip]);
+
+  // Default chat open on desktop, closed on tablet, controlled by mobileTab on phone.
+  // Exception: on a freshly-created trip (no legs yet), chat should be the primary
+  // view on every viewport — the user just got here to plan, not to stare at an
+  // empty itinerary.
+  const isEmptyTrip = trip != null && trip.legs.length === 0;
+  const emptyTripTabAppliedRef = useRef(false);
   useEffect(() => {
     if (viewport === 'desktop') setChatOpen(true);
-    else if (viewport === 'tablet') setChatOpen(false);
-  }, [viewport]);
+    else if (viewport === 'tablet') setChatOpen(isEmptyTrip);
+  }, [viewport, isEmptyTrip]);
+
+  // Once on mobile, if this is the first load of an empty trip, jump straight
+  // to the chat tab. Apply at most once per mount so the user is free to
+  // switch tabs manually afterwards.
+  useEffect(() => {
+    if (viewport !== 'mobile') return;
+    if (!isEmptyTrip) return;
+    if (emptyTripTabAppliedRef.current) return;
+    emptyTripTabAppliedRef.current = true;
+    setMobileTab('chat');
+  }, [viewport, isEmptyTrip]);
 
   useEffect(() => {
     if (viewport === 'mobile' && mobileTab === 'chat') setUnread(0);
@@ -212,6 +240,10 @@ export default function TripWorkspace({
       tripId={tripId}
       initialMessages={initialChat?.messages ?? []}
       initialHasMore={initialChat?.hasMore ?? false}
+      // When a trip hasn't finished onboarding, ChatPanel swaps its composer
+      // for the stepwise OnboardingForm. Defaulting to 'done' on readonly /
+      // demo trips is safe because ChatPanel also guards on `!readonly`.
+      onboardingState={trip.onboarding_state}
       onTripUpdated={loadTrip}
       onActivity={handleChatActivity}
       readonly={readonly}
@@ -266,6 +298,7 @@ export default function TripWorkspace({
             {mapPane}
           </div>
           <div
+            ref={setMobileListEl}
             style={{
               position: 'absolute',
               top: 0,
@@ -279,7 +312,19 @@ export default function TripWorkspace({
               WebkitOverflowScrolling: 'touch',
             }}
           >
-            {itineraryPane}
+            {/*
+              PullToRefresh attaches its listeners to the mobile list
+              scroller (not window). `disabled` when we're not on the
+              list tab so pulls inside the chat or map pane don't
+              trigger a refresh.
+            */}
+            <PullToRefresh
+              scrollContainer={mobileListEl}
+              onRefresh={refreshFromPull}
+              disabled={mobileTab !== 'list'}
+            >
+              {itineraryPane}
+            </PullToRefresh>
           </div>
           <div
             style={{

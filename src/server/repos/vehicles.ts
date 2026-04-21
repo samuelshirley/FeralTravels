@@ -24,7 +24,6 @@ export interface VehicleInput {
   weight_kg?: number | null;
   fuel_economy_kmpl?: number | null;
   fuel_tank_l?: number | null;
-  fuel_reserve_km?: number | null;
   fuel_type?: VehicleFuelType | null;
   max_drive_hours_per_day?: number | null;
   max_drive_hours_per_week?: number | null;
@@ -49,7 +48,6 @@ function vehicleApi(r: VehicleRow) {
     weight_kg: r.weightKg,
     fuel_economy_kmpl: r.fuelEconomyKmpl,
     fuel_tank_l: r.fuelTankL,
-    fuel_reserve_km: r.fuelReserveKm,
     fuel_type: (r.fuelType as VehicleFuelType | null) ?? null,
     max_drive_hours_per_day: r.maxDriveHoursPerDay,
     max_drive_hours_per_week: r.maxDriveHoursPerWeek,
@@ -120,7 +118,6 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   if (input.weight_kg !== undefined) map.weightKg = input.weight_kg;
   if (input.fuel_economy_kmpl !== undefined) map.fuelEconomyKmpl = input.fuel_economy_kmpl;
   if (input.fuel_tank_l !== undefined) map.fuelTankL = input.fuel_tank_l;
-  if (input.fuel_reserve_km !== undefined) map.fuelReserveKm = input.fuel_reserve_km;
   if (input.fuel_type !== undefined) map.fuelType = input.fuel_type;
   if (input.max_drive_hours_per_day !== undefined)
     map.maxDriveHoursPerDay = input.max_drive_hours_per_day;

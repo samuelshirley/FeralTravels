@@ -13,6 +13,7 @@ import {
   pois,
 } from '@/server/db/schema';
 import type {
+  Leg,
   Trip,
   TripWithLegs,
   LegWithDetails,
@@ -33,13 +34,14 @@ import type {
   POI,
 } from '@/types/trip';
 
-function tripRow(r: typeof trips.$inferSelect): Trip & { user_id: string; vehicle_id: number | null; is_template: boolean } {
+function tripRow(r: typeof trips.$inferSelect): Trip {
   return {
     id: r.id,
     name: r.name,
     start_date: r.startDate,
     end_date: r.endDate,
     status: r.status,
+    onboarding_state: r.onboardingState as Trip['onboarding_state'],
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
@@ -69,6 +71,7 @@ function legRow(r: typeof legs.$inferSelect) {
     status: r.status,
     color: r.color,
     notes: r.notes,
+    fuel_status: (r.fuelStatus as Leg['fuel_status']) ?? 'none',
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };

@@ -1,8 +1,8 @@
 import 'server-only';
-import { and, asc, desc, eq, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory } from '@/server/db/schema';
-import type { ChatMessage } from '@/types/trip';
+import type { ChatKind, ChatMessage } from '@/types/trip';
 
 function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
   return {
@@ -10,6 +10,7 @@ function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
     trip_id: r.tripId,
     role: r.role as 'user' | 'assistant',
     content: r.content,
+    kind: (r.kind as ChatKind) ?? 'ai',
     changes_made: r.changesMade,
     created_at: r.createdAt.toISOString(),
   };
@@ -41,10 +42,19 @@ export async function getChatPage(params: {
   tripId: number;
   beforeId?: number | null;
   limit?: number;
+  /**
+   * Restrict to certain chat kinds. Omit to include everything (default). Penny
+   * passes `['ai']` so the deterministic onboarding-form rows don't leak into
+   * Anthropic's short-term-memory window as if they were conversation.
+   */
+  kinds?: ChatKind[];
 }): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
   const limit = Math.min(Math.max(params.limit ?? CHAT_PAGE_SIZE, 1), 200);
   const conditions = [eq(chatHistory.tripId, params.tripId)];
   if (params.beforeId != null) conditions.push(lt(chatHistory.id, params.beforeId));
+  if (params.kinds && params.kinds.length > 0) {
+    conditions.push(inArray(chatHistory.kind, params.kinds));
+  }
 
   // Grab `limit + 1` descending to cheaply detect "hasMore", then reverse so
   // the client can prepend without re-sorting.
@@ -65,7 +75,8 @@ export async function addChatMessage(
   tripId: number,
   role: 'user' | 'assistant',
   content: string,
-  changesMade?: string | null
+  changesMade?: string | null,
+  kind: ChatKind = 'ai'
 ): Promise<ChatMessage> {
   const [row] = await db
     .insert(chatHistory)
@@ -74,6 +85,7 @@ export async function addChatMessage(
       role,
       content,
       changesMade: changesMade ?? null,
+      kind,
     })
     .returning();
   return chatRow(row);

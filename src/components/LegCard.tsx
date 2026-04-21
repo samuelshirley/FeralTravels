@@ -305,15 +305,8 @@ export default function LegCard({
           <RoutesSection
             tripId={tripId}
             legId={leg.id}
-            legCoords={{
-              start_lat: leg.start_lat,
-              start_lng: leg.start_lng,
-              end_lat: leg.end_lat,
-              end_lng: leg.end_lng,
-            }}
             initialRoutes={leg.routes}
             onChanged={onChanged}
-            onTrailsChanged={onTrailsChanged}
             readonly={readonly}
           />
 
@@ -322,7 +315,9 @@ export default function LegCard({
             legId={leg.id}
             legEndName={leg.end_name}
             legEndCoords={{ lat: leg.end_lat, lng: leg.end_lng }}
+            legStartCoords={{ lat: leg.start_lat, lng: leg.start_lng }}
             initialStops={leg.stops}
+            fuelStatus={leg.fuel_status}
             onChanged={onChanged}
             readonly={readonly}
           />

@@ -15,6 +15,13 @@
       "when": 1776765394257,
       "tag": "0001_stops_and_vehicle_fuel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777017600000,
+      "tag": "0002_onboarding_and_fuel_status",
+      "breakpoints": true
     }
   ]
 }

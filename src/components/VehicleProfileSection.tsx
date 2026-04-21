@@ -32,7 +32,6 @@ export interface Vehicle {
   weight_kg: number | null;
   fuel_economy_kmpl: number | null;
   fuel_tank_l: number | null;
-  fuel_reserve_km: number | null;
   fuel_type: VehicleFuelType | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
@@ -46,20 +45,21 @@ export interface Vehicle {
 }
 
 /**
- * Effective range = (tank × economy) − safety reserve. This is the distance
- * between fuel stops Penny should target; it's NOT the theoretical range. If
- * reserve isn't set we assume a conservative 50km buffer so Penny never plans
- * a leg that tops out at zero fuel.
+ * Effective range = tank × economy × 0.8 (flat 20% reserve). This is the
+ * distance between fuel stops Penny should target; it's NOT the theoretical
+ * range. Using a flat 20% buffer matches what overlanders actually teach
+ * ("never let it drop below a fifth of a tank") and removes the
+ * fuel_reserve_km field users struggled to estimate.
  */
+export const FUEL_BUFFER_FRACTION = 0.2;
+
 export function effectiveRangeKm(
   fuel_economy_kmpl: number | null,
-  fuel_tank_l: number | null,
-  fuel_reserve_km: number | null
+  fuel_tank_l: number | null
 ): number | null {
   if (!fuel_economy_kmpl || !fuel_tank_l) return null;
   const theoretical = fuel_economy_kmpl * fuel_tank_l;
-  const reserve = fuel_reserve_km ?? 50;
-  return Math.max(0, Math.round(theoretical - reserve));
+  return Math.max(0, Math.round(theoretical * (1 - FUEL_BUFFER_FRACTION)));
 }
 
 type Draft = Partial<Vehicle> & { name: string };
@@ -83,7 +83,6 @@ function emptyDraft(): Draft {
     weight_kg: null,
     fuel_economy_kmpl: null,
     fuel_tank_l: null,
-    fuel_reserve_km: null,
     fuel_type: null,
     max_drive_hours_per_day: null,
     max_drive_hours_per_week: null,
@@ -259,11 +258,7 @@ function VehicleCard({
   onDelete: () => void;
   onSetDefault: () => void;
 }) {
-  const range = effectiveRangeKm(
-    vehicle.fuel_economy_kmpl,
-    vehicle.fuel_tank_l,
-    vehicle.fuel_reserve_km
-  );
+  const range = effectiveRangeKm(vehicle.fuel_economy_kmpl, vehicle.fuel_tank_l);
   return (
     <div
       style={{
@@ -537,11 +532,7 @@ function FuelFieldGroup({
     setD((p) => ({ ...p, fuel_economy_kmpl: Number(kmpl.toFixed(3)) }));
   }
 
-  const range = effectiveRangeKm(
-    d.fuel_economy_kmpl ?? null,
-    d.fuel_tank_l ?? null,
-    d.fuel_reserve_km ?? null
-  );
+  const range = effectiveRangeKm(d.fuel_economy_kmpl ?? null, d.fuel_tank_l ?? null);
 
   return (
     <div>
@@ -620,19 +611,6 @@ function FuelFieldGroup({
             style={inputStyle}
           />
         </Field>
-        <Field label="Fuel reserve (km)">
-          <input
-            type="number"
-            step="10"
-            value={d.fuel_reserve_km ?? ''}
-            placeholder="50"
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              setD((p) => ({ ...p, fuel_reserve_km: v === '' ? null : Number(v) }));
-            }}
-            style={inputStyle}
-          />
-        </Field>
         <Field label="Fuel type">
           <select
             value={d.fuel_type ?? ''}
@@ -671,7 +649,7 @@ function FuelFieldGroup({
         }}
       >
         {range != null
-          ? `Effective range ≈ ${range} km (tank × economy − ${d.fuel_reserve_km ?? 50} km reserve)`
+          ? `Effective range ≈ ${range} km (tank × economy × 0.8 — flat 20% reserve)`
           : 'Effective range: set tank + economy to compute'}
       </div>
     </div>

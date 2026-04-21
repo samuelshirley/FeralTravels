@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import TripCard from './TripCard';
 import { apiFetch } from '@/lib/api';
 import { LoadingOverlay } from '@/components/Spinner';
+import PullToRefresh from '@/components/PullToRefresh';
 
 interface TripSummary {
   id: number;
@@ -43,8 +44,19 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
 
   const hasAnything = myTrips.length > 0 || templates.length > 0;
 
+  // Pull-to-refresh just re-fetches the server component. router.refresh()
+  // resolves as soon as Next has re-rendered with fresh data so the
+  // spinner stays up the right amount of time.
+  const handleRefresh = async () => {
+    router.refresh();
+    // Small delay so the "Refreshing" label is visible to the user even
+    // when the network round trip is fast — otherwise the pull feels
+    // like it did nothing.
+    await new Promise((r) => setTimeout(r, 350));
+  };
+
   return (
-    <>
+    <PullToRefresh onRefresh={handleRefresh}>
       {hasAnything && (
         <div
           style={{
@@ -140,6 +152,6 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
       )}
 
       {cloning != null && <LoadingOverlay message="Cloning trip…" />}
-    </>
+    </PullToRefresh>
   );
 }

@@ -34,8 +34,7 @@ export interface PennyVehicle {
   fuel_type: string | null;
   fuel_economy_kmpl: number | null;
   fuel_tank_l: number | null;
-  fuel_reserve_km: number | null;
-  /** Derived: (economy × tank) − reserve (default 50 km). null if either is missing. */
+  /** Derived: economy × tank × 0.8 (flat 20% reserve). null if either input is missing. */
   effective_range_km: number | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
@@ -101,17 +100,20 @@ export interface PennyLeg {
   }>;
 }
 
-export const DEFAULT_FUEL_RESERVE_KM = 50;
+/**
+ * Flat 20% reserve buffer, the rule overlanders actually teach: always plan to
+ * arrive with at least a fifth of a tank in hand. Replaces the old
+ * `fuel_reserve_km` column which asked users for a km number most don't know.
+ */
+export const FUEL_BUFFER_FRACTION = 0.2;
 
 /** Pulled out so the UI and Penny share one definition. */
 export function computeEffectiveRangeKm(
   kmpl: number | null,
-  tankL: number | null,
-  reserveKm: number | null
+  tankL: number | null
 ): number | null {
   if (!kmpl || !tankL) return null;
-  const reserve = reserveKm ?? DEFAULT_FUEL_RESERVE_KM;
-  return Math.max(0, Math.round(kmpl * tankL - reserve));
+  return Math.max(0, Math.round(kmpl * tankL * (1 - FUEL_BUFFER_FRACTION)));
 }
 
 /**
@@ -135,6 +137,9 @@ export async function buildPennyContext(
   const chatPage = await getChatPage({
     tripId,
     limit: options.recentChatLimit ?? 12,
+    // Only feed live chat back into Penny — onboarding form Q/A rows would
+    // look like user instructions and confuse her.
+    kinds: ['ai'],
   });
 
   return {
@@ -167,12 +172,7 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     fuel_type: v.fuel_type,
     fuel_economy_kmpl: v.fuel_economy_kmpl,
     fuel_tank_l: v.fuel_tank_l,
-    fuel_reserve_km: v.fuel_reserve_km,
-    effective_range_km: computeEffectiveRangeKm(
-      v.fuel_economy_kmpl,
-      v.fuel_tank_l,
-      v.fuel_reserve_km
-    ),
+    effective_range_km: computeEffectiveRangeKm(v.fuel_economy_kmpl, v.fuel_tank_l),
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,

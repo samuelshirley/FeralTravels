@@ -128,6 +128,19 @@ export function tripApi(tripId: number) {
         query: { tripId, linkId },
       }),
 
+    /**
+     * Kick off the server-side fuel stop planner for a leg. Returns
+     * `{ status: 'ready'|'failed'|'skipped', stopsCreated?, reason? }`.
+     * See src/server/fuel.ts for the algorithm.
+     */
+    planFuelStops: (legId: number) =>
+      apiFetch<{
+        legId: number;
+        status: 'ready' | 'failed' | 'skipped';
+        stopsCreated?: number;
+        reason?: string;
+      }>(`/api/legs/${legId}/fuel-stops`, { method: 'POST', body: {} }),
+
     listStopsForLeg: (legId: number) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
     addStop: (legId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),

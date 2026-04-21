@@ -1,13 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage } from '@/types/trip';
+import type { ChatMessage, OnboardingState } from '@/types/trip';
 import { tripApi, apiFetch } from '@/lib/api';
+import OnboardingForm from '@/components/OnboardingForm';
 
 interface ChatPanelProps {
   tripId: number;
   initialMessages: ChatMessage[];
   initialHasMore?: boolean;
+  /**
+   * When not 'done', the composer is replaced by the OnboardingForm which
+   * walks the user through picking/creating a vehicle before Penny takes over.
+   */
+  onboardingState?: OnboardingState;
   onTripUpdated: () => void;
   onActivity?: (event: 'thinking' | 'response' | 'error') => void;
   readonly?: boolean;
@@ -34,10 +40,12 @@ export default function ChatPanel({
   tripId,
   initialMessages,
   initialHasMore = false,
+  onboardingState = 'done',
   onTripUpdated,
   onActivity,
   readonly = false,
 }: ChatPanelProps) {
+  const isOnboarding = onboardingState !== 'done' && !readonly;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -111,11 +119,22 @@ export default function ChatPanel({
     [hasMore, loadingOlder, loadOlder]
   );
 
-  // Auto-grow textarea (single-line by default, max ~8 lines)
+  // Auto-grow textarea (single-line by default, max ~8 lines).
+  //
+  // Guard against hidden-pane collapse: on mobile, the chat pane uses
+  // `display: none` when another tab is active. A `display:none` subtree
+  // has `scrollHeight === 0`, so without this guard we'd write
+  // `height: 0px` and — when the user switches to the chat tab — the
+  // textarea would still be a 2-pixel sliver with its placeholder clipping
+  // through (the "static pixels at the bottom" bug). The inline
+  // `minHeight` on the textarea itself is a second line of defense so the
+  // input is always at least one line tall even if this effect never ran
+  // while visible.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
+    if (ta.scrollHeight <= 0) return;
     const next = Math.min(ta.scrollHeight, 200);
     ta.style.height = next + 'px';
   }, [input]);
@@ -153,19 +172,22 @@ export default function ChatPanel({
     setImages((prev) => prev.filter((i) => i.id !== id));
   }
 
-  const sendMessage = async () => {
-    const trimmed = input.trim();
-    if ((!trimmed && images.length === 0) || loading) return;
-
-    const attachedImages = images;
-    setInput('');
-    setImages([]);
+  // Shared inner engine for "user said X → Penny replies". `sendMessage`
+  // is the free-text composer path (pulls from input/images state); the
+  // onboarding handoff calls `sendChatMessage` directly with the first
+  // real user message right after the onboarding form finishes.
+  const sendChatMessage = async (
+    trimmed: string,
+    attachedImages: AttachedImage[] = []
+  ): Promise<void> => {
+    if ((!trimmed && attachedImages.length === 0) || loading) return;
 
     const tempUserMsg: UIMessage = {
       id: Date.now(),
       trip_id: tripId,
       role: 'user',
       content: trimmed,
+      kind: 'ai',
       changes_made: null,
       created_at: new Date().toISOString(),
       imageDataUrls: attachedImages.map((i) => i.dataUrl),
@@ -188,6 +210,7 @@ export default function ChatPanel({
             trip_id: tripId,
             role: 'assistant',
             content: `Error: ${data.error}`,
+            kind: 'ai',
             changes_made: null,
             created_at: new Date().toISOString(),
           },
@@ -215,6 +238,7 @@ export default function ChatPanel({
             trip_id: tripId,
             role: 'assistant',
             content: data.response,
+            kind: 'ai',
             // Only keep changes_made when something was actually applied, so
             // the "Changes applied to trip" pill is truthful.
             changes_made: appliedCount > 0 && data.changes ? JSON.stringify(data.changes) : null,
@@ -233,6 +257,7 @@ export default function ChatPanel({
           trip_id: tripId,
           role: 'assistant',
           content: 'Failed to reach the server. Check that your ANTHROPIC_API_KEY is set.',
+          kind: 'ai',
           changes_made: null,
           created_at: new Date().toISOString(),
         },
@@ -241,6 +266,18 @@ export default function ChatPanel({
     } finally {
       setLoading(false);
     }
+  };
+
+  // Thin wrapper — the composer path pulls text/images out of local state,
+  // clears them, and delegates to the shared engine. Onboarding handoff
+  // sidesteps this and calls sendChatMessage directly.
+  const sendMessage = async () => {
+    const trimmed = input.trim();
+    const attachedImages = images;
+    if ((!trimmed && attachedImages.length === 0) || loading) return;
+    setInput('');
+    setImages([]);
+    await sendChatMessage(trimmed, attachedImages);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -584,6 +621,46 @@ export default function ChatPanel({
         >
           Demo trip — clone it from the trips list to chat with Penny.
         </div>
+      ) : isOnboarding ? (
+        <OnboardingForm
+          tripId={tripId}
+          initialState={onboardingState}
+          onAnswer={(userLabel, questionLabel) => {
+            // Mirror the Q/A pair as optimistic bubbles so the chat surface
+            // feels alive even though the real rows are written server-side.
+            // We give assistant the question, user the answer — same order
+            // as the server writes them so the replay after router.refresh
+            // doesn't look any different.
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now(),
+                trip_id: tripId,
+                role: 'assistant',
+                content: questionLabel,
+                kind: 'form_question',
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+              {
+                id: Date.now() + 1,
+                trip_id: tripId,
+                role: 'user',
+                content: userLabel,
+                kind: 'form_answer',
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }}
+          onHandoff={async (handoffText) => {
+            // Fire the real Penny call with the user's free-text answer, then
+            // bounce the server so TripWorkspace picks up onboarding_state='done'
+            // and any legs Penny created.
+            await sendChatMessage(handoffText, []);
+            onTripUpdated();
+          }}
+        />
       ) : (
       <div
         style={{
@@ -674,7 +751,7 @@ export default function ChatPanel({
                 }
               }, 250);
             }}
-            placeholder="Ask Penny to change the plan…"
+            placeholder="Ask Penny…"
             disabled={loading}
             rows={1}
             style={{
@@ -690,6 +767,10 @@ export default function ChatPanel({
               fontFamily: 'inherit',
               resize: 'none',
               lineHeight: 1.4,
+              // ~1 line + vertical padding. Keeps the input from collapsing
+              // to a sliver if the autoresize effect runs while the pane is
+              // hidden (scrollHeight === 0).
+              minHeight: 34,
               maxHeight: 200,
               overflowY: 'auto',
               display: 'block',
