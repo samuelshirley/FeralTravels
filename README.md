@@ -4,10 +4,12 @@ Map-first overlanding trip planner with chat-based AI replanning ("Penny"). Buil
 
 Headline features:
 
-- **Triple-pane workspace** (map · itinerary · chat) with drag-resizable panes on desktop and a sticky bottom nav on mobile.
-- **Penny**, a Claude-powered planner that emits structured JSON change actions and respects per-trip **vehicle constraints** (drive limits, height, water cadence, fuel range).
+- **Triple-pane workspace** (map · itinerary · chat) with drag-resizable panes on desktop and a sticky bottom nav on mobile. Pull-to-refresh on the trips list and trip workspace.
+- **Chat-based onboarding** — new trips walk the user through a deterministic form-in-chat (vehicle pick or create, drive/water/fuel prefs, destination) before Penny goes live. State machine persisted on the trip row (`not_started → vehicle_pick|vehicle_new → ready → done`).
+- **Penny**, a Claude-powered planner that emits structured JSON change actions and respects per-trip **vehicle constraints** (drive limits, height, water cadence, fuel range). Locked to trip-scoped conversations — off-topic turns get politely redirected, no JSON emitted.
 - **Routes per leg** with multiple options, surface badges, drive-time chips, GPX/Google Maps/Wikiloc/Komoot/Gaia link types, and a one-click **Pick this** that becomes the leg's selected stop.
 - **Stops per leg** (fuel / overnight / water / food / rest) with Copy GPS buttons on each stop and "🐕 Dog parks nearby" / "🌳 Parks nearby" Google Maps search chips at the leg's end coords, plus a paste-GPS input that turns any lat/lng or Maps URL into a selected waypoint on the leg's one-click Google Maps route.
+- **Automatic fuel-stop planning** — on leg creation (and on demand via `POST /api/legs/:id/fuel-stops`), samples the OSRM polyline at `range × SAMPLE_FRACTION` intervals and picks gas stations from Google Places Nearby Search. Effective range is `kmpl × tank_l × 0.8` (20% reserve). User-authored stops are never overwritten.
 - **Google Maps "Go" links** that open turn-by-turn navigation directly (`dir_action=navigate`), not the preview.
 - **Multi-trip / multi-vehicle** with per-trip vehicle picker in the navbar and a settings page for vehicle profiles.
 - **Admin dashboard** at `/admin` with a hardcoded allowlist + DB flag + verified-email guard for cost/usage monitoring.
@@ -81,7 +83,8 @@ The script writes a marker into `app_meta` so re-running is a no-op. After a suc
 - **Auth**: Auth.js v5 (NextAuth) with Google OAuth + Resend magic links, `@auth/drizzle-adapter`. Custom `sendVerificationRequest` renders a branded HTML email and surfaces send failures (e.g. wrong Resend sender) as user-friendly messages on `/login`.
 - **Database**: Postgres via Neon, accessed through Drizzle ORM (`postgres-js` driver). Schema in `src/server/db/schema.ts`.
 - **Map**: Google Maps JavaScript API (dark theme) with Directions API for road-following routes. The `lib/maps.ts` helpers always emit `?api=1&dir_action=navigate` URLs so "Go" links open turn-by-turn nav, not preview.
-- **AI**: Anthropic Claude (Penny) for chat-based replanning with structured JSON change actions. Per-user rate + spend caps live in `src/app/api/trip/replan/route.ts`; usage is logged to `usage_events` and aggregated in the admin dashboard.
+- **AI**: Anthropic Claude (Penny) for chat-based replanning with structured JSON change actions. Per-user rate + spend caps live in `src/app/api/trip/replan/route.ts`; usage is logged to `usage_events` and aggregated in the admin dashboard. A deterministic onboarding form-in-chat (`src/server/onboarding.ts`) runs before the first Anthropic call — `chat_history.kind` distinguishes `form_question`/`form_answer` rows from live `ai` turns so onboarding Q&A is never fed back into the model as conversation history.
+- **Fuel planning**: `src/server/fuel.ts` samples the OSRM polyline for a leg and queries Google Places for gas stations. `legs.fuel_status` (`none|pending|computing|ready|failed`) lets the UI show a spinner / retry affordance without polling.
 - **Stops**: `stops` table holds per-leg waypoints (fuel / overnight / water / food / rest / other). The leg card's Stops section surfaces a "🐕 Dog parks nearby" and "🌳 Parks nearby" Google Maps search centered on the leg's end coords (overnight spot discovery), a Copy GPS button on each stop (paste into any external spot-finder app), and a paste-GPS input that accepts raw lat/lng or Google/Apple Maps URLs (short links expanded via `POST /api/coords/parse`). Selected stops become waypoints in the leg's one "Open in Google Maps" button. Penny proposes fuel stops from the vehicle's effective range (`km/L × tank × 0.8`).
 - **GPX overlays**: stored in `src/data/gpx/`, parsed via `@tmcw/togeojson`.
 - **Routing**: `/trips` (list), `/trips/[tripId]` (single trip workspace), `/settings` (profile + vehicles + admin), `/admin` (cost & user dashboard, allowlist-gated), `/login`.
@@ -123,32 +126,47 @@ src/
 │   └── api/
 │       ├── auth/[...nextauth]/   Auth.js handlers
 │       ├── trips/                list / create / clone / delete (DELETE) /
-│       │                         PATCH (rename, vehicle_id assignment)
+│       │                         PATCH (rename, vehicle_id assignment);
+│       │                         subroutes: [id]/clone, [id]/onboarding
 │       ├── trip/                 get full trip, replan (POST → Penny)
+│       ├── chat/                 cursor-paginated chat history (GET)
 │       ├── vehicles/             CRUD + setDefault for user vehicles
 │       ├── routes/               route options + links + select (POST)
 │       ├── stops/                CRUD + select for per-leg stops
+│       ├── legs/[id]/fuel-stops/ trigger auto fuel-stop planning for a leg
 │       ├── coords/parse/         expand short Maps links / parse spot URLs
 │       ├── tasks/                Penny + user tasks
 │       ├── gpx/                  upload, fetch as GeoJSON
-│       └── directions/           OSRM fallback
+│       ├── pois/                 POI lookup
+│       ├── directions/           OSRM fallback
+│       └── admin/test-error/     smoke test for error tracking
 ├── components/                   UI: TripMap, Itinerary, LegCard,
 │                                 RoutesSection, StopsSection, TasksSection,
-│                                 ChatPanel, AppNavbar, StatusBadge,
-│                                 VehicleProfileSection, TripVehicleChip
+│                                 ChatPanel, ChatDrawer, ChatToggleButton,
+│                                 OnboardingForm, AppNavbar, BottomNav,
+│                                 PullToRefresh, StatusBadge, Spinner,
+│                                 ErrorNotifier, VehicleProfileSection,
+│                                 TripVehicleChip
 ├── lib/
 │   ├── api.ts                    client-side `tripApi(tripId)` factory
 │   ├── claude.ts                 Anthropic + Penny system prompt + vehicle
-│   │                             context injection
+│   │                             context injection + trip-only topic lock
 │   ├── coords.ts                 Parse lat/lng, DMS, and Google Maps URLs
 │   ├── maps.ts                   Google Maps URL helpers (buildNavUrl,
 │   │                             buildLegDirectionsUrl, rewriteMapsUrlForNav)
+│   ├── polyline.ts               Encoded polyline decode + length +
+│   │                             every-N-km sampling (used by fuel planner)
 │   ├── penny/context.ts          Build Penny's trip/vehicle/stops context
+│   │                             (also exports computeEffectiveRangeKm)
 │   ├── directions.ts             OSRM client
-│   └── gpx.ts                    GPX file IO + GeoJSON parsing
+│   ├── gpx.ts                    GPX file IO + GeoJSON parsing
+│   ├── useMediaQuery.ts          responsive-layout hook
+│   └── sillyErrors.ts            friendly copy for known failure modes
 ├── server/
 │   ├── auth/                     Auth.js config + ownership + admin guards
 │   ├── db/                       Drizzle schema + client singleton
+│   ├── onboarding.ts             deterministic form-in-chat state machine
+│   ├── fuel.ts                   OSRM + Google Places auto fuel-stop planner
 │   └── repos/                    typed data-access layer (trips, routes,
 │                                 stops, tasks, gpx, pois, vehicles, chat,
 │                                 usage, admin)

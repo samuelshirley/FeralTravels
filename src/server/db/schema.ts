@@ -294,7 +294,7 @@ export const routes = pgTable(
     endLat: doublePrecision('end_lat'),
     endLng: doublePrecision('end_lng'),
     endName: text('end_name'),
-    endSource: text('end_source'), // 'ioverlander'|'park4night'|'google_places'|'manual'
+    endSource: text('end_source'), // 'google_places'|'manual' (legacy 'ioverlander'|'park4night' rows were migrated to 'manual' in 0003)
     endSourceUrl: text('end_source_url'),
     driveTimeMinutes: integer('drive_time_minutes'),
   },
@@ -345,7 +345,7 @@ export const stops = pgTable(
     fuelType: text('fuel_type'), // 'diesel'|'petrol'|'premium'|'lpg'|null
     fuelAmountL: doublePrecision('fuel_amount_l'),
     // Provenance
-    source: text('source'), // 'penny'|'user'|'google_places'|'osm'|'ioverlander'|'park4night'
+    source: text('source'), // 'penny'|'user'|'google_places'|'osm' (legacy 'ioverlander'|'park4night' rows were migrated to 'manual' in 0003)
     sourceUrl: text('source_url'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
