@@ -178,12 +178,20 @@ src/
 
 ## Phone access (PWA)
 
+Once you've deployed (see below), open the production URL on your phone:
+
+- **iOS Safari** — Share → Add to Home Screen.
+- **Android Chrome** — menu → Add to Home screen.
+
+The installed PWA behaves like a native app. The service worker is `network-first` for HTML, so a deploy is picked up on the next page load and the page auto-reloads when the new SW takes control. If a phone gets stuck on a stale build, opening DevTools → Application → Service Workers → "Update on reload" usually unblocks it.
+
+To test a **local** dev build on your phone before pushing (e.g. debugging a mobile-only layout issue), tunnel with ngrok:
+
 ```bash
 ngrok http 3000
-# Open the ngrok URL on your phone, Safari → Share → Add to Home Screen.
 ```
 
-The service worker is `network-first` for HTML, so a deploy is picked up on the next page load and the page auto-reloads when the new SW takes control. If a phone gets stuck on a stale build, opening DevTools → Application → Service Workers → "Update on reload" usually unblocks it.
+Open the ngrok URL on your phone. Don't Add to Home Screen from an ngrok URL — the tunnel URL rotates and the installed PWA will break. Use it for testing only.
 
 ## Deploying to Vercel
 
