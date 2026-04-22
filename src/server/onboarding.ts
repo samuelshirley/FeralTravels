@@ -1,7 +1,7 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { trips } from '@/server/db/schema';
+import { chatHistory, trips } from '@/server/db/schema';
 import { addChatMessage } from '@/server/repos/chat';
 import {
   addVehicle,
@@ -10,7 +10,6 @@ import {
   updateVehicle,
   type VehicleApi,
   type VehicleFuelType,
-  type VehicleType,
 } from '@/server/repos/vehicles';
 import type { OnboardingState } from '@/types/trip';
 
@@ -59,8 +58,20 @@ export interface Question {
 
 /**
  * The canonical vehicle wizard. Order matters — Penny asks them top-to-bottom.
- * Keep required-for-fuel-planning fields (type, economy, tank) near the front
- * so if the user bails partway we at least have enough to plan safely.
+ * Keep required-for-fuel-planning fields (economy, tank) near the front so if
+ * the user bails partway we at least have enough to plan safely.
+ *
+ * Intentionally dropped from the onboarding flow (columns still exist on the
+ * vehicles row and can be edited from the profile settings page):
+ *   - vehicle_type: only used as decorative context for Penny; no planning
+ *     logic branches on it. Physical dimensions + fuel fields carry the
+ *     functional signal.
+ *   - length_m: matters for ferry pricing and campsite pitch caps, but we
+ *     don't plan either today. Add back when we do.
+ *
+ * Height is asked in METERS (people don't think in cm for their rig). We
+ * still store on the `height_cm` column to avoid a schema migration —
+ * `submitAnswer` converts m → cm on write.
  */
 export const VEHICLE_QUESTIONS: Question[] = [
   {
@@ -68,19 +79,6 @@ export const VEHICLE_QUESTIONS: Question[] = [
     kind: 'text',
     label: "What's the vehicle called? (just a nickname is fine)",
     placeholder: 'e.g. Duncan',
-  },
-  {
-    key: 'vehicle_type',
-    kind: 'select',
-    label: 'What kind of vehicle is it?',
-    options: [
-      { value: '4x4_suv', label: '4x4 SUV' },
-      { value: 'pickup', label: 'Pickup' },
-      { value: 'van', label: 'Van / RV' },
-      { value: 'motorcycle', label: 'Motorcycle' },
-      { value: 'sedan', label: 'Sedan' },
-      { value: 'other', label: 'Other' },
-    ],
   },
   {
     key: 'fuel_type',
@@ -111,21 +109,13 @@ export const VEHICLE_QUESTIONS: Question[] = [
     max: 1000,
   },
   {
-    key: 'height_cm',
-    kind: 'integer',
-    label: 'Vehicle height in cm?',
-    placeholder: '210',
-    help: 'Used to flag low-clearance routes. Round up if loaded.',
-    min: 50,
-    max: 500,
-  },
-  {
-    key: 'length_m',
+    key: 'height_m',
     kind: 'number',
-    label: 'Vehicle length in meters?',
-    placeholder: '5.1',
-    min: 1,
-    max: 25,
+    label: 'Vehicle height in meters?',
+    placeholder: '2.3',
+    help: 'Used to flag low-clearance routes. Round up if loaded.',
+    min: 0.5,
+    max: 5.0,
   },
   {
     key: 'weight_kg',
@@ -234,27 +224,54 @@ async function resolveStart(userId: string): Promise<OnboardingState> {
 }
 
 /**
- * When we're in `vehicle_new`, count how many vehicle fields on this trip's
- * linked vehicle are already filled. That tells us which question to ask next.
+ * When we're in `vehicle_new`, figure out which question to ask next by
+ * walking VEHICLE_QUESTIONS and returning the first one that isn't resolved.
+ *
+ * "Resolved" means:
+ *   - REQUIRED field with a non-null value on the vehicle row, OR
+ *   - OPTIONAL field with a non-null value OR whose question label already
+ *     appears in chat_history's form_question rows for this trip (i.e. the
+ *     user was already shown the question and either answered or hit skip,
+ *     resulting in a null column but a recorded question in chat).
+ *
+ * The `askedLabels` set is the fix for an earlier bug where optional
+ * questions looped forever: the old code treated `optional === true` as
+ * "always unfilled" and so the server re-asked `water_refill_days` on every
+ * snapshot fetch, regardless of what the user typed or whether they hit
+ * Skip. Using chat history as a source of truth means Skip actually sticks.
  */
-function nextVehicleQuestion(vehicle: VehicleApi | null): { question: Question; index: number } | null {
+function nextVehicleQuestion(
+  vehicle: VehicleApi | null,
+  askedLabels: Set<string>
+): { question: Question; index: number } | null {
   if (!vehicle) {
     // Name is always first; we haven't even created the row yet.
     return { question: VEHICLE_QUESTIONS[0], index: 0 };
   }
   for (let i = 0; i < VEHICLE_QUESTIONS.length; i++) {
     const q = VEHICLE_QUESTIONS[i];
-    const raw = (vehicle as unknown as Record<string, unknown>)[q.key];
-    const filled = q.optional
-      ? // Optional fields don't block progress — skip them if the user has
-        // never answered (we can't tell "empty" from "explicitly skipped",
-        // so once the user advances past them we rely on the onboarding
-        // state bump; see submitAnswer).
-        false
-      : raw !== null && raw !== undefined && raw !== '';
-    if (!filled) return { question: q, index: i };
+    // `height_m` is a pseudo-key — the stored column is height_cm. Read it
+    // that way so a partially-populated vehicle advances correctly.
+    const columnKey = q.key === 'height_m' ? 'height_cm' : q.key;
+    const raw = (vehicle as unknown as Record<string, unknown>)[columnKey];
+    const hasValue = raw !== null && raw !== undefined && raw !== '';
+    const resolved = q.optional ? hasValue || askedLabels.has(q.label) : hasValue;
+    if (!resolved) return { question: q, index: i };
   }
   return null;
+}
+
+/**
+ * Load the set of question labels we've already written to chat_history as
+ * form_question rows. Used to detect "user already saw this question" for
+ * optional fields that might legitimately still be null after a skip.
+ */
+async function loadAskedLabels(tripId: number): Promise<Set<string>> {
+  const rows = await db
+    .select({ content: chatHistory.content })
+    .from(chatHistory)
+    .where(and(eq(chatHistory.tripId, tripId), eq(chatHistory.kind, 'form_question')));
+  return new Set(rows.map((r) => r.content));
 }
 
 export async function getOnboardingSnapshot(
@@ -299,7 +316,8 @@ export async function getOnboardingSnapshot(
     const currentVehicle = trip.vehicleId
       ? await getVehicleForUser(userId, trip.vehicleId)
       : null;
-    const next = nextVehicleQuestion(currentVehicle);
+    const askedLabels = await loadAskedLabels(tripId);
+    const next = nextVehicleQuestion(currentVehicle, askedLabels);
     if (!next) {
       // All vehicle fields filled — advance to ready.
       await db
@@ -426,9 +444,15 @@ export async function submitAnswer(
         .where(eq(trips.id, tripId));
     } else {
       const patch: Record<string, unknown> = {};
-      if (question.key === 'vehicle_type') patch.vehicle_type = parsed as VehicleType;
-      else if (question.key === 'fuel_type') patch.fuel_type = parsed as VehicleFuelType;
-      else patch[question.key] = parsed;
+      if (question.key === 'fuel_type') {
+        patch.fuel_type = parsed as VehicleFuelType;
+      } else if (question.key === 'height_m') {
+        // UI asks in meters; the column stores cm. Round so integer-typed
+        // downstream consumers don't choke on e.g. 230.0000001.
+        patch.height_cm = parsed == null ? null : Math.round((parsed as number) * 100);
+      } else {
+        patch[question.key] = parsed;
+      }
       await updateVehicle(userId, vehicle.id, patch);
     }
 
@@ -502,13 +526,32 @@ function coerceAnswer(q: Question, raw: unknown): unknown {
   }
 }
 
+/**
+ * Render the user's answer in a human-readable form for the chat bubble.
+ * Unit suffixes are inferred from the question key so we don't need a
+ * separate `unit` field on Question just for display.
+ */
+const UNIT_SUFFIX: Record<string, string> = {
+  fuel_economy_kmpl: ' km/L',
+  fuel_tank_l: ' L',
+  height_m: ' m',
+  weight_kg: ' kg',
+  freshwater_capacity_l: ' L',
+  blackwater_capacity_l: ' L',
+  water_refill_days: ' days',
+  blackwater_refill_days: ' days',
+  max_drive_hours_per_day: ' h/day',
+  max_drive_hours_per_week: ' h/week',
+  max_consecutive_drive_days: ' days',
+};
+
 function humanizeAnswer(q: Question, value: unknown): string {
   if (value === null || value === undefined || value === '') return '(skipped)';
   if (q.kind === 'select') {
     const opt = (q.options ?? []).find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  return String(value);
+  return `${value}${UNIT_SUFFIX[q.key] ?? ''}`;
 }
 
 async function writeQA(tripId: number, question: string, answer: string) {
