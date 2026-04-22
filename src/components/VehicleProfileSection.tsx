@@ -64,15 +64,6 @@ export function effectiveRangeKm(
 
 type Draft = Partial<Vehicle> & { name: string };
 
-const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
-  '4x4_suv': '4x4 SUV',
-  pickup: 'Pickup',
-  van: 'Van / RV',
-  motorcycle: 'Motorcycle',
-  sedan: 'Sedan',
-  other: 'Other',
-};
-
 function emptyDraft(): Draft {
   return {
     name: '',
@@ -288,17 +279,6 @@ function VehicleCard({
               Default
             </span>
           )}
-          {vehicle.vehicle_type && (
-            <span
-              style={{
-                fontSize: 11,
-                color: 'rgba(255,255,255,0.55)',
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              {VEHICLE_TYPE_LABELS[vehicle.vehicle_type]}
-            </span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {!vehicle.is_default && (
@@ -325,8 +305,9 @@ function VehicleCard({
           fontFamily: "'JetBrains Mono', monospace",
         }}
       >
-        {vehicle.height_cm != null && <Stat label="Height" value={`${vehicle.height_cm} cm`} />}
-        {vehicle.length_m != null && <Stat label="Length" value={`${vehicle.length_m} m`} />}
+        {vehicle.height_cm != null && (
+          <Stat label="Height" value={`${(vehicle.height_cm / 100).toFixed(2)} m`} />
+        )}
         {vehicle.weight_kg != null && <Stat label="Weight" value={`${vehicle.weight_kg} kg`} />}
         {range != null && <Stat label="Range" value={`~${range} km`} />}
         {vehicle.fuel_type && <Stat label="Fuel" value={FUEL_TYPE_LABELS[vehicle.fuel_type]} /> }
@@ -390,12 +371,6 @@ function VehicleForm({
       setD((p) => ({ ...p, [field]: v === '' ? null : Number(v) }));
     };
   }
-  function str(field: keyof Draft) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-      const v = e.target.value;
-      setD((p) => ({ ...p, [field]: v === '' ? null : v }));
-    };
-  }
 
   return (
     <div
@@ -413,16 +388,6 @@ function VehicleForm({
         <Field label="Name" required>
           <input value={d.name} onChange={(e) => setD((p) => ({ ...p, name: e.target.value }))} style={inputStyle} placeholder="e.g. The Hilux" />
         </Field>
-        <Field label="Type">
-          <select value={d.vehicle_type ?? ''} onChange={str('vehicle_type')} style={inputStyle}>
-            <option value="">—</option>
-            {Object.entries(VEHICLE_TYPE_LABELS).map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </Field>
         <Field label="Notes" wide>
           <textarea
             value={d.notes ?? ''}
@@ -435,11 +400,20 @@ function VehicleForm({
       </FieldGroup>
 
       <FieldGroup title="Dimensions">
-        <Field label="Height (cm)">
-          <input type="number" value={d.height_cm ?? ''} onChange={num('height_cm')} style={inputStyle} />
-        </Field>
-        <Field label="Length (m)">
-          <input type="number" step="0.01" value={d.length_m ?? ''} onChange={num('length_m')} style={inputStyle} />
+        <Field label="Height (m)">
+          <input
+            type="number"
+            step="0.01"
+            value={d.height_cm != null ? d.height_cm / 100 : ''}
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              setD((p) => ({
+                ...p,
+                height_cm: v === '' ? null : Math.round(Number(v) * 100),
+              }));
+            }}
+            style={inputStyle}
+          />
         </Field>
         <Field label="Weight (kg)">
           <input type="number" value={d.weight_kg ?? ''} onChange={num('weight_kg')} style={inputStyle} />
