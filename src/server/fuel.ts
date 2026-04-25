@@ -124,14 +124,14 @@ export async function planFuelStopsForLeg(
     };
   }
 
-  const placesKey = process.env.GOOGLE_PLACES_API_KEY;
+  const placesKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!placesKey) {
     await setFuelStatus(legId, 'failed');
     return {
       legId,
       status: 'failed',
       reason:
-        'Server is missing GOOGLE_PLACES_API_KEY. Add it to .env to enable auto fuel stops.',
+        'Server is missing NEXT_PUBLIC_GOOGLE_MAPS_API_KEY. Add it to .env to enable auto fuel stops.',
     };
   }
 
