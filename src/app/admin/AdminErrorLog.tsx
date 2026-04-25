@@ -65,6 +65,7 @@ export default function AdminErrorLog({ rows }: Props) {
 
   return (
     <>
+      <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
@@ -132,6 +133,7 @@ export default function AdminErrorLog({ rows }: Props) {
           ))}
         </tbody>
       </table>
+      </div>
 
       {selected && <ErrorDetailModal row={selected} onClose={() => setSelected(null)} />}
     </>

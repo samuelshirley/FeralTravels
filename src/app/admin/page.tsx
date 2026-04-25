@@ -13,6 +13,7 @@ import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
+import styles from './admin.module.css';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -113,12 +114,12 @@ export default async function AdminPage() {
       />
 
       <main
+        className={styles.main}
         style={{
           flex: 1,
           maxWidth: 1240,
           width: '100%',
           margin: '0 auto',
-          padding: '24px 24px 80px',
           boxSizing: 'border-box',
         }}
       >
@@ -221,13 +222,7 @@ export default async function AdminPage() {
           />
         </section>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
-            gap: 16,
-          }}
-        >
+        <div className={styles.bottomGrid}>
           <section style={card}>
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
               Top spenders (24h) — Anthropic
@@ -246,6 +241,7 @@ export default async function AdminPage() {
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
               Recent users
             </h2>
+            <div className={styles.tableScroll}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
@@ -282,12 +278,14 @@ export default async function AdminPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </section>
 
           <section style={card}>
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
               Recent chat activity
             </h2>
+            <div className={styles.tableScroll}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
@@ -333,6 +331,7 @@ export default async function AdminPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </section>
         </div>
 
@@ -376,6 +375,7 @@ function UsageTable({
     );
   }
   return (
+    <div style={{ overflowX: 'auto' }}>
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr>
@@ -409,5 +409,6 @@ function UsageTable({
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
