@@ -30,6 +30,14 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
   const router = useRouter();
   const [editMode, setEditMode] = useState(false);
   const [cloning, setCloning] = useState<number | null>(null);
+  const [myTripsLocal, setMyTripsLocal] = useState(myTrips);
+  const [templatesLocal, setTemplatesLocal] = useState(templates);
+
+  function handleTripDeleted(id: number) {
+    setMyTripsLocal((prev) => prev.filter((t) => t.id !== id));
+    setTemplatesLocal((prev) => prev.filter((t) => t.id !== id));
+    router.refresh();
+  }
 
   async function onCloneClick(id: number) {
     setCloning(id);
@@ -42,7 +50,7 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
     }
   }
 
-  const hasAnything = myTrips.length > 0 || templates.length > 0;
+  const hasAnything = myTripsLocal.length > 0 || templatesLocal.length > 0;
 
   // Pull-to-refresh just re-fetches the server component. router.refresh()
   // resolves as soon as Next has re-rendered with fresh data so the
@@ -96,7 +104,7 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
         </div>
       )}
 
-      {myTrips.length === 0 && (
+      {myTripsLocal.length === 0 && (
         <div
           style={{
             padding: 20,
@@ -113,7 +121,7 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
       )}
 
       <div className="card-grid">
-        {myTrips.map((trip) => (
+        {myTripsLocal.map((trip) => (
           <TripCard
             key={trip.id}
             id={trip.id}
@@ -122,17 +130,18 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             endDate={trip.end_date}
             status={trip.status}
             editMode={editMode}
+            onDeleted={handleTripDeleted}
           />
         ))}
       </div>
 
-      {templates.length > 0 && (
+      {templatesLocal.length > 0 && (
         <div style={{ marginTop: 32 }}>
           <div className="page-eyebrow" style={{ marginBottom: 10 }}>
             DEMO / TEMPLATES
           </div>
           <div className="card-grid">
-            {templates.map((trip) => (
+            {templatesLocal.map((trip) => (
               <TripCard
                 key={trip.id}
                 id={trip.id}
@@ -145,6 +154,7 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
                 showClone
                 onCloneClick={onCloneClick}
                 cloneBusy={cloning === trip.id}
+                onDeleted={handleTripDeleted}
               />
             ))}
           </div>
