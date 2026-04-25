@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import ErrorNotifier from '@/components/ErrorNotifier';
 
 export const metadata: Metadata = {
-  title: 'Nordkapp Trip Planner',
-  description: 'Map-first road trip planner — Girona to Nordkapp',
+  title: 'Feral Travels',
+  description: 'Map-first overlanding trip planner — Feral Travels',
   manifest: '/manifest.json',
 };
 

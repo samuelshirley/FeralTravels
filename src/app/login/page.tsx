@@ -66,7 +66,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             marginBottom: 6,
           }}
         >
-          TRIP PLANNER
+          FERAL TRAVELS
         </div>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 4 }}>Sign in</h1>
         <p

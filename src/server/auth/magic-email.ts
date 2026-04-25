@@ -12,7 +12,7 @@ export function renderMagicEmail({ url, to }: { url: string; to: string }): stri
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>Sign in to Trip Planner</title>
+    <title>Sign in to Feral Travels</title>
   </head>
   <body style="margin:0;padding:0;background:#0d0d0d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0d0d0d;padding:40px 16px;">
@@ -21,7 +21,7 @@ export function renderMagicEmail({ url, to }: { url: string; to: string }): stri
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#171717;border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:32px;">
             <tr>
               <td style="font-family:'JetBrains Mono',Menlo,monospace;font-size:11px;letter-spacing:0.16em;color:rgba(255,255,255,0.45);text-transform:uppercase;padding-bottom:6px;">
-                Trip Planner
+                Feral Travels
               </td>
             </tr>
             <tr>
@@ -37,7 +37,7 @@ export function renderMagicEmail({ url, to }: { url: string; to: string }): stri
             <tr>
               <td align="center" style="padding-bottom:24px;">
                 <a href="${escapedUrl}" style="display:inline-block;background:#7CB5E8;color:#000000;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px;">
-                  Sign in to Trip Planner
+                  Sign in to Feral Travels
                 </a>
               </td>
             </tr>

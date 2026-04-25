@@ -47,13 +47,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error('Email sign-in is not configured (missing AUTH_RESEND_KEY).');
         }
         const resend = new ResendClient(apiKey);
-        const subject = 'Sign in to Trip Planner';
+        const subject = 'Sign in to Feral Travels';
         const result = await resend.emails.send({
           from,
           to,
           subject,
           html: renderMagicEmail({ url, to }),
-          text: `Sign in to Trip Planner: ${url}\n\nIf you didn't request this, you can ignore this email.`,
+          text: `Sign in to Feral Travels: ${url}\n\nIf you didn't request this, you can ignore this email.`,
         });
         if (result.error) {
           // Resend's most common pitfall: `onboarding@resend.dev` can only
