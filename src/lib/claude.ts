@@ -83,6 +83,7 @@ Valid actions:
   { "action": "add_stop",      "leg_id": <int>,   "data": { "stop_type": "fuel|water|food|overnight|rest|other",
                                                               "name": "Esso Viladrau", "lat": 41.85, "lng": 2.42,
                                                               "distance_from_start_km": 80, "notes": "…",
+                                                              "status": "option|selected" /* omit to default to option; use selected when the user explicitly requests this waypoint */,
                                                               "fuel_type": "diesel|petrol|premium|lpg" /* fuel stops only */,
                                                               "source": "penny|google_places|osm|user",
                                                               "source_url": "https://…" } }
