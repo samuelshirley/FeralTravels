@@ -9,3 +9,4 @@ Design docs for features that are deferred but worth picking up later. Each file
 Current contents:
 
 - [`height-aware-routing.md`](./height-aware-routing.md) — truck/RV/tall-van routing that respects low bridges. Deferred because the feature is high-severity but low-frequency; most tall-vehicle miles are on motorways where it doesn't matter.
+- [`penny-tool-surface.md`](./penny-tool-surface.md) — the planned set of external tools Penny should call (Maps routing, geocoding, weather, POI search, etc.) instead of hallucinating facts from training data. Reframes "agentic Penny" → tool-using Penny, with a small speculative section on a real multi-step agent loop gated on actual need.
