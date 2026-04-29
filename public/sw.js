@@ -1,5 +1,5 @@
 // Bump this on every deploy that changes SW strategy so old SWs purge.
-const CACHE_NAME = 'trip-planner-v4';
+const CACHE_NAME = 'trip-planner-v5';
 
 // We deliberately do NOT precache HTML. Next.js ships hashed bundles and the
 // HTML shell references them by hash; caching stale HTML makes the app point
@@ -8,7 +8,15 @@ const CACHE_NAME = 'trip-planner-v4';
 // for immutable hashed static assets.
 
 self.addEventListener('install', (event) => {
-  // Activate this SW immediately; don't wait for all tabs to close.
+  // Activate this SW immediately so a fresh deploy starts handling new
+  // navigations right away. We deliberately do NOT call self.clients.claim()
+  // in the activate handler — claim() forces every already-controlled tab to
+  // switch controllers, which fires `controllerchange` on the page and used
+  // to trigger a JS-driven reload. The combination of skipWaiting + claim
+  // + reload-on-controllerchange caused an infinite reload loop on mobile
+  // when the byte comparison kept seeing /sw.js as "new". Without claim(),
+  // existing tabs stay on their old SW (harmless — they reload eventually),
+  // and new tabs / navigations pick up the new SW. No loop possible.
   self.skipWaiting();
 });
 
@@ -18,14 +26,8 @@ self.addEventListener('activate', (event) => {
       // Nuke every old cache from earlier SW versions.
       const keys = await caches.keys();
       await Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)));
-      await self.clients.claim();
     })()
   );
-});
-
-// Message hook so the page can force the SW to skip waiting on a new deploy.
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 function isNavigationRequest(req) {
