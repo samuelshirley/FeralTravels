@@ -391,7 +391,7 @@ export default function ChatPanel({
               marginTop: 2,
             }}
           >
-            Trip planner AI
+            Feral Travels AI
           </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 {
   "name": "Feral Travels",
   "short_name": "Feral",
-  "description": "Map-first road trip planner.",
+  "description": "Map-first overlanding trip planner — Feral Travels",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0D0D0D",

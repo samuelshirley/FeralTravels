@@ -3,7 +3,7 @@ import ErrorNotifier from '@/components/ErrorNotifier';
 
 export const metadata: Metadata = {
   title: 'Feral Travels',
-  description: 'Map-first road trip planner.',
+  description: 'Map-first overlanding trip planner — Feral Travels',
   manifest: '/manifest.json',
   openGraph: {
     title: 'Feral Travels',

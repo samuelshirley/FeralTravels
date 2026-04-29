@@ -53,7 +53,7 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
           href={tripsHref}
           style={{ color: '#fff', textDecoration: 'none', fontSize: 14, fontWeight: 700 }}
         >
-          Trip Planner
+          Feral Travels
         </Link>
         {tripName && (
           <>
