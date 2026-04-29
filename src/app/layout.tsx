@@ -2,9 +2,20 @@ import type { Metadata, Viewport } from 'next';
 import ErrorNotifier from '@/components/ErrorNotifier';
 
 export const metadata: Metadata = {
-  title: 'Nordkapp Trip Planner',
-  description: 'Map-first road trip planner — Girona to Nordkapp',
+  title: 'Feral Travels',
+  description: 'Map-first road trip planner.',
   manifest: '/manifest.json',
+  openGraph: {
+    title: 'Feral Travels',
+    description: 'Map-first road trip planner.',
+    siteName: 'Feral Travels',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Feral Travels',
+    description: 'Map-first road trip planner.',
+  },
 };
 
 // Note: width / initialScale / maximumScale are intentionally NOT set here

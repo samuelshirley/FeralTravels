@@ -1,7 +1,7 @@
 {
-  "name": "Nordkapp Trip Planner",
-  "short_name": "TripPlan",
-  "description": "Map-first road trip planner — Girona to Nordkapp",
+  "name": "Feral Travels",
+  "short_name": "Feral",
+  "description": "Map-first road trip planner.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0D0D0D",
