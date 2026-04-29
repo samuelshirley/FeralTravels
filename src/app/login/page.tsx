@@ -37,7 +37,15 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   return (
     <div
       style={{
-        minHeight: '100vh',
+        // 100dvh, not 100vh: mobile browsers (iOS Safari, iOS Chrome which
+        // is WebKit under the hood, Android Chrome) compute 100vh against
+        // the *toolbar-collapsed* viewport. With the URL bar visible the box
+        // ends up taller than the visible area, and `align-items: center`
+        // centres against that phantom taller box — pushing the card below
+        // the real centre. dvh is the dynamic viewport height (Chrome 108+,
+        // Safari 15.4+) and tracks the actually-visible area as toolbars
+        // come and go.
+        minHeight: '100dvh',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
