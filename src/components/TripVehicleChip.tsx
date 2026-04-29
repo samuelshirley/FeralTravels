@@ -17,12 +17,17 @@ export default function TripVehicleChip({ tripId, initialVehicleId, readonly = f
   const [busy, setBusy] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
+  // Fetch vehicles on mount, not just when the popup opens. Otherwise the
+  // chip's closed-state label falls through to `#${vehicleId}` (e.g. "#2") on
+  // first render because we have no name to resolve. One extra request per
+  // trip page load. TODO: thread the vehicle name through /api/trip so we
+  // don't need this fetch at all.
   useEffect(() => {
-    if (!open || vehicles != null) return;
+    if (vehicles != null) return;
     apiFetch<Vehicle[]>('/api/vehicles')
       .then(setVehicles)
       .catch(() => setVehicles([]));
-  }, [open, vehicles]);
+  }, [vehicles]);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {

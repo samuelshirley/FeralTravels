@@ -53,7 +53,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: ADD_ROUTE,
   description:
-    'Add a route option to a leg (e.g. Route A / Route B / overnight option). Multi-route legs let the user pick — default new routes to status="option".',
+    'Add an ALTERNATIVE DESTINATION option to a leg (e.g. multiple candidate overnight spots — Camp A / Camp B / Camp C). Routes only carry an endpoint; they CANNOT model alternative paths between the same endpoints (e.g. "via Millau Bridge", "scenic vs highway"). For "go via X" landmarks, use add_stop with stop_type="other" and status="selected" instead — that becomes a routing waypoint. Default new routes to status="option" so the user picks.',
   input_schema: {
     type: 'object',
     required: ['leg_id', 'data'],
