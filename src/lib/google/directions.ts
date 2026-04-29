@@ -173,12 +173,19 @@ export async function getDirections(
   destination: LatLng,
   options: DirectionsOptions = {}
 ): Promise<DirectionsResponse> {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  // Prefer a dedicated server-side key (no HTTP-referer restriction, ideally
+  // IP-restricted to Vercel) if set; otherwise fall back to the same key the
+  // rest of the app uses for Maps JS / Places. The fallback is the operative
+  // path today — see fuel.ts and TripMap.tsx, which also read
+  // NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.
+  const key =
+    process.env.GOOGLE_MAPS_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!key) {
     return {
       ok: false,
       kind: 'no_key',
-      message: 'GOOGLE_MAPS_API_KEY is not set on the server.',
+      message:
+        'No Google Maps API key configured. Set GOOGLE_MAPS_API_KEY (server-only) or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.',
     };
   }
 
