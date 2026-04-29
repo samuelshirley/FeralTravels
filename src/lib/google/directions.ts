@@ -173,19 +173,17 @@ export async function getDirections(
   destination: LatLng,
   options: DirectionsOptions = {}
 ): Promise<DirectionsResponse> {
-  // Prefer a dedicated server-side key (no HTTP-referer restriction, ideally
-  // IP-restricted to Vercel) if set; otherwise fall back to the same key the
-  // rest of the app uses for Maps JS / Places. The fallback is the operative
-  // path today — see fuel.ts and TripMap.tsx, which also read
-  // NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.
-  const key =
-    process.env.GOOGLE_MAPS_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  // Same Google Cloud key value used by the browser map (TripMap.tsx). Next.js
+  // requires the NEXT_PUBLIC_ prefix for any var that ships to the client
+  // bundle, so we standardise on that one name everywhere — server code reads
+  // it just fine, and 'server-only' imports prevent this file from being
+  // bundled into client output regardless.
+  const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!key) {
     return {
       ok: false,
       kind: 'no_key',
-      message:
-        'No Google Maps API key configured. Set GOOGLE_MAPS_API_KEY (server-only) or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.',
+      message: 'No Google Maps API key configured. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.',
     };
   }
 

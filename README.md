@@ -33,7 +33,10 @@ cp .env.example .env
 #                                      the Resend account owner and will 500 for
 #                                      anyone else)
 #   ANTHROPIC_API_KEY               – Penny / chat replanning
-#   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY – Maps JS + Directions (browser, referrer-locked)
+#   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY – Maps JS + Directions + Places. NEXT_PUBLIC_
+#                                      prefix is required by Next.js for the
+#                                      browser map bundle; server code reads the
+#                                      same var.
 #   ADMIN_EMAILS                    – optional whitelist subset (must already be in
 #                                      the hardcoded ADMIN_ALLOWLIST in admin.ts)
 #   REPLAN_REQUESTS_PER_HOUR        – per-user Penny rate limit (default 40)
