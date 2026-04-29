@@ -9,10 +9,12 @@ db/
 src/data/gpx/*
 !src/data/gpx/.gitkeep
 
-# env
+# env — never commit any .env* variants holding secrets.
+# .env.example IS tracked (it's the template with empty values) and is
+# explicitly re-included on the last line.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # vercel
 .vercel

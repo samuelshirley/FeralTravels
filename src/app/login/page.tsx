@@ -198,19 +198,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             Email me a sign-in link
           </button>
         </form>
-
-        <p
-          style={{
-            fontSize: 11,
-            color: 'rgba(255,255,255,0.3)',
-            marginTop: 20,
-            lineHeight: 1.5,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          Each user owns their own trips and vehicles. The Iberia/Nordkapp demo trip is visible on
-          the trips list and can be cloned to your account.
-        </p>
       </div>
     </div>
   );
