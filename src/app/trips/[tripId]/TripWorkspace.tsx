@@ -84,6 +84,7 @@ export default function TripWorkspace({
   const [mobileTab, setMobileTab] = useState<MobileTab>('list');
   const [thinking, setThinking] = useState(false);
   const [fuelPlanning, setFuelPlanning] = useState(false);
+  const [replanBusy, setReplanBusy] = useState(false);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
@@ -270,9 +271,22 @@ export default function TripWorkspace({
     fuelPlanning ||
     trip.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending');
 
+  async function handleReplanFuel() {
+    if (replanBusy || tripFuelBusy) return;
+    setReplanBusy(true);
+    try {
+      await api.replenishFuelStops();
+      await loadTrip();
+    } catch (e) {
+      console.warn('replan fuel failed', e);
+    } finally {
+      setReplanBusy(false);
+    }
+  }
+
   const vehicleChip = !readonly ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {tripFuelBusy && (
+      {(tripFuelBusy || replanBusy) ? (
         <span
           title="Finding gas stations along your route"
           style={{
@@ -281,13 +295,29 @@ export default function TripWorkspace({
             gap: 6,
             fontSize: 11,
             color: 'var(--tp-muted)',
-            
             whiteSpace: 'nowrap',
           }}
         >
           <Spinner size={14} thickness={2} color="var(--tp-gold)" />
           Fuel…
         </span>
+      ) : (
+        <button
+          onClick={handleReplanFuel}
+          title="Re-run fuel stop planning for all legs"
+          style={{
+            fontSize: 11,
+            background: 'transparent',
+            border: '1px solid var(--tp-border)',
+            color: 'var(--tp-muted)',
+            padding: '3px 8px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ⛽ Replan
+        </button>
       )}
       <TripVehicleChip
         tripId={tripId}

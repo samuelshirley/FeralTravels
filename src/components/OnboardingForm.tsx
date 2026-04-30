@@ -95,10 +95,11 @@ export default function OnboardingForm({
       });
 
       if (result.didHandoff) {
-        // Hand off to Penny. The parent writes the user bubble + triggers replan.
+        // Dismiss the form immediately so the chat "Thinking…" animation is
+        // visible right away — don't wait for Penny's full response first.
+        setSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
         const handoffText = typeof value === 'string' ? value : String(value);
         await onHandoff(handoffText);
-        setSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
       } else {
         onAnswer(result.answerLabel, question.label);
         setSnapshot(result.next);

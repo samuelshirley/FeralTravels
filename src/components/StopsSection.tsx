@@ -51,7 +51,21 @@ export default function StopsSection({
   const [pasteValue, setPasteValue] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
   const addingType: StopType = 'overnight';
+
+  async function retryFuelPlan() {
+    if (retryBusy) return;
+    setRetryBusy(true);
+    try {
+      await api.planFuelStops(legId);
+      await reload();
+    } catch {
+      /* error will show via fuelStatus */
+    } finally {
+      setRetryBusy(false);
+    }
+  }
 
   useEffect(() => {
     setStops(initialStops);
@@ -211,14 +225,74 @@ export default function StopsSection({
         <div
           style={{
             marginBottom: 10,
+            padding: '8px 10px',
+            background: 'rgba(198,93,74,0.08)',
+            border: '1px solid rgba(198,93,74,0.3)',
+            borderRadius: 5,
             fontSize: 11,
             color: 'var(--tp-danger)',
-            maxWidth: 420,
-            lineHeight: 1.4,
+            lineHeight: 1.5,
           }}
         >
-          Fuel planning failed for this leg. Check vehicle fuel economy and tank in Settings, and
-          that the server has a Google Maps key with Places API enabled.
+          <strong>Fuel planning failed.</strong> Likely causes: (1) Google Maps key has HTTP
+          referrer restrictions — remove them in Cloud Console so server-side calls work, or (2)
+          "Places API (New)" not enabled on the key. Visit{' '}
+          <code style={{ fontSize: 10 }}>/api/debug/fuel</code> for a full diagnosis.
+          <div style={{ marginTop: 6 }}>
+            <button
+              onClick={retryFuelPlan}
+              disabled={retryBusy}
+              style={{
+                fontSize: 11,
+                background: 'var(--tp-danger)',
+                border: 'none',
+                color: '#fff',
+                padding: '4px 10px',
+                borderRadius: 4,
+                cursor: retryBusy ? 'default' : 'pointer',
+                opacity: retryBusy ? 0.6 : 1,
+              }}
+            >
+              {retryBusy ? 'Retrying…' : 'Retry fuel planning'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!readonly && fuelStatus === 'ready' && stops.filter(s => s.stop_type === 'fuel').length === 0 && (
+        <div
+          style={{
+            marginBottom: 8,
+            padding: '6px 10px',
+            background: 'rgba(184,149,106,0.08)',
+            border: '1px solid rgba(184,149,106,0.25)',
+            borderRadius: 5,
+            fontSize: 11,
+            color: 'var(--tp-gold)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <span>No fuel stops found — Places API may not be returning results.</span>
+          <button
+            onClick={retryFuelPlan}
+            disabled={retryBusy}
+            style={{
+              fontSize: 11,
+              background: 'transparent',
+              border: '1px solid rgba(184,149,106,0.4)',
+              color: 'var(--tp-gold)',
+              padding: '3px 8px',
+              borderRadius: 4,
+              cursor: retryBusy ? 'default' : 'pointer',
+              opacity: retryBusy ? 0.6 : 1,
+              flexShrink: 0,
+            }}
+          >
+            {retryBusy ? 'Retrying…' : '⛽ Retry'}
+          </button>
         </div>
       )}
 
