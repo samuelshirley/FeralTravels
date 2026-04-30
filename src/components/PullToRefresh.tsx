@@ -174,7 +174,7 @@ export default function PullToRefresh({
               gap: 8,
               fontSize: 11,
               color: 'var(--tp-muted)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
             }}

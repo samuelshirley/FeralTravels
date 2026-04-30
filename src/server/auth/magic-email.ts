@@ -20,7 +20,7 @@ export function renderMagicEmail({ url, to }: { url: string; to: string }): stri
         <td align="center">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#FFFFFF;border:1px solid #E6DFD4;border-radius:14px;padding:32px;">
             <tr>
-              <td style="font-family:'JetBrains Mono',Menlo,monospace;font-size:11px;letter-spacing:0.16em;color:#6B6B6B;text-transform:uppercase;padding-bottom:6px;">
+              <td style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:0.16em;color:#6B6B6B;text-transform:uppercase;padding-bottom:6px;">
                 Feral Travels
               </td>
             </tr>

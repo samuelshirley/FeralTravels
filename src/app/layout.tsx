@@ -1,5 +1,13 @@
 import type { Metadata, Viewport } from 'next';
+import { Onest } from 'next/font/google';
 import ErrorNotifier from '@/components/ErrorNotifier';
+
+const onest = Onest({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap',
+  variable: '--font-onest',
+});
 
 export const metadata: Metadata = {
   title: 'Feral Travels',
@@ -29,15 +37,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={onest.variable}>
       <head>
         <meta
           name="viewport"
           content="width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=resizes-content"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Onest:wght@400;500;600;700;800&display=swap"
-          rel="stylesheet"
         />
         <link
           rel="stylesheet"
@@ -64,6 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/apple-splash-1668x2388.jpg" />
         <style>{`
           :root {
+            --tp-font-sans: var(--font-onest), Helvetica, Arial, sans-serif;
             --tp-bg: #F6F2EA;
             --tp-surface: #FFFFFF;
             --tp-surface-muted: #FBF8F3;
@@ -103,6 +108,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             height: 48px !important;
           }
           html, body { overflow-x: hidden; }
+          body {
+            font-family: var(--tp-font-sans);
+            margin: 0;
+            padding: 0;
+            background: var(--tp-bg);
+            color: var(--tp-text);
+            min-height: 100vh;
+            overscroll-behavior: none;
+          }
           * { -webkit-tap-highlight-color: transparent; }
           /* Prevent iOS Safari from zooming on input focus */
           @supports (-webkit-touch-callout: none) {
@@ -140,7 +154,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             font-weight: 700;
             letter-spacing: 0.15em;
             color: var(--tp-subtle);
-            font-family: 'Onest', 'Helvetica Neue', sans-serif;
+            font-family: var(--tp-font-sans);
             margin-bottom: 4px;
             text-transform: uppercase;
           }
@@ -169,17 +183,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }
         `}</style>
       </head>
-      <body
-        style={{
-          margin: 0,
-          padding: 0,
-          fontFamily: "'Onest', 'Helvetica Neue', sans-serif",
-          background: 'var(--tp-bg)',
-          color: 'var(--tp-text)',
-          minHeight: '100vh',
-          overscrollBehavior: 'none',
-        }}
-      >
+      <body>
         {children}
         <ErrorNotifier />
         <script

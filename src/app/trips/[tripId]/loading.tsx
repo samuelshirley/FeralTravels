@@ -31,7 +31,6 @@ export default function Loading() {
           gap: 2,
           color: 'var(--tp-muted)',
           fontSize: 13,
-          fontFamily: "'JetBrains Mono', monospace",
           letterSpacing: '0.1em',
           textTransform: 'uppercase',
         }}

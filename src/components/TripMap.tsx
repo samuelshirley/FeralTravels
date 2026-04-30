@@ -299,7 +299,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const iw = layers.infoWindow;
         if (iw) {
           iw.setContent(`
-            <div style="min-width: 180px; font-family: 'Onest', 'Helvetica Neue', sans-serif;">
+            <div style="min-width: 180px; font-family: var(--tp-font-sans);">
               <div style="font-size: 10px; color: #5c5c5c; font-weight: 600; letter-spacing: 0.05em;">${leg.label ?? ''}</div>
               <div style="font-size: 14px; font-weight: 600; margin: 4px 0; color: #333;">${leg.title}</div>
               <div style="font-size: 12px; color: #6b6b6b;">${leg.dates || ''}</div>
@@ -363,7 +363,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const iw = layers.infoWindow;
         if (iw) {
           iw.setContent(`
-            <div style="min-width: 150px; font-family: 'Onest', 'Helvetica Neue', sans-serif;">
+            <div style="min-width: 150px; font-family: var(--tp-font-sans);">
               <div style="font-size: 13px; font-weight: 600; color: #333;">${poi.name}</div>
               <div style="font-size: 11px; color: #6b6b6b;">${poi.source} ${poi.rating ? '• ★ ' + poi.rating : ''}</div>
               ${poi.url ? `<a href="${poi.url}" target="_blank" style="font-size: 11px;">View on source →</a>` : ''}
@@ -494,7 +494,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
             padding: 24,
             textAlign: 'center',
             fontSize: 13,
-            fontFamily: "'JetBrains Mono', monospace",
+            
             lineHeight: 1.6,
           }}
         >
@@ -514,7 +514,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
             background: 'var(--tp-map-chrome)',
             color: 'var(--tp-muted)',
             fontSize: 13,
-            fontFamily: "'JetBrains Mono', monospace",
+            
             pointerEvents: 'none',
           }}
         >

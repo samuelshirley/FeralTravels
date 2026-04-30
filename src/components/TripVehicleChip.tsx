@@ -143,7 +143,7 @@ export default function TripVehicleChip({
             >
               <span style={{ flex: 1, textAlign: 'left' }}>{v.name}</span>
               {v.is_default && (
-                <span style={{ fontSize: 9, color: 'var(--tp-success)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
+                <span style={{ fontSize: 9, color: 'var(--tp-success)', letterSpacing: '0.06em' }}>
                   DEFAULT
                 </span>
               )}
@@ -173,7 +173,6 @@ const chipStyle: React.CSSProperties = {
   border: '1px solid var(--tp-border)',
   borderRadius: 14,
   color: 'var(--tp-text)',
-  fontFamily: "'JetBrains Mono', monospace",
   letterSpacing: '0.02em',
   whiteSpace: 'nowrap',
 };

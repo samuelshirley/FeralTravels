@@ -34,8 +34,6 @@ const TYPE_META: Record<StopType, { label: string; color: string; icon: string }
   other: { label: 'Other', color: 'var(--tp-muted)', icon: '📍' },
 };
 
-const MONO = "'JetBrains Mono', monospace";
-
 export default function StopsSection({
   tripId,
   legId,
@@ -181,7 +179,6 @@ export default function StopsSection({
           fontWeight: 700,
           letterSpacing: '0.08em',
           color: 'var(--tp-subtle)',
-          fontFamily: MONO,
           marginBottom: 8,
         }}
       >
@@ -201,7 +198,6 @@ export default function StopsSection({
           <span
             style={{
               fontSize: 11,
-              fontFamily: MONO,
               color: 'var(--tp-muted)',
             }}
           >
@@ -259,7 +255,7 @@ export default function StopsSection({
               color: 'var(--tp-text)',
               fontSize: 11,
               padding: '6px 8px',
-              fontFamily: MONO,
+              
               outline: 'none',
             }}
           >
@@ -301,7 +297,7 @@ export default function StopsSection({
               borderRadius: 4,
               cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
               fontWeight: 600,
-              fontFamily: MONO,
+              
             }}
           >
             {pasteBusy ? 'Adding…' : 'Add'}
@@ -318,7 +314,7 @@ export default function StopsSection({
           style={{
             fontSize: 11,
             color: 'var(--tp-subtle)',
-            fontFamily: MONO,
+            
           }}
         >
           {readonly
@@ -347,7 +343,7 @@ export default function StopsSection({
             style={{
               cursor: 'pointer',
               fontSize: 10,
-              fontFamily: MONO,
+              
               color: 'var(--tp-muted)',
               letterSpacing: '0.08em',
             }}
@@ -388,7 +384,7 @@ function ExternalChip({ href, label, hint }: { href: string; label: string; hint
         borderRadius: 4,
         cursor: 'pointer',
         textDecoration: 'none',
-        fontFamily: MONO,
+        
         display: 'inline-flex',
         alignItems: 'center',
         gap: 4,
@@ -420,7 +416,7 @@ function StopGroup({
       <div
         style={{
           fontSize: 10,
-          fontFamily: MONO,
+          
           color: meta.color,
           letterSpacing: '0.08em',
           marginBottom: 4,
@@ -550,7 +546,7 @@ function StopRow({
               style={{
                 fontSize: 10,
                 color: 'var(--tp-muted)',
-                fontFamily: MONO,
+                
               }}
             >
               ~{stop.distance_from_start_km} km
@@ -561,7 +557,7 @@ function StopRow({
               style={{
                 fontSize: 10,
                 color: 'var(--tp-muted)',
-                fontFamily: MONO,
+                
               }}
             >
               {stop.fuel_type}
@@ -573,7 +569,7 @@ function StopRow({
             style={{
               fontSize: 10,
               color: 'var(--tp-subtle)',
-              fontFamily: MONO,
+              
               marginTop: 2,
             }}
           >
@@ -605,7 +601,7 @@ function StopRow({
             color: copied ? 'var(--tp-success)' : 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 6px',
-            fontFamily: MONO,
+            
             borderRadius: 3,
             flexShrink: 0,
           }}
@@ -623,7 +619,7 @@ function StopRow({
             fontSize: 10,
             color: 'rgba(124,181,232,0.7)',
             textDecoration: 'none',
-            fontFamily: MONO,
+            
             padding: '2px 6px',
             flexShrink: 0,
           }}
@@ -642,7 +638,7 @@ function StopRow({
             color: 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 4px',
-            fontFamily: MONO,
+            
           }}
         >
           dismiss
@@ -679,7 +675,7 @@ function StopRow({
               padding: '2px 8px',
               borderRadius: 3,
               textDecoration: 'none',
-              fontFamily: MONO,
+              
             }}
           >
             🐕 dog parks
@@ -697,7 +693,7 @@ function StopRow({
               padding: '2px 8px',
               borderRadius: 3,
               textDecoration: 'none',
-              fontFamily: MONO,
+              
             }}
           >
             🌳 parks

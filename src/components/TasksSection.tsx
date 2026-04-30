@@ -122,7 +122,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             fontWeight: 700,
             letterSpacing: '0.08em',
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           TASKS
@@ -141,7 +141,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
               padding: '3px 10px',
               borderRadius: 4,
               cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace",
+              
             }}
           >
             + Add Task
@@ -233,7 +233,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
           style={{
             fontSize: 11,
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           No tasks. Penny will add things here when she sees something to verify.
@@ -288,7 +288,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       color: badge.fg,
                       padding: '2px 6px',
                       borderRadius: 3,
-                      fontFamily: "'JetBrains Mono', monospace",
+                      
                     }}
                   >
                     {badge.label}
@@ -298,7 +298,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       style={{
                         fontSize: 9,
                         color: 'var(--tp-muted)',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        
                       }}
                     >
                       via Penny
@@ -380,7 +380,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         letterSpacing: '0.08em',
                         color: 'var(--tp-success)',
                         marginBottom: 4,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        
                       }}
                     >
                       ANSWER
@@ -475,7 +475,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         padding: '3px 8px',
                         borderRadius: 4,
                         cursor: 'pointer',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        
                       }}
                     >
                       Resolve
@@ -493,7 +493,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         padding: '3px 8px',
                         borderRadius: 4,
                         cursor: 'pointer',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        
                       }}
                       title="Dismiss"
                     >
@@ -515,7 +515,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       padding: '3px 8px',
                       borderRadius: 4,
                       cursor: 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      
                     }}
                   >
                     Reopen

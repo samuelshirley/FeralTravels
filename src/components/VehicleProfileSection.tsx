@@ -293,7 +293,7 @@ function VehicleCard({
                 color: 'var(--tp-success)',
                 padding: '2px 6px',
                 borderRadius: 3,
-                fontFamily: "'JetBrains Mono', monospace",
+                
                 textTransform: 'uppercase',
               }}
             >
@@ -323,7 +323,7 @@ function VehicleCard({
           gap: 8,
           fontSize: 12,
           color: 'var(--tp-muted)',
-          fontFamily: "'JetBrains Mono', monospace",
+          
         }}
       >
         {vehicle.height_cm != null && (
@@ -368,7 +368,7 @@ function smallBtnStyle(accent: string): React.CSSProperties {
     color: accent,
     borderRadius: 6,
     cursor: 'pointer',
-    fontFamily: "'JetBrains Mono', monospace",
+    
     letterSpacing: '0.04em',
   };
 }
@@ -571,7 +571,7 @@ function FuelFieldGroup({
             letterSpacing: '0.12em',
             textTransform: 'uppercase',
             color: 'var(--tp-muted)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           Fuel
@@ -599,7 +599,7 @@ function FuelFieldGroup({
                 color: unit === u ? 'var(--tp-primary)' : 'var(--tp-muted)',
                 border: 'none',
                 cursor: 'pointer',
-                fontFamily: "'JetBrains Mono', monospace",
+                
                 letterSpacing: '0.04em',
               }}
             >
@@ -697,7 +697,7 @@ function FuelFieldGroup({
           borderRadius: 6,
           fontSize: 11,
           color: range != null ? 'var(--tp-success)' : 'var(--tp-muted)',
-          fontFamily: "'JetBrains Mono', monospace",
+          
           letterSpacing: '0.02em',
         }}
       >
@@ -719,7 +719,7 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
           color: 'var(--tp-muted)',
-          fontFamily: "'JetBrains Mono', monospace",
+          
           marginBottom: 6,
         }}
       >

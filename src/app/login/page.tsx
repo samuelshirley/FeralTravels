@@ -1,5 +1,10 @@
 import { redirect } from 'next/navigation';
 import { auth, signIn } from '@/server/auth';
+import {
+  authTestBackdoorEmailNormalized,
+  authTestBackdoorRequiresToken,
+  isAuthTestBackdoorConfigured,
+} from '@/server/auth/test-backdoor';
 
 interface LoginPageProps {
   searchParams: { callbackUrl?: string; error?: string; emailError?: string };
@@ -33,6 +38,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   const errorMessage = describeError(searchParams.error)
     || (searchParams.emailError ? describeError(searchParams.emailError) : null);
+
+  const testBackdoorOn = isAuthTestBackdoorConfigured();
+  const testBackdoorEmail = authTestBackdoorEmailNormalized();
+  const testBackdoorWantToken = authTestBackdoorRequiresToken();
 
   return (
     <div
@@ -90,6 +99,25 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           account—your saved vehicles (e.g. trip defaults) stay under that account regardless of
           which method you use.
         </p>
+
+        {testBackdoorOn && testBackdoorEmail && (
+          <div
+            style={{
+              padding: '8px 12px',
+              borderRadius: 'var(--tp-radius-sm)',
+              background: 'var(--tp-primary-muted)',
+              border: '1px solid rgba(78, 122, 176, 0.35)',
+              color: 'var(--tp-primary)',
+              fontSize: 12,
+              marginBottom: 16,
+              lineHeight: 1.45,
+            }}
+          >
+            <strong>Test sign-in</strong> — Use <code style={{ fontSize: 11 }}>{testBackdoorEmail}</code> and
+            submit &quot;Email me a sign-in link&quot; for an <strong>instant session</strong> (no email). Remove{' '}
+            <code style={{ fontSize: 11 }}>AUTH_TEST_BACKDOOR</code> before a public launch.
+          </div>
+        )}
 
         {errorMessage && (
           <div
@@ -158,6 +186,32 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             'use server';
             const email = String(formData.get('email') || '').trim();
             if (!email) return;
+            const backdoorEmail = authTestBackdoorEmailNormalized();
+            if (backdoorEmail && email.toLowerCase() === backdoorEmail) {
+              const token = String(formData.get('test_token') || '');
+              try {
+                await signIn('auth-test-backdoor', {
+                  email,
+                  token,
+                  redirectTo: callbackUrl,
+                });
+              } catch (err) {
+                if (
+                  err &&
+                  typeof err === 'object' &&
+                  'digest' in err &&
+                  String((err as { digest?: string }).digest).startsWith('NEXT_REDIRECT')
+                ) {
+                  throw err;
+                }
+                const message = err instanceof Error ? err.message : String(err);
+                console.error('[login] test backdoor sign-in failed:', message);
+                redirect(
+                  `/login?emailError=${encodeURIComponent('AccessDenied')}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+                );
+              }
+              return;
+            }
             try {
               await signIn('resend', { email, redirectTo: callbackUrl });
             } catch (err) {
@@ -181,7 +235,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             name="email"
             type="email"
             required
-            placeholder="you@example.com"
+            placeholder={testBackdoorEmail ? testBackdoorEmail : 'you@example.com'}
             style={{
               padding: '10px 14px',
               background: 'var(--tp-surface-muted)',
@@ -192,6 +246,23 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               outline: 'none',
             }}
           />
+          {testBackdoorOn && testBackdoorWantToken && (
+            <input
+              name="test_token"
+              type="password"
+              autoComplete="off"
+              placeholder="Test backdoor token (AUTH_TEST_BACKDOOR_SECRET)"
+              style={{
+                padding: '10px 14px',
+                background: 'var(--tp-surface-muted)',
+                border: '1px solid var(--tp-border)',
+                borderRadius: 'var(--tp-radius-sm)',
+                color: 'var(--tp-text)',
+                fontSize: 14,
+                outline: 'none',
+              }}
+            />
+          )}
           <button
             type="submit"
             style={{
@@ -206,6 +277,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             }}
           >
             Email me a sign-in link
+            {testBackdoorOn && testBackdoorEmail ? ' / test instant sign-in' : ''}
           </button>
         </form>
       </div>

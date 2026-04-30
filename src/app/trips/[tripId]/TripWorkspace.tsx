@@ -281,7 +281,7 @@ export default function TripWorkspace({
             gap: 6,
             fontSize: 11,
             color: 'var(--tp-muted)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
             whiteSpace: 'nowrap',
           }}
         >

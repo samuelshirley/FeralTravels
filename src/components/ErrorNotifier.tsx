@@ -147,7 +147,7 @@ function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
     >
       <span
         style={{
-          fontFamily: "'JetBrains Mono', monospace",
+          
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.08em',
@@ -289,7 +289,7 @@ function SillyModal({
               fontSize: 13,
               fontWeight: 700,
               cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
             }}
@@ -320,7 +320,7 @@ function SillyModal({
             border: 'none',
             color: 'var(--tp-muted)',
             fontSize: 11,
-            fontFamily: "'JetBrains Mono', monospace",
+            
             cursor: 'pointer',
             textDecoration: 'underline',
           }}
@@ -338,7 +338,7 @@ function SillyModal({
               textAlign: 'left',
               fontSize: 11,
               color: 'var(--tp-muted)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               wordBreak: 'break-word',
             }}
           >

@@ -43,7 +43,7 @@ export default function AdminTestErrorButton() {
           fontSize: 11,
           cursor: busy ? 'wait' : 'pointer',
           fontWeight: 600,
-          fontFamily: "'JetBrains Mono', monospace",
+          
           textTransform: 'uppercase',
           letterSpacing: '0.06em',
         }}
@@ -102,7 +102,7 @@ function MenuItem({
         fontSize: 12,
         cursor: 'pointer',
         textAlign: 'left',
-        fontFamily: "'JetBrains Mono', monospace",
+        
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = 'var(--tp-primary-muted)';

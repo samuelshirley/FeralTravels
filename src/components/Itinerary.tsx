@@ -81,7 +81,7 @@ export default function Itinerary({
                   fontWeight: 700,
                   letterSpacing: '0.1em',
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 {s.label}
@@ -108,7 +108,7 @@ export default function Itinerary({
             borderRadius: 4,
             fontSize: 11,
             cursor: 'pointer',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           Expand All
@@ -123,7 +123,7 @@ export default function Itinerary({
             borderRadius: 4,
             fontSize: 11,
             cursor: 'pointer',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           Collapse All

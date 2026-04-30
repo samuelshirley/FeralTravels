@@ -398,7 +398,7 @@ export default function ChatPanel({
             style={{
               fontSize: 10,
               color: 'var(--tp-subtle)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               letterSpacing: '0.04em',
               marginTop: 2,
             }}
@@ -428,7 +428,7 @@ export default function ChatPanel({
               textAlign: 'center',
               fontSize: 11,
               color: 'var(--tp-subtle)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
               padding: '4px 0 6px',
@@ -447,7 +447,7 @@ export default function ChatPanel({
                   borderRadius: 10,
                   fontSize: 11,
                   cursor: 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
                 }}
@@ -519,7 +519,7 @@ export default function ChatPanel({
                   border: '1px solid rgba(74, 139, 122, 0.28)',
                   fontSize: 11,
                   color: 'var(--tp-success)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 Changes applied to trip
@@ -535,7 +535,7 @@ export default function ChatPanel({
                   border: '1px solid rgba(198, 93, 74, 0.35)',
                   fontSize: 11,
                   color: 'var(--tp-danger)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   lineHeight: 1.45,
                 }}
               >
@@ -626,7 +626,7 @@ export default function ChatPanel({
             color: 'var(--tp-muted)',
             fontSize: 12,
             textAlign: 'center',
-            fontFamily: "'JetBrains Mono', monospace",
+            
             flexShrink: 0,
             paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
           }}
@@ -820,7 +820,7 @@ export default function ChatPanel({
             marginTop: 6,
             fontSize: 10,
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
             letterSpacing: '0.04em',
             textAlign: 'center',
           }}

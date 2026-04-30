@@ -12,6 +12,8 @@ import {
   assertStopOwnedByUser,
   assertTaskOwnedByUser,
   errorResponse,
+  ForbiddenError,
+  NotFoundError,
 } from '@/server/auth/guards';
 import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
@@ -19,6 +21,22 @@ import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
 import { addLeg, deleteLeg } from '@/server/repos/trips';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
+
+/** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
+type ReplanDispatchCtx = { newLegIdsQueue: number[] };
+
+function assertLegOnTrip(legTripId: number, tripId: number): void {
+  if (legTripId !== tripId) throw new ForbiddenError('Leg is not part of this trip');
+}
+
+async function assertPlanFuelLegOwnedOnTrip(
+  legId: number,
+  tripId: number,
+  userId: string
+): Promise<void> {
+  const legTripId = await assertLegOwnedByUser(legId, userId);
+  assertLegOnTrip(legTripId, tripId);
+}
 
 function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
   if (
@@ -124,9 +142,10 @@ export async function POST(req: Request) {
     // `action.name` narrows `action.input` to its exact shape — no manual
     // narrowing or coercion needed (the Zod validators already did that work
     // inside the tool-use loop).
+    const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
     for (const action of result.validatedActions) {
       try {
-        await dispatchAction(action, tripId, userId);
+        await dispatchAction(action, tripId, userId, dispatchCtx);
         appliedActions.push(action);
         appliedCount += 1;
       } catch (e) {
@@ -200,12 +219,13 @@ export async function POST(req: Request) {
 async function dispatchAction(
   action: ValidatedAction,
   tripId: number,
-  userId: string
+  userId: string,
+  ctx: ReplanDispatchCtx
 ): Promise<void> {
   switch (action.name) {
     case 'add_leg': {
       const d = action.input;
-      await addLeg({
+      const newLegId = await addLeg({
         tripId,
         title: d.title,
         label: d.label ?? null,
@@ -225,6 +245,7 @@ async function dispatchAction(
         notes: Array.isArray(d.notes) ? JSON.stringify(d.notes) : null,
         sortOrder: d.sort_order ?? null,
       });
+      ctx.newLegIdsQueue.push(newLegId);
       return;
     }
 
@@ -360,8 +381,20 @@ async function dispatchAction(
     }
 
     case 'plan_fuel_stops': {
-      await assertLegOwnedByUser(action.input.leg_id, userId);
-      // Trip-wide replan runs after the batch when `fuelReplenishQueued` is
+      const requested = action.input.leg_id;
+      try {
+        await assertPlanFuelLegOwnedOnTrip(requested, tripId, userId);
+      } catch (e) {
+        if (!(e instanceof NotFoundError) || ctx.newLegIdsQueue.length === 0) throw e;
+        const fallback = ctx.newLegIdsQueue.shift()!;
+        try {
+          await assertPlanFuelLegOwnedOnTrip(fallback, tripId, userId);
+        } catch (e2) {
+          ctx.newLegIdsQueue.unshift(fallback);
+          throw e2;
+        }
+      }
+      // Trip-wide replen runs after the batch when `fuelReplenishQueued` is
       // set — keeps cumulative range across legs consistent.
       return;
     }

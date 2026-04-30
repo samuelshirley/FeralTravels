@@ -20,7 +20,7 @@ export default function StatusBadge({ status }: StatusBadgeProps) {
         border: `1px solid ${s.border}`,
         color: s.text,
         whiteSpace: 'nowrap',
-        fontFamily: "'JetBrains Mono', monospace",
+        
       }}
     >
       {s.label}

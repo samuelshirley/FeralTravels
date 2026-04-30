@@ -25,7 +25,7 @@ const thStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.1em',
   color: 'var(--tp-muted)',
-  fontFamily: "'JetBrains Mono', monospace",
+  
   textAlign: 'left',
   textTransform: 'uppercase',
 };
@@ -86,7 +86,7 @@ export default function AdminErrorLog({ rows }: Props) {
               <td
                 style={{
                   ...tdStyle,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   color: 'var(--tp-muted)',
                   whiteSpace: 'nowrap',
                 }}
@@ -100,7 +100,7 @@ export default function AdminErrorLog({ rows }: Props) {
                     style={{
                       fontSize: 10,
                       color: 'var(--tp-muted)',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      
                     }}
                   >
                     {r.userEmail}
@@ -110,7 +110,7 @@ export default function AdminErrorLog({ rows }: Props) {
               <td
                 style={{
                   ...tdStyle,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   color: 'var(--tp-gold)',
                   whiteSpace: 'nowrap',
                 }}
@@ -190,7 +190,7 @@ function ErrorDetailModal({
                 fontWeight: 700,
                 letterSpacing: '0.12em',
                 color: 'var(--tp-subtle)',
-                fontFamily: "'JetBrains Mono', monospace",
+                
                 textTransform: 'uppercase',
               }}
             >
@@ -233,7 +233,7 @@ function ErrorDetailModal({
               style={{
                 fontSize: 10,
                 color: 'var(--tp-subtle)',
-                fontFamily: "'JetBrains Mono', monospace",
+                
                 marginTop: 2,
               }}
             >
@@ -278,7 +278,7 @@ function DetailRow({
           fontWeight: 700,
           letterSpacing: '0.1em',
           color: 'var(--tp-muted)',
-          fontFamily: "'JetBrains Mono', monospace",
+          
           textTransform: 'uppercase',
           marginBottom: 4,
         }}
@@ -289,7 +289,7 @@ function DetailRow({
         style={{
           fontSize: 13,
           color: 'var(--tp-text)',
-          fontFamily: monospace ? "'JetBrains Mono', monospace" : 'inherit',
+          fontFamily: 'inherit',
           wordBreak: 'break-word',
           background: 'var(--tp-danger-muted)',
           border: monospace ? '1px solid rgba(198, 93, 74, 0.3)' : 'none',

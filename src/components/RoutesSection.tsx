@@ -46,7 +46,7 @@ function surfaceChip(surface: string | null) {
         color: c.fg,
         padding: '2px 6px',
         borderRadius: 3,
-        fontFamily: "'JetBrains Mono', monospace",
+        
       }}
     >
       {surface}
@@ -144,7 +144,7 @@ export default function RoutesSection({
             fontWeight: 700,
             letterSpacing: '0.08em',
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           ROUTES
@@ -163,7 +163,7 @@ export default function RoutesSection({
               padding: '3px 10px',
               borderRadius: 4,
               cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace",
+              
             }}
           >
             + Add Route
@@ -216,7 +216,7 @@ export default function RoutesSection({
           style={{
             fontSize: 11,
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
           }}
         >
           No route options yet. Ask Penny or add one manually.
@@ -328,7 +328,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                     color: 'var(--tp-primary)',
                     padding: '2px 6px',
                     borderRadius: 3,
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                   }}
                   title="Estimated drive time from leg start"
                 >
@@ -346,7 +346,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                     color: 'var(--tp-gold)',
                     padding: '2px 6px',
                     borderRadius: 3,
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                   }}
                 >
                   {sourceLabel}
@@ -358,7 +358,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                   style={{
                     fontSize: 10,
                     color: 'var(--tp-muted)',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                   }}
                 >
                   {route.distance_km} km
@@ -371,7 +371,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                   fontSize: 11,
                   color: 'var(--tp-muted)',
                   marginTop: 3,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 → {route.end_name}

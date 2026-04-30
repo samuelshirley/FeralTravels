@@ -127,7 +127,7 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
                     style={{
                       fontSize: 11,
                       color: 'var(--tp-subtle)',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      
                       marginTop: 2,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
@@ -176,7 +176,7 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
                     color: 'var(--tp-gold)',
                     textDecoration: 'none',
                     borderTop: '1px solid var(--tp-border)',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                     letterSpacing: '0.05em',
                   }}
                 >

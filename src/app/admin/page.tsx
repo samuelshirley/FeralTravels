@@ -44,7 +44,7 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.15em',
   color: 'var(--tp-subtle)',
-  fontFamily: "'JetBrains Mono', monospace",
+  
   marginBottom: 6,
 };
 
@@ -62,7 +62,7 @@ const thStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.1em',
   color: 'var(--tp-muted)',
-  fontFamily: "'JetBrains Mono', monospace",
+  
   textAlign: 'left',
   textTransform: 'uppercase',
 };
@@ -141,7 +141,7 @@ export default async function AdminPage() {
             style={{
               fontSize: 11,
               color: 'var(--tp-subtle)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               marginLeft: 4,
             }}
           >
@@ -168,7 +168,7 @@ export default async function AdminPage() {
                   style={{
                     fontSize: 11,
                     color: 'var(--tp-subtle)',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                     marginTop: 4,
                   }}
                 >
@@ -198,7 +198,7 @@ export default async function AdminPage() {
                   fontSize: 11,
                   color: 'var(--tp-subtle)',
                   fontWeight: 500,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 {recentErrors.length === 50 ? '50+' : recentErrors.length}
@@ -259,13 +259,13 @@ export default async function AdminPage() {
                         style={{
                           fontSize: 11,
                           color: 'var(--tp-subtle)',
-                          fontFamily: "'JetBrains Mono', monospace",
+                          
                         }}
                       >
                         {u.email}
                       </div>
                     </td>
-                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
+                    <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
                       {fmtRel(u.createdAt)}
                     </td>
                   </tr>
@@ -310,7 +310,7 @@ export default async function AdminPage() {
                     <td style={{ ...tdStyle, color: m.role === 'assistant' ? 'var(--tp-success)' : 'var(--tp-muted)' }}>
                       {m.role}
                       {m.hasChanges && (
-                        <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--tp-success)', fontFamily: "'JetBrains Mono', monospace" }}>
+                        <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--tp-success)' }}>
                           ✓EDIT
                         </span>
                       )}
@@ -318,7 +318,7 @@ export default async function AdminPage() {
                     <td style={{ ...tdStyle, color: 'var(--tp-muted)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {m.content.slice(0, 80)}
                     </td>
-                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
+                    <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
                       {fmtRel(m.createdAt)}
                     </td>
                   </tr>
@@ -341,7 +341,7 @@ export default async function AdminPage() {
             marginTop: 32,
             fontSize: 11,
             color: 'var(--tp-subtle)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
             lineHeight: 1.6,
           }}
         >
@@ -392,18 +392,18 @@ function UsageTable({
             <td style={tdStyle}>
               <div style={{ fontWeight: 600 }}>{r.name || r.email || '(unknown)'}</div>
               {r.email && r.name && (
-                <div style={{ fontSize: 10, color: 'var(--tp-subtle)', fontFamily: "'JetBrains Mono', monospace" }}>
+                <div style={{ fontSize: 10, color: 'var(--tp-subtle)' }}>
                   {r.email}
                 </div>
               )}
             </td>
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+            <td style={{ ...tdStyle, textAlign: 'right' }}>
               {r.requests}
             </td>
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
+            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
               {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
             </td>
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-success)' }}>
+            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
               {fmtMoney(microcentsToDollars(r.microcents))}
             </td>
           </tr>

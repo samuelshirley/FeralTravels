@@ -84,7 +84,7 @@ export default async function SettingsPage() {
               style={{
                 fontSize: 12,
                 color: 'var(--tp-subtle)',
-                fontFamily: "'JetBrains Mono', monospace",
+                
                 marginTop: 4,
               }}
             >
@@ -226,7 +226,7 @@ function Stat({
           fontWeight: 700,
           letterSpacing: '0.12em',
           color: 'var(--tp-subtle)',
-          fontFamily: "'JetBrains Mono', monospace",
+          
           textTransform: 'uppercase',
           marginBottom: 4,
         }}
@@ -248,7 +248,7 @@ function Stat({
           style={{
             fontSize: 10,
             color: 'var(--tp-muted)',
-            fontFamily: "'JetBrains Mono', monospace",
+            
             marginTop: 2,
           }}
         >

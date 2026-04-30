@@ -150,7 +150,7 @@ export default function LegCard({
                 fontWeight: 700,
                 letterSpacing: '0.1em',
                 color: 'var(--tp-subtle)',
-                fontFamily: "'JetBrains Mono', monospace",
+                
               }}
             >
               {leg.label}
@@ -162,7 +162,7 @@ export default function LegCard({
               style={{
                 fontSize: 12,
                 color: 'var(--tp-muted)',
-                fontFamily: "'JetBrains Mono', monospace",
+                
               }}
             >
               {leg.dates}
@@ -172,7 +172,7 @@ export default function LegCard({
                 style={{
                   fontSize: 12,
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 {leg.distance_km} km
@@ -183,7 +183,7 @@ export default function LegCard({
                 style={{
                   fontSize: 12,
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 {driveHours} hrs
@@ -212,7 +212,7 @@ export default function LegCard({
                 style={{
                   fontSize: 10,
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   marginBottom: 2,
                 }}
               >
@@ -225,7 +225,7 @@ export default function LegCard({
                 style={{
                   fontSize: 10,
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   marginBottom: 2,
                 }}
               >
@@ -273,7 +273,7 @@ export default function LegCard({
                   gap: 8,
                   fontSize: 12,
                   fontWeight: 600,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                   letterSpacing: '0.04em',
                   color: '#000',
                   background: 'var(--tp-primary)',
@@ -359,7 +359,7 @@ export default function LegCard({
                   fontWeight: 700,
                   letterSpacing: '0.08em',
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 TRAILS / GPX
@@ -391,7 +391,7 @@ export default function LegCard({
                       padding: '3px 10px',
                       borderRadius: 4,
                       cursor: uploading ? 'default' : 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      
                     }}
                   >
                     {uploading ? 'Uploading…' : '+ Add GPX'}
@@ -405,7 +405,7 @@ export default function LegCard({
                 style={{
                   fontSize: 11,
                   color: 'var(--tp-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 {readonly
@@ -441,7 +441,7 @@ export default function LegCard({
                         style={{
                           fontSize: 10,
                           color: 'var(--tp-muted)',
-                          fontFamily: "'JetBrains Mono', monospace",
+                          
                         }}
                       >
                         {t.distance_km} km
@@ -453,7 +453,7 @@ export default function LegCard({
                       style={{
                         fontSize: 10,
                         color: 'var(--tp-subtle)',
-                        fontFamily: "'JetBrains Mono', monospace",
+                        
                       }}
                     >
                       {t.source_url ? (
@@ -519,7 +519,7 @@ export default function LegCard({
                   letterSpacing: '0.08em',
                   color: 'var(--tp-subtle)',
                   marginBottom: 6,
-                  fontFamily: "'JetBrains Mono', monospace",
+                  
                 }}
               >
                 ESTIMATED COSTS
@@ -533,7 +533,7 @@ export default function LegCard({
                     fontSize: 13,
                     color: 'var(--tp-muted)',
                     padding: '2px 0',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                   }}
                 >
                   <span>{c.item}</span>
@@ -551,7 +551,7 @@ export default function LegCard({
                     padding: '6px 0 0',
                     borderTop: '1px solid var(--tp-border)',
                     marginTop: 4,
-                    fontFamily: "'JetBrains Mono', monospace",
+                    
                   }}
                 >
                   <span>{totalCost.item}</span>

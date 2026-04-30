@@ -350,7 +350,7 @@ function FreeformInput({
           </button>
         )}
         {multiline && (
-          <span style={{ fontSize: 10, color: 'var(--tp-subtle)', fontFamily: "'JetBrains Mono', monospace" }}>
+          <span style={{ fontSize: 10, color: 'var(--tp-subtle)' }}>
             ⌘+Enter to send
           </span>
         )}
@@ -383,7 +383,7 @@ const cardStyle = {
 
 const progressStyle = {
   fontSize: 10,
-  fontFamily: "'JetBrains Mono', monospace",
+  
   letterSpacing: '0.08em',
   textTransform: 'uppercase' as const,
   color: 'var(--tp-primary)',
@@ -439,7 +439,7 @@ const pillStyle = {
   background: 'var(--tp-success-muted)',
   color: 'var(--tp-success)',
   borderRadius: 4,
-  fontFamily: "'JetBrains Mono', monospace",
+  
 };
 
 const primaryButtonStyle = {

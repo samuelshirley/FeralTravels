@@ -99,7 +99,7 @@ export default function TripCard({
             style={{
               fontSize: 12,
               color: 'var(--tp-muted)',
-              fontFamily: "'JetBrains Mono', monospace",
+              
               marginTop: 4,
             }}
           >
@@ -110,7 +110,7 @@ export default function TripCard({
               fontSize: 11,
               color: 'var(--tp-subtle)',
               marginTop: 8,
-              fontFamily: "'JetBrains Mono', monospace",
+              
             }}
           >
             status: {status}
