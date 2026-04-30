@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops } from '@/server/db/schema';
 import { getDirections } from '@/lib/directions';
@@ -241,6 +241,27 @@ export async function planFuelStopsForLeg(
 
   await setFuelStatus(legId, 'ready');
   return { legId, status: 'ready', stopsCreated: toInsert.length };
+}
+
+/**
+ * Re-run auto fuel planning for every leg on a trip in sort order (needed for
+ * cumulative tank state across legs). Failures on one leg are logged; the rest
+ * still run.
+ */
+export async function replenishFuelStopsForTrip(tripId: number, userId: string): Promise<void> {
+  const legRows = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legs.sortOrder));
+
+  for (const row of legRows) {
+    try {
+      await planFuelStopsForLeg(row.id, userId);
+    } catch (e) {
+      console.error('replenishFuelStopsForTrip: leg', row.id, e);
+    }
+  }
 }
 
 async function resolveVehicleForTrip(

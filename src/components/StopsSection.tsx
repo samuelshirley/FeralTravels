@@ -15,9 +15,8 @@ interface StopsSectionProps {
   legStartCoords?: { lat: number | null; lng: number | null };
   initialStops: Stop[];
   /**
-   * Current lifecycle of the auto fuel-stop computation for this leg.
-   * Drives the "Plan fuel" button label and whether we show a spinner
-   * vs a retry affordance.
+   * Per-leg auto fuel lifecycle from the server (`computing` while trip-wide
+   * replan runs).
    */
   fuelStatus?: FuelStatus;
   onChanged?: () => void;
@@ -42,61 +41,26 @@ export default function StopsSection({
   legId,
   legEndName,
   legEndCoords,
-  legStartCoords,
+  legStartCoords: _legStartCoords,
   initialStops,
   fuelStatus = 'none',
   onChanged,
   readonly = false,
 }: StopsSectionProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
+  void _legStartCoords;
   const [stops, setStops] = useState<Stop[]>(initialStops);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [addingType, setAddingType] = useState<StopType>('overnight');
-  // Drives the fuel-stops button. We treat the server-reported
-  // `fuelStatus` as the source of truth, but fall back to a local
-  // 'computing' while a POST is in flight so the spinner is responsive
-  // even before the parent re-fetches the trip.
-  const [localFuelStatus, setLocalFuelStatus] = useState<FuelStatus>(fuelStatus);
-  const [fuelError, setFuelError] = useState<string | null>(null);
 
   useEffect(() => {
     setStops(initialStops);
   }, [initialStops]);
 
-  useEffect(() => {
-    // Server state wins when it changes — clears any stale local override.
-    setLocalFuelStatus(fuelStatus);
-  }, [fuelStatus]);
-
-  const hasStartAndEnd =
-    legEndCoords.lat != null &&
-    legEndCoords.lng != null &&
-    legStartCoords?.lat != null &&
-    legStartCoords?.lng != null;
-
-  async function handlePlanFuel() {
-    if (!hasStartAndEnd || localFuelStatus === 'computing') return;
-    setLocalFuelStatus('computing');
-    setFuelError(null);
-    try {
-      const res = await api.planFuelStops(legId);
-      if (res.status === 'failed') {
-        setLocalFuelStatus('failed');
-        setFuelError(res.reason ?? 'Could not plan fuel stops.');
-      } else {
-        // Re-fetch stops so the newly inserted ones render; the parent
-        // trip refresh picks up the new fuel_status.
-        await reload();
-        setLocalFuelStatus('ready');
-      }
-    } catch (err) {
-      setLocalFuelStatus('failed');
-      setFuelError(err instanceof Error ? err.message : 'Could not plan fuel stops.');
-    }
-  }
-
+  const fuelPlanning =
+    fuelStatus === 'computing' || fuelStatus === 'pending';
   const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
   // Overnight-spot discovery chips on the leg header point at the *leg end*
   // coords — that's where the user will be when they need to park for the
@@ -224,78 +188,40 @@ export default function StopsSection({
         STOPS
       </div>
 
-      {!readonly && (
+      {!readonly && fuelPlanning && (
         <div
           style={{
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
             gap: 8,
             marginBottom: 10,
-            flexWrap: 'wrap',
           }}
         >
-          <button
-            onClick={handlePlanFuel}
-            disabled={!hasStartAndEnd || localFuelStatus === 'computing'}
-            title={
-              hasStartAndEnd
-                ? 'Find gas stations along this leg using your vehicle range'
-                : 'Set start and end coordinates first'
-            }
+          <Spinner size={10} thickness={2} color="var(--tp-gold)" />
+          <span
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
               fontSize: 11,
               fontFamily: MONO,
-              padding: '6px 10px',
-              background:
-                localFuelStatus === 'computing'
-                  ? 'rgba(184, 149, 106, 0.12)'
-                  : localFuelStatus === 'ready'
-                    ? 'var(--tp-success-muted)'
-                    : 'var(--tp-surface-muted)',
-              color:
-                localFuelStatus === 'ready'
-                  ? 'var(--tp-success)'
-                  : localFuelStatus === 'failed'
-                    ? 'var(--tp-danger)'
-                    : 'var(--tp-text)',
-              border: `1px solid ${
-                localFuelStatus === 'ready'
-                  ? 'rgba(74, 139, 122, 0.35)'
-                  : localFuelStatus === 'failed'
-                    ? 'rgba(198, 93, 74, 0.35)'
-                    : 'var(--tp-border)'
-              }`,
-              borderRadius: 4,
-              cursor: hasStartAndEnd && localFuelStatus !== 'computing' ? 'pointer' : 'default',
-              opacity: hasStartAndEnd ? 1 : 0.45,
+              color: 'var(--tp-muted)',
             }}
           >
-            {localFuelStatus === 'computing' && (
-              <Spinner size={10} thickness={2} color="var(--tp-gold)" />
-            )}
-            <span>⛽</span>
-            {localFuelStatus === 'computing'
-              ? 'Planning fuel…'
-              : localFuelStatus === 'ready'
-                ? 'Replan fuel'
-                : localFuelStatus === 'failed'
-                  ? 'Retry fuel plan'
-                  : 'Plan fuel stops'}
-          </button>
-          {fuelError && (
-            <span
-              style={{
-                fontSize: 11,
-                color: 'var(--tp-danger)',
-                maxWidth: 360,
-              }}
-            >
-              {fuelError}
-            </span>
-          )}
+            Planning fuel stops…
+          </span>
+        </div>
+      )}
+
+      {!readonly && fuelStatus === 'failed' && (
+        <div
+          style={{
+            marginBottom: 10,
+            fontSize: 11,
+            color: 'var(--tp-danger)',
+            maxWidth: 420,
+            lineHeight: 1.4,
+          }}
+        >
+          Fuel planning failed for this leg. Check vehicle fuel economy and tank in Settings, and
+          that the server has a Google Maps key with Places API enabled.
         </div>
       )}
 

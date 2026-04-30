@@ -1,13 +1,10 @@
 /**
- * Google Maps URL helpers — emit URLs that open in turn-by-turn navigation
- * mode (not preview).
+ * Google Maps URL helpers for driving directions.
  *
  * Maps URLs API reference: https://developers.google.com/maps/documentation/urls/get-started
  *
- * Key parameter: `dir_action=navigate` — when present on a Maps directions URL
- * opened on a device with the Google Maps app, it triggers Google Maps to
- * launch directly into navigation. Without it, Maps just shows the route
- * preview and you have to tap the "Start" button.
+ * `dir_action=navigate` starts turn-by-turn immediately; multi-stop legs omit it
+ * so Maps opens the full itinerary preview first (better for many waypoints).
  */
 
 export interface LegCoords {
@@ -17,24 +14,37 @@ export interface LegCoords {
   end_lng?: number | null;
 }
 
+export type NavUrlOptions = {
+  /**
+   * When true (default), adds `dir_action=navigate` for immediate turn-by-turn.
+   * Omit for multi-stop routes so Maps opens the full directions preview first
+   * (closer to a shared “multiple stops” link on phones).
+   */
+  navigate?: boolean;
+};
+
 /**
- * Construct a fresh nav-mode directions URL from raw lat/lng.
+ * Construct a directions URL from raw lat/lng.
  *
  * `waypoints` is optional; when provided, each `[lat, lng]` becomes a
  * pipe-delimited stop on the way (Google Maps URLs API supports `&waypoints=`).
  */
 export function buildNavUrl(
   coords: LegCoords,
-  waypoints?: Array<[number, number]>
+  waypoints?: Array<[number, number]>,
+  opts?: NavUrlOptions
 ): string | null {
   const { start_lat, start_lng, end_lat, end_lng } = coords;
   if (end_lat == null || end_lng == null) return null;
+  const navigate = opts?.navigate !== false;
   const params = new URLSearchParams({
     api: '1',
     destination: `${end_lat},${end_lng}`,
     travelmode: 'driving',
-    dir_action: 'navigate',
   });
+  if (navigate) {
+    params.set('dir_action', 'navigate');
+  }
   if (start_lat != null && start_lng != null) {
     params.set('origin', `${start_lat},${start_lng}`);
   }
@@ -88,35 +98,27 @@ export function buildParkSearchUrl(lat: number, lng: number): string {
   return buildMapsSearchUrl(lat, lng, 'park');
 }
 
-/**
- * Build the unified "Open in Google Maps" URL for a leg. Combines the leg's
- * start/end coords with (a) the selected route's end-override (if any) and
- * (b) any user-selected stops (fuel, water, overnight, etc) as waypoints.
- *
- * Waypoints are sorted by `distance_from_start_km` when available, falling
- * back to `sort_order` so the nav route follows the intended driving sequence.
- */
-export function buildLegDirectionsUrl(input: {
-  legCoords: LegCoords;
-  selectedRoute?: {
-    end_lat: number | null;
-    end_lng: number | null;
-  } | null;
-  selectedStops?: Array<{
-    lat: number | null;
-    lng: number | null;
-    distance_from_start_km?: number | null;
-    sort_order?: number | null;
-  }>;
-}): string | null {
-  const { legCoords, selectedRoute, selectedStops } = input;
-  const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
-  const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
-  if (destLat == null || destLng == null) return null;
+/** Stops that can be turned into Maps waypoints (see buildLegDirectionsUrl). */
+export type LegDirectionsStopInput = {
+  lat: number | null;
+  lng: number | null;
+  status: string;
+  stop_type: string;
+  source: string | null;
+  distance_from_start_km?: number | null;
+  sort_order?: number | null;
+};
 
-  const waypoints = (selectedStops ?? [])
-    .filter((s): s is { lat: number; lng: number; distance_from_start_km?: number | null; sort_order?: number | null } =>
-      s.lat != null && s.lng != null
+/** Sorted intermediate coords for leg directions (badge counts, tests). */
+export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[number, number]> {
+  return stops
+    .filter(
+      (s) =>
+        s.status !== 'dismissed' &&
+        s.lat != null &&
+        s.lng != null &&
+        (s.status === 'selected' ||
+          (s.stop_type === 'fuel' && s.source === 'google_places'))
     )
     .slice()
     .sort((a, b) => {
@@ -125,11 +127,39 @@ export function buildLegDirectionsUrl(input: {
       if (ad !== bd) return ad - bd;
       return (a.sort_order ?? 0) - (b.sort_order ?? 0);
     })
-    .map((s) => [s.lat, s.lng] as [number, number]);
+    .map((s) => [s.lat as number, s.lng as number] as [number, number]);
+}
+
+/**
+ * Build the unified "Open in Google Maps" URL for a leg. Combines the leg's
+ * start/end coords with (a) the selected route's end-override (if any) and
+ * (b) waypoints from: every selected stop, plus auto fuel stops from Places
+ * (status `option`, source `google_places`) so they need not be tapped
+ * individually.
+ *
+ * With intermediate waypoints, opens directions **preview** (no
+ * `dir_action=navigate`) so mobile Maps shows the full multi-stop itinerary;
+ * simple A→B still jumps straight into navigation.
+ */
+export function buildLegDirectionsUrl(input: {
+  legCoords: LegCoords;
+  selectedRoute?: {
+    end_lat: number | null;
+    end_lng: number | null;
+  } | null;
+  stops?: LegDirectionsStopInput[] | null;
+}): string | null {
+  const { legCoords, selectedRoute, stops } = input;
+  const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
+  const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
+  if (destLat == null || destLng == null) return null;
+
+  const waypoints = legDirectionsWaypoints(stops ?? []);
 
   return buildNavUrl(
     { ...legCoords, end_lat: destLat, end_lng: destLng },
-    waypoints.length > 0 ? waypoints : undefined
+    waypoints.length > 0 ? waypoints : undefined,
+    { navigate: waypoints.length === 0 }
   );
 }
 

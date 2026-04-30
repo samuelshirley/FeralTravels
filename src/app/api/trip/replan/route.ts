@@ -18,10 +18,16 @@ import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
 import { addLeg, deleteLeg } from '@/server/repos/trips';
-import { getDefaultVehicleForUser, getVehicleForUser } from '@/server/repos/vehicles';
-import { computeEffectiveRangeKm } from '@/lib/penny/context';
-import { getTripFull } from '@/server/repos/trips';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
+
+function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
+  return (
+    action.name === 'add_leg' ||
+    action.name === 'delete_leg' ||
+    action.name === 'update_leg' ||
+    action.name === 'plan_fuel_stops'
+  );
+}
 
 // Per-user spend cap and request cap on Anthropic replans.
 // Update via env at any time.
@@ -95,6 +101,7 @@ export async function POST(req: Request) {
     let appliedCount = 0;
     let failedCount = 0;
     const failedActions: Array<{ action: string; error: string }> = [];
+    const appliedActions: ValidatedAction[] = [];
 
     // Validation failures from inside the tool-use loop (Penny couldn't
     // produce a valid call after MAX_VALIDATION_RETRIES) get surfaced to
@@ -111,6 +118,7 @@ export async function POST(req: Request) {
     for (const action of result.validatedActions) {
       try {
         await dispatchAction(action, tripId, userId);
+        appliedActions.push(action);
         appliedCount += 1;
       } catch (e) {
         failedCount += 1;
@@ -119,6 +127,8 @@ export async function POST(req: Request) {
         console.error('Failed to apply validated action', action, e);
       }
     }
+
+    const fuelReplenishQueued = appliedActions.some(actionShouldTriggerTripFuelReplenish);
 
     // Rebuild a `changes` envelope in the legacy shape so the existing
     // frontend (ChatPanel) keeps working without a schema migration. Each
@@ -138,6 +148,7 @@ export async function POST(req: Request) {
       appliedCount,
       failedCount,
       failedActions,
+      fuelReplenishQueued,
       // Diagnostics — surfaced for the admin log + future client UX. The
       // client currently ignores these but they're cheap to send.
       retryCount: result.retryCount,
@@ -332,16 +343,9 @@ async function dispatchAction(
     }
 
     case 'plan_fuel_stops': {
-      const { leg_id } = action.input;
-      await assertLegOwnedByUser(leg_id, userId);
-      const applied = await planFuelStopsForLeg(leg_id, tripId, userId);
-      if (applied === 0) {
-        throw new Error(
-          'plan_fuel_stops: leg is within effective range or missing vehicle data'
-        );
-      }
-      // Treat the whole plan_fuel_stops call as one applied action — the N
-      // child stops are an implementation detail of the helper.
+      await assertLegOwnedByUser(action.input.leg_id, userId);
+      // Trip-wide replan runs after the batch when `fuelReplenishQueued` is
+      // set — keeps cumulative range across legs consistent.
       return;
     }
 
@@ -426,73 +430,4 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
     case 'update_task':
       return { action: 'update_task', task_id: action.input.task_id, data: action.input.data };
   }
-}
-
-/**
- * Expand a `plan_fuel_stops` action into concrete add_stop inserts.
- *
- * Strategy: look up the leg's distance and the driver's vehicle, derive the
- * effective range (tank × economy − reserve), and place fuel stops at
- * `effective_range_km` intervals along the leg. We don't know real station
- * locations, so we seed placeholder stops named "Refuel near km N" with
- * source='penny' so the user knows to replace them. Interpolation uses
- * straight-line coordinates between the leg start and end — good enough for
- * the UI to render pins; the user will refine when they swap in real stops.
- */
-async function planFuelStopsForLeg(
-  legId: number,
-  tripId: number,
-  userId: string
-): Promise<number> {
-  const trip = await getTripFull(tripId);
-  if (!trip) return 0;
-  const leg = trip.legs.find((l) => l.id === legId);
-  if (!leg || leg.distance_km == null) return 0;
-
-  const vehicle =
-    (trip.vehicle_id != null
-      ? await getVehicleForUser(userId, trip.vehicle_id).catch(() => null)
-      : null) ?? (await getDefaultVehicleForUser(userId).catch(() => null));
-  if (!vehicle) return 0;
-
-  const effectiveRangeKm = computeEffectiveRangeKm(
-    vehicle.fuel_economy_kmpl,
-    vehicle.fuel_tank_l,
-    vehicle.real_world_kmpl
-  );
-  if (effectiveRangeKm == null || effectiveRangeKm <= 0) return 0;
-  if (leg.distance_km <= effectiveRangeKm) return 0;
-
-  const stops: number[] = [];
-  for (let km = effectiveRangeKm; km < leg.distance_km; km += effectiveRangeKm) {
-    stops.push(km);
-  }
-  if (stops.length === 0) return 0;
-
-  let applied = 0;
-  for (const km of stops) {
-    const fraction = km / leg.distance_km;
-    const lat =
-      leg.start_lat != null && leg.end_lat != null
-        ? leg.start_lat + (leg.end_lat - leg.start_lat) * fraction
-        : null;
-    const lng =
-      leg.start_lng != null && leg.end_lng != null
-        ? leg.start_lng + (leg.end_lng - leg.start_lng) * fraction
-        : null;
-    await addStop({
-      leg_id: legId,
-      stop_type: 'fuel',
-      name: `Refuel near km ${Math.round(km)}`,
-      status: 'option',
-      lat,
-      lng,
-      distance_from_start_km: km,
-      fuel_type: (vehicle.fuel_type as 'diesel' | 'petrol' | 'premium' | 'lpg' | null) ?? null,
-      source: 'penny',
-      notes: 'Placeholder — swap in a real station once picked on the map.',
-    });
-    applied += 1;
-  }
-  return applied;
 }

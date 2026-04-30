@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
-import { buildLegDirectionsUrl } from '@/lib/maps';
+import { buildLegDirectionsUrl, legDirectionsWaypoints } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
 import RoutesSection from './RoutesSection';
 import StopsSection from './StopsSection';
@@ -45,7 +45,7 @@ export default function LegCard({
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
   const selectedRoute = leg.routes.find((r) => r.status === 'selected') ?? null;
-  const selectedStops = leg.stops.filter((s) => s.status === 'selected');
+  const navWaypointCount = legDirectionsWaypoints(leg.stops).length;
   const directionsUrl = buildLegDirectionsUrl({
     legCoords: {
       start_lat: leg.start_lat,
@@ -54,7 +54,7 @@ export default function LegCard({
       end_lng: leg.end_lng,
     },
     selectedRoute,
-    selectedStops,
+    stops: leg.stops,
   });
 
   const [trails, setTrails] = useState<AttachedTrail[]>([]);
@@ -261,9 +261,9 @@ export default function LegCard({
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 title={
-                  selectedStops.length > 0
-                    ? `Open leg in Google Maps with ${selectedStops.length} waypoint${
-                        selectedStops.length === 1 ? '' : 's'
+                  navWaypointCount > 0
+                    ? `Open leg in Google Maps with ${navWaypointCount} waypoint${
+                        navWaypointCount === 1 ? '' : 's'
                       }`
                     : 'Open leg in Google Maps'
                 }
@@ -285,7 +285,7 @@ export default function LegCard({
               >
                 <span>▶</span>
                 Open in Google Maps
-                {selectedStops.length > 0 && (
+                {navWaypointCount > 0 && (
                   <span
                     style={{
                       fontSize: 10,
@@ -295,7 +295,7 @@ export default function LegCard({
                       borderRadius: 10,
                     }}
                   >
-                    +{selectedStops.length} stop{selectedStops.length === 1 ? '' : 's'}
+                    +{navWaypointCount} stop{navWaypointCount === 1 ? '' : 's'}
                   </span>
                 )}
               </a>

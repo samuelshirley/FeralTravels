@@ -8,9 +8,16 @@ interface Props {
   tripId: number;
   initialVehicleId: number | null;
   readonly?: boolean;
+  /** Called after the trip's vehicle_id is successfully PATCHed (refresh legs / fuel state). */
+  onTripUpdated?: () => void | Promise<void>;
 }
 
-export default function TripVehicleChip({ tripId, initialVehicleId, readonly = false }: Props) {
+export default function TripVehicleChip({
+  tripId,
+  initialVehicleId,
+  readonly = false,
+  onTripUpdated,
+}: Props) {
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
   const [vehicleId, setVehicleId] = useState<number | null>(initialVehicleId);
   const [open, setOpen] = useState(false);
@@ -53,6 +60,7 @@ export default function TripVehicleChip({ tripId, initialVehicleId, readonly = f
       });
       setVehicleId(id);
       setOpen(false);
+      await onTripUpdated?.();
     } catch {
       /* ignore — chip stays as before */
     } finally {

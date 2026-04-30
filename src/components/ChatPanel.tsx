@@ -15,7 +15,7 @@ interface ChatPanelProps {
    */
   onboardingState?: OnboardingState;
   onTripUpdated: () => void;
-  onActivity?: (event: 'thinking' | 'response' | 'error') => void;
+  onActivity?: (event: 'thinking' | 'response' | 'error' | 'fuel-planning') => void;
   readonly?: boolean;
 }
 
@@ -222,6 +222,7 @@ export default function ChatPanel({
         const hadProposedChanges = Array.isArray(data?.changes?.changes)
           ? data.changes.changes.length > 0
           : false;
+        const fuelReplenishQueued: boolean = data?.fuelReplenishQueued === true;
         let applyError: string | null = null;
         if (hadProposedChanges && appliedCount === 0) {
           applyError =
@@ -246,7 +247,18 @@ export default function ChatPanel({
             applyError,
           },
         ]);
-        if (appliedCount > 0) onTripUpdated();
+        if (appliedCount > 0) {
+          onTripUpdated();
+          if (fuelReplenishQueued) {
+            onActivity?.('fuel-planning');
+            try {
+              await tripApi(tripId).replenishFuelStops();
+            } catch (e) {
+              console.warn('replenishFuelStops failed', e);
+            }
+            onTripUpdated();
+          }
+        }
         onActivity?.(applyError ? 'error' : 'response');
       }
     } catch (err) {

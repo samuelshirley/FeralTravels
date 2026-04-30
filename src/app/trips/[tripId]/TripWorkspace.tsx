@@ -83,6 +83,7 @@ export default function TripWorkspace({
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('list');
   const [thinking, setThinking] = useState(false);
+  const [fuelPlanning, setFuelPlanning] = useState(false);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
@@ -110,6 +111,18 @@ export default function TripWorkspace({
   useEffect(() => {
     loadTrip();
   }, [loadTrip]);
+
+  useEffect(() => {
+    if (
+      !trip?.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending')
+    ) {
+      return;
+    }
+    const t = setInterval(() => {
+      loadTrip();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [trip, loadTrip]);
 
   // Handler for pull-to-refresh on mobile. We pad the resolution slightly
   // so the "Refreshing" chip is visible even when the fetch is instant.
@@ -200,9 +213,13 @@ export default function TripWorkspace({
     );
   }
 
-  const handleChatActivity = (evt: 'thinking' | 'response' | 'error') => {
+  const handleChatActivity = (
+    evt: 'thinking' | 'response' | 'error' | 'fuel-planning'
+  ) => {
     setThinking(evt === 'thinking');
+    if (evt === 'fuel-planning') setFuelPlanning(true);
     if (evt === 'response' || evt === 'error') {
+      setFuelPlanning(false);
       const isOnChat =
         viewport === 'mobile' ? mobileTabRef.current === 'chat' : chatOpenRef.current;
       if (!isOnChat) setUnread((u) => u + 1);
@@ -249,12 +266,36 @@ export default function TripWorkspace({
     />
   );
 
+  const tripFuelBusy =
+    fuelPlanning ||
+    trip.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending');
+
   const vehicleChip = !readonly ? (
-    <TripVehicleChip
-      tripId={tripId}
-      initialVehicleId={trip.vehicle_id ?? null}
-      readonly={readonly}
-    />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      {tripFuelBusy && (
+        <span
+          title="Finding gas stations along your route"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 11,
+            color: 'var(--tp-muted)',
+            fontFamily: "'JetBrains Mono', monospace",
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Spinner size={14} thickness={2} color="var(--tp-gold)" />
+          Fuel…
+        </span>
+      )}
+      <TripVehicleChip
+        tripId={tripId}
+        initialVehicleId={trip.vehicle_id ?? null}
+        readonly={readonly}
+        onTripUpdated={loadTrip}
+      />
+    </div>
   ) : null;
 
   // ───────── MOBILE (<768px): single pane + fixed bottom nav ─────────
@@ -344,7 +385,7 @@ export default function TripWorkspace({
         <BottomNav
           active={mobileTab}
           onChange={setMobileTab}
-          thinking={thinking}
+          thinking={thinking || tripFuelBusy}
           unread={unread}
         />
       </div>
@@ -365,7 +406,7 @@ export default function TripWorkspace({
               <ChatToggleButton
                 open={chatOpen}
                 onClick={() => setChatOpen((v) => !v)}
-                thinking={thinking}
+                thinking={thinking || tripFuelBusy}
                 unread={unread}
               />
             </>
@@ -411,7 +452,7 @@ export default function TripWorkspace({
             <ChatToggleButton
               open={chatOpen}
               onClick={() => setChatOpen((v) => !v)}
-              thinking={thinking}
+              thinking={thinking || tripFuelBusy}
               unread={unread}
             />
           </>

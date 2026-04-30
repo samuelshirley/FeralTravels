@@ -11,6 +11,7 @@ import {
 import { auth } from '@/server/auth';
 import { deleteTrip } from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
+import { replenishFuelStopsForTrip } from '@/server/fuel';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,11 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     if (body.vehicle_id !== undefined) update.vehicleId = body.vehicle_id;
 
     await db.update(trips).set(update).where(eq(trips.id, tripId));
+
+    if (body.vehicle_id !== undefined) {
+      await replenishFuelStopsForTrip(tripId, userId);
+    }
+
     const [row] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
     return Response.json(row ? rowMappers.tripRow(row) : null);
   } catch (err) {

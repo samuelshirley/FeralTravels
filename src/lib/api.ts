@@ -141,6 +141,13 @@ export function tripApi(tripId: number) {
         reason?: string;
       }>(`/api/legs/${legId}/fuel-stops`, { method: 'POST', body: {} }),
 
+    /** Recompute auto fuel stops for every leg on this trip (ordered). */
+    replenishFuelStops: () =>
+      apiFetch<{ ok: boolean }>(`/api/trips/${tripId}/fuel-stops/replan`, {
+        method: 'POST',
+        body: {},
+      }),
+
     listStopsForLeg: (legId: number) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
     addStop: (legId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),
