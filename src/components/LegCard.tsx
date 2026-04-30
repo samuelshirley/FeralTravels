@@ -5,9 +5,7 @@ import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { buildLegDirectionsUrl, legDirectionsWaypoints } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
-import RoutesSection from './RoutesSection';
 import StopsSection from './StopsSection';
-import TasksSection from './TasksSection';
 
 interface LegCardProps {
   tripId: number;
@@ -302,14 +300,6 @@ export default function LegCard({
             </div>
           )}
 
-          <RoutesSection
-            tripId={tripId}
-            legId={leg.id}
-            initialRoutes={leg.routes}
-            onChanged={onChanged}
-            readonly={readonly}
-          />
-
           <StopsSection
             tripId={tripId}
             legId={leg.id}
@@ -493,14 +483,6 @@ export default function LegCard({
               </div>
             ))}
           </div>
-
-          <TasksSection
-            tripId={tripId}
-            legId={leg.id}
-            initialTasks={leg.tasks}
-            onChanged={onChanged}
-            readonly={readonly}
-          />
 
           {itemCosts.length > 0 && (
             <div

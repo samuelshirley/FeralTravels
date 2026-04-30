@@ -51,7 +51,7 @@ export default function StopsSection({
   const [pasteValue, setPasteValue] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [addingType, setAddingType] = useState<StopType>('overnight');
+  const addingType: StopType = 'overnight';
 
   useEffect(() => {
     setStops(initialStops);
@@ -185,6 +185,7 @@ export default function StopsSection({
         STOPS
       </div>
 
+      {/* Fuel planning status — always at top so the user knows what's happening */}
       {!readonly && fuelPlanning && (
         <div
           style={{
@@ -221,8 +222,37 @@ export default function StopsSection({
         </div>
       )}
 
+      {/* 1. Stop list — planned stops (fuel first via TYPE_ORDER) */}
+      {groups.map(([type, arr]) => (
+        <StopGroup
+          key={type}
+          type={type}
+          stops={arr}
+          onSelect={handleSelect}
+          onDismiss={handleDismiss}
+          onDelete={handleDelete}
+          readonly={readonly}
+        />
+      ))}
+
+      {groups.length === 0 && (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--tp-subtle)',
+          }}
+        >
+          {readonly
+            ? 'No stops yet.'
+            : hasEndCoords
+              ? 'No stops yet. Use the park search below to find a spot, then paste its coords.'
+              : 'No destination coords yet — add lat/lng to unlock park search.'}
+        </div>
+      )}
+
+      {/* 2. Park / dog-park discovery chips — middle */}
       {hasEndCoords && dogParkNearEnd && parkNearEnd && !readonly && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
           <ExternalChip
             href={dogParkNearEnd}
             label="🐕 Dog parks nearby"
@@ -236,35 +266,17 @@ export default function StopsSection({
         </div>
       )}
 
+      {/* 3. Paste GPS input — bottom */}
       {!readonly && (
         <div
           style={{
             display: 'flex',
             gap: 6,
-            marginBottom: pasteError ? 4 : 10,
+            marginTop: 10,
+            marginBottom: pasteError ? 4 : 0,
             flexWrap: 'wrap',
           }}
         >
-          <select
-            value={addingType}
-            onChange={(e) => setAddingType(e.target.value as StopType)}
-            style={{
-              background: 'var(--tp-surface-muted)',
-              border: '1px solid var(--tp-border)',
-              borderRadius: 4,
-              color: 'var(--tp-text)',
-              fontSize: 11,
-              padding: '6px 8px',
-              
-              outline: 'none',
-            }}
-          >
-            {TYPE_ORDER.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_META[t].icon} {TYPE_META[t].label}
-              </option>
-            ))}
-          </select>
           <input
             value={pasteValue}
             onChange={(e) => setPasteValue(e.target.value)}
@@ -297,7 +309,6 @@ export default function StopsSection({
               borderRadius: 4,
               cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
               fontWeight: 600,
-              
             }}
           >
             {pasteBusy ? 'Adding…' : 'Add'}
@@ -306,36 +317,8 @@ export default function StopsSection({
       )}
 
       {pasteError && (
-        <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginBottom: 10 }}>{pasteError}</div>
+        <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>{pasteError}</div>
       )}
-
-      {groups.length === 0 && (
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--tp-subtle)',
-            
-          }}
-        >
-          {readonly
-            ? 'No stops yet.'
-            : hasEndCoords
-              ? 'No stops yet. Tap the park search chips to find an overnight spot, then paste its coords here.'
-              : 'No destination coords yet — add lat/lng to the leg to unlock park search chips.'}
-        </div>
-      )}
-
-      {groups.map(([type, arr]) => (
-        <StopGroup
-          key={type}
-          type={type}
-          stops={arr}
-          onSelect={handleSelect}
-          onDismiss={handleDismiss}
-          onDelete={handleDelete}
-          readonly={readonly}
-        />
-      ))}
 
       {dismissed.length > 0 && (
         <details style={{ marginTop: 8 }}>

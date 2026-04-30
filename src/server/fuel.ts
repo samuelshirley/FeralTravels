@@ -211,6 +211,14 @@ export async function planFuelStopsForLeg(
     // nudge the first sample into the leg so Places runs once.
     firstStepKm = Math.min(stepKm, Math.max(40, totalKm * 0.45));
   }
+  // Guard: if the computed first step would land past the leg end, no samples
+  // would be generated and the planner silently returns 0 stops — even on a
+  // 600 km leg with a large-tank vehicle. For any leg that is more than half
+  // the effective range it's worth surfacing at least one suggested stop, so
+  // cap the first step to mid-leg in that case.
+  if (firstStepKm >= totalKm && totalKm > range * 0.5) {
+    firstStepKm = Math.max(40, totalKm * 0.5);
+  }
   const samples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
     0,
     MAX_STOPS_PER_LEG
