@@ -12,7 +12,7 @@ function describeError(code?: string): string | null {
   if (!code) return null;
   switch (code) {
     case 'OAuthAccountNotLinked':
-      return 'This email is already linked to another sign-in method.';
+      return 'This email is already tied to a different sign-in method. Use the Google button above if you usually sign in with Google, or open the magic link you requested—both should use the same account after linking.';
     case 'EmailSignin':
     case 'EmailSendFailed':
     case 'Configuration':
@@ -86,7 +86,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             lineHeight: 1.5,
           }}
         >
-          Sign in with Google or get a magic link by email.
+          Sign in with Google or get a magic link by email. The same email always maps to one
+          account—your saved vehicles (e.g. trip defaults) stay under that account regardless of
+          which method you use.
         </p>
 
         {errorMessage && (

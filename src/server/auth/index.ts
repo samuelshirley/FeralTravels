@@ -32,6 +32,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      // If someone first signed in with Google and later uses the same email
+      // for a magic link (or the reverse), Auth.js would otherwise refuse to
+      // merge accounts (OAuthAccountNotLinked) and they'd get a second user
+      // row — vehicles and trips would appear "missing". Google verifies
+      // email on the ID token; linking is appropriate here.
+      // https://authjs.dev/concepts/oauth#allowdangerousemailaccountlinking-option
+      allowDangerousEmailAccountLinking: true,
       // Always show the Google account picker, even for users who only have
       // one account signed in. Without this, Google skips the picker on
       // repeat sign-ins which makes the app feel like it picked an account

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Vehicle } from '@/components/VehicleProfileSection';
 
@@ -24,17 +24,29 @@ export default function TripVehicleChip({
   const [busy, setBusy] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
-  // Fetch vehicles on mount, not just when the popup opens. Otherwise the
-  // chip's closed-state label falls through to `#${vehicleId}` (e.g. "#2") on
-  // first render because we have no name to resolve. One extra request per
-  // trip page load. TODO: thread the vehicle name through /api/trip so we
-  // don't need this fetch at all.
   useEffect(() => {
-    if (vehicles != null) return;
-    apiFetch<Vehicle[]>('/api/vehicles')
-      .then(setVehicles)
-      .catch(() => setVehicles([]));
-  }, [vehicles]);
+    setVehicleId(initialVehicleId);
+  }, [initialVehicleId]);
+
+  const loadVehicles = useCallback(async () => {
+    try {
+      const list = await apiFetch<Vehicle[]>('/api/vehicles');
+      setVehicles(list);
+    } catch {
+      setVehicles([]);
+    }
+  }, []);
+
+  // Resolve vehicle names for the closed chip; refetch when menu opens so a
+  // newly added Hilux in Settings appears without a full page reload.
+  useEffect(() => {
+    void loadVehicles();
+  }, [loadVehicles]);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadVehicles();
+  }, [open, loadVehicles]);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
