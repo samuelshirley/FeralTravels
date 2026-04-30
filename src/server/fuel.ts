@@ -231,9 +231,25 @@ export async function planFuelStopsForLeg(
     samples.map((s) => findBestGasStation(s.point, fuel, placesKey))
   );
 
+  // If any candidate came back as PLACES_API_ERROR, the whole API is broken —
+  // not just empty results for a rural area. Fail loudly so the user sees an
+  // actionable error instead of a silent "0 stops, status=ready".
+  const firstApiError = candidates.find((c) => c === PLACES_API_ERROR);
+  if (firstApiError !== undefined) {
+    await setFuelStatus(legId, 'failed');
+    const reason =
+      'Places API call failed — enable "Places API (New)" in Google Cloud Console, ' +
+      'and ensure your API key has no HTTP referrer restrictions. ' +
+      'Visit /api/debug/fuel for a full diagnosis.';
+    console.error(`[fuel] leg ${legId}: ${reason}`);
+    return { legId, status: 'failed', reason };
+  }
+
   const toInsert = samples
     .map((s, i) => ({ sample: s, station: candidates[i] }))
-    .filter((x): x is { sample: (typeof samples)[number]; station: GasStation } => !!x.station);
+    .filter((x): x is { sample: (typeof samples)[number]; station: GasStation } =>
+      x.station !== null && x.station !== PLACES_API_ERROR
+    );
 
   // 5. Replace previous auto stops. We use a transactional delete+insert
   //    so the UI never sees a half-applied plan.
@@ -441,11 +457,29 @@ interface GasStation {
   place_id: string | null;
 }
 
+/** Sentinel returned when the Places API itself errored (vs just no results). */
+const PLACES_API_ERROR = Symbol('PLACES_API_ERROR');
+type PlacesResult = GasStation | null | typeof PLACES_API_ERROR;
+
+/** Unwrap a PlacesResult to a string for the failure reason. */
+function placesErrorReason(httpStatus: number, body: string): string {
+  if (httpStatus === 403) {
+    if (body.includes('PERMISSION_DENIED') || body.includes('blocked')) {
+      return `Places API (New) returned 403 PERMISSION_DENIED — enable "Places API (New)" in Google Cloud Console (it is a separate product from the legacy Places API).`;
+    }
+    return `Places API returned 403 — check API key restrictions in Google Cloud Console (server-side calls must not have HTTP referrer restrictions).`;
+  }
+  if (httpStatus === 400) {
+    return `Places API returned 400 — "Places API (New)" may not be enabled for this project in Google Cloud Console.`;
+  }
+  return `Places API returned HTTP ${httpStatus}: ${body.slice(0, 120)}`;
+}
+
 async function findBestGasStation(
   center: LatLng,
   fuelType: FuelType | null,
   apiKey: string
-): Promise<GasStation | null> {
+): Promise<PlacesResult> {
   try {
     const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
       method: 'POST',
@@ -469,14 +503,13 @@ async function findBestGasStation(
     });
 
     if (!res.ok) {
-      // Log the body to the server console for debugging but don't throw —
-      // one leg's failed Places call shouldn't nuke the whole plan. The
-      // caller will skip this sample's stop and carry on.
       const body = await res.text().catch(() => '');
-      console.warn(
-        `Places nearby search failed: HTTP ${res.status} ${body.slice(0, 200)}`
+      // Log for Vercel function logs, but also return a typed sentinel so the
+      // caller can distinguish "API broken" from "no stations in this area".
+      console.error(
+        `[fuel] Places API error: HTTP ${res.status} — ${placesErrorReason(res.status, body)}`
       );
-      return null;
+      return PLACES_API_ERROR;
     }
 
     const data = (await res.json()) as {
