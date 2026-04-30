@@ -13,15 +13,15 @@ interface TasksSectionProps {
 }
 
 const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  high: '#E8927C',
-  normal: '#7CB5E8',
-  low: 'rgba(255,255,255,0.35)',
+  high: 'var(--tp-accent-warm)',
+  normal: 'var(--tp-primary)',
+  low: 'var(--tp-subtle)',
 };
 
 const STATUS_BADGE: Record<TaskStatus, { label: string; bg: string; fg: string }> = {
-  open: { label: 'OPEN', bg: 'rgba(232,213,124,0.15)', fg: '#E8D57C' },
-  answered: { label: 'ANSWERED', bg: 'rgba(124,232,163,0.15)', fg: '#7CE8A3' },
-  dismissed: { label: 'DISMISSED', bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.4)' },
+  open: { label: 'OPEN', bg: 'rgba(184, 149, 106, 0.14)', fg: 'var(--tp-gold)' },
+  answered: { label: 'ANSWERED', bg: 'var(--tp-success-muted)', fg: 'var(--tp-success)' },
+  dismissed: { label: 'DISMISSED', bg: 'var(--tp-surface-muted)', fg: 'var(--tp-muted)' },
 };
 
 export default function TasksSection({ tripId, legId, initialTasks, onChanged, readonly = false }: TasksSectionProps) {
@@ -103,9 +103,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
       style={{
         marginTop: 12,
         padding: '10px 14px',
-        background: 'rgba(255,255,255,0.03)',
+        background: 'var(--tp-surface-muted)',
         borderRadius: 6,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid var(--tp-border)',
       }}
     >
       <div
@@ -121,7 +121,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.08em',
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
@@ -135,9 +135,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             }}
             style={{
               fontSize: 11,
-              background: 'rgba(232,213,124,0.15)',
-              border: '1px solid rgba(232,213,124,0.3)',
-              color: '#E8D57C',
+              background: 'rgba(184, 149, 106, 0.14)',
+              border: '1px solid rgba(184, 149, 106, 0.35)',
+              color: 'var(--tp-gold)',
               padding: '3px 10px',
               borderRadius: 4,
               cursor: 'pointer',
@@ -157,7 +157,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             gap: 6,
             marginBottom: 8,
             padding: 8,
-            background: 'rgba(0,0,0,0.25)',
+            background: 'var(--tp-surface)',
             borderRadius: 4,
           }}
         >
@@ -168,10 +168,10 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             placeholder="Check Timmelsjoch pass opening..."
             style={{
               padding: '6px 10px',
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               borderRadius: 4,
-              color: '#fff',
+              color: 'var(--tp-text)',
               fontSize: 12,
               outline: 'none',
             }}
@@ -184,10 +184,10 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
               style={{
                 flex: 1,
                 padding: '6px 10px',
-                background: 'rgba(0,0,0,0.4)',
-                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'var(--tp-surface-muted)',
+                border: '1px solid var(--tp-border)',
                 borderRadius: 4,
-                color: '#fff',
+                color: 'var(--tp-text)',
                 fontSize: 12,
                 outline: 'none',
               }}
@@ -197,10 +197,10 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
               onChange={(e) => setNewPriority(e.target.value as TaskPriority)}
               style={{
                 padding: '6px 8px',
-                background: 'rgba(0,0,0,0.4)',
-                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'var(--tp-surface-muted)',
+                border: '1px solid var(--tp-border)',
                 borderRadius: 4,
-                color: '#fff',
+                color: 'var(--tp-text)',
                 fontSize: 12,
                 outline: 'none',
               }}
@@ -213,9 +213,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
               onClick={handleAdd}
               style={{
                 fontSize: 11,
-                background: '#7CB5E8',
+                background: 'var(--tp-primary)',
                 border: 'none',
-                color: '#000',
+                color: 'var(--tp-on-primary)',
                 padding: '6px 12px',
                 borderRadius: 4,
                 cursor: 'pointer',
@@ -232,7 +232,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
         <div
           style={{
             fontSize: 11,
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
@@ -248,9 +248,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
             key={task.id}
             style={{
               padding: '8px 10px',
-              background: task.status === 'open' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.08)',
+              background: task.status === 'open' ? 'var(--tp-surface)' : 'var(--tp-surface-muted)',
               borderRadius: 5,
-              border: '1px solid rgba(255,255,255,0.05)',
+              border: '1px solid var(--tp-border)',
               marginTop: 6,
               opacity: task.status === 'dismissed' ? 0.55 : 1,
             }}
@@ -272,7 +272,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                   <span
                     style={{
                       fontSize: 13,
-                      color: 'rgba(255,255,255,0.85)',
+                      color: 'var(--tp-text)',
                       fontWeight: 500,
                       textDecoration: task.status === 'dismissed' ? 'line-through' : 'none',
                     }}
@@ -297,7 +297,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                     <span
                       style={{
                         fontSize: 9,
-                        color: 'rgba(255,255,255,0.4)',
+                        color: 'var(--tp-muted)',
                         fontFamily: "'JetBrains Mono', monospace",
                       }}
                     >
@@ -310,7 +310,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                   <div
                     style={{
                       fontSize: 12,
-                      color: 'rgba(255,255,255,0.5)',
+                      color: 'var(--tp-muted)',
                       marginTop: 3,
                       lineHeight: 1.4,
                     }}
@@ -329,12 +329,12 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         onClick={(e) => e.stopPropagation()}
                         style={{
                           fontSize: 11,
-                          color: '#7CB5E8',
+                          color: 'var(--tp-primary)',
                           textDecoration: 'none',
                           padding: '3px 8px',
-                          border: '1px solid rgba(124,181,232,0.3)',
+                          border: '1px solid var(--tp-primary-muted)',
                           borderRadius: 12,
-                          background: 'rgba(124,181,232,0.08)',
+                          background: 'var(--tp-primary-muted)',
                         }}
                       >
                         ↗ {task.reference_label || 'Reference'}
@@ -346,12 +346,12 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         onClick={(e) => e.stopPropagation()}
                         style={{
                           fontSize: 11,
-                          color: '#7CE8A3',
+                          color: 'var(--tp-success)',
                           textDecoration: 'none',
                           padding: '3px 8px',
-                          border: '1px solid rgba(124,232,163,0.3)',
+                          border: '1px solid rgba(74, 139, 122, 0.35)',
                           borderRadius: 12,
-                          background: 'rgba(124,232,163,0.08)',
+                          background: 'var(--tp-success-muted)',
                         }}
                       >
                         ☎ {task.reference_phone}
@@ -365,11 +365,11 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                     style={{
                       marginTop: 8,
                       padding: '6px 8px',
-                      background: 'rgba(124,232,163,0.08)',
-                      border: '1px solid rgba(124,232,163,0.2)',
+                      background: 'var(--tp-success-muted)',
+                      border: '1px solid rgba(74, 139, 122, 0.28)',
                       borderRadius: 4,
                       fontSize: 12,
-                      color: 'rgba(255,255,255,0.85)',
+                      color: 'var(--tp-text)',
                       lineHeight: 1.4,
                     }}
                   >
@@ -378,7 +378,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         fontSize: 9,
                         fontWeight: 700,
                         letterSpacing: '0.08em',
-                        color: '#7CE8A3',
+                        color: 'var(--tp-success)',
                         marginBottom: 4,
                         fontFamily: "'JetBrains Mono', monospace",
                       }}
@@ -392,7 +392,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                           href={task.answer_source_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ color: '#7CB5E8', fontSize: 11, textDecoration: 'none' }}
+                          style={{ color: 'var(--tp-primary)', fontSize: 11, textDecoration: 'none' }}
                         >
                           source ↗
                         </a>
@@ -411,10 +411,10 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       style={{
                         width: '100%',
                         padding: '6px 10px',
-                        background: 'rgba(0,0,0,0.4)',
-                        border: '1px solid rgba(255,255,255,0.15)',
+                        background: 'var(--tp-surface-muted)',
+                        border: '1px solid var(--tp-border)',
                         borderRadius: 4,
-                        color: '#fff',
+                        color: 'var(--tp-text)',
                         fontSize: 12,
                         outline: 'none',
                         fontFamily: 'inherit',
@@ -426,9 +426,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         onClick={() => saveResolve(task.id)}
                         style={{
                           fontSize: 11,
-                          background: '#7CE8A3',
+                          background: 'var(--tp-success)',
                           border: 'none',
-                          color: '#000',
+                          color: 'var(--tp-on-primary)',
                           padding: '5px 12px',
                           borderRadius: 4,
                           cursor: 'pointer',
@@ -445,8 +445,8 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                         style={{
                           fontSize: 11,
                           background: 'transparent',
-                          border: '1px solid rgba(255,255,255,0.15)',
-                          color: 'rgba(255,255,255,0.5)',
+                          border: '1px solid var(--tp-border)',
+                          color: 'var(--tp-muted)',
                           padding: '5px 12px',
                           borderRadius: 4,
                           cursor: 'pointer',
@@ -469,9 +469,9 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       }}
                       style={{
                         fontSize: 11,
-                        background: 'rgba(124,232,163,0.15)',
-                        border: '1px solid rgba(124,232,163,0.3)',
-                        color: '#7CE8A3',
+                        background: 'var(--tp-success-muted)',
+                        border: '1px solid rgba(74, 139, 122, 0.35)',
+                        color: 'var(--tp-success)',
                         padding: '3px 8px',
                         borderRadius: 4,
                         cursor: 'pointer',
@@ -488,8 +488,8 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       style={{
                         fontSize: 11,
                         background: 'transparent',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: 'rgba(255,255,255,0.4)',
+                        border: '1px solid var(--tp-border)',
+                        color: 'var(--tp-muted)',
                         padding: '3px 8px',
                         borderRadius: 4,
                         cursor: 'pointer',
@@ -510,8 +510,8 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                     style={{
                       fontSize: 11,
                       background: 'transparent',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: 'rgba(255,255,255,0.4)',
+                        border: '1px solid var(--tp-border)',
+                        color: 'var(--tp-muted)',
                       padding: '3px 8px',
                       borderRadius: 4,
                       cursor: 'pointer',
@@ -531,7 +531,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
                       fontSize: 12,
                       background: 'transparent',
                       border: 'none',
-                      color: 'rgba(255,255,255,0.35)',
+                      color: 'var(--tp-subtle)',
                       cursor: 'pointer',
                       padding: '2px 6px',
                     }}

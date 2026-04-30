@@ -13,11 +13,19 @@ export type VehicleType =
 
 export type VehicleFuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
 
+export type FuelTimingPref = 'start_of_day' | 'when_low' | 'end_of_day';
+
 const FUEL_TYPE_LABELS: Record<VehicleFuelType, string> = {
   diesel: 'Diesel',
   petrol: 'Petrol / Unleaded',
   premium: 'Premium',
   lpg: 'LPG',
+};
+
+const FUEL_TIMING_LABELS: Record<FuelTimingPref, string> = {
+  start_of_day: 'Top up first thing',
+  when_low: 'Refuel when low',
+  end_of_day: 'Refuel near camp at end of day',
 };
 
 export interface Vehicle {
@@ -31,8 +39,10 @@ export interface Vehicle {
   length_m: number | null;
   weight_kg: number | null;
   fuel_economy_kmpl: number | null;
+  real_world_kmpl: number | null;
   fuel_tank_l: number | null;
   fuel_type: VehicleFuelType | null;
+  fuel_timing_pref: FuelTimingPref | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
@@ -55,10 +65,15 @@ export const FUEL_BUFFER_FRACTION = 0.2;
 
 export function effectiveRangeKm(
   fuel_economy_kmpl: number | null,
-  fuel_tank_l: number | null
+  fuel_tank_l: number | null,
+  real_world_kmpl: number | null = null
 ): number | null {
-  if (!fuel_economy_kmpl || !fuel_tank_l) return null;
-  const theoretical = fuel_economy_kmpl * fuel_tank_l;
+  // Prefer the user's observed real-world economy when it's set; spec is
+  // the fallback. Most overlanding rigs underperform spec by 15–30 % once
+  // loaded, so users who care will set this and trust it.
+  const effective = real_world_kmpl ?? fuel_economy_kmpl;
+  if (!effective || !fuel_tank_l) return null;
+  const theoretical = effective * fuel_tank_l;
   return Math.max(0, Math.round(theoretical * (1 - FUEL_BUFFER_FRACTION)));
 }
 
@@ -73,8 +88,10 @@ function emptyDraft(): Draft {
     length_m: null,
     weight_kg: null,
     fuel_economy_kmpl: null,
+    real_world_kmpl: null,
     fuel_tank_l: null,
     fuel_type: null,
+    fuel_timing_pref: null,
     max_drive_hours_per_day: null,
     max_drive_hours_per_week: null,
     max_consecutive_drive_days: null,
@@ -158,9 +175,9 @@ export default function VehicleProfileSection() {
             marginBottom: 12,
             padding: '8px 12px',
             borderRadius: 6,
-            background: 'rgba(232,146,124,0.12)',
-            border: '1px solid rgba(232,146,124,0.3)',
-            color: '#E8927C',
+            background: 'var(--tp-danger-muted)',
+            border: '1px solid rgba(198, 93, 74, 0.35)',
+            color: 'var(--tp-danger)',
             fontSize: 12,
           }}
         >
@@ -169,7 +186,7 @@ export default function VehicleProfileSection() {
       )}
 
       {vehicles == null ? (
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>Loading vehicles…</div>
+        <div style={{ fontSize: 13, color: 'var(--tp-muted)' }}>Loading vehicles…</div>
       ) : (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -210,10 +227,10 @@ export default function VehicleProfileSection() {
                 marginTop: 12,
                 width: '100%',
                 padding: '10px 14px',
-                background: 'rgba(124,181,232,0.12)',
-                border: '1px dashed rgba(124,181,232,0.4)',
+                background: 'var(--tp-primary-muted)',
+                border: '1px dashed rgba(78, 122, 176, 0.45)',
                 borderRadius: 8,
-                color: '#7CB5E8',
+                color: 'var(--tp-primary)',
                 fontWeight: 600,
                 fontSize: 13,
                 cursor: 'pointer',
@@ -249,14 +266,18 @@ function VehicleCard({
   onDelete: () => void;
   onSetDefault: () => void;
 }) {
-  const range = effectiveRangeKm(vehicle.fuel_economy_kmpl, vehicle.fuel_tank_l);
+  const range = effectiveRangeKm(
+    vehicle.fuel_economy_kmpl,
+    vehicle.fuel_tank_l,
+    vehicle.real_world_kmpl
+  );
   return (
     <div
       style={{
-        border: '1px solid rgba(255,255,255,0.08)',
+        border: '1px solid var(--tp-border)',
         borderRadius: 10,
         padding: 14,
-        background: 'rgba(255,255,255,0.02)',
+        background: 'var(--tp-surface-muted)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -268,8 +289,8 @@ function VehicleCard({
                 fontSize: 9,
                 fontWeight: 700,
                 letterSpacing: '0.08em',
-                background: 'rgba(124,232,163,0.15)',
-                color: '#7CE8A3',
+                background: 'var(--tp-success-muted)',
+                color: 'var(--tp-success)',
                 padding: '2px 6px',
                 borderRadius: 3,
                 fontFamily: "'JetBrains Mono', monospace",
@@ -282,14 +303,14 @@ function VehicleCard({
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {!vehicle.is_default && (
-            <button onClick={onSetDefault} style={smallBtnStyle('#7CE8A3')}>
+            <button onClick={onSetDefault} style={smallBtnStyle('var(--tp-success)')}>
               Set default
             </button>
           )}
-          <button onClick={onEdit} style={smallBtnStyle('#7CB5E8')}>
+          <button onClick={onEdit} style={smallBtnStyle('var(--tp-primary)')}>
             Edit
           </button>
-          <button onClick={onDelete} style={smallBtnStyle('#E8927C')}>
+          <button onClick={onDelete} style={smallBtnStyle('var(--tp-danger)')}>
             Delete
           </button>
         </div>
@@ -301,7 +322,7 @@ function VehicleCard({
           gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
           gap: 8,
           fontSize: 12,
-          color: 'rgba(255,255,255,0.7)',
+          color: 'var(--tp-muted)',
           fontFamily: "'JetBrains Mono', monospace",
         }}
       >
@@ -319,7 +340,7 @@ function VehicleCard({
         )}
       </div>
       {vehicle.notes && (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.4 }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--tp-muted)', lineHeight: 1.4 }}>
           {vehicle.notes}
         </div>
       )}
@@ -330,7 +351,7 @@ function VehicleCard({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <span style={{ color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      <span style={{ color: 'var(--tp-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
         {label}
       </span>{' '}
       <span style={{ color: '#fff' }}>{value}</span>
@@ -342,8 +363,8 @@ function smallBtnStyle(accent: string): React.CSSProperties {
   return {
     fontSize: 11,
     padding: '5px 10px',
-    background: 'transparent',
-    border: `1px solid ${accent}55`,
+    background: 'var(--tp-surface-muted)',
+    border: '1px solid var(--tp-border)',
     color: accent,
     borderRadius: 6,
     cursor: 'pointer',
@@ -375,10 +396,10 @@ function VehicleForm({
   return (
     <div
       style={{
-        border: '1px solid rgba(124,181,232,0.4)',
+        border: '1px solid rgba(78, 122, 176, 0.35)',
         borderRadius: 10,
         padding: 14,
-        background: 'rgba(124,181,232,0.04)',
+        background: 'var(--tp-primary-muted)',
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
@@ -449,7 +470,7 @@ function VehicleForm({
         </Field>
       </FieldGroup>
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tp-muted)' }}>
         <input
           type="checkbox"
           checked={!!d.is_default}
@@ -459,7 +480,7 @@ function VehicleForm({
       </label>
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ ...primaryBtn, background: 'transparent', color: 'rgba(255,255,255,0.6)' }}>
+        <button onClick={onCancel} style={{ ...primaryBtn, background: 'transparent', color: 'var(--tp-muted)' }}>
           Cancel
         </button>
         <button onClick={() => onSave(d)} disabled={saving} style={{ ...primaryBtn, opacity: saving ? 0.6 : 1 }}>
@@ -493,6 +514,11 @@ function FuelFieldGroup({
     // L/100km = 100 / (km/L)
     return (100 / d.fuel_economy_kmpl).toFixed(1);
   })();
+  const displayedRealWorld = (() => {
+    if (d.real_world_kmpl == null) return '';
+    if (unit === 'kmpl') return String(d.real_world_kmpl);
+    return (100 / d.real_world_kmpl).toFixed(1);
+  })();
 
   function handleEconomyChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value.trim();
@@ -506,7 +532,26 @@ function FuelFieldGroup({
     setD((p) => ({ ...p, fuel_economy_kmpl: Number(kmpl.toFixed(3)) }));
   }
 
-  const range = effectiveRangeKm(d.fuel_economy_kmpl ?? null, d.fuel_tank_l ?? null);
+  function handleRealWorldChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.trim();
+    if (raw === '') {
+      setD((p) => ({ ...p, real_world_kmpl: null }));
+      return;
+    }
+    const val = Number(raw);
+    if (!Number.isFinite(val) || val <= 0) return;
+    const kmpl = unit === 'kmpl' ? val : 100 / val;
+    setD((p) => ({ ...p, real_world_kmpl: Number(kmpl.toFixed(3)) }));
+  }
+
+  const range = effectiveRangeKm(
+    d.fuel_economy_kmpl ?? null,
+    d.fuel_tank_l ?? null,
+    d.real_world_kmpl ?? null
+  );
+  // Show which figure the range is built from so users understand why a
+  // smaller real-world number changes their plan even when spec is set.
+  const rangeBasis = d.real_world_kmpl != null ? 'real-world' : 'spec';
 
   return (
     <div>
@@ -525,7 +570,7 @@ function FuelFieldGroup({
             fontWeight: 700,
             letterSpacing: '0.12em',
             textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.4)',
+            color: 'var(--tp-muted)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
@@ -535,7 +580,7 @@ function FuelFieldGroup({
           role="tablist"
           style={{
             display: 'inline-flex',
-            border: '1px solid rgba(255,255,255,0.12)',
+            border: '1px solid var(--tp-border)',
             borderRadius: 4,
             overflow: 'hidden',
           }}
@@ -550,8 +595,8 @@ function FuelFieldGroup({
               style={{
                 fontSize: 10,
                 padding: '3px 8px',
-                background: unit === u ? 'rgba(124,181,232,0.2)' : 'transparent',
-                color: unit === u ? '#7CB5E8' : 'rgba(255,255,255,0.55)',
+                background: unit === u ? 'var(--tp-primary-muted)' : 'transparent',
+                color: unit === u ? 'var(--tp-primary)' : 'var(--tp-muted)',
                 border: 'none',
                 cursor: 'pointer',
                 fontFamily: "'JetBrains Mono', monospace",
@@ -564,12 +609,26 @@ function FuelFieldGroup({
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-        <Field label={unit === 'kmpl' ? 'Economy (km/L)' : 'Economy (L/100km)'}>
+        <Field
+          label={unit === 'kmpl' ? 'Spec economy (km/L)' : 'Spec economy (L/100km)'}
+        >
           <input
             type="number"
             step="0.1"
             value={displayedEconomy}
             onChange={handleEconomyChange}
+            style={inputStyle}
+          />
+        </Field>
+        <Field
+          label={unit === 'kmpl' ? 'Real-world (km/L)' : 'Real-world (L/100km)'}
+          hint="Optional — what your rig actually gets when loaded for a trip."
+        >
+          <input
+            type="number"
+            step="0.1"
+            value={displayedRealWorld}
+            onChange={handleRealWorldChange}
             style={inputStyle}
           />
         </Field>
@@ -605,19 +664,39 @@ function FuelFieldGroup({
             ))}
           </select>
         </Field>
+        <Field label="Refuel timing">
+          <select
+            value={d.fuel_timing_pref ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              setD((p) => ({
+                ...p,
+                fuel_timing_pref: v === '' ? null : (v as FuelTimingPref),
+              }));
+            }}
+            style={inputStyle}
+          >
+            <option value="">No preference</option>
+            {Object.entries(FUEL_TIMING_LABELS).map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
       <div
         style={{
           marginTop: 8,
           padding: '6px 10px',
-          background: range != null ? 'rgba(124,232,163,0.08)' : 'rgba(255,255,255,0.04)',
+          background: range != null ? 'var(--tp-success-muted)' : 'var(--tp-surface-muted)',
           border:
             range != null
-              ? '1px solid rgba(124,232,163,0.25)'
-              : '1px dashed rgba(255,255,255,0.12)',
+              ? '1px solid rgba(74, 139, 122, 0.35)'
+              : '1px dashed var(--tp-border)',
           borderRadius: 6,
           fontSize: 11,
-          color: range != null ? '#7CE8A3' : 'rgba(255,255,255,0.4)',
+          color: range != null ? 'var(--tp-success)' : 'var(--tp-muted)',
           fontFamily: "'JetBrains Mono', monospace",
           letterSpacing: '0.02em',
         }}
@@ -639,7 +718,7 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
           fontWeight: 700,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--tp-muted)',
           fontFamily: "'JetBrains Mono', monospace",
           marginBottom: 6,
         }}
@@ -657,19 +736,24 @@ function Field({
   label,
   required,
   wide,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
   wide?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, gridColumn: wide ? '1 / -1' : undefined }}>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+      <span style={{ fontSize: 11, color: 'var(--tp-muted)' }}>
         {label}
-        {required && <span style={{ color: '#E8927C' }}> *</span>}
+        {required && <span style={{ color: 'var(--tp-danger)' }}> *</span>}
       </span>
+      {hint && (
+        <span style={{ fontSize: 11, color: 'var(--tp-subtle)', lineHeight: 1.35 }}>{hint}</span>
+      )}
       {children}
     </label>
   );
@@ -677,10 +761,10 @@ function Field({
 
 const inputStyle: React.CSSProperties = {
   padding: '8px 10px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--tp-surface-muted)',
+  border: '1px solid var(--tp-border)',
   borderRadius: 6,
-  color: '#fff',
+  color: 'var(--tp-text)',
   fontSize: 13,
   outline: 'none',
   fontFamily: 'inherit',
@@ -690,8 +774,8 @@ const inputStyle: React.CSSProperties = {
 
 const primaryBtn: React.CSSProperties = {
   padding: '8px 16px',
-  background: '#7CB5E8',
-  color: '#000',
+  background: 'var(--tp-primary)',
+  color: 'var(--tp-on-primary)',
   border: 'none',
   borderRadius: 6,
   fontSize: 13,

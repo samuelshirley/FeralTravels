@@ -50,18 +50,19 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         alignItems: 'center',
         justifyContent: 'center',
         padding: 24,
-        background: '#0D0D0D',
+        background: 'var(--tp-bg)',
       }}
     >
       <div
         style={{
           width: '100%',
           maxWidth: 420,
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 12,
+          background: 'var(--tp-surface)',
+          border: '1px solid var(--tp-border)',
+          borderRadius: 'var(--tp-radius-md)',
           padding: 32,
-          color: '#fff',
+          color: 'var(--tp-text)',
+          boxShadow: 'var(--tp-shadow-md)',
         }}
       >
         <div
@@ -69,8 +70,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.15em',
-            color: 'rgba(255,255,255,0.3)',
-            fontFamily: "'JetBrains Mono', monospace",
+            color: 'var(--tp-subtle)',
             marginBottom: 6,
           }}
         >
@@ -80,7 +80,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <p
           style={{
             fontSize: 13,
-            color: 'rgba(255,255,255,0.5)',
+            color: 'var(--tp-muted)',
             margin: 0,
             marginBottom: 24,
             lineHeight: 1.5,
@@ -93,10 +93,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <div
             style={{
               padding: '8px 12px',
-              borderRadius: 6,
-              background: 'rgba(232,146,124,0.12)',
-              border: '1px solid rgba(232,146,124,0.3)',
-              color: '#E8927C',
+              borderRadius: 'var(--tp-radius-sm)',
+              background: 'var(--tp-danger-muted)',
+              border: '1px solid rgba(198, 93, 74, 0.35)',
+              color: 'var(--tp-danger)',
               fontSize: 12,
               marginBottom: 16,
             }}
@@ -116,10 +116,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             style={{
               width: '100%',
               padding: '12px 16px',
-              background: '#fff',
-              color: '#000',
-              border: 'none',
-              borderRadius: 8,
+              background: 'var(--tp-surface)',
+              color: 'var(--tp-text)',
+              border: '1px solid var(--tp-border-strong)',
+              borderRadius: 'var(--tp-radius-sm)',
               fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',
@@ -127,6 +127,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 10,
+              boxShadow: 'var(--tp-shadow-sm)',
             }}
           >
             <span style={{ fontWeight: 800 }}>G</span>
@@ -140,15 +141,14 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             alignItems: 'center',
             gap: 12,
             margin: '20px 0 16px',
-            color: 'rgba(255,255,255,0.3)',
+            color: 'var(--tp-subtle)',
             fontSize: 11,
-            fontFamily: "'JetBrains Mono', monospace",
             letterSpacing: '0.1em',
           }}
         >
-          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          <div style={{ flex: 1, height: 1, background: 'var(--tp-border)' }} />
           OR EMAIL
-          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          <div style={{ flex: 1, height: 1, background: 'var(--tp-border)' }} />
         </div>
 
         <form
@@ -182,10 +182,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             placeholder="you@example.com"
             style={{
               padding: '10px 14px',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: 8,
-              color: '#fff',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
+              borderRadius: 'var(--tp-radius-sm)',
+              color: 'var(--tp-text)',
               fontSize: 14,
               outline: 'none',
             }}
@@ -194,10 +194,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             type="submit"
             style={{
               padding: '10px 16px',
-              background: '#7CB5E8',
-              color: '#000',
+              background: 'var(--tp-primary)',
+              color: 'var(--tp-on-primary)',
               border: 'none',
-              borderRadius: 8,
+              borderRadius: 'var(--tp-radius-sm)',
               fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',

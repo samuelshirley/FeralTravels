@@ -33,9 +33,13 @@ export interface PennyVehicle {
   vehicle_type: string | null;
   fuel_type: string | null;
   fuel_economy_kmpl: number | null;
+  /** Optional observed real-world economy. When set, `effective_range_km` uses this instead of spec. */
+  real_world_kmpl: number | null;
   fuel_tank_l: number | null;
-  /** Derived: economy × tank × 0.8 (flat 20% reserve). null if either input is missing. */
+  /** Derived: (real_world_kmpl ?? fuel_economy_kmpl) × tank × 0.8 (flat 20% reserve). */
   effective_range_km: number | null;
+  /** 'start_of_day' | 'when_low' | 'end_of_day' | null. */
+  fuel_timing_pref: string | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
@@ -107,13 +111,25 @@ export interface PennyLeg {
  */
 export const FUEL_BUFFER_FRACTION = 0.2;
 
-/** Pulled out so the UI and Penny share one definition. */
+/**
+ * Effective range = (real-world ?? spec) economy × tank × 0.8.
+ *
+ * Most overlanders' rigs miss the spec figure by 15–30 % once loaded for a
+ * trip. When we have an observed `realWorldKmpl` (the user logging "actually
+ * I get 9.5, not 12") we use it; otherwise we fall back to the spec figure.
+ * The 20 % reserve buffer applies in both cases — running on fumes is
+ * dangerous regardless of which economy you trust.
+ *
+ * Pulled out so the UI and Penny share one definition.
+ */
 export function computeEffectiveRangeKm(
   kmpl: number | null,
-  tankL: number | null
+  tankL: number | null,
+  realWorldKmpl: number | null = null
 ): number | null {
-  if (!kmpl || !tankL) return null;
-  return Math.max(0, Math.round(kmpl * tankL * (1 - FUEL_BUFFER_FRACTION)));
+  const effectiveKmpl = realWorldKmpl ?? kmpl;
+  if (!effectiveKmpl || !tankL) return null;
+  return Math.max(0, Math.round(effectiveKmpl * tankL * (1 - FUEL_BUFFER_FRACTION)));
 }
 
 /**
@@ -172,7 +188,13 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     fuel_type: v.fuel_type,
     fuel_economy_kmpl: v.fuel_economy_kmpl,
     fuel_tank_l: v.fuel_tank_l,
-    effective_range_km: computeEffectiveRangeKm(v.fuel_economy_kmpl, v.fuel_tank_l),
+    real_world_kmpl: v.real_world_kmpl,
+    effective_range_km: computeEffectiveRangeKm(
+      v.fuel_economy_kmpl,
+      v.fuel_tank_l,
+      v.real_world_kmpl
+    ),
+    fuel_timing_pref: v.fuel_timing_pref,
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,

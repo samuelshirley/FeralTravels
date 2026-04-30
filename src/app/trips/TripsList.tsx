@@ -82,15 +82,14 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
               alignItems: 'center',
               gap: 6,
               fontSize: 12,
-              background: editMode ? 'rgba(232,146,124,0.15)' : 'rgba(255,255,255,0.06)',
-              color: editMode ? '#E8927C' : 'rgba(255,255,255,0.7)',
+              background: editMode ? 'var(--tp-accent-warm-muted)' : 'var(--tp-surface-muted)',
+              color: editMode ? 'var(--tp-accent-warm)' : 'var(--tp-muted)',
               border: editMode
-                ? '1px solid rgba(232,146,124,0.45)'
-                : '1px solid rgba(255,255,255,0.12)',
+                ? '1px solid rgba(201, 123, 99, 0.45)'
+                : '1px solid var(--tp-border)',
               borderRadius: 999,
               padding: '6px 12px',
               cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: '0.05em',
               textTransform: 'uppercase',
             }}
@@ -108,12 +107,13 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
         <div
           style={{
             padding: 20,
-            border: '1px dashed rgba(255,255,255,0.12)',
+            border: '1px dashed var(--tp-border-strong)',
             borderRadius: 10,
-            color: 'rgba(255,255,255,0.5)',
+            color: 'var(--tp-muted)',
             fontSize: 14,
             marginBottom: 20,
             lineHeight: 1.5,
+            background: 'var(--tp-surface-muted)',
           }}
         >
           You don&apos;t have any trips yet. Create a new one above, or clone the demo trip below.

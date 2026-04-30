@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops } from '@/server/db/schema';
 import { getDirections } from '@/lib/directions';
@@ -49,6 +49,12 @@ const MAX_STOPS_PER_LEG = 8;
 // Minimum leg length to bother planning at all. Under this, the vehicle's
 // original tank + reserve almost certainly covers the drive.
 const MIN_LEG_KM_FOR_PLANNING = 100;
+// Carry-over allowance: if the cumulative km since last refuel + this
+// leg's distance is under range × this, we skip planning entirely.
+// Same semantics as the original 0.7 isolation threshold but applied to
+// the *cumulative* distance instead of the leg's distance, which is what
+// fixes the "three 500 km legs say no fuel needed" bug.
+const SKIP_PLANNING_THRESHOLD = 0.7;
 
 export interface FuelPlanResult {
   legId: number;
@@ -113,7 +119,8 @@ export async function planFuelStopsForLeg(
   }
   const range = computeEffectiveRangeKm(
     vehicle.fuel_economy_kmpl,
-    vehicle.fuel_tank_l
+    vehicle.fuel_tank_l,
+    vehicle.real_world_kmpl
   );
   if (!range) {
     await setFuelStatus(legId, 'failed');
@@ -155,17 +162,34 @@ export async function planFuelStopsForLeg(
     return { legId, status: 'failed', reason: 'Route geometry was unusable' };
   }
 
-  // Early exit for short legs — nothing useful to plan, and we avoid
-  // spending a Places call. We still mark `ready` + return 0 stops so
-  // the UI doesn't keep spinning.
-  if (totalKm < MIN_LEG_KM_FOR_PLANNING || totalKm < range * 0.7) {
+  // Cross-leg fuel state: walk backwards through preceding legs in the
+  // same trip to figure out how much range has already been consumed
+  // since the last refuel. Without this, three sequential 500 km legs
+  // each pass the "fits within range" check individually and the planner
+  // proposes zero stops — even though the tank empties twice across them.
+  const kmAlreadyBurned = await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder);
+  const availableRangeAtStart = Math.max(0, range - kmAlreadyBurned);
+
+  // Early exit when the *cumulative* distance still fits within range ×
+  // threshold. Short solo legs continue to skip via MIN_LEG_KM_FOR_PLANNING.
+  // The cumulative form is the bug fix; the per-leg form was only correct
+  // when each leg started with a full tank.
+  if (
+    totalKm < MIN_LEG_KM_FOR_PLANNING ||
+    kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD
+  ) {
     await clearAutoFuelStops(legId);
     await setFuelStatus(legId, 'ready');
     return { legId, status: 'ready', stopsCreated: 0 };
   }
 
   const stepKm = range * SAMPLE_FRACTION;
-  const samples = samplePolylineEveryKm(polyline, stepKm).slice(
+  // First sample is offset by whatever range we have left when entering
+  // this leg, capped to the normal step so a fresh-tank leg behaves like
+  // before. Subsequent samples space at `stepKm` because the tank is full
+  // again after each fuel stop.
+  const firstStepKm = Math.min(stepKm, availableRangeAtStart * SAMPLE_FRACTION);
+  const samples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
     0,
     MAX_STOPS_PER_LEG
   );
@@ -224,8 +248,10 @@ async function resolveVehicleForTrip(
   userId: string
 ): Promise<{
   fuel_economy_kmpl: number | null;
+  real_world_kmpl: number | null;
   fuel_tank_l: number | null;
   fuel_type: string | null;
+  fuel_timing_pref: string | null;
 } | null> {
   if (tripId != null) {
     // Look up the trip's vehicle_id without re-querying trips directly
@@ -243,6 +269,97 @@ async function resolveVehicleForTrip(
     }
   }
   return getDefaultVehicleForUser(userId).catch(() => null);
+}
+
+/**
+ * Walk back through preceding legs (by sort_order) summing distance until
+ * we hit a "refuel anchor": an overnight stop at the previous leg's end,
+ * a user-selected fuel stop, or the trip start. Returns the kilometers of
+ * range consumed since that anchor — i.e. how much of the tank is gone
+ * when this leg starts.
+ *
+ * Design notes:
+ *
+ * - **Overnight stops are treated as implicit refuels.** A driver who
+ *   stops for the night almost always tops up at a station near camp.
+ *   Encoding this assumption removes the need for users to manually
+ *   place a fuel stop at every overnight.
+ *
+ * - **Both `selected` and `option` fuel stops count; `dismissed` does
+ *   not.** Auto-suggested `option` rows are the planner's own plan for
+ *   prior legs and we want a self-consistent multi-leg plan. If we
+ *   ignored them, leg 2 would always assume leg 1's tank was untouched
+ *   and propose fuel-ASAP at km 0 — wrong. The planner is idempotent for
+ *   this leg only (we delete its prior auto stops before re-planning at
+ *   the start of `planFuelStopsForLeg`), so there's no chicken-and-egg.
+ *
+ * - **`legs.distance_km` is the source of truth, not the polyline.** We
+ *   don't want to OSRM-call every preceding leg here; that turns one
+ *   replan into N route requests. The leg row's stored distance is what
+ *   the user sees in the workspace and what every other math path uses.
+ *
+ * - Returns 0 for the first leg of a trip (no preceding legs).
+ */
+async function computeKmBurnedSinceLastRefuel(
+  tripId: number,
+  thisLegSortOrder: number
+): Promise<number> {
+  const previous = await db
+    .select({
+      id: legs.id,
+      sortOrder: legs.sortOrder,
+      distanceKm: legs.distanceKm,
+    })
+    .from(legs)
+    .where(and(eq(legs.tripId, tripId), lt(legs.sortOrder, thisLegSortOrder)))
+    .orderBy(desc(legs.sortOrder));
+
+  if (previous.length === 0) return 0;
+
+  let kmBurned = 0;
+  for (const prev of previous) {
+    // Pull this leg's stops once, in sortOrder, so we can find the last
+    // user-selected fuel stop (counting from leg end) for the partial-leg
+    // refuel case.
+    const stopRows = await db
+      .select({
+        stopType: stops.stopType,
+        status: stops.status,
+        distanceFromStartKm: stops.distanceFromStartKm,
+      })
+      .from(stops)
+      .where(eq(stops.legId, prev.id));
+
+    // Latest fuel stop in the leg = most recent refuel. We count both
+    // `selected` (user accepted) and `option` (planner-suggested), so the
+    // multi-leg plan stays self-consistent. Only `dismissed` is ignored.
+    const latestFuel = stopRows
+      .filter(
+        (s) =>
+          s.stopType === 'fuel' &&
+          s.status !== 'dismissed' &&
+          s.distanceFromStartKm != null
+      )
+      .sort((a, b) => (b.distanceFromStartKm ?? 0) - (a.distanceFromStartKm ?? 0))[0];
+
+    if (latestFuel?.distanceFromStartKm != null) {
+      const legDist = prev.distanceKm ?? 0;
+      kmBurned += Math.max(0, legDist - latestFuel.distanceFromStartKm);
+      return kmBurned;
+    }
+
+    // Overnight stop at end of leg = implicit refuel anchor. We do NOT
+    // add this leg's distance — the driver fueled at the camp town.
+    const hasOvernight = stopRows.some(
+      (s) => s.stopType === 'overnight' && s.status !== 'dismissed'
+    );
+    if (hasOvernight) return kmBurned;
+
+    // Otherwise: full leg distance carries forward into the tank state.
+    kmBurned += prev.distanceKm ?? 0;
+  }
+
+  return kmBurned;
 }
 
 async function clearAutoFuelStops(legId: number): Promise<void> {

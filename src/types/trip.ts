@@ -234,8 +234,8 @@ export interface TripWithLegs extends Trip {
 export type LegStatus = 'planning' | 'research' | 'confirmed' | 'anchored';
 
 export const STATUS_MAP: Record<LegStatus, { label: string; bg: string; border: string; text: string }> = {
-  anchored: { label: "DATE LOCKED", bg: "#2D1B0E", border: "#E8927C", text: "#E8927C" },
-  confirmed: { label: "CONFIRMED", bg: "#0E2D1B", border: "#7CE8A3", text: "#7CE8A3" },
-  planning: { label: "PLANNING", bg: "#1B1B2D", border: "#7CB5E8", text: "#7CB5E8" },
-  research: { label: "NEEDS RESEARCH", bg: "#2D2D0E", border: "#E8D57C", text: "#E8D57C" },
+  anchored: { label: "DATE LOCKED", bg: "rgba(198, 93, 74, 0.12)", border: "rgba(198, 93, 74, 0.4)", text: "#C65D4A" },
+  confirmed: { label: "CONFIRMED", bg: "rgba(74, 139, 122, 0.12)", border: "rgba(74, 139, 122, 0.38)", text: "#4A8B7A" },
+  planning: { label: "PLANNING", bg: "rgba(78, 122, 176, 0.12)", border: "rgba(78, 122, 176, 0.35)", text: "#4E7AB0" },
+  research: { label: "NEEDS RESEARCH", bg: "rgba(184, 149, 106, 0.14)", border: "rgba(184, 149, 106, 0.4)", text: "#B8956A" },
 };

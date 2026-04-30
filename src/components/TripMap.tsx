@@ -27,22 +27,23 @@ interface GpxFeatureCollection {
   }>;
 }
 
-const DARK_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0d0d1a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
-  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#3a3a5c' }] },
-  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#2a2a44' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#bcbdc7' }] },
+/** Warm light basemap aligned with app cream / tan palette */
+const LIGHT_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#ebe6dd' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#f6f2ea' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#5c5c5c' }] },
+  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
+  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#e0d8cc' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#333333' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a44' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#7c7c99' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3d3d66' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#4a4a7a' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1828' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3d6a8c' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#1f2438' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b6b' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#f0ebe3' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c5d4e0' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4e7ab0' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#e2ddd4' }] },
 ];
 
 function legKey(leg: LegWithDetails): string {
@@ -113,7 +114,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const map = new GMap(el, {
           center: { lat: 52, lng: 10 },
           zoom: 5,
-          styles: DARK_STYLE,
+          styles: LIGHT_MAP_STYLE,
           disableDefaultUI: false,
           zoomControl: true,
           streetViewControl: false,
@@ -122,7 +123,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
           mapTypeControlOptions: {
             mapTypeIds: ['roadmap', 'hybrid', 'terrain'],
           },
-          backgroundColor: '#1a1a2e',
+          backgroundColor: '#ede8e0',
         });
 
         mapRef.current = map;
@@ -227,7 +228,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     // Per-leg road-following polylines (or straight-line fallback while routes load)
     legs.forEach((leg) => {
       const isSelected = leg.id === selectedLegId;
-      const color = leg.color || '#7CB5E8';
+      const color = leg.color || '#4E7AB0';
 
       const cached = routeCacheRef.current.get(legKey(leg));
       if (cached?.length) {
@@ -277,7 +278,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     legs.forEach((leg) => {
       if (leg.start_lat == null || leg.start_lng == null) return;
       const isSelected = leg.id === selectedLegId;
-      const color = leg.color || '#7CB5E8';
+      const color = leg.color || '#4E7AB0';
       const size = isSelected ? 18 : 14;
 
       const marker = new google.maps.Marker({
@@ -298,14 +299,14 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const iw = layers.infoWindow;
         if (iw) {
           iw.setContent(`
-            <div style="min-width: 180px; font-family: 'Inter', sans-serif;">
-              <div style="font-size: 10px; color: #666; font-weight: 600; letter-spacing: 0.05em;">${leg.label ?? ''}</div>
-              <div style="font-size: 14px; font-weight: 600; margin: 4px 0;">${leg.title}</div>
-              <div style="font-size: 12px; color: #888;">${leg.dates || ''}</div>
-              <div style="font-size: 12px; color: #888; margin-top: 2px;">
+            <div style="min-width: 180px; font-family: 'Onest', 'Helvetica Neue', sans-serif;">
+              <div style="font-size: 10px; color: #5c5c5c; font-weight: 600; letter-spacing: 0.05em;">${leg.label ?? ''}</div>
+              <div style="font-size: 14px; font-weight: 600; margin: 4px 0; color: #333;">${leg.title}</div>
+              <div style="font-size: 12px; color: #6b6b6b;">${leg.dates || ''}</div>
+              <div style="font-size: 12px; color: #6b6b6b; margin-top: 2px;">
                 ${leg.distance_km ? leg.distance_km + ' km' : ''} ${leg.drive_time_minutes ? '• ' + Math.round(leg.drive_time_minutes / 60) + ' hrs' : ''}
               </div>
-              <div style="font-size: 11px; color: #aaa; margin-top: 4px;">${leg.overnight || ''}</div>
+              <div style="font-size: 11px; color: #8a8a8a; margin-top: 4px;">${leg.overnight || ''}</div>
             </div>
           `);
           iw.open({ anchor: marker, map });
@@ -324,7 +325,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         map,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
-          fillColor: lastLeg.color || '#E8C17C',
+          fillColor: lastLeg.color || '#B8956A',
           fillOpacity: 1,
           strokeColor: '#ffffff',
           strokeWeight: 3,
@@ -336,7 +337,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const iw = layers.infoWindow;
         if (iw) {
           iw.setContent(
-            '<div style="font-size: 16px; font-weight: 700;">Nordkapp</div><div style="font-size: 12px; color: #888;">71.17°N — The Goal</div>'
+            '<div style="font-size: 16px; font-weight: 700; color: #333;">Nordkapp</div><div style="font-size: 12px; color: #6b6b6b;">71.17°N — The Goal</div>'
           );
           iw.open({ anchor: layers.finalMarker!, map });
         }
@@ -362,9 +363,9 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         const iw = layers.infoWindow;
         if (iw) {
           iw.setContent(`
-            <div style="min-width: 150px; font-family: 'Inter', sans-serif;">
-              <div style="font-size: 13px; font-weight: 600;">${poi.name}</div>
-              <div style="font-size: 11px; color: #888;">${poi.source} ${poi.rating ? '• ★ ' + poi.rating : ''}</div>
+            <div style="min-width: 150px; font-family: 'Onest', 'Helvetica Neue', sans-serif;">
+              <div style="font-size: 13px; font-weight: 600; color: #333;">${poi.name}</div>
+              <div style="font-size: 11px; color: #6b6b6b;">${poi.source} ${poi.rating ? '• ★ ' + poi.rating : ''}</div>
               ${poi.url ? `<a href="${poi.url}" target="_blank" style="font-size: 11px;">View on source →</a>` : ''}
             </div>
           `);
@@ -479,7 +480,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#1a1a2e' }} />
+      <div ref={containerRef} style={{ width: '100%', height: '100%', background: 'var(--tp-map-chrome)' }} />
       {loadError && (
         <div
           style={{
@@ -488,8 +489,8 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(13,13,13,0.85)',
-            color: 'rgba(255,255,255,0.7)',
+            background: 'var(--tp-overlay)',
+            color: 'var(--tp-text)',
             padding: 24,
             textAlign: 'center',
             fontSize: 13,
@@ -510,8 +511,8 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#1a1a2e',
-            color: 'rgba(255,255,255,0.4)',
+            background: 'var(--tp-map-chrome)',
+            color: 'var(--tp-muted)',
             fontSize: 13,
             fontFamily: "'JetBrains Mono', monospace",
             pointerEvents: 'none',

@@ -27,12 +27,12 @@ interface StopsSectionProps {
 const TYPE_ORDER: StopType[] = ['fuel', 'water', 'food', 'overnight', 'rest', 'other'];
 
 const TYPE_META: Record<StopType, { label: string; color: string; icon: string }> = {
-  fuel: { label: 'Fuel', color: '#E8D57C', icon: '⛽' },
-  water: { label: 'Water', color: '#7CB5E8', icon: '💧' },
-  food: { label: 'Food', color: '#E8927C', icon: '🍴' },
-  overnight: { label: 'Overnight', color: '#B57CE8', icon: '🌙' },
-  rest: { label: 'Rest', color: '#7CE8A3', icon: '☕' },
-  other: { label: 'Other', color: 'rgba(255,255,255,0.5)', icon: '📍' },
+  fuel: { label: 'Fuel', color: 'var(--tp-gold)', icon: '⛽' },
+  water: { label: 'Water', color: 'var(--tp-primary)', icon: '💧' },
+  food: { label: 'Food', color: 'var(--tp-accent-warm)', icon: '🍴' },
+  overnight: { label: 'Overnight', color: '#8B7AB8', icon: '🌙' },
+  rest: { label: 'Rest', color: 'var(--tp-success)', icon: '☕' },
+  other: { label: 'Other', color: 'var(--tp-muted)', icon: '📍' },
 };
 
 const MONO = "'JetBrains Mono', monospace";
@@ -205,9 +205,9 @@ export default function StopsSection({
       style={{
         marginTop: 12,
         padding: '10px 14px',
-        background: 'rgba(255,255,255,0.03)',
+        background: 'var(--tp-surface-muted)',
         borderRadius: 6,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid var(--tp-border)',
       }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -216,7 +216,7 @@ export default function StopsSection({
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.08em',
-          color: 'rgba(255,255,255,0.35)',
+          color: 'var(--tp-subtle)',
           fontFamily: MONO,
           marginBottom: 8,
         }}
@@ -251,22 +251,22 @@ export default function StopsSection({
               padding: '6px 10px',
               background:
                 localFuelStatus === 'computing'
-                  ? 'rgba(232,213,124,0.1)'
+                  ? 'rgba(184, 149, 106, 0.12)'
                   : localFuelStatus === 'ready'
-                    ? 'rgba(124,232,163,0.1)'
-                    : 'rgba(255,255,255,0.04)',
+                    ? 'var(--tp-success-muted)'
+                    : 'var(--tp-surface-muted)',
               color:
                 localFuelStatus === 'ready'
-                  ? '#7CE8A3'
+                  ? 'var(--tp-success)'
                   : localFuelStatus === 'failed'
-                    ? '#E8927C'
-                    : 'rgba(255,255,255,0.75)',
+                    ? 'var(--tp-danger)'
+                    : 'var(--tp-text)',
               border: `1px solid ${
                 localFuelStatus === 'ready'
-                  ? 'rgba(124,232,163,0.25)'
+                  ? 'rgba(74, 139, 122, 0.35)'
                   : localFuelStatus === 'failed'
-                    ? 'rgba(232,146,124,0.3)'
-                    : 'rgba(255,255,255,0.12)'
+                    ? 'rgba(198, 93, 74, 0.35)'
+                    : 'var(--tp-border)'
               }`,
               borderRadius: 4,
               cursor: hasStartAndEnd && localFuelStatus !== 'computing' ? 'pointer' : 'default',
@@ -274,7 +274,7 @@ export default function StopsSection({
             }}
           >
             {localFuelStatus === 'computing' && (
-              <Spinner size={10} thickness={2} color="#E8D57C" />
+              <Spinner size={10} thickness={2} color="var(--tp-gold)" />
             )}
             <span>⛽</span>
             {localFuelStatus === 'computing'
@@ -289,7 +289,7 @@ export default function StopsSection({
             <span
               style={{
                 fontSize: 11,
-                color: '#E8927C',
+                color: 'var(--tp-danger)',
                 maxWidth: 360,
               }}
             >
@@ -327,10 +327,10 @@ export default function StopsSection({
             value={addingType}
             onChange={(e) => setAddingType(e.target.value as StopType)}
             style={{
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               borderRadius: 4,
-              color: '#fff',
+              color: 'var(--tp-text)',
               fontSize: 11,
               padding: '6px 8px',
               fontFamily: MONO,
@@ -355,10 +355,10 @@ export default function StopsSection({
               flex: '1 1 280px',
               minWidth: 200,
               padding: '6px 10px',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               borderRadius: 4,
-              color: '#fff',
+              color: 'var(--tp-text)',
               fontSize: 12,
               outline: 'none',
             }}
@@ -368,9 +368,9 @@ export default function StopsSection({
             disabled={pasteBusy || !pasteValue.trim()}
             style={{
               fontSize: 11,
-              background: pasteBusy ? 'rgba(124,181,232,0.1)' : '#7CB5E8',
+              background: pasteBusy ? 'var(--tp-surface-muted)' : 'var(--tp-primary)',
               border: 'none',
-              color: pasteBusy ? 'rgba(124,181,232,0.6)' : '#000',
+              color: pasteBusy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
               padding: '6px 14px',
               borderRadius: 4,
               cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
@@ -384,14 +384,14 @@ export default function StopsSection({
       )}
 
       {pasteError && (
-        <div style={{ fontSize: 11, color: '#E8927C', marginBottom: 10 }}>{pasteError}</div>
+        <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginBottom: 10 }}>{pasteError}</div>
       )}
 
       {groups.length === 0 && (
         <div
           style={{
             fontSize: 11,
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: MONO,
           }}
         >
@@ -422,7 +422,7 @@ export default function StopsSection({
               cursor: 'pointer',
               fontSize: 10,
               fontFamily: MONO,
-              color: 'rgba(255,255,255,0.3)',
+              color: 'var(--tp-muted)',
               letterSpacing: '0.08em',
             }}
           >
@@ -457,7 +457,7 @@ function ExternalChip({ href, label, hint }: { href: string; label: string; hint
         fontSize: 11,
         background: 'rgba(124,181,232,0.15)',
         border: '1px solid rgba(124,181,232,0.3)',
-        color: '#7CB5E8',
+        color: 'var(--tp-primary)',
         padding: '4px 10px',
         borderRadius: 4,
         cursor: 'pointer',
@@ -572,8 +572,8 @@ function StopRow({
         gap: 8,
         padding: '5px 0',
         fontSize: 12,
-        color: dismissed ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.8)',
-        borderTop: '1px solid rgba(255,255,255,0.05)',
+        color: dismissed ? 'var(--tp-subtle)' : 'var(--tp-text)',
+        borderTop: '1px solid var(--tp-border)',
         opacity: dismissed ? 0.6 : 1,
       }}
     >
@@ -585,8 +585,8 @@ function StopRow({
             width: 14,
             height: 14,
             borderRadius: '50%',
-            border: `1.5px solid ${selected ? '#7CE8A3' : 'rgba(255,255,255,0.3)'}`,
-            background: selected ? '#7CE8A3' : 'transparent',
+            border: `1.5px solid ${selected ? 'var(--tp-success)' : 'var(--tp-border-strong)'}`,
+            background: selected ? 'var(--tp-success)' : 'transparent',
             cursor: 'pointer',
             padding: 0,
             flexShrink: 0,
@@ -599,8 +599,8 @@ function StopRow({
             width: 14,
             height: 14,
             borderRadius: '50%',
-            border: `1.5px solid ${selected ? '#7CE8A3' : 'rgba(255,255,255,0.15)'}`,
-            background: selected ? '#7CE8A3' : 'transparent',
+            border: `1.5px solid ${selected ? 'var(--tp-success)' : 'var(--tp-border)'}`,
+            background: selected ? 'var(--tp-success)' : 'transparent',
             flexShrink: 0,
           }}
         />
@@ -610,7 +610,7 @@ function StopRow({
           <span
             style={{
               fontWeight: selected ? 600 : 400,
-              color: selected ? '#fff' : 'inherit',
+              color: selected ? 'var(--tp-text)' : 'inherit',
               textDecoration: dismissed ? 'line-through' : 'none',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -623,7 +623,7 @@ function StopRow({
             <span
               style={{
                 fontSize: 10,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--tp-muted)',
                 fontFamily: MONO,
               }}
             >
@@ -634,7 +634,7 @@ function StopRow({
             <span
               style={{
                 fontSize: 10,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--tp-muted)',
                 fontFamily: MONO,
               }}
             >
@@ -646,7 +646,7 @@ function StopRow({
           <div
             style={{
               fontSize: 10,
-              color: 'rgba(255,255,255,0.35)',
+              color: 'var(--tp-subtle)',
               fontFamily: MONO,
               marginTop: 2,
             }}
@@ -659,7 +659,7 @@ function StopRow({
                   href={stop.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: '#7CB5E8', textDecoration: 'none' }}
+                  style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
                 >
                   {stop.source || 'source'} →
                 </a>
@@ -675,8 +675,8 @@ function StopRow({
           style={{
             fontSize: 10,
             background: 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: copied ? '#7CE8A3' : 'rgba(255,255,255,0.55)',
+            border: '1px solid var(--tp-border)',
+            color: copied ? 'var(--tp-success)' : 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 6px',
             fontFamily: MONO,
@@ -713,7 +713,7 @@ function StopRow({
             fontSize: 10,
             background: 'transparent',
             border: 'none',
-            color: 'rgba(255,255,255,0.4)',
+            color: 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 4px',
             fontFamily: MONO,
@@ -730,7 +730,7 @@ function StopRow({
             fontSize: 14,
             background: 'transparent',
             border: 'none',
-            color: 'rgba(255,255,255,0.4)',
+            color: 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 6px',
           }}

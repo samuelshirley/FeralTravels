@@ -76,7 +76,7 @@ export default function TripVehicleChip({ tripId, initialVehicleId, readonly = f
         style={{
           ...chipStyle,
           cursor: 'pointer',
-          background: open ? 'rgba(124,181,232,0.18)' : chipStyle.background,
+          background: open ? 'var(--tp-primary-muted)' : chipStyle.background,
         }}
         title="Change trip vehicle"
         aria-label="Change trip vehicle"
@@ -96,21 +96,21 @@ export default function TripVehicleChip({ tripId, initialVehicleId, readonly = f
             right: 0,
             top: 'calc(100% + 6px)',
             minWidth: 200,
-            background: '#1A1A1A',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
             borderRadius: 8,
-            boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+            boxShadow: 'var(--tp-shadow-md)',
             overflow: 'hidden',
             zIndex: 2000,
           }}
         >
           {vehicles == null && (
-            <div style={{ padding: '10px 14px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--tp-muted)' }}>
               Loading…
             </div>
           )}
           {vehicles?.length === 0 && (
-            <div style={{ padding: '10px 14px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--tp-muted)' }}>
               No vehicles. Add one in Settings.
             </div>
           )}
@@ -123,17 +123,17 @@ export default function TripVehicleChip({ tripId, initialVehicleId, readonly = f
             >
               <span style={{ flex: 1, textAlign: 'left' }}>{v.name}</span>
               {v.is_default && (
-                <span style={{ fontSize: 9, color: '#7CE8A3', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
+                <span style={{ fontSize: 9, color: 'var(--tp-success)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
                   DEFAULT
                 </span>
               )}
               {v.id === vehicleId && (
-                <span style={{ color: '#7CB5E8', marginLeft: 6 }}>✓</span>
+                <span style={{ color: 'var(--tp-primary)', marginLeft: 6 }}>✓</span>
               )}
             </button>
           ))}
           {vehicleId != null && (
-            <button onClick={() => pick(null)} disabled={busy} style={{ ...menuItemStyle(false), color: 'rgba(255,255,255,0.45)', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <button onClick={() => pick(null)} disabled={busy} style={{ ...menuItemStyle(false), color: 'var(--tp-muted)', borderTop: '1px solid var(--tp-border)' }}>
               Clear
             </button>
           )}
@@ -149,10 +149,10 @@ const chipStyle: React.CSSProperties = {
   gap: 6,
   fontSize: 12,
   padding: '6px 10px',
-  background: 'rgba(255,255,255,0.06)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--tp-surface-muted)',
+  border: '1px solid var(--tp-border)',
   borderRadius: 14,
-  color: 'rgba(255,255,255,0.85)',
+  color: 'var(--tp-text)',
   fontFamily: "'JetBrains Mono', monospace",
   letterSpacing: '0.02em',
   whiteSpace: 'nowrap',
@@ -163,11 +163,11 @@ function menuItemStyle(active: boolean): React.CSSProperties {
     display: 'flex',
     alignItems: 'center',
     width: '100%',
-    background: active ? 'rgba(124,181,232,0.1)' : 'transparent',
+    background: active ? 'var(--tp-primary-muted)' : 'transparent',
     border: 'none',
     padding: '10px 14px',
     fontSize: 13,
-    color: '#fff',
+    color: 'var(--tp-text)',
     cursor: 'pointer',
     fontFamily: 'inherit',
   };

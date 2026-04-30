@@ -166,14 +166,14 @@ export default function PullToRefresh({
               marginTop: 12,
               padding: '6px 14px',
               borderRadius: 999,
-              background: 'rgba(13,13,13,0.85)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'var(--tp-surface)',
+              border: '1px solid var(--tp-border)',
               backdropFilter: 'blur(8px)',
               display: 'flex',
               alignItems: 'center',
               gap: 8,
               fontSize: 11,
-              color: 'rgba(255,255,255,0.7)',
+              color: 'var(--tp-muted)',
               fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
@@ -181,7 +181,7 @@ export default function PullToRefresh({
           >
             {refreshing ? (
               <>
-                <Spinner size={12} thickness={2} color="#7CB5E8" />
+                <Spinner size={12} thickness={2} color="var(--tp-primary)" />
                 Refreshing
               </>
             ) : progress >= 1 ? (

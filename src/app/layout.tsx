@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 // The Next.js `viewport` export doesn't expose interactive-widget, so we
 // emit the meta tag manually and limit this export to themeColor.
 export const viewport: Viewport = {
-  themeColor: '#7CB5E8',
+  themeColor: '#4E7AB0',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           content="width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=resizes-content"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Onest:wght@400;500;600;700;800&display=swap"
           rel="stylesheet"
         />
         <link
@@ -46,7 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="Feral" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         {/* iOS launch (splash) screens. iOS only honours one whose media query
             exactly matches the device, so we ship one per common iPhone/iPad
             class. Anything not listed falls back to a blank screen with the
@@ -63,14 +63,43 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-startup-image" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/apple-splash-2048x2732.jpg" />
         <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/apple-splash-1668x2388.jpg" />
         <style>{`
+          :root {
+            --tp-bg: #F6F2EA;
+            --tp-surface: #FFFFFF;
+            --tp-surface-muted: #FBF8F3;
+            --tp-border: #E6DFD4;
+            --tp-border-strong: #D4C9BA;
+            --tp-text: #333333;
+            --tp-muted: #5C5C5C;
+            --tp-subtle: rgba(51, 51, 51, 0.45);
+            --tp-primary: #4E7AB0;
+            --tp-primary-hover: #3D6799;
+            --tp-primary-muted: rgba(78, 122, 176, 0.14);
+            --tp-on-primary: #FFFFFF;
+            --tp-success: #4A8B7A;
+            --tp-success-muted: rgba(74, 139, 122, 0.14);
+            --tp-danger: #C65D4A;
+            --tp-danger-muted: rgba(198, 93, 74, 0.12);
+            --tp-accent-warm: #C97B63;
+            --tp-accent-warm-muted: rgba(201, 123, 99, 0.14);
+            --tp-gold: #B8956A;
+            --tp-overlay: rgba(51, 51, 51, 0.4);
+            --tp-shadow-sm: 0 1px 2px rgba(51, 51, 51, 0.06);
+            --tp-shadow-md: 0 4px 12px rgba(51, 51, 51, 0.08);
+            --tp-radius-sm: 8px;
+            --tp-radius-md: 12px;
+            --tp-radius-lg: 16px;
+            --tp-map-chrome: #EDE8E0;
+            --tp-focus-ring: 0 0 0 2px var(--tp-surface), 0 0 0 4px var(--tp-primary-muted);
+          }
           /* Resizable pane drag handles */
           .trip-resize-handle:hover,
           .trip-resize-handle[data-resize-handle-active] {
-            background: rgba(124, 181, 232, 0.35) !important;
+            background: var(--tp-primary-muted) !important;
           }
           .trip-resize-handle:hover > div,
           .trip-resize-handle[data-resize-handle-active] > div {
-            background: #7CB5E8 !important;
+            background: var(--tp-primary) !important;
             height: 48px !important;
           }
           html, body { overflow-x: hidden; }
@@ -104,13 +133,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             font-size: 28px;
             font-weight: 700;
             margin: 0;
+            color: var(--tp-text);
           }
           .page-eyebrow {
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.15em;
-            color: rgba(255,255,255,0.3);
-            font-family: 'JetBrains Mono', monospace;
+            color: var(--tp-subtle);
+            font-family: 'Onest', 'Helvetica Neue', sans-serif;
             margin-bottom: 4px;
             text-transform: uppercase;
           }
@@ -143,9 +173,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         style={{
           margin: 0,
           padding: 0,
-          fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
-          background: '#0D0D0D',
-          color: '#fff',
+          fontFamily: "'Onest', 'Helvetica Neue', sans-serif",
+          background: 'var(--tp-bg)',
+          color: 'var(--tp-text)',
           minHeight: '100vh',
           overscrollBehavior: 'none',
         }}

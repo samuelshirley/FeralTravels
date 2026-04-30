@@ -87,6 +87,11 @@ export function haversineKm(a: LatLng, b: LatLng): number {
  * we ask for a sample every ~500 km (range × some fraction) and those
  * samples become the search centers for Google Places.
  *
+ * `firstTargetKm` lets the caller offset the first sample (used by the
+ * fuel planner to place an early stop when entering a leg with a
+ * partially-empty tank from previous legs). Subsequent samples space at
+ * `targetKm` because the tank is assumed full again after the first stop.
+ *
  * Linear interpolation between the two straddling vertices so we don't
  * artificially round up to the next polyline segment (which for long
  * highway stretches can skip a whole town).
@@ -101,13 +106,18 @@ export interface SampledPoint {
 
 export function samplePolylineEveryKm(
   polyline: LatLng[],
-  targetKm: number
+  targetKm: number,
+  firstTargetKm: number = targetKm
 ): SampledPoint[] {
   if (polyline.length < 2 || targetKm <= 0) return [];
 
   const out: SampledPoint[] = [];
   let cumulative = 0;
-  let nextTarget = targetKm;
+  // Clamp firstTargetKm: caller might pass <=0 if the vehicle entered the
+  // leg already over-range. In that case, sample at the very start (km 0)
+  // and then space normally — the alternative (negative offset) breaks the
+  // while-loop math below.
+  let nextTarget = firstTargetKm > 0 ? firstTargetKm : 0;
 
   for (let i = 1; i < polyline.length; i++) {
     const a = polyline[i - 1];

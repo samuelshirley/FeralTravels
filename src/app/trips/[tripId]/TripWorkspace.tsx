@@ -36,7 +36,7 @@ function ResizeHandle() {
     <PanelResizeHandle
       style={{
         width: 6,
-        background: 'rgba(255,255,255,0.06)',
+        background: 'var(--tp-border)',
         position: 'relative',
         cursor: 'col-resize',
         flexShrink: 0,
@@ -53,7 +53,7 @@ function ResizeHandle() {
           width: 2,
           height: 28,
           borderRadius: 2,
-          background: 'rgba(255,255,255,0.25)',
+          background: 'var(--tp-border-strong)',
           pointerEvents: 'none',
         }}
       />
@@ -159,15 +159,14 @@ export default function TripWorkspace({
             gap: 16,
           }}
         >
-          <Spinner size={36} color="#7CE8A3" thickness={3} />
+          <Spinner size={36} color="var(--tp-success)" thickness={3} />
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'baseline',
               gap: 2,
-              color: 'rgba(255,255,255,0.55)',
+              color: 'var(--tp-muted)',
               fontSize: 13,
-              fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
             }}
@@ -192,7 +191,7 @@ export default function TripWorkspace({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'rgba(255,255,255,0.5)',
+            color: 'var(--tp-muted)',
           }}
         >
           Trip not found.
@@ -307,7 +306,7 @@ export default function TripWorkspace({
               bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               overflowY: 'auto',
               padding: '16px 12px',
-              background: 'rgba(13,13,13,0.6)',
+              background: 'var(--tp-bg)',
               display: mobileTab === 'list' ? 'block' : 'none',
               WebkitOverflowScrolling: 'touch',
             }}
@@ -335,7 +334,7 @@ export default function TripWorkspace({
               bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'chat' ? 'flex' : 'none',
               flexDirection: 'column',
-              background: '#0D0D0D',
+              background: 'var(--tp-surface-muted)',
               minHeight: 0,
             }}
           >
@@ -384,7 +383,7 @@ export default function TripWorkspace({
                   height: '100%',
                   overflowY: 'auto',
                   padding: '20px 16px',
-                  background: 'rgba(13,13,13,0.6)',
+                  background: 'var(--tp-bg)',
                 }}
               >
                 {itineraryPane}
@@ -436,7 +435,7 @@ export default function TripWorkspace({
                 height: '100%',
                 overflowY: 'auto',
                 padding: '20px 16px',
-                background: 'rgba(13,13,13,0.6)',
+                background: 'var(--tp-bg)',
               }}
             >
               {itineraryPane}
@@ -450,7 +449,7 @@ export default function TripWorkspace({
                 <div
                   style={{
                     height: '100%',
-                    background: '#0D0D0D',
+                    background: 'var(--tp-surface-muted)',
                     display: 'flex',
                     flexDirection: 'column',
                   }}

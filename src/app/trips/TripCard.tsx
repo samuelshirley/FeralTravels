@@ -79,16 +79,17 @@ export default function TripCard({
           style={{
             display: 'block',
             padding: 16,
-            background: isTemplate ? 'rgba(124,181,232,0.05)' : 'rgba(255,255,255,0.04)',
+            background: isTemplate ? 'var(--tp-primary-muted)' : 'var(--tp-surface)',
             border: isTemplate
-              ? '1px solid rgba(124,181,232,0.2)'
+              ? '1px solid rgba(78, 122, 176, 0.28)'
               : editMode
-                ? '1px solid rgba(232,146,124,0.35)'
-                : '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 10,
-            color: '#fff',
+                ? '1px solid rgba(201, 123, 99, 0.45)'
+                : '1px solid var(--tp-border)',
+            borderRadius: 'var(--tp-radius-md)',
+            color: 'var(--tp-text)',
             textDecoration: 'none',
             transition: 'background 120ms, border-color 120ms',
+            boxShadow: 'var(--tp-shadow-sm)',
           }}
         >
           <div style={{ fontSize: 16, fontWeight: 600, paddingRight: editMode ? 40 : 28 }}>
@@ -97,7 +98,7 @@ export default function TripCard({
           <div
             style={{
               fontSize: 12,
-              color: 'rgba(255,255,255,0.45)',
+              color: 'var(--tp-muted)',
               fontFamily: "'JetBrains Mono', monospace",
               marginTop: 4,
             }}
@@ -107,7 +108,7 @@ export default function TripCard({
           <div
             style={{
               fontSize: 11,
-              color: 'rgba(255,255,255,0.35)',
+              color: 'var(--tp-subtle)',
               marginTop: 8,
               fontFamily: "'JetBrains Mono', monospace",
             }}
@@ -123,12 +124,13 @@ export default function TripCard({
               <span
                 style={{
                   fontSize: 12,
-                  color: '#7CB5E8',
+                  color: 'var(--tp-primary)',
                   textDecoration: 'none',
                   padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid rgba(124,181,232,0.3)',
+                  borderRadius: 'var(--tp-radius-sm)',
+                  border: '1px solid var(--tp-primary-muted)',
                   whiteSpace: 'nowrap',
+                  background: 'var(--tp-surface-muted)',
                 }}
               >
                 View →
@@ -143,11 +145,11 @@ export default function TripCard({
                 disabled={cloneBusy}
                 style={{
                   fontSize: 12,
-                  background: 'rgba(124,232,163,0.15)',
-                  border: '1px solid rgba(124,232,163,0.3)',
-                  color: '#7CE8A3',
+                  background: 'var(--tp-success-muted)',
+                  border: '1px solid rgba(74, 139, 122, 0.35)',
+                  color: 'var(--tp-success)',
                   padding: '5px 10px',
-                  borderRadius: 5,
+                  borderRadius: 'var(--tp-radius-sm)',
                   cursor: cloneBusy ? 'default' : 'pointer',
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -155,7 +157,7 @@ export default function TripCard({
                   opacity: cloneBusy ? 0.7 : 1,
                 }}
               >
-                {cloneBusy && <Spinner size={11} color="#7CE8A3" thickness={2} />}
+                {cloneBusy && <Spinner size={11} color="var(--tp-success)" thickness={2} />}
                 {cloneBusy ? 'Cloning…' : 'Clone to my trips'}
               </button>
             </div>
@@ -178,9 +180,9 @@ export default function TripCard({
               width: 28,
               height: 28,
               borderRadius: 14,
-              background: 'rgba(0,0,0,0.65)',
-              border: '1px solid rgba(232,146,124,0.55)',
-              color: '#E8927C',
+              background: 'var(--tp-surface)',
+              border: '1px solid rgba(198, 93, 74, 0.5)',
+              color: 'var(--tp-danger)',
               fontSize: 18,
               lineHeight: 1,
               cursor: 'pointer',
@@ -188,7 +190,7 @@ export default function TripCard({
               alignItems: 'center',
               justifyContent: 'center',
               backdropFilter: 'blur(6px)',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              boxShadow: 'var(--tp-shadow-md)',
             }}
           >
             ×
@@ -201,7 +203,7 @@ export default function TripCard({
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.6)',
+            background: 'var(--tp-overlay)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -212,22 +214,23 @@ export default function TripCard({
         >
           <div
             style={{
-              background: '#1a1a1a',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: 12,
+              background: 'var(--tp-surface)',
+              border: '1px solid var(--tp-border)',
+              borderRadius: 'var(--tp-radius-md)',
               padding: 24,
               maxWidth: 320,
               width: '100%',
+              boxShadow: 'var(--tp-shadow-md)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#fff', marginBottom: 8 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--tp-text)', marginBottom: 8 }}>
               Delete trip?
             </div>
             <div
               style={{
                 fontSize: 14,
-                color: 'rgba(255,255,255,0.5)',
+                color: 'var(--tp-muted)',
                 marginBottom: 24,
                 lineHeight: 1.5,
               }}
@@ -242,10 +245,10 @@ export default function TripCard({
                 style={{
                   fontSize: 13,
                   padding: '8px 16px',
-                  borderRadius: 8,
-                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: 'var(--tp-radius-sm)',
+                  border: '1px solid var(--tp-border)',
                   background: 'transparent',
-                  color: 'rgba(255,255,255,0.6)',
+                  color: 'var(--tp-muted)',
                   cursor: 'pointer',
                 }}
               >
@@ -258,10 +261,10 @@ export default function TripCard({
                 style={{
                   fontSize: 13,
                   padding: '8px 16px',
-                  borderRadius: 8,
+                  borderRadius: 'var(--tp-radius-sm)',
                   border: 'none',
-                  background: '#E8927C',
-                  color: '#0D0D0D',
+                  background: 'var(--tp-danger)',
+                  color: 'var(--tp-on-primary)',
                   fontWeight: 600,
                   cursor: busy ? 'default' : 'pointer',
                   display: 'inline-flex',
@@ -270,7 +273,7 @@ export default function TripCard({
                   opacity: busy ? 0.7 : 1,
                 }}
               >
-                {busy && <Spinner size={11} color="#0D0D0D" thickness={2} />}
+                {busy && <Spinner size={11} color="var(--tp-on-primary)" thickness={2} />}
                 {busy ? 'Deleting…' : 'Delete'}
               </button>
             </div>

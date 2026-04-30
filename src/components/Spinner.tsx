@@ -15,7 +15,7 @@ export default function Spinner({ size = 14, color = 'currentColor', thickness =
         display: 'inline-block',
         width: size,
         height: size,
-        border: `${thickness}px solid rgba(255,255,255,0.15)`,
+        border: `${thickness}px solid var(--tp-border)`,
         borderTopColor: color,
         borderRadius: '50%',
         animation: 'tp-spin 0.8s linear infinite',
@@ -45,7 +45,7 @@ export function LoadingOverlay({ message = 'Loading…' }: OverlayProps) {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(13,13,13,0.75)',
+        background: 'var(--tp-overlay)',
         backdropFilter: 'blur(4px)',
         zIndex: 9999,
         display: 'flex',
@@ -53,16 +53,15 @@ export function LoadingOverlay({ message = 'Loading…' }: OverlayProps) {
         alignItems: 'center',
         justifyContent: 'center',
         gap: 16,
-        color: '#fff',
+        color: 'var(--tp-text)',
       }}
     >
-      <Spinner size={32} color="#7CE8A3" thickness={3} />
+      <Spinner size={32} color="var(--tp-success)" thickness={3} />
       <div
         style={{
           fontSize: 13,
-          fontFamily: "'JetBrains Mono', monospace",
           letterSpacing: '0.1em',
-          color: 'rgba(255,255,255,0.6)',
+          color: 'var(--tp-muted)',
           textTransform: 'uppercase',
         }}
       >

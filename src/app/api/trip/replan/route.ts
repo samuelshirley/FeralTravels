@@ -457,7 +457,8 @@ async function planFuelStopsForLeg(
 
   const effectiveRangeKm = computeEffectiveRangeKm(
     vehicle.fuel_economy_kmpl,
-    vehicle.fuel_tank_l
+    vehicle.fuel_tank_l,
+    vehicle.real_world_kmpl
   );
   if (effectiveRangeKm == null || effectiveRangeKm <= 0) return 0;
   if (leg.distance_km <= effectiveRangeKm) return 0;

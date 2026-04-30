@@ -20,11 +20,11 @@ interface Props {
 
 const thStyle: React.CSSProperties = {
   padding: '8px 10px',
-  borderBottom: '1px solid rgba(255,255,255,0.12)',
+  borderBottom: '1px solid var(--tp-border-strong)',
   fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.1em',
-  color: 'rgba(255,255,255,0.45)',
+  color: 'var(--tp-muted)',
   fontFamily: "'JetBrains Mono', monospace",
   textAlign: 'left',
   textTransform: 'uppercase',
@@ -32,9 +32,9 @@ const thStyle: React.CSSProperties = {
 
 const tdStyle: React.CSSProperties = {
   padding: '8px 10px',
-  borderBottom: '1px solid rgba(255,255,255,0.05)',
+  borderBottom: '1px solid var(--tp-border)',
   fontSize: 12,
-  color: 'rgba(255,255,255,0.85)',
+  color: 'var(--tp-text)',
   verticalAlign: 'top',
 };
 
@@ -54,7 +54,7 @@ export default function AdminErrorLog({ rows }: Props) {
       <div
         style={{
           fontSize: 12,
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--tp-muted)',
           padding: '12px 4px',
         }}
       >
@@ -87,7 +87,7 @@ export default function AdminErrorLog({ rows }: Props) {
                 style={{
                   ...tdStyle,
                   fontFamily: "'JetBrains Mono', monospace",
-                  color: 'rgba(255,255,255,0.5)',
+                  color: 'var(--tp-muted)',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -99,7 +99,7 @@ export default function AdminErrorLog({ rows }: Props) {
                   <div
                     style={{
                       fontSize: 10,
-                      color: 'rgba(255,255,255,0.4)',
+                      color: 'var(--tp-muted)',
                       fontFamily: "'JetBrains Mono', monospace",
                     }}
                   >
@@ -111,7 +111,7 @@ export default function AdminErrorLog({ rows }: Props) {
                 style={{
                   ...tdStyle,
                   fontFamily: "'JetBrains Mono', monospace",
-                  color: '#E8D57C',
+                  color: 'var(--tp-gold)',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -120,7 +120,7 @@ export default function AdminErrorLog({ rows }: Props) {
               <td
                 style={{
                   ...tdStyle,
-                  color: '#E87C7C',
+                  color: 'var(--tp-danger)',
                   maxWidth: 320,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -153,7 +153,7 @@ function ErrorDetailModal({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.6)',
+        background: 'var(--tp-overlay)',
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
@@ -167,8 +167,8 @@ function ErrorDetailModal({
           width: '100%',
           maxWidth: 640,
           maxHeight: '85vh',
-          background: '#0F0F0F',
-          border: '1px solid rgba(255,255,255,0.12)',
+          background: 'var(--tp-surface)',
+          border: '1px solid var(--tp-border)',
           borderRadius: 10,
           overflow: 'auto',
           padding: '20px 22px',
@@ -189,14 +189,14 @@ function ErrorDetailModal({
                 fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.12em',
-                color: 'rgba(255,255,255,0.45)',
+                color: 'var(--tp-subtle)',
                 fontFamily: "'JetBrains Mono', monospace",
                 textTransform: 'uppercase',
               }}
             >
               Error {row.id}
             </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '4px 0 0' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '4px 0 0', color: 'var(--tp-text)' }}>
               {row.provider}
             </h2>
           </div>
@@ -204,8 +204,8 @@ function ErrorDetailModal({
             onClick={onClose}
             style={{
               background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.15)',
-              color: 'rgba(255,255,255,0.7)',
+              border: '1px solid var(--tp-border)',
+              color: 'var(--tp-muted)',
               borderRadius: 4,
               padding: '4px 10px',
               fontSize: 12,
@@ -222,7 +222,7 @@ function ErrorDetailModal({
         <DetailRow label="User">
           {row.userName || '—'}
           {row.userEmail && (
-            <span style={{ color: 'rgba(255,255,255,0.5)', marginLeft: 6 }}>
+            <span style={{ color: 'var(--tp-muted)', marginLeft: 6 }}>
               {'<'}
               {row.userEmail}
               {'>'}
@@ -232,7 +232,7 @@ function ErrorDetailModal({
             <div
               style={{
                 fontSize: 10,
-                color: 'rgba(255,255,255,0.35)',
+                color: 'var(--tp-subtle)',
                 fontFamily: "'JetBrains Mono', monospace",
                 marginTop: 2,
               }}
@@ -245,12 +245,12 @@ function ErrorDetailModal({
           {row.tripId ? (
             <Link
               href={`/trips/${row.tripId}`}
-              style={{ color: '#7CB5E8', textDecoration: 'none' }}
+              style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
             >
               #{row.tripId}
             </Link>
           ) : (
-            <span style={{ color: 'rgba(255,255,255,0.4)' }}>(no trip context)</span>
+            <span style={{ color: 'var(--tp-muted)' }}>(no trip context)</span>
           )}
         </DetailRow>
         <DetailRow label="Error message" monospace>
@@ -277,7 +277,7 @@ function DetailRow({
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.1em',
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--tp-muted)',
           fontFamily: "'JetBrains Mono', monospace",
           textTransform: 'uppercase',
           marginBottom: 4,
@@ -288,11 +288,11 @@ function DetailRow({
       <div
         style={{
           fontSize: 13,
-          color: 'rgba(255,255,255,0.85)',
+          color: 'var(--tp-text)',
           fontFamily: monospace ? "'JetBrains Mono', monospace" : 'inherit',
           wordBreak: 'break-word',
-          background: monospace ? 'rgba(232,124,124,0.06)' : 'transparent',
-          border: monospace ? '1px solid rgba(232,124,124,0.2)' : 'none',
+          background: 'var(--tp-danger-muted)',
+          border: monospace ? '1px solid rgba(198, 93, 74, 0.3)' : 'none',
           padding: monospace ? '10px 12px' : 0,
           borderRadius: monospace ? 4 : 0,
           lineHeight: 1.5,

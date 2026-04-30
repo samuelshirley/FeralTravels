@@ -32,6 +32,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      // Always show the Google account picker, even for users who only have
+      // one account signed in. Without this, Google skips the picker on
+      // repeat sign-ins which makes the app feel like it picked an account
+      // for the user instead of letting them choose. People often have
+      // multiple Google accounts (work + personal); forcing the picker is
+      // worth the one extra click.
+      authorization: { params: { prompt: 'select_account' } },
     }),
     Resend({
       apiKey: process.env.AUTH_RESEND_KEY,

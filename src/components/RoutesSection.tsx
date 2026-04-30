@@ -26,15 +26,15 @@ function formatDriveTime(minutes: number | null | undefined): string | null {
 }
 
 const SURFACE_COLORS: Record<string, { bg: string; fg: string }> = {
-  paved: { bg: 'rgba(124,181,232,0.15)', fg: '#7CB5E8' },
-  gravel: { bg: 'rgba(232,213,124,0.15)', fg: '#E8D57C' },
-  mix: { bg: 'rgba(232,146,124,0.15)', fg: '#E8927C' },
+  paved: { bg: 'var(--tp-primary-muted)', fg: 'var(--tp-primary)' },
+  gravel: { bg: 'rgba(184, 149, 106, 0.14)', fg: 'var(--tp-gold)' },
+  mix: { bg: 'var(--tp-accent-warm-muted)', fg: 'var(--tp-accent-warm)' },
 };
 
 function surfaceChip(surface: string | null) {
   if (!surface) return null;
   const key = surface.toLowerCase();
-  const c = SURFACE_COLORS[key] || { bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.5)' };
+  const c = SURFACE_COLORS[key] || { bg: 'var(--tp-surface-muted)', fg: 'var(--tp-muted)' };
   return (
     <span
       style={{
@@ -125,9 +125,9 @@ export default function RoutesSection({
       style={{
         marginTop: 12,
         padding: '10px 14px',
-        background: 'rgba(255,255,255,0.03)',
+        background: 'var(--tp-surface-muted)',
         borderRadius: 6,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid var(--tp-border)',
       }}
     >
       <div
@@ -143,7 +143,7 @@ export default function RoutesSection({
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.08em',
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
@@ -157,9 +157,9 @@ export default function RoutesSection({
             }}
             style={{
               fontSize: 11,
-              background: 'rgba(124,181,232,0.15)',
-              border: '1px solid rgba(124,181,232,0.3)',
-              color: '#7CB5E8',
+              background: 'var(--tp-primary-muted)',
+              border: '1px solid rgba(78, 122, 176, 0.35)',
+              color: 'var(--tp-primary)',
               padding: '3px 10px',
               borderRadius: 4,
               cursor: 'pointer',
@@ -185,10 +185,10 @@ export default function RoutesSection({
             style={{
               flex: 1,
               padding: '6px 10px',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               borderRadius: 4,
-              color: '#fff',
+              color: 'var(--tp-text)',
               fontSize: 12,
               outline: 'none',
             }}
@@ -197,9 +197,9 @@ export default function RoutesSection({
             onClick={handleAddRoute}
             style={{
               fontSize: 11,
-              background: '#7CB5E8',
+              background: 'var(--tp-primary)',
               border: 'none',
-              color: '#000',
+              color: 'var(--tp-on-primary)',
               padding: '6px 12px',
               borderRadius: 4,
               cursor: 'pointer',
@@ -215,7 +215,7 @@ export default function RoutesSection({
         <div
           style={{
             fontSize: 11,
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
@@ -275,11 +275,11 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
       }
       style={{
         padding: '8px 10px',
-        background: isSelected ? 'rgba(124,232,163,0.08)' : 'rgba(0,0,0,0.2)',
+        background: isSelected ? 'var(--tp-success-muted)' : 'var(--tp-surface)',
         borderRadius: 5,
         border: isSelected
-          ? '1px solid rgba(124,232,163,0.45)'
-          : '1px solid rgba(255,255,255,0.05)',
+          ? '1px solid rgba(74, 139, 122, 0.45)'
+          : '1px solid var(--tp-border)',
         marginTop: 6,
         cursor: clickable ? 'pointer' : 'default',
       }}
@@ -300,9 +300,9 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               height: 16,
               borderRadius: 999,
               border: isSelected
-                ? '4px solid #7CE8A3'
-                : '1px solid rgba(255,255,255,0.4)',
-              background: isSelected ? '#7CE8A3' : 'transparent',
+                ? '4px solid var(--tp-success)'
+                : '1px solid var(--tp-border-strong)',
+              background: isSelected ? 'var(--tp-success)' : 'transparent',
               display: 'inline-block',
               flexShrink: 0,
             }}
@@ -312,7 +312,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               <span
                 style={{
                   fontSize: 13,
-                  color: isSelected ? '#7CE8A3' : 'rgba(255,255,255,0.85)',
+                  color: isSelected ? 'var(--tp-success)' : 'var(--tp-text)',
                   fontWeight: isSelected ? 600 : 500,
                 }}
               >
@@ -324,8 +324,8 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                     fontSize: 10,
                     fontWeight: 700,
                     letterSpacing: '0.06em',
-                    background: 'rgba(124,181,232,0.15)',
-                    color: '#7CB5E8',
+                    background: 'var(--tp-primary-muted)',
+                    color: 'var(--tp-primary)',
                     padding: '2px 6px',
                     borderRadius: 3,
                     fontFamily: "'JetBrains Mono', monospace",
@@ -342,8 +342,8 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                     fontWeight: 700,
                     letterSpacing: '0.06em',
                     textTransform: 'uppercase',
-                    background: 'rgba(232,213,124,0.12)',
-                    color: '#E8D57C',
+                    background: 'rgba(184, 149, 106, 0.14)',
+                    color: 'var(--tp-gold)',
                     padding: '2px 6px',
                     borderRadius: 3,
                     fontFamily: "'JetBrains Mono', monospace",
@@ -357,7 +357,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                 <span
                   style={{
                     fontSize: 10,
-                    color: 'rgba(255,255,255,0.4)',
+                    color: 'var(--tp-muted)',
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >
@@ -369,7 +369,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               <div
                 style={{
                   fontSize: 11,
-                  color: 'rgba(255,255,255,0.55)',
+                  color: 'var(--tp-muted)',
                   marginTop: 3,
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
@@ -381,7 +381,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               <div
                 style={{
                   fontSize: 12,
-                  color: 'rgba(255,255,255,0.5)',
+                  color: 'var(--tp-muted)',
                   marginTop: 4,
                   lineHeight: 1.4,
                 }}
@@ -406,12 +406,12 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
                     alignItems: 'center',
                     gap: 5,
                     fontSize: 11,
-                    color: '#E8D57C',
+                    color: 'var(--tp-gold)',
                     textDecoration: 'none',
                     padding: '3px 8px',
-                    border: '1px solid rgba(232,213,124,0.3)',
+                    border: '1px solid rgba(184, 149, 106, 0.35)',
                     borderRadius: 12,
-                    background: 'rgba(232,213,124,0.08)',
+                    background: 'rgba(184, 149, 106, 0.1)',
                   }}
                 >
                   <span style={{ fontSize: 10 }}>↗</span>
@@ -431,7 +431,7 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               fontSize: 12,
               background: 'transparent',
               border: 'none',
-              color: 'rgba(255,255,255,0.35)',
+              color: 'var(--tp-subtle)',
               cursor: 'pointer',
               padding: '2px 6px',
               flexShrink: 0,

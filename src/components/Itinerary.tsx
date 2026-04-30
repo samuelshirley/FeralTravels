@@ -50,21 +50,20 @@ export default function Itinerary({
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.15em',
-            color: 'rgba(255,255,255,0.25)',
-            fontFamily: "'JetBrains Mono', monospace",
+            color: 'var(--tp-subtle)',
             marginBottom: 6,
           }}
         >
           ROUTE PLAN
           {readonly && (
-            <span style={{ marginLeft: 8, color: '#7CB5E8' }}>
+            <span style={{ marginLeft: 8, color: 'var(--tp-primary)' }}>
               · DEMO (read-only — clone to edit)
             </span>
           )}
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, lineHeight: 1.2 }}>{trip.name}</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, lineHeight: 1.2, color: 'var(--tp-text)' }}>{trip.name}</h1>
         {(trip.start_date || trip.end_date) && (
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginTop: 6 }}>
+          <div style={{ fontSize: 13, color: 'var(--tp-muted)', marginTop: 6 }}>
             {[trip.start_date, trip.end_date].filter(Boolean).join(' → ')}
           </div>
         )}
@@ -81,14 +80,14 @@ export default function Itinerary({
                   fontSize: 9,
                   fontWeight: 700,
                   letterSpacing: '0.1em',
-                  color: 'rgba(255,255,255,0.25)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
                 {s.label}
               </div>
               <div
-                style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginTop: 2 }}
+                style={{ fontSize: 14, fontWeight: 600, color: 'var(--tp-text)', marginTop: 2 }}
               >
                 {s.value}
               </div>
@@ -102,9 +101,9 @@ export default function Itinerary({
         <button
           onClick={expandAll}
           style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: 'rgba(255,255,255,0.5)',
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
+            color: 'var(--tp-muted)',
             padding: '5px 12px',
             borderRadius: 4,
             fontSize: 11,
@@ -117,9 +116,9 @@ export default function Itinerary({
         <button
           onClick={collapseAll}
           style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: 'rgba(255,255,255,0.5)',
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
+            color: 'var(--tp-muted)',
             padding: '5px 12px',
             borderRadius: 4,
             fontSize: 11,
@@ -134,10 +133,11 @@ export default function Itinerary({
       {/* Leg cards */}
       <div
         style={{
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--tp-border)',
           borderRadius: 10,
           overflow: 'hidden',
-          background: 'rgba(255,255,255,0.015)',
+          background: 'var(--tp-surface)',
+          boxShadow: 'var(--tp-shadow-sm)',
         }}
       >
         {legs.map((leg) => (

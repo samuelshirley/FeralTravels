@@ -12,6 +12,7 @@ export const dynamic = 'force-dynamic';
 
 const VEHICLE_TYPES = ['4x4_suv', 'pickup', 'van', 'motorcycle', 'sedan', 'other'] as const;
 const FUEL_TYPES = ['diesel', 'petrol', 'premium', 'lpg'] as const;
+const FUEL_TIMING_PREFS = ['start_of_day', 'when_low', 'end_of_day'] as const;
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -21,8 +22,10 @@ const patchSchema = z.object({
   length_m: z.number().positive().nullish(),
   weight_kg: z.number().positive().nullish(),
   fuel_economy_kmpl: z.number().positive().nullish(),
+  real_world_kmpl: z.number().positive().nullish(),
   fuel_tank_l: z.number().positive().nullish(),
   fuel_type: z.enum(FUEL_TYPES).nullish(),
+  fuel_timing_pref: z.enum(FUEL_TIMING_PREFS).nullish(),
   max_drive_hours_per_day: z.number().positive().nullish(),
   max_drive_hours_per_week: z.number().positive().nullish(),
   max_consecutive_drive_days: z.number().int().positive().nullish(),

@@ -118,8 +118,8 @@ export default function OnboardingForm({
   if (loading) {
     return (
       <div style={composerPad}>
-        <div style={{ ...cardStyle, color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
-          <Spinner size={12} thickness={2} color="#7CB5E8" /> Loading setup…
+        <div style={{ ...cardStyle, color: 'var(--tp-muted)', fontSize: 13 }}>
+          <Spinner size={12} thickness={2} color="var(--tp-primary)" /> Loading setup…
         </div>
       </div>
     );
@@ -217,7 +217,7 @@ function VehiclePicker({
         >
           <span style={{ fontWeight: 600 }}>{v.name}</span>
           {v.is_default && <span style={pillStyle}>default</span>}
-          {v.vehicle_type && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>· {v.vehicle_type.replace(/_/g, ' ')}</span>}
+          {v.vehicle_type && <span style={{ fontSize: 11, color: 'var(--tp-muted)' }}>· {v.vehicle_type.replace(/_/g, ' ')}</span>}
         </button>
       ))}
       <button
@@ -283,10 +283,10 @@ function FreeformInput({
     flex: 1,
     minWidth: 0,
     padding: '8px 12px',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.15)',
-    borderRadius: 8,
-    color: '#fff',
+    background: 'var(--tp-surface-muted)',
+    border: '1px solid var(--tp-border)',
+    borderRadius: 'var(--tp-radius-sm)',
+    color: 'var(--tp-text)',
     fontSize: 14,
     outline: 'none',
     fontFamily: 'inherit',
@@ -341,7 +341,7 @@ function FreeformInput({
             opacity: disabled || (!draft.trim() && !onSkip) ? 0.5 : 1,
           }}
         >
-          {submitting && <Spinner size={11} thickness={2} color="#000" />}
+          {submitting && <Spinner size={11} thickness={2} color="var(--tp-on-primary)" />}
           {submitLabel}
         </button>
         {onSkip && (
@@ -350,7 +350,7 @@ function FreeformInput({
           </button>
         )}
         {multiline && (
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono', monospace" }}>
+          <span style={{ fontSize: 10, color: 'var(--tp-subtle)', fontFamily: "'JetBrains Mono', monospace" }}>
             ⌘+Enter to send
           </span>
         )}
@@ -365,17 +365,17 @@ function FreeformInput({
 
 const composerPad = {
   padding: '12px 16px',
-  borderTop: '1px solid rgba(255,255,255,0.08)',
-  background: '#0D0D0D',
+  borderTop: '1px solid var(--tp-border)',
+  background: 'var(--tp-surface-muted)',
   flexShrink: 0,
   paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
 } as const;
 
 const cardStyle = {
   padding: 12,
-  background: 'rgba(124,181,232,0.06)',
-  border: '1px solid rgba(124,181,232,0.18)',
-  borderRadius: 10,
+  background: 'var(--tp-primary-muted)',
+  border: '1px solid rgba(78, 122, 176, 0.22)',
+  borderRadius: 'var(--tp-radius-md)',
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
@@ -386,26 +386,26 @@ const progressStyle = {
   fontFamily: "'JetBrains Mono', monospace",
   letterSpacing: '0.08em',
   textTransform: 'uppercase' as const,
-  color: '#7CB5E8',
+  color: 'var(--tp-primary)',
   marginBottom: 2,
 };
 
 const questionLabelStyle = {
   fontSize: 14,
   fontWeight: 600,
-  color: 'rgba(255,255,255,0.9)',
+  color: 'var(--tp-text)',
   lineHeight: 1.4,
 };
 
 const helpStyle = {
   fontSize: 12,
-  color: 'rgba(255,255,255,0.45)',
+  color: 'var(--tp-muted)',
   lineHeight: 1.4,
 };
 
 const errorStyle = {
   fontSize: 12,
-  color: '#E8927C',
+  color: 'var(--tp-danger)',
   marginTop: 4,
 };
 
@@ -414,10 +414,10 @@ const pickButtonStyle = {
   alignItems: 'center',
   gap: 8,
   padding: '10px 12px',
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.12)',
-  borderRadius: 8,
-  color: '#fff',
+  background: 'var(--tp-surface)',
+  border: '1px solid var(--tp-border)',
+  borderRadius: 'var(--tp-radius-sm)',
+  color: 'var(--tp-text)',
   fontSize: 13,
   cursor: 'pointer',
   textAlign: 'left' as const,
@@ -425,10 +425,10 @@ const pickButtonStyle = {
 
 const chipStyle = {
   padding: '8px 14px',
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--tp-surface)',
+  border: '1px solid var(--tp-border)',
   borderRadius: 999,
-  color: '#fff',
+  color: 'var(--tp-text)',
   fontSize: 13,
   cursor: 'pointer',
 };
@@ -436,18 +436,18 @@ const chipStyle = {
 const pillStyle = {
   padding: '2px 6px',
   fontSize: 10,
-  background: 'rgba(124,232,163,0.15)',
-  color: '#7CE8A3',
+  background: 'var(--tp-success-muted)',
+  color: 'var(--tp-success)',
   borderRadius: 4,
   fontFamily: "'JetBrains Mono', monospace",
 };
 
 const primaryButtonStyle = {
   padding: '8px 16px',
-  background: '#7CB5E8',
-  color: '#000',
+  background: 'var(--tp-primary)',
+  color: 'var(--tp-on-primary)',
   border: 'none',
-  borderRadius: 8,
+  borderRadius: 'var(--tp-radius-sm)',
   fontSize: 13,
   fontWeight: 600,
   cursor: 'pointer',
@@ -459,9 +459,9 @@ const primaryButtonStyle = {
 const skipButtonStyle = {
   padding: '8px 14px',
   background: 'transparent',
-  color: 'rgba(255,255,255,0.55)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8,
+  color: 'var(--tp-muted)',
+  border: '1px solid var(--tp-border)',
+  borderRadius: 'var(--tp-radius-sm)',
   fontSize: 13,
   cursor: 'pointer',
 };

@@ -115,7 +115,7 @@ export default function LegCard({
     <div
       style={{
         marginBottom: 2,
-        background: expanded ? 'rgba(255,255,255,0.04)' : 'transparent',
+        background: expanded ? 'var(--tp-surface-muted)' : 'transparent',
         borderRadius: 8,
         overflow: 'hidden',
         transition: 'background 0.2s',
@@ -137,9 +137,9 @@ export default function LegCard({
             width: 10,
             height: 10,
             borderRadius: '50%',
-            background: leg.color || '#7CB5E8',
+            background: leg.color || '#4E7AB0',
             flexShrink: 0,
-            boxShadow: `0 0 8px ${leg.color || '#7CB5E8'}40`,
+            boxShadow: `0 0 8px ${leg.color || '#4E7AB0'}40`,
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -149,19 +149,19 @@ export default function LegCard({
                 fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.1em',
-                color: 'rgba(255,255,255,0.3)',
+                color: 'var(--tp-subtle)',
                 fontFamily: "'JetBrains Mono', monospace",
               }}
             >
               {leg.label}
             </span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>{leg.title}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>{leg.title}</span>
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 3, flexWrap: 'wrap' }}>
             <span
               style={{
                 fontSize: 12,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--tp-muted)',
                 fontFamily: "'JetBrains Mono', monospace",
               }}
             >
@@ -171,7 +171,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 12,
-                  color: 'rgba(255,255,255,0.25)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -182,7 +182,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 12,
-                  color: 'rgba(255,255,255,0.25)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -194,7 +194,7 @@ export default function LegCard({
         <StatusBadge status={leg.status} />
         <span
           style={{
-            color: 'rgba(255,255,255,0.3)',
+            color: 'var(--tp-subtle)',
             fontSize: 18,
             transform: expanded ? 'rotate(180deg)' : 'rotate(0)',
             transition: 'transform 0.2s',
@@ -211,27 +211,27 @@ export default function LegCard({
               <div
                 style={{
                   fontSize: 10,
-                  color: 'rgba(255,255,255,0.3)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                   marginBottom: 2,
                 }}
               >
                 TERRAIN
               </div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{leg.terrain}</div>
+              <div style={{ fontSize: 13, color: 'var(--tp-muted)' }}>{leg.terrain}</div>
             </div>
             <div>
               <div
                 style={{
                   fontSize: 10,
-                  color: 'rgba(255,255,255,0.3)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                   marginBottom: 2,
                 }}
               >
                 OVERNIGHT
               </div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{leg.overnight}</div>
+              <div style={{ fontSize: 13, color: 'var(--tp-muted)' }}>{leg.overnight}</div>
             </div>
           </div>
 
@@ -241,10 +241,10 @@ export default function LegCard({
                 key={i}
                 style={{
                   fontSize: 13,
-                  color: 'rgba(255,255,255,0.55)',
+                  color: 'var(--tp-muted)',
                   lineHeight: 1.5,
                   padding: '3px 0 3px 12px',
-                  borderLeft: '2px solid rgba(255,255,255,0.06)',
+                  borderLeft: '2px solid var(--tp-border)',
                   marginBottom: 2,
                 }}
               >
@@ -276,7 +276,7 @@ export default function LegCard({
                   fontFamily: "'JetBrains Mono', monospace",
                   letterSpacing: '0.04em',
                   color: '#000',
-                  background: '#7CB5E8',
+                  background: 'var(--tp-primary)',
                   padding: '7px 14px',
                   borderRadius: 6,
                   textDecoration: 'none',
@@ -326,9 +326,9 @@ export default function LegCard({
             style={{
               marginTop: 12,
               padding: '10px 14px',
-              background: 'rgba(255,255,255,0.03)',
+              background: 'var(--tp-surface-muted)',
               borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.06)',
+              border: '1px solid var(--tp-border)',
             }}
             onDragOver={(e) => {
               if (readonly) return;
@@ -358,7 +358,7 @@ export default function LegCard({
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
-                  color: 'rgba(255,255,255,0.35)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -387,7 +387,7 @@ export default function LegCard({
                       fontSize: 11,
                       background: 'rgba(124,181,232,0.15)',
                       border: '1px solid rgba(124,181,232,0.3)',
-                      color: '#7CB5E8',
+                      color: 'var(--tp-primary)',
                       padding: '3px 10px',
                       borderRadius: 4,
                       cursor: uploading ? 'default' : 'pointer',
@@ -404,7 +404,7 @@ export default function LegCard({
               <div
                 style={{
                   fontSize: 11,
-                  color: 'rgba(255,255,255,0.35)',
+                  color: 'var(--tp-subtle)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -415,7 +415,7 @@ export default function LegCard({
             )}
 
             {uploadError && (
-              <div style={{ fontSize: 11, color: '#E8927C', marginBottom: 6 }}>{uploadError}</div>
+              <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginBottom: 6 }}>{uploadError}</div>
             )}
 
             {trails.map((t) => (
@@ -427,8 +427,8 @@ export default function LegCard({
                   justifyContent: 'space-between',
                   padding: '4px 0',
                   fontSize: 12,
-                  color: 'rgba(255,255,255,0.7)',
-                  borderTop: '1px solid rgba(255,255,255,0.05)',
+                  color: 'var(--tp-muted)',
+                  borderTop: '1px solid var(--tp-border)',
                 }}
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
@@ -440,7 +440,7 @@ export default function LegCard({
                       <span
                         style={{
                           fontSize: 10,
-                          color: 'rgba(255,255,255,0.4)',
+                          color: 'var(--tp-muted)',
                           fontFamily: "'JetBrains Mono', monospace",
                         }}
                       >
@@ -452,7 +452,7 @@ export default function LegCard({
                     <div
                       style={{
                         fontSize: 10,
-                        color: 'rgba(255,255,255,0.35)',
+                        color: 'var(--tp-subtle)',
                         fontFamily: "'JetBrains Mono', monospace",
                       }}
                     >
@@ -461,7 +461,7 @@ export default function LegCard({
                           href={t.source_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ color: '#7CB5E8', textDecoration: 'none' }}
+                          style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
                         >
                           {t.source || 'source'} →
                         </a>
@@ -481,7 +481,7 @@ export default function LegCard({
                       fontSize: 11,
                       background: 'transparent',
                       border: 'none',
-                      color: 'rgba(255,255,255,0.4)',
+                      color: 'var(--tp-muted)',
                       cursor: 'pointer',
                       padding: '2px 6px',
                     }}
@@ -507,9 +507,9 @@ export default function LegCard({
               style={{
                 marginTop: 12,
                 padding: '10px 14px',
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--tp-surface-muted)',
                 borderRadius: 6,
-                border: '1px solid rgba(255,255,255,0.06)',
+                border: '1px solid var(--tp-border)',
               }}
             >
               <div
@@ -517,7 +517,7 @@ export default function LegCard({
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
-                  color: 'rgba(255,255,255,0.35)',
+                  color: 'var(--tp-subtle)',
                   marginBottom: 6,
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
@@ -531,13 +531,13 @@ export default function LegCard({
                     display: 'flex',
                     justifyContent: 'space-between',
                     fontSize: 13,
-                    color: 'rgba(255,255,255,0.6)',
+                    color: 'var(--tp-muted)',
                     padding: '2px 0',
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >
                   <span>{c.item}</span>
-                  <span style={{ color: 'rgba(255,255,255,0.8)' }}>{c.estimate}</span>
+                  <span style={{ color: 'var(--tp-text)' }}>{c.estimate}</span>
                 </div>
               ))}
               {totalCost && (
@@ -547,9 +547,9 @@ export default function LegCard({
                     justifyContent: 'space-between',
                     fontSize: 14,
                     fontWeight: 700,
-                    color: '#fff',
+                    color: 'var(--tp-text)',
                     padding: '6px 0 0',
-                    borderTop: '1px solid rgba(255,255,255,0.1)',
+                    borderTop: '1px solid var(--tp-border)',
                     marginTop: 4,
                     fontFamily: "'JetBrains Mono', monospace",
                   }}

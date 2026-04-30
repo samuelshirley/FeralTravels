@@ -132,8 +132,8 @@ function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
         zIndex: 10000,
         minWidth: 240,
         maxWidth: 'calc(100vw - 32px)',
-        background: 'rgba(232,124,124,0.95)',
-        color: '#1a0606',
+        background: 'rgba(198, 93, 74, 0.95)',
+        color: '#FFFFFF',
         border: '1px solid rgba(0,0,0,0.2)',
         borderRadius: 8,
         padding: '10px 14px',
@@ -203,7 +203,7 @@ function SillyModal({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.75)',
+        background: 'var(--tp-overlay)',
         zIndex: 10001,
         display: 'flex',
         alignItems: 'center',
@@ -216,8 +216,8 @@ function SillyModal({
         style={{
           width: '100%',
           maxWidth: 460,
-          background: '#0F0F0F',
-          border: '1px solid rgba(255,255,255,0.12)',
+          background: 'var(--tp-surface)',
+          border: '1px solid var(--tp-border)',
           borderRadius: 12,
           padding: '28px 24px 20px',
           textAlign: 'center',
@@ -232,7 +232,7 @@ function SillyModal({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(232,124,124,0.08)',
+            background: 'var(--tp-danger-muted)',
             borderRadius: '50%',
             overflow: 'hidden',
           }}
@@ -261,7 +261,7 @@ function SillyModal({
             fontSize: 18,
             fontWeight: 700,
             margin: '0 0 8px',
-            color: '#fff',
+            color: 'var(--tp-text)',
             lineHeight: 1.3,
           }}
         >
@@ -270,7 +270,7 @@ function SillyModal({
         <p
           style={{
             fontSize: 14,
-            color: 'rgba(255,255,255,0.7)',
+            color: 'var(--tp-muted)',
             margin: '0 0 20px',
             lineHeight: 1.5,
           }}
@@ -281,8 +281,8 @@ function SillyModal({
           <button
             onClick={() => window.location.reload()}
             style={{
-              background: '#7CB5E8',
-              color: '#000',
+              background: 'var(--tp-primary)',
+              color: 'var(--tp-on-primary)',
               border: 'none',
               padding: '10px 20px',
               borderRadius: 6,
@@ -300,8 +300,8 @@ function SillyModal({
             onClick={onClose}
             style={{
               background: 'transparent',
-              color: 'rgba(255,255,255,0.7)',
-              border: '1px solid rgba(255,255,255,0.2)',
+              color: 'var(--tp-muted)',
+              border: '1px solid var(--tp-border)',
               padding: '10px 20px',
               borderRadius: 6,
               fontSize: 13,
@@ -318,7 +318,7 @@ function SillyModal({
             marginTop: 14,
             background: 'transparent',
             border: 'none',
-            color: 'rgba(255,255,255,0.4)',
+            color: 'var(--tp-muted)',
             fontSize: 11,
             fontFamily: "'JetBrains Mono', monospace",
             cursor: 'pointer',
@@ -332,19 +332,19 @@ function SillyModal({
             style={{
               marginTop: 10,
               padding: '10px 12px',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               borderRadius: 6,
               textAlign: 'left',
               fontSize: 11,
-              color: 'rgba(255,255,255,0.7)',
+              color: 'var(--tp-muted)',
               fontFamily: "'JetBrains Mono', monospace",
               wordBreak: 'break-word',
             }}
           >
             <div>{modal.status != null ? `HTTP ${modal.status}` : 'Network error'}</div>
-            <div style={{ color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>{modal.path}</div>
-            <div style={{ color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>{modal.detail}</div>
+            <div style={{ color: 'var(--tp-subtle)', marginTop: 4 }}>{modal.path}</div>
+            <div style={{ color: 'var(--tp-subtle)', marginTop: 4 }}>{modal.detail}</div>
           </div>
         )}
       </div>

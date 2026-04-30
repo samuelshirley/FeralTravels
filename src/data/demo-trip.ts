@@ -41,7 +41,7 @@ export const DEMO_LEGS: DemoLeg[] = [
     drive_time_minutes: 390,
     terrain: 'Highway',
     overnight: 'Rest stop / Aire in southern France or Liguria',
-    color: '#E8927C',
+    color: '#C97B63',
     status: 'planning',
     notes: [
       'Straight shot on AP-7 → A9 through France → Italian autostrada',
@@ -65,7 +65,7 @@ export const DEMO_LEGS: DemoLeg[] = [
     drive_time_minutes: 360,
     terrain: 'Highway → Gravel/Mountain Pass',
     overnight: 'Wild camp near pass summit or alpine meadow',
-    color: '#7CB5E8',
+    color: '#4E7AB0',
     status: 'research',
     notes: [
       'Highway through Po Valley to Brenner area or Dolomites',
@@ -91,7 +91,7 @@ export const DEMO_LEGS: DemoLeg[] = [
     drive_time_minutes: 0,
     terrain: 'City / Driveway',
     overnight: "Friend's driveway / local Stellplatz",
-    color: '#7CE8A3',
+    color: '#4A8B7A',
     status: 'confirmed',
     notes: [
       '2 nights in Innsbruck with your friend',

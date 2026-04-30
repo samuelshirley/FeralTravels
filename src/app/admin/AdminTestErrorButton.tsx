@@ -35,9 +35,9 @@ export default function AdminTestErrorButton() {
         onClick={() => setOpen((v) => !v)}
         disabled={busy}
         style={{
-          background: 'rgba(232,124,124,0.1)',
-          border: '1px solid rgba(232,124,124,0.3)',
-          color: '#E87C7C',
+          background: 'var(--tp-danger-muted)',
+          border: '1px solid rgba(198, 93, 74, 0.35)',
+          color: 'var(--tp-danger)',
           padding: '6px 12px',
           borderRadius: 4,
           fontSize: 11,
@@ -56,8 +56,8 @@ export default function AdminTestErrorButton() {
             position: 'absolute',
             top: 'calc(100% + 6px)',
             right: 0,
-            background: '#0F0F0F',
-            border: '1px solid rgba(255,255,255,0.15)',
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
             borderRadius: 6,
             padding: 6,
             display: 'flex',
@@ -65,7 +65,7 @@ export default function AdminTestErrorButton() {
             gap: 4,
             zIndex: 100,
             minWidth: 180,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            boxShadow: 'var(--tp-shadow-md)',
           }}
         >
           <MenuItem onClick={() => trigger('4xx')}>
@@ -96,7 +96,7 @@ function MenuItem({
       style={{
         background: 'transparent',
         border: 'none',
-        color: 'rgba(255,255,255,0.85)',
+        color: 'var(--tp-text)',
         padding: '6px 10px',
         borderRadius: 4,
         fontSize: 12,
@@ -105,7 +105,7 @@ function MenuItem({
         fontFamily: "'JetBrains Mono', monospace",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'rgba(124,181,232,0.12)';
+        e.currentTarget.style.background = 'var(--tp-primary-muted)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = 'transparent';

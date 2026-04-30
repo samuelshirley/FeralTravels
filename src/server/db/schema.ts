@@ -97,14 +97,25 @@ export const vehicles = pgTable(
     // Fuel
     fuelEconomyKmpl: doublePrecision('fuel_economy_kmpl'),
     fuelTankL: doublePrecision('fuel_tank_l'),
+    // Optional override: the *observed* economy in real overlanding
+    // conditions, which is almost always lower than spec (loaded vehicle,
+    // roof rack drag, mountain grades). When set, `effective_range_km`
+    // uses this instead of `fuel_economy_kmpl`. The 20% reserve buffer
+    // still applies on top — see comment below.
+    realWorldKmpl: doublePrecision('real_world_kmpl'),
     // NOTE: `fuel_reserve_km` was removed in favor of a flat 20% buffer rule
-    // applied everywhere: effective_range_km = fuel_economy_kmpl × fuel_tank_l × 0.8.
+    // applied everywhere: effective_range_km = (real_world_kmpl ?? fuel_economy_kmpl) × fuel_tank_l × 0.8.
     // Reasoning: users don't reliably know their reserve in km, and the 20%
     // rule is what overlanders actually teach. Keep the column out of the
     // model so UI / Penny / fuel-planner all share the same formula.
     // 'diesel' | 'petrol' | 'premium' | 'lpg' | null. Used by Penny to
     // pick appropriate fuel stations and by the UI for nicer copy.
     fuelType: text('fuel_type'),
+    // Refueling preference. Bias the auto fuel-stop planner toward
+    // start-of-day / end-of-day camp-area stations vs. mid-leg centerline
+    // math. NULL = no preference (centerline math).
+    // 'start_of_day' | 'when_low' | 'end_of_day'.
+    fuelTimingPref: text('fuel_timing_pref'),
     // Drive limits
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),

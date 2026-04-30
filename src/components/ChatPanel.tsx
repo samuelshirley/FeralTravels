@@ -325,7 +325,7 @@ export default function ChatPanel({
         minHeight: 0,
         // Fallback for parents that lay this out as a non-flex item.
         height: '100%',
-        background: '#0D0D0D',
+        background: 'var(--tp-surface-muted)',
         position: 'relative',
       }}
     >
@@ -334,13 +334,13 @@ export default function ChatPanel({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(124,181,232,0.12)',
-            border: '2px dashed rgba(124,181,232,0.6)',
+            background: 'var(--tp-primary-muted)',
+            border: '2px dashed rgba(78, 122, 176, 0.45)',
             zIndex: 10,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#7CB5E8',
+            color: 'var(--tp-primary)',
             fontSize: 14,
             fontWeight: 600,
             pointerEvents: 'none',
@@ -354,7 +354,7 @@ export default function ChatPanel({
       <div
         style={{
           padding: '12px 16px',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          borderBottom: '1px solid var(--tp-border)',
           display: 'flex',
           alignItems: 'center',
           gap: 10,
@@ -366,11 +366,11 @@ export default function ChatPanel({
             width: 28,
             height: 28,
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #7CB5E8 0%, #7CE8A3 100%)',
+            background: 'linear-gradient(145deg, var(--tp-primary) 0%, var(--tp-success) 100%)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#000',
+            color: 'var(--tp-on-primary)',
             fontWeight: 800,
             fontSize: 13,
             flexShrink: 0,
@@ -379,13 +379,13 @@ export default function ChatPanel({
           P
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.1 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tp-text)', lineHeight: 1.1 }}>
             Penny
           </div>
           <div
             style={{
               fontSize: 10,
-              color: 'rgba(255,255,255,0.4)',
+              color: 'var(--tp-subtle)',
               fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: '0.04em',
               marginTop: 2,
@@ -415,7 +415,7 @@ export default function ChatPanel({
             style={{
               textAlign: 'center',
               fontSize: 11,
-              color: 'rgba(255,255,255,0.35)',
+              color: 'var(--tp-subtle)',
               fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
@@ -429,8 +429,8 @@ export default function ChatPanel({
                 onClick={() => loadOlder()}
                 style={{
                   background: 'transparent',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'rgba(255,255,255,0.55)',
+                  border: '1px solid var(--tp-border)',
+                  color: 'var(--tp-muted)',
                   padding: '4px 10px',
                   borderRadius: 10,
                   fontSize: 11,
@@ -446,7 +446,7 @@ export default function ChatPanel({
           </div>
         )}
         {messages.length === 0 && (
-          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
+          <div style={{ color: 'var(--tp-muted)', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
             Ask Penny to modify your trip plan. For example:
             <br />
             <em>&quot;Move the Nürburgring day to after Denmark&quot;</em>
@@ -455,7 +455,7 @@ export default function ChatPanel({
             <br />
             <em>&quot;Add a rest day in Hamburg&quot;</em>
             <br />
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>
+            <span style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
               Drag, paste, or click 📎 to attach a screenshot.
             </span>
           </div>
@@ -469,10 +469,10 @@ export default function ChatPanel({
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
               padding: '10px 14px',
               borderRadius: 10,
-              background: msg.role === 'user' ? 'rgba(124,181,232,0.15)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${msg.role === 'user' ? 'rgba(124,181,232,0.2)' : 'rgba(255,255,255,0.08)'}`,
+              background: msg.role === 'user' ? 'var(--tp-primary-muted)' : 'var(--tp-surface)',
+              border: `1px solid ${msg.role === 'user' ? 'rgba(78, 122, 176, 0.28)' : 'var(--tp-border)'}`,
               fontSize: 14,
-              color: 'rgba(255,255,255,0.85)',
+              color: 'var(--tp-text)',
               lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
             }}
@@ -489,7 +489,7 @@ export default function ChatPanel({
                       maxWidth: 180,
                       maxHeight: 180,
                       borderRadius: 6,
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      border: '1px solid var(--tp-border)',
                       objectFit: 'cover',
                     }}
                   />
@@ -502,11 +502,11 @@ export default function ChatPanel({
                 style={{
                   marginTop: 8,
                   padding: '6px 8px',
-                  background: 'rgba(124,232,163,0.1)',
+                  background: 'var(--tp-success-muted)',
                   borderRadius: 4,
-                  border: '1px solid rgba(124,232,163,0.2)',
+                  border: '1px solid rgba(74, 139, 122, 0.28)',
                   fontSize: 11,
-                  color: '#7CE8A3',
+                  color: 'var(--tp-success)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -518,11 +518,11 @@ export default function ChatPanel({
                 style={{
                   marginTop: 8,
                   padding: '6px 8px',
-                  background: 'rgba(232,146,124,0.1)',
+                  background: 'var(--tp-danger-muted)',
                   borderRadius: 4,
-                  border: '1px solid rgba(232,146,124,0.25)',
+                  border: '1px solid rgba(198, 93, 74, 0.35)',
                   fontSize: 11,
-                  color: '#E8927C',
+                  color: 'var(--tp-danger)',
                   fontFamily: "'JetBrains Mono', monospace",
                   lineHeight: 1.45,
                 }}
@@ -539,10 +539,10 @@ export default function ChatPanel({
               alignSelf: 'flex-start',
               padding: '10px 14px',
               borderRadius: 10,
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--tp-surface-muted)',
+              border: '1px solid var(--tp-border)',
               fontSize: 14,
-              color: 'rgba(255,255,255,0.4)',
+              color: 'var(--tp-muted)',
             }}
           >
             Thinking...
@@ -571,7 +571,7 @@ export default function ChatPanel({
                 height: 56,
                 borderRadius: 6,
                 overflow: 'hidden',
-                border: '1px solid rgba(255,255,255,0.15)',
+                border: '1px solid var(--tp-border)',
               }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -590,8 +590,8 @@ export default function ChatPanel({
                   height: 18,
                   borderRadius: '50%',
                   border: 'none',
-                  background: 'rgba(0,0,0,0.7)',
-                  color: '#fff',
+                  background: 'var(--tp-overlay)',
+                  color: 'var(--tp-on-primary)',
                   fontSize: 12,
                   lineHeight: '18px',
                   cursor: 'pointer',
@@ -610,8 +610,8 @@ export default function ChatPanel({
         <div
           style={{
             padding: '12px 16px',
-            borderTop: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.5)',
+            borderTop: '1px solid var(--tp-border)',
+            color: 'var(--tp-muted)',
             fontSize: 12,
             textAlign: 'center',
             fontFamily: "'JetBrains Mono', monospace",
@@ -665,13 +665,13 @@ export default function ChatPanel({
       <div
         style={{
           padding: '12px 16px',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
+          borderTop: '1px solid var(--tp-border)',
           // Without this, the input block can compress to zero height on
           // mobile Safari when the flex container is short (e.g. inside a
           // position:absolute mobile tab pane) — leaving the user with no
           // textbox to type in.
           flexShrink: 0,
-          background: '#0D0D0D',
+          background: 'var(--tp-surface-muted)',
           // Respect iOS home-indicator / Android gesture-bar safe area so
           // the send button isn't hidden behind the OS affordance.
           paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
@@ -693,8 +693,8 @@ export default function ChatPanel({
             display: 'flex',
             alignItems: 'flex-end',
             gap: 6,
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
             borderRadius: 12,
             padding: 6,
             transition: 'border-color 0.15s',
@@ -712,7 +712,7 @@ export default function ChatPanel({
               background: 'transparent',
               border: 'none',
               borderRadius: 8,
-              color: 'rgba(255,255,255,0.55)',
+              color: 'var(--tp-muted)',
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
@@ -720,12 +720,12 @@ export default function ChatPanel({
               transition: 'background 0.15s, color 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-              e.currentTarget.style.color = 'rgba(255,255,255,0.85)';
+              e.currentTarget.style.background = 'var(--tp-primary-muted)';
+              e.currentTarget.style.color = 'var(--tp-primary)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.color = 'rgba(255,255,255,0.55)';
+              e.currentTarget.style.color = 'var(--tp-muted)';
             }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -761,7 +761,7 @@ export default function ChatPanel({
               padding: '7px 4px',
               background: 'transparent',
               border: 'none',
-              color: '#fff',
+              color: 'var(--tp-text)',
               fontSize: 14,
               outline: 'none',
               fontFamily: 'inherit',
@@ -786,10 +786,10 @@ export default function ChatPanel({
               height: 32,
               flexShrink: 0,
               padding: 0,
-              background: input.trim() || images.length > 0 ? '#7CB5E8' : 'rgba(255,255,255,0.08)',
+              background: input.trim() || images.length > 0 ? 'var(--tp-primary)' : 'var(--tp-border)',
               border: 'none',
               borderRadius: 8,
-              color: input.trim() || images.length > 0 ? '#000' : 'rgba(255,255,255,0.3)',
+              color: input.trim() || images.length > 0 ? 'var(--tp-on-primary)' : 'var(--tp-subtle)',
               cursor: input.trim() || images.length > 0 ? 'pointer' : 'default',
               transition: 'background 0.15s, color 0.15s',
               display: 'inline-flex',
@@ -807,7 +807,7 @@ export default function ChatPanel({
           style={{
             marginTop: 6,
             fontSize: 10,
-            color: 'rgba(255,255,255,0.25)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
             letterSpacing: '0.04em',
             textAlign: 'center',

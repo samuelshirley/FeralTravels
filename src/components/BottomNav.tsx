@@ -56,13 +56,13 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
         bottom: 0,
         left: 0,
         right: 0,
-        background: 'rgba(13,13,13,0.92)',
+        background: 'rgba(251, 248, 243, 0.95)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
+        borderTop: '1px solid var(--tp-border)',
         paddingBottom: 'env(safe-area-inset-bottom)',
         zIndex: 1000,
-        boxShadow: '0 -4px 16px rgba(0,0,0,0.25)',
+        boxShadow: '0 -4px 16px rgba(51,51,51,0.06)',
       }}
     >
       <div
@@ -73,7 +73,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
       >
         {items.map((item) => {
           const isActive = item.id === active;
-          const color = isActive ? '#7CB5E8' : 'rgba(255,255,255,0.55)';
+          const color = isActive ? 'var(--tp-primary)' : 'var(--tp-muted)';
 
           const inner = (
             <div
@@ -110,9 +110,9 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
                       width: 8,
                       height: 8,
                       borderRadius: '50%',
-                      background: '#7CE8A3',
+                      background: 'var(--tp-success)',
                       animation: 'tp-pulse 1.2s ease-in-out infinite',
-                      boxShadow: '0 0 0 0 rgba(124,232,163,0.6)',
+                      boxShadow: '0 0 0 0 rgba(74,139,122,0.45)',
                     }}
                   />
                 )}
@@ -126,8 +126,8 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
                       height: 16,
                       padding: '0 4px',
                       borderRadius: 8,
-                      background: '#E8927C',
-                      color: '#000',
+                      background: 'var(--tp-accent-warm)',
+                      color: 'var(--tp-on-primary)',
                       fontSize: 10,
                       fontWeight: 700,
                       display: 'inline-flex',
@@ -145,7 +145,6 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
                   fontSize: 10,
                   letterSpacing: '0.05em',
                   fontWeight: isActive ? 700 : 500,
-                  fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
                 {item.label.toUpperCase()}

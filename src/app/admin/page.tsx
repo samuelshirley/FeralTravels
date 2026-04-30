@@ -32,35 +32,36 @@ function fmtRel(d: Date | string): string {
 }
 
 const card: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.03)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  background: 'var(--tp-surface)',
+  border: '1px solid var(--tp-border)',
   borderRadius: 10,
   padding: 16,
+  boxShadow: 'var(--tp-shadow-sm)',
 };
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.15em',
-  color: 'rgba(255,255,255,0.4)',
+  color: 'var(--tp-subtle)',
   fontFamily: "'JetBrains Mono', monospace",
   marginBottom: 6,
 };
 
 const tdStyle: React.CSSProperties = {
   padding: '8px 10px',
-  borderBottom: '1px solid rgba(255,255,255,0.05)',
+  borderBottom: '1px solid var(--tp-border)',
   fontSize: 12,
-  color: 'rgba(255,255,255,0.85)',
+  color: 'var(--tp-text)',
 };
 
 const thStyle: React.CSSProperties = {
   padding: '8px 10px',
-  borderBottom: '1px solid rgba(255,255,255,0.12)',
+  borderBottom: '1px solid var(--tp-border-strong)',
   fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.1em',
-  color: 'rgba(255,255,255,0.45)',
+  color: 'var(--tp-muted)',
   fontFamily: "'JetBrains Mono', monospace",
   textAlign: 'left',
   textTransform: 'uppercase',
@@ -139,7 +140,7 @@ export default async function AdminPage() {
           <div
             style={{
               fontSize: 11,
-              color: 'rgba(255,255,255,0.45)',
+              color: 'var(--tp-subtle)',
               fontFamily: "'JetBrains Mono', monospace",
               marginLeft: 4,
             }}
@@ -159,14 +160,14 @@ export default async function AdminPage() {
           {stats.map((s) => (
             <div key={s.label} style={card}>
               <div style={labelStyle}>{s.label.toUpperCase()}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', lineHeight: 1.1 }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--tp-text)', lineHeight: 1.1 }}>
                 {s.value}
               </div>
               {s.sub && (
                 <div
                   style={{
                     fontSize: 11,
-                    color: 'rgba(255,255,255,0.45)',
+                    color: 'var(--tp-subtle)',
                     fontFamily: "'JetBrains Mono', monospace",
                     marginTop: 4,
                   }}
@@ -195,7 +196,7 @@ export default async function AdminPage() {
                 style={{
                   marginLeft: 8,
                   fontSize: 11,
-                  color: 'rgba(255,255,255,0.45)',
+                  color: 'var(--tp-subtle)',
                   fontWeight: 500,
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
@@ -257,21 +258,21 @@ export default async function AdminPage() {
                       <div
                         style={{
                           fontSize: 11,
-                          color: 'rgba(255,255,255,0.45)',
+                          color: 'var(--tp-subtle)',
                           fontFamily: "'JetBrains Mono', monospace",
                         }}
                       >
                         {u.email}
                       </div>
                     </td>
-                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.5)' }}>
+                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
                       {fmtRel(u.createdAt)}
                     </td>
                   </tr>
                 ))}
                 {recentUsers.length === 0 && (
                   <tr>
-                    <td colSpan={2} style={{ ...tdStyle, color: 'rgba(255,255,255,0.4)' }}>
+                    <td colSpan={2} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
                       No users yet.
                     </td>
                   </tr>
@@ -301,30 +302,30 @@ export default async function AdminPage() {
                     <td style={tdStyle}>
                       <Link
                         href={`/trips/${m.tripId}`}
-                        style={{ color: '#7CB5E8', textDecoration: 'none' }}
+                        style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
                       >
                         #{m.tripId}
                       </Link>
                     </td>
-                    <td style={{ ...tdStyle, color: m.role === 'assistant' ? '#7CE8A3' : 'rgba(255,255,255,0.7)' }}>
+                    <td style={{ ...tdStyle, color: m.role === 'assistant' ? 'var(--tp-success)' : 'var(--tp-muted)' }}>
                       {m.role}
                       {m.hasChanges && (
-                        <span style={{ marginLeft: 6, fontSize: 9, color: '#7CE8A3', fontFamily: "'JetBrains Mono', monospace" }}>
+                        <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--tp-success)', fontFamily: "'JetBrains Mono', monospace" }}>
                           ✓EDIT
                         </span>
                       )}
                     </td>
-                    <td style={{ ...tdStyle, color: 'rgba(255,255,255,0.7)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td style={{ ...tdStyle, color: 'var(--tp-muted)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {m.content.slice(0, 80)}
                     </td>
-                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.5)' }}>
+                    <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
                       {fmtRel(m.createdAt)}
                     </td>
                   </tr>
                 ))}
                 {recentChat.length === 0 && (
                   <tr>
-                    <td colSpan={4} style={{ ...tdStyle, color: 'rgba(255,255,255,0.4)' }}>
+                    <td colSpan={4} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
                       No chat activity yet.
                     </td>
                   </tr>
@@ -339,7 +340,7 @@ export default async function AdminPage() {
           style={{
             marginTop: 32,
             fontSize: 11,
-            color: 'rgba(255,255,255,0.35)',
+            color: 'var(--tp-subtle)',
             fontFamily: "'JetBrains Mono', monospace",
             lineHeight: 1.6,
           }}
@@ -369,7 +370,7 @@ function UsageTable({
 }) {
   if (rows.length === 0) {
     return (
-      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', padding: '12px 4px' }}>
+      <div style={{ fontSize: 12, color: 'var(--tp-subtle)', padding: '12px 4px' }}>
         No AI calls in this window.
       </div>
     );
@@ -391,7 +392,7 @@ function UsageTable({
             <td style={tdStyle}>
               <div style={{ fontWeight: 600 }}>{r.name || r.email || '(unknown)'}</div>
               {r.email && r.name && (
-                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono', monospace" }}>
+                <div style={{ fontSize: 10, color: 'var(--tp-subtle)', fontFamily: "'JetBrains Mono', monospace" }}>
                   {r.email}
                 </div>
               )}
@@ -399,10 +400,10 @@ function UsageTable({
             <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
               {r.requests}
             </td>
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.55)' }}>
+            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-muted)' }}>
               {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
             </td>
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: '#7CE8A3' }}>
+            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'var(--tp-success)' }}>
               {fmtMoney(microcentsToDollars(r.microcents))}
             </td>
           </tr>

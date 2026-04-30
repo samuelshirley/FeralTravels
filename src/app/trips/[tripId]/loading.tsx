@@ -8,7 +8,7 @@ export default function Loading() {
         justifyContent: 'center',
         flexDirection: 'column',
         gap: 16,
-        background: '#0D0D0D',
+        background: 'var(--tp-bg)',
       }}
     >
       <span
@@ -18,8 +18,8 @@ export default function Loading() {
           display: 'inline-block',
           width: 36,
           height: 36,
-          border: '3px solid rgba(255,255,255,0.15)',
-          borderTopColor: '#7CE8A3',
+          border: '3px solid var(--tp-border)',
+          borderTopColor: 'var(--tp-success)',
           borderRadius: '50%',
           animation: 'tp-spin 0.8s linear infinite',
         }}
@@ -29,7 +29,7 @@ export default function Loading() {
           display: 'inline-flex',
           alignItems: 'baseline',
           gap: 2,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--tp-muted)',
           fontSize: 13,
           fontFamily: "'JetBrains Mono', monospace",
           letterSpacing: '0.1em',

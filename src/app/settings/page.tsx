@@ -54,36 +54,36 @@ export default async function SettingsPage() {
         <div
           style={{
             fontSize: 11,
-            color: 'rgba(255,255,255,0.35)',
-            fontFamily: "'JetBrains Mono', monospace",
+            color: 'var(--tp-subtle)',
             letterSpacing: '0.15em',
             marginBottom: 4,
           }}
         >
           USER
         </div>
-        <h1 style={{ margin: 0, marginBottom: 24, fontSize: 28, fontWeight: 700 }}>Settings</h1>
+        <h1 style={{ margin: 0, marginBottom: 24, fontSize: 28, fontWeight: 700, color: 'var(--tp-text)' }}>Settings</h1>
 
         <section
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 10,
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
+            borderRadius: 'var(--tp-radius-md)',
             padding: 20,
             marginBottom: 16,
+            boxShadow: 'var(--tp-shadow-sm)',
           }}
         >
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--tp-muted)', marginBottom: 4 }}>
             Signed in as
           </div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>
             {session.user.name || session.user.email}
           </div>
           {session.user.email && session.user.name && (
             <div
               style={{
                 fontSize: 12,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--tp-subtle)',
                 fontFamily: "'JetBrains Mono', monospace",
                 marginTop: 4,
               }}
@@ -95,17 +95,18 @@ export default async function SettingsPage() {
 
         <section
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 10,
+            background: 'var(--tp-surface)',
+            border: '1px solid var(--tp-border)',
+            borderRadius: 'var(--tp-radius-md)',
             padding: 20,
             marginBottom: 16,
+            boxShadow: 'var(--tp-shadow-sm)',
           }}
         >
-          <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700 }}>
+          <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>
             Vehicle profile
           </h2>
-          <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+          <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: 'var(--tp-muted)', lineHeight: 1.5 }}>
             Penny uses these constraints to keep your plan realistic — max drive hours/day, fuel
             range, vehicle clearance, and water/black-water intervals.
           </p>
@@ -117,8 +118,7 @@ export default async function SettingsPage() {
             <div
               style={{
                 fontSize: 11,
-                color: 'rgba(232,193,124,0.65)',
-                fontFamily: "'JetBrains Mono', monospace",
+                color: 'var(--tp-gold)',
                 letterSpacing: '0.15em',
                 marginTop: 32,
                 marginBottom: 4,
@@ -128,9 +128,9 @@ export default async function SettingsPage() {
             </div>
             <section
               style={{
-                background: 'rgba(232,193,124,0.06)',
-                border: '1px solid rgba(232,193,124,0.25)',
-                borderRadius: 10,
+                background: 'rgba(184, 149, 106, 0.1)',
+                border: '1px solid rgba(184, 149, 106, 0.35)',
+                borderRadius: 'var(--tp-radius-md)',
                 padding: 20,
               }}
             >
@@ -145,13 +145,13 @@ export default async function SettingsPage() {
                 }}
               >
                 <div>
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>System overview</h2>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>System overview</h2>
                   <p
                     style={{
                       margin: 0,
                       marginTop: 4,
                       fontSize: 12,
-                      color: 'rgba(255,255,255,0.45)',
+                      color: 'var(--tp-muted)',
                     }}
                   >
                     Visible only to you. Live numbers from Neon + usage_events.
@@ -163,9 +163,9 @@ export default async function SettingsPage() {
                     fontSize: 12,
                     fontWeight: 600,
                     padding: '7px 12px',
-                    background: '#E8C17C',
-                    color: '#0D0D0D',
-                    borderRadius: 6,
+                    background: 'var(--tp-gold)',
+                    color: 'var(--tp-text)',
+                    borderRadius: 'var(--tp-radius-sm)',
                     textDecoration: 'none',
                     whiteSpace: 'nowrap',
                   }}
@@ -214,9 +214,9 @@ function Stat({
   return (
     <div
       style={{
-        background: highlight ? 'rgba(124,232,163,0.06)' : 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-        borderRadius: 8,
+        background: highlight ? 'var(--tp-success-muted)' : 'var(--tp-surface-muted)',
+        border: '1px solid var(--tp-border)',
+        borderRadius: 'var(--tp-radius-sm)',
         padding: '10px 12px',
       }}
     >
@@ -225,7 +225,7 @@ function Stat({
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.12em',
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--tp-subtle)',
           fontFamily: "'JetBrains Mono', monospace",
           textTransform: 'uppercase',
           marginBottom: 4,
@@ -237,7 +237,7 @@ function Stat({
         style={{
           fontSize: 18,
           fontWeight: 700,
-          color: highlight ? '#7CE8A3' : '#fff',
+          color: highlight ? 'var(--tp-success)' : 'var(--tp-text)',
           lineHeight: 1.1,
         }}
       >
@@ -247,7 +247,7 @@ function Stat({
         <div
           style={{
             fontSize: 10,
-            color: 'rgba(255,255,255,0.45)',
+            color: 'var(--tp-muted)',
             fontFamily: "'JetBrains Mono', monospace",
             marginTop: 2,
           }}

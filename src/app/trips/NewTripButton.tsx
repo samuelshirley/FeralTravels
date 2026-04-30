@@ -40,13 +40,14 @@ export default function NewTripButton() {
         onClick={() => setOpen(true)}
         style={{
           padding: '8px 16px',
-          background: '#7CB5E8',
-          color: '#000',
+          background: 'var(--tp-primary)',
+          color: 'var(--tp-on-primary)',
           border: 'none',
-          borderRadius: 8,
+          borderRadius: 'var(--tp-radius-sm)',
           fontSize: 13,
           fontWeight: 600,
           cursor: 'pointer',
+          boxShadow: 'var(--tp-shadow-sm)',
         }}
       >
         + New trip
@@ -67,10 +68,10 @@ export default function NewTripButton() {
         placeholder="Trip name"
         style={{
           padding: '8px 12px',
-          background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.15)',
-          borderRadius: 6,
-          color: '#fff',
+          background: 'var(--tp-surface-muted)',
+          border: '1px solid var(--tp-border)',
+          borderRadius: 'var(--tp-radius-sm)',
+          color: 'var(--tp-text)',
           fontSize: 13,
           outline: 'none',
         }}
@@ -80,10 +81,10 @@ export default function NewTripButton() {
         disabled={busy || !name.trim()}
         style={{
           padding: '8px 14px',
-          background: busy ? 'rgba(255,255,255,0.1)' : '#7CB5E8',
-          color: busy ? '#fff' : '#000',
+          background: busy ? 'var(--tp-border)' : 'var(--tp-primary)',
+          color: busy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
           border: 'none',
-          borderRadius: 6,
+          borderRadius: 'var(--tp-radius-sm)',
           fontSize: 13,
           fontWeight: 600,
           cursor: busy ? 'default' : 'pointer',
@@ -92,7 +93,7 @@ export default function NewTripButton() {
           gap: 6,
         }}
       >
-        {busy && <Spinner size={11} color="#7CB5E8" thickness={2} />}
+        {busy && <Spinner size={11} color="var(--tp-primary)" thickness={2} />}
         {busy ? 'Creating…' : 'Create'}
       </button>
       <button
@@ -103,16 +104,16 @@ export default function NewTripButton() {
         style={{
           padding: '8px 12px',
           background: 'transparent',
-          color: 'rgba(255,255,255,0.5)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: 6,
+          color: 'var(--tp-muted)',
+          border: '1px solid var(--tp-border)',
+          borderRadius: 'var(--tp-radius-sm)',
           fontSize: 13,
           cursor: 'pointer',
         }}
       >
         Cancel
       </button>
-      {err && <span style={{ fontSize: 12, color: '#E8927C' }}>{err}</span>}
+      {err && <span style={{ fontSize: 12, color: 'var(--tp-danger)' }}>{err}</span>}
       {busy && <LoadingOverlay message="Creating trip…" />}
     </div>
   );
