@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, like, or } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops } from '@/server/db/schema';
 import { getDirections } from '@/lib/directions';
@@ -10,6 +10,12 @@ import {
   samplePolylineEveryKm,
   type LatLng,
 } from '@/lib/polyline';
+import {
+  mergeFuelAndStretchSamples,
+  samplePolylineByTargetMinutes,
+  type SampledPoint,
+} from '@/lib/polyline-time';
+import { nearestStretchBreakPlace } from '@/server/places/nearby-parks';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import type { FuelType } from '@/types/trip';
@@ -26,8 +32,16 @@ import type { FuelType } from '@/types/trip';
  *   4. Pick the best candidate (nearest to the sample point that matches
  *      the vehicle's fuel type keyword when possible).
  *   5. Replace any previous auto-generated fuel stops on the leg (source
- *      = 'google_places', status='option'). User-picked / user-authored
- *      stops are never touched.
+ *      = 'google_places', status='option'), plus matching auto **rest**
+ *      stretch breaks (same source/status, notes prefix
+ *      AUTO_STRETCH_BREAK_NOTE_PREFIX). User-picked / user-authored stops
+ *      are never touched.
+ *
+ *   Stretch knots: when vehicle.max_drive_hours_per_day is set, sample the
+ *   polyline at ~80 % of that cap in estimated driving time (uniform-speed
+ *   proxy from OSRM), merge with fuel samples, dedupe clusters, Places
+ *   dog_park/park lookup at stretch-only knots; fuel+stretch clusters get
+ *   fuel only so the station doubles as the break where possible.
  *
  * Fails loudly (sets fuel_status='failed' and returns details) when the
  * Places key is missing, the vehicle has no fuel data, or the route
@@ -55,6 +69,13 @@ const MIN_LEG_KM_FOR_PLANNING = 100;
 // the *cumulative* distance instead of the leg's distance, which is what
 // fixes the "three 500 km legs say no fuel needed" bug.
 const SKIP_PLANNING_THRESHOLD = 0.7;
+// When placing stretch-break knots, target ~80% of max_drive_hours_per_day in
+// estimated driving time so detours to dog parks / fuel rarely exceed the cap.
+const SEGMENT_TIME_BUFFER = 0.2;
+// Merge fuel-range and time-based knots when they land within this along-route gap (km).
+const KNOT_MERGE_GAP_KM = 12;
+/** Matches auto-inserted rest rows — used when clearing planner output. */
+export const AUTO_STRETCH_BREAK_NOTE_PREFIX = 'Auto-suggested stretch break';
 
 export interface FuelPlanResult {
   legId: number;
@@ -195,7 +216,7 @@ export async function planFuelStopsForLeg(
   // long day-one segments (Maps/UI), even when tank math says leg 1 alone
   // is within range.
   if (belowMinLeg || (cumulativeFitsComfortably && !isFirstLegOfMultiLegLongTrip)) {
-    await clearAutoFuelStops(legId);
+    await clearAutoPlannerGooglePlacesOptionStops(legId);
     await setFuelStatus(legId, 'ready');
     return { legId, status: 'ready', stopsCreated: 0 };
   }
@@ -219,74 +240,136 @@ export async function planFuelStopsForLeg(
   if (firstStepKm >= totalKm && totalKm > range * 0.5) {
     firstStepKm = Math.max(40, totalKm * 0.5);
   }
-  const samples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
+  const fuelSamples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
     0,
     MAX_STOPS_PER_LEG
   );
 
-  // 4. Places lookups. Issue them concurrently but bounded — a 10-stop
-  //    leg with serial 1-second calls adds 10s to the spinner time.
-  const fuel = (vehicle.fuel_type ?? null) as FuelType | null;
-  const candidates = await Promise.all(
-    samples.map((s) => findBestGasStation(s.point, fuel, placesKey))
-  );
-
-  // If any candidate came back as PLACES_API_ERROR, the whole API is broken —
-  // not just empty results for a rural area. Fail loudly so the user sees an
-  // actionable error instead of a silent "0 stops, status=ready".
-  const firstApiError = candidates.find((c) => c === PLACES_API_ERROR);
-  if (firstApiError !== undefined) {
-    await setFuelStatus(legId, 'failed');
-    const reason =
-      'Places API call failed — enable "Places API (New)" in Google Cloud Console, ' +
-      'and ensure your API key has no HTTP referrer restrictions. ' +
-      'Visit /api/debug/fuel for a full diagnosis.';
-    console.error(`[fuel] leg ${legId}: ${reason}`);
-    return { legId, status: 'failed', reason };
+  const driveMinsOsrm = directions.drive_time_minutes;
+  let stretchSamples: SampledPoint[] = [];
+  const maxDailyHrs = vehicle.max_drive_hours_per_day;
+  if (
+    maxDailyHrs != null &&
+    maxDailyHrs > 0 &&
+    driveMinsOsrm > maxDailyHrs * 60 * (1 - SEGMENT_TIME_BUFFER)
+  ) {
+    const targetSegmentMins = maxDailyHrs * 60 * (1 - SEGMENT_TIME_BUFFER);
+    stretchSamples = samplePolylineByTargetMinutes(polyline, driveMinsOsrm, targetSegmentMins, {
+      maxSamples: MAX_STOPS_PER_LEG,
+      minDistanceFromEndKm: 10,
+    });
   }
 
-  const toInsert = samples
-    .map((s, i) => ({ sample: s, station: candidates[i] }))
-    .filter((x): x is { sample: (typeof samples)[number]; station: GasStation } =>
-      x.station !== null && x.station !== PLACES_API_ERROR
-    );
+  const mergedKnots = mergeFuelAndStretchSamples(
+    fuelSamples,
+    stretchSamples,
+    KNOT_MERGE_GAP_KM
+  ).slice(0, MAX_STOPS_PER_LEG * 2);
 
-  // 5. Replace previous auto stops. We use a transactional delete+insert
+  const fuel = (vehicle.fuel_type ?? null) as FuelType | null;
+  type PendingFuel = { kind: 'fuel'; distance_km: number; station: GasStation };
+  type PendingRest = {
+    kind: 'rest';
+    distance_km: number;
+    place: NonNullable<Awaited<ReturnType<typeof nearestStretchBreakPlace>>>;
+  };
+
+  const pending: Array<PendingFuel | PendingRest> = [];
+  for (const knot of mergedKnots) {
+    if (knot.needFuel) {
+      const station = await findBestGasStation(knot.point, fuel, placesKey);
+      if (station === PLACES_API_ERROR) {
+        await setFuelStatus(legId, 'failed');
+        const reason =
+          'Places API call failed — enable "Places API (New)" in Google Cloud Console, ' +
+          'and ensure your API key has no HTTP referrer restrictions. ' +
+          'Visit /api/debug/fuel for a full diagnosis.';
+        console.error(`[fuel] leg ${legId}: ${reason}`);
+        return { legId, status: 'failed', reason };
+      }
+      if (station) {
+        pending.push({ kind: 'fuel', distance_km: knot.distance_km, station });
+      }
+    } else if (knot.needStretch) {
+      const place = await nearestStretchBreakPlace(knot.point, placesKey);
+      if (place) {
+        pending.push({ kind: 'rest', distance_km: knot.distance_km, place });
+      }
+    }
+  }
+
+  pending.sort((a, b) => a.distance_km - b.distance_km);
+
+  const maxDailyLabel =
+    vehicle.max_drive_hours_per_day != null && vehicle.max_drive_hours_per_day > 0
+      ? String(vehicle.max_drive_hours_per_day)
+      : '?';
+
+  // 5. Replace previous auto fuel + planner stretch stops. Transactional delete+insert
   //    so the UI never sees a half-applied plan.
   await db.transaction(async (tx) => {
-    await tx
-      .delete(stops)
-      .where(
-        and(
-          eq(stops.legId, legId),
-          eq(stops.source, 'google_places'),
-          eq(stops.status, 'option')
-        )
-      );
+    await tx.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
 
-    for (let i = 0; i < toInsert.length; i++) {
-      const { sample, station } = toInsert[i];
-      await tx.insert(stops).values({
-        legId,
-        sortOrder: 1000 + i, // keep well above user stops
-        stopType: 'fuel',
-        status: 'option',
-        name: station.name,
-        lat: station.lat,
-        lng: station.lng,
-        distanceFromStartKm: Math.round(sample.distance_km),
-        fuelType: fuel ?? null,
-        source: 'google_places',
-        sourceUrl: station.place_id
-          ? `https://www.google.com/maps/place/?q=place_id:${station.place_id}`
-          : null,
-        notes: `Auto-suggested refuel ≈${Math.round(sample.distance_km)} km into the leg.`,
-      });
+    for (let i = 0; i < pending.length; i++) {
+      const row = pending[i];
+      if (row.kind === 'fuel') {
+        await tx.insert(stops).values({
+          legId,
+          sortOrder: 1000 + i,
+          stopType: 'fuel',
+          status: 'option',
+          name: row.station.name,
+          lat: row.station.lat,
+          lng: row.station.lng,
+          distanceFromStartKm: Math.round(row.distance_km),
+          fuelType: fuel ?? null,
+          source: 'google_places',
+          sourceUrl: row.station.place_id
+            ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
+            : null,
+          notes: `Auto-suggested refuel ≈${Math.round(row.distance_km)} km into the leg.`,
+        });
+      } else {
+        await tx.insert(stops).values({
+          legId,
+          sortOrder: 1000 + i,
+          stopType: 'rest',
+          status: 'option',
+          name: row.place.name,
+          lat: row.place.lat,
+          lng: row.place.lng,
+          distanceFromStartKm: Math.round(row.distance_km),
+          fuelType: null,
+          source: 'google_places',
+          sourceUrl:
+            row.place.googleMapsUri ??
+            (row.place.placeId
+              ? `https://www.google.com/maps/place/?q=place_id:${row.place.placeId}`
+              : null),
+          notes: `${AUTO_STRETCH_BREAK_NOTE_PREFIX} (targets ≤${maxDailyLabel} h driving/day, ${Math.round(SEGMENT_TIME_BUFFER * 100)}% pessimism) ≈${Math.round(row.distance_km)} km along this leg.`,
+        });
+      }
     }
   });
 
   await setFuelStatus(legId, 'ready');
-  return { legId, status: 'ready', stopsCreated: toInsert.length };
+  return { legId, status: 'ready', stopsCreated: pending.length };
+}
+
+function autoPlannerGooglePlacesOptionSql(legId: number) {
+  return and(
+    eq(stops.legId, legId),
+    eq(stops.source, 'google_places'),
+    eq(stops.status, 'option'),
+    or(
+      eq(stops.stopType, 'fuel'),
+      and(eq(stops.stopType, 'rest'), like(stops.notes, `${AUTO_STRETCH_BREAK_NOTE_PREFIX}%`))
+    )
+  );
+}
+
+async function clearAutoPlannerGooglePlacesOptionStops(legId: number): Promise<void> {
+  await db.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
 }
 
 /**
@@ -319,6 +402,7 @@ async function resolveVehicleForTrip(
   fuel_tank_l: number | null;
   fuel_type: string | null;
   fuel_timing_pref: string | null;
+  max_drive_hours_per_day: number | null;
 } | null> {
   if (tripId != null) {
     // Look up the trip's vehicle_id without re-querying trips directly
@@ -427,18 +511,6 @@ async function computeKmBurnedSinceLastRefuel(
   }
 
   return kmBurned;
-}
-
-async function clearAutoFuelStops(legId: number): Promise<void> {
-  await db
-    .delete(stops)
-    .where(
-      and(
-        eq(stops.legId, legId),
-        eq(stops.source, 'google_places'),
-        eq(stops.status, 'option')
-      )
-    );
 }
 
 // ---------------------------------------------------------------------------

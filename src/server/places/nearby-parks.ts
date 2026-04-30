@@ -255,3 +255,74 @@ export async function nearbyParksAround(
 
   return { payload, error: fatal };
 }
+
+export type StretchBreakCandidate = {
+  name: string;
+  lat: number;
+  lng: number;
+  placeId: string | null;
+  googleMapsUri: string | null;
+  primaryType: string | null;
+};
+
+/**
+ * Single best dog-park-or-park near a knot on the route (stretch break).
+ * Prefers dog_park; falls back to green-space types excluding dog runs as duplicate parks.
+ */
+export async function nearestStretchBreakPlace(
+  center: LatLng,
+  apiKey: string
+): Promise<StretchBreakCandidate | null> {
+  const tryDog = await searchNearbyPlaces(
+    center,
+    NEARBY_PARKS_INNER_RADIUS_M,
+    ['dog_park'],
+    apiKey
+  );
+  let raw: RawPlaceRow[] | null = null;
+  if (tryDog.ok && tryDog.places.length > 0) {
+    raw = tryDog.places;
+  } else {
+    const tryGreen = await searchNearbyPlaces(
+      center,
+      NEARBY_PARKS_INNER_RADIUS_M,
+      PARK_INCLUDED_TYPES,
+      apiKey
+    );
+    if (!tryGreen.ok) return null;
+    raw = tryGreen.places.filter(
+      (p) => typeof p.primaryType !== 'string' || p.primaryType !== 'dog_park'
+    );
+  }
+  if (!raw || raw.length === 0) return null;
+
+  const mapped = raw
+    .map((p) => {
+      const lat = p.location?.latitude;
+      const lng = p.location?.longitude;
+      if (lat == null || lng == null) return null;
+      const primaryType = typeof p.primaryType === 'string' ? p.primaryType : null;
+      return {
+        name: (p.displayName?.text ?? '').trim() || 'Park',
+        lat,
+        lng,
+        placeId: p.id ?? null,
+        googleMapsUri: readGoogleMapsUri(p as RawPlaceRow & Record<string, unknown>),
+        primaryType,
+        distanceKm: haversineKm(center, { lat, lng }),
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  const best = mapped[0];
+  if (!best) return null;
+  return {
+    name: best.name,
+    lat: best.lat,
+    lng: best.lng,
+    placeId: best.placeId,
+    googleMapsUri: best.googleMapsUri,
+    primaryType: best.primaryType,
+  };
+}

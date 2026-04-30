@@ -297,6 +297,29 @@ export default function LegCard({
                   </span>
                 )}
               </a>
+              {driveHours ? (
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--tp-subtle)',
+                    margin: '8px 0 0 0',
+                    maxWidth: 460,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {navWaypointCount > 0 ? (
+                    <>
+                      Shown driving time (~{driveHours} h) is the leg headline start→destination only — it excludes
+                      detours via added stops; Open in Maps with waypoints typically takes longer on the clock.
+                    </>
+                  ) : (
+                    <>
+                      Shown driving time (~{driveHours} h) assumes start→destination without intermediate stops inside
+                      this leg card.
+                    </>
+                  )}
+                </p>
+              ) : null}
             </div>
           )}
 

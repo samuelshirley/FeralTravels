@@ -425,8 +425,9 @@ export default function StopsSection({
           <div style={legSubsectionTitleStyle}>PARKS NEAR STOP</div>
 
           <p style={{ fontSize: 11, color: 'var(--tp-muted)', margin: '0 0 8px 0', lineHeight: 1.45 }}>
-            Suggestions centered on tonight’s destination (within 5 km when possible — otherwise the closest finds we
-            can).
+            Google Places ideas near the destination for scouting stops or camping — optional, not prescribed. Planned
+            mid-leg stretch stops (Places dog parks/parks along the route) show as Rest rows after fuel planning when your
+            vehicle has max drive hours/day set.
           </p>
 
           {nearbyBusy ? (
