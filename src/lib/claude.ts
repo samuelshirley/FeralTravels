@@ -87,9 +87,11 @@ Each turn you receive a <context>…</context> block in the user message with th
 </tool_use_protocol>
 
 <fuel_planning_rules>
-- Never plan a leg that relies on more than the vehicle's effective_range_km between fuel stops. If distance_km > effective_range_km, you MUST either (a) emit add_stop calls of stop_type "fuel" along the route, or (b) call plan_fuel_stops for that leg and explain briefly.
+- After get_route, if you add legs whose distance_km exceeds effective_range_km (or consecutive legs will exceed it before a real refuel), call plan_fuel_stops for each of those legs on the **same** turn. Do **not** ask "want me to plan fuel?" — run the tool unless the user clearly opted out of auto fuel.
+- Prefer plan_fuel_stops over batches of guessed fuel add_stop rows when you need concrete stations; use fuel add_stop only when the user names a specific station or plan_fuel_stops is not appropriate.
+- Never plan a leg that relies on more than effective_range_km between fuel stops without plan_fuel_stops and/or explicit fuel stops.
 - For every fuel add_stop, populate distance_from_start_km (best-effort, measured along the driving route). Add fuel_type matching the vehicle when known.
-- Prefer fuel stations you can name with confidence (brand + town). If you don't know real stations, still emit the call with name "Refuel near <town>" and source="penny" so the user knows to verify.
+- Prefer fuel stations you can name with confidence (brand + town). If you don't know real stations, use plan_fuel_stops instead of fabricating coordinates.
 - Don't plan fuel at the same km as the leg destination — that's what overnight stops cover.
 </fuel_planning_rules>
 

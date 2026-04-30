@@ -111,14 +111,18 @@ export type LegDirectionsStopInput = {
 
 /** Sorted intermediate coords for leg directions (badge counts, tests). */
 export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[number, number]> {
+  const fuelWithCoords = (s: LegDirectionsStopInput) =>
+    s.stop_type === 'fuel' && s.lat != null && s.lng != null;
+  const nonFuelSelected = (s: LegDirectionsStopInput) =>
+    s.stop_type !== 'fuel' && s.status === 'selected' && s.lat != null && s.lng != null;
+
   return stops
     .filter(
       (s) =>
         s.status !== 'dismissed' &&
         s.lat != null &&
         s.lng != null &&
-        (s.status === 'selected' ||
-          (s.stop_type === 'fuel' && s.source === 'google_places'))
+        (nonFuelSelected(s) || fuelWithCoords(s))
     )
     .slice()
     .sort((a, b) => {
@@ -133,9 +137,9 @@ export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[
 /**
  * Build the unified "Open in Google Maps" URL for a leg. Combines the leg's
  * start/end coords with (a) the selected route's end-override (if any) and
- * (b) waypoints from: every selected stop, plus auto fuel stops from Places
- * (status `option`, source `google_places`) so they need not be tapped
- * individually.
+ * (b) waypoints: every **selected** non-fuel stop with coords, plus every
+ * **fuel** stop with coords (any `source`: google_places, penny, user) unless
+ * dismissed.
  *
  * With intermediate waypoints, opens directions **preview** (no
  * `dir_action=navigate`) so mobile Maps shows the full multi-stop itinerary;

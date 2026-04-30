@@ -13,6 +13,7 @@
     "seed": "tsx scripts/seed-demo-trip.ts",
     "migrate-sqlite": "tsx scripts/migrate-sqlite-to-neon.ts",
     "backfill-maps-nav": "tsx scripts/backfill-google-maps-nav.ts",
+    "verify-maps-waypoints": "tsx scripts/verify-maps-waypoints.ts",
     "ship": "bash scripts/ship.sh"
   },
   "dependencies": {

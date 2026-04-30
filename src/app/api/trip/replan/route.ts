@@ -21,12 +21,18 @@ import { addLeg, deleteLeg } from '@/server/repos/trips';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 
 function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
-  return (
+  if (
     action.name === 'add_leg' ||
     action.name === 'delete_leg' ||
     action.name === 'update_leg' ||
     action.name === 'plan_fuel_stops'
-  );
+  ) {
+    return true;
+  }
+  if (action.name === 'add_stop' && action.input.data.stop_type === 'fuel') {
+    return true;
+  }
+  return false;
 }
 
 // Per-user spend cap and request cap on Anthropic replans.
@@ -51,6 +57,8 @@ export async function POST(req: Request) {
   // usage_events even when the failure happens mid-Anthropic-call.
   let userIdForLog: string | null = null;
   let tripIdForLog: number | null = null;
+  /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
+  let userTurnSaved = false;
   try {
     const userId = await requireUserId();
     userIdForLog = userId;
@@ -96,6 +104,7 @@ export async function POST(req: Request) {
     }
 
     await addChatMessage(tripId, 'user', message || '(image only)');
+    userTurnSaved = true;
     const result = await replan(message, tripId, images, userId);
 
     let appliedCount = 0;
@@ -155,6 +164,14 @@ export async function POST(req: Request) {
       truncated: result.truncated,
     });
   } catch (err) {
+    if (userTurnSaved && tripIdForLog != null) {
+      await addChatMessage(
+        tripIdForLog,
+        'assistant',
+        'Something went wrong while updating your trip. Please try again.',
+        null
+      ).catch(() => {});
+    }
     // Log fatal replan failures to usage_events so they show up in the admin
     // Recent errors log. Per-action failures (add_leg etc) are already handled
     // inline above with failedActions/failedCount.

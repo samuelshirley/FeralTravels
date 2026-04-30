@@ -170,14 +170,31 @@ export async function planFuelStopsForLeg(
   const kmAlreadyBurned = await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder);
   const availableRangeAtStart = Math.max(0, range - kmAlreadyBurned);
 
+  const tripLegMeta = await db
+    .select({ sortOrder: legs.sortOrder, distanceKm: legs.distanceKm })
+    .from(legs)
+    .where(eq(legs.tripId, leg.tripId));
+
+  const tripLegCount = tripLegMeta.length;
+  const tripTotalKm = tripLegMeta.reduce((s, r) => s + (r.distanceKm ?? 0), 0);
+  const minSort =
+    tripLegMeta.length > 0
+      ? Math.min(...tripLegMeta.map((r) => r.sortOrder))
+      : leg.sortOrder;
+  const isFirstLegOfMultiLegLongTrip =
+    tripLegCount > 1 && tripTotalKm > range && leg.sortOrder === minSort;
+
+  const belowMinLeg = totalKm < MIN_LEG_KM_FOR_PLANNING;
+  const cumulativeFitsComfortably =
+    kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD;
+
   // Early exit when the *cumulative* distance still fits within range ×
   // threshold. Short solo legs continue to skip via MIN_LEG_KM_FOR_PLANNING.
-  // The cumulative form is the bug fix; the per-leg form was only correct
-  // when each leg started with a full tank.
-  if (
-    totalKm < MIN_LEG_KM_FOR_PLANNING ||
-    kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD
-  ) {
+  // First leg of a multi-leg trip whose *total* distance exceeds one tank
+  // still runs the planner so users see at least one suggested station on
+  // long day-one segments (Maps/UI), even when tank math says leg 1 alone
+  // is within range.
+  if (belowMinLeg || (cumulativeFitsComfortably && !isFirstLegOfMultiLegLongTrip)) {
     await clearAutoFuelStops(legId);
     await setFuelStatus(legId, 'ready');
     return { legId, status: 'ready', stopsCreated: 0 };
@@ -188,7 +205,12 @@ export async function planFuelStopsForLeg(
   // this leg, capped to the normal step so a fresh-tank leg behaves like
   // before. Subsequent samples space at `stepKm` because the tank is full
   // again after each fuel stop.
-  const firstStepKm = Math.min(stepKm, availableRangeAtStart * SAMPLE_FRACTION);
+  let firstStepKm = Math.min(stepKm, availableRangeAtStart * SAMPLE_FRACTION);
+  if (isFirstLegOfMultiLegLongTrip && cumulativeFitsComfortably) {
+    // Default step lands past leg end (e.g. 600 km leg vs ~730 km first step);
+    // nudge the first sample into the leg so Places runs once.
+    firstStepKm = Math.min(stepKm, Math.max(40, totalKm * 0.45));
+  }
   const samples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
     0,
     MAX_STOPS_PER_LEG
