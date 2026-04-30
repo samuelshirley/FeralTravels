@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { tripApi, ApiError } from '@/lib/api';
 import { buildDogParkSearchUrl, buildParkSearchUrl } from '@/lib/maps';
@@ -23,6 +23,23 @@ interface StopsSectionProps {
   readonly?: boolean;
 }
 
+/** Matches TRAILS / GPX subsection shell in [`LegCard.tsx`](/src/components/LegCard.tsx). */
+const legSubsectionCardStyle: CSSProperties = {
+  marginTop: 12,
+  padding: '10px 14px',
+  background: 'var(--tp-surface-muted)',
+  borderRadius: 6,
+  border: '1px solid var(--tp-border)',
+};
+
+const legSubsectionTitleStyle: CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  color: 'var(--tp-subtle)',
+  marginBottom: 6,
+};
+
 const TYPE_ORDER: StopType[] = ['fuel', 'water', 'food', 'overnight', 'rest', 'other'];
 
 const TYPE_META: Record<StopType, { label: string; color: string; icon: string }> = {
@@ -32,6 +49,17 @@ const TYPE_META: Record<StopType, { label: string; color: string; icon: string }
   overnight: { label: 'Overnight', color: '#8B7AB8', icon: '🌙' },
   rest: { label: 'Rest', color: 'var(--tp-success)', icon: '☕' },
   other: { label: 'Other', color: 'var(--tp-muted)', icon: '📍' },
+};
+
+type NearbyRow = {
+  name: string;
+  lat: number;
+  lng: number;
+  placeId: string | null;
+  primaryType: string | null;
+  googleMapsUri: string | null;
+  distanceKm: number;
+  within5Km: boolean;
 };
 
 export default function StopsSection({
@@ -47,12 +75,103 @@ export default function StopsSection({
 }: StopsSectionProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   void _legStartCoords;
+  void legEndName;
+
   const [stops, setStops] = useState<Stop[]>(initialStops);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const addingType: StopType = 'overnight';
+
+  const [nearbyBusy, setNearbyBusy] = useState(
+    () =>
+      Boolean(
+        legEndCoords.lat != null &&
+          legEndCoords.lng != null &&
+          typeof legId === 'number' &&
+          !readonly
+      )
+  );
+  const [nearbyError, setNearbyError] = useState<string | null>(null);
+  const [nearbyDog, setNearbyDog] = useState<NearbyRow[]>([]);
+  const [nearbyParksGreen, setNearbyParksGreen] = useState<NearbyRow[]>([]);
+  const [addingParkKey, setAddingParkKey] = useState<string | null>(null);
+
+  const parksCacheRef = useRef(
+    new Map<string, { dogParks: NearbyRow[]; parks: NearbyRow[]; error?: string }>()
+  );
+
+  const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
+  const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
+  const anchorLat = legEndCoords.lat as number | undefined;
+  const anchorLng = legEndCoords.lng as number | undefined;
+
+  const parksMountKey =
+    anchorLat !== undefined && anchorLng !== undefined
+      ? `${legId}:${anchorLat.toFixed(4)}:${anchorLng.toFixed(4)}`
+      : '';
+
+  async function reload() {
+    try {
+      const data = await api.listStopsForLeg(legId);
+      if (Array.isArray(data)) setStops(data as Stop[]);
+      onChanged?.();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    setStops(initialStops);
+  }, [initialStops]);
+
+  useEffect(() => {
+    if (!hasEndCoords || readonly || !parksMountKey || anchorLat == null || anchorLng == null)
+      return;
+    const cached = parksCacheRef.current.get(parksMountKey);
+    if (cached) {
+      setNearbyDog(cached.dogParks);
+      setNearbyParksGreen(cached.parks);
+      setNearbyError(cached.error ?? null);
+      setNearbyBusy(false);
+      return;
+    }
+
+    const ac = new AbortController();
+    setNearbyBusy(true);
+    setNearbyError(null);
+
+    api
+      .nearbyParks(legId, { lat: anchorLat, lng: anchorLng }, { signal: ac.signal, skipGlobalErrorReport: true })
+      .then((data) => {
+        if (!data || typeof data !== 'object') return;
+        const dogList = Array.isArray((data as any).dogParks) ? (data as any).dogParks : [];
+        const parkList = Array.isArray((data as any).parks) ? (data as any).parks : [];
+        const msg = typeof (data as any).error === 'string' ? (data as any).error : undefined;
+        parksCacheRef.current.set(parksMountKey, {
+          dogParks: dogList,
+          parks: parkList,
+          error: msg,
+        });
+        setNearbyDog(dogList);
+        setNearbyParksGreen(parkList);
+        setNearbyError(msg ?? null);
+      })
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return;
+        const msg =
+          err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Could not load nearby parks.';
+        setNearbyDog([]);
+        setNearbyParksGreen([]);
+        setNearbyError(msg);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setNearbyBusy(false);
+      });
+
+    return () => ac.abort();
+  }, [anchorLat, anchorLng, api, hasEndCoords, legId, parksMountKey, readonly]);
 
   async function retryFuelPlan() {
     if (retryBusy) return;
@@ -64,38 +183,6 @@ export default function StopsSection({
       /* error will show via fuelStatus */
     } finally {
       setRetryBusy(false);
-    }
-  }
-
-  useEffect(() => {
-    setStops(initialStops);
-  }, [initialStops]);
-
-  const fuelPlanning =
-    fuelStatus === 'computing' || fuelStatus === 'pending';
-  const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
-  // Overnight-spot discovery chips on the leg header point at the *leg end*
-  // coords — that's where the user will be when they need to park for the
-  // night. Individual overnight stops further down the list each get their
-  // own chips centered on that stop's coords.
-  const dogParkNearEnd = hasEndCoords
-    ? buildDogParkSearchUrl(legEndCoords.lat as number, legEndCoords.lng as number)
-    : null;
-  const parkNearEnd = hasEndCoords
-    ? buildParkSearchUrl(legEndCoords.lat as number, legEndCoords.lng as number)
-    : null;
-  // `legEndName` is kept in props for callers that might want to label
-  // chips with the destination town in a future change; unused here for
-  // now since the search term doesn't include it.
-  void legEndName;
-
-  async function reload() {
-    try {
-      const data = await api.listStopsForLeg(legId);
-      if (Array.isArray(data)) setStops(data as Stop[]);
-      onChanged?.();
-    } catch {
-      /* ignore */
     }
   }
 
@@ -136,10 +223,33 @@ export default function StopsSection({
     }
   }
 
+  async function handleAddNearbyPlace(row: NearbyRow) {
+    const key =
+      row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+    if (addingParkKey) return;
+    setAddingParkKey(key);
+    try {
+      await api.addStop(legId, {
+        stop_type: 'rest',
+        name: row.name,
+        lat: row.lat,
+        lng: row.lng,
+        status: 'selected',
+        source: 'google_places',
+        source_url: row.googleMapsUri ?? null,
+      });
+      await reload();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to add stop';
+      setNearbyError(msg);
+    } finally {
+      setAddingParkKey(null);
+    }
+  }
+
   async function handleSelect(id: number) {
-    setStops((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, status: 'selected' } : s))
-    );
+    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'selected' } : s)));
     try {
       await api.selectStop(id);
       reload();
@@ -149,9 +259,7 @@ export default function StopsSection({
   }
 
   async function handleDismiss(id: number) {
-    setStops((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, status: 'dismissed' } : s))
-    );
+    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'dismissed' } : s)));
     try {
       await api.updateStop(id, { status: 'dismissed' });
       reload();
@@ -177,278 +285,409 @@ export default function StopsSection({
   const dismissed = stops.filter((s) => s.status === 'dismissed');
 
   return (
-    <div
-      style={{
-        marginTop: 12,
-        padding: '10px 14px',
-        background: 'var(--tp-surface-muted)',
-        borderRadius: 6,
-        border: '1px solid var(--tp-border)',
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 700,
-          letterSpacing: '0.08em',
-          color: 'var(--tp-subtle)',
-          marginBottom: 8,
-        }}
-      >
-        STOPS
-      </div>
+    <>
+      {/* STOPS */}
+      <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
+        <div style={legSubsectionTitleStyle}>STOPS</div>
 
-      {/* Fuel planning status — always at top so the user knows what's happening */}
-      {!readonly && fuelPlanning && (
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            marginBottom: 10,
-          }}
-        >
-          <Spinner size={10} thickness={2} color="var(--tp-gold)" />
-          <span
+        {!readonly && fuelPlanning && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Spinner size={10} thickness={2} color="var(--tp-gold)" />
+            <span style={{ fontSize: 11, color: 'var(--tp-muted)' }}>Planning fuel stops…</span>
+          </div>
+        )}
+
+        {!readonly && fuelStatus === 'failed' && (
+          <div
             style={{
+              marginBottom: 8,
+              padding: '8px 10px',
+              background: 'rgba(198,93,74,0.08)',
+              border: '1px solid rgba(198,93,74,0.3)',
+              borderRadius: 5,
               fontSize: 11,
-              color: 'var(--tp-muted)',
+              color: 'var(--tp-danger)',
+              lineHeight: 1.5,
             }}
           >
-            Planning fuel stops…
-          </span>
-        </div>
-      )}
+            <strong>Fuel planning failed.</strong> Enable “Places API (New)” in Google Cloud Console and ensure the
+            key has no API restrictions blocking it. Visit{' '}
+            <code style={{ fontSize: 10 }}>/api/debug/fuel</code> for a diagnosis.
+            <div style={{ marginTop: 6 }}>
+              <button
+                onClick={retryFuelPlan}
+                disabled={retryBusy}
+                style={{
+                  fontSize: 11,
+                  background: 'var(--tp-danger)',
+                  border: 'none',
+                  color: '#fff',
+                  padding: '4px 10px',
+                  borderRadius: 4,
+                  cursor: retryBusy ? 'default' : 'pointer',
+                  opacity: retryBusy ? 0.6 : 1,
+                }}
+              >
+                {retryBusy ? 'Retrying…' : 'Retry fuel planning'}
+              </button>
+            </div>
+          </div>
+        )}
 
-      {!readonly && fuelStatus === 'failed' && (
-        <div
-          style={{
-            marginBottom: 10,
-            padding: '8px 10px',
-            background: 'rgba(198,93,74,0.08)',
-            border: '1px solid rgba(198,93,74,0.3)',
-            borderRadius: 5,
-            fontSize: 11,
-            color: 'var(--tp-danger)',
-            lineHeight: 1.5,
-          }}
-        >
-          <strong>Fuel planning failed.</strong> Likely causes: (1) Google Maps key has HTTP
-          referrer restrictions — remove them in Cloud Console so server-side calls work, or (2)
-          "Places API (New)" not enabled on the key. Visit{' '}
-          <code style={{ fontSize: 10 }}>/api/debug/fuel</code> for a full diagnosis.
-          <div style={{ marginTop: 6 }}>
-            <button
-              onClick={retryFuelPlan}
-              disabled={retryBusy}
+        {!readonly &&
+          fuelStatus === 'ready' &&
+          stops.filter((s) => s.stop_type === 'fuel').length === 0 && (
+            <div
               style={{
+                marginBottom: 8,
+                padding: '6px 10px',
+                background: 'rgba(184,149,106,0.08)',
+                border: '1px solid rgba(184,149,106,0.25)',
+                borderRadius: 5,
                 fontSize: 11,
-                background: 'var(--tp-danger)',
-                border: 'none',
-                color: '#fff',
-                padding: '4px 10px',
-                borderRadius: 4,
-                cursor: retryBusy ? 'default' : 'pointer',
-                opacity: retryBusy ? 0.6 : 1,
+                color: 'var(--tp-gold)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
               }}
             >
-              {retryBusy ? 'Retrying…' : 'Retry fuel planning'}
+              <span>No fuel stops found.</span>
+              <button
+                onClick={retryFuelPlan}
+                disabled={retryBusy}
+                style={{
+                  fontSize: 11,
+                  background: 'transparent',
+                  border: '1px solid rgba(184,149,106,0.4)',
+                  color: 'var(--tp-gold)',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  cursor: retryBusy ? 'default' : 'pointer',
+                  opacity: retryBusy ? 0.6 : 1,
+                  flexShrink: 0,
+                }}
+              >
+                {retryBusy ? 'Retrying…' : '⛽ Retry'}
+              </button>
+            </div>
+          )}
+
+        {groups.map(([type, arr]) => (
+          <StopGroup
+            key={type}
+            type={type}
+            stops={arr}
+            onSelect={handleSelect}
+            onDismiss={handleDismiss}
+            onDelete={handleDelete}
+            readonly={readonly}
+          />
+        ))}
+
+        {groups.length === 0 && !fuelPlanning && fuelStatus !== 'failed' && (
+          <div style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
+            {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
+          </div>
+        )}
+
+        {dismissed.length > 0 && (
+          <details style={{ marginTop: 8 }}>
+            <summary
+              style={{
+                cursor: 'pointer',
+                fontSize: 10,
+                color: 'var(--tp-muted)',
+                letterSpacing: '0.08em',
+              }}
+            >
+              {dismissed.length} DISMISSED
+            </summary>
+            <div style={{ marginTop: 6 }}>
+              {dismissed.map((s) => (
+                <StopRow
+                  key={s.id}
+                  stop={s}
+                  onSelect={handleSelect}
+                  onDismiss={handleDismiss}
+                  onDelete={handleDelete}
+                  readonly={readonly}
+                />
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+
+      {/* PARKS NEAR STOP — leg end anchor (overnight-area discovery). */}
+      {hasEndCoords && !readonly && anchorLat != null && anchorLng != null && (
+        <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
+          <div style={legSubsectionTitleStyle}>PARKS NEAR STOP</div>
+
+          <p style={{ fontSize: 11, color: 'var(--tp-muted)', margin: '0 0 8px 0', lineHeight: 1.45 }}>
+            Suggestions centered on tonight’s destination (within 5 km when possible — otherwise the closest finds we
+            can).
+          </p>
+
+          {nearbyBusy ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--tp-muted)' }}>
+              <Spinner size={10} thickness={2} color="var(--tp-primary)" />
+              Loading nearby places…
+            </div>
+          ) : nearbyError &&
+            nearbyDog.length === 0 &&
+            nearbyParksGreen.length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--tp-danger)', lineHeight: 1.45 }}>{nearbyError}</div>
+          ) : (
+            <>
+              <ParkSuggestionGroup
+                label="DOG PARKS"
+                rows={nearbyDog}
+                readonly={readonly}
+                accentHue="rgba(124,232,163,0.85)"
+                onAdd={handleAddNearbyPlace}
+                addingKey={addingParkKey}
+                mapsHrefForRow={(row) =>
+                  row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
+                }
+              />
+              <ParkSuggestionGroup
+                label="PARKS"
+                rows={nearbyParksGreen}
+                readonly={readonly}
+                accentHue="rgba(181,124,232,0.85)"
+                onAdd={handleAddNearbyPlace}
+                addingKey={addingParkKey}
+                mapsHrefForRow={(row) => row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)}
+              />
+              {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
+                <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>{nearbyError}</div>
+              )}
+            </>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginTop: 10,
+              fontSize: 11,
+              color: 'var(--tp-primary)',
+            }}
+          >
+            <a
+              href={buildDogParkSearchUrl(anchorLat, anchorLng)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--tp-primary)', textDecoration: 'underline' }}
+            >
+              Browse all dog parks ↗
+            </a>
+            <a
+              href={buildParkSearchUrl(anchorLat, anchorLng)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--tp-primary)', textDecoration: 'underline' }}
+            >
+              Browse all parks ↗
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Paste GPS */}
+      {!readonly && (
+        <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
+          <div style={legSubsectionTitleStyle}>PASTE GPS</div>
+          <p style={{ fontSize: 11, color: 'var(--tp-muted)', margin: '0 0 8px 0', lineHeight: 1.45 }}>
+            Add a waypoint from decimal coordinates or a Google Maps link (still stored as overnight).
+          </p>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <input
+              value={pasteValue}
+              onChange={(e) => setPasteValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddFromPaste();
+              }}
+              placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
+              disabled={pasteBusy}
+              style={{
+                flex: '1 1 240px',
+                minWidth: 180,
+                padding: '6px 10px',
+                background: 'var(--tp-surface-muted)',
+                border: '1px solid var(--tp-border)',
+                borderRadius: 4,
+                color: 'var(--tp-text)',
+                fontSize: 12,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleAddFromPaste}
+              disabled={pasteBusy || !pasteValue.trim()}
+              style={{
+                fontSize: 11,
+                background: pasteBusy ? 'var(--tp-surface-muted)' : 'var(--tp-primary)',
+                border: 'none',
+                color: pasteBusy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
+                padding: '6px 14px',
+                borderRadius: 4,
+                cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {pasteBusy ? 'Adding…' : 'Add'}
             </button>
           </div>
+          {pasteError && (
+            <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>{pasteError}</div>
+          )}
         </div>
       )}
-
-      {!readonly && fuelStatus === 'ready' && stops.filter(s => s.stop_type === 'fuel').length === 0 && (
-        <div
-          style={{
-            marginBottom: 8,
-            padding: '6px 10px',
-            background: 'rgba(184,149,106,0.08)',
-            border: '1px solid rgba(184,149,106,0.25)',
-            borderRadius: 5,
-            fontSize: 11,
-            color: 'var(--tp-gold)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-          }}
-        >
-          <span>No fuel stops found — Places API may not be returning results.</span>
-          <button
-            onClick={retryFuelPlan}
-            disabled={retryBusy}
-            style={{
-              fontSize: 11,
-              background: 'transparent',
-              border: '1px solid rgba(184,149,106,0.4)',
-              color: 'var(--tp-gold)',
-              padding: '3px 8px',
-              borderRadius: 4,
-              cursor: retryBusy ? 'default' : 'pointer',
-              opacity: retryBusy ? 0.6 : 1,
-              flexShrink: 0,
-            }}
-          >
-            {retryBusy ? 'Retrying…' : '⛽ Retry'}
-          </button>
-        </div>
-      )}
-
-      {/* 1. Stop list — planned stops (fuel first via TYPE_ORDER) */}
-      {groups.map(([type, arr]) => (
-        <StopGroup
-          key={type}
-          type={type}
-          stops={arr}
-          onSelect={handleSelect}
-          onDismiss={handleDismiss}
-          onDelete={handleDelete}
-          readonly={readonly}
-        />
-      ))}
-
-      {groups.length === 0 && (
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--tp-subtle)',
-          }}
-        >
-          {readonly
-            ? 'No stops yet.'
-            : hasEndCoords
-              ? 'No stops yet. Use the park search below to find a spot, then paste its coords.'
-              : 'No destination coords yet — add lat/lng to unlock park search.'}
-        </div>
-      )}
-
-      {/* 2. Park / dog-park discovery chips — middle */}
-      {hasEndCoords && dogParkNearEnd && parkNearEnd && !readonly && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-          <ExternalChip
-            href={dogParkNearEnd}
-            label="🐕 Dog parks nearby"
-            hint="Open Google Maps centered on the leg end, searching for dog parks"
-          />
-          <ExternalChip
-            href={parkNearEnd}
-            label="🌳 Parks nearby"
-            hint="Open Google Maps centered on the leg end, searching for parks"
-          />
-        </div>
-      )}
-
-      {/* 3. Paste GPS input — bottom */}
-      {!readonly && (
-        <div
-          style={{
-            display: 'flex',
-            gap: 6,
-            marginTop: 10,
-            marginBottom: pasteError ? 4 : 0,
-            flexWrap: 'wrap',
-          }}
-        >
-          <input
-            value={pasteValue}
-            onChange={(e) => setPasteValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleAddFromPaste();
-            }}
-            placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
-            disabled={pasteBusy}
-            style={{
-              flex: '1 1 280px',
-              minWidth: 200,
-              padding: '6px 10px',
-              background: 'var(--tp-surface-muted)',
-              border: '1px solid var(--tp-border)',
-              borderRadius: 4,
-              color: 'var(--tp-text)',
-              fontSize: 12,
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={handleAddFromPaste}
-            disabled={pasteBusy || !pasteValue.trim()}
-            style={{
-              fontSize: 11,
-              background: pasteBusy ? 'var(--tp-surface-muted)' : 'var(--tp-primary)',
-              border: 'none',
-              color: pasteBusy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
-              padding: '6px 14px',
-              borderRadius: 4,
-              cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            {pasteBusy ? 'Adding…' : 'Add'}
-          </button>
-        </div>
-      )}
-
-      {pasteError && (
-        <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>{pasteError}</div>
-      )}
-
-      {dismissed.length > 0 && (
-        <details style={{ marginTop: 8 }}>
-          <summary
-            style={{
-              cursor: 'pointer',
-              fontSize: 10,
-              
-              color: 'var(--tp-muted)',
-              letterSpacing: '0.08em',
-            }}
-          >
-            {dismissed.length} DISMISSED
-          </summary>
-          <div style={{ marginTop: 6 }}>
-            {dismissed.map((s) => (
-              <StopRow
-                key={s.id}
-                stop={s}
-                onSelect={handleSelect}
-                onDismiss={handleDismiss}
-                onDelete={handleDelete}
-                readonly={readonly}
-              />
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
+    </>
   );
 }
 
-function ExternalChip({ href, label, hint }: { href: string; label: string; hint?: string }) {
+function ParkSuggestionGroup({
+  label,
+  rows,
+  readonly,
+  accentHue,
+  onAdd,
+  addingKey,
+  mapsHrefForRow,
+}: {
+  label: string;
+  rows: NearbyRow[];
+  readonly: boolean;
+  accentHue: string;
+  onAdd: (row: NearbyRow) => void;
+  addingKey: string | null;
+  mapsHrefForRow: (row: NearbyRow) => string;
+}) {
+  if (!rows?.length) {
+    return (
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 6, color: accentHue }}>
+          {label}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tp-subtle)', fontStyle: 'italic' }}>No Places hits in reach.</div>
+      </div>
+    );
+  }
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={hint}
-      style={{
-        fontSize: 11,
-        background: 'rgba(124,181,232,0.15)',
-        border: '1px solid rgba(124,181,232,0.3)',
-        color: 'var(--tp-primary)',
-        padding: '4px 10px',
-        borderRadius: 4,
-        cursor: 'pointer',
-        textDecoration: 'none',
-        
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-      }}
-    >
-      {label} ↗
-    </a>
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, color: accentHue }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map((row, idx) => {
+          const dedupe =
+            row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+          const mapsHref = mapsHrefForRow(row);
+          return (
+            <div
+              key={`${dedupe}-${idx}`}
+              style={{
+                paddingTop: idx === 0 ? 0 : 8,
+                paddingBottom: idx === rows.length - 1 ? 0 : 8,
+                borderTop: idx === 0 ? 'none' : '1px solid var(--tp-border)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'baseline',
+                  gap: 6,
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: idx === 0 ? 600 : 400, color: 'var(--tp-text)' }}>
+                    {row.name}
+                  </span>{' '}
+                  {idx === 0 ? (
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                        color: 'var(--tp-success)',
+                        border: '1px solid rgba(124,232,163,0.35)',
+                        borderRadius: 3,
+                        padding: '2px 5px',
+                        marginLeft: 4,
+                      }}
+                    >
+                      Closest
+                    </span>
+                  ) : null}
+                  {!row.within5Km ? (
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                        color: 'var(--tp-muted)',
+                        border: '1px solid var(--tp-border)',
+                        borderRadius: 3,
+                        padding: '2px 5px',
+                        marginLeft: 4,
+                      }}
+                    >
+                      Outside 5 km
+                    </span>
+                  ) : null}
+                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}>
+                    {row.distanceKm.toFixed(1)} km
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                <a
+                  href={mapsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    fontSize: 11,
+                    padding: '3px 10px',
+                    borderRadius: 4,
+                    textDecoration: 'none',
+                    color: accentHue,
+                    border: `1px solid ${accentHue}55`,
+                  }}
+                >
+                  Maps ↗
+                </a>
+                {!readonly && (
+                  <button
+                    type="button"
+                    onClick={() => onAdd(row)}
+                    disabled={addingKey !== null}
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 10px',
+                      borderRadius: 4,
+                      cursor: addingKey !== null ? 'wait' : 'pointer',
+                      background: 'rgba(124,181,232,0.18)',
+                      border: '1px solid rgba(124,181,232,0.35)',
+                      color: 'var(--tp-primary)',
+                    }}
+                  >
+                    {addingKey === dedupe ? 'Adding…' : 'Add as rest stop'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -473,7 +712,6 @@ function StopGroup({
       <div
         style={{
           fontSize: 10,
-          
           color: meta.color,
           letterSpacing: '0.08em',
           marginBottom: 4,
@@ -513,7 +751,6 @@ function StopRow({
   const hasCoords = stop.lat != null && stop.lng != null;
   const [copied, setCopied] = useState(false);
 
-  // Reset the "Copied!" label after a short delay so repeated clicks work.
   async function handleCopyCoords() {
     if (!hasCoords) return;
     const text = `${stop.lat},${stop.lng}`;
@@ -521,7 +758,6 @@ function StopRow({
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        // Fallback for older browsers — use a hidden textarea + execCommand.
         const el = document.createElement('textarea');
         el.value = text;
         el.style.position = 'fixed';
@@ -534,14 +770,9 @@ function StopRow({
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
     } catch {
-      // Swallow — permissions denied in some contexts. The user can still
-      // read the coords from the stop name if they care.
+      /* ignore */
     }
   }
-
-  // Only overnight stops get the "park near this point" enrichment — fuel
-  // and water stops are just utility stops, no park link adds value.
-  const showParkChips = stop.stop_type === 'overnight' && hasCoords;
 
   return (
     <div
@@ -599,37 +830,14 @@ function StopRow({
             {stop.name}
           </span>
           {stop.distance_from_start_km != null && (
-            <span
-              style={{
-                fontSize: 10,
-                color: 'var(--tp-muted)',
-                
-              }}
-            >
-              ~{stop.distance_from_start_km} km
-            </span>
+            <span style={{ fontSize: 10, color: 'var(--tp-muted)' }}>~{stop.distance_from_start_km} km</span>
           )}
           {stop.fuel_type && (
-            <span
-              style={{
-                fontSize: 10,
-                color: 'var(--tp-muted)',
-                
-              }}
-            >
-              {stop.fuel_type}
-            </span>
+            <span style={{ fontSize: 10, color: 'var(--tp-muted)' }}>{stop.fuel_type}</span>
           )}
         </div>
         {(stop.notes || stop.source_url) && (
-          <div
-            style={{
-              fontSize: 10,
-              color: 'var(--tp-subtle)',
-              
-              marginTop: 2,
-            }}
-          >
+          <div style={{ fontSize: 10, color: 'var(--tp-subtle)', marginTop: 2 }}>
             {stop.notes ? <span>{stop.notes}</span> : null}
             {stop.source_url ? (
               <>
@@ -658,7 +866,6 @@ function StopRow({
             color: copied ? 'var(--tp-success)' : 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 6px',
-            
             borderRadius: 3,
             flexShrink: 0,
           }}
@@ -676,7 +883,6 @@ function StopRow({
             fontSize: 10,
             color: 'rgba(124,181,232,0.7)',
             textDecoration: 'none',
-            
             padding: '2px 6px',
             flexShrink: 0,
           }}
@@ -695,7 +901,6 @@ function StopRow({
             color: 'var(--tp-muted)',
             cursor: 'pointer',
             padding: '2px 4px',
-            
           }}
         >
           dismiss
@@ -716,46 +921,6 @@ function StopRow({
         >
           ×
         </button>
-      )}
-      {showParkChips && (
-        <div style={{ flexBasis: '100%', display: 'flex', gap: 6, paddingLeft: 22, marginTop: 4 }}>
-          <a
-            href={buildDogParkSearchUrl(stop.lat as number, stop.lng as number)}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Search Google Maps for dog parks near this stop"
-            style={{
-              fontSize: 10,
-              color: 'rgba(124,232,163,0.85)',
-              background: 'rgba(124,232,163,0.08)',
-              border: '1px solid rgba(124,232,163,0.2)',
-              padding: '2px 8px',
-              borderRadius: 3,
-              textDecoration: 'none',
-              
-            }}
-          >
-            🐕 dog parks
-          </a>
-          <a
-            href={buildParkSearchUrl(stop.lat as number, stop.lng as number)}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Search Google Maps for parks near this stop"
-            style={{
-              fontSize: 10,
-              color: 'rgba(181,124,232,0.85)',
-              background: 'rgba(181,124,232,0.08)',
-              border: '1px solid rgba(181,124,232,0.2)',
-              padding: '2px 8px',
-              borderRadius: 3,
-              textDecoration: 'none',
-              
-            }}
-          >
-            🌳 parks
-          </a>
-        </div>
       )}
     </div>
   );

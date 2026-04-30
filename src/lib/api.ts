@@ -167,6 +167,39 @@ export function tripApi(tripId: number) {
         source_url?: string;
       }>(`/api/coords/parse`, { body: { input } }),
 
+    /** Nearby dog parks / parks via Places API (server). Errors may return 200 + `error` or 503. */
+    nearbyParks: (
+      legId: number,
+      coords: { lat: number; lng: number },
+      opts?: Pick<ApiOptions, 'signal' | 'skipGlobalErrorReport'>
+    ) =>
+      apiFetch<{
+        dogParks: Array<{
+          name: string;
+          lat: number;
+          lng: number;
+          placeId: string | null;
+          primaryType: string | null;
+          googleMapsUri: string | null;
+          distanceKm: number;
+          within5Km: boolean;
+        }>;
+        parks: Array<{
+          name: string;
+          lat: number;
+          lng: number;
+          placeId: string | null;
+          primaryType: string | null;
+          googleMapsUri: string | null;
+          distanceKm: number;
+          within5Km: boolean;
+        }>;
+        error?: string;
+      }>(`/api/places/nearby-parks`, {
+        query: { tripId, legId, lat: coords.lat, lng: coords.lng },
+        ...opts,
+      }),
+
     listTasksForLeg: (legId: number) => apiFetch(`/api/tasks`, { query: { tripId, legId } }),
     listTasksForTrip: () => apiFetch(`/api/tasks`, { query: { tripId } }),
     addTask: (payload: Record<string, unknown>) =>
