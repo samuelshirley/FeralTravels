@@ -32,6 +32,11 @@ interface UIMessage extends ChatMessage {
   // (unknown action, owner mismatch, DB error). We surface this so the user
   // doesn't see a misleading "Changes applied to trip" badge.
   applyError?: string | null;
+  // True when the replan response had truncated=true — i.e. Penny hit the
+  // tool-use iteration cap mid-plan and only persisted partial work. We
+  // surface a warning + 'Continue planning' button on the bubble. UI-only;
+  // not persisted, so historical messages from a page reload never show it.
+  truncated?: boolean;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -223,6 +228,7 @@ export default function ChatPanel({
           ? data.changes.changes.length > 0
           : false;
         const fuelReplenishQueued: boolean = data?.fuelReplenishQueued === true;
+        const truncated: boolean = data?.truncated === true;
         let applyError: string | null = null;
         if (hadProposedChanges && appliedCount === 0) {
           applyError =
@@ -245,6 +251,7 @@ export default function ChatPanel({
             changes_made: appliedCount > 0 && data.changes ? JSON.stringify(data.changes) : null,
             created_at: new Date().toISOString(),
             applyError,
+            truncated,
           },
         ]);
         if (appliedCount > 0) {
@@ -535,11 +542,58 @@ export default function ChatPanel({
                   border: '1px solid rgba(198, 93, 74, 0.35)',
                   fontSize: 11,
                   color: 'var(--tp-danger)',
-                  
+
                   lineHeight: 1.45,
                 }}
               >
                 {msg.applyError}
+              </div>
+            )}
+            {msg.truncated && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '8px 10px',
+                  background: 'var(--tp-danger-muted)',
+                  borderRadius: 4,
+                  border: '1px solid rgba(198, 93, 74, 0.35)',
+                  fontSize: 12,
+                  color: 'var(--tp-text)',
+                  lineHeight: 1.45,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                <div style={{ color: 'var(--tp-danger)', fontWeight: 600 }}>
+                  Penny didn&apos;t finish your plan
+                </div>
+                <div style={{ color: 'var(--tp-muted)' }}>
+                  She ran out of room mid-plan and saved partial work. Click below to keep going from where she stopped.
+                </div>
+                <button
+                  onClick={() =>
+                    sendChatMessage(
+                      'Continue planning the trip from where you left off. Add the remaining legs.'
+                    )
+                  }
+                  disabled={loading}
+                  style={{
+                    alignSelf: 'flex-start',
+                    marginTop: 2,
+                    padding: '5px 10px',
+                    background: loading ? 'var(--tp-border)' : 'var(--tp-primary)',
+                    color: loading ? 'var(--tp-subtle)' : 'var(--tp-on-primary)',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    cursor: loading ? 'default' : 'pointer',
+                  }}
+                >
+                  Continue planning
+                </button>
               </div>
             )}
           </div>

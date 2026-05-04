@@ -61,9 +61,23 @@ const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR |
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * Hard cap on the size of a single chat message. The textarea has no
+ * character limit on the client (deliberate — copy-paste friendliness),
+ * so this is the server-side anti-spam guard. 4000 chars ≈ ~1000 tokens
+ * — plenty for "plan a 14-day trip from X to Y hitting A, B, C" with
+ * room for elaboration. Anything larger is almost certainly someone
+ * pasting junk to burn tokens.
+ *
+ * Defense in depth: REPLAN_REQUESTS_PER_HOUR (40) and
+ * REPLAN_USD_CAP_PER_DAY ($5) cap the total damage even if individual
+ * messages slip through long.
+ */
+const MAX_MESSAGE_CHARS = 4000;
+
 const inputSchema = z.object({
   tripId: z.number().int().positive(),
-  message: z.string().optional().default(''),
+  message: z.string().max(MAX_MESSAGE_CHARS).optional().default(''),
   images: z
     .array(z.object({ dataUrl: z.string(), mediaType: z.string() }))
     .optional()
@@ -124,6 +138,21 @@ export async function POST(req: Request) {
     await addChatMessage(tripId, 'user', message || '(image only)');
     userTurnSaved = true;
     const result = await replan(message, tripId, images, userId);
+
+    // Truncation = Penny hit MAX_TOOL_USE_ITERATIONS mid-plan and exited
+    // with partial work persisted. Log it so we can watch how often this
+    // happens after the iteration bump + parallel-batching prompt change.
+    // Fire-and-forget — never let a logging error fail the response.
+    if (result.truncated) {
+      logUsageEvent({
+        userId,
+        tripId,
+        provider: 'anthropic:replan-truncated',
+        requests: 1,
+        success: true,
+        errorMessage: 'Tool-use loop hit MAX_TOOL_USE_ITERATIONS',
+      }).catch((e) => console.warn('logUsageEvent (truncation) failed:', e));
+    }
 
     let appliedCount = 0;
     let failedCount = 0;

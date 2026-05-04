@@ -31,8 +31,18 @@ const MAX_VALIDATION_RETRIES = 2;
  * Hard ceiling on tool-use loop iterations regardless of validation
  * success. Protects against pathological loops where Claude keeps calling
  * lookup tools without ever ending her turn.
+ *
+ * Sized so a multi-waypoint trip (e.g. Tampa → Smoky → Grand Canyon → Moab
+ * → Seattle) can complete even if Penny serializes one segment per turn:
+ * worst case is ~2N+1 iterations for N segments. The system prompt also
+ * pushes her to batch get_route calls in parallel, which collapses that to
+ * ~2-3 iterations in the common case — so this is mostly a safety net.
+ *
+ * Cost ceiling: 16 iterations × max_tokens=4096 ≈ ~65K output tokens per
+ * request. The per-user $5/day spend cap (REPLAN_USD_CAP_PER_DAY) and
+ * 40-req/hour cap (REPLAN_REQUESTS_PER_HOUR) bound the blast radius.
  */
-const MAX_TOOL_USE_ITERATIONS = 8;
+const MAX_TOOL_USE_ITERATIONS = 16;
 
 // ---------------------------------------------------------------------------
 // SYSTEM_PROMPT
@@ -66,6 +76,16 @@ One exception: if the user's message is clearly a greeting ("hey", "thanks", "ok
 - Never mark anything "selected" yourself — the user picks. Default new routes/stops to status="option".
 </style>
 
+<units>
+This app is metric-only. Always express distances in kilometers (km), driving times in hours/minutes, fuel volumes in liters, temperatures in Celsius. NEVER use miles, mph, gallons, Fahrenheit, or any other imperial unit in your responses, even if the user uses them.
+
+If the user mentions an imperial unit (miles, mph, gallons, °F, feet, etc.), respond with one short deadpan line that you don't recognize that unit, then plan in metric using your best metric estimate. Examples:
+  - User: "drive 500 miles tomorrow" → "I don't know what a 'mile' is — planning ~805 km."
+  - User: "fill up 10 gallons" → "I don't speak imperial. Working in liters (~38 L)."
+  - User: "it'll be 80°F" → "°F is not a unit I use. Planning around ~27°C."
+Keep it dry — one short line, then proceed. Do not lecture, apologize, or explain why. Do not ask the user to switch units. Do not offer a unit selector. Just convert and move on.
+</units>
+
 <context_facts>
 Each turn you receive a <context>…</context> block in the user message with this shape:
   trip       — { id, name, start_date, end_date, status }
@@ -84,6 +104,15 @@ Each turn you receive a <context>…</context> block in the user message with th
 - When a tool_result comes back with success, do NOT re-emit that tool call.
 - When a tool_result comes back with is_error: true, fix the specific problem the error message describes and emit a corrected call. Do not retry an unchanged call — it will fail the same way.
 - You may call multiple tools in one response (e.g. add_leg × N for a multi-day plan after one get_route).
+
+<batching_for_multi_waypoint_trips>
+You have a hard cap on tool-use iterations per turn. Burning iterations one segment at a time will leave the user with a half-saved plan. Batch aggressively:
+
+- When the user gives MULTIPLE mandatory waypoints in one message (e.g. "Tampa → Smoky → Grand Canyon → Moab → Seattle"), emit ALL the get_route calls — one per segment — IN PARALLEL in a single response. Do not call get_route, wait, then call the next get_route. Fire them together as N tool_use blocks in one assistant turn.
+- After all those get_route results come back in one batched tool_result, emit ALL the add_leg calls for the entire trip in your next response — every driving day across every segment in one batched assistant turn.
+- This collapses what would otherwise be ~2N+1 iterations down to 2-3 for any number of segments. It is the difference between a complete saved plan and a truncated one.
+- Sequential get_route calls are still fine for single-segment work or follow-up tweaks. The batching rule only applies when the user has named multiple mandatory stops up front.
+</batching_for_multi_waypoint_trips>
 </tool_use_protocol>
 
 <fuel_planning_rules>
