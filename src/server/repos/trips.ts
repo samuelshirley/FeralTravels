@@ -1,6 +1,7 @@
 import 'server-only';
-import { and, asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
+import { ConflictError } from '@/server/auth/guards';
 import {
   trips,
   legs,
@@ -336,6 +337,41 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
   return { ...trip, legs: fullLegs };
 }
 
+/**
+ * Reject a trip name that already exists for this user (case-insensitive,
+ * trimmed). Pass `excludeTripId` when validating a rename so the trip being
+ * renamed doesn't conflict with itself.
+ *
+ * The DB also has a unique index on (user_id, lower(trim(name))) — see
+ * migration 0005 — so this check is for the nice error message; the index
+ * is the actual race-condition backstop.
+ */
+export async function assertTripNameAvailable(
+  userId: string,
+  name: string,
+  excludeTripId?: number,
+): Promise<void> {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return; // Zod already rejects empty names; this is just defensive.
+  const conditions = [
+    eq(trips.userId, userId),
+    sql`lower(trim(${trips.name})) = ${normalized}`,
+  ];
+  if (excludeTripId !== undefined) {
+    conditions.push(ne(trips.id, excludeTripId));
+  }
+  const existing = await db
+    .select({ id: trips.id })
+    .from(trips)
+    .where(and(...conditions))
+    .limit(1);
+  if (existing.length > 0) {
+    throw new ConflictError(
+      `A trip named "${name.trim()}" already exists. Pick a different name.`,
+    );
+  }
+}
+
 export async function createTrip(input: {
   userId: string;
   name: string;
@@ -343,6 +379,7 @@ export async function createTrip(input: {
   endDate?: string | null;
   vehicleId?: number | null;
 }) {
+  await assertTripNameAvailable(input.userId, input.name);
   const [row] = await db
     .insert(trips)
     .values({
@@ -436,12 +473,38 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
   const s = src[0];
 
   return await db.transaction(async (tx) => {
+    // Find an available "(copy)" / "(copy 2)" / "(copy N)" suffix. The unique
+    // index on (user_id, lower(trim(name))) means a naive "(copy)" suffix
+    // would crash the second time the same template is cloned. Probing inside
+    // the transaction reduces (but doesn't eliminate) the race; the DB unique
+    // index is the actual backstop.
+    let newName = `${s.name} (copy)`;
+    for (let i = 1; i < 100; i++) {
+      const candidate = i === 1 ? `${s.name} (copy)` : `${s.name} (copy ${i})`;
+      const taken = await tx
+        .select({ id: trips.id })
+        .from(trips)
+        .where(
+          and(
+            eq(trips.userId, userId),
+            sql`lower(trim(${trips.name})) = ${candidate.trim().toLowerCase()}`,
+          ),
+        )
+        .limit(1);
+      if (taken.length === 0) {
+        newName = candidate;
+        break;
+      }
+      // Pathological case: 100 copies. Fall back to a timestamp suffix.
+      if (i === 99) newName = `${s.name} (copy ${Date.now()})`;
+    }
+
     const [newTrip] = await tx
       .insert(trips)
       .values({
         userId,
         vehicleId: null,
-        name: `${s.name} (copy)`,
+        name: newName,
         startDate: s.startDate,
         endDate: s.endDate,
         status: 'planning',

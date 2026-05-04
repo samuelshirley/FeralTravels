@@ -9,7 +9,7 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { auth } from '@/server/auth';
-import { deleteTrip } from '@/server/repos/trips';
+import { deleteTrip, assertTripNameAvailable } from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
 import { replenishFuelStopsForTrip } from '@/server/fuel';
 
@@ -35,6 +35,14 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     await assertTripOwnedByUser(tripId, userId);
 
     const body = patchSchema.parse(await req.json());
+
+    // Reject rename collisions against the user's other trips (case-insensitive,
+    // trimmed). Excluding tripId from the check so a no-op rename doesn't fight
+    // with itself. The DB unique index on (user_id, lower(trim(name))) is the
+    // real backstop; this gives us the friendlier error message.
+    if (body.name !== undefined) {
+      await assertTripNameAvailable(userId, body.name, tripId);
+    }
 
     // If vehicle_id is being set, verify the user actually owns that vehicle
     // — otherwise a malicious client could attach someone else's vehicle to
