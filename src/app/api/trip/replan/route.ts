@@ -167,12 +167,46 @@ export async function POST(req: Request) {
       failedActions.push({ action: v.tool, error: v.error });
     }
 
+    // Feasibility gate (server-side belt for the prompt rule's suspenders).
+    //
+    // If extract_trip_intent was called this turn, this is a fresh plan or
+    // significant scope change — Penny was required to call
+    // check_trip_feasibility. If that didn't happen, or it returned
+    // 'over_budget', we refuse to apply any add_leg actions. Other action
+    // types (add_stop, update_route, plan_fuel_stops, etc.) flow through
+    // unaffected — the gate is specific to leg creation, since legs are
+    // what determines the day count the budget gates against.
+    //
+    // Tweaks (no extract_trip_intent in this turn) bypass the gate entirely.
+    // That preserves the "move leg 3 a day later" / "add a fuel stop" UX.
+    const feasibilityGateActive = result.extractIntentCalled;
+    const feasibilityGateBlocks =
+      feasibilityGateActive &&
+      (result.feasibilityVerdict === null ||
+        result.feasibilityVerdict === 'over_budget');
+
     // Dispatch every validated action. The discriminated union on
     // `action.name` narrows `action.input` to its exact shape — no manual
     // narrowing or coercion needed (the Zod validators already did that work
     // inside the tool-use loop).
     const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
     for (const action of result.validatedActions) {
+      // Reject add_leg when the feasibility gate is blocking. We surface
+      // this as a per-action failure so the chat shows a clear error,
+      // similar to validator failures. Penny's text response (which
+      // should already explain the over-budget situation per the prompt
+      // rule) is shown to the user alongside.
+      if (feasibilityGateBlocks && action.name === 'add_leg') {
+        failedCount += 1;
+        failedActions.push({
+          action: 'add_leg',
+          error:
+            result.feasibilityVerdict === 'over_budget'
+              ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
+              : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
+        });
+        continue;
+      }
       try {
         await dispatchAction(action, tripId, userId, dispatchCtx);
         appliedActions.push(action);

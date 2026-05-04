@@ -1,7 +1,7 @@
 import 'server-only';
 import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { ConflictError } from '@/server/auth/guards';
+import { ConflictError, HttpError } from '@/server/auth/guards';
 import {
   trips,
   legs,
@@ -372,6 +372,45 @@ export async function assertTripNameAvailable(
   }
 }
 
+/**
+ * Maximum allowable trip duration. 2 years is a sanity guard: it admits
+ * "extended sabbaticals" and "round-the-world" itineraries, but rejects
+ * obvious nonsense (a 10-year trip, a typo). Note this is NOT a cost cap —
+ * a 2-year trip with auto-replan can still hit the Places API a lot.
+ * Per-user spend caps live in usage.ts.
+ */
+export const MAX_TRIP_DURATION_DAYS = 730;
+
+/**
+ * Throw a 400-tier error if the (startDate, endDate) range exceeds the cap.
+ *
+ * Both dates must be present for the check to fire — open-ended trips
+ * (start without end, or vice versa) are allowed since we can't compute
+ * a duration. Invalid dates throw a parse error.
+ */
+export function assertTripDurationWithinLimit(
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+) {
+  if (!startDate || !endDate) return;
+  const startMs = Date.parse(startDate);
+  const endMs = Date.parse(endDate);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    throw new HttpError(400, 'Trip start_date or end_date is not a valid date.');
+  }
+  if (endMs < startMs) {
+    throw new HttpError(400, 'Trip end_date must be on or after start_date.');
+  }
+  const days = Math.ceil((endMs - startMs) / (24 * 60 * 60 * 1000));
+  if (days > MAX_TRIP_DURATION_DAYS) {
+    throw new HttpError(
+      400,
+      `Trip duration is ${days} days; the limit is ${MAX_TRIP_DURATION_DAYS} days (about 2 years). ` +
+        `Split this into multiple trips, or shorten the date range.`,
+    );
+  }
+}
+
 export async function createTrip(input: {
   userId: string;
   name: string;
@@ -379,6 +418,7 @@ export async function createTrip(input: {
   endDate?: string | null;
   vehicleId?: number | null;
 }) {
+  assertTripDurationWithinLimit(input.startDate, input.endDate);
   await assertTripNameAvailable(input.userId, input.name);
   const [row] = await db
     .insert(trips)

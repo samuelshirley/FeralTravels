@@ -36,6 +36,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
 
   return (
     <nav
+      className="tp-app-navbar"
+      data-trip-context={tripName ? 'trip' : 'app'}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -49,16 +51,20 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         boxShadow: 'var(--tp-shadow-sm)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+      <div
+        className="tp-app-navbar__left"
+        style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}
+      >
         <Link
           href={tripsHref}
+          className="tp-app-navbar__brand"
           style={{ color: 'var(--tp-text)', textDecoration: 'none', fontSize: 14, fontWeight: 700 }}
         >
           Feral Travels
         </Link>
         {tripName && (
           <>
-            <span style={{ color: 'var(--tp-subtle)' }}>/</span>
+            <span className="tp-app-navbar__sep" style={{ color: 'var(--tp-subtle)' }}>/</span>
             <span
               style={{
                 fontSize: 14,
@@ -75,7 +81,10 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div
+        className="tp-app-navbar__right"
+        style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}
+      >
         {rightSlot}
         <div ref={ref} style={{ position: 'relative' }}>
           <button
@@ -204,6 +213,33 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
           )}
         </div>
       </div>
+
+      {/*
+        Mobile-friendly tweaks. On a phone, the trip name + vehicle chip
+        compete for ~360px of header width, and the brand "Feral Travels /"
+        crowds them out. When we're inside a trip context, hide the brand
+        text + separator on narrow viewports — the brand is still reachable
+        from the avatar dropdown's "Trips" link. App-context navbars (e.g.
+        /trips index) keep the brand visible since there's no trip name to
+        compete with.
+      */}
+      <style jsx>{`
+        @media (max-width: 480px) {
+          .tp-app-navbar {
+            padding: 8px 12px !important;
+          }
+          .tp-app-navbar[data-trip-context='trip'] .tp-app-navbar__brand,
+          .tp-app-navbar[data-trip-context='trip'] .tp-app-navbar__sep {
+            display: none;
+          }
+          .tp-app-navbar__left {
+            gap: 8px !important;
+          }
+          .tp-app-navbar__right {
+            gap: 8px !important;
+          }
+        }
+      `}</style>
     </nav>
   );
 }

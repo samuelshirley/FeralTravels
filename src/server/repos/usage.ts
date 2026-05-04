@@ -81,6 +81,61 @@ export async function logUsageEvent(input: {
   });
 }
 
+// Google Places API (New) per-call pricing in USD. Tied to which fields we
+// request via X-Goog-FieldMask:
+//   - "essentials"  → only id, displayName, location, primaryType (~$0.005)
+//   - "pro"         → adds googleMapsUri or other Pro-tier fields  (~$0.025)
+//   - "enterprise"  → reviews, contact info, etc. (not used here)  (~$0.040)
+// We pick the SKU at the call site so the bill estimate matches what we
+// asked Google for. Update when Google's price page changes.
+// https://developers.google.com/maps/billing-and-pricing/pricing
+const GOOGLE_PLACES_PRICING_PER_CALL_USD: Record<string, number> = {
+  'nearby-search-essentials': 0.005,
+  'nearby-search-pro': 0.025,
+  'nearby-search-enterprise': 0.040,
+};
+
+export type GooglePlacesEndpoint =
+  | 'nearby-search-essentials'
+  | 'nearby-search-pro'
+  | 'nearby-search-enterprise';
+
+export interface LogGooglePlacesUsageInput {
+  userId: string;
+  tripId?: number | null;
+  endpoint: GooglePlacesEndpoint;
+  /** How many Places calls this row covers — usually batched per leg/replan. */
+  requests: number;
+  success?: boolean;
+  errorMessage?: string | null;
+}
+
+/**
+ * Record Google Places usage so it appears alongside Anthropic spend in
+ * usageEvents / admin dashboards. Costs are estimated from the field-mask
+ * tier passed in `endpoint`; the request count is what actually hit Google.
+ *
+ * No-op when `requests <= 0` so we don't write empty rows from legs that
+ * skipped planning.
+ */
+export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
+  if (input.requests <= 0) return;
+  const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[input.endpoint] ?? 0.005;
+  const usd = perCall * input.requests;
+  await db.insert(usageEvents).values({
+    userId: input.userId,
+    tripId: input.tripId ?? null,
+    provider: 'google-places',
+    model: input.endpoint,
+    inputTokens: 0,
+    outputTokens: 0,
+    requests: input.requests,
+    costMicrocents: dollarsToMicrocents(usd),
+    success: input.success ?? true,
+    errorMessage: input.errorMessage ?? null,
+  });
+}
+
 /** Sum cost + count requests for a user in the trailing N hours. Used for rate limiting. */
 export async function getUserUsageSummary(userId: string, hours: number) {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);

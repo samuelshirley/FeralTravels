@@ -9,7 +9,11 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { auth } from '@/server/auth';
-import { deleteTrip, assertTripNameAvailable } from '@/server/repos/trips';
+import {
+  deleteTrip,
+  assertTripNameAvailable,
+  assertTripDurationWithinLimit,
+} from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
 import { replenishFuelStopsForTrip } from '@/server/fuel';
 
@@ -56,6 +60,23 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       if (owned.length === 0) {
         return Response.json({ error: 'Vehicle not found' }, { status: 404 });
       }
+    }
+
+    // Enforce the 2-year max trip duration. PATCH may update only one of the
+    // two date fields, so merge the incoming change against the current
+    // persisted dates before checking — otherwise a partial PATCH could push
+    // a previously-valid trip over the limit unnoticed.
+    if (body.start_date !== undefined || body.end_date !== undefined) {
+      const [existing] = await db
+        .select({ startDate: trips.startDate, endDate: trips.endDate })
+        .from(trips)
+        .where(eq(trips.id, tripId))
+        .limit(1);
+      const nextStart =
+        body.start_date !== undefined ? body.start_date : existing?.startDate ?? null;
+      const nextEnd =
+        body.end_date !== undefined ? body.end_date : existing?.endDate ?? null;
+      assertTripDurationWithinLimit(nextStart, nextEnd);
     }
 
     const update: Record<string, unknown> = { updatedAt: new Date() };

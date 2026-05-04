@@ -8,8 +8,6 @@ import ChatPanel from '@/components/ChatPanel';
 import AppNavbar from '@/components/AppNavbar';
 import Spinner from '@/components/Spinner';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
-import ChatDrawer from '@/components/ChatDrawer';
-import ChatToggleButton from '@/components/ChatToggleButton';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
@@ -31,14 +29,18 @@ interface Props {
 // indicator safe area.
 const MOBILE_BOTTOM_NAV_HEIGHT = 62;
 
-function ResizeHandle() {
+function ResizeHandle({ direction = 'horizontal' }: { direction?: 'horizontal' | 'vertical' }) {
+  // For a horizontal PanelGroup the handle is a vertical bar (col-resize);
+  // for a vertical PanelGroup the handle is a horizontal bar (row-resize).
+  const isCol = direction === 'horizontal';
   return (
     <PanelResizeHandle
       style={{
-        width: 6,
+        width: isCol ? 6 : '100%',
+        height: isCol ? '100%' : 6,
         background: 'var(--tp-border)',
         position: 'relative',
-        cursor: 'col-resize',
+        cursor: isCol ? 'col-resize' : 'row-resize',
         flexShrink: 0,
         transition: 'background 120ms ease',
       }}
@@ -50,8 +52,8 @@ function ResizeHandle() {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 2,
-          height: 28,
+          width: isCol ? 2 : 28,
+          height: isCol ? 28 : 2,
           borderRadius: 2,
           background: 'var(--tp-border-strong)',
           pointerEvents: 'none',
@@ -77,7 +79,6 @@ export default function TripWorkspace({
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
   const [selectedLegId, setSelectedLegId] = useState<number | null>(null);
-  const [chatOpen, setChatOpen] = useState(viewport === 'desktop');
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
 
@@ -88,8 +89,8 @@ export default function TripWorkspace({
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
-  const chatOpenRef = useRef(chatOpen);
-  chatOpenRef.current = chatOpen;
+  // Note: chat is permanently visible on tablet & desktop (no toggle in the
+  // header anymore), so chatOpen state is gone. Mobile still uses mobileTab.
   // Host for the mobile itinerary scroller — passed to PullToRefresh so
   // the pull gesture only engages when the itinerary tab is actually at
   // scrollTop=0 (vs the window, which is pinned on mobile).
@@ -132,20 +133,13 @@ export default function TripWorkspace({
     await new Promise((r) => setTimeout(r, 250));
   }, [loadTrip]);
 
-  // Default chat open on desktop, closed on tablet, controlled by mobileTab on phone.
-  // Exception: on a freshly-created trip (no legs yet), chat should be the primary
-  // view on every viewport — the user just got here to plan, not to stare at an
-  // empty itinerary.
+  // On tablet & desktop chat is now always visible — no chatOpen toggle to set.
+  // On mobile, on a freshly-created trip (no legs yet), chat should be the
+  // primary view: the user just got here to plan, not to stare at an empty
+  // itinerary. Apply at most once per mount so the user is free to switch
+  // tabs manually afterwards.
   const isEmptyTrip = trip != null && trip.legs.length === 0;
   const emptyTripTabAppliedRef = useRef(false);
-  useEffect(() => {
-    if (viewport === 'desktop') setChatOpen(true);
-    else if (viewport === 'tablet') setChatOpen(isEmptyTrip);
-  }, [viewport, isEmptyTrip]);
-
-  // Once on mobile, if this is the first load of an empty trip, jump straight
-  // to the chat tab. Apply at most once per mount so the user is free to
-  // switch tabs manually afterwards.
   useEffect(() => {
     if (viewport !== 'mobile') return;
     if (!isEmptyTrip) return;
@@ -155,9 +149,68 @@ export default function TripWorkspace({
   }, [viewport, isEmptyTrip]);
 
   useEffect(() => {
+    // Chat is always visible on tablet & desktop now, so the unread badge is
+    // a mobile-only concern. Reset it whenever the user is on the chat tab.
     if (viewport === 'mobile' && mobileTab === 'chat') setUnread(0);
-    if (viewport !== 'mobile' && chatOpen) setUnread(0);
-  }, [mobileTab, viewport, chatOpen]);
+    if (viewport !== 'mobile') setUnread(0);
+  }, [mobileTab, viewport]);
+
+  // ---------------------------------------------------------------------------
+  // Auto-replan: any change to the parts of the trip that affect fuel routing
+  // (vehicle, leg geometry, user-picked stops) schedules a debounced replan.
+  // The fingerprint excludes planner-generated 'option' rows so a successful
+  // replan doesn't bounce the fingerprint and trigger another replan in a loop.
+  //
+  // KNOWN GAP: this still rebuilds the entire auto stop list on every replan,
+  // which can clobber a user's manually-picked gas station if it happens to be
+  // a 'google_places' source row. Tracked as follow-up — not in this change.
+  // ---------------------------------------------------------------------------
+  const tripFingerprint = useMemo(() => {
+    if (!trip) return '';
+    return JSON.stringify({
+      v: trip.vehicle_id,
+      legs: trip.legs.map((l) => ({
+        i: l.id,
+        o: l.sort_order,
+        sl: l.start_lat,
+        sn: l.start_lng,
+        el: l.end_lat,
+        en: l.end_lng,
+        d: l.distance_km,
+        s: (l.stops ?? [])
+          .filter((s) => s.status !== 'option' || s.stop_type === 'overnight')
+          .map((s) => ({
+            t: s.stop_type,
+            st: s.status,
+            d: s.distance_from_start_km,
+          })),
+      })),
+    });
+  }, [trip]);
+
+  const handleReplanFuelRef = useRef<() => Promise<void>>(async () => {});
+  const lastFingerprintRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (readonly) return;
+    if (!tripFingerprint) return;
+    // First observation: establish baseline so we don't auto-replan on the
+    // initial trip load. Subsequent edits compare against this baseline.
+    if (lastFingerprintRef.current === null) {
+      lastFingerprintRef.current = tripFingerprint;
+      return;
+    }
+    if (lastFingerprintRef.current === tripFingerprint) return;
+    lastFingerprintRef.current = tripFingerprint;
+
+    // Debounce so a burst of edits (drag a waypoint, rename a leg, swap the
+    // vehicle) collapses to one replan instead of N. Latest-wins; if a new
+    // edit lands inside the window, we cancel the pending call and restart.
+    const t = setTimeout(() => {
+      void handleReplanFuelRef.current();
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [tripFingerprint, readonly]);
 
   if (loading) {
     return (
@@ -221,11 +274,19 @@ export default function TripWorkspace({
     if (evt === 'fuel-planning') setFuelPlanning(true);
     if (evt === 'response' || evt === 'error') {
       setFuelPlanning(false);
+      // Chat is permanently visible on tablet & desktop — only mobile needs an
+      // unread badge, and only when the user is on a non-chat tab.
       const isOnChat =
-        viewport === 'mobile' ? mobileTabRef.current === 'chat' : chatOpenRef.current;
+        viewport === 'mobile' ? mobileTabRef.current === 'chat' : true;
       if (!isOnChat) setUnread((u) => u + 1);
     }
   };
+
+  // Hoisted above the pane definitions because itineraryPane needs to know
+  // the fuel-syncing state to render its Maps-link affordance.
+  const tripFuelBusy =
+    fuelPlanning ||
+    trip.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending');
 
   const mapPane = (
     <TripMap
@@ -249,6 +310,11 @@ export default function TripWorkspace({
       onTrailsChanged={() => setTrailsVersion((v) => v + 1)}
       onChanged={loadTrip}
       readonly={readonly}
+      // While auto-replan is in flight, leg-level Maps links show a syncing
+      // affordance so users don't click a stale URL. `tripFuelBusy` covers
+      // any leg whose fuel_status is computing/pending; `replanBusy` covers
+      // the workspace-level POST /fuel-stops/replan call.
+      isFuelSyncing={tripFuelBusy || replanBusy}
     />
   );
 
@@ -267,10 +333,6 @@ export default function TripWorkspace({
     />
   );
 
-  const tripFuelBusy =
-    fuelPlanning ||
-    trip.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending');
-
   async function handleReplanFuel() {
     if (replanBusy || tripFuelBusy) return;
     setReplanBusy(true);
@@ -283,12 +345,19 @@ export default function TripWorkspace({
       setReplanBusy(false);
     }
   }
+  // Bind the latest closure so the auto-replan effect (declared above the
+  // early returns) always invokes the current implementation.
+  handleReplanFuelRef.current = handleReplanFuel;
 
+  // Replan is now automatic (debounced useEffect below). The chip just shows
+  // a quiet "Fuel…" indicator while a replan is in flight so the user knows
+  // why a moment of latency is happening. On mobile we hide the label and
+  // keep only the spinner to save header width.
   const vehicleChip = !readonly ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {(tripFuelBusy || replanBusy) ? (
+      {(tripFuelBusy || replanBusy) && (
         <span
-          title="Finding gas stations along your route"
+          title="Refreshing fuel stops along your route"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -299,25 +368,8 @@ export default function TripWorkspace({
           }}
         >
           <Spinner size={14} thickness={2} color="var(--tp-gold)" />
-          Fuel…
+          {viewport !== 'mobile' && <span>Fuel…</span>}
         </span>
-      ) : (
-        <button
-          onClick={handleReplanFuel}
-          title="Re-run fuel stop planning for all legs"
-          style={{
-            fontSize: 11,
-            background: 'transparent',
-            border: '1px solid var(--tp-border)',
-            color: 'var(--tp-muted)',
-            padding: '3px 8px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          ⛽ Replan
-        </button>
       )}
       <TripVehicleChip
         tripId={tripId}
@@ -422,7 +474,11 @@ export default function TripWorkspace({
     );
   }
 
-  // ───────── TABLET (768–1023px): two panes + slide-in chat drawer ─────────
+  // ───────── TABLET (768–1023px): map top-left, list top-right, chat bottom ─────────
+  // Three panels permanently visible: a horizontal map|itinerary split on top,
+  // chat as a resizable bottom panel. No chat toggle in the header — users
+  // who want more map/list can drag the bottom panel down. Replaces the
+  // previous slide-in ChatDrawer pattern.
   if (viewport === 'tablet') {
     return (
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -430,77 +486,71 @@ export default function TripWorkspace({
           user={user}
           tripName={trip.name}
           isAdmin={isAdmin}
-          rightSlot={
-            <>
-              {vehicleChip}
-              <ChatToggleButton
-                open={chatOpen}
-                onClick={() => setChatOpen((v) => !v)}
-                thinking={thinking || tripFuelBusy}
-                unread={unread}
-              />
-            </>
-          }
+          rightSlot={vehicleChip}
         />
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-tablet`}>
-            <Panel defaultSize={45} minSize={25} order={1}>
-              <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+          <PanelGroup direction="vertical" autoSaveId={`trip-${tripId}-tablet-v2`}>
+            <Panel defaultSize={62} minSize={30} order={1}>
+              <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-tablet-top`}>
+                <Panel defaultSize={45} minSize={25} order={1}>
+                  <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+                </Panel>
+                <ResizeHandle />
+                <Panel defaultSize={55} minSize={30} order={2}>
+                  <div
+                    style={{
+                      height: '100%',
+                      overflowY: 'auto',
+                      padding: '20px 16px',
+                      background: 'var(--tp-bg)',
+                    }}
+                  >
+                    {itineraryPane}
+                  </div>
+                </Panel>
+              </PanelGroup>
             </Panel>
-            <ResizeHandle />
-            <Panel defaultSize={55} minSize={30} order={2}>
+            <ResizeHandle direction="vertical" />
+            <Panel defaultSize={38} minSize={15} order={2}>
               <div
                 style={{
                   height: '100%',
-                  overflowY: 'auto',
-                  padding: '20px 16px',
-                  background: 'var(--tp-bg)',
+                  background: 'var(--tp-surface-muted)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  minHeight: 0,
                 }}
               >
-                {itineraryPane}
+                {chatPane}
               </div>
             </Panel>
           </PanelGroup>
         </div>
-        <ChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} widthPct={50}>
-          {chatPane}
-        </ChatDrawer>
       </div>
     );
   }
 
-  // ───────── DESKTOP (>=1024px): three resizable panes ─────────
+  // ───────── DESKTOP (>=1024px): three resizable panes (always on) ─────────
+  // Chat is permanently visible, so no toggle button in the header. Users who
+  // want a wider itinerary can drag the chat panel narrow.
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}
         tripName={trip.name}
         isAdmin={isAdmin}
-        rightSlot={
-          <>
-            {vehicleChip}
-            <ChatToggleButton
-              open={chatOpen}
-              onClick={() => setChatOpen((v) => !v)}
-              thinking={thinking || tripFuelBusy}
-              unread={unread}
-            />
-          </>
-        }
+        rightSlot={vehicleChip}
       />
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <PanelGroup
-          direction="horizontal"
-          autoSaveId={chatOpen ? `trip-${tripId}-panes-3` : `trip-${tripId}-panes-2`}
-        >
+        <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-panes-3`}>
           <Panel defaultSize={30} minSize={15} order={1}>
             <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
           </Panel>
 
           <ResizeHandle />
 
-          <Panel defaultSize={chatOpen ? 40 : 70} minSize={20} order={2}>
+          <Panel defaultSize={40} minSize={20} order={2}>
             <div
               style={{
                 height: '100%',
@@ -513,23 +563,20 @@ export default function TripWorkspace({
             </div>
           </Panel>
 
-          {chatOpen && (
-            <>
-              <ResizeHandle />
-              <Panel defaultSize={30} minSize={18} order={3}>
-                <div
-                  style={{
-                    height: '100%',
-                    background: 'var(--tp-surface-muted)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                  }}
-                >
-                  {chatPane}
-                </div>
-              </Panel>
-            </>
-          )}
+          <ResizeHandle />
+
+          <Panel defaultSize={30} minSize={18} order={3}>
+            <div
+              style={{
+                height: '100%',
+                background: 'var(--tp-surface-muted)',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              {chatPane}
+            </div>
+          </Panel>
         </PanelGroup>
       </div>
     </div>

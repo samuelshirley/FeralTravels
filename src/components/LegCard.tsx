@@ -5,6 +5,7 @@ import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { buildLegDirectionsUrl, legDirectionsWaypoints } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
+import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 
 interface LegCardProps {
@@ -16,6 +17,17 @@ interface LegCardProps {
   onTrailsChanged?: () => void;
   onChanged?: () => void;
   readonly?: boolean;
+  /**
+   * True while a fuel replan is in flight for the trip. The "Open in Google
+   * Maps" link composes its waypoints from the trip's stops, so during a
+   * replan the URL is briefly stale (waypoints from the previous plan).
+   * We render a loading affordance so the user knows the link will update
+   * shortly — link stays clickable; opening it works, the route just won't
+   * include the latest fuel stops yet.
+   */
+  isFuelSyncing?: boolean;
+  /** Total number of legs in the trip — used in the syncing tooltip copy. */
+  fuelSyncTotalLegs?: number;
 }
 
 interface AttachedTrail {
@@ -36,6 +48,8 @@ export default function LegCard({
   onTrailsChanged,
   onChanged,
   readonly = false,
+  isFuelSyncing = false,
+  fuelSyncTotalLegs,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
@@ -253,50 +267,93 @@ export default function LegCard({
 
           {directionsUrl && (
             <div style={{ marginTop: 10 }}>
-              <a
-                href={directionsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                title={
-                  navWaypointCount > 0
-                    ? `Open leg in Google Maps with ${navWaypointCount} waypoint${
-                        navWaypointCount === 1 ? '' : 's'
-                      }`
-                    : 'Open leg in Google Maps'
-                }
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  
-                  letterSpacing: '0.04em',
-                  color: '#000',
-                  background: 'var(--tp-primary)',
-                  padding: '7px 14px',
-                  borderRadius: 6,
-                  textDecoration: 'none',
-                  boxShadow: '0 2px 8px rgba(124,181,232,0.2)',
-                }}
-              >
-                <span>▶</span>
-                Open in Google Maps
-                {navWaypointCount > 0 && (
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      background: 'rgba(0,0,0,0.2)',
-                      padding: '1px 6px',
-                      borderRadius: 10,
-                    }}
-                  >
-                    +{navWaypointCount} stop{navWaypointCount === 1 ? '' : 's'}
-                  </span>
-                )}
-              </a>
+              {/*
+                Two visual states for this button:
+                  - normal       → "▶ Open in Google Maps  (+N stops)"
+                  - fuel-syncing → spinner + "Updating route…"  (link still
+                                   works; waypoints will refresh momentarily)
+                The syncing state is reachable on every viewport — we don't
+                rely on a hover tooltip alone — because mobile/tablet have no
+                hover. The native `title` is kept as a desktop courtesy.
+              */}
+              {isFuelSyncing ? (
+                <a
+                  href={directionsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-busy="true"
+                  title={
+                    fuelSyncTotalLegs && fuelSyncTotalLegs > 0
+                      ? `Refreshing fuel stops across ${fuelSyncTotalLegs} leg${
+                          fuelSyncTotalLegs === 1 ? '' : 's'
+                        } — link will include the latest waypoints in a moment.`
+                      : 'Refreshing fuel stops — link will include the latest waypoints in a moment.'
+                  }
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    color: 'var(--tp-muted)',
+                    background: 'var(--tp-surface-muted)',
+                    border: '1px dashed var(--tp-border-strong)',
+                    padding: '6px 13px',
+                    borderRadius: 6,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <Spinner size={12} thickness={2} color="var(--tp-gold)" />
+                  <span>Updating route…</span>
+                </a>
+              ) : (
+                <a
+                  href={directionsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  title={
+                    navWaypointCount > 0
+                      ? `Open leg in Google Maps with ${navWaypointCount} waypoint${
+                          navWaypointCount === 1 ? '' : 's'
+                        }`
+                      : 'Open leg in Google Maps'
+                  }
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 12,
+                    fontWeight: 600,
+
+                    letterSpacing: '0.04em',
+                    color: '#000',
+                    background: 'var(--tp-primary)',
+                    padding: '7px 14px',
+                    borderRadius: 6,
+                    textDecoration: 'none',
+                    boxShadow: '0 2px 8px rgba(124,181,232,0.2)',
+                  }}
+                >
+                  <span>▶</span>
+                  Open in Google Maps
+                  {navWaypointCount > 0 && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: 'rgba(0,0,0,0.2)',
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                      }}
+                    >
+                      +{navWaypointCount} stop{navWaypointCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </a>
+              )}
               {driveHours ? (
                 <p
                   style={{

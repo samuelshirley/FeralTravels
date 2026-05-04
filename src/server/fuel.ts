@@ -15,9 +15,10 @@ import {
   samplePolylineByTargetMinutes,
   type SampledPoint,
 } from '@/lib/polyline-time';
-import { nearestStretchBreakPlace } from '@/server/places/nearby-parks';
+import { nearestStretchBreakPlace, type StretchBreakCandidate } from '@/server/places/nearby-parks';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
+import { logGooglePlacesUsage } from '@/server/repos/usage';
 import type { FuelType } from '@/types/trip';
 
 /**
@@ -271,13 +272,22 @@ export async function planFuelStopsForLeg(
   type PendingRest = {
     kind: 'rest';
     distance_km: number;
-    place: NonNullable<Awaited<ReturnType<typeof nearestStretchBreakPlace>>>;
+    place: StretchBreakCandidate;
   };
+
+  // Tally Places API calls so we can log usage in one batched insert at the
+  // end of leg planning. Tier matches the field-mask we send Google:
+  //   essentials = id/displayName/location/primaryType (gas stations)
+  //   pro        = essentials + googleMapsUri          (stretch-break parks)
+  let placesEssentialsCalls = 0;
+  let placesProCalls = 0;
+  let placesError: string | null = null;
 
   const pending: Array<PendingFuel | PendingRest> = [];
   for (const knot of mergedKnots) {
     if (knot.needFuel) {
       const station = await findBestGasStation(knot.point, fuel, placesKey);
+      placesEssentialsCalls += 1;
       if (station === PLACES_API_ERROR) {
         await setFuelStatus(legId, 'failed');
         const reason =
@@ -285,18 +295,38 @@ export async function planFuelStopsForLeg(
           'and ensure your API key has no HTTP referrer restrictions. ' +
           'Visit /api/debug/fuel for a full diagnosis.';
         console.error(`[fuel] leg ${legId}: ${reason}`);
+        placesError = reason;
+        // Log the partial usage we accumulated before bailing — Places still
+        // billed us for those calls regardless of the final status.
+        await logPlacesUsageSafe({
+          userId,
+          tripId: leg.tripId,
+          essentialsCalls: placesEssentialsCalls,
+          proCalls: placesProCalls,
+          success: false,
+          errorMessage: placesError,
+        });
         return { legId, status: 'failed', reason };
       }
       if (station) {
         pending.push({ kind: 'fuel', distance_km: knot.distance_km, station });
       }
     } else if (knot.needStretch) {
-      const place = await nearestStretchBreakPlace(knot.point, placesKey);
-      if (place) {
-        pending.push({ kind: 'rest', distance_km: knot.distance_km, place });
+      const lookup = await nearestStretchBreakPlace(knot.point, placesKey);
+      placesProCalls += lookup.placesCallsMade;
+      if (lookup.candidate) {
+        pending.push({ kind: 'rest', distance_km: knot.distance_km, place: lookup.candidate });
       }
     }
   }
+
+  await logPlacesUsageSafe({
+    userId,
+    tripId: leg.tripId,
+    essentialsCalls: placesEssentialsCalls,
+    proCalls: placesProCalls,
+    success: true,
+  });
 
   pending.sort((a, b) => a.distance_km - b.distance_km);
 
@@ -370,6 +400,47 @@ function autoPlannerGooglePlacesOptionSql(legId: number) {
 
 async function clearAutoPlannerGooglePlacesOptionStops(legId: number): Promise<void> {
   await db.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
+}
+
+/**
+ * Best-effort usage logging for a leg's Google Places spend. We split the
+ * tally into two rows because the field-mask tier (and therefore the per-call
+ * SKU price) differs between fuel-station lookups and stretch-break lookups.
+ *
+ * Failures are swallowed — usage logging shouldn't take down a fuel replan.
+ */
+async function logPlacesUsageSafe(input: {
+  userId: string;
+  tripId: number | null;
+  essentialsCalls: number;
+  proCalls: number;
+  success: boolean;
+  errorMessage?: string | null;
+}): Promise<void> {
+  try {
+    if (input.essentialsCalls > 0) {
+      await logGooglePlacesUsage({
+        userId: input.userId,
+        tripId: input.tripId,
+        endpoint: 'nearby-search-essentials',
+        requests: input.essentialsCalls,
+        success: input.success,
+        errorMessage: input.errorMessage ?? null,
+      });
+    }
+    if (input.proCalls > 0) {
+      await logGooglePlacesUsage({
+        userId: input.userId,
+        tripId: input.tripId,
+        endpoint: 'nearby-search-pro',
+        requests: input.proCalls,
+        success: input.success,
+        errorMessage: input.errorMessage ?? null,
+      });
+    }
+  } catch (err) {
+    console.warn('logPlacesUsageSafe failed (continuing):', err);
+  }
 }
 
 /**

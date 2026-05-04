@@ -9,6 +9,8 @@ import {
   VALIDATORS,
   type ValidatedAction,
   getRoute as getRouteTool,
+  extractTripIntent as extractTripIntentTool,
+  checkTripFeasibility as checkTripFeasibilityTool,
 } from '@/lib/penny/tools';
 import { zodErrorToFeedback } from '@/lib/penny/tools/shared';
 import { getDirections } from '@/lib/google/directions';
@@ -140,8 +142,42 @@ This is the most common mistake to avoid. Read carefully:
 - Don't recreate routes/stops/tasks that already exist — update or extend them instead.
 </route_planning_rules>
 
+<intent_extraction>
+For ANY new multi-segment trip plan or significant scope change to an existing trip, your VERY FIRST tool call must be extract_trip_intent. This forces you to commit to a typed parse of the user's request before any get_route or add_leg work.
+
+Triggers — call extract_trip_intent first when:
+  - The trip has no legs and the user describes a route (origin → destination, optionally with stops).
+  - The user names multiple mandatory waypoints in one message ("hit Smoky, Grand Canyon, Moab").
+  - The user gives or revises a time budget ("over two weeks", "10-day trip", "extend to 18 days").
+
+Do NOT call it for small tweaks: "move leg 3 a day later", "add a fuel stop near Marseille", "swap the Yosemite night for Sequoia". For those, go straight to the relevant action tool.
+
+When the tool returns, the parsed intent and total_overnight_nights become the authoritative source of truth for the feasibility check below. Do not re-derive the time budget or stop list from the user's prose after this point — use the parsed fields.
+</intent_extraction>
+
+<feasibility_check>
+After extract_trip_intent and after you have called get_route for every segment between waypoints, you MUST call check_trip_feasibility BEFORE any add_leg.
+
+Do NOT do the arithmetic yourself. The check_trip_feasibility tool runs deterministic JS on the server. You pass it:
+  - segment_drive_days: array of min_driving_days from each get_route result, in route order
+  - waypoint_nights: array of nights from each waypoint in your parsed intent, in route order
+  - time_budget_days: from your parsed intent (may be null)
+
+The tool returns a verdict:
+  - "fits" → proceed with add_leg. Briefly mention totals in your response ("12 driving days + 7 park nights = 19 days, fits your 21-day budget with 2 days of slack").
+  - "tight" → proceed with add_leg, but tell the user there's no buffer for weather or rest.
+  - "no_budget" → proceed with add_leg. Surface the total day count so the user sees what they're committing to.
+  - "over_budget" → STOP. Do NOT call add_leg. Do NOT save anything. Respond in plain prose with:
+      1. The numbers from the tool's summary field ("Your 14-day budget needs 20 days with these stops, short by 6.").
+      2. Two specific options framed as a question — extending the trip to total_min_days_needed, OR dropping a specific stop. When suggesting which to drop, prefer the waypoint with the lowest nights or the weakest purpose string from your parsed intent (e.g. "stay" feels less mandatory than "anniversary dinner with parents").
+      3. End by asking which they want.
+    Wait for the user's reply. When they pick, call extract_trip_intent again with the revised inputs and re-run check_trip_feasibility.
+
+This is a HARD gate enforced by the server. If you skip check_trip_feasibility on a fresh plan (when extract_trip_intent was called), the dispatcher rejects all your add_leg actions and the user sees a failure message — worse UX than if you'd just called the tool. Always call it.
+</feasibility_check>
+
 <leg_planning_rules>
-- If the user asks for a plan and the trip has no legs, you MUST call get_route first to get authoritative distance/time, then emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
+- If the user asks for a plan and the trip has no legs, you MUST call extract_trip_intent first (see <intent_extraction>), then get_route for each segment, then run the <feasibility_check>, THEN emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
 - The validator will reject any add_leg or update_leg with drive_time_minutes > vehicle.max_drive_hours_per_day × 60. Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
@@ -172,6 +208,25 @@ export interface ReplanResult {
   failedValidations: Array<{ tool: string; error: string }>;
   /** Was the loop terminated by hitting MAX_TOOL_USE_ITERATIONS? */
   truncated: boolean;
+  /**
+   * True if Penny called extract_trip_intent at any point in this turn.
+   * Used by the dispatcher to decide whether the feasibility gate applies:
+   * if false, this is a small tweak and add_legs are allowed without a
+   * feasibility check; if true, this is a fresh plan and the feasibility
+   * gate must have passed before add_legs are dispatched.
+   */
+  extractIntentCalled: boolean;
+  /**
+   * The verdict from the LATEST check_trip_feasibility call this turn,
+   * or null if the tool was never called. The dispatcher uses this to
+   * gate add_leg actions — null or 'over_budget' means reject.
+   */
+  feasibilityVerdict:
+    | 'fits'
+    | 'tight'
+    | 'over_budget'
+    | 'no_budget'
+    | null;
 }
 
 export async function replan(
@@ -211,6 +266,12 @@ export async function replan(
   let truncated = false;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  // Workflow gate tracking. The dispatcher in /api/trip/replan uses these
+  // to decide whether add_leg actions are allowed: if extract_trip_intent
+  // was called, this is a fresh plan and check_trip_feasibility must have
+  // passed (or returned 'no_budget') before add_legs can land.
+  let extractIntentCalled = false;
+  let feasibilityVerdict: ReplanResult['feasibilityVerdict'] = null;
 
   for (let iteration = 0; iteration < MAX_TOOL_USE_ITERATIONS; iteration++) {
     let response: Anthropic.Message;
@@ -265,6 +326,24 @@ export async function replan(
     for (const tu of toolUses) {
       if (LOOKUP_TOOL_NAMES.has(tu.name)) {
         const result = await executeLookupTool(tu, context);
+        // Workflow tracking — must happen here in the loop because each
+        // iteration creates new tool_results, and we need cumulative state.
+        // We track on success only; a failed extract_trip_intent doesn't
+        // count as "fresh plan in progress".
+        if (
+          !result.is_error &&
+          tu.name === extractTripIntentTool.EXTRACT_TRIP_INTENT
+        ) {
+          extractIntentCalled = true;
+        }
+        if (
+          !result.is_error &&
+          tu.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY &&
+          result.feasibilityVerdict
+        ) {
+          // Latest verdict wins — Penny may revise inputs and recheck.
+          feasibilityVerdict = result.feasibilityVerdict;
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tu.id,
@@ -364,6 +443,8 @@ export async function replan(
     retryCount,
     failedValidations,
     truncated,
+    extractIntentCalled,
+    feasibilityVerdict,
   };
 }
 
@@ -374,6 +455,12 @@ export async function replan(
 interface LookupResult {
   is_error: boolean;
   content: string;
+  /**
+   * Set only by executeCheckTripFeasibility — the verdict bubbles up to
+   * the replan() loop so the dispatcher can gate add_leg actions on it.
+   * Other lookup tools leave this undefined.
+   */
+  feasibilityVerdict?: ReplanResult['feasibilityVerdict'];
 }
 
 async function executeLookupTool(
@@ -383,9 +470,109 @@ async function executeLookupTool(
   if (toolUse.name === getRouteTool.GET_ROUTE) {
     return executeGetRoute(toolUse, context);
   }
+  if (toolUse.name === extractTripIntentTool.EXTRACT_TRIP_INTENT) {
+    return executeExtractTripIntent(toolUse, context);
+  }
+  if (toolUse.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY) {
+    return executeCheckTripFeasibility(toolUse, context);
+  }
   return {
     is_error: true,
     content: `Unhandled lookup tool: ${toolUse.name}.`,
+  };
+}
+
+/**
+ * check_trip_feasibility — runs the deterministic JS computation in
+ * checkTripFeasibility.computeFeasibility and returns the verdict to Penny
+ * AND surfaces it to the replan() loop so the dispatcher can gate add_leg.
+ *
+ * The `feasibilityVerdict` field on the LookupResult is the side-channel.
+ * Penny sees the JSON content; the dispatcher sees the verdict via the
+ * loop's tracking variable. Same source of truth either way.
+ */
+async function executeCheckTripFeasibility(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext
+): Promise<LookupResult> {
+  const schema = checkTripFeasibilityTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on check_trip_feasibility: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const result = checkTripFeasibilityTool.computeFeasibility(
+    parsed.data as checkTripFeasibilityTool.CheckTripFeasibilityInput
+  );
+
+  return {
+    is_error: false,
+    content: JSON.stringify(result),
+    feasibilityVerdict: result.verdict,
+  };
+}
+
+/**
+ * extract_trip_intent doesn't write to the DB or hit any external API.
+ * The server's job is just to:
+ *   1. Validate the parse Penny committed to (via Zod)
+ *   2. Echo it back so it's authoritative state in the conversation
+ *   3. Surface gentle warnings (e.g. missing time budget) so Penny knows
+ *      what's underspecified before she starts feasibility math
+ *
+ * Crucially we DON'T compute feasibility here — that requires get_route
+ * results, which Penny calls next. Keeping this tool a pure parse-and-echo
+ * means it's cheap (no I/O) and composable with any planning workflow.
+ */
+async function executeExtractTripIntent(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext
+): Promise<LookupResult> {
+  const schema = extractTripIntentTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on extract_trip_intent: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const intent = parsed.data as extractTripIntentTool.ExtractTripIntentInput;
+
+  // Diagnostic warnings — non-fatal, just hints to Penny about what's
+  // missing so she can decide whether to proceed or ask the user.
+  const warnings: string[] = [];
+  if (intent.time_budget_days == null) {
+    warnings.push(
+      'No time_budget_days specified. The user did not state a trip length — proceed assuming flexible timing, or ask the user before committing to a long plan.'
+    );
+  }
+  if (intent.mandatory_waypoints.length === 0) {
+    warnings.push(
+      'No mandatory_waypoints. If the user just wants the shortest A→B, that is fine — otherwise re-read their message for stops you may have missed.'
+    );
+  }
+
+  // Sum of overnight nights the user explicitly requested. Penny needs this
+  // for the feasibility check (driving_days + overnight_nights ≤ time_budget_days).
+  const total_overnight_nights = intent.mandatory_waypoints.reduce(
+    (sum, wp) => sum + wp.nights,
+    0
+  );
+
+  return {
+    is_error: false,
+    content: JSON.stringify({
+      ok: true,
+      parsed: intent,
+      total_overnight_nights,
+      warnings,
+      next_step:
+        'Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.',
+    }),
   };
 }
 
@@ -437,6 +624,17 @@ async function executeGetRoute(
     });
   }
 
+  // Minimum number of driving days this segment requires given the
+  // vehicle's per-day cap. Used by Penny's feasibility check: she sums
+  // min_driving_days across every get_route call, adds the user's
+  // mandatory overnight nights, and compares to time_budget_days.
+  // When no cap is set we fall back to "at least 1 day" — a single-day
+  // trip without a cap is always feasible by definition.
+  const minDrivingDays =
+    cap != null
+      ? Math.max(1, Math.ceil(directions.drive_time_minutes / (cap * 60)))
+      : 1;
+
   // Emit a compact JSON payload for Claude to consume. Drop the raw
   // polyline (hundreds of points = thousands of tokens); send only what
   // Claude needs to plan with.
@@ -450,6 +648,7 @@ async function executeGetRoute(
     cached: directions.cached,
     exceeds_daily_cap: exceedsCap,
     daily_cap_minutes: cap != null ? cap * 60 : null,
+    min_driving_days: minDrivingDays,
     suggested_split: suggestedSplit?.map((leg) => ({
       day_index: leg.day_index,
       start_lat: round5(leg.start_lat),

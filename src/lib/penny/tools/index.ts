@@ -16,6 +16,8 @@ import * as planFuelStops from './planFuelStops';
 import * as addTask from './addTask';
 import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
+import * as extractTripIntent from './extractTripIntent';
+import * as checkTripFeasibility from './checkTripFeasibility';
 
 export {
   addLeg,
@@ -31,6 +33,8 @@ export {
   addTask,
   updateTask,
   getRoute,
+  extractTripIntent,
+  checkTripFeasibility,
 };
 
 /**
@@ -38,9 +42,13 @@ export {
  * `tools` parameter on messages.create.
  */
 export const TOOLS: Anthropic.Tool[] = [
-  // get_route is listed first so its description is closer to the top of
-  // Claude's view; the "always call this first" instruction lands harder.
+  // Order matters for prompt salience — Penny reads the tool list top-down.
+  // The required workflow gate is: extract_trip_intent → get_route ×N →
+  // check_trip_feasibility → add_leg ×N. List the gates first so their
+  // "call me before X" wording lands prominently.
+  extractTripIntent.tool,
   getRoute.tool,
+  checkTripFeasibility.tool,
   addLeg.tool,
   updateLeg.tool,
   deleteLeg.tool,
@@ -82,6 +90,8 @@ export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
   getRoute.GET_ROUTE,
+  extractTripIntent.EXTRACT_TRIP_INTENT,
+  checkTripFeasibility.CHECK_TRIP_FEASIBILITY,
 ]);
 
 /**
@@ -104,6 +114,8 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [addTask.ADD_TASK]: addTask.validator,
   [updateTask.UPDATE_TASK]: updateTask.validator,
   [getRoute.GET_ROUTE]: getRoute.validator,
+  [extractTripIntent.EXTRACT_TRIP_INTENT]: extractTripIntent.validator,
+  [checkTripFeasibility.CHECK_TRIP_FEASIBILITY]: checkTripFeasibility.validator,
 };
 
 export type ValidatedAction =

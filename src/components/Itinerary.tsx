@@ -11,6 +11,13 @@ interface ItineraryProps {
   onTrailsChanged?: () => void;
   onChanged?: () => void;
   readonly?: boolean;
+  /**
+   * True while the trip's auto fuel-replan is in flight. Forwarded to each
+   * LegCard so the per-leg "Open in Google Maps" button can show a syncing
+   * affordance — the URL composes its waypoints from current stops, which
+   * are briefly stale during a replan.
+   */
+  isFuelSyncing?: boolean;
 }
 
 export default function Itinerary({
@@ -20,6 +27,7 @@ export default function Itinerary({
   onTrailsChanged,
   onChanged,
   readonly = false,
+  isFuelSyncing = false,
 }: ItineraryProps) {
   const legs = trip.legs;
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -151,6 +159,8 @@ export default function Itinerary({
             onTrailsChanged={onTrailsChanged}
             onChanged={onChanged}
             readonly={readonly}
+            isFuelSyncing={isFuelSyncing}
+            fuelSyncTotalLegs={legs.length}
           />
         ))}
       </div>

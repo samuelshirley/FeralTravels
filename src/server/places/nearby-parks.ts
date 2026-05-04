@@ -265,20 +265,33 @@ export type StretchBreakCandidate = {
   primaryType: string | null;
 };
 
+export type StretchBreakLookup = {
+  candidate: StretchBreakCandidate | null;
+  /** Number of Places Nearby Search calls actually made (1 or 2). For usage logging. */
+  placesCallsMade: number;
+};
+
 /**
  * Single best dog-park-or-park near a knot on the route (stretch break).
  * Prefers dog_park; falls back to green-space types excluding dog runs as duplicate parks.
+ *
+ * Returns the actual Places call count alongside the candidate so callers
+ * can report accurate usage to billing/telemetry without re-deriving it.
  */
 export async function nearestStretchBreakPlace(
   center: LatLng,
   apiKey: string
-): Promise<StretchBreakCandidate | null> {
+): Promise<StretchBreakLookup> {
+  let placesCallsMade = 0;
+
   const tryDog = await searchNearbyPlaces(
     center,
     NEARBY_PARKS_INNER_RADIUS_M,
     ['dog_park'],
     apiKey
   );
+  placesCallsMade += 1;
+
   let raw: RawPlaceRow[] | null = null;
   if (tryDog.ok && tryDog.places.length > 0) {
     raw = tryDog.places;
@@ -289,12 +302,13 @@ export async function nearestStretchBreakPlace(
       PARK_INCLUDED_TYPES,
       apiKey
     );
-    if (!tryGreen.ok) return null;
+    placesCallsMade += 1;
+    if (!tryGreen.ok) return { candidate: null, placesCallsMade };
     raw = tryGreen.places.filter(
       (p) => typeof p.primaryType !== 'string' || p.primaryType !== 'dog_park'
     );
   }
-  if (!raw || raw.length === 0) return null;
+  if (!raw || raw.length === 0) return { candidate: null, placesCallsMade };
 
   const mapped = raw
     .map((p) => {
@@ -316,13 +330,16 @@ export async function nearestStretchBreakPlace(
     .sort((a, b) => a.distanceKm - b.distanceKm);
 
   const best = mapped[0];
-  if (!best) return null;
+  if (!best) return { candidate: null, placesCallsMade };
   return {
-    name: best.name,
-    lat: best.lat,
-    lng: best.lng,
-    placeId: best.placeId,
-    googleMapsUri: best.googleMapsUri,
-    primaryType: best.primaryType,
+    candidate: {
+      name: best.name,
+      lat: best.lat,
+      lng: best.lng,
+      placeId: best.placeId,
+      googleMapsUri: best.googleMapsUri,
+      primaryType: best.primaryType,
+    },
+    placesCallsMade,
   };
 }
