@@ -36,7 +36,7 @@ export default async function TripsPage() {
             <div className="page-eyebrow">YOUR TRIPS</div>
             <h1 className="page-title">Trips</h1>
           </div>
-          <NewTripButton />
+          <NewTripButton existingNames={myTrips.map((t) => t.name)} />
         </div>
 
         <TripsList

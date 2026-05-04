@@ -1,11 +1,21 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
-import Spinner, { LoadingOverlay } from '@/components/Spinner';
+import Spinner from '@/components/Spinner';
 
-export default function NewTripButton() {
+interface NewTripButtonProps {
+  /**
+   * Existing trip names for the current user, passed down by the trips page
+   * server component. Used for instant client-side duplicate detection so the
+   * user gets feedback as they type instead of after the round-trip. The
+   * server still re-validates and is the authoritative source.
+   */
+  existingNames: string[];
+}
+
+export default function NewTripButton({ existingNames }: NewTripButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -13,16 +23,33 @@ export default function NewTripButton() {
   const [err, setErr] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Pre-normalize the existing names once so each keystroke is just a Set
+  // membership check. Same rule as the server: lowercase + trimmed.
+  const takenSet = useMemo(
+    () => new Set(existingNames.map((n) => n.trim().toLowerCase())),
+    [existingNames]
+  );
+
+  const trimmed = name.trim();
+  const localDuplicate = trimmed.length > 0 && takenSet.has(trimmed.toLowerCase());
+  const canSubmit = !busy && trimmed.length > 0 && !localDuplicate;
+
+  // Synthesize the inline error: prefer the live client-side message while
+  // typing, fall back to the last server error. Cleared on edit.
+  const message = localDuplicate
+    ? `A trip named "${trimmed}" already exists. Pick a different name.`
+    : err;
+
   async function handleCreate() {
-    if (!name.trim()) return;
+    if (!canSubmit) return;
     setBusy(true);
     setErr(null);
     try {
       const trip = await apiFetch<{ id: number }>(`/api/trips`, {
         method: 'POST',
-        body: { name: name.trim() },
-        // We render our own inline error below the input — opt out of the
-        // global toast so duplicate-name 409s don't double-notify.
+        body: { name: trimmed },
+        // We render our own inline error — opt out of the global toast so a
+        // 409 from the server (race condition backstop) doesn't double-notify.
         skipGlobalErrorReport: true,
       });
       // Invalidate the /trips RSC cache so when the user navigates back from
@@ -36,8 +63,7 @@ export default function NewTripButton() {
       setErr(e?.message || 'Failed to create trip');
       setBusy(false);
       // Pull focus back into the input + select existing text so the user
-      // can immediately retype a new name. Most common failure here is a
-      // duplicate-name 409 from the server.
+      // can immediately retype a new name.
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -75,8 +101,9 @@ export default function NewTripButton() {
           value={name}
           onChange={(e) => {
             setName(e.target.value);
-            // Clear the duplicate-name error as soon as the user edits the
-            // name — otherwise the stale message lingers until they submit.
+            // Clear the stale server error as soon as the user edits the
+            // name. Live duplicate detection happens via takenSet and is
+            // recomputed on every render.
             if (err) setErr(null);
           }}
           onKeyDown={(e) => {
@@ -84,12 +111,12 @@ export default function NewTripButton() {
             if (e.key === 'Escape') setOpen(false);
           }}
           placeholder="Trip name"
-          aria-invalid={err ? true : undefined}
-          aria-describedby={err ? 'new-trip-error' : undefined}
+          aria-invalid={message ? true : undefined}
+          aria-describedby={message ? 'new-trip-error' : undefined}
           style={{
             padding: '8px 12px',
             background: 'var(--tp-surface-muted)',
-            border: `1px solid ${err ? 'var(--tp-danger)' : 'var(--tp-border)'}`,
+            border: `1px solid ${message ? 'var(--tp-danger)' : 'var(--tp-border)'}`,
             borderRadius: 'var(--tp-radius-sm)',
             color: 'var(--tp-text)',
             fontSize: 13,
@@ -98,16 +125,16 @@ export default function NewTripButton() {
         />
         <button
           onClick={handleCreate}
-          disabled={busy || !name.trim()}
+          disabled={!canSubmit}
           style={{
             padding: '8px 14px',
-            background: busy ? 'var(--tp-border)' : 'var(--tp-primary)',
-            color: busy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
+            background: canSubmit ? 'var(--tp-primary)' : 'var(--tp-border)',
+            color: canSubmit ? 'var(--tp-on-primary)' : 'var(--tp-muted)',
             border: 'none',
             borderRadius: 'var(--tp-radius-sm)',
             fontSize: 13,
             fontWeight: 600,
-            cursor: busy ? 'default' : 'pointer',
+            cursor: canSubmit ? 'pointer' : 'default',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
@@ -135,16 +162,15 @@ export default function NewTripButton() {
           Cancel
         </button>
       </div>
-      {err && (
+      {message && (
         <span
           id="new-trip-error"
           role="alert"
           style={{ fontSize: 12, color: 'var(--tp-danger)' }}
         >
-          {err}
+          {message}
         </span>
       )}
-      {busy && <LoadingOverlay message="Creating trip…" />}
     </div>
   );
 }

@@ -10,7 +10,9 @@ import {
   timestamp,
   primaryKey,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
 // ============================================================================
@@ -160,6 +162,14 @@ export const trips = pgTable(
   (t) => ({
     userIdx: index('trips_user_idx').on(t.userId),
     templateIdx: index('trips_template_idx').on(t.isTemplate),
+    // Trip names are unique per user, case-insensitive, ignoring surrounding
+    // whitespace. Enforced at the DB layer as a backstop for the app-level
+    // check in assertTripNameAvailable() — see migration 0005 and
+    // src/server/repos/trips.ts.
+    userNameUnique: uniqueIndex('trips_user_name_unique_idx').on(
+      t.userId,
+      sql`lower(trim(${t.name}))`
+    ),
   })
 );
 

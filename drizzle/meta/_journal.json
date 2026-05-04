@@ -36,6 +36,13 @@
       "when": 1777881600000,
       "tag": "0004_vehicle_real_world_economy_and_fuel_pref",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778025600000,
+      "tag": "0005_unique_trip_name_per_user",
+      "breakpoints": true
     }
   ]
 }
