@@ -443,19 +443,48 @@ async function logPlacesUsageSafe(input: {
   }
 }
 
+export interface ReplenishFuelStopsOptions {
+  /**
+   * Skip every leg whose `sort_order` is strictly less than this value.
+   *
+   * Use case: forward-only replan. When the user edits leg N, only legs with
+   * sort_order >= N can have their fuel state affected (cumulative tank math
+   * flows forward — previous legs' planning depends only on legs ahead of
+   * them, never behind). Skipping the unchanged front of the trip is the
+   * single biggest cost win for long itineraries.
+   *
+   * `planFuelStopsForLeg` still walks back through preceding legs internally
+   * to compute `kmBurnedSinceLastRefuel`, so skipping their *replanning* is
+   * safe even though their stops continue to influence the tank-state math.
+   *
+   * Omit (or pass undefined) to replan every leg.
+   */
+  startFromSortOrder?: number;
+}
+
 /**
- * Re-run auto fuel planning for every leg on a trip in sort order (needed for
- * cumulative tank state across legs). Failures on one leg are logged; the rest
- * still run.
+ * Re-run auto fuel planning for legs on a trip in sort order (needed for
+ * cumulative tank state across legs). Failures on one leg are logged; the
+ * rest still run. Pass `startFromSortOrder` to skip legs ahead of an edit.
  */
-export async function replenishFuelStopsForTrip(tripId: number, userId: string): Promise<void> {
+export async function replenishFuelStopsForTrip(
+  tripId: number,
+  userId: string,
+  opts: ReplenishFuelStopsOptions = {}
+): Promise<void> {
   const legRows = await db
-    .select({ id: legs.id })
+    .select({ id: legs.id, sortOrder: legs.sortOrder })
     .from(legs)
     .where(eq(legs.tripId, tripId))
     .orderBy(asc(legs.sortOrder));
 
-  for (const row of legRows) {
+  const startFrom = opts.startFromSortOrder;
+  const toRun =
+    typeof startFrom === 'number'
+      ? legRows.filter((l) => l.sortOrder >= startFrom)
+      : legRows;
+
+  for (const row of toRun) {
     try {
       await planFuelStopsForLeg(row.id, userId);
     } catch (e) {

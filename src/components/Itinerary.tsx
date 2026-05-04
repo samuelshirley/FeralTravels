@@ -1,8 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
 import LegCard from './LegCard';
+
+// Pagination tuning. The first chunk is sized so a 20-day trip fits in a
+// single render (matches the user-facing "20 days" model). Subsequent
+// chunks are smaller so the loading shimmer feels like progress, not a
+// long pause. Increase if profiling shows the IntersectionObserver firing
+// too aggressively on fast scrolls.
+const INITIAL_VISIBLE_LEGS = 20;
+const INCREMENTAL_BATCH_SIZE = 10;
+// Brief artificial pause before revealing each new batch so the user
+// perceives that something happened — instant rendering reads as "broken"
+// to the modern eye even when it's correct.
+const BATCH_REVEAL_DELAY_MS = 220;
 
 interface ItineraryProps {
   tripId: number;
@@ -32,6 +44,61 @@ export default function Itinerary({
   const legs = trip.legs;
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
+  // ── Lazy rendering ─────────────────────────────────────────────────────
+  // We mount the first INITIAL_VISIBLE_LEGS leg cards and reveal more in
+  // batches as the user scrolls past a sentinel near the bottom. The
+  // server-side replan / data-fetching is unchanged — this is purely about
+  // not paying React reconciliation cost for cards no one is looking at.
+  // Trips with <= INITIAL_VISIBLE_LEGS render everything immediately.
+  const [visibleCount, setVisibleCount] = useState(() =>
+    Math.min(legs.length, INITIAL_VISIBLE_LEGS),
+  );
+  const [revealing, setRevealing] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep visibleCount in sync as legs are added/removed underneath us. If
+  // the trip grew, we don't auto-reveal — let the IO trigger that. If the
+  // trip shrank below visibleCount, clamp down so we don't try to render
+  // past the array.
+  useEffect(() => {
+    setVisibleCount((current) => Math.min(current, legs.length) || legs.length);
+  }, [legs.length]);
+
+  // Cleanup any pending reveal timer on unmount so a late tick doesn't
+  // setState after the component is gone.
+  useEffect(() => {
+    return () => {
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+    if (visibleCount >= legs.length) return; // nothing more to reveal
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          if (revealTimerRef.current) return; // already scheduled
+          setRevealing(true);
+          revealTimerRef.current = setTimeout(() => {
+            setVisibleCount((c) =>
+              Math.min(legs.length, c + INCREMENTAL_BATCH_SIZE),
+            );
+            setRevealing(false);
+            revealTimerRef.current = null;
+          }, BATCH_REVEAL_DELAY_MS);
+        }
+      },
+      { rootMargin: '120px 0px' },
+    );
+    io.observe(node);
+    return () => io.disconnect();
+  }, [visibleCount, legs.length]);
+
   const toggle = (id: number) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -44,8 +111,63 @@ export default function Itinerary({
     });
   };
 
-  const expandAll = () => setExpanded(new Set(legs.map((l) => l.id)));
+  // Expand-All implies "show me everything" — reveal all legs in addition to
+  // expanding their cards. Otherwise users would click Expand All and only
+  // see the first 20 cards expanded with the rest still hidden behind the
+  // sentinel.
+  const expandAll = () => {
+    setVisibleCount(legs.length);
+    setExpanded(new Set(legs.map((l) => l.id)));
+  };
   const collapseAll = () => setExpanded(new Set());
+
+  const visibleLegs = legs.slice(0, visibleCount);
+  const hiddenCount = legs.length - visibleCount;
+
+  // ── Segment grouping ───────────────────────────────────────────────────
+  // Each leg row is a *driving day* in user terms. When Penny has tagged
+  // legs with a segment_index, we may render them grouped under segment
+  // headers — but only if the trip is large enough that grouping helps,
+  // per the user's rule: "more than 20 days OR more than 5 segments".
+  // Trips smaller than that always render as a flat day list, even when
+  // segment data exists.
+  const distinctSegments = new Set(
+    legs.map((l) => l.segment_index).filter((i): i is number => i != null),
+  ).size;
+  const shouldGroup =
+    distinctSegments > 0 && (legs.length > 20 || distinctSegments > 5);
+
+  // Walk visibleLegs and bucket consecutive same-segment legs together.
+  // Legs whose segment_index is null become single-leg "loose" groups so
+  // they slot into the order they were authored in (rather than a catch-all
+  // bucket at the end). Penny is expected to set segments consistently when
+  // she sets them at all, so loose legs in a grouped trip should be rare.
+  type LegGroup = {
+    key: string;
+    segmentIndex: number | null;
+    segmentName: string | null;
+    legs: typeof visibleLegs;
+  };
+  const groups: LegGroup[] = [];
+  if (shouldGroup) {
+    for (const leg of visibleLegs) {
+      const last = groups[groups.length - 1];
+      if (
+        last &&
+        last.segmentIndex === leg.segment_index &&
+        leg.segment_index != null
+      ) {
+        last.legs.push(leg);
+      } else {
+        groups.push({
+          key: `${leg.segment_index ?? `loose-${leg.id}`}`,
+          segmentIndex: leg.segment_index,
+          segmentName: leg.segment_name,
+          legs: [leg],
+        });
+      }
+    }
+  }
 
   const totalDist = legs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
 
@@ -79,7 +201,15 @@ export default function Itinerary({
         <div style={{ display: 'flex', gap: 20, marginTop: 14, flexWrap: 'wrap' }}>
           {[
             { label: 'TOTAL', value: `~${totalDist.toLocaleString()} km` },
-            { label: 'LEGS', value: `${legs.length}` },
+            // When the trip is grouped, surface both granularities so the
+            // stat block matches the rendered structure (segments above,
+            // days inside). Otherwise just show the day count.
+            ...(shouldGroup
+              ? [
+                  { label: 'LEGS', value: `${distinctSegments}` },
+                  { label: 'DAYS', value: `${legs.length}` },
+                ]
+              : [{ label: 'DAYS', value: `${legs.length}` }]),
             { label: 'STATUS', value: trip.status },
           ].map((s, i) => (
             <div key={i}>
@@ -138,32 +268,199 @@ export default function Itinerary({
         </button>
       </div>
 
-      {/* Leg cards */}
-      <div
-        style={{
-          border: '1px solid var(--tp-border)',
-          borderRadius: 10,
-          overflow: 'hidden',
-          background: 'var(--tp-surface)',
-          boxShadow: 'var(--tp-shadow-sm)',
-        }}
-      >
-        {legs.map((leg) => (
-          <LegCard
-            key={leg.id}
-            tripId={tripId}
-            leg={leg}
-            expanded={expanded.has(leg.id)}
-            onToggle={() => toggle(leg.id)}
-            onNavigate={() => onLegSelect(leg.id)}
-            onTrailsChanged={onTrailsChanged}
-            onChanged={onChanged}
-            readonly={readonly}
-            isFuelSyncing={isFuelSyncing}
-            fuelSyncTotalLegs={legs.length}
-          />
-        ))}
-      </div>
+      {/* Leg cards — flat or grouped by segment */}
+      {shouldGroup ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {groups.map((group) => {
+            const groupKm = group.legs.reduce(
+              (sum, l) => sum + (l.distance_km || 0),
+              0,
+            );
+            const isLoose = group.segmentIndex === null;
+            return (
+              <div key={group.key}>
+                {/*
+                  Segment header. Looks like a small section title, not a
+                  full chrome card — the leg cards underneath carry the
+                  visual weight. Loose legs (no segment tagged) get a
+                  dimmer, non-numbered header so they read as "uncatalogued"
+                  rather than as their own equal-weight segment.
+                */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: 10,
+                    padding: '0 4px 8px 4px',
+                    borderBottom: '1px solid var(--tp-border)',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      letterSpacing: '0.18em',
+                      color: 'var(--tp-subtle)',
+                      textTransform: 'uppercase',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {isLoose
+                      ? 'OTHER'
+                      : `LEG ${(group.segmentIndex ?? 0) + 1}`}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 600,
+                      color: isLoose ? 'var(--tp-muted)' : 'var(--tp-text)',
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {group.segmentName ?? '—'}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--tp-subtle)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {group.legs.length} day{group.legs.length === 1 ? '' : 's'}
+                    {groupKm > 0 && ` · ~${Math.round(groupKm).toLocaleString()} km`}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    border: '1px solid var(--tp-border)',
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    background: 'var(--tp-surface)',
+                    boxShadow: 'var(--tp-shadow-sm)',
+                  }}
+                >
+                  {group.legs.map((leg) => (
+                    <LegCard
+                      key={leg.id}
+                      tripId={tripId}
+                      leg={leg}
+                      expanded={expanded.has(leg.id)}
+                      onToggle={() => toggle(leg.id)}
+                      onNavigate={() => onLegSelect(leg.id)}
+                      onTrailsChanged={onTrailsChanged}
+                      onChanged={onChanged}
+                      readonly={readonly}
+                      isFuelSyncing={isFuelSyncing}
+                      fuelSyncTotalLegs={legs.length}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          style={{
+            border: '1px solid var(--tp-border)',
+            borderRadius: 10,
+            overflow: 'hidden',
+            background: 'var(--tp-surface)',
+            boxShadow: 'var(--tp-shadow-sm)',
+          }}
+        >
+          {visibleLegs.map((leg) => (
+            <LegCard
+              key={leg.id}
+              tripId={tripId}
+              leg={leg}
+              expanded={expanded.has(leg.id)}
+              onToggle={() => toggle(leg.id)}
+              onNavigate={() => onLegSelect(leg.id)}
+              onTrailsChanged={onTrailsChanged}
+              onChanged={onChanged}
+              readonly={readonly}
+              isFuelSyncing={isFuelSyncing}
+              fuelSyncTotalLegs={legs.length}
+            />
+          ))}
+        </div>
+      )}
+
+      {/*
+        Sentinel + reveal skeleton. Only renders when there are still legs
+        below the fold. The skeleton (three pulsing bars) is intentionally
+        boring — it conveys "loading more, please wait" without competing
+        with the real content above. We show "Loading N more leg(s)…" so the
+        user knows roughly what's coming.
+      */}
+      {hiddenCount > 0 && (
+        <div ref={sentinelRef} style={{ marginTop: 14 }}>
+          <div
+            aria-live="polite"
+            style={{
+              padding: '14px 16px',
+              border: '1px dashed var(--tp-border)',
+              borderRadius: 10,
+              background: 'var(--tp-surface-muted)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              opacity: revealing ? 1 : 0.7,
+              transition: 'opacity 200ms ease',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                letterSpacing: '0.08em',
+                color: 'var(--tp-muted)',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              Loading {Math.min(hiddenCount, INCREMENTAL_BATCH_SIZE)} more leg
+              {Math.min(hiddenCount, INCREMENTAL_BATCH_SIZE) === 1 ? '' : 's'}…
+              {hiddenCount > INCREMENTAL_BATCH_SIZE && (
+                <span style={{ color: 'var(--tp-subtle)', marginLeft: 6 }}>
+                  ({hiddenCount} remaining)
+                </span>
+              )}
+            </div>
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="tp-skeleton-bar"
+                style={{
+                  height: 12,
+                  borderRadius: 4,
+                  width: `${100 - i * 18}%`,
+                  background:
+                    'linear-gradient(90deg, var(--tp-border) 0%, var(--tp-border-strong) 50%, var(--tp-border) 100%)',
+                  backgroundSize: '200% 100%',
+                  animation: 'tp-skeleton-shimmer 1.4s ease-in-out infinite',
+                  animationDelay: `${i * 120}ms`,
+                }}
+              />
+            ))}
+          </div>
+          <style jsx>{`
+            @keyframes tp-skeleton-shimmer {
+              0% {
+                background-position: 200% 0;
+              }
+              100% {
+                background-position: -200% 0;
+              }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   );
 }

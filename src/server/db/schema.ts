@@ -183,6 +183,19 @@ export const legs = pgTable(
     sortOrder: integer('sort_order').notNull(),
     title: text('title').notNull(),
     label: text('label'),
+    // Two-level grouping ("leg = user-stated destination jump, day = driving
+    // day inside it"). Each leg row is a *driving day* in user terms; the
+    // segment_* columns optionally tag which user-stated leg this day belongs
+    // to. Null on both = ungrouped (flat list rendering). When set, all
+    // consecutive driving days that share a segment_index render under one
+    // header in the UI. segment_name is what the user actually said
+    // ("Girona → Berlin"); segment_index gives a stable ordering inside the
+    // trip without depending on string comparisons.
+    //
+    // Backwards compatible: legs predating this column have NULL on both,
+    // and the UI falls back to the flat-list rendering for those trips.
+    segmentIndex: integer('segment_index'),
+    segmentName: text('segment_name'),
     startName: text('start_name'),
     endName: text('end_name'),
     startLat: doublePrecision('start_lat'),

@@ -38,6 +38,12 @@ export interface Leg {
   sort_order: number;
   title: string;
   label: string | null;
+  // Two-level grouping. Each leg row is a *driving day* in user terms; these
+  // optional fields tag which user-stated jump (e.g. "Girona → Berlin") this
+  // day belongs to. Both null = ungrouped — UI falls back to flat-list mode.
+  // See drizzle/0006_legs_segment_grouping.sql for migration notes.
+  segment_index: number | null;
+  segment_name: string | null;
   start_name: string | null;
   end_name: string | null;
   start_lat: number | null;

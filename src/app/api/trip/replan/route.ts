@@ -307,6 +307,8 @@ async function dispatchAction(
         color: d.color ?? null,
         notes: Array.isArray(d.notes) ? JSON.stringify(d.notes) : null,
         sortOrder: d.sort_order ?? null,
+        segmentIndex: d.segment_index ?? null,
+        segmentName: d.segment_name ?? null,
       });
       ctx.newLegIdsQueue.push(newLegId);
       return;
@@ -345,6 +347,8 @@ async function dispatchAction(
       if (data.color !== undefined) legUpdate.color = data.color;
       if (data.notes !== undefined)
         legUpdate.notes = Array.isArray(data.notes) ? JSON.stringify(data.notes) : null;
+      if (data.segment_index !== undefined) legUpdate.segmentIndex = data.segment_index;
+      if (data.segment_name !== undefined) legUpdate.segmentName = data.segment_name;
 
       // updatedAt is always set; only run the SQL update if at least one
       // real column changed.

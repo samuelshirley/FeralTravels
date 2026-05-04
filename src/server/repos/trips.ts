@@ -58,6 +58,8 @@ function legRow(r: typeof legs.$inferSelect) {
     sort_order: r.sortOrder,
     title: r.title,
     label: r.label,
+    segment_index: r.segmentIndex,
+    segment_name: r.segmentName,
     start_name: r.startName,
     end_name: r.endName,
     start_lat: r.startLat,
@@ -462,6 +464,13 @@ export async function addLeg(input: {
   color?: string | null;
   notes?: string | null;
   sortOrder?: number | null;
+  /**
+   * Two-level grouping. Set both fields together when this driving day belongs
+   * to a user-stated jump that takes more than one day; leave both null for
+   * single-day jumps or for legs you don't want grouped. See migration 0006.
+   */
+  segmentIndex?: number | null;
+  segmentName?: string | null;
 }): Promise<number> {
   let sortOrder = input.sortOrder;
   if (sortOrder == null) {
@@ -493,6 +502,8 @@ export async function addLeg(input: {
       status: input.status ?? 'planning',
       color: input.color ?? null,
       notes: input.notes ?? null,
+      segmentIndex: input.segmentIndex ?? null,
+      segmentName: input.segmentName ?? null,
     })
     .returning({ id: legs.id });
   return row.id;
@@ -577,6 +588,10 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
           status: l.status,
           color: l.color,
           notes: l.notes,
+          // Carry segment grouping into the cloned trip so the new copy renders
+          // the same shape (flat vs. grouped) as the source template.
+          segmentIndex: l.segmentIndex,
+          segmentName: l.segmentName,
         })
         .returning({ id: legs.id });
       legIdMap.set(l.id, nl.id);

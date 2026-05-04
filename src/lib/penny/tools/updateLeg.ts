@@ -30,6 +30,10 @@ const dataSchema = z.object({
   status: legStatusSchema.nullish(),
   color: z.string().nullish(),
   notes: z.array(z.string()).nullish(),
+  // Re-tag a leg's group membership. Pass null for both to ungroup.
+  // See addLeg for the grouping semantics.
+  segment_index: z.number().int().min(0).nullish(),
+  segment_name: z.string().min(1).max(200).nullish(),
   costs: z
     .array(
       z.object({
@@ -91,6 +95,16 @@ export const tool: Anthropic.Tool = {
           status: { type: 'string', enum: ['planning', 'research', 'confirmed', 'anchored'] },
           color: { type: 'string' },
           notes: { type: 'array', items: { type: 'string' } },
+          segment_index: {
+            type: 'integer',
+            minimum: 0,
+            description:
+              'Re-tag this day to a different jump (or pass null to ungroup). See add_leg for grouping rules.',
+          },
+          segment_name: {
+            type: 'string',
+            description: 'Updated jump label (e.g. "Girona → Berlin").',
+          },
           costs: {
             type: 'array',
             items: {

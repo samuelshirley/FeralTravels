@@ -40,6 +40,12 @@ const baseSchema = z.object({
   color: z.string().nullish(),
   notes: z.array(z.string()).nullish(),
   sort_order: z.number().int().nullish(),
+  // Two-level grouping. Each leg row is a *driving day*; segment_* tags
+  // which user-stated jump it belongs to. Set both together — segment_index
+  // gives stable ordering within the trip, segment_name is the label users
+  // see ("Girona → Berlin"). Leave both null for short single-day jumps.
+  segment_index: z.number().int().min(0).nullish(),
+  segment_name: z.string().min(1).max(200).nullish(),
 });
 
 export type AddLegInput = z.infer<typeof baseSchema>;
@@ -66,7 +72,13 @@ export function validator(ctx: PennyContext) {
 
 export const tool: Anthropic.Tool = {
   name: ADD_LEG,
-  description: `Add a new driving leg to the trip. ${HEADING.callOrderRule} Each leg should fit within one driving day (≤ vehicle.max_drive_hours_per_day). For routes that exceed that, call get_route first and emit one add_leg per resulting day.`,
+  description: `Add a new driving leg to the trip. ${HEADING.callOrderRule} Each leg you add represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
+
+GROUPING (segment_index / segment_name): When the user describes a destination jump that takes more than one driving day — e.g. "Girona to Berlin" stretching over 5 days — give every day in that jump the SAME segment_index (an integer, 0 for the first jump, 1 for the second, …) and the SAME segment_name (the user's words: "Girona → Berlin"). This is what lets the UI render long trips as collapsible sections.
+
+Leave both fields null when the user-stated jump is itself only one day, or when you're not confident which jump a day belongs to. The UI falls back to a flat list when no segment data is set.
+
+For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Barcelona to Paris, segment 1 all days Paris→Berlin, segment 2 all days Berlin→Oslo.`,
   input_schema: {
     type: 'object',
     required: ['title'],
@@ -108,6 +120,17 @@ export const tool: Anthropic.Tool = {
       color: { type: 'string' },
       notes: { type: 'array', items: { type: 'string' } },
       sort_order: { type: 'integer' },
+      segment_index: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'Optional 0-based index of the user-stated jump this day belongs to. All days inside the same jump share this value. Leave omitted for single-day jumps.',
+      },
+      segment_name: {
+        type: 'string',
+        description:
+          'Optional human label for the jump this day belongs to, e.g. "Girona → Berlin". Must be set together with segment_index.',
+      },
     },
   },
 };

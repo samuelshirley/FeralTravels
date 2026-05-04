@@ -156,22 +156,35 @@ export default function TripWorkspace({
   }, [mobileTab, viewport]);
 
   // ---------------------------------------------------------------------------
-  // Auto-replan: any change to the parts of the trip that affect fuel routing
-  // (vehicle, leg geometry, user-picked stops) schedules a debounced replan.
-  // The fingerprint excludes planner-generated 'option' rows so a successful
-  // replan doesn't bounce the fingerprint and trigger another replan in a loop.
+  // Auto-replan with FORWARD-ONLY scoping.
   //
-  // KNOWN GAP: this still rebuilds the entire auto stop list on every replan,
-  // which can clobber a user's manually-picked gas station if it happens to be
-  // a 'google_places' source row. Tracked as follow-up — not in this change.
+  // We compute a per-leg fingerprint (start/end coords, distance, non-option
+  // stops). When something changes, we identify the lowest sort_order whose
+  // fingerprint differs from the last committed baseline and ask the server
+  // to replan from that leg forward — past legs are skipped because the
+  // cumulative tank-state math only flows forward.
+  //
+  // The vehicle itself is tracked separately: changing the vehicle changes
+  // effective range, which affects every leg, so a vehicle change forces a
+  // full replan from sort_order 0.
+  //
+  // The committed baseline only advances after a replan completes (or after
+  // we observe a no-op state). That means edits made WHILE a replan is in
+  // flight are not lost — they accumulate in the baseline diff and trigger a
+  // follow-up replan once `replanBusy` clears.
+  //
+  // KNOWN GAP: replan still rebuilds the entire auto stop list for the legs
+  // it touches, which can clobber a user's manually-picked gas station if
+  // it's stored as a 'google_places' source row. Separate follow-up work.
   // ---------------------------------------------------------------------------
-  const tripFingerprint = useMemo(() => {
-    if (!trip) return '';
-    return JSON.stringify({
-      v: trip.vehicle_id,
-      legs: trip.legs.map((l) => ({
+  type LegFingerprint = { sortOrder: number; sig: string };
+
+  const legFingerprints = useMemo<LegFingerprint[]>(() => {
+    if (!trip) return [];
+    return trip.legs.map((l) => ({
+      sortOrder: l.sort_order,
+      sig: JSON.stringify({
         i: l.id,
-        o: l.sort_order,
         sl: l.start_lat,
         sn: l.start_lng,
         el: l.end_lat,
@@ -184,33 +197,77 @@ export default function TripWorkspace({
             st: s.status,
             d: s.distance_from_start_km,
           })),
-      })),
-    });
+      }),
+    }));
   }, [trip]);
 
-  const handleReplanFuelRef = useRef<() => Promise<void>>(async () => {});
-  const lastFingerprintRef = useRef<string | null>(null);
+  const vehicleFingerprint = trip?.vehicle_id ?? null;
+
+  const handleReplanFuelRef = useRef<(start?: number) => Promise<void>>(async () => {});
+  const committedLegsRef = useRef<LegFingerprint[] | null>(null);
+  const committedVehicleRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (readonly) return;
-    if (!tripFingerprint) return;
-    // First observation: establish baseline so we don't auto-replan on the
-    // initial trip load. Subsequent edits compare against this baseline.
-    if (lastFingerprintRef.current === null) {
-      lastFingerprintRef.current = tripFingerprint;
+    if (!trip) return;
+    // Pause while a replan is mid-flight; we'll re-evaluate on the next render
+    // after replanBusy clears (committed baseline still pointing at pre-replan
+    // state, so any edits during the flight are preserved as a diff).
+    if (replanBusy) return;
+
+    // First observation: establish committed baseline silently.
+    if (committedLegsRef.current === null) {
+      committedLegsRef.current = legFingerprints;
+      committedVehicleRef.current = vehicleFingerprint;
       return;
     }
-    if (lastFingerprintRef.current === tripFingerprint) return;
-    lastFingerprintRef.current = tripFingerprint;
 
-    // Debounce so a burst of edits (drag a waypoint, rename a leg, swap the
-    // vehicle) collapses to one replan instead of N. Latest-wins; if a new
-    // edit lands inside the window, we cancel the pending call and restart.
+    // Vehicle swap → effective range changes → every leg must be replanned.
+    let startFromSortOrder: number | undefined;
+    if (committedVehicleRef.current !== vehicleFingerprint) {
+      startFromSortOrder = undefined; // full replan
+    } else {
+      // Diff per-leg fingerprints against committed baseline; find the
+      // lowest sort_order that differs. Also catches deletions (a baseline
+      // entry whose sort_order no longer exists in the current snapshot).
+      const prev = committedLegsRef.current;
+      const curMap = new Map(legFingerprints.map((p) => [p.sortOrder, p.sig]));
+      const prevMap = new Map(prev.map((p) => [p.sortOrder, p.sig]));
+      let minChanged: number | null = null;
+      for (const cur of legFingerprints) {
+        if (prevMap.get(cur.sortOrder) !== cur.sig) {
+          if (minChanged === null || cur.sortOrder < minChanged) {
+            minChanged = cur.sortOrder;
+          }
+        }
+      }
+      for (const before of prev) {
+        if (!curMap.has(before.sortOrder)) {
+          if (minChanged === null || before.sortOrder < minChanged) {
+            minChanged = before.sortOrder;
+          }
+        }
+      }
+      if (minChanged === null) {
+        // No change — usually a post-replan re-render where the stops we wrote
+        // happen to be 'option' rows (excluded from the fingerprint). Advance
+        // baseline so we don't keep diffing against pre-replan state forever.
+        committedLegsRef.current = legFingerprints;
+        committedVehicleRef.current = vehicleFingerprint;
+        return;
+      }
+      startFromSortOrder = minChanged;
+    }
+
+    // Debounce: a burst of edits (drag waypoint, rename leg, swap stop)
+    // collapses to one replan. We do NOT update the committed baseline here —
+    // we wait until the replan completes successfully. Edits arriving inside
+    // the window cancel this timeout and reschedule.
     const t = setTimeout(() => {
-      void handleReplanFuelRef.current();
+      void handleReplanFuelRef.current(startFromSortOrder);
     }, 3000);
     return () => clearTimeout(t);
-  }, [tripFingerprint, readonly]);
+  }, [legFingerprints, vehicleFingerprint, readonly, trip, replanBusy]);
 
   if (loading) {
     return (
@@ -333,11 +390,13 @@ export default function TripWorkspace({
     />
   );
 
-  async function handleReplanFuel() {
+  async function handleReplanFuel(startFromSortOrder?: number) {
     if (replanBusy || tripFuelBusy) return;
     setReplanBusy(true);
     try {
-      await api.replenishFuelStops();
+      await api.replenishFuelStops(
+        startFromSortOrder !== undefined ? { startFromSortOrder } : undefined,
+      );
       await loadTrip();
     } catch (e) {
       console.warn('replan fuel failed', e);
