@@ -5,35 +5,12 @@ import { vehicles } from '@/server/db/schema';
 
 export type VehicleRow = typeof vehicles.$inferSelect;
 
-export type VehicleType =
-  | '4x4_suv'
-  | 'pickup'
-  | 'van'
-  | 'motorcycle'
-  | 'sedan'
-  | 'other';
-
-export type VehicleFuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
-
-export type FuelTimingPref = 'start_of_day' | 'when_low' | 'end_of_day';
-
 export interface VehicleInput {
   name: string;
-  vehicle_type?: VehicleType | null;
-  notes?: string | null;
-  height_cm?: number | null;
-  length_m?: number | null;
-  weight_kg?: number | null;
-  fuel_economy_kmpl?: number | null;
-  real_world_kmpl?: number | null;
-  fuel_tank_l?: number | null;
-  fuel_type?: VehicleFuelType | null;
-  fuel_timing_pref?: FuelTimingPref | null;
+  refill_distance_km?: number | null;
   max_drive_hours_per_day?: number | null;
   max_drive_hours_per_week?: number | null;
   max_consecutive_drive_days?: number | null;
-  freshwater_capacity_l?: number | null;
-  blackwater_capacity_l?: number | null;
   water_refill_days?: number | null;
   blackwater_refill_days?: number | null;
   is_default?: boolean;
@@ -45,21 +22,10 @@ function vehicleApi(r: VehicleRow) {
     user_id: r.userId,
     name: r.name,
     is_default: r.isDefault,
-    vehicle_type: (r.vehicleType as VehicleType | null) ?? null,
-    notes: r.notes,
-    height_cm: r.heightCm,
-    length_m: r.lengthM,
-    weight_kg: r.weightKg,
-    fuel_economy_kmpl: r.fuelEconomyKmpl,
-    real_world_kmpl: r.realWorldKmpl,
-    fuel_tank_l: r.fuelTankL,
-    fuel_type: (r.fuelType as VehicleFuelType | null) ?? null,
-    fuel_timing_pref: (r.fuelTimingPref as FuelTimingPref | null) ?? null,
+    refill_distance_km: r.refillDistanceKm,
     max_drive_hours_per_day: r.maxDriveHoursPerDay,
     max_drive_hours_per_week: r.maxDriveHoursPerWeek,
     max_consecutive_drive_days: r.maxConsecutiveDriveDays,
-    freshwater_capacity_l: r.freshwaterCapacityL,
-    blackwater_capacity_l: r.blackwaterCapacityL,
     water_refill_days: r.waterRefillDays,
     blackwater_refill_days: r.blackwaterRefillDays,
     created_at: r.createdAt.toISOString(),
@@ -117,26 +83,13 @@ export async function getDefaultVehicleForUser(userId: string): Promise<VehicleA
 function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   const map: Record<string, unknown> = {};
   if (input.name !== undefined) map.name = input.name;
-  if (input.vehicle_type !== undefined) map.vehicleType = input.vehicle_type;
-  if (input.notes !== undefined) map.notes = input.notes;
-  if (input.height_cm !== undefined) map.heightCm = input.height_cm;
-  if (input.length_m !== undefined) map.lengthM = input.length_m;
-  if (input.weight_kg !== undefined) map.weightKg = input.weight_kg;
-  if (input.fuel_economy_kmpl !== undefined) map.fuelEconomyKmpl = input.fuel_economy_kmpl;
-  if (input.real_world_kmpl !== undefined) map.realWorldKmpl = input.real_world_kmpl;
-  if (input.fuel_tank_l !== undefined) map.fuelTankL = input.fuel_tank_l;
-  if (input.fuel_type !== undefined) map.fuelType = input.fuel_type;
-  if (input.fuel_timing_pref !== undefined) map.fuelTimingPref = input.fuel_timing_pref;
+  if (input.refill_distance_km !== undefined) map.refillDistanceKm = input.refill_distance_km;
   if (input.max_drive_hours_per_day !== undefined)
     map.maxDriveHoursPerDay = input.max_drive_hours_per_day;
   if (input.max_drive_hours_per_week !== undefined)
     map.maxDriveHoursPerWeek = input.max_drive_hours_per_week;
   if (input.max_consecutive_drive_days !== undefined)
     map.maxConsecutiveDriveDays = input.max_consecutive_drive_days;
-  if (input.freshwater_capacity_l !== undefined)
-    map.freshwaterCapacityL = input.freshwater_capacity_l;
-  if (input.blackwater_capacity_l !== undefined)
-    map.blackwaterCapacityL = input.blackwater_capacity_l;
   if (input.water_refill_days !== undefined) map.waterRefillDays = input.water_refill_days;
   if (input.blackwater_refill_days !== undefined)
     map.blackwaterRefillDays = input.blackwater_refill_days;

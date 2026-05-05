@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { RouteWithLinks } from '@/types/trip';
 import { tripApi } from '@/lib/api';
+import Distance from './Distance';
 
 interface RoutesSectionProps {
   tripId: number;
@@ -354,15 +355,11 @@ function RouteRow({ route, readonly = false, onDelete, onSelect }: RouteRowProps
               )}
               {surfaceChip(route.surface)}
               {route.distance_km != null && (
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--tp-muted)',
-                    
-                  }}
-                >
-                  {route.distance_km} km
-                </span>
+                <Distance
+                  km={route.distance_km}
+                  layout="inline"
+                  style={{ fontSize: 10, color: 'var(--tp-muted)' }}
+                />
               )}
             </div>
             {route.end_name && (

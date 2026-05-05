@@ -31,6 +31,12 @@ export const users = pgTable('users', {
   // session.user.email alone — always cross-check this flag against the
   // hardcoded ADMIN_ALLOWLIST in src/server/auth/admin.ts.
   isAdmin: boolean('is_admin').default(false).notNull(),
+  // 'metric' | 'imperial' — display preference only. The DB always stores
+  // distances in km, capacities in L, weights in kg. The flag tells the UI
+  // and Penny's onboarding prompts which units to *show* (and which to
+  // accept on input — values are converted back to metric on save). Default
+  // metric so the existing UX doesn't shift on day one for current users.
+  unitsPref: text('units_pref').default('metric').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -80,6 +86,18 @@ export const verificationTokens = pgTable(
 // Application schema
 // ============================================================================
 
+// Vehicle profile — intentionally narrow.
+//
+// We used to capture make/model, dimensions, full fuel breakdown
+// (spec + real-world economy + tank + fuel type + timing preference), and
+// fresh/black-water capacities. In practice almost none of that drove a real
+// planning decision — the only thing the fuel planner actually needed was an
+// "effective range between fuel stops" number, derived from
+// `(real_world_kmpl ?? fuel_economy_kmpl) × fuel_tank_l × 0.8`. Migration
+// 0007 collapses the lot into a single user-stated `refill_distance_km` ("I
+// like to refuel every ~X km") and asks the user directly. That's both
+// closer to how overlanders actually reason about refueling and dramatically
+// shorter to fill in during onboarding.
 export const vehicles = pgTable(
   'vehicles',
   {
@@ -89,42 +107,18 @@ export const vehicles = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     isDefault: boolean('is_default').default(false).notNull(),
-    // Identity / classification
-    vehicleType: text('vehicle_type'), // '4x4_suv'|'pickup'|'van'|'motorcycle'|'sedan'|'other'
-    notes: text('notes'),
-    // Dimensions
-    heightCm: integer('height_cm'),
-    lengthM: doublePrecision('length_m'),
-    weightKg: doublePrecision('weight_kg'),
-    // Fuel
-    fuelEconomyKmpl: doublePrecision('fuel_economy_kmpl'),
-    fuelTankL: doublePrecision('fuel_tank_l'),
-    // Optional override: the *observed* economy in real overlanding
-    // conditions, which is almost always lower than spec (loaded vehicle,
-    // roof rack drag, mountain grades). When set, `effective_range_km`
-    // uses this instead of `fuel_economy_kmpl`. The 20% reserve buffer
-    // still applies on top — see comment below.
-    realWorldKmpl: doublePrecision('real_world_kmpl'),
-    // NOTE: `fuel_reserve_km` was removed in favor of a flat 20% buffer rule
-    // applied everywhere: effective_range_km = (real_world_kmpl ?? fuel_economy_kmpl) × fuel_tank_l × 0.8.
-    // Reasoning: users don't reliably know their reserve in km, and the 20%
-    // rule is what overlanders actually teach. Keep the column out of the
-    // model so UI / Penny / fuel-planner all share the same formula.
-    // 'diesel' | 'petrol' | 'premium' | 'lpg' | null. Used by Penny to
-    // pick appropriate fuel stations and by the UI for nicer copy.
-    fuelType: text('fuel_type'),
-    // Refueling preference. Bias the auto fuel-stop planner toward
-    // start-of-day / end-of-day camp-area stations vs. mid-leg centerline
-    // math. NULL = no preference (centerline math).
-    // 'start_of_day' | 'when_low' | 'end_of_day'.
-    fuelTimingPref: text('fuel_timing_pref'),
+    // User-stated refuel cadence: how far they want to drive between fuel
+    // stops, in kilometers. Used directly by the auto fuel planner as the
+    // effective range. NULL = no preference set yet (planner skips this
+    // vehicle until the user fills it in). Always stored in km regardless
+    // of users.units_pref — the UI converts on display/input.
+    refillDistanceKm: integer('refill_distance_km'),
     // Drive limits
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
     maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
-    // Water (capacity in liters + how many days of usage between refills/dumps)
-    freshwaterCapacityL: doublePrecision('freshwater_capacity_l'),
-    blackwaterCapacityL: doublePrecision('blackwater_capacity_l'),
+    // Water (just the cadence — no tank capacities. Penny treats these as
+    // intervals between visits to a freshwater tap and to a dump station.)
     waterRefillDays: integer('water_refill_days'),
     blackwaterRefillDays: integer('blackwater_refill_days'),
     createdAt: timestamp('created_at').defaultNow().notNull(),

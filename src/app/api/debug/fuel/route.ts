@@ -21,18 +21,19 @@ export async function GET() {
       ? `set (${key.slice(0, 8)}…)`
       : 'MISSING — fuel planning will always fail';
 
-    // 2. Vehicle / effective range
+    // 2. Vehicle / effective range — post-0007 the planner uses the user's
+    // stated `refill_distance_km` directly. The old fuel_economy × tank × 0.8
+    // computation lived here; both the column reads and the multi-arg helper
+    // signature were dropped in the same migration.
     let range: number | null = null;
     try {
       const v = await getDefaultVehicleForUser(userId);
       if (!v) {
         results['vehicle'] = 'No default vehicle found for this user';
       } else {
-        range = computeEffectiveRangeKm(v.fuel_economy_kmpl, v.fuel_tank_l, v.real_world_kmpl);
+        range = computeEffectiveRangeKm(v.refill_distance_km);
         results['vehicle'] = {
-          fuel_economy_kmpl: v.fuel_economy_kmpl,
-          fuel_tank_l: v.fuel_tank_l,
-          real_world_kmpl: v.real_world_kmpl,
+          refill_distance_km: v.refill_distance_km,
           effective_range_km: range,
         };
       }
@@ -110,7 +111,7 @@ export async function GET() {
         : !placesOk
           ? `❌ Places API failing — ${(results['places_api'] as any)?.hint ?? 'see places_api above'}`
           : !range
-            ? '❌ No vehicle / effective range — add fuel economy + tank size in Settings'
+            ? '❌ No vehicle / effective range — set "Refill every X km" on your default vehicle in Settings'
             : '✅ All checks passed — if stops are still missing, trigger a replan';
 
     return Response.json(results, { status: 200 });

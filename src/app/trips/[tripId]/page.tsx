@@ -3,6 +3,8 @@ import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
+import { getUnitsPref } from '@/server/repos/users';
+import { UnitsProvider } from '@/components/UnitsContext';
 import TripWorkspace from './TripWorkspace';
 
 export const dynamic = 'force-dynamic';
@@ -29,18 +31,24 @@ export default async function TripPage({ params }: Props) {
   // Ship the most-recent page of chat with the HTML so the chat panel isn't
   // empty on hard refresh. Older messages are loaded lazily via GET /api/chat.
   const initialChat = await getChatPage({ tripId });
+  // Seed the UnitsProvider so distance labels (and the secondary mi line for
+  // imperial users) render correctly on first paint, before the client has a
+  // chance to fetch /api/me.
+  const unitsPref = await getUnitsPref(session.user.id as string);
 
   return (
-    <TripWorkspace
-      tripId={tripId}
-      readonly={!isOwner}
-      user={{
-        name: session.user.name,
-        email: session.user.email,
-        image: session.user.image,
-      }}
-      isAdmin={admin}
-      initialChat={initialChat}
-    />
+    <UnitsProvider initialUnits={unitsPref}>
+      <TripWorkspace
+        tripId={tripId}
+        readonly={!isOwner}
+        user={{
+          name: session.user.name,
+          email: session.user.email,
+          image: session.user.image,
+        }}
+        isAdmin={admin}
+        initialChat={initialChat}
+      />
+    </UnitsProvider>
   );
 }

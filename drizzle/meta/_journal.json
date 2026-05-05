@@ -50,6 +50,13 @@
       "when": 1778198400000,
       "tag": "0006_legs_segment_grouping",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778457600000,
+      "tag": "0007_simplify_vehicle_profile",
+      "breakpoints": true
     }
   ]
 }

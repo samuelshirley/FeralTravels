@@ -26,7 +26,7 @@ interface Question {
 interface Snapshot {
   state: OnboardingState;
   question: Question | null;
-  vehicles: Array<{ id: number; name: string; is_default: boolean; vehicle_type: string | null }>;
+  vehicles: Array<{ id: number; name: string; is_default: boolean }>;
   progress: { current: number; total: number } | null;
 }
 
@@ -218,7 +218,6 @@ function VehiclePicker({
         >
           <span style={{ fontWeight: 600 }}>{v.name}</span>
           {v.is_default && <span style={pillStyle}>default</span>}
-          {v.vehicle_type && <span style={{ fontSize: 11, color: 'var(--tp-muted)' }}>· {v.vehicle_type.replace(/_/g, ' ')}</span>}
         </button>
       ))}
       <button

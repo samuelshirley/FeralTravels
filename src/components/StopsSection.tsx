@@ -6,6 +6,7 @@ import { tripApi, ApiError } from '@/lib/api';
 import { buildDogParkSearchUrl, buildParkSearchUrl } from '@/lib/maps';
 import { parseCoords, needsServerResolution } from '@/lib/coords';
 import Spinner from './Spinner';
+import Distance from './Distance';
 
 interface StopsSectionProps {
   tripId: number;
@@ -644,9 +645,12 @@ function ParkSuggestionGroup({
                       Outside 5 km
                     </span>
                   ) : null}
-                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}>
-                    {row.distanceKm.toFixed(1)} km
-                  </span>
+                  <Distance
+                    km={row.distanceKm}
+                    layout="inline"
+                    primaryOverride={`${row.distanceKm.toFixed(1)} km`}
+                    style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}
+                  />
                 </div>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
@@ -831,7 +835,12 @@ function StopRow({
             {stop.name}
           </span>
           {stop.distance_from_start_km != null && (
-            <span style={{ fontSize: 10, color: 'var(--tp-muted)' }}>~{stop.distance_from_start_km} km</span>
+            <Distance
+              km={stop.distance_from_start_km}
+              layout="inline"
+              primaryOverride={`~${stop.distance_from_start_km} km`}
+              style={{ fontSize: 10, color: 'var(--tp-muted)' }}
+            />
           )}
           {stop.fuel_type && (
             <span style={{ fontSize: 10, color: 'var(--tp-muted)' }}>{stop.fuel_type}</span>

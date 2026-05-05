@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
 import LegCard from './LegCard';
+import Distance from './Distance';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
 // single render (matches the user-facing "20 days" model). Subsequent
@@ -199,19 +200,29 @@ export default function Itinerary({
         )}
 
         <div style={{ display: 'flex', gap: 20, marginTop: 14, flexWrap: 'wrap' }}>
-          {[
-            { label: 'TOTAL', value: `~${totalDist.toLocaleString()} km` },
+          {([
+            // Primary total uses Distance so imperial users see the (X mi)
+            // secondary line under the km value.
+            {
+              label: 'TOTAL',
+              value: (
+                <Distance
+                  km={totalDist}
+                  primaryOverride={`~${totalDist.toLocaleString()} km`}
+                />
+              ),
+            },
             // When the trip is grouped, surface both granularities so the
             // stat block matches the rendered structure (segments above,
             // days inside). Otherwise just show the day count.
             ...(shouldGroup
               ? [
-                  { label: 'LEGS', value: `${distinctSegments}` },
-                  { label: 'DAYS', value: `${legs.length}` },
+                  { label: 'LEGS', value: `${distinctSegments}` as React.ReactNode },
+                  { label: 'DAYS', value: `${legs.length}` as React.ReactNode },
                 ]
-              : [{ label: 'DAYS', value: `${legs.length}` }]),
-            { label: 'STATUS', value: trip.status },
-          ].map((s, i) => (
+              : [{ label: 'DAYS', value: `${legs.length}` as React.ReactNode }]),
+            { label: 'STATUS', value: trip.status as React.ReactNode },
+          ] as Array<{ label: string; value: React.ReactNode }>).map((s, i) => (
             <div key={i}>
               <div
                 style={{
@@ -219,7 +230,6 @@ export default function Itinerary({
                   fontWeight: 700,
                   letterSpacing: '0.1em',
                   color: 'var(--tp-subtle)',
-                  
                 }}
               >
                 {s.label}
@@ -329,10 +339,24 @@ export default function Itinerary({
                       fontSize: 11,
                       color: 'var(--tp-subtle)',
                       whiteSpace: 'nowrap',
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 6,
                     }}
                   >
-                    {group.legs.length} day{group.legs.length === 1 ? '' : 's'}
-                    {groupKm > 0 && ` · ~${Math.round(groupKm).toLocaleString()} km`}
+                    <span>
+                      {group.legs.length} day{group.legs.length === 1 ? '' : 's'}
+                    </span>
+                    {groupKm > 0 && (
+                      <>
+                        <span>·</span>
+                        <Distance
+                          km={Math.round(groupKm)}
+                          layout="inline"
+                          primaryOverride={`~${Math.round(groupKm).toLocaleString()} km`}
+                        />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div

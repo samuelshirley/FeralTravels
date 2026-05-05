@@ -7,6 +7,7 @@ import { buildLegDirectionsUrl, legDirectionsWaypoints } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
+import Distance from './Distance';
 
 interface LegCardProps {
   tripId: number;
@@ -180,15 +181,11 @@ export default function LegCard({
               {leg.dates}
             </span>
             {leg.distance_km ? (
-              <span
-                style={{
-                  fontSize: 12,
-                  color: 'var(--tp-subtle)',
-                  
-                }}
-              >
-                {leg.distance_km} km
-              </span>
+              <Distance
+                km={leg.distance_km}
+                layout="inline"
+                style={{ fontSize: 12, color: 'var(--tp-subtle)' }}
+              />
             ) : null}
             {driveHours ? (
               <span
@@ -507,15 +504,11 @@ export default function LegCard({
                       {t.name}
                     </span>
                     {t.distance_km != null && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          color: 'var(--tp-muted)',
-                          
-                        }}
-                      >
-                        {t.distance_km} km
-                      </span>
+                      <Distance
+                        km={t.distance_km}
+                        layout="inline"
+                        style={{ fontSize: 10, color: 'var(--tp-muted)' }}
+                      />
                     )}
                   </div>
                   {(t.source || t.source_url) && (

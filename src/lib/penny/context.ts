@@ -27,30 +27,26 @@ export interface PennyContext {
   recentChat: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
+/**
+ * Trimmed vehicle shape Penny actually plans against. Mirrors the simplified
+ * vehicles row introduced in migration 0007: a single user-stated refuel
+ * cadence + drive limits + water cadence. The `effective_range_km` field is
+ * a deliberate alias of `refill_distance_km` — kept under that name so the
+ * fuel planner and the system prompt can refer to "effective range" without
+ * caring whether it came from a tank-math computation (old model) or a
+ * straight user preference (new model).
+ */
 export interface PennyVehicle {
   id: number;
   name: string;
-  vehicle_type: string | null;
-  fuel_type: string | null;
-  fuel_economy_kmpl: number | null;
-  /** Optional observed real-world economy. When set, `effective_range_km` uses this instead of spec. */
-  real_world_kmpl: number | null;
-  fuel_tank_l: number | null;
-  /** Derived: (real_world_kmpl ?? fuel_economy_kmpl) × tank × 0.8 (flat 20% reserve). */
+  refill_distance_km: number | null;
+  /** Alias of refill_distance_km — kept for prompt/system-side stability. */
   effective_range_km: number | null;
-  /** 'start_of_day' | 'when_low' | 'end_of_day' | null. */
-  fuel_timing_pref: string | null;
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
-  freshwater_capacity_l: number | null;
-  blackwater_capacity_l: number | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
-  height_m: number | null;
-  length_m: number | null;
-  weight_kg: number | null;
-  notes: string | null;
 }
 
 export interface PennyLeg {
@@ -105,31 +101,20 @@ export interface PennyLeg {
 }
 
 /**
- * Flat 20% reserve buffer, the rule overlanders actually teach: always plan to
- * arrive with at least a fifth of a tank in hand. Replaces the old
- * `fuel_reserve_km` column which asked users for a km number most don't know.
- */
-export const FUEL_BUFFER_FRACTION = 0.2;
-
-/**
- * Effective range = (real-world ?? spec) economy × tank × 0.8.
+ * Effective driving range between fuel stops, in kilometers.
  *
- * Most overlanders' rigs miss the spec figure by 15–30 % once loaded for a
- * trip. When we have an observed `realWorldKmpl` (the user logging "actually
- * I get 9.5, not 12") we use it; otherwise we fall back to the spec figure.
- * The 20 % reserve buffer applies in both cases — running on fumes is
- * dangerous regardless of which economy you trust.
- *
- * Pulled out so the UI and Penny share one definition.
+ * Migration 0007 collapsed the old fuel-economy / tank / real-world / 20% buffer
+ * computation into a single user-stated `refill_distance_km` ("I like to refuel
+ * every ~X km"). This helper exists so callers don't reach into the vehicle row
+ * directly — if we ever add range-shaping logic (terrain modifiers, towing
+ * derate, etc.) it goes here in one place. Today it's the identity function on
+ * a non-positive guard.
  */
 export function computeEffectiveRangeKm(
-  kmpl: number | null,
-  tankL: number | null,
-  realWorldKmpl: number | null = null
+  refillDistanceKm: number | null
 ): number | null {
-  const effectiveKmpl = realWorldKmpl ?? kmpl;
-  if (!effectiveKmpl || !tankL) return null;
-  return Math.max(0, Math.round(effectiveKmpl * tankL * (1 - FUEL_BUFFER_FRACTION)));
+  if (refillDistanceKm == null || refillDistanceKm <= 0) return null;
+  return Math.round(refillDistanceKm);
 }
 
 /**
@@ -181,31 +166,17 @@ async function resolveVehicle(trip: TripWithLegs, userId: string): Promise<Vehic
 }
 
 function projectVehicle(v: VehicleApi): PennyVehicle {
+  const range = computeEffectiveRangeKm(v.refill_distance_km);
   return {
     id: v.id,
     name: v.name,
-    vehicle_type: v.vehicle_type,
-    fuel_type: v.fuel_type,
-    fuel_economy_kmpl: v.fuel_economy_kmpl,
-    fuel_tank_l: v.fuel_tank_l,
-    real_world_kmpl: v.real_world_kmpl,
-    effective_range_km: computeEffectiveRangeKm(
-      v.fuel_economy_kmpl,
-      v.fuel_tank_l,
-      v.real_world_kmpl
-    ),
-    fuel_timing_pref: v.fuel_timing_pref,
+    refill_distance_km: v.refill_distance_km,
+    effective_range_km: range,
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
-    freshwater_capacity_l: v.freshwater_capacity_l,
-    blackwater_capacity_l: v.blackwater_capacity_l,
     water_refill_days: v.water_refill_days,
     blackwater_refill_days: v.blackwater_refill_days,
-    height_m: v.height_cm != null ? Number((v.height_cm / 100).toFixed(2)) : null,
-    length_m: v.length_m,
-    weight_kg: v.weight_kg,
-    notes: v.notes,
   };
 }
 

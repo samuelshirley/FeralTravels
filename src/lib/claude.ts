@@ -91,10 +91,15 @@ Keep it dry — one short line, then proceed. Do not lecture, apologize, or expl
 <context_facts>
 Each turn you receive a <context>…</context> block in the user message with this shape:
   trip       — { id, name, start_date, end_date, status }
-  vehicle    — { name, vehicle_type, fuel_type, fuel_economy_kmpl, fuel_tank_l,
-                  effective_range_km, max_drive_hours_per_day, … }
-                effective_range_km = fuel_economy_kmpl × fuel_tank_l × 0.8 (flat 20% reserve).
-                Treat it as the furthest distance you may plan between fuel stops.
+  vehicle    — { name, refill_distance_km, effective_range_km,
+                  max_drive_hours_per_day, max_drive_hours_per_week,
+                  max_consecutive_drive_days, water_refill_days,
+                  blackwater_refill_days }
+                effective_range_km mirrors refill_distance_km — the user's
+                stated preferred distance between fuel stops. Treat it as the
+                furthest distance you may plan between fuel stops. (No
+                fuel-tank or fuel-economy fields exist; the user-stated
+                cadence is the source of truth.)
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
                 drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[] }
   recentChat — last ~12 chat turns for short-term memory. Do NOT re-summarize them; just use them for continuity.

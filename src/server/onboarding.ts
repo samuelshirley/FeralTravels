@@ -9,8 +9,9 @@ import {
   listVehiclesForUser,
   updateVehicle,
   type VehicleApi,
-  type VehicleFuelType,
 } from '@/server/repos/vehicles';
+import { getUnitsPref } from '@/server/repos/users';
+import { miToKm, type UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
 
 // ---------------------------------------------------------------------------
@@ -20,7 +21,7 @@ import type { OnboardingState } from '@/types/trip';
 //   not_started  → (has vehicles?)  yes → vehicle_pick     no → vehicle_new
 //   vehicle_pick → (user picks existing) → link → ready
 //                  (user picks "new")    → vehicle_new
-//   vehicle_new  → iterate VEHICLE_QUESTIONS → ready
+//   vehicle_new  → iterate buildVehicleQuestions(unitsPref) → ready
 //   ready        → single "where do you want to go?" question → done
 //   done         → hand off to Penny (Anthropic), chat is live
 //
@@ -58,141 +59,98 @@ export interface Question {
 
 /**
  * The canonical vehicle wizard. Order matters — Penny asks them top-to-bottom.
- * Keep required-for-fuel-planning fields (economy, tank) near the front so if
- * the user bails partway we at least have enough to plan safely.
  *
- * Intentionally dropped from the onboarding flow (columns still exist on the
- * vehicles row and can be edited from the profile settings page):
- *   - vehicle_type: only used as decorative context for Penny; no planning
- *     logic branches on it. Physical dimensions + fuel fields carry the
- *     functional signal.
- *   - length_m: matters for ferry pricing and campsite pitch caps, but we
- *     don't plan either today. Add back when we do.
+ * Migration 0007 collapsed the old 14-question flow (make/model, dimensions,
+ * full fuel breakdown, water capacities, notes) into seven targeted prompts.
+ * The single non-obvious one is `refill_distance_km`: rather than ask for
+ * fuel economy + tank size + reserve and back-compute an effective range,
+ * we ask the user directly how far they like to drive between refuels.
+ * That mirrors the way overlanders actually think about it ("I'll fill up
+ * roughly every 400 km") and avoids forcing anyone to know their L/100km.
  *
- * Height is asked in METERS (people don't think in cm for their rig). We
- * still store on the `height_cm` column to avoid a schema migration —
- * `submitAnswer` converts m → cm on write.
+ * Question text (and the `refill_distance_km` placeholder/limits) is unit-
+ * aware: imperial users see "miles" and we convert miles → km on save.
+ * Stored values are always metric.
  */
-export const VEHICLE_QUESTIONS: Question[] = [
-  {
-    key: 'name',
-    kind: 'text',
-    label: "What's the vehicle called? (just a nickname is fine)",
-    placeholder: 'e.g. Duncan',
-  },
-  {
-    key: 'fuel_type',
-    kind: 'select',
-    label: 'Fuel type?',
-    options: [
-      { value: 'diesel', label: 'Diesel' },
-      { value: 'petrol', label: 'Petrol / Unleaded' },
-      { value: 'premium', label: 'Premium' },
-      { value: 'lpg', label: 'LPG' },
-    ],
-  },
-  {
-    key: 'fuel_economy_kmpl',
-    kind: 'number',
-    label: 'Fuel economy, in km per liter?',
-    placeholder: '8',
-    help: 'If you know L/100km, divide 100 by it — e.g. 12.5 L/100km ≈ 8 km/L.',
-    min: 0.1,
-    max: 100,
-  },
-  {
-    key: 'fuel_tank_l',
-    kind: 'number',
-    label: 'Tank size in liters?',
-    placeholder: '80',
-    min: 1,
-    max: 1000,
-  },
-  {
-    key: 'height_m',
-    kind: 'number',
-    label: 'Vehicle height in meters?',
-    placeholder: '2.3',
-    help: 'Used to flag low-clearance routes. Round up if loaded.',
-    min: 0.5,
-    max: 5.0,
-  },
-  {
-    key: 'weight_kg',
-    kind: 'number',
-    label: 'Loaded weight in kg?',
-    placeholder: '2800',
-    help: 'Ballpark is fine. Over 3500 kg pushes you off narrow tracks.',
-    min: 100,
-    max: 40000,
-  },
-  {
-    key: 'max_drive_hours_per_day',
-    kind: 'number',
-    label: 'Max hours you want to drive per day?',
-    placeholder: '6',
-    min: 1,
-    max: 24,
-  },
-  {
-    key: 'max_drive_hours_per_week',
-    kind: 'number',
-    label: 'Max hours per week?',
-    placeholder: '30',
-    min: 1,
-    max: 100,
-  },
-  {
-    key: 'max_consecutive_drive_days',
-    kind: 'integer',
-    label: 'Max consecutive driving days before a rest day?',
-    placeholder: '3',
-    min: 1,
-    max: 14,
-  },
-  {
-    key: 'freshwater_capacity_l',
-    kind: 'number',
-    label: 'Freshwater tank in liters? (0 if none)',
-    placeholder: '100',
-    min: 0,
-    max: 2000,
-  },
-  {
-    key: 'blackwater_capacity_l',
-    kind: 'number',
-    label: 'Blackwater / grey tank in liters? (0 if none)',
-    placeholder: '80',
-    min: 0,
-    max: 2000,
-  },
-  {
-    key: 'water_refill_days',
-    kind: 'integer',
-    label: 'How many days between freshwater refills?',
-    placeholder: '4',
-    min: 1,
-    max: 30,
-    optional: true,
-  },
-  {
-    key: 'blackwater_refill_days',
-    kind: 'integer',
-    label: 'How many days between blackwater dumps?',
-    placeholder: '5',
-    min: 1,
-    max: 30,
-    optional: true,
-  },
-  {
-    key: 'notes',
-    kind: 'text',
-    label: 'Any other notes about this vehicle? (optional — skip if not)',
-    placeholder: '4WD with lockers, rooftop tent, solar…',
-    optional: true,
-    multiline: true,
-  },
-];
+function buildVehicleQuestions(units: UnitsPref): Question[] {
+  const isImperial = units === 'imperial';
+  const distLabel = isImperial ? 'miles' : 'kilometers';
+  const distPlaceholder = isImperial ? '250' : '400';
+  // Bound the *displayed* range. `coerceAnswer` enforces these limits on
+  // the value the user types; we convert mi → km only after validation.
+  const distMin = isImperial ? 30 : 50;
+  const distMax = isImperial ? 1500 : 2500;
+
+  return [
+    {
+      key: 'name',
+      kind: 'text',
+      label: "What's the vehicle called? (just a nickname is fine)",
+      placeholder: 'e.g. Duncan',
+    },
+    {
+      key: 'refill_distance_km',
+      kind: 'integer',
+      label: `How far between fuel stops, in ${distLabel}?`,
+      placeholder: distPlaceholder,
+      help:
+        'Tell me roughly how far you like to drive on a tank before refueling. ' +
+        "I'll plan a fuel stop every ~that distance, regardless of your tank's actual capacity.",
+      min: distMin,
+      max: distMax,
+    },
+    {
+      key: 'max_drive_hours_per_day',
+      kind: 'number',
+      label: 'Max hours you want to drive per day?',
+      placeholder: '6',
+      min: 1,
+      max: 24,
+    },
+    {
+      key: 'max_drive_hours_per_week',
+      kind: 'number',
+      label: 'Max hours per week?',
+      placeholder: '30',
+      min: 1,
+      max: 100,
+    },
+    {
+      key: 'max_consecutive_drive_days',
+      kind: 'integer',
+      label: 'Max consecutive driving days before a rest day?',
+      placeholder: '3',
+      min: 1,
+      max: 14,
+    },
+    {
+      key: 'water_refill_days',
+      kind: 'integer',
+      label: 'How many days between freshwater refills?',
+      placeholder: '4',
+      min: 1,
+      max: 30,
+      optional: true,
+    },
+    {
+      key: 'blackwater_refill_days',
+      kind: 'integer',
+      label: 'How many days between black/grey water dumps?',
+      placeholder: '5',
+      min: 1,
+      max: 30,
+      optional: true,
+    },
+  ];
+}
+
+/**
+ * Stable count of vehicle questions — used for the "3 of 7" progress label.
+ * The list is the same length in metric and imperial; we just rebuild it
+ * with the active labels. Hard-coded here so the UI doesn't need to call
+ * buildVehicleQuestions() just to count.
+ */
+const VEHICLE_QUESTION_COUNT = 7;
 
 export const HANDOFF_QUESTION: Question = {
   key: 'handoff',
@@ -209,7 +167,7 @@ export interface OnboardingSnapshot {
   /** Next question to ask, or null if onboarding is done. */
   question: Question | null;
   /** For 'vehicle_pick', the candidate vehicles. */
-  vehicles: Array<{ id: number; name: string; is_default: boolean; vehicle_type: string | null }>;
+  vehicles: Array<{ id: number; name: string; is_default: boolean }>;
   /** Progress counter — "3 of 16" style. */
   progress: { current: number; total: number } | null;
 }
@@ -225,7 +183,7 @@ async function resolveStart(userId: string): Promise<OnboardingState> {
 
 /**
  * When we're in `vehicle_new`, figure out which question to ask next by
- * walking VEHICLE_QUESTIONS and returning the first one that isn't resolved.
+ * walking the active questions list and returning the first one that isn't resolved.
  *
  * "Resolved" means:
  *   - REQUIRED field with a non-null value on the vehicle row, OR
@@ -242,18 +200,16 @@ async function resolveStart(userId: string): Promise<OnboardingState> {
  */
 function nextVehicleQuestion(
   vehicle: VehicleApi | null,
-  askedLabels: Set<string>
+  askedLabels: Set<string>,
+  questions: Question[]
 ): { question: Question; index: number } | null {
   if (!vehicle) {
     // Name is always first; we haven't even created the row yet.
-    return { question: VEHICLE_QUESTIONS[0], index: 0 };
+    return { question: questions[0], index: 0 };
   }
-  for (let i = 0; i < VEHICLE_QUESTIONS.length; i++) {
-    const q = VEHICLE_QUESTIONS[i];
-    // `height_m` is a pseudo-key — the stored column is height_cm. Read it
-    // that way so a partially-populated vehicle advances correctly.
-    const columnKey = q.key === 'height_m' ? 'height_cm' : q.key;
-    const raw = (vehicle as unknown as Record<string, unknown>)[columnKey];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const raw = (vehicle as unknown as Record<string, unknown>)[q.key];
     const hasValue = raw !== null && raw !== undefined && raw !== '';
     const resolved = q.optional ? hasValue || askedLabels.has(q.label) : hasValue;
     if (!resolved) return { question: q, index: i };
@@ -306,7 +262,6 @@ export async function getOnboardingSnapshot(
         id: v.id,
         name: v.name,
         is_default: v.is_default,
-        vehicle_type: v.vehicle_type,
       })),
       progress: null,
     };
@@ -317,7 +272,9 @@ export async function getOnboardingSnapshot(
       ? await getVehicleForUser(userId, trip.vehicleId)
       : null;
     const askedLabels = await loadAskedLabels(tripId);
-    const next = nextVehicleQuestion(currentVehicle, askedLabels);
+    const unitsPref = await getUnitsPref(userId);
+    const questions = buildVehicleQuestions(unitsPref);
+    const next = nextVehicleQuestion(currentVehicle, askedLabels, questions);
     if (!next) {
       // All vehicle fields filled — advance to ready.
       await db
@@ -335,7 +292,7 @@ export async function getOnboardingSnapshot(
       state,
       question: next.question,
       vehicles: [],
-      progress: { current: next.index + 1, total: VEHICLE_QUESTIONS.length },
+      progress: { current: next.index + 1, total: VEHICLE_QUESTION_COUNT },
     };
   }
 
@@ -420,10 +377,12 @@ export async function submitAnswer(
 
   // vehicle_new — write one field at a time.
   if (state === 'vehicle_new') {
-    const question = VEHICLE_QUESTIONS.find((q) => q.key === input.questionKey);
+    const unitsPref = await getUnitsPref(userId);
+    const questions = buildVehicleQuestions(unitsPref);
+    const question = questions.find((q) => q.key === input.questionKey);
     if (!question) throw new Error(`Unknown question ${input.questionKey}`);
 
-    // Coerce + validate.
+    // Coerce + validate (in displayed units — miles for imperial users).
     const parsed = coerceAnswer(question, input.value);
 
     // First question ('name') creates the vehicle. Subsequent questions PATCH.
@@ -444,25 +403,25 @@ export async function submitAnswer(
         .where(eq(trips.id, tripId));
     } else {
       const patch: Record<string, unknown> = {};
-      if (question.key === 'fuel_type') {
-        patch.fuel_type = parsed as VehicleFuelType;
-      } else if (question.key === 'height_m') {
-        // UI asks in meters; the column stores cm. Round so integer-typed
-        // downstream consumers don't choke on e.g. 230.0000001.
-        patch.height_cm = parsed == null ? null : Math.round((parsed as number) * 100);
+      if (question.key === 'refill_distance_km' && unitsPref === 'imperial') {
+        // User answered in miles; storage is always km. miToKm preserves
+        // null for skip/empty answers.
+        const km = parsed == null ? null : miToKm(parsed as number);
+        patch.refill_distance_km = km == null ? null : Math.round(km);
       } else {
         patch[question.key] = parsed;
       }
       await updateVehicle(userId, vehicle.id, patch);
     }
 
-    await writeQA(tripId, question.label, humanizeAnswer(question, parsed));
+    const answerLabel = humanizeAnswer(question, parsed, unitsPref);
+    await writeQA(tripId, question.label, answerLabel);
 
     // Check if that was the last field — advance to 'ready' if so.
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     return {
       next: afterSnapshot,
-      answerLabel: humanizeAnswer(question, parsed),
+      answerLabel,
       didHandoff: false,
     };
   }
@@ -529,15 +488,11 @@ function coerceAnswer(q: Question, raw: unknown): unknown {
 /**
  * Render the user's answer in a human-readable form for the chat bubble.
  * Unit suffixes are inferred from the question key so we don't need a
- * separate `unit` field on Question just for display.
+ * separate `unit` field on Question just for display. The refill-distance
+ * suffix toggles with the user's units pref because the value the user
+ * typed (and what we want to echo back) is in their chosen unit.
  */
-const UNIT_SUFFIX: Record<string, string> = {
-  fuel_economy_kmpl: ' km/L',
-  fuel_tank_l: ' L',
-  height_m: ' m',
-  weight_kg: ' kg',
-  freshwater_capacity_l: ' L',
-  blackwater_capacity_l: ' L',
+const STATIC_UNIT_SUFFIX: Record<string, string> = {
   water_refill_days: ' days',
   blackwater_refill_days: ' days',
   max_drive_hours_per_day: ' h/day',
@@ -545,13 +500,16 @@ const UNIT_SUFFIX: Record<string, string> = {
   max_consecutive_drive_days: ' days',
 };
 
-function humanizeAnswer(q: Question, value: unknown): string {
+function humanizeAnswer(q: Question, value: unknown, units: UnitsPref): string {
   if (value === null || value === undefined || value === '') return '(skipped)';
   if (q.kind === 'select') {
     const opt = (q.options ?? []).find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  return `${value}${UNIT_SUFFIX[q.key] ?? ''}`;
+  if (q.key === 'refill_distance_km') {
+    return `${value}${units === 'imperial' ? ' mi' : ' km'}`;
+  }
+  return `${value}${STATIC_UNIT_SUFFIX[q.key] ?? ''}`;
 }
 
 async function writeQA(tripId: number, question: string, answer: string) {

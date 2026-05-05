@@ -19,7 +19,6 @@ import { nearestStretchBreakPlace, type StretchBreakCandidate } from '@/server/p
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
-import type { FuelType } from '@/types/trip';
 
 /**
  * Auto fuel-stop planner.
@@ -139,17 +138,14 @@ export async function planFuelStopsForLeg(
     await setFuelStatus(legId, 'failed');
     return { legId, status: 'failed', reason: 'No vehicle on file for user' };
   }
-  const range = computeEffectiveRangeKm(
-    vehicle.fuel_economy_kmpl,
-    vehicle.fuel_tank_l,
-    vehicle.real_world_kmpl
-  );
+  const range = computeEffectiveRangeKm(vehicle.refill_distance_km);
   if (!range) {
     await setFuelStatus(legId, 'failed');
     return {
       legId,
       status: 'failed',
-      reason: 'Vehicle is missing fuel economy or tank size',
+      reason:
+        "Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.",
     };
   }
 
@@ -267,7 +263,11 @@ export async function planFuelStopsForLeg(
     KNOT_MERGE_GAP_KM
   ).slice(0, MAX_STOPS_PER_LEG * 2);
 
-  const fuel = (vehicle.fuel_type ?? null) as FuelType | null;
+  // Fuel type was removed from the vehicle profile in 0007 — Places filters
+  // by `gas_station` includedTypes anyway, and the prior keyword-match by
+  // diesel/petrol was a no-op (most stations carry both). The local var
+  // stays so future fuel-type bias work has an obvious place to land.
+  const fuel: null = null;
   type PendingFuel = { kind: 'fuel'; distance_km: number; station: GasStation };
   type PendingRest = {
     kind: 'rest';
@@ -497,11 +497,7 @@ async function resolveVehicleForTrip(
   tripId: number | null,
   userId: string
 ): Promise<{
-  fuel_economy_kmpl: number | null;
-  real_world_kmpl: number | null;
-  fuel_tank_l: number | null;
-  fuel_type: string | null;
-  fuel_timing_pref: string | null;
+  refill_distance_km: number | null;
   max_drive_hours_per_day: number | null;
 } | null> {
   if (tripId != null) {
@@ -649,7 +645,9 @@ function placesErrorReason(httpStatus: number, body: string): string {
 
 async function findBestGasStation(
   center: LatLng,
-  fuelType: FuelType | null,
+  // Vehicle-level fuel type was dropped in 0007; signature kept as `null`
+  // so the future fuel-type bias work has an obvious place to plug back in.
+  fuelType: null,
   apiKey: string
 ): Promise<PlacesResult> {
   try {
