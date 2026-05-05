@@ -44,7 +44,6 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.15em',
   color: 'var(--tp-subtle)',
-  
   marginBottom: 6,
 };
 
@@ -62,7 +61,6 @@ const thStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.1em',
   color: 'var(--tp-muted)',
-  
   textAlign: 'left',
   textTransform: 'uppercase',
 };
@@ -77,8 +75,9 @@ export default async function AdminPage() {
     await Promise.all([
       getAdminOverview(),
       getRecentUsers(15),
-      getRecentChatActivity(20),
-      getRecentErrors(50),
+      getRecentChatActivity(15),
+      // Home page shows last 15 — full pagination + filters lives at /admin/errors.
+      getRecentErrors(15),
       getTopUsageUsers(24, 10),
       getTopUsageUsers(24 * 7, 10),
       getGlobalUsage(24),
@@ -93,37 +92,61 @@ export default async function AdminPage() {
     .reduce((sum, u) => sum + microcentsToDollars(u.microcents), 0);
   const projectedMonthly = usd7d * (30 / 7);
 
-  const stats: Array<{ label: string; value: string | number; sub?: string }> = [
-    { label: 'Total users', value: overview.totalUsers, sub: `+${overview.newUsers7d} (7d)` },
-    { label: 'Active trips', value: overview.totalTrips, sub: `${overview.totalTemplates} template(s)` },
+  // Stat cards. `href` makes the card a Link to its drill-in page.
+  // Others stay as plain numbers (no useful drill-in yet).
+  const stats: Array<{
+    label: string;
+    value: string | number;
+    sub?: string;
+    href?: string;
+  }> = [
+    {
+      label: 'Total users',
+      value: overview.totalUsers,
+      sub: `+${overview.newUsers7d} (7d)`,
+      href: '/admin/users',
+    },
+    {
+      label: 'Active trips',
+      value: overview.totalTrips,
+      sub: `${overview.totalTemplates} template(s)`,
+    },
     { label: 'Legs planned', value: overview.totalLegs },
-    { label: 'Chat messages', value: overview.totalChat, sub: `${overview.totalReplans} Penny edits` },
+    {
+      label: 'Chat messages',
+      value: overview.totalChat,
+      sub: `${overview.totalReplans} Penny edits`,
+    },
     { label: 'GPX trails uploaded', value: overview.totalGpx },
-    { label: 'New signups (24h)', value: overview.newUsers24h, sub: `+${overview.newUsers7d} (7d)` },
-    { label: 'AI spend (24h)', value: fmtMoney(usd24), sub: `${usage24.find((u) => u.provider === 'anthropic')?.requests ?? 0} req` },
-    { label: 'AI spend (7d)', value: fmtMoney(usd7d), sub: `~${fmtMoney(projectedMonthly)}/mo projected` },
+    {
+      label: 'New signups (24h)',
+      value: overview.newUsers24h,
+      sub: `+${overview.newUsers7d} (7d)`,
+    },
+    {
+      label: 'AI spend (24h)',
+      value: fmtMoney(usd24),
+      sub: `${usage24.find((u) => u.provider === 'anthropic')?.requests ?? 0} req`,
+    },
+    {
+      label: 'AI spend (7d)',
+      value: fmtMoney(usd7d),
+      sub: `~${fmtMoney(projectedMonthly)}/mo projected`,
+    },
   ];
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className={styles.wrapper}>
       <AppNavbar
         user={{
           name: session.user.name,
           email: session.user.email,
           image: session.user.image,
         }}
+        isAdmin
       />
 
-      <main
-        className={styles.main}
-        style={{
-          flex: 1,
-          maxWidth: 1240,
-          width: '100%',
-          margin: '0 auto',
-          boxSizing: 'border-box',
-        }}
-      >
+      <main className={styles.main}>
         <div
           style={{
             display: 'flex',
@@ -141,7 +164,6 @@ export default async function AdminPage() {
             style={{
               fontSize: 11,
               color: 'var(--tp-subtle)',
-              
               marginLeft: 4,
             }}
           >
@@ -149,34 +171,60 @@ export default async function AdminPage() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-            gap: 12,
-            marginBottom: 24,
-          }}
-        >
-          {stats.map((s) => (
-            <div key={s.label} style={card}>
-              <div style={labelStyle}>{s.label.toUpperCase()}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--tp-text)', lineHeight: 1.1 }}>
-                {s.value}
-              </div>
-              {s.sub && (
+        <div className={styles.statsGrid}>
+          {stats.map((s) => {
+            const inner = (
+              <>
+                <div style={labelStyle}>{s.label.toUpperCase()}</div>
                 <div
                   style={{
-                    fontSize: 11,
-                    color: 'var(--tp-subtle)',
-                    
-                    marginTop: 4,
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: 'var(--tp-text)',
+                    lineHeight: 1.1,
                   }}
                 >
-                  {s.sub}
+                  {s.value}
                 </div>
-              )}
-            </div>
-          ))}
+                {s.sub && (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--tp-subtle)',
+                      marginTop: 4,
+                    }}
+                  >
+                    {s.sub}
+                  </div>
+                )}
+                {s.href && (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: 'var(--tp-primary)',
+                      marginTop: 6,
+                      fontWeight: 600,
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    VIEW ALL →
+                  </div>
+                )}
+              </>
+            );
+            if (s.href) {
+              return (
+                <Link key={s.label} href={s.href} className={styles.cardLink} style={card}>
+                  {inner}
+                </Link>
+              );
+            }
+            return (
+              <div key={s.label} style={card}>
+                {inner}
+              </div>
+            );
+          })}
         </div>
 
         <section style={{ ...card, marginBottom: 16 }}>
@@ -191,20 +239,24 @@ export default async function AdminPage() {
             }}
           >
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
-              Recent errors
+              Recent API failures
               <span
                 style={{
                   marginLeft: 8,
                   fontSize: 11,
                   color: 'var(--tp-subtle)',
                   fontWeight: 500,
-                  
                 }}
               >
-                {recentErrors.length === 50 ? '50+' : recentErrors.length}
+                last {recentErrors.length}
               </span>
             </h2>
-            <AdminTestErrorButton />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Link href="/admin/errors" className={styles.seeAllLink}>
+                See all errors →
+              </Link>
+              <AdminTestErrorButton />
+            </div>
           </div>
           <AdminErrorLog
             rows={recentErrors.map((e) => ({
@@ -239,46 +291,65 @@ export default async function AdminPage() {
           </section>
 
           <section style={card}>
-            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
-              Recent users
-            </h2>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'space-between',
+                marginBottom: 12,
+              }}
+            >
+              <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Recent users</h2>
+              <Link href="/admin/users" className={styles.seeAllLink}>
+                All users →
+              </Link>
+            </div>
             <div className={styles.tableScroll}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>User</th>
-                  <th style={thStyle}>Joined</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentUsers.map((u) => (
-                  <tr key={u.id}>
-                    <td style={tdStyle}>
-                      <div style={{ fontWeight: 600 }}>{u.name || '—'}</div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--tp-subtle)',
-                          
-                        }}
-                      >
-                        {u.email}
-                      </div>
-                    </td>
-                    <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
-                      {fmtRel(u.createdAt)}
-                    </td>
-                  </tr>
-                ))}
-                {recentUsers.length === 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
                   <tr>
-                    <td colSpan={2} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
-                      No users yet.
-                    </td>
+                    <th style={thStyle}>User</th>
+                    <th style={thStyle}>Joined</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {recentUsers.map((u) => (
+                    <tr key={u.id} className={styles.rowLink}>
+                      <td style={tdStyle}>
+                        <Link
+                          href={`/admin/users/${u.id}`}
+                          style={{ color: 'inherit', textDecoration: 'none', display: 'block' }}
+                        >
+                          <div style={{ fontWeight: 600 }}>{u.name || '—'}</div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--tp-subtle)',
+                            }}
+                          >
+                            {u.email}
+                          </div>
+                        </Link>
+                      </td>
+                      <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
+                        <Link
+                          href={`/admin/users/${u.id}`}
+                          style={{ color: 'inherit', textDecoration: 'none', display: 'block' }}
+                        >
+                          {fmtRel(u.createdAt)}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                  {recentUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={2} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
+                        No users yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
 
@@ -287,51 +358,87 @@ export default async function AdminPage() {
               Recent chat activity
             </h2>
             <div className={styles.tableScroll}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Trip</th>
-                  <th style={thStyle}>Role</th>
-                  <th style={thStyle}>Snippet</th>
-                  <th style={thStyle}>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentChat.map((m) => (
-                  <tr key={m.id}>
-                    <td style={tdStyle}>
-                      <Link
-                        href={`/trips/${m.tripId}`}
-                        style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
-                      >
-                        #{m.tripId}
-                      </Link>
-                    </td>
-                    <td style={{ ...tdStyle, color: m.role === 'assistant' ? 'var(--tp-success)' : 'var(--tp-muted)' }}>
-                      {m.role}
-                      {m.hasChanges && (
-                        <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--tp-success)' }}>
-                          ✓EDIT
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ ...tdStyle, color: 'var(--tp-muted)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {m.content.slice(0, 80)}
-                    </td>
-                    <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
-                      {fmtRel(m.createdAt)}
-                    </td>
-                  </tr>
-                ))}
-                {recentChat.length === 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
                   <tr>
-                    <td colSpan={4} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
-                      No chat activity yet.
-                    </td>
+                    <th style={thStyle}>Trip</th>
+                    <th style={thStyle}>Role</th>
+                    <th style={thStyle}>Snippet</th>
+                    <th style={thStyle}>When</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {recentChat.map((m) => (
+                    <tr key={m.id} className={styles.rowLink}>
+                      <td style={tdStyle}>
+                        <Link
+                          href={`/admin/chats/${m.tripId}`}
+                          style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
+                        >
+                          #{m.tripId}
+                        </Link>
+                      </td>
+                      <td
+                        style={{
+                          ...tdStyle,
+                          color:
+                            m.role === 'assistant' ? 'var(--tp-success)' : 'var(--tp-muted)',
+                        }}
+                      >
+                        <Link
+                          href={`/admin/chats/${m.tripId}`}
+                          style={{ color: 'inherit', textDecoration: 'none' }}
+                        >
+                          {m.role}
+                          {m.hasChanges && (
+                            <span
+                              style={{
+                                marginLeft: 6,
+                                fontSize: 9,
+                                color: 'var(--tp-success)',
+                              }}
+                            >
+                              ✓EDIT
+                            </span>
+                          )}
+                        </Link>
+                      </td>
+                      <td
+                        style={{
+                          ...tdStyle,
+                          color: 'var(--tp-muted)',
+                          maxWidth: 240,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <Link
+                          href={`/admin/chats/${m.tripId}`}
+                          style={{ color: 'inherit', textDecoration: 'none' }}
+                        >
+                          {m.content.slice(0, 80)}
+                        </Link>
+                      </td>
+                      <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
+                        <Link
+                          href={`/admin/chats/${m.tripId}`}
+                          style={{ color: 'inherit', textDecoration: 'none' }}
+                        >
+                          {fmtRel(m.createdAt)}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                  {recentChat.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ ...tdStyle, color: 'var(--tp-subtle)' }}>
+                        No chat activity yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
         </div>
@@ -341,7 +448,6 @@ export default async function AdminPage() {
             marginTop: 32,
             fontSize: 11,
             color: 'var(--tp-subtle)',
-            
             lineHeight: 1.6,
           }}
         >
@@ -376,40 +482,77 @@ function UsageTable({
     );
   }
   return (
-    <div style={{ overflowX: 'auto' }}>
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-      <thead>
-        <tr>
-          <th style={thStyle}>User</th>
-          <th style={{ ...thStyle, textAlign: 'right' }}>Reqs</th>
-          <th style={{ ...thStyle, textAlign: 'right' }}>Tokens</th>
-          <th style={{ ...thStyle, textAlign: 'right' }}>Cost</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={r.userId || `anon-${i}`}>
-            <td style={tdStyle}>
-              <div style={{ fontWeight: 600 }}>{r.name || r.email || '(unknown)'}</div>
-              {r.email && r.name && (
-                <div style={{ fontSize: 10, color: 'var(--tp-subtle)' }}>
-                  {r.email}
-                </div>
-              )}
-            </td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>
-              {r.requests}
-            </td>
-            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
-              {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
-            </td>
-            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
-              {fmtMoney(microcentsToDollars(r.microcents))}
-            </td>
+    <div className={styles.tableScroll}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={thStyle}>User</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Reqs</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Tokens</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Cost</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            // Anonymous / orphaned usage rows — render plain (no drill-in target).
+            if (!r.userId) {
+              return (
+                <tr key={`anon-${i}`}>
+                  <td style={tdStyle}>
+                    <div style={{ fontWeight: 600 }}>(unknown)</div>
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{r.requests}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                    {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
+                    {fmtMoney(microcentsToDollars(r.microcents))}
+                  </td>
+                </tr>
+              );
+            }
+            return (
+              <tr key={r.userId} className={styles.rowLink}>
+                <td style={tdStyle}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none', display: 'block' }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{r.name || r.email || '(unknown)'}</div>
+                    {r.email && r.name && (
+                      <div style={{ fontSize: 10, color: 'var(--tp-subtle)' }}>{r.email}</div>
+                    )}
+                  </Link>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {r.requests}
+                  </Link>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
+                  </Link>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {fmtMoney(microcentsToDollars(r.microcents))}
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

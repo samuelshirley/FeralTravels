@@ -1,4 +1,23 @@
+/* Admin dashboard layout.
+ *
+ * Note on scroll: previous versions wrapped everything in a `display: flex;
+ * flex-direction: column; min-height: 100vh` outer div, with `flex: 1` on
+ * <main>. On Chrome desktop that combination intermittently traps vertical
+ * scroll once the page exceeds viewport height — the body computes scroll
+ * height correctly but the flex item doesn't propagate its overflow to the
+ * document. Switching to plain block flow on the wrapper (just `min-height:
+ * 100vh` so short pages still fill the viewport) lets the body scroll
+ * naturally for tall content. */
+.wrapper {
+  min-height: 100vh;
+  background: var(--tp-bg);
+}
+
 .main {
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
   padding: 24px 24px 80px;
 }
 
@@ -23,4 +42,79 @@
 .tableScroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+/* Clickable row variants — used for Recent users / Top spenders / Recent chat
+ * tables on the dashboard so the whole row navigates to the drill-in page. */
+.rowLink {
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+.rowLink:hover {
+  background: var(--tp-primary-muted);
+}
+
+/* Used to make a stat card (e.g. Total users) feel clickable. */
+.cardLink {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.cardLink:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--tp-shadow-md);
+}
+
+/* Inline button-style link used for "See all errors →" etc. */
+.seeAllLink {
+  font-size: 12px;
+  color: var(--tp-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.seeAllLink:hover {
+  text-decoration: underline;
+}
+
+/* Below 640px we collapse multi-column tables (errors, recent chat) into
+ * stacked row-cards so the page never forces horizontal scroll. The page
+ * components opt in by rendering both a table and a card list and toggling
+ * visibility via these classes. */
+.mobileOnly {
+  display: none;
+}
+.desktopOnly {
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .mobileOnly {
+    display: block;
+  }
+  .desktopOnly {
+    display: none;
+  }
+}
+
+.mobileRowCard {
+  border: 1px solid var(--tp-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--tp-surface);
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.mobileRowCard:active {
+  background: var(--tp-primary-muted);
 }
