@@ -82,7 +82,6 @@ export default function StopsSection({
   const [pasteValue, setPasteValue] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [retryBusy, setRetryBusy] = useState(false);
   const addingType: StopType = 'overnight';
 
   const [nearbyBusy, setNearbyBusy] = useState(
@@ -174,19 +173,6 @@ export default function StopsSection({
     return () => ac.abort();
   }, [anchorLat, anchorLng, api, hasEndCoords, legId, parksMountKey, readonly]);
 
-  async function retryFuelPlan() {
-    if (retryBusy) return;
-    setRetryBusy(true);
-    try {
-      await api.planFuelStops(legId);
-      await reload();
-    } catch {
-      /* error will show via fuelStatus */
-    } finally {
-      setRetryBusy(false);
-    }
-  }
-
   async function handleAddFromPaste() {
     const raw = pasteValue.trim();
     if (!raw) return;
@@ -249,33 +235,52 @@ export default function StopsSection({
     }
   }
 
+  /**
+   * Stop IDs can disappear out from under the UI when an auto fuel replan
+   * runs and rewrites the auto-suggested rows. The user sees the old row in
+   * the list, clicks it, and the server returns 404 because that ID is gone.
+   * We treat 404 as "stale optimistic state" — silently reload the leg's
+   * stops so the user sees the fresh rows. Other errors fall through to the
+   * global notifier.
+   */
+  /**
+   * Stop IDs can disappear out from under the UI when an auto fuel replan
+   * runs and rewrites the auto-suggested rows. The user sees the old row in
+   * the list, clicks it, and the server returns 404 because that ID is gone.
+   * We pass `skipGlobalErrorReport` so the global toast doesn't fire on a
+   * stale-id 404; we silently reload the leg's stops instead. Non-404 errors
+   * we re-throw so the global notifier can still surface real failures.
+   */
   async function handleSelect(id: number) {
     setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'selected' } : s)));
     try {
-      await api.selectStop(id);
-      reload();
-    } catch {
-      reload();
+      await api.selectStop(id, { skipGlobalErrorReport: true });
+      await reload();
+    } catch (err) {
+      await reload();
+      if (!(err instanceof ApiError) || err.status !== 404) throw err;
     }
   }
 
   async function handleDismiss(id: number) {
     setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'dismissed' } : s)));
     try {
-      await api.updateStop(id, { status: 'dismissed' });
-      reload();
-    } catch {
-      reload();
+      await api.updateStop(id, { status: 'dismissed' }, { skipGlobalErrorReport: true });
+      await reload();
+    } catch (err) {
+      await reload();
+      if (!(err instanceof ApiError) || err.status !== 404) throw err;
     }
   }
 
   async function handleDelete(id: number) {
     if (!confirm('Delete this stop?')) return;
     try {
-      await api.deleteStop(id);
-      reload();
-    } catch {
-      /* ignore */
+      await api.deleteStop(id, { skipGlobalErrorReport: true });
+      await reload();
+    } catch (err) {
+      await reload();
+      if (!(err instanceof ApiError) || err.status !== 404) throw err;
     }
   }
 
@@ -311,68 +316,10 @@ export default function StopsSection({
               lineHeight: 1.5,
             }}
           >
-            <strong>Fuel planning failed.</strong> Enable “Places API (New)” in Google Cloud Console and ensure the
-            key has no API restrictions blocking it. Visit{' '}
-            <code style={{ fontSize: 10 }}>/api/debug/fuel</code> for a diagnosis.
-            <div style={{ marginTop: 6 }}>
-              <button
-                onClick={retryFuelPlan}
-                disabled={retryBusy}
-                style={{
-                  fontSize: 11,
-                  background: 'var(--tp-danger)',
-                  border: 'none',
-                  color: '#fff',
-                  padding: '4px 10px',
-                  borderRadius: 4,
-                  cursor: retryBusy ? 'default' : 'pointer',
-                  opacity: retryBusy ? 0.6 : 1,
-                }}
-              >
-                {retryBusy ? 'Retrying…' : 'Retry fuel planning'}
-              </button>
-            </div>
+            <strong>Fuel planning failed.</strong> We&apos;ll retry automatically the next time you edit a stop or
+            change the route. (If this keeps happening, enable &quot;Places API (New)&quot; in Google Cloud Console.)
           </div>
         )}
-
-        {!readonly &&
-          fuelStatus === 'ready' &&
-          stops.filter((s) => s.stop_type === 'fuel').length === 0 && (
-            <div
-              style={{
-                marginBottom: 8,
-                padding: '6px 10px',
-                background: 'rgba(184,149,106,0.08)',
-                border: '1px solid rgba(184,149,106,0.25)',
-                borderRadius: 5,
-                fontSize: 11,
-                color: 'var(--tp-gold)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 8,
-              }}
-            >
-              <span>No fuel stops found.</span>
-              <button
-                onClick={retryFuelPlan}
-                disabled={retryBusy}
-                style={{
-                  fontSize: 11,
-                  background: 'transparent',
-                  border: '1px solid rgba(184,149,106,0.4)',
-                  color: 'var(--tp-gold)',
-                  padding: '3px 8px',
-                  borderRadius: 4,
-                  cursor: retryBusy ? 'default' : 'pointer',
-                  opacity: retryBusy ? 0.6 : 1,
-                  flexShrink: 0,
-                }}
-              >
-                {retryBusy ? 'Retrying…' : '⛽ Retry'}
-              </button>
-            </div>
-          )}
 
         {groups.map(([type, arr]) => (
           <StopGroup

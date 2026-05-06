@@ -160,12 +160,34 @@ export function tripApi(tripId: number) {
     listStopsForLeg: (legId: number) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
     addStop: (legId: number, payload: Record<string, unknown>) =>
       apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),
-    updateStop: (stopId: number, data: Record<string, unknown>) =>
-      apiFetch(`/api/stops/${stopId}`, { method: 'PATCH', body: { tripId, ...data } }),
-    deleteStop: (stopId: number) =>
-      apiFetch(`/api/stops/${stopId}`, { method: 'DELETE', query: { tripId } }),
-    selectStop: (stopId: number) =>
-      apiFetch(`/api/stops/${stopId}/select`, { method: 'POST', body: {} }),
+    /**
+     * Mutating-stop calls (`updateStop`, `deleteStop`, `selectStop`) accept
+     * `skipGlobalErrorReport` so callers can swallow 404s caused by an
+     * auto-replan rewriting the row's id. The handlers in StopsSection use
+     * this to silently re-fetch instead of showing the global error toast.
+     */
+    updateStop: (
+      stopId: number,
+      data: Record<string, unknown>,
+      opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>
+    ) =>
+      apiFetch(`/api/stops/${stopId}`, {
+        method: 'PATCH',
+        body: { tripId, ...data },
+        ...opts,
+      }),
+    deleteStop: (stopId: number, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
+      apiFetch(`/api/stops/${stopId}`, {
+        method: 'DELETE',
+        query: { tripId },
+        ...opts,
+      }),
+    selectStop: (stopId: number, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
+      apiFetch(`/api/stops/${stopId}/select`, {
+        method: 'POST',
+        body: {},
+        ...opts,
+      }),
     /** Parse GPS coordinates / URLs pasted by the user. See /api/coords/parse. */
     parseCoords: (input: string) =>
       apiFetch<{

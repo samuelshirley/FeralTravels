@@ -43,10 +43,12 @@ interface OnboardingFormProps {
   onAnswer: (userLabel: string, questionLabel: string) => void;
   /**
    * Called when onboarding is complete. Receives the user's handoff text so
-   * the parent can call /api/trip/replan with it. The parent should also
-   * refetch the trip (to pick up the new onboarding_state='done').
+   * the parent can call /api/trip/replan with it, plus the label of the
+   * question that produced it (so the parent can mirror an optimistic
+   * "Penny asked X" bubble — same pattern as `onAnswer`). The parent should
+   * also refetch the trip (to pick up the new onboarding_state='done').
    */
-  onHandoff: (handoffText: string) => Promise<void>;
+  onHandoff: (handoffText: string, questionLabel: string) => Promise<void>;
 }
 
 export default function OnboardingForm({
@@ -99,7 +101,7 @@ export default function OnboardingForm({
         // visible right away — don't wait for Penny's full response first.
         setSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
         const handoffText = typeof value === 'string' ? value : String(value);
-        await onHandoff(handoffText);
+        await onHandoff(handoffText, question.label);
       } else {
         onAnswer(result.answerLabel, question.label);
         setSnapshot(result.next);

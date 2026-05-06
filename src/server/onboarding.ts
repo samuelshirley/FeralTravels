@@ -431,14 +431,24 @@ export async function submitAnswer(
   if (state === 'ready' && input.questionKey === 'handoff') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
+    // Persist the handoff QUESTION (only) as form_question so the chat surface
+    // still shows it after a hard refresh. kind='form_question' keeps it out
+    // of Penny's recent-chat window — lib/penny/context.ts filters to ['ai']
+    // — so this is invisible to the model but visible in the UI (which
+    // renders every kind). We DON'T write a form_answer here: the live Penny
+    // conversation takes over, and the caller writes the user's handoff text
+    // as kind='ai' before invoking replan, keeping it in Penny's context.
+    await addChatMessage(
+      tripId,
+      'assistant',
+      HANDOFF_QUESTION.label,
+      null,
+      'form_question'
+    );
     await db
       .update(trips)
       .set({ onboardingState: 'done', updatedAt: new Date() })
       .where(eq(trips.id, tripId));
-    // We DON'T write a form_question/form_answer for the handoff — the live
-    // Penny conversation takes over, and the caller writes the user message
-    // as kind='ai' before invoking replan. That keeps the hand-off message in
-    // Penny's own context window.
     return {
       next: { state: 'done', question: null, vehicles: [], progress: null },
       answerLabel: text,

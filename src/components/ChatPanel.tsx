@@ -719,7 +719,27 @@ export default function ChatPanel({
               },
             ]);
           }}
-          onHandoff={async (handoffText) => {
+          onHandoff={async (handoffText, questionLabel) => {
+            // Mirror the question that prompted the handoff as an optimistic
+            // assistant bubble — same shape `onAnswer` uses for the vehicle
+            // wizard. Without this, the user sees their long handoff text +
+            // Penny's reply but never the prompt that triggered it, which
+            // reads as a non-sequitur ("where do you want to go?" disappears
+            // when the form unmounts). The server now persists the same row
+            // as kind='form_question' (see onboarding.ts → submitAnswer), so
+            // a hard refresh keeps the question visible too.
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now(),
+                trip_id: tripId,
+                role: 'assistant',
+                content: questionLabel,
+                kind: 'form_question',
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
             // Fire the real Penny call with the user's free-text answer, then
             // bounce the server so TripWorkspace picks up onboarding_state='done'
             // and any legs Penny created.

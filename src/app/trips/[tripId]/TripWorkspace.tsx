@@ -158,24 +158,26 @@ export default function TripWorkspace({
   // ---------------------------------------------------------------------------
   // Auto-replan with FORWARD-ONLY scoping.
   //
-  // We compute a per-leg fingerprint (start/end coords, distance, non-option
+  // We compute a per-leg fingerprint (start/end coords, distance, user-owned
   // stops). When something changes, we identify the lowest sort_order whose
   // fingerprint differs from the last committed baseline and ask the server
   // to replan from that leg forward — past legs are skipped because the
   // cumulative tank-state math only flows forward.
   //
-  // The vehicle itself is tracked separately: changing the vehicle changes
-  // effective range, which affects every leg, so a vehicle change forces a
-  // full replan from sort_order 0.
+  // We DELIBERATELY exclude any stop whose `source` is 'google_places' (auto
+  // fuel/stretch rows the planner wrote itself) from the fingerprint.
+  // Otherwise replan's own output would diff against the prior baseline and
+  // schedule another replan — that was the recursive loop that hammered the
+  // Google Places API every few seconds.
+  //
+  // We also no longer track vehicle_id: users don't swap vehicles mid-trip,
+  // and treating it as a replan trigger added another way for the loop to
+  // re-arm. Real geometry/stop changes are what matter.
   //
   // The committed baseline only advances after a replan completes (or after
   // we observe a no-op state). That means edits made WHILE a replan is in
   // flight are not lost — they accumulate in the baseline diff and trigger a
   // follow-up replan once `replanBusy` clears.
-  //
-  // KNOWN GAP: replan still rebuilds the entire auto stop list for the legs
-  // it touches, which can clobber a user's manually-picked gas station if
-  // it's stored as a 'google_places' source row. Separate follow-up work.
   // ---------------------------------------------------------------------------
   type LegFingerprint = { sortOrder: number; sig: string };
 
@@ -191,6 +193,12 @@ export default function TripWorkspace({
         en: l.end_lng,
         d: l.distance_km,
         s: (l.stops ?? [])
+          // Exclude auto fuel/stretch rows the planner wrote itself —
+          // including them would make every successful replan re-trigger.
+          .filter((s) => s.source !== 'google_places')
+          // Exclude options the user hasn't acted on either way; only
+          // committed stops (selected/dismissed) and overnights move the
+          // route enough to warrant a re-plan.
           .filter((s) => s.status !== 'option' || s.stop_type === 'overnight')
           .map((s) => ({
             t: s.stop_type,
@@ -201,11 +209,8 @@ export default function TripWorkspace({
     }));
   }, [trip]);
 
-  const vehicleFingerprint = trip?.vehicle_id ?? null;
-
   const handleReplanFuelRef = useRef<(start?: number) => Promise<void>>(async () => {});
   const committedLegsRef = useRef<LegFingerprint[] | null>(null);
-  const committedVehicleRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (readonly) return;
@@ -218,46 +223,37 @@ export default function TripWorkspace({
     // First observation: establish committed baseline silently.
     if (committedLegsRef.current === null) {
       committedLegsRef.current = legFingerprints;
-      committedVehicleRef.current = vehicleFingerprint;
       return;
     }
 
-    // Vehicle swap → effective range changes → every leg must be replanned.
-    let startFromSortOrder: number | undefined;
-    if (committedVehicleRef.current !== vehicleFingerprint) {
-      startFromSortOrder = undefined; // full replan
-    } else {
-      // Diff per-leg fingerprints against committed baseline; find the
-      // lowest sort_order that differs. Also catches deletions (a baseline
-      // entry whose sort_order no longer exists in the current snapshot).
-      const prev = committedLegsRef.current;
-      const curMap = new Map(legFingerprints.map((p) => [p.sortOrder, p.sig]));
-      const prevMap = new Map(prev.map((p) => [p.sortOrder, p.sig]));
-      let minChanged: number | null = null;
-      for (const cur of legFingerprints) {
-        if (prevMap.get(cur.sortOrder) !== cur.sig) {
-          if (minChanged === null || cur.sortOrder < minChanged) {
-            minChanged = cur.sortOrder;
-          }
+    // Diff per-leg fingerprints against committed baseline; find the
+    // lowest sort_order that differs. Also catches deletions (a baseline
+    // entry whose sort_order no longer exists in the current snapshot).
+    const prev = committedLegsRef.current;
+    const curMap = new Map(legFingerprints.map((p) => [p.sortOrder, p.sig]));
+    const prevMap = new Map(prev.map((p) => [p.sortOrder, p.sig]));
+    let minChanged: number | null = null;
+    for (const cur of legFingerprints) {
+      if (prevMap.get(cur.sortOrder) !== cur.sig) {
+        if (minChanged === null || cur.sortOrder < minChanged) {
+          minChanged = cur.sortOrder;
         }
       }
-      for (const before of prev) {
-        if (!curMap.has(before.sortOrder)) {
-          if (minChanged === null || before.sortOrder < minChanged) {
-            minChanged = before.sortOrder;
-          }
-        }
-      }
-      if (minChanged === null) {
-        // No change — usually a post-replan re-render where the stops we wrote
-        // happen to be 'option' rows (excluded from the fingerprint). Advance
-        // baseline so we don't keep diffing against pre-replan state forever.
-        committedLegsRef.current = legFingerprints;
-        committedVehicleRef.current = vehicleFingerprint;
-        return;
-      }
-      startFromSortOrder = minChanged;
     }
+    for (const before of prev) {
+      if (!curMap.has(before.sortOrder)) {
+        if (minChanged === null || before.sortOrder < minChanged) {
+          minChanged = before.sortOrder;
+        }
+      }
+    }
+    if (minChanged === null) {
+      // No change — advance baseline to current snapshot so we don't keep
+      // diffing against the pre-replan state forever.
+      committedLegsRef.current = legFingerprints;
+      return;
+    }
+    const startFromSortOrder: number = minChanged;
 
     // Debounce: a burst of edits (drag waypoint, rename leg, swap stop)
     // collapses to one replan. We do NOT update the committed baseline here —
@@ -267,7 +263,7 @@ export default function TripWorkspace({
       void handleReplanFuelRef.current(startFromSortOrder);
     }, 3000);
     return () => clearTimeout(t);
-  }, [legFingerprints, vehicleFingerprint, readonly, trip, replanBusy]);
+  }, [legFingerprints, readonly, trip, replanBusy]);
 
   if (loading) {
     return (
