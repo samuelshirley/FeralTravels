@@ -124,7 +124,10 @@ export async function sendOtpCode(email: string): Promise<string> {
     throw new Error('Email sign-in is not configured (missing AUTH_RESEND_KEY).');
   }
 
-  const from = process.env.AUTH_EMAIL_FROM ?? 'onboarding@resend.dev';
+  const from = process.env.AUTH_EMAIL_FROM;
+  if (!from) {
+    throw new Error('Email sign-in is not configured (missing AUTH_EMAIL_FROM). Set it to a verified sender on your Resend domain.');
+  }
   const resend = new Resend(apiKey);
 
   const result = await resend.emails.send({

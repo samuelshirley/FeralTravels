@@ -29,7 +29,7 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 24,
+        padding: 'clamp(12px, 4vw, 24px)',
         background: 'var(--tp-bg)',
       }}
     >
@@ -40,7 +40,7 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
           background: 'var(--tp-surface)',
           border: '1px solid var(--tp-border)',
           borderRadius: 'var(--tp-radius-md)',
-          padding: 32,
+          padding: 'clamp(20px, 5vw, 32px)',
           color: 'var(--tp-text)',
           boxShadow: 'var(--tp-shadow-md)',
         }}

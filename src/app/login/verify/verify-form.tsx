@@ -99,10 +99,14 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
   const errorMessage = describeError(error);
 
   const digitBoxStyle: React.CSSProperties = {
-    width: 48,
-    height: 58,
+    // Use flex: 1 with a max so boxes share available width on narrow screens
+    // instead of overflowing. min-width 0 lets them shrink below content size.
+    flex: '1 1 0',
+    minWidth: 0,
+    maxWidth: 52,
+    aspectRatio: '1 / 1.2',
     textAlign: 'center',
-    fontSize: 26,
+    fontSize: 'clamp(18px, 5vw, 26px)',
     fontWeight: 700,
     fontVariantNumeric: 'tabular-nums',
     background: 'var(--tp-surface-muted)',
@@ -111,7 +115,6 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
     color: 'var(--tp-text)',
     outline: 'none',
     caretColor: 'transparent',
-    // On mobile the browser shows a cursor in the box — hide it via caret.
     cursor: 'default',
     transition: 'border-color 0.15s',
   };
@@ -165,9 +168,10 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
         <div
           style={{
             display: 'flex',
-            gap: 8,
+            gap: 'clamp(4px, 1.5vw, 8px)',
             justifyContent: 'center',
             marginBottom: 20,
+            width: '100%',
           }}
         >
           {digits.map((digit, i) => (
