@@ -9,7 +9,7 @@
  * 100vh` so short pages still fill the viewport) lets the body scroll
  * naturally for tall content. */
 .wrapper {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--tp-bg);
 }
 

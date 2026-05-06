@@ -20,7 +20,7 @@ export default async function TripsPage() {
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== session.user.id);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={{
           name: session.user.name,

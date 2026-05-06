@@ -536,7 +536,7 @@ export default function TripWorkspace({
   // previous slide-in ChatDrawer pattern.
   if (viewport === 'tablet') {
     return (
-      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={user}
           tripName={trip.name}
@@ -589,7 +589,7 @@ export default function TripWorkspace({
   // Chat is permanently visible, so no toggle button in the header. Users who
   // want a wider itinerary can drag the chat panel narrow.
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}
         tripName={trip.name}

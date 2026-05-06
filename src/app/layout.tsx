@@ -116,7 +116,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             padding: 0;
             background: var(--tp-bg);
             color: var(--tp-text);
-            min-height: 100vh;
+            min-height: 100dvh;
             overscroll-behavior: none;
           }
           * { -webkit-tap-highlight-color: transparent; }
