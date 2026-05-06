@@ -107,7 +107,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             background: var(--tp-primary) !important;
             height: 48px !important;
           }
-          html, body { overflow-x: hidden; }
+          /* overflow-x: hidden on <html> can clip vertical scroll on Chrome
+             desktop when a child uses min-height:100vh. Keep it on body only. */
+          body { overflow-x: hidden; }
           body {
             font-family: var(--tp-font-sans);
             margin: 0;

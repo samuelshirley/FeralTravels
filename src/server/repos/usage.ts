@@ -6,12 +6,18 @@ import { and, eq, gte, sql, desc } from 'drizzle-orm';
 // Anthropic public list pricing (USD per 1M tokens). Update when pricing changes.
 // https://www.anthropic.com/pricing#anthropic-api
 const ANTHROPIC_PRICING_PER_MTOK: Record<string, { input: number; output: number }> = {
+  // Sonnet 4 (current Penny model: claude-sonnet-4-20250514)
+  'claude-sonnet-4':              { input: 3.0,  output: 15.0 },
+  // Sonnet 4.5
   'claude-sonnet-4-5':            { input: 3.0,  output: 15.0 },
-  'claude-sonnet-4-5-20250929':   { input: 3.0,  output: 15.0 },
-  'claude-3-5-sonnet-latest':     { input: 3.0,  output: 15.0 },
-  'claude-3-5-sonnet-20241022':   { input: 3.0,  output: 15.0 },
-  'claude-3-5-haiku-latest':      { input: 0.8,  output: 4.0 },
-  'claude-3-opus-20240229':       { input: 15.0, output: 75.0 },
+  // Legacy Sonnet 3.5
+  'claude-3-5-sonnet':            { input: 3.0,  output: 15.0 },
+  // Haiku
+  'claude-3-5-haiku':             { input: 0.8,  output: 4.0 },
+  'claude-haiku-4':               { input: 0.8,  output: 4.0 },
+  // Opus
+  'claude-3-opus':                { input: 15.0, output: 75.0 },
+  'claude-opus-4':                { input: 15.0, output: 75.0 },
 };
 
 /** Convert US dollars to integer microcents (1 cent = 1,000,000 microcents). */
