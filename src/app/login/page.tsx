@@ -20,7 +20,7 @@ function describeError(code?: string): string | null {
       return 'This email is already tied to a different sign-in method. Use the Google button above if you usually sign in with Google, or enter your email again to get a new code.';
     case 'EmailSendFailed':
     case 'Configuration':
-      return "Couldn't send the sign-in email. Try Google sign-in or contact support.";
+      return "Couldn't send your sign-in code. Try Google sign-in or contact support.";
     case 'AccessDenied':
       return 'Access denied. If you think this is a mistake, contact support.';
     case 'RateLimited':
