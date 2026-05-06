@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth, signIn } from '@/server/auth';
+import { sendOtpCode } from '@/server/auth/otp';
 import {
   authTestBackdoorEmailNormalized,
   authTestBackdoorRequiresToken,
@@ -11,21 +12,19 @@ interface LoginPageProps {
 }
 
 // Auth.js v5 routes provider failures to /api/auth/error?error=<code>. Map
-// the codes we actually see into copy users can act on instead of showing
-// raw machine codes.
+// the codes we actually see into copy users can act on.
 function describeError(code?: string): string | null {
   if (!code) return null;
   switch (code) {
     case 'OAuthAccountNotLinked':
-      return 'This email is already tied to a different sign-in method. Use the Google button above if you usually sign in with Google, or open the magic link you requested—both should use the same account after linking.';
-    case 'EmailSignin':
+      return 'This email is already tied to a different sign-in method. Use the Google button above if you usually sign in with Google, or enter your email again to get a new code.';
     case 'EmailSendFailed':
     case 'Configuration':
       return "Couldn't send the sign-in email. Try Google sign-in or contact support.";
     case 'AccessDenied':
       return 'Access denied. If you think this is a mistake, contact support.';
-    case 'Verification':
-      return 'That sign-in link has expired or already been used. Request a new one.';
+    case 'RateLimited':
+      return 'A code was already sent recently — please wait 60 seconds before requesting another.';
     default:
       return `Sign-in failed: ${code}`;
   }
@@ -36,8 +35,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const callbackUrl = searchParams.callbackUrl || '/trips';
   if (session?.user) redirect(callbackUrl);
 
-  const errorMessage = describeError(searchParams.error)
-    || (searchParams.emailError ? describeError(searchParams.emailError) : null);
+  const errorMessage =
+    describeError(searchParams.error) ||
+    (searchParams.emailError ? describeError(searchParams.emailError) : null);
 
   const testBackdoorOn = isAuthTestBackdoorConfigured();
   const testBackdoorEmail = authTestBackdoorEmailNormalized();
@@ -95,9 +95,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             lineHeight: 1.5,
           }}
         >
-          Sign in with Google or get a magic link by email. The same email always maps to one
-          account—your saved vehicles (e.g. trip defaults) stay under that account regardless of
-          which method you use.
+          Sign in with Google, or enter your email and we&apos;ll send you a 6-digit code. The same
+          email always maps to one account.
         </p>
 
         {testBackdoorOn && testBackdoorEmail && (
@@ -114,7 +113,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             }}
           >
             <strong>Test sign-in</strong> — Use <code style={{ fontSize: 11 }}>{testBackdoorEmail}</code> and
-            submit &quot;Email me a sign-in link&quot; for an <strong>instant session</strong> (no email). Remove{' '}
+            submit &quot;Email me a code&quot; for an <strong>instant session</strong> (no email). Remove{' '}
             <code style={{ fontSize: 11 }}>AUTH_TEST_BACKDOOR</code> before a public launch.
           </div>
         )}
@@ -135,6 +134,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           </div>
         )}
 
+        {/* Google */}
         <form
           action={async () => {
             'use server';
@@ -181,11 +181,14 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <div style={{ flex: 1, height: 1, background: 'var(--tp-border)' }} />
         </div>
 
+        {/* Email / OTP */}
         <form
           action={async (formData: FormData) => {
             'use server';
             const email = String(formData.get('email') || '').trim();
             if (!email) return;
+
+            // Test backdoor shortcut: bypass OTP for the configured test email.
             const backdoorEmail = authTestBackdoorEmailNormalized();
             if (backdoorEmail && email.toLowerCase() === backdoorEmail) {
               const token = String(formData.get('test_token') || '');
@@ -212,22 +215,27 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               }
               return;
             }
+
+            // Send OTP code and redirect to the verify screen.
             try {
-              await signIn('resend', { email, redirectTo: callbackUrl });
+              await sendOtpCode(email);
             } catch (err) {
-              // Auth.js intentionally throws a `redirect` error after a
-              // successful sign-in start to perform the navigation; let
-              // that bubble. Anything else is a real failure (Resend 403,
-              // missing API key, etc.) — bounce back to /login with a
-              // friendly error code we map in describeError().
-              if (err && typeof err === 'object' && 'digest' in err && String((err as { digest?: string }).digest).startsWith('NEXT_REDIRECT')) {
-                throw err;
-              }
               const message = err instanceof Error ? err.message : String(err);
-              const code = message.startsWith('EmailSendFailed') ? 'EmailSendFailed' : 'EmailSignin';
-              console.error('[login] email sign-in failed:', message);
-              redirect(`/login?emailError=${encodeURIComponent(code)}&callbackUrl=${encodeURIComponent(callbackUrl)}`);
+              const code = message === 'RateLimited'
+                ? 'RateLimited'
+                : message.startsWith('EmailSendFailed')
+                ? 'EmailSendFailed'
+                : 'Configuration';
+              console.error('[login] OTP send failed:', message);
+              redirect(
+                `/login?emailError=${encodeURIComponent(code)}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+              );
+              return;
             }
+
+            redirect(
+              `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+            );
           }}
           style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
         >
@@ -276,7 +284,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               cursor: 'pointer',
             }}
           >
-            Email me a sign-in link
+            Email me a code
             {testBackdoorOn && testBackdoorEmail ? ' / test instant sign-in' : ''}
           </button>
         </form>

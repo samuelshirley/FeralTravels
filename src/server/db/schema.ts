@@ -82,6 +82,25 @@ export const verificationTokens = pgTable(
   })
 );
 
+// OTP codes for email sign-in. A 6-digit numeric code is generated when the
+// user submits their email on /login and emailed via Resend. The user enters
+// it on /login/verify; on success the code is deleted and a session is created.
+// Codes expire after 10 minutes; after 5 failed attempts the code is invalidated.
+export const emailOtpCodes = pgTable(
+  'email_otp_codes',
+  {
+    id: serial('id').primaryKey(),
+    email: text('email').notNull(),
+    code: text('code').notNull(),
+    expires: timestamp('expires', { mode: 'date' }).notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    emailIdx: index('otp_email_idx').on(t.email),
+  })
+);
+
 // ============================================================================
 // Application schema
 // ============================================================================

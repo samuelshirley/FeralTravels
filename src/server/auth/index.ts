@@ -1,14 +1,12 @@
 import 'server-only';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Google from 'next-auth/providers/google';
-import Resend from 'next-auth/providers/resend';
-import { Resend as ResendClient } from 'resend';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
-import { renderMagicEmail } from './magic-email';
+import { verifyOtpCode } from './otp';
 import {
   isAuthTestBackdoorConfigured,
 } from './test-backdoor';
@@ -37,7 +35,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
       // If someone first signed in with Google and later uses the same email
-      // for a magic link (or the reverse), Auth.js would otherwise refuse to
+      // for an OTP code (or the reverse), Auth.js would otherwise refuse to
       // merge accounts (OAuthAccountNotLinked) and they'd get a second user
       // row — vehicles and trips would appear "missing". Google verifies
       // email on the ID token; linking is appropriate here.
@@ -51,39 +49,79 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // worth the one extra click.
       authorization: { params: { prompt: 'select_account' } },
     }),
-    Resend({
-      apiKey: process.env.AUTH_RESEND_KEY,
-      from: process.env.AUTH_EMAIL_FROM || 'onboarding@resend.dev',
-      // Wrap the Resend send call so we can: (a) brand the email,
-      // (b) catch + log the Resend API error so users see a real message
-      // instead of an opaque 500, and (c) surface common configuration
-      // pitfalls (test sender locked to account-owner email, etc.).
-      async sendVerificationRequest({ identifier: to, url, provider }) {
-        const apiKey = (provider as { apiKey?: string }).apiKey ?? process.env.AUTH_RESEND_KEY;
-        const from = (provider as { from?: string }).from ?? process.env.AUTH_EMAIL_FROM ?? 'onboarding@resend.dev';
-        if (!apiKey) {
-          throw new Error('Email sign-in is not configured (missing AUTH_RESEND_KEY).');
+
+    // OTP email sign-in: the /login page sends a 6-digit code via Resend,
+    // the user enters it on /login/verify, and this provider validates it.
+    // On success it finds or creates the user row just like the old magic-link
+    // flow, so existing accounts are preserved.
+    Credentials({
+      id: 'email-otp',
+      name: 'Email OTP',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        code: { label: 'Code', type: 'text' },
+      },
+      async authorize(credentials) {
+        const email = String(credentials?.email ?? '').trim().toLowerCase();
+        const code = String(credentials?.code ?? '').trim();
+        if (!email || !code) return null;
+
+        const valid = await verifyOtpCode(email, code);
+        if (!valid) return null;
+
+        // Find or create the user row. Mirrors the test-backdoor pattern so
+        // the same session/vehicle bootstrap logic applies.
+        const existing = await db
+          .select({ id: users.id, email: users.email, name: users.name, emailVerified: users.emailVerified })
+          .from(users)
+          .where(sql`lower(${users.email}) = ${email}`)
+          .limit(1);
+
+        let userId: string;
+        let name: string | null;
+
+        if (existing.length > 0) {
+          userId = existing[0].id;
+          name = existing[0].name;
+          // Mark email as verified if it isn't yet (e.g. account created via
+          // Google but user is now signing in with OTP for the first time).
+          if (!existing[0].emailVerified) {
+            await db
+              .update(users)
+              .set({ emailVerified: new Date() })
+              .where(eq(users.id, userId));
+          }
+        } else {
+          const [row] = await db
+            .insert(users)
+            .values({
+              email,
+              emailVerified: new Date(),
+            })
+            .returning({ id: users.id, name: users.name });
+          userId = row.id;
+          name = row.name;
+
+          // Bootstrap a default vehicle for new users.
+          const hasV = await db
+            .select({ id: vehicles.id })
+            .from(vehicles)
+            .where(eq(vehicles.userId, userId))
+            .limit(1);
+          if (hasV.length === 0) {
+            await db.insert(vehicles).values({
+              userId,
+              name: 'My Vehicle',
+              isDefault: true,
+            });
+          }
+          await syncAdminFlagOnSignIn(email).catch(() => {});
         }
-        const resend = new ResendClient(apiKey);
-        const subject = 'Sign in to Feral Travels';
-        const result = await resend.emails.send({
-          from,
-          to,
-          subject,
-          html: renderMagicEmail({ url, to }),
-          text: `Sign in to Feral Travels: ${url}\n\nIf you didn't request this, you can ignore this email.`,
-        });
-        if (result.error) {
-          // Resend's most common pitfall: `onboarding@resend.dev` can only
-          // send to the account-owner's email. Translate that into a clear
-          // operator message in the server log; the user sees a generic
-          // "couldn't send" banner via the /login error page mapping.
-          const msg = result.error.message || 'Unknown Resend error';
-          console.error('[auth] Resend send failed', { to, from, error: result.error });
-          throw new Error(`EmailSendFailed: ${msg}`);
-        }
+
+        return { id: userId, email, name: name ?? email };
       },
     }),
+
     ...(isAuthTestBackdoorConfigured()
       ? [
           Credentials({
@@ -177,7 +215,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // can safely mark the local `emailVerified` column, which our admin
       // guard requires. Without this, Google OAuth users never pass the
       // "emailVerified IS NOT NULL" check. We only touch rows that haven't
-      // already been verified through some other flow (e.g. magic link).
+      // already been verified through some other flow (e.g. OTP sign-in).
       try {
         const trustedOAuthProviders = new Set(['google']);
         if (

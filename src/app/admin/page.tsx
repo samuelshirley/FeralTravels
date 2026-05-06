@@ -8,6 +8,7 @@ import {
   getRecentChatActivity,
   getRecentErrors,
   getTopUsageUsers,
+  getAnthropicHealthAlert,
 } from '@/server/repos/admin';
 import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
@@ -71,7 +72,7 @@ export default async function AdminPage() {
   // Silent redirect — no error page, no info leak that /admin even exists.
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
-  const [overview, recentUsers, recentChat, recentErrors, top24, top7d, usage24, usage7d] =
+  const [overview, recentUsers, recentChat, recentErrors, top24, top7d, usage24, usage7d, anthropicAlert] =
     await Promise.all([
       getAdminOverview(),
       getRecentUsers(15),
@@ -82,6 +83,7 @@ export default async function AdminPage() {
       getTopUsageUsers(24 * 7, 10),
       getGlobalUsage(24),
       getGlobalUsage(24 * 7),
+      getAnthropicHealthAlert(),
     ]);
 
   const usd24 = usage24
@@ -147,6 +149,38 @@ export default async function AdminPage() {
       />
 
       <main className={styles.main}>
+        {anthropicAlert && (
+          <div
+            style={{
+              background: '#7C1D1D',
+              border: '1px solid #B91C1C',
+              borderRadius: 8,
+              padding: '12px 16px',
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 12,
+            }}
+          >
+            <span style={{ fontSize: 20, flexShrink: 0 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#FCA5A5', marginBottom: 4 }}>
+                Anthropic API is failing — {anthropicAlert.failureCount} error{anthropicAlert.failureCount !== 1 ? 's' : ''} in the last hour
+              </div>
+              <div style={{ fontSize: 12, color: '#FCA5A5', opacity: 0.85 }}>
+                {anthropicAlert.lastError ?? 'Unknown error'}
+              </div>
+              <div style={{ fontSize: 11, color: '#FCA5A5', opacity: 0.6, marginTop: 4 }}>
+                Check your Anthropic API key and credit balance. Last failure:{' '}
+                {anthropicAlert.lastFailedAt
+                  ? fmtRel(anthropicAlert.lastFailedAt)
+                  : 'unknown'}
+                {' · '}
+                <a href="/admin/errors" style={{ color: '#FCA5A5' }}>View all errors →</a>
+              </div>
+            </div>
+          </div>
+        )}
         <div
           style={{
             display: 'flex',

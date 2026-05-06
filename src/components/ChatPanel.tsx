@@ -275,7 +275,7 @@ export default function ChatPanel({
           id: Date.now() + 1,
           trip_id: tripId,
           role: 'assistant',
-          content: 'Failed to reach the server. Check that your ANTHROPIC_API_KEY is set.',
+          content: 'Something went wrong. Please try again.',
           kind: 'ai',
           changes_made: null,
           created_at: new Date().toISOString(),

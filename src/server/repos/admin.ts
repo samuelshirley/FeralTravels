@@ -93,6 +93,42 @@ export async function getRecentChatActivity(limit = 30) {
     .limit(limit);
 }
 
+/**
+ * Checks whether the Anthropic API has been failing recently.
+ * Returns null if healthy, or a summary object if there are failures.
+ * Used by the admin dashboard to show a top-of-page alert.
+ */
+export async function getAnthropicHealthAlert(): Promise<{
+  failureCount: number;
+  lastError: string | null;
+  lastFailedAt: Date | null;
+} | null> {
+  const since1h = new Date(Date.now() - 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      errorMessage: usageEvents.errorMessage,
+      createdAt: usageEvents.createdAt,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.success, false),
+        gte(usageEvents.createdAt, since1h),
+        sql`${usageEvents.provider} LIKE 'anthropic%'`
+      )
+    )
+    .orderBy(desc(usageEvents.createdAt))
+    .limit(20);
+
+  if (rows.length === 0) return null;
+
+  return {
+    failureCount: rows.length,
+    lastError: rows[0]?.errorMessage ?? null,
+    lastFailedAt: rows[0]?.createdAt ?? null,
+  };
+}
+
 export async function getRecentErrors(limit = 50) {
   return db
     .select({

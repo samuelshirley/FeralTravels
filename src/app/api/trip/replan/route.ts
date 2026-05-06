@@ -19,7 +19,8 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull } from '@/server/repos/trips';
+import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
@@ -60,6 +61,7 @@ const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR |
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300; // Anthropic calls can take >60s on complex trips
 
 /**
  * Hard cap on the size of a single chat message. The textarea has no
@@ -104,9 +106,18 @@ export async function POST(req: Request) {
       return Response.json({ error: 'Message or image is required' }, { status: 400 });
     }
     if (!process.env.ANTHROPIC_API_KEY) {
+      // Log so it shows up in /admin/errors, but don't expose env var details to users.
+      await logUsageEvent({
+        userId: userIdForLog,
+        tripId: tripIdForLog,
+        provider: 'anthropic:replan',
+        requests: 1,
+        success: false,
+        errorMessage: 'ANTHROPIC_API_KEY is not set',
+      }).catch(() => {});
       return Response.json(
-        { error: 'ANTHROPIC_API_KEY not set. Add it to your .env file.' },
-        { status: 500 }
+        { error: 'AI service is temporarily unavailable. Please try again later.' },
+        { status: 503 }
       );
     }
 
@@ -286,6 +297,37 @@ async function dispatchAction(
   ctx: ReplanDispatchCtx
 ): Promise<void> {
   switch (action.name) {
+    case 'update_vehicle': {
+      // The vehicle to update is the one in the trip's context — the same
+      // vehicle Penny was given at the start of this turn. We resolve it the
+      // same way buildPennyContext does: prefer trip.vehicle_id, fall back to
+      // the user's default. We re-fetch here (rather than threading the id
+      // through from context) so this dispatch path is self-contained and the
+      // ownership check is always fresh.
+      const trip = await getTripFull(tripId);
+      if (!trip) throw new NotFoundError('Trip not found');
+
+      let vehicleId: number | null = trip.vehicle_id ?? null;
+      if (vehicleId == null) {
+        const def = await getDefaultVehicleForUser(userId);
+        vehicleId = def?.id ?? null;
+      } else {
+        // Verify the user owns the vehicle referenced by the trip.
+        const owned = await getVehicleForUser(userId, vehicleId);
+        if (!owned) throw new ForbiddenError('Vehicle is not owned by this user');
+      }
+
+      if (vehicleId == null) {
+        throw new NotFoundError(
+          'No vehicle found for this trip. Add a vehicle in settings first.'
+        );
+      }
+
+      const updated = await updateVehicle(userId, vehicleId, action.input.data);
+      if (!updated) throw new NotFoundError('Vehicle not found or not owned by user');
+      return;
+    }
+
     case 'add_leg': {
       const d = action.input;
       const newLegId = await addLeg({
@@ -514,6 +556,8 @@ async function dispatchAction(
 // ---------------------------------------------------------------------------
 function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> {
   switch (action.name) {
+    case 'update_vehicle':
+      return { action: 'update_vehicle', data: action.input.data };
     case 'add_leg':
       return { action: 'add_leg', data: action.input };
     case 'delete_leg':

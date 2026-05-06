@@ -18,6 +18,7 @@ import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
 import * as extractTripIntent from './extractTripIntent';
 import * as checkTripFeasibility from './checkTripFeasibility';
+import * as updateVehicle from './updateVehicle';
 
 export {
   addLeg,
@@ -35,6 +36,7 @@ export {
   getRoute,
   extractTripIntent,
   checkTripFeasibility,
+  updateVehicle,
 };
 
 /**
@@ -49,6 +51,7 @@ export const TOOLS: Anthropic.Tool[] = [
   extractTripIntent.tool,
   getRoute.tool,
   checkTripFeasibility.tool,
+  updateVehicle.tool,
   addLeg.tool,
   updateLeg.tool,
   deleteLeg.tool,
@@ -69,6 +72,7 @@ export const TOOLS: Anthropic.Tool[] = [
  * Claude finishes her turn (see src/app/api/trip/replan/route.ts).
  */
 export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  updateVehicle.UPDATE_VEHICLE,
   addLeg.ADD_LEG,
   updateLeg.UPDATE_LEG,
   deleteLeg.DELETE_LEG,
@@ -101,6 +105,7 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
  * those factories so they pick up live trip state.
  */
 export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unknown>> = {
+  [updateVehicle.UPDATE_VEHICLE]: updateVehicle.validator,
   [addLeg.ADD_LEG]: addLeg.validator,
   [updateLeg.UPDATE_LEG]: updateLeg.validator,
   [deleteLeg.DELETE_LEG]: deleteLeg.validator,
@@ -119,6 +124,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
 };
 
 export type ValidatedAction =
+  | { name: typeof updateVehicle.UPDATE_VEHICLE; input: updateVehicle.UpdateVehicleInput }
   | { name: typeof addLeg.ADD_LEG; input: addLeg.AddLegInput }
   | { name: typeof updateLeg.UPDATE_LEG; input: updateLeg.UpdateLegInput }
   | { name: typeof deleteLeg.DELETE_LEG; input: deleteLeg.DeleteLegInput }
