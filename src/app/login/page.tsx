@@ -15,9 +15,18 @@ interface LoginPageProps {
 // the codes we actually see into copy users can act on.
 function describeError(code?: string): string | null {
   if (!code) return null;
+
+  // Handle parameterised codes before the switch.
+  if (code.startsWith('TypoSuggestion:')) {
+    const suggested = code.replace('TypoSuggestion:', '');
+    return `Did you mean @${suggested}? Please check your email and try again.`;
+  }
+
   switch (code) {
     case 'OAuthAccountNotLinked':
       return 'This email is already tied to a different sign-in method. Use the Google button above if you usually sign in with Google, or enter your email again to get a new code.';
+    case 'InvalidEmail':
+      return "That doesn't look like a valid email address. Please double-check and try again.";
     case 'EmailSendFailed':
     case 'Configuration':
       return "Couldn't send your sign-in code. Try Google sign-in or contact support.";
@@ -187,6 +196,35 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             'use server';
             const email = String(formData.get('email') || '').trim();
             if (!email) return;
+
+            // Basic sanity check: the browser's type="email" validation is
+            // client-side only and easily bypassed. Catch obvious typos like
+            // missing TLD, bad format, or misspelled common domains before we
+            // burn a Resend call on an undeliverable address.
+            const emailRe = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
+            if (!emailRe.test(email)) {
+              redirect(
+                `/login?emailError=${encodeURIComponent('InvalidEmail')}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+              );
+              return;
+            }
+
+            // Catch common domain typos (gmail.con, gmail.cmo, hotmal.com, etc.)
+            const domain = email.split('@')[1].toLowerCase();
+            const domainTypos: Record<string, string> = {
+              'gmail.con': 'gmail.com', 'gmail.cmo': 'gmail.com', 'gmial.com': 'gmail.com',
+              'gmai.com': 'gmail.com', 'gmal.com': 'gmail.com', 'gamil.com': 'gmail.com',
+              'hotmal.com': 'hotmail.com', 'hotmai.com': 'hotmail.com', 'hotmail.con': 'hotmail.com',
+              'outloo.com': 'outlook.com', 'outlok.com': 'outlook.com', 'outlook.con': 'outlook.com',
+              'yahooo.com': 'yahoo.com', 'yaho.com': 'yahoo.com', 'yahoo.con': 'yahoo.com',
+              'icloud.con': 'icloud.com', 'iclod.com': 'icloud.com',
+            };
+            if (domainTypos[domain]) {
+              redirect(
+                `/login?emailError=${encodeURIComponent('TypoSuggestion:' + domainTypos[domain])}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+              );
+              return;
+            }
 
             // Test backdoor shortcut: bypass OTP for the configured test email.
             const backdoorEmail = authTestBackdoorEmailNormalized();
