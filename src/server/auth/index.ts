@@ -6,7 +6,6 @@ import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
-import { verifyOtpCode } from './otp';
 import {
   isAuthTestBackdoorConfigured,
 } from './test-backdoor';
@@ -50,77 +49,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       authorization: { params: { prompt: 'select_account' } },
     }),
 
-    // OTP email sign-in: the /login page sends a 6-digit code via Resend,
-    // the user enters it on /login/verify, and this provider validates it.
-    // On success it finds or creates the user row just like the old magic-link
-    // flow, so existing accounts are preserved.
-    Credentials({
-      id: 'email-otp',
-      name: 'Email OTP',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        code: { label: 'Code', type: 'text' },
-      },
-      async authorize(credentials) {
-        const email = String(credentials?.email ?? '').trim().toLowerCase();
-        const code = String(credentials?.code ?? '').trim();
-        if (!email || !code) return null;
-
-        const valid = await verifyOtpCode(email, code);
-        if (!valid) return null;
-
-        // Find or create the user row. Mirrors the test-backdoor pattern so
-        // the same session/vehicle bootstrap logic applies.
-        const existing = await db
-          .select({ id: users.id, email: users.email, name: users.name, emailVerified: users.emailVerified })
-          .from(users)
-          .where(sql`lower(${users.email}) = ${email}`)
-          .limit(1);
-
-        let userId: string;
-        let name: string | null;
-
-        if (existing.length > 0) {
-          userId = existing[0].id;
-          name = existing[0].name;
-          // Mark email as verified if it isn't yet (e.g. account created via
-          // Google but user is now signing in with OTP for the first time).
-          if (!existing[0].emailVerified) {
-            await db
-              .update(users)
-              .set({ emailVerified: new Date() })
-              .where(eq(users.id, userId));
-          }
-        } else {
-          const [row] = await db
-            .insert(users)
-            .values({
-              email,
-              emailVerified: new Date(),
-            })
-            .returning({ id: users.id, name: users.name });
-          userId = row.id;
-          name = row.name;
-
-          // Bootstrap a default vehicle for new users.
-          const hasV = await db
-            .select({ id: vehicles.id })
-            .from(vehicles)
-            .where(eq(vehicles.userId, userId))
-            .limit(1);
-          if (hasV.length === 0) {
-            await db.insert(vehicles).values({
-              userId,
-              name: 'My Vehicle',
-              isDefault: true,
-            });
-          }
-          await syncAdminFlagOnSignIn(email).catch(() => {});
-        }
-
-        return { id: userId, email, name: name ?? email };
-      },
-    }),
+    // OTP email sign-in is handled directly by signInWithOtp() in
+    // src/server/auth/otp.ts — it verifies the code, finds/creates the user,
+    // creates a database session, and sets the cookie. We bypass Auth.js's
+    // Credentials provider because it doesn't support database sessions.
 
     ...(isAuthTestBackdoorConfigured()
       ? [

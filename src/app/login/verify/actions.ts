@@ -1,37 +1,31 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { signIn } from '@/server/auth';
-import { sendOtpCode } from '@/server/auth/otp';
+import { sendOtpCode, signInWithOtp } from '@/server/auth/otp';
 
 /**
  * Validate the submitted OTP code and sign the user in.
  * Called by the client-side VerifyForm via form action.
+ *
+ * We don't use Auth.js's `signIn('credentials', ...)` because the Credentials
+ * provider does not support database sessions. Instead, `signInWithOtp` handles
+ * code verification, user lookup/creation, session creation, and cookie setting
+ * all in one shot.
  */
 export async function verifyOtpAction(formData: FormData) {
   const email = String(formData.get('email') || '').trim();
   const code = String(formData.get('code') || '').trim();
   const callbackUrl = String(formData.get('callbackUrl') || '/trips');
 
-  try {
-    await signIn('email-otp', { email, code, redirectTo: callbackUrl });
-  } catch (err) {
-    // Auth.js throws a NEXT_REDIRECT "error" on a successful sign-in to
-    // trigger the navigation — we must re-throw it.
-    if (
-      err &&
-      typeof err === 'object' &&
-      'digest' in err &&
-      String((err as { digest?: string }).digest).startsWith('NEXT_REDIRECT')
-    ) {
-      throw err;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[verify] OTP sign-in failed:', message);
+  const userId = await signInWithOtp(email, code);
+
+  if (!userId) {
     redirect(
       `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=InvalidCode`
     );
   }
+
+  redirect(callbackUrl);
 }
 
 /**

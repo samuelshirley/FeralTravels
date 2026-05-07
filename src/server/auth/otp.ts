@@ -1,9 +1,11 @@
 import 'server-only';
 import { db } from '@/server/db/client';
-import { emailOtpCodes } from '@/server/db/schema';
-import { eq } from 'drizzle-orm';
+import { emailOtpCodes, users, vehicles, sessions } from '@/server/db/schema';
+import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { renderOtpEmail } from './otp-email';
+import { syncAdminFlagOnSignIn } from './admin';
+import { cookies } from 'next/headers';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_MAX_ATTEMPTS = 5;
@@ -145,4 +147,99 @@ export async function sendOtpCode(email: string): Promise<string> {
   }
 
   return code;
+}
+
+// Auth.js session cookie config. In production (HTTPS), Auth.js uses the
+// __Secure- prefix. In dev (HTTP) it's just `authjs.session-token`.
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function getSessionCookieName(): string {
+  const useSecure = process.env.NODE_ENV === 'production';
+  return useSecure ? '__Secure-authjs.session-token' : 'authjs.session-token';
+}
+
+/**
+ * Full OTP sign-in: verify the code, find-or-create the user, create a
+ * database session, and set the session cookie.
+ *
+ * We bypass Auth.js's `signIn('credentials', ...)` because the Credentials
+ * provider does NOT work with `session: { strategy: 'database' }` — it only
+ * supports JWT sessions. So we handle the database session ourselves.
+ *
+ * Returns the userId on success, or null if the code is invalid/expired.
+ */
+export async function signInWithOtp(email: string, code: string): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  const submitted = code.trim();
+  if (!normalized || !submitted) return null;
+
+  // 1. Verify the OTP code.
+  const valid = await verifyOtpCode(normalized, submitted);
+  if (!valid) return null;
+
+  // 2. Find or create the user row.
+  const existing = await db
+    .select({ id: users.id, email: users.email, name: users.name, emailVerified: users.emailVerified })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+
+  let userId: string;
+
+  if (existing.length > 0) {
+    userId = existing[0].id;
+    if (!existing[0].emailVerified) {
+      await db
+        .update(users)
+        .set({ emailVerified: new Date() })
+        .where(eq(users.id, userId));
+    }
+  } else {
+    const [row] = await db
+      .insert(users)
+      .values({ email: normalized, emailVerified: new Date() })
+      .returning({ id: users.id });
+    userId = row.id;
+
+    // Bootstrap a default vehicle for new users.
+    const hasV = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(eq(vehicles.userId, userId))
+      .limit(1);
+    if (hasV.length === 0) {
+      await db.insert(vehicles).values({
+        userId,
+        name: 'My Vehicle',
+        isDefault: true,
+      });
+    }
+    await syncAdminFlagOnSignIn(normalized).catch(() => {});
+  }
+
+  // Re-sync admin flag on every sign-in (mirrors the signIn event handler).
+  await syncAdminFlagOnSignIn(normalized).catch(() => {});
+
+  // 3. Create a database session.
+  const sessionToken = crypto.randomUUID();
+  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
+
+  await db.insert(sessions).values({
+    sessionToken,
+    userId,
+    expires,
+  });
+
+  // 4. Set the session cookie so Auth.js picks it up.
+  const cookieStore = await cookies();
+  const isSecure = process.env.NODE_ENV === 'production';
+  cookieStore.set(getSessionCookieName(), sessionToken, {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: 'lax',
+    path: '/',
+    expires,
+  });
+
+  return userId;
 }
