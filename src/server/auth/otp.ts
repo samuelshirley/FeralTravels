@@ -132,12 +132,24 @@ export async function sendOtpCode(email: string): Promise<string> {
   }
   const resend = new Resend(apiKey);
 
+  // Extract the domain from AUTH_URL or NEXTAUTH_URL for the origin-bound
+  // one-time code line that Apple/Google use for auto-fill suggestions.
+  const siteUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || '';
+  let domain: string | undefined;
+  try {
+    const parsed = new URL(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`);
+    domain = parsed.hostname;
+  } catch {
+    // If we can't parse it, skip the origin-bound line — auto-fill just
+    // won't get the domain hint but the email still works fine.
+  }
+
   const result = await resend.emails.send({
     from,
     to: normalized,
-    subject: 'Your Feral Travels sign-in code',
-    html: renderOtpEmail({ code, to: normalized }),
-    text: `Your Feral Travels sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email.`,
+    subject: `${code} is your Feral Travels sign-in code`,
+    html: renderOtpEmail({ code, to: normalized, domain }),
+    text: `Your Feral Travels sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email.${domain ? `\n\n@${domain} #${code}` : ''}`,
   });
 
   if (result.error) {

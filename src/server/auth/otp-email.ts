@@ -4,7 +4,7 @@ import 'server-only';
  * HTML for the OTP code sign-in email. Shows a large 6-digit code instead of
  * a magic link — the user types the code on the /login/verify screen.
  */
-export function renderOtpEmail({ code, to }: { code: string; to: string }): string {
+export function renderOtpEmail({ code, to, domain }: { code: string; to: string; domain?: string }): string {
   const escapedTo = escapeHtml(to);
   // Render the code with letter-spacing so each digit is clearly separated.
   // Split into two groups of three (e.g. "123 456") for readability.
@@ -52,7 +52,16 @@ export function renderOtpEmail({ code, to }: { code: string; to: string }): stri
               <td style="font-size:11px;color:#6B6B6B;line-height:1.5;border-top:1px solid #E6DFD4;padding-top:16px;">
                 If you didn't request this code, you can safely ignore this email. Someone may have entered your address by mistake.
               </td>
-            </tr>
+            </tr>${domain ? `
+            <!-- Origin-bound one-time code (WICG spec). Apple Mail, Gmail on
+                 iOS, and Android use this line to auto-suggest pasting the code
+                 into the correct website's input field. The format is:
+                 @<domain> #<code>  -->
+            <tr>
+              <td style="font-size:0;line-height:0;color:#F6F2EA;max-height:0;overflow:hidden;mso-hide:all;" aria-hidden="true">
+                @${domain} #${code}
+              </td>
+            </tr>` : ''}
           </table>
         </td>
       </tr>

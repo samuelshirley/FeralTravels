@@ -34,6 +34,7 @@ function maskEmail(email: string): string {
 export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProps) {
   const NUM_DIGITS = 6;
   const [digits, setDigits] = useState<string[]>(Array(NUM_DIGITS).fill(''));
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const formRef = useRef<HTMLFormElement>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -55,9 +56,22 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
   }, [codeComplete, submitting]);
 
   function handleChange(index: number, value: string) {
-    // Only accept digits; take the last typed character if multiple somehow
-    // sneak through (e.g. some IME composing).
-    const digit = value.replace(/\D/g, '').slice(-1);
+    const cleaned = value.replace(/\D/g, '');
+
+    // iOS auto-fill / password manager may inject the full code into one input.
+    // If we get more than one digit, spread them across all boxes.
+    if (cleaned.length > 1) {
+      const chars = cleaned.slice(0, NUM_DIGITS).split('');
+      const next = Array(NUM_DIGITS).fill('');
+      for (let i = 0; i < chars.length; i++) next[i] = chars[i];
+      setDigits(next);
+      const firstEmpty = next.findIndex((d) => d === '');
+      inputRefs.current[firstEmpty === -1 ? NUM_DIGITS - 1 : firstEmpty]?.focus();
+      return;
+    }
+
+    // Normal single-digit entry.
+    const digit = cleaned.slice(-1);
     const next = digits.slice();
     next[index] = digit;
     setDigits(next);
@@ -99,11 +113,8 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
   const errorMessage = describeError(error);
 
   const digitBoxStyle: React.CSSProperties = {
-    // Use flex: 1 with a max so boxes share available width on narrow screens
-    // instead of overflowing. min-width 0 lets them shrink below content size.
-    flex: '1 1 0',
-    minWidth: 0,
-    maxWidth: 52,
+    // Width is 100% of the wrapper div which handles the flex sizing.
+    boxSizing: 'border-box' as const,
     aspectRatio: '1 / 1.2',
     textAlign: 'center',
     fontSize: 'clamp(18px, 5vw, 26px)',
@@ -119,8 +130,17 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
     transition: 'border-color 0.15s',
   };
 
+  // Show a blinking cursor line in the focused empty box.
+  const showCursor = (i: number) => focusedIndex === i && !digits[i];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      <style>{`
+        @keyframes otp-blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+      `}</style>
       {errorMessage && (
         <div
           style={{
@@ -175,27 +195,60 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
           }}
         >
           {digits.map((digit, i) => (
-            <input
+            <div
               key={i}
-              ref={(el) => {
-                inputRefs.current[i] = el;
-              }}
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={1}
-              value={digit}
-              autoComplete={i === 0 ? 'one-time-code' : 'off'}
-              onChange={(e) => handleChange(i, e.target.value)}
-              onKeyDown={(e) => handleKeyDown(i, e)}
-              onPaste={handlePaste}
-              onFocus={(e) => e.target.select()}
               style={{
-                ...digitBoxStyle,
-                borderColor: digit ? 'var(--tp-border-strong)' : 'var(--tp-border)',
+                position: 'relative',
+                flex: '1 1 0',
+                minWidth: 0,
+                maxWidth: 52,
               }}
-              aria-label={`Digit ${i + 1} of ${NUM_DIGITS}`}
-            />
+            >
+              <input
+                ref={(el) => {
+                  inputRefs.current[i] = el;
+                }}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={digit}
+                autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                onChange={(e) => handleChange(i, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(i, e)}
+                onPaste={handlePaste}
+                onFocus={(e) => {
+                  setFocusedIndex(i);
+                  e.target.select();
+                }}
+                onBlur={() => setFocusedIndex(null)}
+                style={{
+                  ...digitBoxStyle,
+                  width: '100%',
+                  borderColor: focusedIndex === i
+                    ? 'var(--tp-primary)'
+                    : digit
+                    ? 'var(--tp-border-strong)'
+                    : 'var(--tp-border)',
+                }}
+                aria-label={`Digit ${i + 1} of ${NUM_DIGITS}`}
+              />
+              {showCursor(i) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    width: 2,
+                    height: '40%',
+                    background: 'var(--tp-primary)',
+                    borderRadius: 1,
+                    animation: 'otp-blink 1s step-end infinite',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
+            </div>
           ))}
         </div>
 
