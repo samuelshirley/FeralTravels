@@ -489,6 +489,7 @@ export default async function AdminPage() {
           Maps JS / Directions client-side calls are not tracked here — set hard quotas in Google
           Cloud Console for those. Per-user limits: {process.env.REPLAN_REQUESTS_PER_HOUR || 40}
           {' '}requests/hour and ${parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5').toFixed(2)} AI spend/day.
+          {' '}Admins on the hardcoded allowlist are exempt from both caps (usage is still recorded).
         </p>
       </main>
     </div>

@@ -6,7 +6,7 @@ import { replanStream, type ReplanEvent } from '@/lib/claude';
 import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
 import {
-  requireUserId,
+  requireUser,
   assertTripOwnedByUser,
   assertLegOwnedByUser,
   assertRouteOwnedByUser,
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
   /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
   let userTurnSaved = false;
   try {
-    const userId = await requireUserId();
+    const { id: userId, isAdmin: isAdminUser } = await requireUser();
     userIdForLog = userId;
     const body = inputSchema.parse(await req.json());
     tripIdForLog = body.tripId;
@@ -125,26 +125,34 @@ export async function POST(req: Request) {
     await assertTripOwnedByUser(tripId, userId);
 
     // Soft per-user spend / request guardrails to prevent runaway cost.
-    const [hourly, daily] = await Promise.all([
-      getUserUsageSummary(userId, 1),
-      getUserUsageSummary(userId, 24),
-    ]);
-    if (hourly.requests >= REPLAN_REQUESTS_PER_HOUR) {
-      return Response.json(
-        {
-          error: `Hourly Penny request limit reached (${REPLAN_REQUESTS_PER_HOUR}). Try again later.`,
-        },
-        { status: 429 }
-      );
-    }
-    const dailyUsd = microcentsToDollars(daily.microcents);
-    if (dailyUsd >= REPLAN_USD_CAP_PER_DAY) {
-      return Response.json(
-        {
-          error: `Daily AI spend cap reached ($${REPLAN_USD_CAP_PER_DAY.toFixed(2)}). Resets in 24h.`,
-        },
-        { status: 429 }
-      );
+    //
+    // Admins (defined by the hardcoded allowlist in src/server/auth/admin.ts)
+    // are exempt from both caps so the operator can debug, demo, or stress-
+    // test without locking themselves out. Everyone else hits the same
+    // hourly request and daily $ caps. We still record their usage events
+    // below — exemption is on the gate, not on the accounting.
+    if (!isAdminUser) {
+      const [hourly, daily] = await Promise.all([
+        getUserUsageSummary(userId, 1),
+        getUserUsageSummary(userId, 24),
+      ]);
+      if (hourly.requests >= REPLAN_REQUESTS_PER_HOUR) {
+        return Response.json(
+          {
+            error: `Hourly Penny request limit reached (${REPLAN_REQUESTS_PER_HOUR}). Try again later.`,
+          },
+          { status: 429 }
+        );
+      }
+      const dailyUsd = microcentsToDollars(daily.microcents);
+      if (dailyUsd >= REPLAN_USD_CAP_PER_DAY) {
+        return Response.json(
+          {
+            error: `Daily AI spend cap reached ($${REPLAN_USD_CAP_PER_DAY.toFixed(2)}). Resets in 24h.`,
+          },
+          { status: 429 }
+        );
+      }
     }
 
     await addChatMessage(tripId, 'user', message || '(image only)');

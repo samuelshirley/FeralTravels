@@ -42,6 +42,33 @@ export async function requireUserId(): Promise<string> {
   return session.user.id;
 }
 
+/**
+ * Resolve the signed-in principal in one call: id + email + admin flag.
+ *
+ * Use this from routes that need to branch on admin status (e.g. to
+ * exempt admins from rate limits) — it avoids the otherwise-easy
+ * footgun of calling `requireUserId()` and then forgetting to also
+ * fetch the email/admin separately. The `isAdmin` boolean uses the
+ * canonical check in src/server/auth/admin.ts (hardcoded allowlist +
+ * env restriction + verified email + DB flag).
+ *
+ * Throws UnauthorizedError if there's no session, mirroring
+ * requireUserId. Sessions without an email value (shouldn't happen
+ * with the current Auth.js config but belt-and-suspenders) always come
+ * back with isAdmin=false.
+ */
+export async function requireUser(): Promise<{
+  id: string;
+  email: string | null;
+  isAdmin: boolean;
+}> {
+  const session = await auth();
+  if (!session?.user?.id) throw new UnauthorizedError();
+  const email = session.user.email ?? null;
+  const admin = email ? await isAdminEmail(email) : false;
+  return { id: session.user.id, email, isAdmin: admin };
+}
+
 // Admin authorization lives in src/server/auth/admin.ts — hardcoded allowlist
 // + env restriction + DB flag + verified email. Re-exported here for callers
 // that already import from guards.
