@@ -141,9 +141,10 @@ export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[
  * **fuel** stop with coords (any `source`: google_places, penny, user) unless
  * dismissed.
  *
- * With intermediate waypoints, opens directions **preview** (no
- * `dir_action=navigate`) so mobile Maps shows the full multi-stop itinerary;
- * simple A→B still jumps straight into navigation.
+ * Always uses `dir_action=navigate` so Google Maps launches straight into
+ * turn-by-turn on mobile. Omitting it for multi-stop routes caused Maps to
+ * open the route-planning view instead ("Dropped pin" for each waypoint),
+ * which often got stuck and never launched navigation.
  */
 export function buildLegDirectionsUrl(input: {
   legCoords: LegCoords;
@@ -163,7 +164,7 @@ export function buildLegDirectionsUrl(input: {
   return buildNavUrl(
     { ...legCoords, end_lat: destLat, end_lng: destLng },
     waypoints.length > 0 ? waypoints : undefined,
-    { navigate: waypoints.length === 0 }
+    { navigate: true }
   );
 }
 

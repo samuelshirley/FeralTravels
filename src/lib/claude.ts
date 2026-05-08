@@ -20,6 +20,26 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const MODEL = 'claude-sonnet-4-20250514';
 
+// ---------------------------------------------------------------------------
+// Prompt caching
+//
+// The system prompt + tool schemas are stable across every iteration of the
+// tool-use loop (and across most replan calls within a 5-min window). Marking
+// them with cache_control: ephemeral lets Anthropic serve them from cache at
+// 0.10× the base input price after the first request, vs paying the full
+// $3/MTok every iteration.
+//
+// We also mark a rolling cache_control on the most recent tool_result block
+// so iteration N+1 reads iteration N's accumulated history from cache.
+//
+// Anthropic allows up to 4 cache_control breakpoints per request:
+//   1. End of system prompt
+//   2. End of tools array (covers system + tools)
+//   3. Rolling, on the latest tool_result (covers system + tools + history)
+//
+// Docs: https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+// ---------------------------------------------------------------------------
+
 /**
  * How many times we'll feed validation failures back to Claude before
  * giving up and surfacing the failed actions to the user.
@@ -288,6 +308,19 @@ export async function replan(
   let truncated = false;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalCacheCreationTokens = 0;
+  let totalCacheReadTokens = 0;
+
+  // System prompt + tools as cacheable structures. Built once per replan so
+  // we're not rebuilding the array on every iteration.
+  const cachedSystem: Anthropic.TextBlockParam[] = [
+    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+  ];
+  const cachedTools: Anthropic.Tool[] = TOOLS.map((tool, i) =>
+    i === TOOLS.length - 1
+      ? { ...tool, cache_control: { type: 'ephemeral' } }
+      : tool
+  );
   // Workflow gate tracking. The dispatcher in /api/trip/replan uses these
   // to decide whether add_leg actions are allowed: if extract_trip_intent
   // was called, this is a fresh plan and check_trip_feasibility must have
@@ -301,8 +334,8 @@ export async function replan(
       response = await client.messages.create({
         model: MODEL,
         max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
+        system: cachedSystem,
+        tools: cachedTools,
         messages,
       });
     } catch (err) {
@@ -312,6 +345,8 @@ export async function replan(
         model: MODEL,
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
+        cacheCreationInputTokens: totalCacheCreationTokens,
+        cacheReadInputTokens: totalCacheReadTokens,
         success: false,
         errorMessage: String((err as Error)?.message ?? err).slice(0, 500),
       }).catch(() => {});
@@ -320,6 +355,10 @@ export async function replan(
 
     totalInputTokens += response.usage?.input_tokens ?? 0;
     totalOutputTokens += response.usage?.output_tokens ?? 0;
+    // Anthropic returns these as separate fields on usage. Sum them so we
+    // can bill at the correct rates and observe cache hit rate per replan.
+    totalCacheCreationTokens += response.usage?.cache_creation_input_tokens ?? 0;
+    totalCacheReadTokens += response.usage?.cache_read_input_tokens ?? 0;
 
     // Collect text blocks from this iteration.
     for (const block of response.content) {
@@ -414,6 +453,33 @@ export async function replan(
 
     // Append the assistant turn and our tool_results so Claude can continue.
     messages.push({ role: 'assistant', content: response.content });
+
+    // Move the rolling cache breakpoint forward: strip cache_control from any
+    // prior tool_result block, then mark the last tool_result of THIS turn so
+    // it caches the system + tools + complete history up to here. The next
+    // iteration reads everything up to this point at 0.10× input price.
+    //
+    // We strip first because Anthropic caps requests at 4 cache_control
+    // markers — without removal, we'd accumulate one per iteration and hit
+    // the cap by iteration 4.
+    for (const msg of messages) {
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (
+            block.type === 'tool_result' &&
+            (block as Anthropic.ToolResultBlockParam).cache_control
+          ) {
+            delete (block as { cache_control?: unknown }).cache_control;
+          }
+        }
+      }
+    }
+    if (toolResults.length > 0) {
+      toolResults[toolResults.length - 1] = {
+        ...toolResults[toolResults.length - 1],
+        cache_control: { type: 'ephemeral' },
+      };
+    }
     messages.push({ role: 'user', content: toolResults });
 
     // If this round had validation failures, count it as a retry.
@@ -450,12 +516,25 @@ export async function replan(
     }
   }
 
+  // Quick visibility on cache effectiveness. Useful when tuning breakpoints
+  // and after deploying — a healthy run should show cacheReadTokens dwarfing
+  // cacheCreationTokens after iteration 1. If reads stay low, caching isn't
+  // landing (e.g., system prompt being mutated, or 5-min TTL expired).
+  const cacheTotal = totalCacheCreationTokens + totalCacheReadTokens;
+  const cacheHitRate =
+    cacheTotal > 0 ? (totalCacheReadTokens / cacheTotal).toFixed(2) : 'n/a';
+  console.log(
+    `[penny.replan] tripId=${tripId} input=${totalInputTokens} output=${totalOutputTokens} cacheWrite=${totalCacheCreationTokens} cacheRead=${totalCacheReadTokens} cacheHitRate=${cacheHitRate}`
+  );
+
   await logAnthropicUsage({
     userId,
     tripId,
     model: MODEL,
     inputTokens: totalInputTokens,
     outputTokens: totalOutputTokens,
+    cacheCreationInputTokens: totalCacheCreationTokens,
+    cacheReadInputTokens: totalCacheReadTokens,
     success: true,
   }).catch((e) => console.warn('logAnthropicUsage failed:', e));
 

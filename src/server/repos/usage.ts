@@ -30,17 +30,36 @@ export function microcentsToDollars(mc: number | null | undefined): number {
   return mc / 100 / 1_000_000;
 }
 
+/**
+ * Anthropic prompt-cache pricing modifiers (relative to base input price):
+ *   - cache write (cache_creation_input_tokens): 1.25× base
+ *   - cache read  (cache_read_input_tokens):     0.10× base
+ * https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+ */
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;
+
 export function estimateAnthropicCostUsd(
   model: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cacheCreationInputTokens = 0,
+  cacheReadInputTokens = 0
 ): number {
   const key = model.toLowerCase();
   const price =
     ANTHROPIC_PRICING_PER_MTOK[key] ??
     Object.entries(ANTHROPIC_PRICING_PER_MTOK).find(([k]) => key.startsWith(k))?.[1];
   if (!price) return 0;
-  return (inputTokens / 1_000_000) * price.input + (outputTokens / 1_000_000) * price.output;
+  // Anthropic's `input_tokens` field excludes cache reads/writes — they're
+  // billed separately, so we add each component at its own rate.
+  const inputCost = (inputTokens / 1_000_000) * price.input;
+  const cacheWriteCost =
+    (cacheCreationInputTokens / 1_000_000) * price.input * CACHE_WRITE_MULTIPLIER;
+  const cacheReadCost =
+    (cacheReadInputTokens / 1_000_000) * price.input * CACHE_READ_MULTIPLIER;
+  const outputCost = (outputTokens / 1_000_000) * price.output;
+  return inputCost + cacheWriteCost + cacheReadCost + outputCost;
 }
 
 export interface LogAnthropicUsageInput {
@@ -49,18 +68,33 @@ export interface LogAnthropicUsageInput {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Tokens billed at 1.25× base input price (prompt-cache writes). */
+  cacheCreationInputTokens?: number;
+  /** Tokens billed at 0.10× base input price (prompt-cache reads). */
+  cacheReadInputTokens?: number;
   success?: boolean;
   errorMessage?: string | null;
 }
 
 export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
-  const usd = estimateAnthropicCostUsd(input.model, input.inputTokens, input.outputTokens);
+  const cacheCreate = input.cacheCreationInputTokens ?? 0;
+  const cacheRead = input.cacheReadInputTokens ?? 0;
+  const usd = estimateAnthropicCostUsd(
+    input.model,
+    input.inputTokens,
+    input.outputTokens,
+    cacheCreate,
+    cacheRead
+  );
+  // Roll cache tokens into the stored inputTokens column so the dashboard
+  // reflects total token volume (regular + cache write + cache read). The
+  // costMicrocents field already reflects the correctly-discounted USD.
   await db.insert(usageEvents).values({
     userId: input.userId,
     tripId: input.tripId ?? null,
     provider: 'anthropic',
     model: input.model,
-    inputTokens: input.inputTokens,
+    inputTokens: input.inputTokens + cacheCreate + cacheRead,
     outputTokens: input.outputTokens,
     requests: 1,
     costMicrocents: dollarsToMicrocents(usd),
