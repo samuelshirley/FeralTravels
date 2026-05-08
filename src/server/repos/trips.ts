@@ -147,6 +147,7 @@ function stopRow(r: typeof stops.$inferSelect): Stop {
     fuel_amount_l: r.fuelAmountL,
     source: (r.source as StopSource | null) ?? null,
     source_url: r.sourceUrl,
+    alternatives: r.alternatives ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };

@@ -188,6 +188,21 @@ export function tripApi(tripId: number) {
         body: {},
         ...opts,
       }),
+    /**
+     * Atomically swap a fuel/rest stop's primary fields with one of its
+     * persisted alternates so the user can swap stations without a Places
+     * round-trip. See /api/stops/:id/swap-primary.
+     */
+    swapStopPrimary: (
+      stopId: number,
+      altIndex: number,
+      opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>
+    ) =>
+      apiFetch(`/api/stops/${stopId}/swap-primary`, {
+        method: 'POST',
+        body: { alt_index: altIndex },
+        ...opts,
+      }),
     /** Parse GPS coordinates / URLs pasted by the user. See /api/coords/parse. */
     parseCoords: (input: string) =>
       apiFetch<{

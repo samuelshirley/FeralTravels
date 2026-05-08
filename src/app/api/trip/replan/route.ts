@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs } from '@/server/db/schema';
-import { replan } from '@/lib/claude';
+import { replanStream, type ReplanEvent } from '@/lib/claude';
+import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
 import {
   requireUserId,
@@ -148,113 +149,151 @@ export async function POST(req: Request) {
 
     await addChatMessage(tripId, 'user', message || '(image only)');
     userTurnSaved = true;
-    const result = await replan(message, tripId, images, userId);
 
-    // Truncation = Penny hit MAX_TOOL_USE_ITERATIONS mid-plan and exited
-    // with partial work persisted. Log it so we can watch how often this
-    // happens after the iteration bump + parallel-batching prompt change.
-    // Fire-and-forget — never let a logging error fail the response.
-    if (result.truncated) {
-      logUsageEvent({
-        userId,
-        tripId,
-        provider: 'anthropic:replan-truncated',
-        requests: 1,
-        success: true,
-        errorMessage: 'Tool-use loop hit MAX_TOOL_USE_ITERATIONS',
-      }).catch((e) => console.warn('logUsageEvent (truncation) failed:', e));
-    }
+    // Stream Penny's progress so the user sees each paragraph + tool-call
+    // status pill as it lands instead of the whole turn buffering for
+    // ~10-30s. Format is plain Server-Sent Events: each event is a single
+    // `data: <json>\n\n` frame. Final dispatch (DB writes, fuel replenish
+    // queue, etc.) runs after the model loop terminates and emits a
+    // synthetic `applied` event with the same shape the old JSON response
+    // used. See ChatPanel.sendChatMessage for the consumer.
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (e: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
+        };
+        try {
+          let final: ReplanResult | null = null;
+          for await (const ev of replanStream(message, tripId, images, userId)) {
+            // The model loop yields a terminal `done` event with the full
+            // ReplanResult — we don't forward that to the client. Instead
+            // we synthesize the post-dispatch `applied` event below.
+            if (ev.kind === 'done') {
+              final = ev.result;
+              continue;
+            }
+            send(ev satisfies ReplanEvent);
+          }
 
-    let appliedCount = 0;
-    let failedCount = 0;
-    const failedActions: Array<{ action: string; error: string }> = [];
-    const appliedActions: ValidatedAction[] = [];
+          if (!final) throw new Error('replanStream finished without a result');
 
-    // Validation failures from inside the tool-use loop (Penny couldn't
-    // produce a valid call after MAX_VALIDATION_RETRIES) get surfaced to
-    // the user the same way as repo-layer failures below.
-    for (const v of result.failedValidations) {
-      failedCount += 1;
-      failedActions.push({ action: v.tool, error: v.error });
-    }
+          if (final.truncated) {
+            logUsageEvent({
+              userId,
+              tripId,
+              provider: 'anthropic:replan-truncated',
+              requests: 1,
+              success: true,
+              errorMessage: 'Tool-use loop hit MAX_TOOL_USE_ITERATIONS',
+            }).catch((e) => console.warn('logUsageEvent (truncation) failed:', e));
+          }
 
-    // Feasibility gate (server-side belt for the prompt rule's suspenders).
-    //
-    // If extract_trip_intent was called this turn, this is a fresh plan or
-    // significant scope change — Penny was required to call
-    // check_trip_feasibility. If that didn't happen, or it returned
-    // 'over_budget', we refuse to apply any add_leg actions. Other action
-    // types (add_stop, update_route, plan_fuel_stops, etc.) flow through
-    // unaffected — the gate is specific to leg creation, since legs are
-    // what determines the day count the budget gates against.
-    //
-    // Tweaks (no extract_trip_intent in this turn) bypass the gate entirely.
-    // That preserves the "move leg 3 a day later" / "add a fuel stop" UX.
-    const feasibilityGateActive = result.extractIntentCalled;
-    const feasibilityGateBlocks =
-      feasibilityGateActive &&
-      (result.feasibilityVerdict === null ||
-        result.feasibilityVerdict === 'over_budget');
+          let appliedCount = 0;
+          let failedCount = 0;
+          const failedActions: Array<{ action: string; error: string }> = [];
+          const appliedActions: ValidatedAction[] = [];
 
-    // Dispatch every validated action. The discriminated union on
-    // `action.name` narrows `action.input` to its exact shape — no manual
-    // narrowing or coercion needed (the Zod validators already did that work
-    // inside the tool-use loop).
-    const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
-    for (const action of result.validatedActions) {
-      // Reject add_leg when the feasibility gate is blocking. We surface
-      // this as a per-action failure so the chat shows a clear error,
-      // similar to validator failures. Penny's text response (which
-      // should already explain the over-budget situation per the prompt
-      // rule) is shown to the user alongside.
-      if (feasibilityGateBlocks && action.name === 'add_leg') {
-        failedCount += 1;
-        failedActions.push({
-          action: 'add_leg',
-          error:
-            result.feasibilityVerdict === 'over_budget'
-              ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
-              : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
-        });
-        continue;
-      }
-      try {
-        await dispatchAction(action, tripId, userId, dispatchCtx);
-        appliedActions.push(action);
-        appliedCount += 1;
-      } catch (e) {
-        failedCount += 1;
-        const msg = e instanceof Error ? e.message : String(e);
-        failedActions.push({ action: action.name, error: msg });
-        console.error('Failed to apply validated action', action, e);
-      }
-    }
+          for (const v of final.failedValidations) {
+            failedCount += 1;
+            failedActions.push({ action: v.tool, error: v.error });
+          }
 
-    const fuelReplenishQueued = appliedActions.some(actionShouldTriggerTripFuelReplenish);
+          const feasibilityGateActive = final.extractIntentCalled;
+          const feasibilityGateBlocks =
+            feasibilityGateActive &&
+            (final.feasibilityVerdict === null ||
+              final.feasibilityVerdict === 'over_budget');
 
-    // Rebuild a `changes` envelope in the legacy shape so the existing
-    // frontend (ChatPanel) keeps working without a schema migration. Each
-    // entry mirrors the old `{ action, ...flat }` shape so
-    // `data.changes.changes` array probing still works on the client.
-    const changesEnvelope = {
-      changes: result.validatedActions.map(actionToLegacyChange),
-    };
+          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
+          for (const action of final.validatedActions) {
+            if (feasibilityGateBlocks && action.name === 'add_leg') {
+              failedCount += 1;
+              failedActions.push({
+                action: 'add_leg',
+                error:
+                  final.feasibilityVerdict === 'over_budget'
+                    ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
+                    : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
+              });
+              continue;
+            }
+            try {
+              await dispatchAction(action, tripId, userId, dispatchCtx);
+              appliedActions.push(action);
+              appliedCount += 1;
+            } catch (e) {
+              failedCount += 1;
+              const msg = e instanceof Error ? e.message : String(e);
+              failedActions.push({ action: action.name, error: msg });
+              console.error('Failed to apply validated action', action, e);
+            }
+          }
 
-    const assistantChangesMade =
-      appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
-    await addChatMessage(tripId, 'assistant', result.response, assistantChangesMade);
+          const fuelReplenishQueued = appliedActions.some(
+            actionShouldTriggerTripFuelReplenish
+          );
 
-    return Response.json({
-      response: result.response,
-      changes: changesEnvelope,
-      appliedCount,
-      failedCount,
-      failedActions,
-      fuelReplenishQueued,
-      // Diagnostics — surfaced for the admin log + future client UX. The
-      // client currently ignores these but they're cheap to send.
-      retryCount: result.retryCount,
-      truncated: result.truncated,
+          const changesEnvelope = {
+            changes: final.validatedActions.map(actionToLegacyChange),
+          };
+
+          const assistantChangesMade =
+            appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
+          await addChatMessage(tripId, 'assistant', final.response, assistantChangesMade);
+
+          // Terminal event. Same shape as the old JSON response so the
+          // client doesn't need two parsers.
+          send({
+            kind: 'applied',
+            response: final.response,
+            changes: changesEnvelope,
+            appliedCount,
+            failedCount,
+            failedActions,
+            fuelReplenishQueued,
+            retryCount: final.retryCount,
+            truncated: final.truncated,
+          });
+        } catch (err) {
+          console.error('replan stream failed', err);
+          // Best-effort: surface a chat bubble so the user knows the turn
+          // failed. The outer try/catch above (for input parse errors etc.)
+          // does the same — this branch covers errors that surface AFTER
+          // the user message was already saved.
+          await addChatMessage(
+            tripId,
+            'assistant',
+            'Something went wrong while updating your trip. Please try again.',
+            null
+          ).catch(() => {});
+          await logUsageEvent({
+            userId,
+            tripId,
+            provider: 'anthropic:replan',
+            requests: 1,
+            success: false,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          }).catch(() => {});
+          send({
+            kind: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        // Disable nginx/Vercel proxy buffering so events flush in real time
+        // instead of being held until the response completes.
+        'X-Accel-Buffering': 'no',
+        Connection: 'keep-alive',
+      },
     });
   } catch (err) {
     if (userTurnSaved && tripIdForLog != null) {

@@ -40,3 +40,25 @@ Either path also probably wants a real place-search tool — Penny currently has
 - Settings UI for the toggle.
 
 The reason this was deferred: it's a real feature, not a bug fix. Wanted to ship the km-only enforcement first and design the selector properly.
+
+---
+
+## Direction-of-travel + off-highway fuel filtering
+
+**Status:** Deferred. The auto-fuel planner picks the closest gas station to each knot center along the route polyline. Today that's purely a haversine ranking — it doesn't know which side of the highway the station is on, whether it's actually accessible without an exit-and-re-enter detour, or whether the user has to cross oncoming traffic to reach it.
+
+**What the user wants in the StopRow UI:** small "right side" and "off highway" check indicators next to each fuel candidate, so the dropdown can surface the candidate that's both off-highway *and* on the direction-of-travel side of the road. Alternates that fail either check still show, just unchecked, so the user can pick them on purpose if needed.
+
+**Sketch of the work:**
+- Compute the route's *bearing* at each fuel knot from the surrounding polyline points (already decoded in `src/server/fuel.ts`).
+- For each Places result, compute its bearing from the knot center. The angular delta against route bearing classifies it: roughly aligned → "right side" if the cross product is on the correct hemisphere for the country's drive-side, otherwise "wrong side". (Drive-side comes from the country code returned by reverse-geocoding the leg, or a per-trip setting.)
+- "Off highway" needs a separate signal — possibly the Places `primaryType` (`gas_station` is fine, `truck_stop` is great, anything inside `route` polygons is suspicious) plus a small distance check from the polyline (≥80 m off the centerline = likely an off-ramp station).
+- Persist these flags on each `StopAlternative` row so the swap dropdown can render them without re-querying Google.
+- Bias `findTopGasStations` ranking: prefer right-side + off-highway, but don't *exclude* others — the user might still want a wrong-side station near their actual stop point.
+
+**Decision needed before building:**
+- How to determine drive-side reliably (country reverse-geocode? per-trip setting? user profile?). Australia/UK/Japan/India are right-hand-drive; the rest of the world is left.
+- Whether "off highway" needs its own Places query (e.g. truck_stop + amenity filters) or can be derived from existing nearby-search payloads.
+- UI: paired tick-mark / cross icons inline with each station row, vs separate filter pills above the dropdown.
+
+This was deferred because the immediate pain (one fuel station per knot, no way to swap) was solved by Feature B (top-3 candidates with a swap dropdown). Adding directional bias is a refinement on the same dropdown; it doesn't unlock new behavior, just better defaults.

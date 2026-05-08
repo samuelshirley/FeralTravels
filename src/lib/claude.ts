@@ -98,6 +98,33 @@ One exception: if the user's message is clearly a greeting ("hey", "thanks", "ok
 - Never mark anything "selected" yourself — the user picks. Default new routes/stops to status="option".
 </style>
 
+<closing_questions>
+Never end a response with offers to plan things the system already automates. The following questions are BANNED in any phrasing:
+  - "Need me to plan fuel stops?"
+  - "Want me to plan fuel?"
+  - "Need me to plan overnight stops?"
+  - "Want me to plan overnight options?"
+  - "Need me to plan fuel stops or overnight for any legs?"
+
+Why: fuel stations and stretch-break rests are auto-planned server-side after every leg edit. Each driving leg ends at an overnight city by construction (the leg's end_name IS the overnight). The user does not need to opt in to either.
+
+If you genuinely need user input on a leg, ask ONE specific question grounded in concrete leg detail (e.g. "Day 3 is gravel — keep the pass or route around?"). Never offer an open menu.
+</closing_questions>
+
+<plan_summary_format>
+When you emit a multi-leg plan in a single turn (any turn that batches add_leg calls for a fresh route), your closing text response MUST be:
+
+1. ONE short opening sentence acknowledging the plan ("Plan saved." / "Your mountain adventure is set.").
+2. ONE blank line.
+3. ONE recap line per driving day in this exact shape (no bullets, no numbering, plain text, one per line):
+   Day N: <start> → <end>, ~<H>h, <terrain>, overnight <end-city>
+   Example: Day 3: Milan → Innsbruck, ~5.8h, gravel pass, overnight Innsbruck
+
+This replaces any phrasing like "no overnight waypoint stops" or "no overnight stops needed" — the leg's end_name IS the overnight, and the recap line says so explicitly. Do not say a plan has "no overnight stops" when each leg ends at a destination city.
+
+Skip this format on small tweaks (single leg edits, single stop additions, conversational replies) — only apply it to fresh batched plans.
+</plan_summary_format>
+
 <units>
 This app is metric-only. Always express distances in kilometers (km), driving times in hours/minutes, fuel volumes in liters, temperatures in Celsius. NEVER use miles, mph, gallons, Fahrenheit, or any other imperial unit in your responses, even if the user uses them.
 
@@ -206,7 +233,7 @@ Do NOT do the arithmetic yourself. The check_trip_feasibility tool runs determin
   - time_budget_days: from your parsed intent (may be null)
 
 The tool returns a verdict:
-  - "fits" → proceed with add_leg. Briefly mention totals in your response ("12 driving days + 7 park nights = 19 days, fits your 21-day budget with 2 days of slack").
+  - "fits" → proceed with add_leg. Briefly mention totals in your response AND cite the active daily-driving cap from vehicle.max_drive_hours_per_day so the user sees it was honored ("12 driving days + 7 park nights = 19 days, fits your 21-day budget with 2 days of slack — within your 6h/day cap"). If max_drive_hours_per_day is null, omit the cap clause.
   - "tight" → proceed with add_leg, but tell the user there's no buffer for weather or rest.
   - "no_budget" → proceed with add_leg. Surface the total day count so the user sees what they're committing to.
   - "over_budget" → STOP. Do NOT call add_leg. Do NOT save anything. Respond in plain prose with:
@@ -271,12 +298,48 @@ export interface ReplanResult {
     | null;
 }
 
+/**
+ * Stream events from the replan loop so the route handler can flush
+ * Penny's progress to the UI per-iteration instead of buffering the whole
+ * turn into a single JSON blob. Consumers iterate the generator, surface
+ * `text` / `tool_started` / `tool_done` events as they arrive, and read
+ * the final `ReplanResult` from the terminal `done` event.
+ *
+ * The non-streaming `replan()` below stays for callers that just want the
+ * accumulated result (and as a thin guard against drift between the two
+ * code paths).
+ */
+export type ReplanEvent =
+  | { kind: 'iteration_start'; index: number }
+  | { kind: 'text'; chunk: string }
+  | { kind: 'tool_started'; name: string; toolUseId: string }
+  | {
+      kind: 'tool_done';
+      name: string;
+      toolUseId: string;
+      ok: boolean;
+      error?: string;
+    }
+  | { kind: 'done'; result: ReplanResult };
+
 export async function replan(
   userMessage: string,
   tripId: number,
   images: InputImage[] = [],
   userId?: string
 ): Promise<ReplanResult> {
+  for await (const ev of replanStream(userMessage, tripId, images, userId)) {
+    if (ev.kind === 'done') return ev.result;
+  }
+  throw new Error('replanStream finished without yielding done');
+}
+
+export async function* replanStream(
+  userMessage: string,
+  tripId: number,
+  images: InputImage[] = [],
+  userId?: string
+): AsyncGenerator<ReplanEvent, void, void> {
   if (!userId) throw new Error('userId is required for Penny replan');
   const context = await buildPennyContext(tripId, userId);
   if (!context) throw new Error('Trip not found');
@@ -329,6 +392,7 @@ export async function replan(
   let feasibilityVerdict: ReplanResult['feasibilityVerdict'] = null;
 
   for (let iteration = 0; iteration < MAX_TOOL_USE_ITERATIONS; iteration++) {
+    yield { kind: 'iteration_start', index: iteration };
     let response: Anthropic.Message;
     try {
       response = await client.messages.create({
@@ -360,10 +424,14 @@ export async function replan(
     totalCacheCreationTokens += response.usage?.cache_creation_input_tokens ?? 0;
     totalCacheReadTokens += response.usage?.cache_read_input_tokens ?? 0;
 
-    // Collect text blocks from this iteration.
+    // Collect text blocks from this iteration. We yield them live so the
+    // SSE consumer can append paragraphs to the assistant message bubble
+    // as they arrive — the user sees Penny "thinking out loud" instead of
+    // waiting for the full turn to land.
     for (const block of response.content) {
       if (block.type === 'text' && block.text.trim().length > 0) {
         textChunks.push(block.text);
+        yield { kind: 'text', chunk: block.text };
       }
     }
 
@@ -386,7 +454,19 @@ export async function replan(
 
     for (const tu of toolUses) {
       if (LOOKUP_TOOL_NAMES.has(tu.name)) {
+        yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
         const result = await executeLookupTool(tu, context);
+        yield {
+          kind: 'tool_done',
+          name: tu.name,
+          toolUseId: tu.id,
+          ok: !result.is_error,
+          error: result.is_error
+            ? typeof result.content === 'string'
+              ? result.content.slice(0, 200)
+              : 'Unknown error'
+            : undefined,
+        };
         // Workflow tracking — must happen here in the loop because each
         // iteration creates new tool_results, and we need cumulative state.
         // We track on success only; a failed extract_trip_intent doesn't
@@ -415,6 +495,14 @@ export async function replan(
       }
 
       if (!ACTION_TOOL_NAMES.has(tu.name)) {
+        yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
+        yield {
+          kind: 'tool_done',
+          name: tu.name,
+          toolUseId: tu.id,
+          ok: false,
+          error: `Unknown tool: ${tu.name}.`,
+        };
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tu.id,
@@ -425,6 +513,7 @@ export async function replan(
         continue;
       }
 
+      yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
       const validatorFactory = VALIDATORS[tu.name];
       const schema = validatorFactory(context);
       const parsed = schema.safeParse(tu.input);
@@ -439,6 +528,12 @@ export async function replan(
           is_error: false,
           content: 'Validated and queued. Do not re-emit this call.',
         });
+        yield {
+          kind: 'tool_done',
+          name: tu.name,
+          toolUseId: tu.id,
+          ok: true,
+        };
       } else {
         hadValidationFailure = true;
         const feedback = zodErrorToFeedback(parsed.error);
@@ -448,6 +543,13 @@ export async function replan(
           is_error: true,
           content: `Validation error: ${feedback}. Emit a corrected call addressing this specific issue.`,
         });
+        yield {
+          kind: 'tool_done',
+          name: tu.name,
+          toolUseId: tu.id,
+          ok: false,
+          error: feedback.slice(0, 200),
+        };
       }
     }
 
@@ -538,14 +640,17 @@ export async function replan(
     success: true,
   }).catch((e) => console.warn('logAnthropicUsage failed:', e));
 
-  return {
-    response: textChunks.join('\n\n').trim(),
-    validatedActions,
-    retryCount,
-    failedValidations,
-    truncated,
-    extractIntentCalled,
-    feasibilityVerdict,
+  yield {
+    kind: 'done',
+    result: {
+      response: textChunks.join('\n\n').trim(),
+      validatedActions,
+      retryCount,
+      failedValidations,
+      truncated,
+      extractIntentCalled,
+      feasibilityVerdict,
+    },
   };
 }
 

@@ -88,6 +88,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --tp-accent-warm: #C97B63;
             --tp-accent-warm-muted: rgba(201, 123, 99, 0.14);
             --tp-gold: #B8956A;
+            --tp-accent-violet: #6B5B9A;
+            --tp-accent-violet-muted: rgba(107, 91, 154, 0.14);
             --tp-overlay: rgba(51, 51, 51, 0.4);
             --tp-shadow-sm: 0 1px 2px rgba(51, 51, 51, 0.06);
             --tp-shadow-md: 0 4px 12px rgba(51, 51, 51, 0.08);
@@ -178,6 +180,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           @keyframes tp-dot-pulse {
             0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
             40% { opacity: 1; transform: translateY(-2px); }
+          }
+          @keyframes tp-cursor-blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
           }
           .loading-dot {
             display: inline-block;

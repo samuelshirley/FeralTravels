@@ -117,7 +117,7 @@ export const tool: Anthropic.Tool = {
             nights: {
               type: 'number',
               description:
-                'Nights the user wants to stay (integer, 0-30). 0 means "drive through, no overnight".',
+                'Nights the user wants to stay (integer, 0-30). Use 1 by default for any waypoint the user named as a stopping point along the route — naming a city ("then to Innsbruck") implies an overnight there. Use 0 ONLY when the user explicitly said something like "drive through" or "don\'t stop" for that waypoint. Use 2+ when the user gave a duration ("two nights in Moab", "a long weekend in Asheville").',
             },
             purpose: {
               type: 'string',

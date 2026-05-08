@@ -26,6 +26,15 @@ interface AttachedImage {
   name: string;
 }
 
+interface InFlightTool {
+  /** Per-tool-call id from the model so we can update the same pill on tool_done. */
+  toolUseId: string;
+  /** Human label, e.g. "Looking up routes". */
+  label: string;
+  /** Lifecycle: 'running' shows spinner, 'ok'/'error' fades the pill. */
+  status: 'running' | 'ok' | 'error';
+}
+
 interface UIMessage extends ChatMessage {
   imageDataUrls?: string[];
   // Populated when Penny proposed changes but the server couldn't apply them
@@ -37,6 +46,41 @@ interface UIMessage extends ChatMessage {
   // surface a warning + 'Continue planning' button on the bubble. UI-only;
   // not persisted, so historical messages from a page reload never show it.
   truncated?: boolean;
+  // Live status pills while Penny is streaming. Set on the in-progress
+  // assistant message bubble; cleared once the stream's `applied` event
+  // arrives. Persisted messages from page reload never have these.
+  inFlightTools?: InFlightTool[];
+  /** True while the SSE stream is still appending paragraphs. */
+  streaming?: boolean;
+}
+
+/**
+ * Map Penny's internal tool names → the short human label we show as a
+ * status pill on the assistant bubble while the tool runs. Anything we
+ * forget falls back to the verbatim tool name (visibly ugly, which is
+ * the point — it surfaces missing labels for follow-up tweaks).
+ */
+const PENNY_TOOL_LABELS: Record<string, string> = {
+  extract_trip_intent: 'Reading your request',
+  get_route: 'Looking up routes',
+  check_trip_feasibility: 'Checking feasibility',
+  update_vehicle: 'Saving preferences',
+  add_leg: 'Saving plan',
+  update_leg: 'Saving plan',
+  delete_leg: 'Saving plan',
+  add_stop: 'Saving stops',
+  update_stop: 'Saving stops',
+  delete_stop: 'Saving stops',
+  plan_fuel_stops: 'Planning fuel',
+  add_route: 'Saving routes',
+  update_route: 'Saving routes',
+  delete_route: 'Saving routes',
+  add_task: 'Saving tasks',
+  update_task: 'Saving tasks',
+};
+
+function pennyToolLabel(name: string): string {
+  return PENNY_TOOL_LABELS[name] ?? name;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -181,14 +225,24 @@ export default function ChatPanel({
   // is the free-text composer path (pulls from input/images state); the
   // onboarding handoff calls `sendChatMessage` directly with the first
   // real user message right after the onboarding form finishes.
+  //
+  // Streams the response as Server-Sent Events so the user sees Penny's
+  // paragraphs + "Looking up routes…" / "Checking feasibility…" status
+  // pills land live instead of waiting for the entire turn to buffer.
+  // The terminal `applied` event carries the same shape as the old JSON
+  // response — that's where we trigger onTripUpdated and the optional
+  // fuel replenish.
   const sendChatMessage = async (
     trimmed: string,
     attachedImages: AttachedImage[] = []
   ): Promise<void> => {
     if ((!trimmed && attachedImages.length === 0) || loading) return;
 
+    const userMsgId = Date.now();
+    const assistantMsgId = userMsgId + 1;
+
     const tempUserMsg: UIMessage = {
-      id: Date.now(),
+      id: userMsgId,
       trip_id: tripId,
       role: 'user',
       content: trimmed,
@@ -197,90 +251,252 @@ export default function ChatPanel({
       created_at: new Date().toISOString(),
       imageDataUrls: attachedImages.map((i) => i.dataUrl),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+    const pendingAssistantMsg: UIMessage = {
+      id: assistantMsgId,
+      trip_id: tripId,
+      role: 'assistant',
+      content: '',
+      kind: 'ai',
+      changes_made: null,
+      created_at: new Date().toISOString(),
+      streaming: true,
+      inFlightTools: [],
+    };
+    setMessages((prev) => [...prev, tempUserMsg, pendingAssistantMsg]);
     setLoading(true);
     onActivity?.('thinking');
 
-    try {
-      const data: any = await tripApi(tripId).replan(
-        trimmed,
-        attachedImages.map((i) => ({ dataUrl: i.dataUrl, mediaType: i.mediaType }))
+    /** Append a chunk of streamed text to the in-progress assistant bubble. */
+    const appendText = (chunk: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                // Insert a blank line between paragraphs so the iteration
+                // boundaries read as natural breaks instead of running on.
+                content: m.content ? `${m.content}\n\n${chunk}` : chunk,
+              }
+            : m
+        )
       );
+    };
 
-      if (data?.error) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            trip_id: tripId,
-            role: 'assistant',
-            content: `Error: ${data.error}`,
-            kind: 'ai',
-            changes_made: null,
-            created_at: new Date().toISOString(),
-          },
-        ]);
+    /** Push or update a pill in inFlightTools. */
+    const upsertTool = (toolUseId: string, patch: Partial<InFlightTool>) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantMsgId) return m;
+          const existing = m.inFlightTools ?? [];
+          const idx = existing.findIndex((t) => t.toolUseId === toolUseId);
+          if (idx === -1) {
+            return {
+              ...m,
+              inFlightTools: [
+                ...existing,
+                {
+                  toolUseId,
+                  label: patch.label ?? '',
+                  status: patch.status ?? 'running',
+                },
+              ],
+            };
+          }
+          const next = existing.slice();
+          next[idx] = { ...next[idx], ...patch };
+          return { ...m, inFlightTools: next };
+        })
+      );
+    };
+
+    /** Produce a stable error bubble when the stream collapses. */
+    const failAssistant = (msg: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                content: m.content || msg,
+                streaming: false,
+                inFlightTools: undefined,
+                applyError: m.content ? msg : null,
+              }
+            : m
+        )
+      );
+    };
+
+    type AppliedEvent = {
+      response: string;
+      changes: { changes: unknown[] };
+      appliedCount: number;
+      failedCount: number;
+      failedActions: Array<{ action: string; error: string }>;
+      fuelReplenishQueued: boolean;
+      truncated: boolean;
+    };
+    let appliedEvent: AppliedEvent | null = null;
+
+    try {
+      const res = await fetch('/api/trip/replan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tripId,
+          message: trimmed,
+          images: attachedImages.map((i) => ({
+            dataUrl: i.dataUrl,
+            mediaType: i.mediaType,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        // Pre-stream errors (rate limit, validation, missing key) come back
+        // as plain JSON like before.
+        const data = await res.json().catch(() => ({}));
+        const errMsg = (data as { error?: string }).error ?? `Request failed (${res.status})`;
+        failAssistant(`Error: ${errMsg}`);
         onActivity?.('error');
-      } else {
-        const appliedCount: number = typeof data?.appliedCount === 'number' ? data.appliedCount : 0;
-        const failedCount: number = typeof data?.failedCount === 'number' ? data.failedCount : 0;
-        const hadProposedChanges = Array.isArray(data?.changes?.changes)
-          ? data.changes.changes.length > 0
-          : false;
-        const fuelReplenishQueued: boolean = data?.fuelReplenishQueued === true;
-        const truncated: boolean = data?.truncated === true;
-        let applyError: string | null = null;
-        if (hadProposedChanges && appliedCount === 0) {
-          applyError =
-            'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
-        } else if (failedCount > 0 && Array.isArray(data?.failedActions)) {
-          applyError = `Some changes failed: ${data.failedActions
-            .map((f: any) => f.action)
-            .join(', ')}`;
-        }
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            trip_id: tripId,
-            role: 'assistant',
-            content: data.response,
-            kind: 'ai',
-            // Only keep changes_made when something was actually applied, so
-            // the "Changes applied to trip" pill is truthful.
-            changes_made: appliedCount > 0 && data.changes ? JSON.stringify(data.changes) : null,
-            created_at: new Date().toISOString(),
-            applyError,
-            truncated,
-          },
-        ]);
-        if (appliedCount > 0) {
-          onTripUpdated();
-          if (fuelReplenishQueued) {
-            onActivity?.('fuel-planning');
+        return;
+      }
+      if (!res.body) {
+        failAssistant('Stream not supported by this browser.');
+        onActivity?.('error');
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      // SSE frame parsing: events are separated by a blank line. Each event
+      // we receive is `data: <json>\n\n` (we don't use multi-line data:
+      // continuations). Anything else (`event:`, `id:`, comments) is
+      // ignored — we only care about data frames.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          for (const line of frame.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const json = line.slice(6);
+            let ev: { kind: string; [k: string]: unknown };
             try {
-              await tripApi(tripId).replenishFuelStops();
-            } catch (e) {
-              console.warn('replenishFuelStops failed', e);
+              ev = JSON.parse(json);
+            } catch {
+              continue;
             }
-            onTripUpdated();
+            switch (ev.kind) {
+              case 'iteration_start':
+                // No UI change — the next text/tool event drives the bubble.
+                break;
+              case 'text': {
+                const chunk = typeof ev.chunk === 'string' ? ev.chunk : '';
+                if (chunk) appendText(chunk);
+                break;
+              }
+              case 'tool_started': {
+                const name = typeof ev.name === 'string' ? ev.name : 'tool';
+                const id = typeof ev.toolUseId === 'string' ? ev.toolUseId : `${Date.now()}-${Math.random()}`;
+                upsertTool(id, { label: pennyToolLabel(name), status: 'running' });
+                break;
+              }
+              case 'tool_done': {
+                const id = typeof ev.toolUseId === 'string' ? ev.toolUseId : '';
+                if (!id) break;
+                upsertTool(id, { status: ev.ok ? 'ok' : 'error' });
+                break;
+              }
+              case 'applied': {
+                appliedEvent = ev as unknown as AppliedEvent;
+                break;
+              }
+              case 'error': {
+                const msg =
+                  typeof ev.message === 'string'
+                    ? `Error: ${ev.message}`
+                    : 'Something went wrong while updating your trip.';
+                failAssistant(msg);
+                break;
+              }
+            }
           }
         }
-        onActivity?.(applyError ? 'error' : 'response');
       }
+
+      if (!appliedEvent) {
+        // Stream ended without a terminal `applied` event — treat as failure
+        // but preserve whatever partial paragraphs already landed.
+        failAssistant(
+          'Connection dropped before Penny finished. Your partial response is above; please retry.'
+        );
+        onActivity?.('error');
+        return;
+      }
+
+      const {
+        response: finalResponse,
+        changes,
+        appliedCount,
+        failedCount,
+        failedActions,
+        fuelReplenishQueued,
+        truncated,
+      } = appliedEvent;
+      const hadProposedChanges = Array.isArray(changes?.changes)
+        ? changes.changes.length > 0
+        : false;
+      let applyError: string | null = null;
+      if (hadProposedChanges && appliedCount === 0) {
+        applyError =
+          'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
+      } else if (failedCount > 0 && Array.isArray(failedActions)) {
+        applyError = `Some changes failed: ${failedActions.map((f) => f.action).join(', ')}`;
+      }
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                // Authoritative final text from the server (the streamed
+                // chunks were the same content joined with double-newlines —
+                // this overwrite keeps us consistent with what's persisted
+                // server-side via addChatMessage).
+                content: finalResponse || m.content,
+                changes_made:
+                  appliedCount > 0 && changes ? JSON.stringify(changes) : null,
+                applyError,
+                truncated,
+                streaming: false,
+                inFlightTools: undefined,
+              }
+            : m
+        )
+      );
+
+      if (appliedCount > 0) {
+        onTripUpdated();
+        if (fuelReplenishQueued) {
+          onActivity?.('fuel-planning');
+          try {
+            await tripApi(tripId).replenishFuelStops();
+          } catch (e) {
+            console.warn('replenishFuelStops failed', e);
+          }
+          onTripUpdated();
+        }
+      }
+      onActivity?.(applyError ? 'error' : 'response');
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          trip_id: tripId,
-          role: 'assistant',
-          content: 'Something went wrong. Please try again.',
-          kind: 'ai',
-          changes_made: null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      console.warn('replan stream errored', err);
+      failAssistant('Something went wrong. Please try again.');
       onActivity?.('error');
     } finally {
       setLoading(false);
@@ -515,7 +731,77 @@ export default function ChatPanel({
                 ))}
               </div>
             )}
+            {msg.inFlightTools && msg.inFlightTools.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 6,
+                  marginBottom: msg.content ? 8 : 0,
+                }}
+              >
+                {msg.inFlightTools.map((tool) => {
+                  const palette =
+                    tool.status === 'error'
+                      ? {
+                          bg: 'var(--tp-danger-muted)',
+                          fg: 'var(--tp-danger)',
+                          border: 'rgba(198, 93, 74, 0.35)',
+                        }
+                      : tool.status === 'ok'
+                        ? {
+                            bg: 'var(--tp-success-muted)',
+                            fg: 'var(--tp-success)',
+                            border: 'rgba(74, 139, 122, 0.28)',
+                          }
+                        : {
+                            bg: 'var(--tp-primary-muted)',
+                            fg: 'var(--tp-primary)',
+                            border: 'rgba(78, 122, 176, 0.28)',
+                          };
+                  const glyph =
+                    tool.status === 'ok' ? '✓' : tool.status === 'error' ? '!' : '…';
+                  return (
+                    <span
+                      key={tool.toolUseId}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '3px 8px',
+                        background: palette.bg,
+                        border: `1px solid ${palette.border}`,
+                        color: palette.fg,
+                        borderRadius: 999,
+                        fontSize: 11,
+                        lineHeight: 1.2,
+                        opacity: tool.status === 'running' ? 1 : 0.85,
+                      }}
+                    >
+                      <span aria-hidden style={{ fontWeight: 700 }}>
+                        {glyph}
+                      </span>
+                      {tool.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
             {msg.content}
+            {msg.streaming && (
+              <span
+                aria-hidden
+                style={{
+                  display: 'inline-block',
+                  marginLeft: 2,
+                  width: 6,
+                  height: 14,
+                  background: 'var(--tp-muted)',
+                  verticalAlign: '-2px',
+                  animation: 'tp-cursor-blink 1s steps(2, start) infinite',
+                }}
+              />
+            )}
             {msg.changes_made && !msg.applyError && (
               <div
                 style={{

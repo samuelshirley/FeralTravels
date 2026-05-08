@@ -180,6 +180,14 @@ export type StopSource =
   | 'manual';
 export type FuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
 
+export interface StopAlternative {
+  name: string;
+  lat: number;
+  lng: number;
+  place_id: string | null;
+  distance_km: number;
+}
+
 export interface Stop {
   id: number;
   leg_id: number;
@@ -195,6 +203,9 @@ export interface Stop {
   fuel_amount_l: number | null;
   source: StopSource | null;
   source_url: string | null;
+  // Up to 2 alternate gas-station / rest-stop candidates persisted by the
+  // auto-fuel planner. Null on user-authored stops, water/food types, etc.
+  alternatives: StopAlternative[] | null;
   created_at: string;
   updated_at: string;
 }

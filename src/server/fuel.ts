@@ -268,7 +268,12 @@ export async function planFuelStopsForLeg(
   // diesel/petrol was a no-op (most stations carry both). The local var
   // stays so future fuel-type bias work has an obvious place to land.
   const fuel: null = null;
-  type PendingFuel = { kind: 'fuel'; distance_km: number; station: GasStation };
+  type PendingFuel = {
+    kind: 'fuel';
+    distance_km: number;
+    station: GasStationRanked;
+    alternates: GasStationRanked[];
+  };
   type PendingRest = {
     kind: 'rest';
     distance_km: number;
@@ -286,9 +291,9 @@ export async function planFuelStopsForLeg(
   const pending: Array<PendingFuel | PendingRest> = [];
   for (const knot of mergedKnots) {
     if (knot.needFuel) {
-      const station = await findBestGasStation(knot.point, fuel, placesKey);
+      const result = await findTopGasStations(knot.point, fuel, placesKey);
       placesEssentialsCalls += 1;
-      if (station === PLACES_API_ERROR) {
+      if (result === PLACES_API_ERROR) {
         await setFuelStatus(legId, 'failed');
         const reason =
           'Places API call failed — enable "Places API (New)" in Google Cloud Console, ' +
@@ -308,8 +313,13 @@ export async function planFuelStopsForLeg(
         });
         return { legId, status: 'failed', reason };
       }
-      if (station) {
-        pending.push({ kind: 'fuel', distance_km: knot.distance_km, station });
+      if (result) {
+        pending.push({
+          kind: 'fuel',
+          distance_km: knot.distance_km,
+          station: result.primary,
+          alternates: result.alternates,
+        });
       }
     } else if (knot.needStretch) {
       const lookup = await nearestStretchBreakPlace(knot.point, placesKey);
@@ -337,11 +347,60 @@ export async function planFuelStopsForLeg(
 
   // 5. Replace previous auto fuel + planner stretch stops. Transactional delete+insert
   //    so the UI never sees a half-applied plan.
+  //
+  //    Bug 2b dedupe: a google_places stop the user previously promoted to
+  //    'selected' is NOT deleted by autoPlannerGooglePlacesOptionSql (it
+  //    only matches status='option'). Without the skip below, the next
+  //    replan would insert a duplicate option for the same Google station
+  //    and the user would see two "Total Petrol Station ~228 km" rows at
+  //    the same coordinates. We compare by place_id (extracted from
+  //    sourceUrl) first, falling back to a tight haversine threshold.
   await db.transaction(async (tx) => {
+    const existingSelected = await tx
+      .select({
+        sourceUrl: stops.sourceUrl,
+        lat: stops.lat,
+        lng: stops.lng,
+        stopType: stops.stopType,
+      })
+      .from(stops)
+      .where(
+        and(
+          eq(stops.legId, legId),
+          eq(stops.source, 'google_places'),
+          eq(stops.status, 'selected')
+        )
+      );
+
     await tx.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
 
+    let inserted = 0;
     for (let i = 0; i < pending.length; i++) {
       const row = pending[i];
+      if (
+        row.kind === 'fuel' &&
+        matchesExistingSelected(
+          'fuel',
+          row.station.place_id,
+          row.station.lat,
+          row.station.lng,
+          existingSelected
+        )
+      ) {
+        continue;
+      }
+      if (
+        row.kind === 'rest' &&
+        matchesExistingSelected(
+          'rest',
+          row.place.placeId ?? null,
+          row.place.lat,
+          row.place.lng,
+          existingSelected
+        )
+      ) {
+        continue;
+      }
       if (row.kind === 'fuel') {
         await tx.insert(stops).values({
           legId,
@@ -358,6 +417,16 @@ export async function planFuelStopsForLeg(
             ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
             : null,
           notes: `Auto-suggested refuel ≈${Math.round(row.distance_km)} km into the leg.`,
+          alternatives:
+            row.alternates.length > 0
+              ? row.alternates.map((a) => ({
+                  name: a.name,
+                  lat: a.lat,
+                  lng: a.lng,
+                  place_id: a.place_id,
+                  distance_km: a.distance_km,
+                }))
+              : null,
         });
       } else {
         await tx.insert(stops).values({
@@ -379,11 +448,65 @@ export async function planFuelStopsForLeg(
           notes: `${AUTO_STRETCH_BREAK_NOTE_PREFIX} (targets ≤${maxDailyLabel} h driving/day, ${Math.round(SEGMENT_TIME_BUFFER * 100)}% pessimism) ≈${Math.round(row.distance_km)} km along this leg.`,
         });
       }
+      inserted += 1;
     }
+    void inserted; // exposed only for the return below
   });
 
   await setFuelStatus(legId, 'ready');
   return { legId, status: 'ready', stopsCreated: pending.length };
+}
+
+/**
+ * Pull a place_id out of a google.com/maps `q=place_id:XYZ` URL we wrote
+ * ourselves. Returns null if the URL is missing or doesn't match the shape.
+ */
+function extractPlaceIdFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/q=place_id:([^&]+)/);
+  return m ? m[1] : null;
+}
+
+/**
+ * True if a candidate matches an existing stop on the same leg by place_id
+ * (preferred) or by tight haversine fallback when place_id isn't available.
+ * Only same stopType rows are considered — a fuel station shouldn't dedupe
+ * against a rest stop that happens to share coords.
+ */
+function matchesExistingSelected(
+  candidateType: 'fuel' | 'rest',
+  candidatePlaceId: string | null,
+  candidateLat: number,
+  candidateLng: number,
+  existing: Array<{
+    sourceUrl: string | null;
+    lat: number | null;
+    lng: number | null;
+    stopType: string;
+  }>
+): boolean {
+  for (const e of existing) {
+    if (e.stopType !== candidateType) continue;
+    const existingPlaceId = extractPlaceIdFromUrl(e.sourceUrl);
+    if (
+      candidatePlaceId &&
+      existingPlaceId &&
+      candidatePlaceId === existingPlaceId
+    ) {
+      return true;
+    }
+    // Coordinate fallback: ~80 m. Tight enough that two genuinely different
+    // stations don't collide, loose enough to absorb minor place-data
+    // shifts between Places revisions.
+    if (e.lat != null && e.lng != null) {
+      const km = haversineKm(
+        { lat: candidateLat, lng: candidateLng },
+        { lat: e.lat, lng: e.lng }
+      );
+      if (km < 0.08) return true;
+    }
+  }
+  return false;
 }
 
 function autoPlannerGooglePlacesOptionSql(legId: number) {
@@ -627,7 +750,6 @@ interface GasStation {
 
 /** Sentinel returned when the Places API itself errored (vs just no results). */
 const PLACES_API_ERROR = Symbol('PLACES_API_ERROR');
-type PlacesResult = GasStation | null | typeof PLACES_API_ERROR;
 
 /** Unwrap a PlacesResult to a string for the failure reason. */
 function placesErrorReason(httpStatus: number, body: string): string {
@@ -643,13 +765,32 @@ function placesErrorReason(httpStatus: number, body: string): string {
   return `Places API returned HTTP ${httpStatus}: ${body.slice(0, 120)}`;
 }
 
-async function findBestGasStation(
+/** Up to 3 ranked candidates for one knot: the primary + up to 2 alternates. */
+interface GasStationRanked extends GasStation {
+  /** Haversine km from the knot center — proxy for off-route detour. */
+  distance_km: number;
+}
+
+interface GasStationCandidates {
+  primary: GasStationRanked;
+  alternates: GasStationRanked[]; // 0..2 entries
+}
+
+type GasStationCandidatesResult =
+  | GasStationCandidates
+  | null
+  | typeof PLACES_API_ERROR;
+
+/** Maximum total candidates returned per knot (1 primary + 2 alternates). */
+const FUEL_CANDIDATES_PER_KNOT = 3;
+
+async function findTopGasStations(
   center: LatLng,
   // Vehicle-level fuel type was dropped in 0007; signature kept as `null`
   // so the future fuel-type bias work has an obvious place to plug back in.
   fuelType: null,
   apiKey: string
-): Promise<PlacesResult> {
+): Promise<GasStationCandidatesResult> {
   try {
     const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
       method: 'POST',
@@ -662,7 +803,11 @@ async function findBestGasStation(
       },
       body: JSON.stringify({
         includedTypes: ['gas_station'],
-        maxResultCount: 5,
+        // Bumped from 5 to 8 to give the proximity ranker headroom: we want
+        // 3 distinct candidates after de-duplicating same-name same-coord
+        // hits, and clusters around major junctions sometimes return the
+        // same station twice with slightly different ids.
+        maxResultCount: 8,
         locationRestriction: {
           circle: {
             center: { latitude: center.lat, longitude: center.lng },
@@ -705,15 +850,34 @@ async function findBestGasStation(
           lat: loc.latitude,
           lng: loc.longitude,
           place_id: p.id ?? null,
-          distance: haversineKm(center, { lat: loc.latitude, lng: loc.longitude }),
+          distance_km: haversineKm(center, { lat: loc.latitude, lng: loc.longitude }),
         };
       })
       .filter((x): x is NonNullable<typeof x> => !!x)
-      .sort((a, b) => a.distance - b.distance);
+      .sort((a, b) => a.distance_km - b.distance_km);
 
-    const best = ranked[0];
-    if (!best) return null;
-    return { name: best.name, lat: best.lat, lng: best.lng, place_id: best.place_id };
+    // Deduplicate near-identical hits (same place_id, or same name within
+    // ~30 m). Google occasionally returns the same physical pump under
+    // multiple ids; without this we'd offer "Total / Total / Total" as 3
+    // alternates that are actually one station.
+    const dedupedRanked: typeof ranked = [];
+    for (const cand of ranked) {
+      const dup = dedupedRanked.some(
+        (kept) =>
+          (cand.place_id != null && kept.place_id === cand.place_id) ||
+          (kept.name.toLowerCase() === cand.name.toLowerCase() &&
+            haversineKm(
+              { lat: kept.lat, lng: kept.lng },
+              { lat: cand.lat, lng: cand.lng }
+            ) < 0.03)
+      );
+      if (!dup) dedupedRanked.push(cand);
+      if (dedupedRanked.length >= FUEL_CANDIDATES_PER_KNOT) break;
+    }
+
+    const [primary, ...alternates] = dedupedRanked;
+    if (!primary) return null;
+    return { primary, alternates };
   } catch (err) {
     console.warn('Places nearby search threw:', err);
     return null;

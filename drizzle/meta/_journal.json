@@ -64,6 +64,13 @@
       "when": 1778544000000,
       "tag": "0008_email_otp_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778630400000,
+      "tag": "0009_stops_alternatives",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
@@ -394,6 +395,13 @@ export const stops = pgTable(
     // Provenance
     source: text('source'), // 'penny'|'user'|'google_places'|'osm' (legacy 'ioverlander'|'park4night' rows were migrated to 'manual' in 0003)
     sourceUrl: text('source_url'),
+    // Up to 2 alternate candidates for this stop, persisted by the auto-fuel
+    // planner so the UI can offer a swap dropdown without re-querying Google
+    // Places. Shape: [{ name, lat, lng, place_id, distance_km }]. Null when
+    // there are no alternates (user-authored stops, water/food types, etc.).
+    // Used by /api/stops/:id/swap-primary to atomically swap a stop's
+    // primary fields with one of its alternates.
+    alternatives: jsonb('alternatives').$type<StopAlternative[]>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -401,6 +409,15 @@ export const stops = pgTable(
     legIdx: index('stops_leg_idx').on(t.legId),
   })
 );
+
+/** One alternate gas station / rest stop candidate for a `stops` row. */
+export interface StopAlternative {
+  name: string;
+  lat: number;
+  lng: number;
+  place_id: string | null;
+  distance_km: number;
+}
 
 export const tasks = pgTable(
   'tasks',

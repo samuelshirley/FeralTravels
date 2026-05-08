@@ -63,6 +63,48 @@ type NearbyRow = {
   within5Km: boolean;
 };
 
+/**
+ * Quick haversine. We don't import from `@/lib/polyline` because that
+ * module also pulls in the polyline decoder which we don't need on the
+ * client for the parks list.
+ */
+function haversineKmLocal(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Pick the top dog park + top park to surface as the leg's curated
+ * overnight suggestion. We prefer a pair within `maxKm` of each other so
+ * the same campsite serves both walks. If no pair qualifies, fall back to
+ * the closest entry in each list independently.
+ */
+function pickTopPair(
+  dogs: NearbyRow[],
+  parks: NearbyRow[],
+  maxKm: number
+): { dog: NearbyRow | null; park: NearbyRow | null } {
+  if (dogs.length === 0 && parks.length === 0) return { dog: null, park: null };
+  if (dogs.length === 0) return { dog: null, park: parks[0] ?? null };
+  if (parks.length === 0) return { dog: dogs[0] ?? null, park: null };
+  for (const d of dogs) {
+    for (const p of parks) {
+      if (haversineKmLocal({ lat: d.lat, lng: d.lng }, { lat: p.lat, lng: p.lng }) <= maxKm) {
+        return { dog: d, park: p };
+      }
+    }
+  }
+  return { dog: dogs[0], park: parks[0] };
+}
+
 export default function StopsSection({
   tripId,
   legId,
@@ -236,6 +278,52 @@ export default function StopsSection({
   }
 
   /**
+   * Promote a nearby park / dog park into the leg's overnight slot. We
+   * dismiss any existing google_places-sourced overnight options first so
+   * the leg only has one active overnight at a time, then insert the new
+   * row as stop_type='overnight', status='selected'. User-authored
+   * overnights (source != 'google_places') are NOT touched — those came
+   * from the user directly and they can manage them by hand.
+   */
+  async function handleSetOvernight(row: NearbyRow) {
+    const key =
+      row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+    if (addingParkKey) return;
+    setAddingParkKey(key);
+    try {
+      const existingOvernights = stops.filter(
+        (s) =>
+          s.stop_type === 'overnight' &&
+          s.status !== 'dismissed' &&
+          s.source === 'google_places'
+      );
+      for (const existing of existingOvernights) {
+        await api
+          .updateStop(existing.id, { status: 'dismissed' }, { skipGlobalErrorReport: true })
+          .catch(() => {
+            /* stale id from auto-replan — fine, we'll reload below */
+          });
+      }
+      await api.addStop(legId, {
+        stop_type: 'overnight',
+        name: row.name,
+        lat: row.lat,
+        lng: row.lng,
+        status: 'selected',
+        source: 'google_places',
+        source_url: row.googleMapsUri ?? null,
+      });
+      await reload();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to add stop';
+      setNearbyError(msg);
+    } finally {
+      setAddingParkKey(null);
+    }
+  }
+
+  /**
    * Stop IDs can disappear out from under the UI when an auto fuel replan
    * runs and rewrites the auto-suggested rows. The user sees the old row in
    * the list, clicks it, and the server returns 404 because that ID is gone.
@@ -277,6 +365,23 @@ export default function StopsSection({
     if (!confirm('Delete this stop?')) return;
     try {
       await api.deleteStop(id, { skipGlobalErrorReport: true });
+      await reload();
+    } catch (err) {
+      await reload();
+      if (!(err instanceof ApiError) || err.status !== 404) throw err;
+    }
+  }
+
+  /**
+   * Swap a fuel/rest stop's primary fields with one of its persisted
+   * alternates so the user can flip between Google Places candidates
+   * without us re-querying Google. Server-side dispatch is in
+   * /api/stops/:id/swap-primary; same 404-as-stale-id treatment as the
+   * other mutation handlers above.
+   */
+  async function handleSwapAlternate(id: number, altIndex: number) {
+    try {
+      await api.swapStopPrimary(id, altIndex, { skipGlobalErrorReport: true });
       await reload();
     } catch (err) {
       await reload();
@@ -329,6 +434,7 @@ export default function StopsSection({
             onSelect={handleSelect}
             onDismiss={handleDismiss}
             onDelete={handleDelete}
+            onSwapAlternate={handleSwapAlternate}
             readonly={readonly}
           />
         ))}
@@ -388,31 +494,96 @@ export default function StopsSection({
             nearbyParksGreen.length === 0 ? (
             <div style={{ fontSize: 11, color: 'var(--tp-danger)', lineHeight: 1.45 }}>{nearbyError}</div>
           ) : (
-            <>
-              <ParkSuggestionGroup
-                label="DOG PARKS"
-                rows={nearbyDog}
-                readonly={readonly}
-                accentHue="rgba(124,232,163,0.85)"
-                onAdd={handleAddNearbyPlace}
-                addingKey={addingParkKey}
-                mapsHrefForRow={(row) =>
-                  row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
-                }
-              />
-              <ParkSuggestionGroup
-                label="PARKS"
-                rows={nearbyParksGreen}
-                readonly={readonly}
-                accentHue="rgba(181,124,232,0.85)"
-                onAdd={handleAddNearbyPlace}
-                addingKey={addingParkKey}
-                mapsHrefForRow={(row) => row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)}
-              />
-              {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
-                <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>{nearbyError}</div>
-              )}
-            </>
+            (() => {
+              // Curate to a single top dog park + a single top park that are
+              // ideally within ~5 km of each other (so the same camp serves
+              // both walks). Anything past that goes behind a "Show more"
+              // expander — the user told us the long flat list was too noisy.
+              const topPair = pickTopPair(nearbyDog, nearbyParksGreen, 5);
+              const restDog = nearbyDog.filter((r) => r !== topPair.dog);
+              const restParks = nearbyParksGreen.filter((r) => r !== topPair.park);
+              const hasMore = restDog.length > 0 || restParks.length > 0;
+              return (
+                <>
+                  <ParkSuggestionGroup
+                    label="DOG PARKS"
+                    rows={topPair.dog ? [topPair.dog] : []}
+                    readonly={readonly}
+                    accentColor="var(--tp-success)"
+                    accentBorder="rgba(74,139,122,0.35)"
+                    onAdd={handleAddNearbyPlace}
+                    onSetOvernight={handleSetOvernight}
+                    addingKey={addingParkKey}
+                    mapsHrefForRow={(row) =>
+                      row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
+                    }
+                  />
+                  <ParkSuggestionGroup
+                    label="PARKS"
+                    rows={topPair.park ? [topPair.park] : []}
+                    readonly={readonly}
+                    accentColor="var(--tp-accent-violet)"
+                    accentBorder="var(--tp-accent-violet-muted)"
+                    onAdd={handleAddNearbyPlace}
+                    onSetOvernight={handleSetOvernight}
+                    addingKey={addingParkKey}
+                    mapsHrefForRow={(row) =>
+                      row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)
+                    }
+                  />
+                  {hasMore && (
+                    <details style={{ marginTop: 4 }}>
+                      <summary
+                        style={{
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          color: 'var(--tp-muted)',
+                          letterSpacing: '0.04em',
+                          padding: '4px 0',
+                        }}
+                      >
+                        Show more nearby places
+                      </summary>
+                      <div style={{ marginTop: 8 }}>
+                        {restDog.length > 0 && (
+                          <ParkSuggestionGroup
+                            label="MORE DOG PARKS"
+                            rows={restDog}
+                            readonly={readonly}
+                            accentColor="var(--tp-success)"
+                            accentBorder="rgba(74,139,122,0.35)"
+                            onAdd={handleAddNearbyPlace}
+                            addingKey={addingParkKey}
+                            mapsHrefForRow={(row) =>
+                              row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
+                            }
+                          />
+                        )}
+                        {restParks.length > 0 && (
+                          <ParkSuggestionGroup
+                            label="MORE PARKS"
+                            rows={restParks}
+                            readonly={readonly}
+                            accentColor="var(--tp-accent-violet)"
+                            accentBorder="var(--tp-accent-violet-muted)"
+                            onAdd={handleAddNearbyPlace}
+                            addingKey={addingParkKey}
+                            mapsHrefForRow={(row) =>
+                              row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)
+                            }
+                          />
+                        )}
+                      </div>
+                    </details>
+                  )}
+                  {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
+                    <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>
+                      {nearbyError}
+                    </div>
+                  )}
+                </>
+              );
+            })()
           )}
 
           <div
@@ -503,23 +674,32 @@ function ParkSuggestionGroup({
   label,
   rows,
   readonly,
-  accentHue,
+  accentColor,
+  accentBorder,
   onAdd,
+  onSetOvernight,
   addingKey,
   mapsHrefForRow,
 }: {
   label: string;
   rows: NearbyRow[];
   readonly: boolean;
-  accentHue: string;
+  accentColor: string;
+  accentBorder: string;
   onAdd: (row: NearbyRow) => void;
+  /**
+   * Optional. When provided, adds an "Add as overnight" primary button
+   * next to "Add as rest stop". Only the curated top-pick groups get this
+   * — the long "Show more" leftovers don't, to keep the affordance scarce.
+   */
+  onSetOvernight?: (row: NearbyRow) => void;
   addingKey: string | null;
   mapsHrefForRow: (row: NearbyRow) => string;
 }) {
   if (!rows?.length) {
     return (
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 6, color: accentHue }}>
+        <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 6, color: accentColor }}>
           {label}
         </div>
         <div style={{ fontSize: 11, color: 'var(--tp-subtle)', fontStyle: 'italic' }}>No Places hits in reach.</div>
@@ -528,7 +708,7 @@ function ParkSuggestionGroup({
   }
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, color: accentHue }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, color: accentColor }}>
         {label}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -565,8 +745,8 @@ function ParkSuggestionGroup({
                         fontWeight: 700,
                         textTransform: 'uppercase',
                         letterSpacing: '0.06em',
-                        color: 'var(--tp-success)',
-                        border: '1px solid rgba(124,232,163,0.35)',
+                        color: accentColor,
+                        border: `1px solid ${accentBorder}`,
                         borderRadius: 3,
                         padding: '2px 5px',
                         marginLeft: 4,
@@ -610,12 +790,31 @@ function ParkSuggestionGroup({
                     padding: '3px 10px',
                     borderRadius: 4,
                     textDecoration: 'none',
-                    color: accentHue,
-                    border: `1px solid ${accentHue}55`,
+                    color: accentColor,
+                    border: `1px solid ${accentBorder}`,
                   }}
                 >
                   Maps ↗
                 </a>
+                {!readonly && onSetOvernight && (
+                  <button
+                    type="button"
+                    onClick={() => onSetOvernight(row)}
+                    disabled={addingKey !== null}
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 10px',
+                      borderRadius: 4,
+                      cursor: addingKey !== null ? 'wait' : 'pointer',
+                      background: 'var(--tp-primary)',
+                      border: '1px solid var(--tp-primary)',
+                      color: 'var(--tp-on-primary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {addingKey === dedupe ? 'Adding…' : 'Use as overnight'}
+                  </button>
+                )}
                 {!readonly && (
                   <button
                     type="button"
@@ -649,6 +848,7 @@ function StopGroup({
   onSelect,
   onDismiss,
   onDelete,
+  onSwapAlternate,
   readonly,
 }: {
   type: StopType;
@@ -656,6 +856,7 @@ function StopGroup({
   onSelect: (id: number) => void;
   onDismiss: (id: number) => void;
   onDelete: (id: number) => void;
+  onSwapAlternate?: (id: number, altIndex: number) => void;
   readonly: boolean;
 }) {
   const meta = TYPE_META[type];
@@ -678,6 +879,7 @@ function StopGroup({
           onSelect={onSelect}
           onDismiss={onDismiss}
           onDelete={onDelete}
+          onSwapAlternate={onSwapAlternate}
           readonly={readonly}
         />
       ))}
@@ -690,18 +892,31 @@ function StopRow({
   onSelect,
   onDismiss,
   onDelete,
+  onSwapAlternate,
   readonly,
 }: {
   stop: Stop;
   onSelect: (id: number) => void;
   onDismiss: (id: number) => void;
   onDelete: (id: number) => void;
+  onSwapAlternate?: (id: number, altIndex: number) => void;
   readonly: boolean;
 }) {
   const selected = stop.status === 'selected';
   const dismissed = stop.status === 'dismissed';
   const hasCoords = stop.lat != null && stop.lng != null;
   const [copied, setCopied] = useState(false);
+  // Auto-fuel rows from src/server/fuel.ts persist up to 2 alternate
+  // gas-station candidates so the user can swap without us round-tripping
+  // Google. Only show the dropdown for fuel rows (rest auto-stretch rows
+  // currently come with no alternates).
+  const hasSwapOptions =
+    !readonly &&
+    !dismissed &&
+    stop.stop_type === 'fuel' &&
+    stop.alternatives != null &&
+    stop.alternatives.length > 0 &&
+    onSwapAlternate != null;
 
   async function handleCopyCoords() {
     if (!hasCoords) return;
@@ -829,6 +1044,43 @@ function StopRow({
         >
           {copied ? '✓ Copied' : '📋 GPS'}
         </button>
+      )}
+      {hasSwapOptions && stop.alternatives && (
+        <select
+          aria-label="Swap to a different gas station"
+          title="Swap to a different gas station nearby"
+          // Reset the select back to the placeholder after every change so
+          // the user can re-open it and pick again. We treat the select
+          // purely as a one-shot menu — the row's actual primary lives in
+          // stop.name above.
+          value=""
+          onChange={(e) => {
+            const idx = parseInt(e.target.value, 10);
+            if (Number.isNaN(idx)) return;
+            onSwapAlternate?.(stop.id, idx);
+            e.currentTarget.value = '';
+          }}
+          style={{
+            fontSize: 10,
+            background: 'transparent',
+            border: '1px solid var(--tp-border)',
+            color: 'var(--tp-muted)',
+            cursor: 'pointer',
+            padding: '2px 4px',
+            borderRadius: 3,
+            flexShrink: 0,
+            maxWidth: 110,
+          }}
+        >
+          <option value="" disabled>
+            ▾ Swap
+          </option>
+          {stop.alternatives.map((alt, idx) => (
+            <option key={`${alt.place_id ?? idx}`} value={idx}>
+              {alt.name} ({alt.distance_km.toFixed(1)} km)
+            </option>
+          ))}
+        </select>
       )}
       {hasCoords && (
         <a

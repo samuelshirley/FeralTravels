@@ -388,12 +388,20 @@ export default function TripWorkspace({
 
   async function handleReplanFuel(startFromSortOrder?: number) {
     if (replanBusy || tripFuelBusy) return;
+    // Snapshot the fingerprints we're about to commit. After the replan
+    // succeeds we promote this snapshot to the committed baseline so the
+    // diff doesn't re-fire forever (the replan itself only mutates
+    // google_places stops, which the fingerprint excludes — without this
+    // promotion the effect kept re-detecting the same minChanged and
+    // rescheduled a new replan every 3s in an infinite loop).
+    const snapshot = legFingerprints;
     setReplanBusy(true);
     try {
       await api.replenishFuelStops(
         startFromSortOrder !== undefined ? { startFromSortOrder } : undefined,
       );
       await loadTrip();
+      committedLegsRef.current = snapshot;
     } catch (e) {
       console.warn('replan fuel failed', e);
     } finally {
