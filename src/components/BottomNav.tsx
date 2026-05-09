@@ -6,14 +6,15 @@ export type MobileTab = 'list' | 'map' | 'chat';
 
 interface BottomNavProps {
   /**
-   * Which tab is currently active. `'settings'` is used when this nav is
-   * mounted on the /settings page itself so the gear icon highlights.
+   * Which tab is currently highlighted. `'settings'` highlights the gear;
+   * `undefined` leaves no item highlighted (used on pages like /admin
+   * that aren't reachable via any of the four nav items).
    */
-  active: MobileTab | 'settings';
+  active?: MobileTab | 'settings';
   /**
    * Tab change handler. Optional because the nav can be mounted on pages
-   * with no trip context (e.g. /settings). When absent, list/map/chat
-   * become Links to `/trips` instead of buttons.
+   * with no trip context (e.g. /settings, /trips index, /admin). When
+   * absent, list/map/chat become Links to `/trips` instead of buttons.
    */
   onChange?: (tab: MobileTab) => void;
   thinking?: boolean;

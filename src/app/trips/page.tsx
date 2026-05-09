@@ -3,6 +3,7 @@ import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { listTripsForUser } from '@/server/repos/trips';
 import AppNavbar from '@/components/AppNavbar';
+import MobileFooter from '@/components/MobileFooter';
 import NewTripButton from './NewTripButton';
 import TripsList from './TripsList';
 
@@ -57,6 +58,13 @@ export default async function TripsPage() {
           canDeleteTemplates={admin}
         />
       </main>
+      {/*
+        Persistent mobile footer — phone users get the same 4-button nav
+        on every top-level page (trips list, settings, admin). 'list' is
+        highlighted here because /trips IS the trip list. Footer hides
+        itself on tablet/desktop.
+      */}
+      <MobileFooter active="list" />
     </div>
   );
 }

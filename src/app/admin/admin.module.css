@@ -22,8 +22,13 @@
 }
 
 @media (max-width: 640px) {
+  /*
+    Extra bottom padding on phones makes room for the persistent
+    MobileFooter (~70px + iPhone home indicator safe area) so the last
+    section isn't hidden behind it.
+  */
   .main {
-    padding: 12px 12px 60px;
+    padding: 12px 12px calc(60px + env(safe-area-inset-bottom) + 70px);
   }
 }
 

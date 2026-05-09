@@ -14,9 +14,21 @@ export const BREAKPOINTS = {
 } as const;
 
 export function useMediaQuery(query: string): boolean {
-  // Default to false on the server to avoid hydration mismatches; actual
-  // value is applied in useEffect after mount.
-  const [matches, setMatches] = useState(false);
+  // Initialize synchronously from matchMedia when available so the FIRST
+  // client render already knows the viewport. The previous "always false"
+  // default caused a one-frame flicker where mobile-only UI (e.g. the
+  // BottomNav on /settings) flashed off then on after the useEffect ran —
+  // and on slower client navigations it could "stick" off until the next
+  // re-render, making the footer appear missing entirely (bug 2026-05-09).
+  //
+  // SSR still gets `false` (no `window`), which is fine: client hydration
+  // immediately swaps to the correct value via the lazy initializer and
+  // there's no visible mismatch because we never SSR the BottomNav itself
+  // (it's only rendered when matches=true).
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;

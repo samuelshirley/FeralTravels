@@ -19,6 +19,7 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
+import MobileFooter from '@/components/MobileFooter';
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
 import styles from './admin.module.css';
@@ -319,54 +320,6 @@ export default async function AdminPage() {
           })}
         </div>
 
-        <section style={{ ...card, marginBottom: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 12,
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
-              Recent API failures
-              <span
-                style={{
-                  marginLeft: 8,
-                  fontSize: 11,
-                  color: 'var(--tp-subtle)',
-                  fontWeight: 500,
-                }}
-              >
-                last {recentErrors.length}
-              </span>
-            </h2>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <Link href="/admin/errors" className={styles.seeAllLink}>
-                See all errors →
-              </Link>
-              <AdminTestErrorButton />
-            </div>
-          </div>
-          <AdminErrorLog
-            rows={recentErrors.map((e) => ({
-              id: e.id,
-              createdAt: (e.createdAt instanceof Date
-                ? e.createdAt
-                : new Date(e.createdAt)
-              ).toISOString(),
-              provider: e.provider,
-              errorMessage: e.errorMessage,
-              tripId: e.tripId,
-              userId: e.userId,
-              userEmail: e.userEmail,
-              userName: e.userName,
-            }))}
-          />
-        </section>
-
         {/* Provider split (last 7d). Lets you see at a glance whether the
          * dashboard total is mostly Anthropic or mostly Google estimate.
          * Google switched from a unified $200/mo credit to per-SKU monthly
@@ -428,7 +381,9 @@ export default async function AdminPage() {
                 All users →
               </Link>
             </div>
-            <div className={styles.tableScroll}>
+            {/* Desktop: dense 2-col table. Mobile: stacked cards so the
+                row never forces horizontal scroll on a narrow viewport. */}
+            <div className={`${styles.tableScroll} ${styles.desktopOnly}`}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
@@ -475,13 +430,40 @@ export default async function AdminPage() {
                 </tbody>
               </table>
             </div>
+            <div className={styles.mobileOnly}>
+              {recentUsers.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--tp-subtle)', padding: '8px 0' }}>
+                  No users yet.
+                </div>
+              ) : (
+                recentUsers.map((u) => (
+                  <Link
+                    key={u.id}
+                    href={`/admin/users/${u.id}`}
+                    className={styles.mobileRowCard}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{u.name || '—'}</div>
+                    {u.email && (
+                      <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 2 }}>
+                        {u.email}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, color: 'var(--tp-muted)', marginTop: 6 }}>
+                      Joined {fmtRel(u.createdAt)}
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
           </section>
 
           <section style={card}>
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
               Recent chat activity
             </h2>
-            <div className={styles.tableScroll}>
+            {/* Desktop: 4-col table. Mobile: stacked cards (4 cols
+                including the snippet was way too wide for a phone). */}
+            <div className={`${styles.tableScroll} ${styles.desktopOnly}`}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
@@ -564,24 +546,132 @@ export default async function AdminPage() {
                 </tbody>
               </table>
             </div>
+            <div className={styles.mobileOnly}>
+              {recentChat.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--tp-subtle)', padding: '8px 0' }}>
+                  No chat activity yet.
+                </div>
+              ) : (
+                recentChat.map((m) => (
+                  <Link
+                    key={m.id}
+                    href={`/admin/chats/${m.tripId}`}
+                    className={styles.mobileRowCard}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'baseline',
+                        gap: 8,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color:
+                            m.role === 'assistant' ? 'var(--tp-success)' : 'var(--tp-muted)',
+                        }}
+                      >
+                        {m.role}
+                        {m.hasChanges && (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: 9,
+                              color: 'var(--tp-success)',
+                            }}
+                          >
+                            ✓EDIT
+                          </span>
+                        )}
+                        <span style={{ marginLeft: 8, color: 'var(--tp-primary)' }}>
+                          #{m.tripId}
+                        </span>
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
+                        {fmtRel(m.createdAt)}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--tp-text)',
+                        lineHeight: 1.4,
+                        // Two-line clamp; full message is on the chat
+                        // detail page if needed.
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {m.content}
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
           </section>
         </div>
 
-        <p
-          style={{
-            marginTop: 32,
-            fontSize: 11,
-            color: 'var(--tp-subtle)',
-            lineHeight: 1.6,
-          }}
-        >
-          AI spend is estimated from Anthropic public list pricing for the model in use. Google
-          Maps JS / Directions client-side calls are not tracked here — set hard quotas in Google
-          Cloud Console for those. Per-user limits: {process.env.REPLAN_REQUESTS_PER_HOUR || 40}
-          {' '}requests/hour and ${parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5').toFixed(2)} AI spend/day.
-          {' '}Admins on the hardcoded allowlist are exempt from both caps (usage is still recorded).
-        </p>
+        {/*
+          Recent API failures lives at the bottom now — most of the time
+          it's empty (no failures in 19+ days) so it's wasted real estate
+          near the top. Keeping it on the page so we still notice when
+          things break, just out of the way.
+        */}
+        <section style={{ ...card, marginTop: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 12,
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
+              Recent API failures
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 11,
+                  color: 'var(--tp-subtle)',
+                  fontWeight: 500,
+                }}
+              >
+                last {recentErrors.length}
+              </span>
+            </h2>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Link href="/admin/errors" className={styles.seeAllLink}>
+                See all errors →
+              </Link>
+              <AdminTestErrorButton />
+            </div>
+          </div>
+          <AdminErrorLog
+            rows={recentErrors.map((e) => ({
+              id: e.id,
+              createdAt: (e.createdAt instanceof Date
+                ? e.createdAt
+                : new Date(e.createdAt)
+              ).toISOString(),
+              provider: e.provider,
+              errorMessage: e.errorMessage,
+              tripId: e.tripId,
+              userId: e.userId,
+              userEmail: e.userEmail,
+              userName: e.userName,
+            }))}
+          />
+        </section>
       </main>
+      <MobileFooter />
     </div>
   );
 }
@@ -737,7 +827,12 @@ function AllTimeUsageTable({
     );
   }
   return (
-    <div className={styles.tableScroll}>
+    <>
+    {/* Desktop: 6-col table. Mobile: stacked cards with the same data
+        re-flowed (User name + email on top, then a 4-up grid of
+        Total / Trips / Avg/trip / Last 7d, then Last seen as muted
+        meta). 6 cols on a phone was the worst overflow on the page. */}
+    <div className={`${styles.tableScroll} ${styles.desktopOnly}`}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
@@ -841,6 +936,112 @@ function AllTimeUsageTable({
         </tbody>
       </table>
     </div>
+    <div className={styles.mobileOnly}>
+      {rows.map((r, i) => {
+        const total = microcentsToDollars(r.microcents);
+        const last7d = microcentsToDollars(r.microcents7d);
+        const avgPerTrip = r.tripCount > 0 ? total / r.tripCount : null;
+        const inner = (
+          <>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                gap: 8,
+                marginBottom: 6,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 13,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {r.name || r.email || '(unknown)'}
+                </div>
+                {r.email && r.name && (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: 'var(--tp-subtle)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {r.email}
+                  </div>
+                )}
+              </div>
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 14,
+                  color: 'var(--tp-success)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                ${total.toFixed(total >= 1 ? 2 : 4)}
+              </div>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 4,
+                fontSize: 11,
+                color: 'var(--tp-muted)',
+                marginTop: 4,
+              }}
+            >
+              <div>
+                <span style={{ color: 'var(--tp-subtle)' }}>Trips </span>
+                {r.tripCount}
+              </div>
+              <div>
+                <span style={{ color: 'var(--tp-subtle)' }}>Avg </span>
+                {avgPerTrip != null ? `$${avgPerTrip.toFixed(avgPerTrip >= 1 ? 2 : 4)}` : '—'}
+              </div>
+              <div>
+                <span style={{ color: 'var(--tp-subtle)' }}>7d </span>
+                {last7d > 0 ? `$${last7d.toFixed(last7d >= 1 ? 2 : 4)}` : '—'}
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: 10,
+                color: 'var(--tp-subtle)',
+                marginTop: 6,
+              }}
+            >
+              Last seen {fmtRel(r.lastSeenAt)}
+            </div>
+          </>
+        );
+        if (!r.userId) {
+          return (
+            <div key={`anon-${i}`} className={styles.mobileRowCard} style={{ cursor: 'default' }}>
+              {inner}
+            </div>
+          );
+        }
+        return (
+          <Link
+            key={r.userId}
+            href={`/admin/users/${r.userId}`}
+            className={styles.mobileRowCard}
+          >
+            {inner}
+          </Link>
+        );
+      })}
+    </div>
+    </>
   );
 }
 
