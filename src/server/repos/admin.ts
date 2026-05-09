@@ -168,6 +168,88 @@ export async function getTopUsageUsers(hours: number, limit = 25) {
     .limit(limit);
 }
 
+/**
+ * All-time top spenders, joined to trip count for an avg-cost-per-trip
+ * calculation. Drives the "who's actually expensive" view on /admin.
+ *
+ * The trip count comes from a correlated subquery rather than a join +
+ * GROUP BY because joining trips would multiply usage rows by trip count
+ * (each user's usage gets duplicated per trip they own) and inflate the
+ * spend totals. The subquery keeps the spend math correct.
+ *
+ * `lastSeenAt` is the most recent usage row, so you can spot dormant
+ * heavy spenders vs currently-active ones at a glance.
+ *
+ * Filtered to provider='anthropic' because Google Places spend in our DB
+ * is an estimate that the $200/mo free credit usually zeros out — mixing
+ * it into a "user cost" view would mislead.
+ */
+export async function getTopUsersAllTime(limit = 25) {
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  return db
+    .select({
+      userId: usageEvents.userId,
+      email: users.email,
+      name: users.name,
+      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
+      // Same row, narrower predicate via FILTER — gives us per-user 7d spend
+      // alongside the all-time total without a second query or join.
+      microcents7d: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}) FILTER (WHERE ${usageEvents.createdAt} >= ${since7d}), 0)::bigint`,
+      tripCount: sql<number>`(
+        SELECT COUNT(*)::int FROM ${trips}
+        WHERE ${trips.userId} = ${usageEvents.userId}
+          AND ${trips.isTemplate} = false
+      )`,
+      lastSeenAt: sql<Date>`MAX(${usageEvents.createdAt})`,
+    })
+    .from(usageEvents)
+    .leftJoin(users, eq(users.id, usageEvents.userId))
+    .where(eq(usageEvents.provider, 'anthropic'))
+    .groupBy(usageEvents.userId, users.email, users.name)
+    .orderBy(desc(sql`SUM(${usageEvents.costMicrocents})`))
+    .limit(limit);
+}
+
+/**
+ * Aggregate spend by provider over a time window. Used by the dashboard
+ * to surface Anthropic vs Google estimates side-by-side, with a note
+ * that Google figures are estimates (free-tier credits typically zero
+ * the actual bill).
+ */
+export async function getProviderTotals(hours: number) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  return db
+    .select({
+      provider: usageEvents.provider,
+      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
+    })
+    .from(usageEvents)
+    .where(gte(usageEvents.createdAt, since))
+    .groupBy(usageEvents.provider);
+}
+
+/**
+ * All-time Anthropic spend total. Single number for the headline stat
+ * card so the dashboard isn't only showing 24h/7d windows.
+ */
+export async function getAllTimeAnthropicSpend(): Promise<{
+  microcents: number;
+  requests: number;
+  firstSeen: Date | null;
+}> {
+  const rows = await db
+    .select({
+      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
+      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      firstSeen: sql<Date | null>`MIN(${usageEvents.createdAt})`,
+    })
+    .from(usageEvents)
+    .where(eq(usageEvents.provider, 'anthropic'));
+  return rows[0] ?? { microcents: 0, requests: 0, firstSeen: null };
+}
+
 // ============================================================================
 // Drill-in helpers — used by /admin/users, /admin/users/[id], /admin/errors,
 // /admin/chats/[tripId]. All return raw rows; Date conversion + serialization

@@ -8,6 +8,9 @@ import {
   getRecentChatActivity,
   getRecentErrors,
   getTopUsageUsers,
+  getTopUsersAllTime,
+  getProviderTotals,
+  getAllTimeAnthropicSpend,
   getAnthropicHealthAlert,
 } from '@/server/repos/admin';
 import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
@@ -72,19 +75,34 @@ export default async function AdminPage() {
   // Silent redirect — no error page, no info leak that /admin even exists.
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
-  const [overview, recentUsers, recentChat, recentErrors, top24, top7d, usage24, usage7d, anthropicAlert] =
-    await Promise.all([
-      getAdminOverview(),
-      getRecentUsers(15),
-      getRecentChatActivity(15),
-      // Home page shows last 15 — full pagination + filters lives at /admin/errors.
-      getRecentErrors(15),
-      getTopUsageUsers(24, 10),
-      getTopUsageUsers(24 * 7, 10),
-      getGlobalUsage(24),
-      getGlobalUsage(24 * 7),
-      getAnthropicHealthAlert(),
-    ]);
+  const [
+    overview,
+    recentUsers,
+    recentChat,
+    recentErrors,
+    topAllTime,
+    usage24,
+    usage7d,
+    providers7d,
+    allTimeAnthropic,
+    anthropicAlert,
+  ] = await Promise.all([
+    getAdminOverview(),
+    getRecentUsers(15),
+    getRecentChatActivity(15),
+    // Home page shows last 15 — full pagination + filters lives at /admin/errors.
+    getRecentErrors(15),
+    // Combined "who's expensive" view: all-time spend, trip count,
+    // avg/trip, last-7d spend, last seen — one row per user.
+    getTopUsersAllTime(20),
+    getGlobalUsage(24),
+    getGlobalUsage(24 * 7),
+    // Provider split (last 7d) — surfaces Anthropic vs Google estimate
+    // so the all-up cost picture isn't misread as one big Anthropic bill.
+    getProviderTotals(24 * 7),
+    getAllTimeAnthropicSpend(),
+    getAnthropicHealthAlert(),
+  ]);
 
   const usd24 = usage24
     .filter((u) => u.provider === 'anthropic')
@@ -93,6 +111,7 @@ export default async function AdminPage() {
     .filter((u) => u.provider === 'anthropic')
     .reduce((sum, u) => sum + microcentsToDollars(u.microcents), 0);
   const projectedMonthly = usd7d * (30 / 7);
+  const usdAllTime = microcentsToDollars(allTimeAnthropic.microcents);
 
   // Stat cards. `href` makes the card a Link to its drill-in page.
   // Others stay as plain numbers (no useful drill-in yet).
@@ -133,7 +152,17 @@ export default async function AdminPage() {
     {
       label: 'AI spend (7d)',
       value: fmtMoney(usd7d),
-      sub: `~${fmtMoney(projectedMonthly)}/mo projected`,
+      sub: `${usage7d.find((u) => u.provider === 'anthropic')?.requests ?? 0} req`,
+    },
+    {
+      label: 'AI spend (all-time)',
+      value: fmtMoney(usdAllTime),
+      sub: `${allTimeAnthropic.requests.toLocaleString()} req`,
+    },
+    {
+      label: 'Projected /mo',
+      value: fmtMoney(projectedMonthly),
+      sub: 'extrapolated from 7d',
     },
   ];
 
@@ -207,6 +236,10 @@ export default async function AdminPage() {
 
         <div className={styles.statsGrid}>
           {stats.map((s) => {
+            // Three vertical regions inside every card so heights stay
+            // identical across the row even when sub-text or the VIEW ALL
+            // chevron is missing on a particular card. Empty regions
+            // collapse but still reserve space via the parent flex layout.
             const inner = (
               <>
                 <div style={labelStyle}>{s.label.toUpperCase()}</div>
@@ -216,45 +249,55 @@ export default async function AdminPage() {
                     fontWeight: 700,
                     color: 'var(--tp-text)',
                     lineHeight: 1.1,
+                    marginTop: 4,
                   }}
                 >
                   {s.value}
                 </div>
-                {s.sub && (
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--tp-subtle)',
-                      marginTop: 4,
-                    }}
-                  >
-                    {s.sub}
-                  </div>
-                )}
-                {s.href && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: 'var(--tp-primary)',
-                      marginTop: 6,
-                      fontWeight: 600,
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    VIEW ALL →
-                  </div>
-                )}
+                <div
+                  style={{
+                    marginTop: 'auto',
+                    paddingTop: 6,
+                    minHeight: 14,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                  }}
+                >
+                  {s.sub && (
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--tp-subtle)',
+                      }}
+                    >
+                      {s.sub}
+                    </div>
+                  )}
+                  {s.href && (
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--tp-primary)',
+                        fontWeight: 600,
+                        letterSpacing: '0.04em',
+                      }}
+                    >
+                      VIEW ALL →
+                    </div>
+                  )}
+                </div>
               </>
             );
             if (s.href) {
               return (
-                <Link key={s.label} href={s.href} className={styles.cardLink} style={card}>
+                <Link key={s.label} href={s.href} className={styles.statCard}>
                   {inner}
                 </Link>
               );
             }
             return (
-              <div key={s.label} style={card}>
+              <div key={s.label} className={styles.statCard}>
                 {inner}
               </div>
             );
@@ -309,19 +352,36 @@ export default async function AdminPage() {
           />
         </section>
 
-        <div className={styles.bottomGrid}>
-          <section style={card}>
-            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
-              Top spenders (24h) — Anthropic
-            </h2>
-            <UsageTable rows={top24} />
-          </section>
+        {/* Provider split (last 7d). Lets you see at a glance whether the
+         * dashboard total is mostly Anthropic or mostly Google estimate.
+         * Google's $200/mo free credit means real charges are usually $0
+         * even when the estimate column shows non-zero. */}
+        <section style={{ ...card, marginBottom: 16 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
+            Spend by provider (7d)
+          </h2>
+          <ProviderBreakdown rows={providers7d} />
+          <div
+            style={{
+              marginTop: 10,
+              fontSize: 11,
+              color: 'var(--tp-subtle)',
+              lineHeight: 1.5,
+            }}
+          >
+            Anthropic = real spend. Google = our estimate; Google&apos;s
+            $200/mo free credit usually zeros the actual bill. Cross-check
+            against Anthropic Console and Google Cloud Billing if numbers
+            feel off.
+          </div>
+        </section>
 
-          <section style={card}>
+        <div className={styles.bottomGrid}>
+          <section style={{ ...card, gridColumn: '1 / -1' }}>
             <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
-              Top spenders (7d) — Anthropic
+              Top spenders — all-time
             </h2>
-            <UsageTable rows={top7d} />
+            <AllTimeUsageTable rows={topAllTime} />
           </section>
 
           <section style={card}>
@@ -496,7 +556,89 @@ export default async function AdminPage() {
   );
 }
 
-function UsageTable({
+/**
+ * Provider breakdown card. Shows requests + estimated cost per provider
+ * for the time window the parent passes in. Intended for the section
+ * that explains "your dashboard total = $X Anthropic + $Y Google estimate".
+ */
+function ProviderBreakdown({
+  rows,
+}: {
+  rows: Array<{ provider: string; requests: number; microcents: number }>;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: 'var(--tp-subtle)', padding: '8px 0' }}>
+        No usage in this window.
+      </div>
+    );
+  }
+  // Sort: anthropic first (the real money), everything else after.
+  const sorted = [...rows].sort((a, b) => {
+    if (a.provider === 'anthropic') return -1;
+    if (b.provider === 'anthropic') return 1;
+    return a.provider.localeCompare(b.provider);
+  });
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+        gap: 12,
+      }}
+    >
+      {sorted.map((r) => {
+        const isAnthropic = r.provider === 'anthropic';
+        return (
+          <div
+            key={r.provider}
+            style={{
+              padding: '10px 12px',
+              border: '1px solid var(--tp-border)',
+              borderRadius: 8,
+              background: 'var(--tp-bg)',
+            }}
+          >
+            <div style={{ ...labelStyle, marginBottom: 4 }}>
+              {r.provider}
+              {!isAnthropic && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: 9,
+                    color: 'var(--tp-subtle)',
+                    fontWeight: 500,
+                    letterSpacing: 0,
+                  }}
+                >
+                  (estimate)
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>
+              {fmtMoney(microcentsToDollars(r.microcents))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 2 }}>
+              {r.requests.toLocaleString()} req
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * All-time spender table — total spend, trips, avg cost per trip,
+ * last-7d spend, and last-seen, joined per user. Built specifically to
+ * answer "who is costing me money and how active are they?" in one
+ * sortable view.
+ *
+ * Avg/trip is null when the user has no trips (their spend was incurred
+ * on a trip that's since been deleted, or before trip creation completed).
+ * We render '—' rather than dividing by zero.
+ */
+function AllTimeUsageTable({
   rows,
 }: {
   rows: Array<{
@@ -505,14 +647,15 @@ function UsageTable({
     name: string | null;
     requests: number;
     microcents: number;
-    inputTokens: number;
-    outputTokens: number;
+    microcents7d: number;
+    tripCount: number;
+    lastSeenAt: Date | string;
   }>;
 }) {
   if (rows.length === 0) {
     return (
       <div style={{ fontSize: 12, color: 'var(--tp-subtle)', padding: '12px 4px' }}>
-        No AI calls in this window.
+        No AI usage recorded yet.
       </div>
     );
   }
@@ -522,13 +665,35 @@ function UsageTable({
         <thead>
           <tr>
             <th style={thStyle}>User</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Reqs</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Tokens</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Cost</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Total</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Trips</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Avg / trip</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Last 7d</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Last seen</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => {
+            const total = microcentsToDollars(r.microcents);
+            const last7d = microcentsToDollars(r.microcents7d);
+            const avgPerTrip = r.tripCount > 0 ? total / r.tripCount : null;
+            const cells = (
+              <>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
+                  {fmtMoney(total)}
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{r.tripCount}</td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                  {avgPerTrip != null ? fmtMoney(avgPerTrip) : '—'}
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                  {last7d > 0 ? fmtMoney(last7d) : '—'}
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                  {fmtRel(r.lastSeenAt)}
+                </td>
+              </>
+            );
             // Anonymous / orphaned usage rows — render plain (no drill-in target).
             if (!r.userId) {
               return (
@@ -536,13 +701,7 @@ function UsageTable({
                   <td style={tdStyle}>
                     <div style={{ fontWeight: 600 }}>(unknown)</div>
                   </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{r.requests}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
-                    {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
-                    {fmtMoney(microcentsToDollars(r.microcents))}
-                  </td>
+                  {cells}
                 </tr>
               );
             }
@@ -559,12 +718,20 @@ function UsageTable({
                     )}
                   </Link>
                 </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {fmtMoney(total)}
+                  </Link>
+                </td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>
                   <Link
                     href={`/admin/users/${r.userId}`}
                     style={{ color: 'inherit', textDecoration: 'none' }}
                   >
-                    {r.requests}
+                    {r.tripCount}
                   </Link>
                 </td>
                 <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
@@ -572,15 +739,23 @@ function UsageTable({
                     href={`/admin/users/${r.userId}`}
                     style={{ color: 'inherit', textDecoration: 'none' }}
                   >
-                    {r.inputTokens.toLocaleString()} / {r.outputTokens.toLocaleString()}
+                    {avgPerTrip != null ? fmtMoney(avgPerTrip) : '—'}
                   </Link>
                 </td>
-                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-success)' }}>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
                   <Link
                     href={`/admin/users/${r.userId}`}
                     style={{ color: 'inherit', textDecoration: 'none' }}
                   >
-                    {fmtMoney(microcentsToDollars(r.microcents))}
+                    {last7d > 0 ? fmtMoney(last7d) : '—'}
+                  </Link>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--tp-muted)' }}>
+                  <Link
+                    href={`/admin/users/${r.userId}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {fmtRel(r.lastSeenAt)}
                   </Link>
                 </td>
               </tr>
@@ -591,3 +766,4 @@ function UsageTable({
     </div>
   );
 }
+
