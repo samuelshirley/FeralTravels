@@ -185,7 +185,15 @@ export async function getTopUsageUsers(hours: number, limit = 25) {
  * it into a "user cost" view would mislead.
  */
 export async function getTopUsersAllTime(limit = 25) {
-  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  // IMPORTANT: pass an ISO string, not a Date, when interpolating into a raw
+  // sql`` template. The drizzle helpers like gte(col, date) carry the
+  // column's pg type, but template-interpolated values do not — postgres-js
+  // falls back to its text encoder and tries Buffer.byteLength on the value.
+  // Buffer.byteLength on a Date throws ERR_INVALID_ARG_TYPE → the whole
+  // /admin page 500s with a server-side digest. Caused outage 2026-05-09.
+  // PostgreSQL implicit-casts ISO 8601 strings to timestamp in comparisons,
+  // so this is functionally identical to a Date param via gte().
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   return db
     .select({
       userId: usageEvents.userId,
