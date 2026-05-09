@@ -244,7 +244,7 @@ export async function getGlobalUsage(hours: number) {
  * Returned shape supports both a headline "Google billable (mo)" stat card and
  * a per-SKU breakdown row.
  */
-export async function getGoogleBillableThisMonth(): Promise<{
+export interface GoogleBillableSummary {
   grossUsd: number;
   billableUsd: number;
   perSku: Array<{
@@ -254,44 +254,56 @@ export async function getGoogleBillableThisMonth(): Promise<{
     grossUsd: number;
     billableUsd: number;
   }>;
-}> {
-  const now = new Date();
-  const startOfMonthUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
 
-  const rows = await db
-    .select({
-      sku: usageEvents.model,
-      calls: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
-    })
-    .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.provider, 'google-places'),
-        gte(usageEvents.createdAt, startOfMonthUtc)
+export async function getGoogleBillableThisMonth(): Promise<GoogleBillableSummary> {
+  // Defensive: any DB hiccup here should not 500 the whole admin dashboard.
+  // The dashboard has many other panels; if Google billing math fails we
+  // render zeros + log the error and let the user see everything else.
+  try {
+    const now = new Date();
+    const startOfMonthUtc = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+    );
+
+    const rows = await db
+      .select({
+        sku: usageEvents.model,
+        calls: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      })
+      .from(usageEvents)
+      .where(
+        and(
+          eq(usageEvents.provider, 'google-places'),
+          gte(usageEvents.createdAt, startOfMonthUtc)
+        )
       )
-    )
-    .groupBy(usageEvents.model);
+      .groupBy(usageEvents.model);
 
-  const perSku = rows.map((r) => {
-    const sku = r.sku ?? 'unknown';
-    const calls = Number(r.calls) || 0;
-    const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[sku] ?? 0;
-    const freeCalls =
-      GOOGLE_PLACES_FREE_CALLS_PER_MONTH[sku as GooglePlacesEndpoint] ?? 0;
-    const billableCalls = Math.max(0, calls - freeCalls);
-    return {
-      sku,
-      calls,
-      freeCalls,
-      grossUsd: calls * perCall,
-      billableUsd: billableCalls * perCall,
-    };
-  });
+    const perSku = rows.map((r) => {
+      const sku = r.sku ?? 'unknown';
+      const calls = Number(r.calls) || 0;
+      const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[sku] ?? 0;
+      const freeCalls =
+        GOOGLE_PLACES_FREE_CALLS_PER_MONTH[sku as GooglePlacesEndpoint] ?? 0;
+      const billableCalls = Math.max(0, calls - freeCalls);
+      return {
+        sku,
+        calls,
+        freeCalls,
+        grossUsd: calls * perCall,
+        billableUsd: billableCalls * perCall,
+      };
+    });
 
-  const grossUsd = perSku.reduce((s, r) => s + r.grossUsd, 0);
-  const billableUsd = perSku.reduce((s, r) => s + r.billableUsd, 0);
+    const grossUsd = perSku.reduce((s, r) => s + r.grossUsd, 0);
+    const billableUsd = perSku.reduce((s, r) => s + r.billableUsd, 0);
 
-  return { grossUsd, billableUsd, perSku };
+    return { grossUsd, billableUsd, perSku };
+  } catch (err) {
+    console.error('[admin] getGoogleBillableThisMonth failed:', err);
+    return { grossUsd: 0, billableUsd: 0, perSku: [] };
+  }
 }
 
 /** Per-user usage breakdown for the trailing window — admin dashboard. */

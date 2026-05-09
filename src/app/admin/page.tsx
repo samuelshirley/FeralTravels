@@ -90,6 +90,11 @@ export default async function AdminPage() {
     providers7d,
     allTimeAnthropic,
     anthropicAlert,
+    // Calendar-month Google bill after subtracting per-SKU free allowances.
+    // Internally try/catch'd → returns zeros on failure so it can never 500
+    // the whole dashboard. Parallelized into this batch so it doesn't add
+    // sequential latency to the page render.
+    googleBillable,
   ] = await Promise.all([
     getAdminOverview(),
     getRecentUsers(15),
@@ -106,12 +111,8 @@ export default async function AdminPage() {
     getProviderTotals(24 * 7),
     getAllTimeAnthropicSpend(),
     getAnthropicHealthAlert(),
+    getGoogleBillableThisMonth(),
   ]);
-
-  // Calendar-month Google bill estimate after subtracting per-SKU free
-  // allowances. This is what your actual Google Cloud invoice should look
-  // like — the gross row is what we'd be paying without the free tier.
-  const googleBillable = await getGoogleBillableThisMonth();
 
   const usd24 = usage24
     .filter((u) => u.provider === 'anthropic')
