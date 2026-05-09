@@ -55,12 +55,47 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         className="tp-app-navbar__left"
         style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}
       >
+        {/*
+          When inside a trip, the brand slot becomes a "← Trips" back
+          affordance so the user always has a one-tap way back to their
+          trip list. On non-trip pages (trips index, settings, admin) we
+          keep the "Feral Travels" wordmark since there's nothing to back
+          out to. Same Link target either way (`tripsHref`).
+        */}
         <Link
           href={tripsHref}
           className="tp-app-navbar__brand"
-          style={{ color: 'var(--tp-text)', textDecoration: 'none', fontSize: 14, fontWeight: 700 }}
+          style={{
+            color: 'var(--tp-text)',
+            textDecoration: 'none',
+            fontSize: 14,
+            fontWeight: 700,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+          aria-label={tripName ? 'Back to trips' : 'Feral Travels home'}
         >
-          Feral Travels
+          {tripName ? (
+            <>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              <span>Trips</span>
+            </>
+          ) : (
+            'Feral Travels'
+          )}
         </Link>
         {tripName && (
           <>
@@ -215,22 +250,18 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
       </div>
 
       {/*
-        Mobile-friendly tweaks. On a phone, the trip name + vehicle chip
-        compete for ~360px of header width, and the brand "Feral Travels /"
-        crowds them out. When we're inside a trip context, hide the brand
-        text + separator on narrow viewports — the brand is still reachable
-        from the avatar dropdown's "Trips" link. App-context navbars (e.g.
-        /trips index) keep the brand visible since there's no trip name to
-        compete with.
+        Mobile-friendly tweaks. On a phone the brand slot used to be hidden
+        in trip context (it just said "Feral Travels /") to save room for
+        the trip name + vehicle chip. As of 2026-05 the brand is now a
+        compact "← Trips" back affordance, so we KEEP it visible on mobile
+        — that's the one-tap path back to the trips list. We still tighten
+        padding/gap on narrow viewports so trip name + vehicle chip have
+        room to breathe.
       */}
       <style jsx>{`
         @media (max-width: 480px) {
           .tp-app-navbar {
             padding: 8px 12px !important;
-          }
-          .tp-app-navbar[data-trip-context='trip'] .tp-app-navbar__brand,
-          .tp-app-navbar[data-trip-context='trip'] .tp-app-navbar__sep {
-            display: none;
           }
           .tp-app-navbar__left {
             gap: 8px !important;

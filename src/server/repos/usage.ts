@@ -140,6 +140,29 @@ export type GooglePlacesEndpoint =
   | 'nearby-search-pro'
   | 'nearby-search-enterprise';
 
+/**
+ * Per-SKU monthly free-call allowance from Google Maps Platform's free tier.
+ * Each SKU has its own monthly allowance (NOT a shared $200 credit anymore as
+ * of 2024-2025). We subtract these from the calendar-month call counts when
+ * rendering "billable" Google spend on the admin dashboard.
+ *
+ * Defaults reflect the Maps Platform free tier as of late 2024 — Google
+ * updates these periodically, so they're env-configurable. Verify against
+ * https://developers.google.com/maps/billing-and-pricing/pricing and your
+ * own Google Cloud Console → Billing → Reports view.
+ */
+export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, number> = {
+  'nearby-search-essentials': Number(
+    process.env.GOOGLE_PLACES_FREE_CALLS_ESSENTIALS_PER_MONTH ?? 10000
+  ),
+  'nearby-search-pro': Number(
+    process.env.GOOGLE_PLACES_FREE_CALLS_PRO_PER_MONTH ?? 5000
+  ),
+  'nearby-search-enterprise': Number(
+    process.env.GOOGLE_PLACES_FREE_CALLS_ENTERPRISE_PER_MONTH ?? 1000
+  ),
+};
+
 export interface LogGooglePlacesUsageInput {
   userId: string;
   tripId?: number | null;
@@ -206,6 +229,69 @@ export async function getGlobalUsage(hours: number) {
     .where(gte(usageEvents.createdAt, since))
     .groupBy(usageEvents.provider);
   return rows;
+}
+
+/**
+ * Compute Google Maps "actual billable" spend for the current calendar month
+ * (UTC) by subtracting each SKU's free-call allowance from its month-to-date
+ * call count, then multiplying the remainder by the per-call list price.
+ *
+ * Why a separate calc instead of summing `costMicrocents`? `logGooglePlacesUsage`
+ * stores the GROSS estimate (per-call price × calls) per row. The free tier
+ * resets monthly across all rows, so it can only be applied at aggregate time —
+ * not per-event. This function does that aggregation.
+ *
+ * Returned shape supports both a headline "Google billable (mo)" stat card and
+ * a per-SKU breakdown row.
+ */
+export async function getGoogleBillableThisMonth(): Promise<{
+  grossUsd: number;
+  billableUsd: number;
+  perSku: Array<{
+    sku: string;
+    calls: number;
+    freeCalls: number;
+    grossUsd: number;
+    billableUsd: number;
+  }>;
+}> {
+  const now = new Date();
+  const startOfMonthUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+  const rows = await db
+    .select({
+      sku: usageEvents.model,
+      calls: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.provider, 'google-places'),
+        gte(usageEvents.createdAt, startOfMonthUtc)
+      )
+    )
+    .groupBy(usageEvents.model);
+
+  const perSku = rows.map((r) => {
+    const sku = r.sku ?? 'unknown';
+    const calls = Number(r.calls) || 0;
+    const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[sku] ?? 0;
+    const freeCalls =
+      GOOGLE_PLACES_FREE_CALLS_PER_MONTH[sku as GooglePlacesEndpoint] ?? 0;
+    const billableCalls = Math.max(0, calls - freeCalls);
+    return {
+      sku,
+      calls,
+      freeCalls,
+      grossUsd: calls * perCall,
+      billableUsd: billableCalls * perCall,
+    };
+  });
+
+  const grossUsd = perSku.reduce((s, r) => s + r.grossUsd, 0);
+  const billableUsd = perSku.reduce((s, r) => s + r.billableUsd, 0);
+
+  return { grossUsd, billableUsd, perSku };
 }
 
 /** Per-user usage breakdown for the trailing window — admin dashboard. */

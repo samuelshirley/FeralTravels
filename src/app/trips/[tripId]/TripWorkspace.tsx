@@ -25,9 +25,9 @@ interface Props {
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
-// don't end up under the nav. Equals nav height (~62px) plus iPhone home
-// indicator safe area.
-const MOBILE_BOTTOM_NAV_HEIGHT = 62;
+// don't end up under the nav. Equals nav height (~70px after the 2026-05
+// taller-touch-target tweak) plus iPhone home indicator safe area.
+const MOBILE_BOTTOM_NAV_HEIGHT = 70;
 
 function ResizeHandle({ direction = 'horizontal' }: { direction?: 'horizontal' | 'vertical' }) {
   // For a horizontal PanelGroup the handle is a vertical bar (col-resize);

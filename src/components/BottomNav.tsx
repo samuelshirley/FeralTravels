@@ -5,8 +5,17 @@ import Link from 'next/link';
 export type MobileTab = 'list' | 'map' | 'chat';
 
 interface BottomNavProps {
-  active: MobileTab;
-  onChange: (tab: MobileTab) => void;
+  /**
+   * Which tab is currently active. `'settings'` is used when this nav is
+   * mounted on the /settings page itself so the gear icon highlights.
+   */
+  active: MobileTab | 'settings';
+  /**
+   * Tab change handler. Optional because the nav can be mounted on pages
+   * with no trip context (e.g. /settings). When absent, list/map/chat
+   * become Links to `/trips` instead of buttons.
+   */
+  onChange?: (tab: MobileTab) => void;
   thinking?: boolean;
   unread?: number;
 }
@@ -20,18 +29,26 @@ interface NavItem {
 }
 
 export default function BottomNav({ active, onChange, thinking = false, unread = 0 }: BottomNavProps) {
+  // When there's no `onChange` (e.g. mounted on /settings), the trip-tab
+  // items can't toggle a parent state — so we route them to /trips instead.
+  // The user picked "go_to_trips_index" in the design Q&A: simplest, reuses
+  // the existing trips list view as a hub.
+  const tripsHref = onChange ? undefined : '/trips';
+
   const items: NavItem[] = [
     {
       id: 'list',
       label: 'List',
       iconPath:
         'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+      href: tripsHref,
     },
     {
       id: 'map',
       label: 'Map',
       iconPath:
         'M9 20l-5.447-2.724A1 1 0 0 1 3 16.382V5.618a1 1 0 0 1 1.447-.894L9 7m0 13 6-3m-6 3V7m6 10 5.553 2.276A1 1 0 0 0 22 18.382V7.618a1 1 0 0 0-.553-.894L15 4m0 13V4m0 0L9 7',
+      href: tripsHref,
     },
     {
       id: 'chat',
@@ -39,6 +56,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
       iconPath:
         'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
       badge: thinking ? 'thinking' : unread > 0 ? unread : undefined,
+      href: tripsHref,
     },
     {
       id: 'settings',
@@ -82,7 +100,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: 3,
-                padding: '8px 4px 8px',
+                padding: '12px 4px 12px',
                 color,
                 position: 'relative',
               }}
@@ -167,7 +185,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
           return (
             <button
               key={item.id}
-              onClick={() => onChange(item.id as MobileTab)}
+              onClick={() => onChange?.(item.id as MobileTab)}
               style={{
                 background: 'transparent',
                 border: 'none',

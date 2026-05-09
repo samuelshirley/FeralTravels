@@ -13,7 +13,11 @@ import {
   getAllTimeAnthropicSpend,
   getAnthropicHealthAlert,
 } from '@/server/repos/admin';
-import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
+import {
+  getGlobalUsage,
+  microcentsToDollars,
+  getGoogleBillableThisMonth,
+} from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
@@ -104,6 +108,11 @@ export default async function AdminPage() {
     getAnthropicHealthAlert(),
   ]);
 
+  // Calendar-month Google bill estimate after subtracting per-SKU free
+  // allowances. This is what your actual Google Cloud invoice should look
+  // like — the gross row is what we'd be paying without the free tier.
+  const googleBillable = await getGoogleBillableThisMonth();
+
   const usd24 = usage24
     .filter((u) => u.provider === 'anthropic')
     .reduce((sum, u) => sum + microcentsToDollars(u.microcents), 0);
@@ -163,6 +172,11 @@ export default async function AdminPage() {
       label: 'Projected /mo',
       value: fmtMoney(projectedMonthly),
       sub: 'extrapolated from 7d',
+    },
+    {
+      label: 'Google billable (mo)',
+      value: fmtMoney(googleBillable.billableUsd),
+      sub: googleSubLabel(googleBillable),
     },
   ];
 
@@ -354,13 +368,18 @@ export default async function AdminPage() {
 
         {/* Provider split (last 7d). Lets you see at a glance whether the
          * dashboard total is mostly Anthropic or mostly Google estimate.
-         * Google's $200/mo free credit means real charges are usually $0
-         * even when the estimate column shows non-zero. */}
+         * Google switched from a unified $200/mo credit to per-SKU monthly
+         * free allowances in 2024 — the dashboard subtracts those before
+         * showing the "billable" number so it matches your real bill. */}
         <section style={{ ...card, marginBottom: 16 }}>
           <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
             Spend by provider (7d)
           </h2>
-          <ProviderBreakdown rows={providers7d} />
+          <ProviderBreakdown
+            rows={providers7d}
+            googleBillableMonthGrossUsd={googleBillable.grossUsd}
+            googleBillableMonthUsd={googleBillable.billableUsd}
+          />
           <div
             style={{
               marginTop: 10,
@@ -369,10 +388,20 @@ export default async function AdminPage() {
               lineHeight: 1.5,
             }}
           >
-            Anthropic = real spend. Google = our estimate; Google&apos;s
-            $200/mo free credit usually zeros the actual bill. Cross-check
-            against Anthropic Console and Google Cloud Billing if numbers
-            feel off.
+            Anthropic = real spend. Google = list-price estimate; the
+            dashboard subtracts per-SKU monthly free allowances (configured
+            via <code>GOOGLE_PLACES_FREE_CALLS_*</code> env vars) so the
+            &quot;billable&quot; figure matches your Google Cloud invoice.
+            The 7d number is the raw gross estimate for context — the
+            month-to-date billable is in the stat card above. Verify free
+            allowances at{' '}
+            <a
+              href="https://developers.google.com/maps/billing-and-pricing/pricing"
+              style={{ color: 'var(--tp-primary)' }}
+            >
+              Google&apos;s pricing page
+            </a>
+            .
           </div>
         </section>
 
@@ -557,14 +586,37 @@ export default async function AdminPage() {
 }
 
 /**
+ * Build the sub-text under the "Google billable (mo)" stat card. Shows
+ * how much of each SKU's free allowance has been consumed so far this
+ * month, and the gross (pre-free-tier) estimate for context.
+ */
+function googleSubLabel(billable: {
+  grossUsd: number;
+  perSku: Array<{ sku: string; calls: number; freeCalls: number }>;
+}): string {
+  if (billable.perSku.length === 0) return 'no Places calls this month';
+  const totalCalls = billable.perSku.reduce((s, r) => s + r.calls, 0);
+  const totalFree = billable.perSku.reduce((s, r) => s + r.freeCalls, 0);
+  return `gross ${`$${billable.grossUsd.toFixed(billable.grossUsd >= 1 ? 2 : 4)}`} · ${totalCalls.toLocaleString()}/${totalFree.toLocaleString()} free calls used`;
+}
+
+/**
  * Provider breakdown card. Shows requests + estimated cost per provider
  * for the time window the parent passes in. Intended for the section
  * that explains "your dashboard total = $X Anthropic + $Y Google estimate".
+ *
+ * For Google rows, the headline number is the month-to-date BILLABLE
+ * (after subtracting per-SKU free allowances) and the gross is shown as
+ * smaller context — that's what actually hits your invoice.
  */
 function ProviderBreakdown({
   rows,
+  googleBillableMonthGrossUsd,
+  googleBillableMonthUsd,
 }: {
   rows: Array<{ provider: string; requests: number; microcents: number }>;
+  googleBillableMonthGrossUsd: number;
+  googleBillableMonthUsd: number;
 }) {
   if (rows.length === 0) {
     return (
@@ -589,6 +641,8 @@ function ProviderBreakdown({
     >
       {sorted.map((r) => {
         const isAnthropic = r.provider === 'anthropic';
+        const isGoogle = r.provider.startsWith('google');
+        const grossUsd7d = microcentsToDollars(r.microcents);
         return (
           <div
             key={r.provider}
@@ -601,7 +655,20 @@ function ProviderBreakdown({
           >
             <div style={{ ...labelStyle, marginBottom: 4 }}>
               {r.provider}
-              {!isAnthropic && (
+              {isGoogle && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: 9,
+                    color: 'var(--tp-subtle)',
+                    fontWeight: 500,
+                    letterSpacing: 0,
+                  }}
+                >
+                  (after free tier, mo)
+                </span>
+              )}
+              {!isAnthropic && !isGoogle && (
                 <span
                   style={{
                     marginLeft: 6,
@@ -616,10 +683,19 @@ function ProviderBreakdown({
               )}
             </div>
             <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>
-              {fmtMoney(microcentsToDollars(r.microcents))}
+              {isGoogle
+                ? fmtMoney(googleBillableMonthUsd)
+                : fmtMoney(grossUsd7d)}
             </div>
             <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 2 }}>
-              {r.requests.toLocaleString()} req
+              {isGoogle ? (
+                <>
+                  {r.requests.toLocaleString()} req (7d) ·{' '}
+                  {fmtMoney(googleBillableMonthGrossUsd)} gross/mo
+                </>
+              ) : (
+                <>{r.requests.toLocaleString()} req</>
+              )}
             </div>
           </div>
         );

@@ -9,6 +9,7 @@ import AppNavbar from '@/components/AppNavbar';
 import VehicleProfileSection from '@/components/VehicleProfileSection';
 import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
+import SettingsBottomNav from './SettingsBottomNav';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +57,11 @@ export default async function SettingsPage() {
             maxWidth: 720,
             width: '100%',
             margin: '0 auto',
-            padding: '32px 16px 80px',
+            // Extra bottom padding accounts for the mobile BottomNav
+            // (~70px nav + iPhone home indicator) so the last admin card
+            // isn't hidden behind it. On tablet/desktop the nav doesn't
+            // mount, but the extra space is harmless.
+            padding: '32px 16px calc(80px + env(safe-area-inset-bottom) + 70px)',
             boxSizing: 'border-box',
           }}
         >
@@ -221,6 +226,7 @@ export default async function SettingsPage() {
             </>
           )}
         </div>
+        <SettingsBottomNav />
       </div>
     </UnitsProvider>
   );
