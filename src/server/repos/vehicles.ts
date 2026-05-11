@@ -175,6 +175,12 @@ export async function deleteVehicle(
     .select({ id: vehicles.id })
     .from(vehicles)
     .where(eq(vehicles.userId, userId));
+  if (allRows.length <= 1) {
+    return {
+      ok: false,
+      error: 'You need at least one vehicle. Add another first.',
+    };
+  }
   if (owned.is_default && allRows.length > 1) {
     return {
       ok: false,

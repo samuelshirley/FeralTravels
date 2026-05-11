@@ -163,6 +163,23 @@ export default function VehicleProfileSection() {
         <div style={{ fontSize: 13, color: 'var(--tp-muted)' }}>Loading vehicles…</div>
       ) : (
         <>
+          {vehicles.length === 1 && (
+            <div
+              data-testid="vehicle-solo-reminder"
+              style={{
+                marginBottom: 12,
+                padding: '8px 12px',
+                borderRadius: 6,
+                background: 'var(--tp-danger-muted)',
+                border: '1px solid rgba(198, 93, 74, 0.35)',
+                color: 'var(--tp-danger)',
+                fontSize: 12,
+                lineHeight: 1.4,
+              }}
+            >
+              You need at least one vehicle. Add another first.
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {vehicles.map((v) => (
               <div key={v.id}>
@@ -176,6 +193,7 @@ export default function VehicleProfileSection() {
                 ) : (
                   <VehicleCard
                     vehicle={v}
+                    canDelete={vehicles.length > 1}
                     onEdit={() => setEditingId(v.id)}
                     onDelete={() => handleDelete(v.id)}
                     onSetDefault={() => handleSetDefault(v.id)}
@@ -222,11 +240,13 @@ export default function VehicleProfileSection() {
 
 function VehicleCard({
   vehicle,
+  canDelete,
   onEdit,
   onDelete,
   onSetDefault,
 }: {
   vehicle: Vehicle;
+  canDelete: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onSetDefault: () => void;
@@ -281,9 +301,15 @@ function VehicleCard({
           <button onClick={onEdit} style={smallBtnStyle('var(--tp-primary)')}>
             Edit
           </button>
-          <button onClick={onDelete} style={smallBtnStyle('var(--tp-danger)')}>
-            Delete
-          </button>
+          {canDelete && (
+            <button
+              data-testid="vehicle-delete-button"
+              onClick={onDelete}
+              style={smallBtnStyle('var(--tp-danger)')}
+            >
+              Delete
+            </button>
+          )}
         </div>
       </div>
       <div
