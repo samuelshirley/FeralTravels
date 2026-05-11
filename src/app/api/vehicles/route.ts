@@ -14,8 +14,8 @@ const createSchema = z
     max_drive_hours_per_week: z.number().positive().max(168),
     max_consecutive_drive_days: z.number().int().positive().max(14),
     water_tracking_enabled: z.boolean(),
-    water_refill_days: z.number().int().positive().max(60).optional(),
-    blackwater_refill_days: z.number().int().positive().max(60).optional(),
+    water_refill_days: z.number().int().positive().max(60).nullish(),
+    blackwater_refill_days: z.number().int().positive().max(60).nullish(),
     is_default: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
