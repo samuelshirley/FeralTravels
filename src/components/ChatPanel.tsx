@@ -41,6 +41,8 @@ interface UIMessage extends ChatMessage {
   // (unknown action, owner mismatch, DB error). We surface this so the user
   // doesn't see a misleading "Changes applied to trip" badge.
   applyError?: string | null;
+  /** When some writes succeeded AND some failed — show success + this warning */
+  partialApplyWarning?: string | null;
   // True when the replan response had truncated=true — i.e. Penny hit the
   // tool-use iteration cap mid-plan and only persisted partial work. We
   // surface a warning + 'Continue planning' button on the bubble. UI-only;
@@ -453,11 +455,14 @@ export default function ChatPanel({
         ? changes.changes.length > 0
         : false;
       let applyError: string | null = null;
+      let partialApplyWarning: string | null = null;
       if (hadProposedChanges && appliedCount === 0) {
         applyError =
           'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
+      } else if (failedCount > 0 && appliedCount > 0 && Array.isArray(failedActions)) {
+        partialApplyWarning = `Some edits didn't save: ${failedActions.map((f) => f.action).join(', ')}`;
       } else if (failedCount > 0 && Array.isArray(failedActions)) {
-        applyError = `Some changes failed: ${failedActions.map((f) => f.action).join(', ')}`;
+        applyError = `Changes failed to save: ${failedActions.map((f) => f.action).join(', ')}`;
       }
 
       setMessages((prev) =>
@@ -471,8 +476,9 @@ export default function ChatPanel({
                 // server-side via addChatMessage).
                 content: finalResponse || m.content,
                 changes_made:
-                  appliedCount > 0 && changes ? JSON.stringify(changes) : null,
+                  appliedCount > 0 ? JSON.stringify(changes ?? { changes: [] }) : null,
                 applyError,
+                partialApplyWarning,
                 truncated,
                 streaming: false,
                 inFlightTools: undefined,
@@ -816,6 +822,22 @@ export default function ChatPanel({
                 }}
               >
                 Changes applied to trip
+              </div>
+            )}
+            {msg.partialApplyWarning && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '6px 8px',
+                  background: 'rgba(212, 160, 23, 0.12)',
+                  borderRadius: 4,
+                  border: '1px solid rgba(212, 160, 23, 0.35)',
+                  fontSize: 11,
+                  color: 'var(--tp-text)',
+                  lineHeight: 1.45,
+                }}
+              >
+                {msg.partialApplyWarning}
               </div>
             )}
             {msg.applyError && (

@@ -47,14 +47,23 @@ const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // at an already-running app, e.g. a Vercel preview URL).
 const useExternalServer = !!process.env.E2E_BASE_URL;
 
+// Local: parallelise across spec files (still serial within a file). CI stays
+// single-worker to reduce DB fixture contention and Anthropic rate pressure.
+// Override any time: PW_WORKERS=1 npx playwright test
+const playwrightWorkers = process.env.PW_WORKERS
+  ? parseInt(process.env.PW_WORKERS, 10)
+  : process.env.CI
+    ? 1
+    : 5;
+
 export default defineConfig({
   testDir: path.join(__dirname, 'e2e'),
   // E2E runs serially per file by default; tests within a file are
-  // independent and safe to parallelise. We cap workers because the AI
-  // test holds an Anthropic stream open for ~30s and we don't want to
-  // burn rate limit quota with unrelated parallel work.
+  // independent and safe to parallelise. The Penny test calls Anthropic —
+  // locally we still default to several workers (see playwrightWorkers); CI
+  // uses 1. Use PW_WORKERS=1 if you see flakiness or quota issues.
   fullyParallel: false,
-  workers: 1,
+  workers: Number.isFinite(playwrightWorkers) && playwrightWorkers > 0 ? playwrightWorkers : 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [
     ['list'],
