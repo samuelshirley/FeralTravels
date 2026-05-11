@@ -273,8 +273,22 @@ export async function getOnboardingSnapshot(
   }
 
   if (state === 'vehicle_new') {
-    const currentVehicle = trip.vehicleId
-      ? await getVehicleForUser(userId, trip.vehicleId)
+    // If the trip has no vehicle yet but the account owns exactly one row,
+    // attach it so we complete that profile instead of creating a duplicate via
+    // the "name first" branch of submitAnswer.
+    let vehicleIdForFlow = trip.vehicleId;
+    if (!vehicleIdForFlow) {
+      const owned = await listVehiclesForUser(userId);
+      if (owned.length === 1) {
+        vehicleIdForFlow = owned[0].id;
+        await db
+          .update(trips)
+          .set({ vehicleId: vehicleIdForFlow, updatedAt: new Date() })
+          .where(eq(trips.id, tripId));
+      }
+    }
+    const currentVehicle = vehicleIdForFlow
+      ? await getVehicleForUser(userId, vehicleIdForFlow)
       : null;
     const askedLabels = await loadAskedLabels(tripId);
     const unitsPref = await getUnitsPref(userId);

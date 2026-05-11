@@ -34,6 +34,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
     .map((s) => s[0]?.toUpperCase() ?? '')
     .join('');
 
+  const hasPhoto = Boolean(user.image?.trim());
+
   return (
     <nav
       className="tp-app-navbar"
@@ -128,24 +130,33 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               width: 32,
               height: 32,
               borderRadius: '50%',
-              background: 'linear-gradient(145deg, var(--tp-primary) 0%, var(--tp-success) 100%)',
               border: '2px solid var(--tp-surface)',
-              color: 'var(--tp-on-primary)',
               fontWeight: 800,
               fontSize: 12,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundImage: user.image ? `url(${user.image})` : undefined,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
               boxShadow: 'var(--tp-shadow-sm)',
+              appearance: 'none',
+              WebkitAppearance: 'none',
+              ...(hasPhoto
+                ? {
+                    backgroundImage: `url(${user.image}), linear-gradient(145deg, var(--tp-primary) 0%, var(--tp-success) 100%)`,
+                    backgroundSize: 'cover, cover',
+                    backgroundPosition: 'center, center',
+                    backgroundRepeat: 'no-repeat, no-repeat',
+                    color: 'var(--tp-on-primary)',
+                  }
+                : {
+                    background: 'var(--tp-primary-muted)',
+                    color: 'var(--tp-primary)',
+                  }),
             }}
             aria-label="Account menu"
             title={user.email || user.name || 'Account'}
           >
-            {!user.image && initials}
+            {!hasPhoto && initials}
           </button>
           {open && (
             <div

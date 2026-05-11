@@ -12,8 +12,7 @@ import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
-import type { TripWithLegs, POI, ChatMessage } from '@/types/trip';
-
+import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
@@ -26,6 +25,8 @@ interface Props {
   isAdmin?: boolean;
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
   needsVehicleRemediation?: boolean;
+  /** SSR onboarding state — lets us show remediation during client trip fetch */
+  serverOnboardingState?: OnboardingState;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -74,6 +75,7 @@ export default function TripWorkspace({
   isAdmin = false,
   initialChat,
   needsVehicleRemediation = false,
+  serverOnboardingState,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -270,9 +272,17 @@ export default function TripWorkspace({
     return () => clearTimeout(t);
   }, [legFingerprints, readonly, trip, replanBusy]);
 
+  const effectiveOnboardingState: OnboardingState =
+    trip?.onboarding_state ?? serverOnboardingState ?? 'not_started';
+  const showVehicleRemediation =
+    needsVehicleRemediation && effectiveOnboardingState === 'done' && !readonly;
+  const remediationOverlay = showVehicleRemediation ? <VehicleRemediationOverlay /> : null;
+
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <>
+        {remediationOverlay}
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar user={user} isAdmin={isAdmin} />
         <div
           style={{
@@ -303,12 +313,15 @@ export default function TripWorkspace({
           </div>
         </div>
       </div>
+      </>
     );
   }
 
   if (!trip) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <>
+        {remediationOverlay}
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar user={user} isAdmin={isAdmin} />
         <div
           style={{
@@ -322,6 +335,7 @@ export default function TripWorkspace({
           Trip not found.
         </div>
       </div>
+      </>
     );
   }
 
@@ -454,11 +468,6 @@ export default function TripWorkspace({
       />
     </div>
   ) : null;
-
-  const remediationOverlay =
-    needsVehicleRemediation && trip.onboarding_state === 'done' && !readonly ? (
-      <VehicleRemediationOverlay />
-    ) : null;
 
   // ───────── MOBILE (<768px): single pane + fixed bottom nav ─────────
   if (viewport === 'mobile') {

@@ -20,7 +20,7 @@ export async function userNeedsVehicleProfileRemediation(userId: string): Promis
 /**
  * Sets `needs_vehicle_profile_remediation` from owned vehicles — call after PATCH vehicle etc.
  *
- * Users with zero vehicles can't open trip workspace meaningfully but keep flag false.
+ * Users with zero vehicles get flag false (nothing to remediate until they add one).
  */
 export async function recalculateUserRemediationFlag(userId: string): Promise<boolean> {
   const list = await listVehiclesForUser(userId);

@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
-import { userNeedsVehicleProfileRemediation } from '@/server/repos/remediationFlags';
+import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
 import { getUnitsPref } from '@/server/repos/users';
@@ -28,8 +28,10 @@ export default async function TripPage({ params }: Props) {
   const isOwner = trip.user_id === session.user.id;
   if (!isOwner && !trip.is_template) notFound();
 
+  // Recompute from vehicles every load — the cached column defaults false and was
+  // never set when users only had the legacy auto-created empty default row.
   const needsVehicleRemediation =
-    isOwner && (await userNeedsVehicleProfileRemediation(session.user.id as string));
+    isOwner && (await recalculateUserRemediationFlag(session.user.id as string));
   const admin = await isAdmin(session.user.email);
   // Ship the most-recent page of chat with the HTML so the chat panel isn't
   // empty on hard refresh. Older messages are loaded lazily via GET /api/chat.
@@ -52,6 +54,7 @@ export default async function TripPage({ params }: Props) {
         isAdmin={admin}
         initialChat={initialChat}
         needsVehicleRemediation={needsVehicleRemediation}
+        serverOnboardingState={trip.onboarding_state}
       />
     </UnitsProvider>
   );

@@ -171,15 +171,11 @@ export async function deleteVehicle(
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return { ok: false, error: 'Vehicle not found' };
 
-  // Block deletion if it's the only vehicle — every user keeps at least one.
   const allRows = await db
     .select({ id: vehicles.id })
     .from(vehicles)
     .where(eq(vehicles.userId, userId));
-  if (allRows.length <= 1) {
-    return { ok: false, error: 'You need at least one vehicle. Add another first.' };
-  }
-  if (owned.is_default) {
+  if (owned.is_default && allRows.length > 1) {
     return {
       ok: false,
       error: 'This is your default vehicle. Set another as default first.',

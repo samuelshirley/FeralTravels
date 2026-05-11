@@ -3,9 +3,10 @@ import NextAuth, { type DefaultSession } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
-import { users, accounts, sessions, verificationTokens, vehicles } from '@/server/db/schema';
+import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
+import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import {
   isAuthTestBackdoorConfigured,
 } from './test-backdoor';
@@ -95,18 +96,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 userId = row.id;
                 name = row.name;
 
-                const hasV = await db
-                  .select({ id: vehicles.id })
-                  .from(vehicles)
-                  .where(eq(vehicles.userId, userId))
-                  .limit(1);
-                if (hasV.length === 0) {
-                  await db.insert(vehicles).values({
-                    userId,
-                    name: 'My Vehicle',
-                    isDefault: true,
-                  });
-                }
                 await syncAdminFlagOnSignIn(email).catch(() => {});
               }
 
@@ -125,14 +114,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   events: {
     async createUser({ user }) {
       if (!user.id) return;
-      const existing = await db.select({ id: vehicles.id }).from(vehicles).where(eq(vehicles.userId, user.id)).limit(1);
-      if (existing.length === 0) {
-        await db.insert(vehicles).values({
-          userId: user.id,
-          name: 'My Vehicle',
-          isDefault: true,
-        });
-      }
       // Set admin flag on first creation if email is on the hardcoded allowlist.
       await syncAdminFlagOnSignIn(user.email).catch(() => {});
     },
@@ -141,6 +122,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // tampered with manually, and ensures admin status is reflected even on
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
+      if (user?.id) {
+        await recalculateUserRemediationFlag(user.id).catch(() => {});
+      }
 
       // Trusted-OAuth email verification: Google (and any OIDC provider) ships
       // an `email_verified` claim on the ID token. When that claim is true we

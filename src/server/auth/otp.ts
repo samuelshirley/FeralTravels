@@ -1,10 +1,11 @@
 import 'server-only';
 import { db } from '@/server/db/client';
-import { emailOtpCodes, users, vehicles, sessions } from '@/server/db/schema';
+import { emailOtpCodes, users, sessions } from '@/server/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { renderOtpEmail } from './otp-email';
 import { syncAdminFlagOnSignIn } from './admin';
+import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import { cookies } from 'next/headers';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -232,25 +233,12 @@ export async function signInWithOtp(email: string, code: string): Promise<string
       .values({ email: normalized, emailVerified: new Date() })
       .returning({ id: users.id });
     userId = row.id;
-
-    // Bootstrap a default vehicle for new users.
-    const hasV = await db
-      .select({ id: vehicles.id })
-      .from(vehicles)
-      .where(eq(vehicles.userId, userId))
-      .limit(1);
-    if (hasV.length === 0) {
-      await db.insert(vehicles).values({
-        userId,
-        name: 'My Vehicle',
-        isDefault: true,
-      });
-    }
     await syncAdminFlagOnSignIn(normalized).catch(() => {});
   }
 
   // Re-sync admin flag on every sign-in (mirrors the signIn event handler).
   await syncAdminFlagOnSignIn(normalized).catch(() => {});
+  await recalculateUserRemediationFlag(userId).catch(() => {});
 
   // 3. Create a database session.
   const sessionToken = crypto.randomUUID();
