@@ -163,22 +163,22 @@ export default async function AdminPage() {
     {
       label: 'AI spend (24h)',
       value: fmtMoney(usd24),
-      sub: `${usage24.find((u) => u.provider === 'anthropic')?.requests ?? 0} req`,
+      sub: `${usage24.find((u) => u.provider === 'anthropic')?.requests ?? 0} req · list-price est.`,
     },
     {
       label: 'AI spend (7d)',
       value: fmtMoney(usd7d),
-      sub: `${usage7d.find((u) => u.provider === 'anthropic')?.requests ?? 0} req`,
+      sub: `${usage7d.find((u) => u.provider === 'anthropic')?.requests ?? 0} req · rolling 168h · list-price est.`,
     },
     {
       label: 'AI spend (all-time)',
       value: fmtMoney(usdAllTime),
-      sub: `${allTimeAnthropic.requests.toLocaleString()} req`,
+      sub: `${allTimeAnthropic.requests.toLocaleString()} req · list-price est.`,
     },
     {
       label: 'Projected /mo',
       value: fmtMoney(projectedMonthly),
-      sub: 'extrapolated from 7d',
+      sub: '×30/7 from 7d est. (not an invoice)',
     },
     {
       label: 'Google billable (mo)',
@@ -347,7 +347,25 @@ export default async function AdminPage() {
               lineHeight: 1.5,
             }}
           >
-            Anthropic = real spend. Google = list-price estimate; the
+            Anthropic totals here sum our{' '}
+            <strong>list-price estimates</strong> from token counts logged with each API
+            call — useful for trends and caps, but they can diverge from{' '}
+            <a
+              href="https://console.anthropic.com/"
+              style={{ color: 'var(--tp-primary)' }}
+            >
+              Anthropic Console
+            </a>{' '}
+            (billing tiers, rounding, workbench usage, or Section 7 rows in{' '}
+            <code>scripts/reconcile-anthropic-spend.ts</code>). For vendor-reported USD,
+            use Anthropic&apos;s{' '}
+            <a
+              href="https://docs.anthropic.com/en/api/data-usage-cost-api"
+              style={{ color: 'var(--tp-primary)' }}
+            >
+              Usage &amp; Cost API
+            </a>{' '}
+            (requires an organization admin API key). Google = list-price estimate; the
             dashboard subtracts per-SKU monthly free allowances (configured
             via <code>GOOGLE_PLACES_FREE_CALLS_*</code> env vars) so the
             &quot;billable&quot; figure matches your Google Cloud invoice.
@@ -699,7 +717,7 @@ function googleSubLabel(billable: {
 /**
  * Provider breakdown card. Shows requests + estimated cost per provider
  * for the time window the parent passes in. Intended for the section
- * that explains "your dashboard total = $X Anthropic + $Y Google estimate".
+ * that explains "your dashboard total = $X Anthropic (list est.) + $Y Google estimate".
  *
  * For Google rows, the headline number is the month-to-date BILLABLE
  * (after subtracting per-SKU free allowances) and the gross is shown as
@@ -721,7 +739,7 @@ function ProviderBreakdown({
       </div>
     );
   }
-  // Sort: anthropic first (the real money), everything else after.
+  // Sort: anthropic first (primary LLM estimate), everything else after.
   const sorted = [...rows].sort((a, b) => {
     if (a.provider === 'anthropic') return -1;
     if (b.provider === 'anthropic') return 1;
@@ -751,6 +769,19 @@ function ProviderBreakdown({
           >
             <div style={{ ...labelStyle, marginBottom: 4 }}>
               {r.provider}
+              {isAnthropic && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: 9,
+                    color: 'var(--tp-subtle)',
+                    fontWeight: 500,
+                    letterSpacing: 0,
+                  }}
+                >
+                  (list-price est., 7d)
+                </span>
+              )}
               {isGoogle && (
                 <span
                   style={{

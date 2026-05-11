@@ -210,15 +210,51 @@ async function main() {
     }))
   );
 
+  // ─── Section 7: Zero-dollar Anthropic rows (historical / pricing gaps) ─
+  console.log('\n═══ Anthropic rows with $0 cost but non-zero tokens ═══');
+  const zeroCostAnthropic = await db
+    .select({
+      model: usageEvents.model,
+      rowCount: sql<number>`COUNT(*)::int`,
+      sumInput: sql<number>`COALESCE(SUM(${usageEvents.inputTokens}), 0)::bigint`,
+      sumOutput: sql<number>`COALESCE(SUM(${usageEvents.outputTokens}), 0)::bigint`,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.provider, 'anthropic'),
+        sql`(COALESCE(${usageEvents.costMicrocents}, 0) = 0)`,
+        sql`(COALESCE(${usageEvents.inputTokens}, 0) + COALESCE(${usageEvents.outputTokens}, 0)) > 0`
+      )
+    )
+    .groupBy(usageEvents.model);
+
+  if (zeroCostAnthropic.length === 0) {
+    console.log('None — all anthropic rows with tokens have non-zero cost_microcents.');
+  } else {
+    console.table(
+      zeroCostAnthropic.map((r) => ({
+        model: r.model ?? '(null)',
+        rows: r.rowCount,
+        input_tokens: r.sumInput,
+        output_tokens: r.sumOutput,
+      }))
+    );
+    console.log(
+      'These deflate dashboard totals vs Anthropic Console. Fix forward via pricing in src/lib/anthropicCostEstimate.ts; repair historical rows with scripts/backfill-anthropic-zero-cost-rows.ts'
+    );
+  }
+
   await client.end();
 
   // ─── Reconciliation guidance ──────────────────────────────────────────
   console.log('\n═══ How to read this ═══');
   console.log(
     [
-      '1. Section 1 "anthropic" usd vs Anthropic Console "Month to date":',
-      '   should match within ~5%. Console rounds and excludes mid-flight',
-      '   requests. Bigger gap = math bug.',
+      '1. Section 1 "anthropic" usd vs Anthropic Console "Total token cost"',
+      '   for the same rolling 7-day window (API-only scope): often within ~10%;',
+      '   larger gaps usually mean Section 7 rows, console workbench usage, or',
+      '   list-price estimate vs billed amounts.',
       '',
       '2. Section 2 daily numbers vs Console "Daily token cost" bars:',
       '   per-day mismatch points at pricing constants (Sonnet 4 base $3/$15;',
@@ -236,6 +272,9 @@ async function main() {
       "   cost. Google's $200/mo free credit usually zeros it out at",
       '   the actual bill. Compare against your Google Cloud Billing',
       '   page; do not treat the estimate as money out the door.',
+      '',
+      '6. Section 7 lists anthropic rows still at $0 despite tokens — run',
+      '   scripts/backfill-anthropic-zero-cost-rows.ts after fixing pricing.',
     ].join('\n')
   );
 }

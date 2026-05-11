@@ -2,65 +2,13 @@ import 'server-only';
 import { db } from '@/server/db/client';
 import { usageEvents } from '@/server/db/schema';
 import { and, eq, gte, sql, desc } from 'drizzle-orm';
+import {
+  dollarsToMicrocents,
+  estimateAnthropicCostUsd,
+  microcentsToDollars,
+} from '@/lib/anthropicCostEstimate';
 
-// Anthropic public list pricing (USD per 1M tokens). Update when pricing changes.
-// https://www.anthropic.com/pricing#anthropic-api
-const ANTHROPIC_PRICING_PER_MTOK: Record<string, { input: number; output: number }> = {
-  // Sonnet 4 (current Penny model: claude-sonnet-4-20250514)
-  'claude-sonnet-4':              { input: 3.0,  output: 15.0 },
-  // Sonnet 4.5
-  'claude-sonnet-4-5':            { input: 3.0,  output: 15.0 },
-  // Legacy Sonnet 3.5
-  'claude-3-5-sonnet':            { input: 3.0,  output: 15.0 },
-  // Haiku
-  'claude-3-5-haiku':             { input: 0.8,  output: 4.0 },
-  'claude-haiku-4':               { input: 0.8,  output: 4.0 },
-  // Opus
-  'claude-3-opus':                { input: 15.0, output: 75.0 },
-  'claude-opus-4':                { input: 15.0, output: 75.0 },
-};
-
-/** Convert US dollars to integer microcents (1 cent = 1,000,000 microcents). */
-export function dollarsToMicrocents(usd: number): number {
-  return Math.round(usd * 100 * 1_000_000);
-}
-
-export function microcentsToDollars(mc: number | null | undefined): number {
-  if (!mc) return 0;
-  return mc / 100 / 1_000_000;
-}
-
-/**
- * Anthropic prompt-cache pricing modifiers (relative to base input price):
- *   - cache write (cache_creation_input_tokens): 1.25× base
- *   - cache read  (cache_read_input_tokens):     0.10× base
- * https://docs.claude.com/en/docs/build-with-claude/prompt-caching
- */
-const CACHE_WRITE_MULTIPLIER = 1.25;
-const CACHE_READ_MULTIPLIER = 0.1;
-
-export function estimateAnthropicCostUsd(
-  model: string,
-  inputTokens: number,
-  outputTokens: number,
-  cacheCreationInputTokens = 0,
-  cacheReadInputTokens = 0
-): number {
-  const key = model.toLowerCase();
-  const price =
-    ANTHROPIC_PRICING_PER_MTOK[key] ??
-    Object.entries(ANTHROPIC_PRICING_PER_MTOK).find(([k]) => key.startsWith(k))?.[1];
-  if (!price) return 0;
-  // Anthropic's `input_tokens` field excludes cache reads/writes — they're
-  // billed separately, so we add each component at its own rate.
-  const inputCost = (inputTokens / 1_000_000) * price.input;
-  const cacheWriteCost =
-    (cacheCreationInputTokens / 1_000_000) * price.input * CACHE_WRITE_MULTIPLIER;
-  const cacheReadCost =
-    (cacheReadInputTokens / 1_000_000) * price.input * CACHE_READ_MULTIPLIER;
-  const outputCost = (outputTokens / 1_000_000) * price.output;
-  return inputCost + cacheWriteCost + cacheReadCost + outputCost;
-}
+export { dollarsToMicrocents, estimateAnthropicCostUsd, microcentsToDollars };
 
 export interface LogAnthropicUsageInput {
   userId: string;
@@ -86,6 +34,13 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
     cacheCreate,
     cacheRead
   );
+  const tokenVolume =
+    input.inputTokens + input.outputTokens + cacheCreate + cacheRead;
+  if (usd === 0 && tokenVolume > 0) {
+    console.warn(
+      `[usage] Anthropic cost estimate is $0 despite ${tokenVolume} tokens — add pricing for model "${input.model}" in anthropicCostEstimate.ts`
+    );
+  }
   // Roll cache tokens into the stored inputTokens column so the dashboard
   // reflects total token volume (regular + cache write + cache read). The
   // costMicrocents field already reflects the correctly-discounted USD.
