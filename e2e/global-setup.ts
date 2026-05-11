@@ -8,6 +8,11 @@
  *      against. Re-running is a no-op when nothing has changed; if a test
  *      mutated fixture data (it shouldn't, but…) we put it back.
  *
+ *      The seed may set users.units_pref to NULL (see migration 0011). If the
+ *      DB still has NOT NULL on that column, run `npm run db:push` (or
+ *      `npm run ship`, which syncs the schema before E2E) so Neon matches
+ *      schema.ts before Playwright runs.
+ *
  * OTP E2E is optional: it only runs when E2E_OTP_EMAIL is set. Other tests
  * don't depend on it.
  */
