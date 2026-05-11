@@ -20,6 +20,8 @@ interface StopsSectionProps {
    * replan runs).
    */
   fuelStatus?: FuelStatus;
+  /** Last server-side fuel planner error when fuelStatus is failed. */
+  fuelPlanError?: string | null;
   onChanged?: () => void;
   readonly?: boolean;
 }
@@ -113,6 +115,7 @@ export default function StopsSection({
   legStartCoords: _legStartCoords,
   initialStops,
   fuelStatus = 'none',
+  fuelPlanError = null,
   onChanged,
   readonly = false,
 }: StopsSectionProps) {
@@ -422,7 +425,19 @@ export default function StopsSection({
             }}
           >
             <strong>Fuel planning failed.</strong> We&apos;ll retry automatically the next time you edit a stop or
-            change the route. (If this keeps happening, enable &quot;Places API (New)&quot; in Google Cloud Console.)
+            change the route.
+            {fuelPlanError ? (
+              <>
+                {' '}
+                <span style={{ color: 'var(--tp-muted)' }}>{fuelPlanError}</span>
+              </>
+            ) : (
+              <>
+                {' '}
+                (If this keeps happening, enable &quot;Places API (New)&quot; in Google Cloud and set
+                GOOGLE_MAPS_SERVER_API_KEY for server-side Places calls.)
+              </>
+            )}
           </div>
         )}
 

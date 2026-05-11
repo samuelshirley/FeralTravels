@@ -1,5 +1,6 @@
 export type OnboardingState =
   | 'not_started'
+  | 'units_pick'
   | 'vehicle_pick'
   | 'vehicle_new'
   | 'preferences'
@@ -59,6 +60,8 @@ export interface Leg {
   color: string | null;
   notes: string | null; // JSON array
   fuel_status: FuelStatus;
+  /** Populated when fuel_status is failed; human-readable diagnosis. */
+  fuel_plan_error: string | null;
   created_at: string;
   updated_at: string;
 }

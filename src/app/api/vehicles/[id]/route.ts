@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { requireUserId, errorResponse } from '@/server/auth/guards';
+import { HttpError, requireUserId, errorResponse } from '@/server/auth/guards';
 import {
   deleteVehicle,
   getVehicleForUser,
   setDefaultVehicle,
   updateVehicle,
 } from '@/server/repos/vehicles';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,35 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       const updated = await setDefaultVehicle(userId, id);
       if (!updated) return Response.json({ error: 'Not found' }, { status: 404 });
       return Response.json(updated);
+    }
+
+    const before = await getVehicleForUser(userId, id);
+    if (!before) return Response.json({ error: 'Not found' }, { status: 404 });
+
+    const merged = {
+      ...before,
+      ...(body.name !== undefined && { name: body.name }),
+      ...(body.refill_distance_km !== undefined && { refill_distance_km: body.refill_distance_km }),
+      ...(body.max_drive_hours_per_day !== undefined && {
+        max_drive_hours_per_day: body.max_drive_hours_per_day,
+      }),
+      ...(body.max_drive_hours_per_week !== undefined && {
+        max_drive_hours_per_week: body.max_drive_hours_per_week,
+      }),
+      ...(body.max_consecutive_drive_days !== undefined && {
+        max_consecutive_drive_days: body.max_consecutive_drive_days,
+      }),
+      ...(body.water_refill_days !== undefined && { water_refill_days: body.water_refill_days }),
+      ...(body.blackwater_refill_days !== undefined && {
+        blackwater_refill_days: body.blackwater_refill_days,
+      }),
+    } as Record<string, unknown>;
+
+    if (!vehicleMeetsFuelPlanningMinimum(merged)) {
+      throw new HttpError(
+        400,
+        'Refill distance is required: set “refuel every X km” to a value between 1 and 5000.'
+      );
     }
 
     const updated = await updateVehicle(userId, id, body);

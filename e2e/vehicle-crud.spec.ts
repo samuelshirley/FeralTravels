@@ -34,6 +34,7 @@ test.describe('Vehicle CRUD', () => {
     await expect(page.getByTestId('vehicle-form')).toBeVisible();
 
     await page.getByTestId('vehicle-name-input').fill(vehicleName);
+    await page.getByTestId('vehicle-refill-input').fill('400');
     await page.getByTestId('vehicle-save-button').click();
 
     // After save the form unmounts and a new VehicleCard appears.

@@ -5,6 +5,7 @@ import {
 } from '@/server/auth/guards';
 import { getLegTripId } from '@/server/repos/tasks';
 import { nearbyParksAround } from '@/server/places/nearby-parks';
+import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,11 +39,12 @@ export async function GET(request: Request) {
     }
     await assertTripReadableByUser(tripId, userId);
 
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    const apiKey = googleMapsApiKeyForServer();
     if (!apiKey) {
       return Response.json(
         {
-          error: 'Places search unavailable — NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is not set.',
+          error:
+            'Places search unavailable — set GOOGLE_MAPS_SERVER_API_KEY and/or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.',
           dogParks: [],
           parks: [],
         },

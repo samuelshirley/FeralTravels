@@ -6,6 +6,7 @@ import { requireUserId } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getDirections } from '@/lib/directions';
+import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,11 +16,16 @@ export async function GET() {
     const userId = await requireUserId();
     const results: Record<string, unknown> = {};
 
-    // 1. Google Maps API key presence
-    const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    results['env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY'] = key
-      ? `set (${key.slice(0, 8)}…)`
-      : 'MISSING — fuel planning will always fail';
+    const pub = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    const serverOnly = process.env.GOOGLE_MAPS_SERVER_API_KEY;
+    results['env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY'] = pub
+      ? `set (${pub.slice(0, 8)}…)`
+      : 'not set — browser Maps JS needs this';
+    results['env.GOOGLE_MAPS_SERVER_API_KEY'] = serverOnly
+      ? `set (${serverOnly.slice(0, 8)}…) — used for Places REST from the server`
+      : 'not set — server falls back to NEXT_PUBLIC key (referrer-only keys break Places REST with 403)';
+
+    const key = googleMapsApiKeyForServer();
 
     // 2. Vehicle / effective range — post-0007 the planner uses the user's
     // stated `refill_distance_km` directly. The old fuel_economy × tank × 0.8
@@ -53,7 +59,8 @@ export async function GET() {
 
     // 4. Google Places API (New) — gas stations near Barcelona
     if (!key) {
-      results['places_api'] = 'Skipped — no API key';
+      results['places_api'] =
+        'Skipped — set at least one of GOOGLE_MAPS_SERVER_API_KEY or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY';
     } else {
       try {
         const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
@@ -83,7 +90,7 @@ export async function GET() {
             body: body.slice(0, 400),
             hint:
               res.status === 403
-                ? 'KEY HAS HTTP REFERRER RESTRICTIONS — server-side calls are blocked. In Google Cloud Console, remove referrer restrictions from this key or create a separate unrestricted server key.'
+                ? '403 from Places REST — use GOOGLE_MAPS_SERVER_API_KEY (no HTTP referrer restriction) or relax key restrictions. Browser-only keys return 403 for server fetch().'
                 : res.status === 400
                   ? 'BAD REQUEST — "Places API (New)" is probably not enabled. In Google Cloud Console → APIs & Services → Enable APIs, search for "Places API (New)" and enable it.'
                   : 'Check Google Cloud Console for key/quota issues.',
@@ -105,7 +112,7 @@ export async function GET() {
     const placesOk = (results['places_api'] as any)?.ok === true;
     const osrmOk = (results['osrm'] as any)?.ok === true;
     results['summary'] = !key
-      ? '❌ Missing NEXT_PUBLIC_GOOGLE_MAPS_API_KEY'
+      ? '❌ Missing GOOGLE_MAPS_SERVER_API_KEY / NEXT_PUBLIC_GOOGLE_MAPS_API_KEY — server cannot call Places'
       : !osrmOk
         ? '❌ OSRM unreachable — route geometry fetch will fail'
         : !placesOk

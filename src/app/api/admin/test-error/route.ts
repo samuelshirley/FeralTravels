@@ -11,6 +11,8 @@ import { isAdmin, errorResponse, HttpError } from '@/server/auth/guards';
  * Network-failure testing is done client-side by pointing fetch at an
  * invalid host — see AdminTestErrorButton.
  */
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest): Promise<Response> {
   try {
     const session = await auth();

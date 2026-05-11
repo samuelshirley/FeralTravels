@@ -75,6 +75,7 @@ function legRow(r: typeof legs.$inferSelect) {
     color: r.color,
     notes: r.notes,
     fuel_status: (r.fuelStatus as Leg['fuel_status']) ?? 'none',
+    fuel_plan_error: r.fuelPlanError ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };

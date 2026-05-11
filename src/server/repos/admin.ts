@@ -8,6 +8,7 @@ import {
   chatHistory,
   gpxTrails,
   usageEvents,
+  vehicles,
 } from '@/server/db/schema';
 
 export async function getAdminOverview() {
@@ -22,6 +23,7 @@ export async function getAdminOverview() {
     [{ totalChat }],
     [{ totalReplans }],
     [{ totalGpx }],
+    [{ totalVehicles }],
     [{ newUsers24h }],
     [{ newUsers7d }],
   ] = await Promise.all([
@@ -41,14 +43,12 @@ export async function getAdminOverview() {
       .from(chatHistory)
       .where(sql`${chatHistory.role} = 'assistant' AND ${chatHistory.changesMade} IS NOT NULL`),
     db.select({ totalGpx: sql<number>`COUNT(*)::int` }).from(gpxTrails),
+    db.select({ totalVehicles: sql<number>`COUNT(*)::int` }).from(vehicles),
     db
       .select({ newUsers24h: sql<number>`COUNT(*)::int` })
       .from(users)
       .where(gte(users.createdAt, since24)),
-    db
-      .select({ newUsers7d: sql<number>`COUNT(*)::int` })
-      .from(users)
-      .where(gte(users.createdAt, since7d)),
+    db.select({ newUsers7d: sql<number>`COUNT(*)::int` }).from(users).where(gte(users.createdAt, since7d)),
   ]);
 
   return {
@@ -59,9 +59,65 @@ export async function getAdminOverview() {
     totalChat,
     totalReplans,
     totalGpx,
+    totalVehicles,
     newUsers24h,
     newUsers7d,
   };
+}
+
+const ADMIN_VEHICLES_LIST_LIMIT = 500;
+
+export async function getAdminVehiclesOverview(limit = ADMIN_VEHICLES_LIST_LIMIT) {
+  return db
+    .select({
+      vehicleId: vehicles.id,
+      userId: vehicles.userId,
+      userEmail: users.email,
+      userName: users.name,
+      userUnitsPref: users.unitsPref,
+      name: vehicles.name,
+      isDefault: vehicles.isDefault,
+      refillDistanceKm: vehicles.refillDistanceKm,
+      maxDriveHoursPerDay: vehicles.maxDriveHoursPerDay,
+      maxDriveHoursPerWeek: vehicles.maxDriveHoursPerWeek,
+      maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
+      waterRefillDays: vehicles.waterRefillDays,
+      blackwaterRefillDays: vehicles.blackwaterRefillDays,
+      createdAt: vehicles.createdAt,
+      updatedAt: vehicles.updatedAt,
+    })
+    .from(vehicles)
+    .innerJoin(users, eq(vehicles.userId, users.id))
+    .orderBy(desc(vehicles.updatedAt))
+    .limit(limit);
+}
+
+export type AdminVehicleListRow = Awaited<ReturnType<typeof getAdminVehiclesOverview>>[number];
+
+export async function getAdminVehicleById(vehicleId: number) {
+  const rows = await db
+    .select({
+      vehicleId: vehicles.id,
+      userId: vehicles.userId,
+      userEmail: users.email,
+      userName: users.name,
+      userUnitsPref: users.unitsPref,
+      name: vehicles.name,
+      isDefault: vehicles.isDefault,
+      refillDistanceKm: vehicles.refillDistanceKm,
+      maxDriveHoursPerDay: vehicles.maxDriveHoursPerDay,
+      maxDriveHoursPerWeek: vehicles.maxDriveHoursPerWeek,
+      maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
+      waterRefillDays: vehicles.waterRefillDays,
+      blackwaterRefillDays: vehicles.blackwaterRefillDays,
+      createdAt: vehicles.createdAt,
+      updatedAt: vehicles.updatedAt,
+    })
+    .from(vehicles)
+    .innerJoin(users, eq(vehicles.userId, users.id))
+    .where(eq(vehicles.id, vehicleId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export async function getRecentUsers(limit = 25) {

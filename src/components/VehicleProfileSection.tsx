@@ -4,6 +4,12 @@ import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { kmToMi, miToKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
+import {
+  buildVehicleProfileQuestions,
+  validateVehicleProfileDraftForSave,
+  vehicleProfileGroupTitle,
+  type VehicleProfileFieldKey,
+} from '@/lib/vehicleProfile';
 
 /**
  * Vehicle profile — the simplified shape introduced by migration 0007.
@@ -44,6 +50,7 @@ function emptyDraft(): Draft {
 }
 
 export default function VehicleProfileSection() {
+  const { units } = useUnits();
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
@@ -63,14 +70,27 @@ export default function VehicleProfileSection() {
   }, []);
 
   async function handleSave(draft: Draft, id: number | 'new') {
-    if (!draft.name?.trim()) {
-      setError('Vehicle name is required.');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
-      const payload = sanitize(draft);
+      const validated = validateVehicleProfileDraftForSave(
+        {
+          name: draft.name ?? '',
+          refill_distance_km: draft.refill_distance_km ?? null,
+          max_drive_hours_per_day: draft.max_drive_hours_per_day ?? null,
+          max_drive_hours_per_week: draft.max_drive_hours_per_week ?? null,
+          max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
+          water_refill_days: draft.water_refill_days ?? null,
+          blackwater_refill_days: draft.blackwater_refill_days ?? null,
+          is_default: draft.is_default,
+        },
+        units
+      );
+      if (!validated.ok) {
+        setError(validated.error);
+        return;
+      }
+      const payload = validated.payload;
       if (id === 'new') {
         await apiFetch('/api/vehicles', { body: payload });
       } else {
@@ -185,16 +205,6 @@ export default function VehicleProfileSection() {
       )}
     </div>
   );
-}
-
-function sanitize(draft: Draft): Record<string, unknown> {
-  const out: Record<string, unknown> = { name: draft.name.trim() };
-  for (const [k, v] of Object.entries(draft)) {
-    if (k === 'name' || k === 'id' || k === 'user_id' || k === 'created_at' || k === 'updated_at') continue;
-    if (v === '' || v === undefined) continue;
-    out[k] = v;
-  }
-  return out;
 }
 
 function VehicleCard({
@@ -319,14 +329,9 @@ function smallBtnStyle(accent: string): React.CSSProperties {
 }
 
 /**
- * The form has three groups: Identity (just name), Driving limits, Water.
- * Refill distance lives in its own labeled field at the top of Driving.
- *
- * Refill distance is the only field that's unit-aware on input. We store km
- * in the draft state regardless of which unit the user typed: the input
- * displays converted miles when imperial is active, and converts back to km
- * (rounded to whole km) on every keystroke. That keeps the rest of the form
- * — and the API payload — in one consistent unit.
+ * Fields, labels, and validation are driven by `@/lib/vehicleProfile` so this
+ * stays aligned with onboarding chat. Refill distance is unit-aware on input;
+ * draft state stores km, same as the API.
  */
 function VehicleForm({
   initial,
@@ -342,15 +347,19 @@ function VehicleForm({
   const [d, setD] = useState<Draft>({ ...initial });
   const { units } = useUnits();
   const isImperial = units === 'imperial';
+  const questions = buildVehicleProfileQuestions(units);
+  const groups = (['identity', 'driving', 'water'] as const).map((g) => ({
+    group: g,
+    items: questions.filter((q) => q.group === g),
+  }));
 
-  function num(field: keyof Draft) {
+  function num(field: VehicleProfileFieldKey) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
       const v = e.target.value.trim();
       setD((p) => ({ ...p, [field]: v === '' ? null : Number(v) }));
     };
   }
 
-  // Refill distance input — display in current unit, store as km.
   const refillDisplay = (() => {
     if (d.refill_distance_km == null) return '';
     if (!isImperial) return String(d.refill_distance_km);
@@ -385,80 +394,58 @@ function VehicleForm({
         gap: 12,
       }}
     >
-      <FieldGroup title="Identity">
-        <Field label="Name" required wide>
-          <input
-            data-testid="vehicle-name-input"
-            value={d.name}
-            onChange={(e) => setD((p) => ({ ...p, name: e.target.value }))}
-            style={inputStyle}
-            placeholder="e.g. The Hilux"
-          />
-        </Field>
-      </FieldGroup>
-
-      <FieldGroup title="Driving limits">
-        <Field
-          label={`Refill every (${isImperial ? 'mi' : 'km'})`}
-          hint="How far you like to drive between fuel stops. Penny plans a refuel around this distance."
-          wide
-        >
-          <input
-            type="number"
-            step="1"
-            min="1"
-            value={refillDisplay}
-            onChange={handleRefillChange}
-            placeholder={isImperial ? '250' : '400'}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Hours / day">
-          <input
-            type="number"
-            step="0.5"
-            value={d.max_drive_hours_per_day ?? ''}
-            onChange={num('max_drive_hours_per_day')}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Hours / week">
-          <input
-            type="number"
-            step="0.5"
-            value={d.max_drive_hours_per_week ?? ''}
-            onChange={num('max_drive_hours_per_week')}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Consec. days">
-          <input
-            type="number"
-            value={d.max_consecutive_drive_days ?? ''}
-            onChange={num('max_consecutive_drive_days')}
-            style={inputStyle}
-          />
-        </Field>
-      </FieldGroup>
-
-      <FieldGroup title="Water">
-        <Field label="Refill (days)" hint="Days between freshwater top-ups.">
-          <input
-            type="number"
-            value={d.water_refill_days ?? ''}
-            onChange={num('water_refill_days')}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Dump (days)" hint="Days between black/grey water dumps.">
-          <input
-            type="number"
-            value={d.blackwater_refill_days ?? ''}
-            onChange={num('blackwater_refill_days')}
-            style={inputStyle}
-          />
-        </Field>
-      </FieldGroup>
+      {groups.map(({ group, items }) => (
+        <FieldGroup key={group} title={vehicleProfileGroupTitle(group)}>
+          {items.map((q) => {
+            if (q.key === 'name') {
+              return (
+                <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
+                  <input
+                    data-testid="vehicle-name-input"
+                    value={d.name}
+                    onChange={(e) => setD((p) => ({ ...p, name: e.target.value }))}
+                    style={inputStyle}
+                    placeholder={q.placeholder}
+                  />
+                </Field>
+              );
+            }
+            if (q.key === 'refill_distance_km') {
+              return (
+                <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
+                  <input
+                    data-testid="vehicle-refill-input"
+                    type="number"
+                    step="1"
+                    min={q.min}
+                    max={q.max}
+                    value={refillDisplay}
+                    onChange={handleRefillChange}
+                    placeholder={q.placeholder}
+                    style={inputStyle}
+                  />
+                </Field>
+              );
+            }
+            const step = q.kind === 'integer' ? '1' : '0.5';
+            const val = d[q.key];
+            return (
+              <Field key={q.key} label={q.label} required={!q.optional} hint={q.help}>
+                <input
+                  type="number"
+                  step={step}
+                  min={q.min}
+                  max={q.max}
+                  value={val ?? ''}
+                  onChange={num(q.key)}
+                  placeholder={q.placeholder}
+                  style={inputStyle}
+                />
+              </Field>
+            );
+          })}
+        </FieldGroup>
+      ))}
 
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tp-muted)' }}>
         <input

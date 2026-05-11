@@ -62,6 +62,46 @@ export async function createBlankPlanningTrip(label: string): Promise<{
   return { tripId: trip.id, name };
 }
 
+/**
+ * Trip that has not run onboarding yet (`not_started`). The first GET to
+ * `/api/trips/:id/onboarding` bumps the row to `units_pick` and shows the
+ * metric/imperial step — use this to exercise the wizard without Anthropic.
+ */
+export async function createOnboardingTrip(label: string): Promise<{
+  tripId: number;
+  name: string;
+}> {
+  const db = getDb();
+
+  const userRow = (
+    await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, FIXTURE_EMAIL))
+      .limit(1)
+  )[0];
+  if (!userRow) {
+    throw new Error(
+      `[e2e/test-trip] Fixture user ${FIXTURE_EMAIL} not found. ` +
+        'Did global setup run? Try `npm run e2e:seed`.',
+    );
+  }
+
+  const name = playwrightName(label);
+  const [trip] = await db
+    .insert(schema.trips)
+    .values({
+      userId: userRow.id,
+      vehicleId: null,
+      name,
+      status: 'planning',
+      onboardingState: 'not_started',
+    })
+    .returning({ id: schema.trips.id });
+
+  return { tripId: trip.id, name };
+}
+
 /** Count the legs currently attached to a trip (post-Penny submit assertion). */
 export async function countLegs(tripId: number): Promise<number> {
   const db = getDb();

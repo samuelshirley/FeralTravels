@@ -231,6 +231,8 @@ export const legs = pgTable(
     // 'ready'    — fuel stops have been inserted into `stops`
     // 'failed'   — lookup errored; UI should surface a retry affordance
     fuelStatus: text('fuel_status').default('none').notNull(),
+    /** Last planFuelStopsForLeg error; cleared when status is not failed. */
+    fuelPlanError: text('fuel_plan_error'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

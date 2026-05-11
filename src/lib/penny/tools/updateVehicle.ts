@@ -77,6 +77,10 @@ Save updated vehicle driving preferences to the database. Call this whenever the
 - refuel cadence or range (km between fuel stops)
 - water or blackwater refill intervals
 
+The API requires a positive refill_distance_km for fuel planning. If the trip vehicle may still be missing that
+value (new or stub profile), include refill_distance_km in this update whenever the user gives a range or you
+infer one; otherwise PATCH may reject partial preference-only updates.
+
 Parse the user's freeform answer into metric numbers and call this tool.
 Common patterns:
   "6 hours a day, 3 days a week" → max_drive_hours_per_day: 6, max_consecutive_drive_days: 3

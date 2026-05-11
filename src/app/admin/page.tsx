@@ -139,6 +139,11 @@ export default async function AdminPage() {
       href: '/admin/users',
     },
     {
+      label: 'Total vehicles',
+      value: overview.totalVehicles,
+      href: '/admin/vehicles',
+    },
+    {
       label: 'Active trips',
       value: overview.totalTrips,
       sub: `${overview.totalTemplates} template(s)`,

@@ -3,11 +3,16 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { trips, vehicles } from '@/server/db/schema';
 import {
+  HttpError,
   requireUserId,
   assertTripOwnedByUser,
   isAdmin,
   errorResponse,
 } from '@/server/auth/guards';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
+import {
+  getVehicleForUser,
+} from '@/server/repos/vehicles';
 import { auth } from '@/server/auth';
 import {
   deleteTrip,
@@ -59,6 +64,13 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
         .limit(1);
       if (owned.length === 0) {
         return Response.json({ error: 'Vehicle not found' }, { status: 404 });
+      }
+      const v = await getVehicleForUser(userId, body.vehicle_id);
+      if (v && !vehicleMeetsFuelPlanningMinimum(v as Record<string, unknown>)) {
+        throw new HttpError(
+          400,
+          'This vehicle needs a refill distance (km between fuel stops) before it can be used on a trip.'
+        );
       }
     }
 

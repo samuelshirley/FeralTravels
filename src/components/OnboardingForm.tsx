@@ -5,9 +5,7 @@ import { apiFetch } from '@/lib/api';
 import type { OnboardingState } from '@/types/trip';
 import Spinner from '@/components/Spinner';
 
-// Client-side mirror of the server's question shape (src/server/onboarding.ts).
-// We don't share the file because the server imports drizzle and other
-// server-only modules; the schema is duplicated in its simplest form.
+// Vehicle question shape matches `@/lib/vehicleProfile` + vehicle_pick / handoff (server snapshot).
 type QuestionKind = 'text' | 'number' | 'integer' | 'select' | 'vehicle_pick' | 'handoff';
 
 interface Question {

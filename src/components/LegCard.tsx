@@ -387,6 +387,7 @@ export default function LegCard({
             legStartCoords={{ lat: leg.start_lat, lng: leg.start_lng }}
             initialStops={leg.stops}
             fuelStatus={leg.fuel_status}
+            fuelPlanError={leg.fuel_plan_error}
             onChanged={onChanged}
             readonly={readonly}
           />

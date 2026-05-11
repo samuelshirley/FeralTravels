@@ -5,13 +5,10 @@ import { addVehicle, listVehiclesForUser } from '@/server/repos/vehicles';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Vehicle profile is intentionally narrow — see schema.ts for the rationale.
-// Only a name is required; everything else is optional and nullable so users
-// can fill the profile in piecemeal (and so Penny can do the same during
-// onboarding).
+// Refill distance is required for fuel planning; see vehicleMeetsFuelPlanningMinimum.
 const createSchema = z.object({
   name: z.string().min(1).max(100),
-  refill_distance_km: z.number().int().positive().max(5000).nullish(),
+  refill_distance_km: z.number().int().positive().max(5000),
   max_drive_hours_per_day: z.number().positive().max(24).nullish(),
   max_drive_hours_per_week: z.number().positive().max(168).nullish(),
   max_consecutive_drive_days: z.number().int().positive().max(60).nullish(),

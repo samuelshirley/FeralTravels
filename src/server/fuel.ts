@@ -19,6 +19,7 @@ import { nearestStretchBreakPlace, type StretchBreakCandidate } from '@/server/p
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
+import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 
 /**
  * Auto fuel-stop planner.
@@ -43,10 +44,11 @@ import { logGooglePlacesUsage } from '@/server/repos/usage';
  *   dog_park/park lookup at stretch-only knots; fuel+stretch clusters get
  *   fuel only so the station doubles as the break where possible.
  *
- * Fails loudly (sets fuel_status='failed' and returns details) when the
- * Places key is missing, the vehicle has no fuel data, or the route
- * couldn't be decoded. The UI reads fuel_status to decide whether to
- * show a retry affordance.
+ * Fails loudly (sets fuel_status='failed', fuel_plan_error text, returns
+ * details) when the Places key is missing, the vehicle has no range data, the
+ * route couldn't be decoded, or Places returns an error. Prefer
+ * GOOGLE_MAPS_SERVER_API_KEY for server REST calls (see google-maps-server-key).
+ * The UI reads fuel_status / fuel_plan_error for spinners and accurate copy.
  */
 
 // Walk between refuels is a fraction of effective_range_km so we always
@@ -84,14 +86,16 @@ export interface FuelPlanResult {
   stopsCreated?: number;
 }
 
-/** Quick status-only mutation; reused from both the worker and the API. */
+/** Quick status mutation; clears `fuel_plan_error` whenever status is not failed. */
 async function setFuelStatus(
   legId: number,
-  status: 'none' | 'pending' | 'computing' | 'ready' | 'failed'
+  status: 'none' | 'pending' | 'computing' | 'ready' | 'failed',
+  fuelPlanError: string | null = null
 ) {
+  const errCol = status === 'failed' ? (fuelPlanError ?? 'Fuel planning failed.') : null;
   await db
     .update(legs)
-    .set({ fuelStatus: status, updatedAt: new Date() })
+    .set({ fuelStatus: status, fuelPlanError: errCol, updatedAt: new Date() })
     .where(eq(legs.id, legId));
 }
 
@@ -135,29 +139,24 @@ export async function planFuelStopsForLeg(
   //    get fuel plans.
   const vehicle = await resolveVehicleForTrip(leg.tripId, userId);
   if (!vehicle) {
-    await setFuelStatus(legId, 'failed');
-    return { legId, status: 'failed', reason: 'No vehicle on file for user' };
+    const reason = 'No vehicle on file for user';
+    await setFuelStatus(legId, 'failed', reason);
+    return { legId, status: 'failed', reason };
   }
   const range = computeEffectiveRangeKm(vehicle.refill_distance_km);
   if (!range) {
-    await setFuelStatus(legId, 'failed');
-    return {
-      legId,
-      status: 'failed',
-      reason:
-        "Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.",
-    };
+    const reason =
+      'Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.';
+    await setFuelStatus(legId, 'failed', reason);
+    return { legId, status: 'failed', reason };
   }
 
-  const placesKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const placesKey = googleMapsApiKeyForServer();
   if (!placesKey) {
-    await setFuelStatus(legId, 'failed');
-    return {
-      legId,
-      status: 'failed',
-      reason:
-        'Server is missing NEXT_PUBLIC_GOOGLE_MAPS_API_KEY. Add it to .env to enable auto fuel stops.',
-    };
+    const reason =
+      'Missing Google Maps API key for server Places calls. Set GOOGLE_MAPS_SERVER_API_KEY (no HTTP referrer restriction) and/or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in the server environment.';
+    await setFuelStatus(legId, 'failed', reason);
+    return { legId, status: 'failed', reason };
   }
 
   // 3. OSRM call. We ask for the full polyline (vs just distance) so we
@@ -169,15 +168,17 @@ export async function planFuelStopsForLeg(
     leg.endLng
   );
   if (!directions?.geometry) {
-    await setFuelStatus(legId, 'failed');
-    return { legId, status: 'failed', reason: 'Could not fetch route geometry' };
+    const reason = 'Could not fetch route geometry';
+    await setFuelStatus(legId, 'failed', reason);
+    return { legId, status: 'failed', reason };
   }
 
   const polyline = decodePolyline(directions.geometry);
   const totalKm = polylineLengthKm(polyline);
   if (polyline.length < 2 || totalKm <= 0) {
-    await setFuelStatus(legId, 'failed');
-    return { legId, status: 'failed', reason: 'Route geometry was unusable' };
+    const reason = 'Route geometry was unusable';
+    await setFuelStatus(legId, 'failed', reason);
+    return { legId, status: 'failed', reason };
   }
 
   // Cross-leg fuel state: walk backwards through preceding legs in the
@@ -293,16 +294,13 @@ export async function planFuelStopsForLeg(
     if (knot.needFuel) {
       const result = await findTopGasStations(knot.point, fuel, placesKey);
       placesEssentialsCalls += 1;
-      if (result === PLACES_API_ERROR) {
-        await setFuelStatus(legId, 'failed');
-        const reason =
-          'Places API call failed — enable "Places API (New)" in Google Cloud Console, ' +
-          'and ensure your API key has no HTTP referrer restrictions. ' +
-          'Visit /api/debug/fuel for a full diagnosis.';
-        console.error(`[fuel] leg ${legId}: ${reason}`);
+      if (!result.ok) {
+        const reason = `${result.message} Visit /api/debug/fuel while signed in for a full diagnosis.`;
+        await setFuelStatus(legId, 'failed', reason);
+        console.error(
+          `[fuel] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${result.message}`
+        );
         placesError = reason;
-        // Log the partial usage we accumulated before bailing — Places still
-        // billed us for those calls regardless of the final status.
         await logPlacesUsageSafe({
           userId,
           tripId: leg.tripId,
@@ -313,12 +311,12 @@ export async function planFuelStopsForLeg(
         });
         return { legId, status: 'failed', reason };
       }
-      if (result) {
+      if (result.data) {
         pending.push({
           kind: 'fuel',
           distance_km: knot.distance_km,
-          station: result.primary,
-          alternates: result.alternates,
+          station: result.data.primary,
+          alternates: result.data.alternates,
         });
       }
     } else if (knot.needStretch) {
@@ -748,23 +746,6 @@ interface GasStation {
   place_id: string | null;
 }
 
-/** Sentinel returned when the Places API itself errored (vs just no results). */
-const PLACES_API_ERROR = Symbol('PLACES_API_ERROR');
-
-/** Unwrap a PlacesResult to a string for the failure reason. */
-function placesErrorReason(httpStatus: number, body: string): string {
-  if (httpStatus === 403) {
-    if (body.includes('PERMISSION_DENIED') || body.includes('blocked')) {
-      return `Places API (New) returned 403 PERMISSION_DENIED — enable "Places API (New)" in Google Cloud Console (it is a separate product from the legacy Places API).`;
-    }
-    return `Places API returned 403 — check API key restrictions in Google Cloud Console (server-side calls must not have HTTP referrer restrictions).`;
-  }
-  if (httpStatus === 400) {
-    return `Places API returned 400 — "Places API (New)" may not be enabled for this project in Google Cloud Console.`;
-  }
-  return `Places API returned HTTP ${httpStatus}: ${body.slice(0, 120)}`;
-}
-
 /** Up to 3 ranked candidates for one knot: the primary + up to 2 alternates. */
 interface GasStationRanked extends GasStation {
   /** Haversine km from the knot center — proxy for off-route detour. */
@@ -776,13 +757,39 @@ interface GasStationCandidates {
   alternates: GasStationRanked[]; // 0..2 entries
 }
 
-type GasStationCandidatesResult =
-  | GasStationCandidates
-  | null
-  | typeof PLACES_API_ERROR;
-
 /** Maximum total candidates returned per knot (1 primary + 2 alternates). */
 const FUEL_CANDIDATES_PER_KNOT = 3;
+
+const PLACES_RETRYABLE_HTTP = new Set([429, 502, 503]);
+const PLACES_MAX_ATTEMPTS = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Unwrap a Places HTTP error to a string for logs and the leg error column. */
+function placesErrorReason(httpStatus: number, body: string): string {
+  if (httpStatus === 403) {
+    if (body.includes('PERMISSION_DENIED') || body.includes('blocked')) {
+      return (
+        'Places API (New) returned 403 PERMISSION_DENIED — enable it (and billing) in Google Cloud Console. ' +
+        'If this key is restricted to HTTP referrers, set GOOGLE_MAPS_SERVER_API_KEY to a separate key without referrer restrictions for server-side Places calls.'
+      );
+    }
+    return (
+      'Places API returned 403 — key restrictions are blocking the server. ' +
+      'Use GOOGLE_MAPS_SERVER_API_KEY without HTTP referrer restrictions for Places REST calls from Vercel.'
+    );
+  }
+  if (httpStatus === 400) {
+    return `Places API returned 400 — "Places API (New)" may not be enabled for this project in Google Cloud Console.`;
+  }
+  return `Places API returned HTTP ${httpStatus}: ${body.slice(0, 120)}`;
+}
+
+type FindGasOutcome =
+  | { ok: true; data: GasStationCandidates | null }
+  | { ok: false; message: string };
 
 async function findTopGasStations(
   center: LatLng,
@@ -790,96 +797,104 @@ async function findTopGasStations(
   // so the future fuel-type bias work has an obvious place to plug back in.
   fuelType: null,
   apiKey: string
-): Promise<GasStationCandidatesResult> {
-  try {
-    const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': apiKey,
-        // Only request the fields we actually use — keeps the bill small.
-        'X-Goog-FieldMask':
-          'places.displayName,places.location,places.id,places.primaryType',
-      },
-      body: JSON.stringify({
-        includedTypes: ['gas_station'],
-        // Bumped from 5 to 8 to give the proximity ranker headroom: we want
-        // 3 distinct candidates after de-duplicating same-name same-coord
-        // hits, and clusters around major junctions sometimes return the
-        // same station twice with slightly different ids.
-        maxResultCount: 8,
-        locationRestriction: {
-          circle: {
-            center: { latitude: center.lat, longitude: center.lng },
-            radius: SEARCH_RADIUS_KM * 1000,
-          },
+): Promise<FindGasOutcome> {
+  const payload = () =>
+    JSON.stringify({
+      includedTypes: ['gas_station'],
+      maxResultCount: 8,
+      locationRestriction: {
+        circle: {
+          center: { latitude: center.lat, longitude: center.lng },
+          radius: SEARCH_RADIUS_KM * 1000,
         },
-      }),
+      },
     });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      // Log for Vercel function logs, but also return a typed sentinel so the
-      // caller can distinguish "API broken" from "no stations in this area".
-      console.error(
-        `[fuel] Places API error: HTTP ${res.status} — ${placesErrorReason(res.status, body)}`
-      );
-      return PLACES_API_ERROR;
+  let lastHttpMessage = 'Places nearby search failed.';
+
+  for (let attempt = 0; attempt < PLACES_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask':
+            'places.displayName,places.location,places.id,places.primaryType',
+        },
+        body: payload(),
+      });
+
+      const bodyText = await res.text().catch(() => '');
+
+      if (!res.ok) {
+        lastHttpMessage = placesErrorReason(res.status, bodyText);
+        if (PLACES_RETRYABLE_HTTP.has(res.status) && attempt < PLACES_MAX_ATTEMPTS - 1) {
+          await sleep(350 * (attempt + 1));
+          continue;
+        }
+        console.error(`[fuel] Places API error: HTTP ${res.status} — ${lastHttpMessage}`);
+        return { ok: false, message: lastHttpMessage };
+      }
+
+      const data = JSON.parse(bodyText) as {
+        places?: Array<{
+          id?: string;
+          displayName?: { text?: string };
+          location?: { latitude: number; longitude: number };
+          primaryType?: string;
+        }>;
+      };
+      const places = data.places ?? [];
+      if (places.length === 0) return { ok: true, data: null };
+
+      void fuelType;
+      const ranked = places
+        .map((p) => {
+          const loc = p.location;
+          if (!loc) return null;
+          return {
+            name: p.displayName?.text?.trim() || 'Gas station',
+            lat: loc.latitude,
+            lng: loc.longitude,
+            place_id: p.id ?? null,
+            distance_km: haversineKm(center, { lat: loc.latitude, lng: loc.longitude }),
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x)
+        .sort((a, b) => a.distance_km - b.distance_km);
+
+      const dedupedRanked: typeof ranked = [];
+      for (const cand of ranked) {
+        const dup = dedupedRanked.some(
+          (kept) =>
+            (cand.place_id != null && kept.place_id === cand.place_id) ||
+            (kept.name.toLowerCase() === cand.name.toLowerCase() &&
+              haversineKm(
+                { lat: kept.lat, lng: kept.lng },
+                { lat: cand.lat, lng: cand.lng }
+              ) < 0.03)
+        );
+        if (!dup) dedupedRanked.push(cand);
+        if (dedupedRanked.length >= FUEL_CANDIDATES_PER_KNOT) break;
+      }
+
+      const [primary, ...alternates] = dedupedRanked;
+      if (!primary) return { ok: true, data: null };
+      return { ok: true, data: { primary, alternates } };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < PLACES_MAX_ATTEMPTS - 1) {
+        await sleep(350 * (attempt + 1));
+        continue;
+      }
+      console.warn('[fuel] Places nearby search threw after retries:', err);
+      return {
+        ok: false,
+        message: `Places request failed after retries (${msg}). Check network and API key configuration.`,
+      };
     }
-
-    const data = (await res.json()) as {
-      places?: Array<{
-        id?: string;
-        displayName?: { text?: string };
-        location?: { latitude: number; longitude: number };
-        primaryType?: string;
-      }>;
-    };
-    const places = data.places ?? [];
-    if (places.length === 0) return null;
-
-    // Rank by proximity to `center`. Fuel-type matching via name keyword is
-    // weak — most stations carry diesel + petrol — so we skip it for now.
-    void fuelType;
-    const ranked = places
-      .map((p) => {
-        const loc = p.location;
-        if (!loc) return null;
-        return {
-          name: p.displayName?.text?.trim() || 'Gas station',
-          lat: loc.latitude,
-          lng: loc.longitude,
-          place_id: p.id ?? null,
-          distance_km: haversineKm(center, { lat: loc.latitude, lng: loc.longitude }),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => !!x)
-      .sort((a, b) => a.distance_km - b.distance_km);
-
-    // Deduplicate near-identical hits (same place_id, or same name within
-    // ~30 m). Google occasionally returns the same physical pump under
-    // multiple ids; without this we'd offer "Total / Total / Total" as 3
-    // alternates that are actually one station.
-    const dedupedRanked: typeof ranked = [];
-    for (const cand of ranked) {
-      const dup = dedupedRanked.some(
-        (kept) =>
-          (cand.place_id != null && kept.place_id === cand.place_id) ||
-          (kept.name.toLowerCase() === cand.name.toLowerCase() &&
-            haversineKm(
-              { lat: kept.lat, lng: kept.lng },
-              { lat: cand.lat, lng: cand.lng }
-            ) < 0.03)
-      );
-      if (!dup) dedupedRanked.push(cand);
-      if (dedupedRanked.length >= FUEL_CANDIDATES_PER_KNOT) break;
-    }
-
-    const [primary, ...alternates] = dedupedRanked;
-    if (!primary) return null;
-    return { primary, alternates };
-  } catch (err) {
-    console.warn('Places nearby search threw:', err);
-    return null;
   }
+
+  return { ok: false, message: lastHttpMessage };
 }

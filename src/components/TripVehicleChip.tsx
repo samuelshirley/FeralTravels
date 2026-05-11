@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Vehicle } from '@/components/VehicleProfileSection';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 
 interface Props {
   tripId: number;
@@ -61,6 +62,11 @@ export default function TripVehicleChip({
 
   const current = vehicles?.find((v) => v.id === vehicleId) ?? null;
   const label = current?.name ?? (vehicleId == null ? 'Pick vehicle' : `#${vehicleId}`);
+  const currentIncomplete =
+    current != null && !vehicleMeetsFuelPlanningMinimum(current as unknown as Record<string, unknown>);
+  const pickable =
+    vehicles?.filter((v) => vehicleMeetsFuelPlanningMinimum(v as unknown as Record<string, unknown>)) ??
+    null;
 
   async function pick(id: number | null) {
     if (busy) return;
@@ -73,8 +79,6 @@ export default function TripVehicleChip({
       setVehicleId(id);
       setOpen(false);
       await onTripUpdated?.();
-    } catch {
-      /* ignore — chip stays as before */
     } finally {
       setBusy(false);
     }
@@ -124,6 +128,21 @@ export default function TripVehicleChip({
             zIndex: 2000,
           }}
         >
+          {currentIncomplete && (
+            <div
+              style={{
+                padding: '8px 14px',
+                fontSize: 11,
+                color: 'var(--tp-danger)',
+                lineHeight: 1.4,
+                borderBottom: '1px solid var(--tp-border)',
+                background: 'rgba(198, 93, 74, 0.06)',
+              }}
+            >
+              This trip&apos;s vehicle is missing refill distance. Complete it in Settings before planning fuel
+              stops.
+            </div>
+          )}
           {vehicles == null && (
             <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--tp-muted)' }}>
               Loading…
@@ -134,7 +153,12 @@ export default function TripVehicleChip({
               No vehicles. Add one in Settings.
             </div>
           )}
-          {vehicles?.map((v) => (
+          {pickable && pickable.length === 0 && vehicles != null && vehicles.length > 0 && (
+            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--tp-muted)' }}>
+              No fuel-ready vehicles yet. Set &quot;refuel every X km&quot; on a vehicle in Settings.
+            </div>
+          )}
+          {pickable?.map((v) => (
             <button
               key={v.id}
               onClick={() => pick(v.id)}
