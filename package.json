@@ -22,7 +22,8 @@
     "e2e:seed": "tsx scripts/seed-e2e-fixture.ts",
     "e2e:cleanup": "tsx scripts/cleanup-e2e.ts",
     "e2e:report": "playwright show-report",
-    "ship": "bash scripts/ship.sh"
+    "ship": "bash scripts/ship.sh",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
@@ -52,6 +53,7 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.28.1",
     "tsx": "^4.7.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.6"
   }
 }

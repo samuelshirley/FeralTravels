@@ -21,6 +21,11 @@ export interface PennyContext {
     start_date: string | null;
     end_date: string | null;
     status: string;
+    /**
+     * Maps to trip.prefer_avoid_highways — server merges into get_route Directions `avoid`,
+     * never overrides explicit user wording in-chat (model can still pass avoid[]).
+     */
+    prefer_avoid_highways: boolean;
   };
   vehicle: PennyVehicle | null;
   legs: PennyLeg[];
@@ -152,6 +157,7 @@ export async function buildPennyContext(
       start_date: trip.start_date,
       end_date: trip.end_date,
       status: trip.status,
+      prefer_avoid_highways: trip.prefer_avoid_highways,
     },
     vehicle: vehicle ? projectVehicle(vehicle) : null,
     legs: trip.legs.map(projectLeg),

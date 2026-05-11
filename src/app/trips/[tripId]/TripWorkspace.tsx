@@ -15,6 +15,7 @@ import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage } from '@/types/trip';
 
 import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
+import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
@@ -438,6 +439,13 @@ export default function TripWorkspace({
           {viewport !== 'mobile' && <span>Fuel…</span>}
         </span>
       )}
+      <TripPreferAvoidHighwaysToggle
+        tripId={tripId}
+        initial={trip.prefer_avoid_highways}
+        readonly={readonly}
+        onUpdated={loadTrip}
+        compact={viewport === 'mobile'}
+      />
       <TripVehicleChip
         tripId={tripId}
         initialVehicleId={trip.vehicle_id ?? null}

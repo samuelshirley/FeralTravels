@@ -24,9 +24,9 @@ const baseSchema = z.object({
   origin_name: z.string().nullish(),
   destination_name: z.string().nullish(),
   /**
-   * Things to route around. Mostly leave empty — this is a road-trip app
-   * and most users don't pre-emptively avoid highways or tolls. Set only
-   * when the user explicitly says.
+   * Things to route around. The server UNIONs Google avoid flags from
+   * `trip.prefer_avoid_highways` (motorways); only add tolls/ferries/extra flags
+   * when the user explicitly asks.
    */
   avoid: z.array(z.enum(['tolls', 'highways', 'ferries'])).nullish(),
 });
@@ -40,7 +40,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: GET_ROUTE,
   description:
-    'Get the real driving route between two points from Google Directions. Returns total distance_km, drive_time_minutes, and the polyline. If drive_time_minutes exceeds the vehicle\'s daily driving cap, also returns a suggested per-day split with real lat/lng points along the route — use those split points as start/end for one add_leg per day. ALWAYS call this before add_leg for new multi-day plans; never invent distance or drive time from your own knowledge.',
+    'Get the real driving route between two points from Google Directions. Returns total distance_km, drive_time_minutes, and the polyline. If trip.prefer_avoid_highways is true in context, the server automatically adds avoid=highways (motorways) — union with any explicit `avoid` you pass. This is NOT gravel-only routing: Directions still favors paved roads. If drive_time_minutes exceeds the vehicle\'s daily driving cap, also returns a suggested per-day split with real lat/lng points along the route — use those split points as start/end for one add_leg per day. ALWAYS call this before add_leg for new multi-day plans; never invent distance or drive time from your own knowledge.',
   input_schema: {
     type: 'object',
     required: ['origin_lat', 'origin_lng', 'destination_lat', 'destination_lng'],
@@ -54,7 +54,8 @@ export const tool: Anthropic.Tool = {
       avoid: {
         type: 'array',
         items: { type: 'string', enum: ['tolls', 'highways', 'ferries'] },
-        description: 'Only set when user explicitly asks to avoid these.',
+        description:
+          'Extra avoid flags merged with trip defaults — only add when user explicitly asks (e.g. tolls only). Omit when trip.prefer_avoid_highways already covers motorways.',
       },
     },
   },

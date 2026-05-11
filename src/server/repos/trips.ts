@@ -43,6 +43,7 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     end_date: r.endDate,
     status: r.status,
     onboarding_state: r.onboardingState as Trip['onboarding_state'],
+    prefer_avoid_highways: !!r.preferAvoidHighways,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
@@ -562,6 +563,7 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
         endDate: s.endDate,
         status: 'planning',
         isTemplate: false,
+        preferAvoidHighways: s.preferAvoidHighways,
       })
       .returning();
     const newTripId = newTrip.id;

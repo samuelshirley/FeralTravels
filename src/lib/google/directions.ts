@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { canonicalDirectionsAvoid } from '@/lib/penny/routingAvoidMerge';
+
 /**
  * Server-side wrapper around Google Maps Directions API.
  *
@@ -89,7 +91,7 @@ function cacheKey(origin: LatLng, destination: LatLng, opts: DirectionsOptions):
   const o = `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}`;
   const d = `${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}`;
   const mode = opts.mode ?? 'driving';
-  const avoid = (opts.avoid ?? []).slice().sort().join(',');
+  const avoid = canonicalDirectionsAvoid(opts.avoid ?? []).join(',');
   return `${o}|${d}|${mode}|${avoid}`;
 }
 
@@ -198,7 +200,10 @@ export async function getDirections(
     key,
   });
   if (options.avoid && options.avoid.length > 0) {
-    params.set('avoid', options.avoid.join('|'));
+    const canon = canonicalDirectionsAvoid(options.avoid);
+    if (canon.length > 0) {
+      params.set('avoid', canon.join('|'));
+    }
   }
   if (options.departureTime != null) {
     params.set('departure_time', String(options.departureTime));

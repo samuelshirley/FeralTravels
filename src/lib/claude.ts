@@ -14,6 +14,7 @@ import {
 } from '@/lib/penny/tools';
 import { zodErrorToFeedback } from '@/lib/penny/tools/shared';
 import { getDirections } from '@/lib/google/directions';
+import { mergedDirectionsAvoidFromPenny } from '@/lib/penny/routingAvoidMerge';
 import { splitLegByDriveTime } from '@/lib/penny/split-route';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -98,6 +99,21 @@ One exception: if the user's message is clearly a greeting ("hey", "thanks", "ok
 - Never mark anything "selected" yourself — the user picks. Default new routes/stops to status="option".
 </style>
 
+<discovery_phase>
+When the driver asks for a NEW plan (or replan-from-scratch) but their intent is fuzzy — no time horizon, missing start or end, "help me decide", "somewhere scenic", a long wishlist with no calendar, hand-wavy geography — converse before you lock assumptions with tools. Many people don't know what this app can do; a short back-and-forth teaches tradeoffs without a manual.
+
+Rules:
+- For that iteration, respond in plain prose ONLY. Do NOT call extract_trip_intent, get_route, check_trip_feasibility, or add_leg while you are still missing answers you need them to consciously choose (or explicitly delegate). Exception: call update_vehicle immediately when they state concrete driving/refuel cadence (same rule as vehicle_preference_updates).
+- Stay compact — default ONE focused question bundling related details, or TWO short questions tops. Optionally start with ONE sentence reflecting what you heard ("Cross-Alpine corridor, roughly two weeks-ish?") so they can correct you.
+- When relevant, surface ONE tradeoff they'd care about rather than listing everything:
+  pace vs winding roads (mention trip.prefer_avoid_highways in context — if true, motorways are already off for routing; only nudge toggling when it conflicts with their stated goal); rough day-count vs feasibility; paved routing limits vs gravel dreams (<routing_engine_limits>); tolerance for tolls/long sea legs if their geography implies it.
+- Escape hatch: if they explicitly defer ("you decide", "just wire it up", "no preference"), stop interviewing — if that same message already names enough geography and duration cues, proceed with extract_trip_intent in that response; otherwise one line acknowledging sensible defaults then extract_trip_intent on their next reply once origin/destination exists per <leg_planning_rules>.
+
+SKIP discovery when the request is already concrete (clear O/D, duration or clearly flexible okay, manageable waypoint list), when the trip already has legs and they're requesting a tweak, or when they are plainly answering prior discovery prompts — then run extract_trip_intent once you have enough to commit without guessing hidden preferences.
+
+discovery_phase complements <intent_extraction>: structured planning still ALWAYS flows extract_trip_intent → batched get_route → check_trip_feasibility → add_leg once you commit.
+</discovery_phase>
+
 <closing_questions>
 Never end a response with offers to plan things the system already automates. The following questions are BANNED in any phrasing:
   - "Need me to plan fuel stops?"
@@ -109,6 +125,8 @@ Never end a response with offers to plan things the system already automates. Th
 Why: fuel stations and stretch-break rests are auto-planned server-side after every leg edit. Each driving leg ends at an overnight city by construction (the leg's end_name IS the overnight). The user does not need to opt in to either.
 
 If you genuinely need user input on a leg, ask ONE specific question grounded in concrete leg detail (e.g. "Day 3 is gravel — keep the pass or route around?"). Never offer an open menu.
+
+discovery_phase narrowing questions ("roughly how many days?", "okay to skip motorways for this corridor?") are allowed here — they're not generic fuel/overnight opt-ins.
 </closing_questions>
 
 <plan_summary_format>
@@ -154,7 +172,10 @@ The "I don't recognize" line from the units section is ONLY for imperial units (
 
 <context_facts>
 Each turn you receive a <context>…</context> block in the user message with this shape:
-  trip       — { id, name, start_date, end_date, status }
+  trip       — { id, name, start_date, end_date, status, prefer_avoid_highways }
+                When prefer_avoid_highways is true, the server UNIONs Google's
+                avoid=highways (motorway-class omission) into every get_route —
+                you don't have to repeat it unless the user revokes off-highway routing.
   vehicle    — { name, refill_distance_km, effective_range_km,
                   max_drive_hours_per_day, max_drive_hours_per_week,
                   max_consecutive_drive_days, water_refill_days,
@@ -173,6 +194,10 @@ Each turn you receive a <context>…</context> block in the user message with th
                 turn changes legs, reload uses fresh ids from subsequent context.
   recentChat — last ~12 chat turns for short-term memory. Do NOT re-summarize them; just use them for continuity.
 </context_facts>
+
+<routing_engine_limits>
+Google Directions ONLY plans drivable paved routes with optional avoidance of motorways, tolls, or ferries. It does NOT "prefer gravel", guarantee dirt-only itineraries, certify forest-road legality, or replace local knowledge. When the user wants maximum off-pavement / small-road travel, acknowledge the limit honestly in one clause: Directions still optimizes what Google considers legal driving roads; gravel-first long corridors need manual waypoints (add_stop selected + distance_from_start_km), uploaded GPX, or specialist data — tease that roadmap once, don't lecture.
+</routing_engine_limits>
 
 <tool_use_protocol>
 - Tool definitions describe valid inputs. Read each tool's description carefully — it tells you when to call it.
@@ -217,9 +242,11 @@ This is the most common mistake to avoid. Read carefully:
 </route_planning_rules>
 
 <intent_extraction>
-For ANY new multi-segment trip plan or significant scope change to an existing trip, your VERY FIRST tool call must be extract_trip_intent. This forces you to commit to a typed parse of the user's request before any get_route or add_leg work.
+For ANY new multi-segment trip plan or significant scope change to an existing trip, your VERY FIRST planning tool call must be extract_trip_intent — but only after <discovery_phase> is satisfied (either you skipped it because the request was concrete, or the user answered / waived detail). This forces a typed parse before any get_route or add_leg work.
 
-Triggers — call extract_trip_intent first when:
+Do NOT call extract_trip_intent in the same assistant turn whose main job is asking unresolved discovery questions; let them reply, then commit on the next turn. If the same user message both waives detail AND names enough structure to plan ("Tampa to Seattle, you pick the stops, two weeks max"), you may call extract_trip_intent that turn.
+
+Triggers — call extract_trip_intent first (among planning tools) when:
   - The trip has no legs and the user describes a route (origin → destination, optionally with stops).
   - The user names multiple mandatory waypoints in one message ("hit Smoky, Grand Canyon, Moab").
   - The user gives or revises a time budget ("over two weeks", "10-day trip", "extend to 18 days").
@@ -803,12 +830,14 @@ async function executeGetRoute(
   }
 
   const input = parsed.data as getRouteTool.GetRouteInput;
+  const avoidMerged = mergedDirectionsAvoidFromPenny({
+    tripPreferAvoidHighways: context.trip.prefer_avoid_highways,
+    modelAvoid: input.avoid,
+  });
   const directions = await getDirections(
     { lat: input.origin_lat, lng: input.origin_lng },
     { lat: input.destination_lat, lng: input.destination_lng },
-    {
-      avoid: input.avoid ?? undefined,
-    }
+    { avoid: avoidMerged }
   );
 
   if (!directions.ok) {
@@ -851,6 +880,7 @@ async function executeGetRoute(
   // Claude needs to plan with.
   const payload = {
     ok: true,
+    effective_avoid: avoidMerged ?? null,
     distance_km: directions.distance_km,
     drive_time_minutes: directions.drive_time_minutes,
     start_address: directions.start_address,

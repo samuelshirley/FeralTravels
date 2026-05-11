@@ -14,6 +14,8 @@ export interface Trip {
   end_date: string | null;
   status: string;
   onboarding_state: OnboardingState;
+  /** When true, Penny defaults `get_route` to Maps avoid=highways (motorways); user can toggle in workspace. */
+  prefer_avoid_highways: boolean;
   created_at: string;
   updated_at: string;
   user_id: string;

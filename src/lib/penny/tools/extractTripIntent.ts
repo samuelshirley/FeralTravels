@@ -4,9 +4,9 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 
 /**
- * extract_trip_intent — the FIRST tool Penny must call when the user asks
- * to plan a multi-segment trip. Forces Penny to commit to a typed parse of
- * the user's request before doing any planning work.
+ * extract_trip_intent — the FIRST planning tool Penny calls once the driver's
+ * request is specific enough to commit (or they explicitly defer all choices).
+ * Forces a typed parse before any get_route or add_leg work.
  *
  * Why this exists:
  *  1. Feasibility math needs a clean source of truth for time_budget_days,
@@ -92,7 +92,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: EXTRACT_TRIP_INTENT,
   description:
-    'Extract the user\'s trip-planning request into a typed structure. Call this FIRST — before any get_route or add_leg — whenever the user asks for a new multi-segment trip plan or significantly changes the scope of an existing one. Returns the validated parse plus warnings (e.g. "no time budget specified"). Penny then uses time_budget_days and mandatory_waypoints[].nights as the source of truth for the feasibility check that gates add_leg. Do NOT call this for small tweaks ("move leg 3 a day later", "add a fuel stop near Marseille") — only for full or near-full plan creation.',
+    'Extract the user\'s trip-planning request into a typed structure. After any discovery-phase clarifications are resolved, call this BEFORE any get_route or add_leg whenever the user wants a new multi-segment trip plan or significantly changes scope. Skip it when the driver is still too vague to knowingly confirm assumptions — reply in prose-only first (see system prompt discovery_phase). Returns the validated parse plus warnings (e.g. "no time budget specified"). Penny then uses time_budget_days and mandatory_waypoints[].nights as the source of truth for feasibility. Do NOT call this for small tweaks ("move leg 3 a day later", "add a fuel stop near Marseille") — only for full or near-full plan creation.',
   input_schema: {
     type: 'object',
     required: ['origin', 'destination', 'mandatory_waypoints', 'time_budget_days'],

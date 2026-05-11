@@ -32,6 +32,8 @@ const patchSchema = z.object({
   status: z.string().max(40).optional(),
   // null = explicitly clear; number = set to a vehicle the user owns.
   vehicle_id: z.number().int().positive().nullable().optional(),
+  /** Google Directions `avoid=highways` (motorways); merged into Penny get_route */
+  prefer_avoid_highways: z.boolean().optional(),
 });
 
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
@@ -97,6 +99,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     if (body.end_date !== undefined) update.endDate = body.end_date;
     if (body.status !== undefined) update.status = body.status;
     if (body.vehicle_id !== undefined) update.vehicleId = body.vehicle_id;
+    if (body.prefer_avoid_highways !== undefined)
+      update.preferAvoidHighways = body.prefer_avoid_highways;
 
     await db.update(trips).set(update).where(eq(trips.id, tripId));
 

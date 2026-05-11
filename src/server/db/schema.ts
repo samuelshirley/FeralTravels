@@ -177,6 +177,11 @@ export const trips = pgTable(
     // 'ready' — last static question ("where do you want to go?") is active
     // 'done' — handed off to Anthropic; chat is live replanning
     onboardingState: text('onboarding_state').default('not_started').notNull(),
+    /**
+     * User wants Google Directions routes that omit motorways (Maps `avoid=highways`).
+     * Penny merges this with explicit `get_route.avoid`; does not imply gravel-only.
+     */
+    preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
