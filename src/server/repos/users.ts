@@ -5,20 +5,27 @@ import { users } from '@/server/db/schema';
 import { asUnitsPref, type UnitsPref } from '@/lib/units';
 
 /**
- * Read the user's units display preference. Returns 'metric' if the user
- * row is missing for any reason — onboarding-time race conditions, etc.
- *
- * This is hot-path for any page that renders a distance, so we keep the
- * select narrow. If the column ever grows, prefer adding a getUserPrefs()
- * that returns the whole row over fetching everything at every call site.
+ * Read stored units preference, or null if the user has not chosen yet
+ * (onboarding units_pick not completed).
  */
-export async function getUnitsPref(userId: string): Promise<UnitsPref> {
+export async function getRawUnitsPref(userId: string): Promise<UnitsPref | null> {
   const rows = await db
     .select({ unitsPref: users.unitsPref })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  return asUnitsPref(rows[0]?.unitsPref);
+  const raw = rows[0]?.unitsPref;
+  if (raw == null || raw === '') return null;
+  return raw === 'imperial' ? 'imperial' : 'metric';
+}
+
+/**
+ * Read the user's units display preference. Null / missing in DB is treated
+ * as metric for UI so distances always render sensibly before onboarding.
+ */
+export async function getUnitsPref(userId: string): Promise<UnitsPref> {
+  const pref = await getRawUnitsPref(userId);
+  return pref ?? 'metric';
 }
 
 /**

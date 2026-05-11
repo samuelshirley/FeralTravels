@@ -32,12 +32,10 @@ export const users = pgTable('users', {
   // session.user.email alone — always cross-check this flag against the
   // hardcoded ADMIN_ALLOWLIST in src/server/auth/admin.ts.
   isAdmin: boolean('is_admin').default(false).notNull(),
-  // 'metric' | 'imperial' — display preference only. The DB always stores
-  // distances in km, capacities in L, weights in kg. The flag tells the UI
-  // and Penny's onboarding prompts which units to *show* (and which to
-  // accept on input — values are converted back to metric on save). Default
-  // metric so the existing UX doesn't shift on day one for current users.
-  unitsPref: text('units_pref').default('metric').notNull(),
+  // 'metric' | 'imperial' once the user chooses (Settings or onboarding).
+  // NULL = not chosen yet — first trip shows units_pick. Existing rows keep
+  // a value after migration; new signups omit this column until onboarding.
+  unitsPref: text('units_pref'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

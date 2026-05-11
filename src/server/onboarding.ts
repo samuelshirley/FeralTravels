@@ -10,7 +10,7 @@ import {
   updateVehicle,
   type VehicleApi,
 } from '@/server/repos/vehicles';
-import { getUnitsPref, setUnitsPref } from '@/server/repos/users';
+import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
@@ -28,7 +28,7 @@ import {
 // Onboarding is a deterministic form-in-chat that gathers everything Penny
 // needs BEFORE the first real Anthropic call. Flow:
 //
-//   not_started  → units_pick
+//   not_started  → units_pick (if units_pref NULL) | else vehicle_pick | vehicle_new
 //   units_pick   → metric/imperial persisted → vehicle_pick | vehicle_new
 //   vehicle_pick → existing & complete → ready | incomplete → vehicle_new
 //                  "new" → vehicle_new
@@ -200,11 +200,21 @@ export async function getOnboardingSnapshot(
   let state = trip.onboardingState as OnboardingState;
 
   if (state === 'not_started') {
-    await db
-      .update(trips)
-      .set({ onboardingState: 'units_pick', updatedAt: new Date() })
-      .where(eq(trips.id, tripId));
-    state = 'units_pick';
+    const unitsChosen = (await getRawUnitsPref(userId)) != null;
+    if (!unitsChosen) {
+      await db
+        .update(trips)
+        .set({ onboardingState: 'units_pick', updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      state = 'units_pick';
+    } else {
+      const nextState = await resolveStart(userId);
+      await db
+        .update(trips)
+        .set({ onboardingState: nextState, updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      state = nextState;
+    }
   }
 
   if (state === 'units_pick') {

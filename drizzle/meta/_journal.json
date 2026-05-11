@@ -78,6 +78,13 @@
       "when": 1778716800000,
       "tag": "0010_leg_fuel_plan_error",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778803200000,
+      "tag": "0011_units_pref_nullable",
+      "breakpoints": true
     }
   ]
 }

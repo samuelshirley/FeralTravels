@@ -49,6 +49,9 @@ export function vehicleMeetsCompletenessTier(
   );
 }
 
+/** Plan / docs name — same as {@link vehicleMeetsCompletenessTier}. */
+export const isVehicleCompleteForTier = vehicleMeetsCompletenessTier;
+
 export const VEHICLE_PROFILE_KEYS = [
   'name',
   'refill_distance_km',

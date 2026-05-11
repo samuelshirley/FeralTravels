@@ -11,7 +11,7 @@ import {
   vehicleProfileFieldHasValue,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
-import { kmToMi, type UnitsPref } from '@/lib/units';
+import { kmToMi, asUnitsPref, type UnitsPref } from '@/lib/units';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -28,10 +28,6 @@ function fmtRel(d: Date | string): string {
 function fmtAbs(d: Date | string): string {
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toISOString().slice(0, 16).replace('T', ' ');
-}
-
-function toUnitsPref(raw: string): UnitsPref {
-  return raw === 'imperial' ? 'imperial' : 'metric';
 }
 
 const card: React.CSSProperties = {
@@ -105,7 +101,7 @@ export default async function AdminVehicleDetailPage({ params }: PageProps) {
   const row = await getAdminVehicleById(vehicleId);
   if (!row) notFound();
 
-  const units = toUnitsPref(row.userUnitsPref);
+  const units = asUnitsPref(row.userUnitsPref);
   const questions = buildVehicleProfileQuestions(units);
   const vehicleRecord = Object.fromEntries(
     questions.map((q) => [q.key, rawValueForField(q.key, row)])
@@ -161,7 +157,8 @@ export default async function AdminVehicleDetailPage({ params }: PageProps) {
             )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--tp-subtle)', marginTop: 6 }}>
-            Updated {fmtAbs(row.updatedAt)} ({fmtRel(row.updatedAt)}) · Owner units: {row.userUnitsPref}
+            Updated {fmtAbs(row.updatedAt)} ({fmtRel(row.updatedAt)}) · Owner units:{' '}
+            {row.userUnitsPref ?? '— (not set)'}
           </div>
         </header>
 

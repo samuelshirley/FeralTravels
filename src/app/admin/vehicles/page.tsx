@@ -8,7 +8,7 @@ import styles from '../admin.module.css';
 import {
   vehicleProfileRequiredCompletion,
 } from '@/lib/vehicleProfile';
-import { kmToMi, type UnitsPref } from '@/lib/units';
+import { kmToMi, asUnitsPref, type UnitsPref } from '@/lib/units';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,10 +20,6 @@ function fmtRel(d: Date | string): string {
   if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
   return `${Math.round(diffSec / 86400)}d ago`;
-}
-
-function toUnitsPref(raw: string): UnitsPref {
-  return raw === 'imperial' ? 'imperial' : 'metric';
 }
 
 function rowToProfileRecord(row: AdminVehicleListRow): Record<string, unknown> {
@@ -38,9 +34,9 @@ function rowToProfileRecord(row: AdminVehicleListRow): Record<string, unknown> {
   };
 }
 
-function refillSummary(km: number | null, unitsPref: string): string {
+function refillSummary(km: number | null, unitsPref: string | null): string {
   if (km == null) return '—';
-  const u = toUnitsPref(unitsPref);
+  const u = asUnitsPref(unitsPref);
   if (u === 'imperial') {
     const mi = kmToMi(km);
     return mi == null ? '—' : `~${Math.round(mi)} mi`;

@@ -66,6 +66,13 @@ async function main() {
     console.log(`[seed-e2e] Reusing fixture user ${userRow.id}`);
   }
 
+  // E2E onboarding tests expect `units_pick` on new trips. Clear any pref
+  // from earlier runs so the fixture user is always "not yet chosen".
+  await db
+    .update(schema.users)
+    .set({ unitsPref: null })
+    .where(eq(schema.users.id, userRow.id));
+
   // --- 2. Ensure default vehicle exists --------------------------------
   let vehicleRow = (
     await db
