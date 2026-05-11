@@ -5,28 +5,45 @@
 #   1. tsc --noEmit          → typecheck guard. We refuse to push code that
 #                              won't build on Vercel. Five seconds locally
 #                              beats a failed deploy on main.
-#   2. If the working tree is dirty, stages + commits everything with the
+#   2. playwright test       → full E2E suite against a self-spawned
+#                              `next start`. Catches broken login,
+#                              broken vehicle CRUD, and broken Penny
+#                              before they hit production. The webServer
+#                              is configured in playwright.config.ts;
+#                              the suite reuses .next/ so iterating is
+#                              fast (~5s build after the first run).
+#   3. If the working tree is dirty, stages + commits everything with the
 #      message you pass as $1 (default: "dev: ship <timestamp>").
-#   3. git push origin HEAD  → triggers a Vercel deploy.
-#   4. drizzle-kit push      → syncs schema.ts to the Neon database pointed
+#   4. git push origin HEAD  → triggers a Vercel deploy.
+#   5. drizzle-kit push      → syncs schema.ts to the Neon database pointed
 #                              at by DATABASE_URL in your local .env.
-#   5. drizzle migrate       → advances the migration journal so /drizzle/
+#   6. drizzle migrate       → advances the migration journal so /drizzle/
 #                              SQL files stay an authoritative paper trail
 #                              alongside the schema.ts source-of-truth. No-op
 #                              if all migrations are already applied.
-#   6. backfill-maps-nav     → rewrites any legacy Google Maps path URLs
+#   7. backfill-maps-nav     → rewrites any legacy Google Maps path URLs
 #                              to dir_action=navigate.
 #
 # Usage:
 #   ./scripts/ship.sh                         # auto-generated commit msg
 #   ./scripts/ship.sh "fix chat keyboard bug" # custom commit msg
 #   SKIP_TYPECHECK=1 ./scripts/ship.sh        # bypass step 1 (last resort)
+#   SKIP_E2E=1 ./scripts/ship.sh              # bypass step 2 (last resort —
+#                                             # use only when you've manually
+#                                             # confirmed the change is safe,
+#                                             # e.g. docs-only edits)
 #
 # Notes:
 #   - Since dev and prod currently share a single Neon database, running
 #     db:push locally IS running it against prod. That's by design for
 #     solo-dev mode; splitting DBs later means running the db:push step
 #     with a prod DATABASE_URL instead.
+#   - The E2E suite also runs against the same Neon DB. It seeds a fixed
+#     fixture user + trip on first run and cleans up its own
+#     `playwright-*` rows when finished, so it's safe to run repeatedly.
+#   - The Penny submit-trip E2E test calls Anthropic for real, costing
+#     ~$0.05–0.20 per ship. Set SKIP_E2E=1 if you're shipping at high
+#     velocity and have other coverage in place.
 #   - Vercel deploys asynchronously; this script returns as soon as the
 #     push is accepted, not when the build finishes.
 #   - db:push and db:migrate are deliberately both run. db:push is the
@@ -62,7 +79,25 @@ else
   fi
 fi
 
-# ── 2. commit ─────────────────────────────────────────────────────────────
+# ── 2. e2e (Playwright) ────────────────────────────────────────────────────
+# Spins up `next start` on its own port, runs the suite (login, vehicle CRUD,
+# existing trip, Penny submit, map render), tears the server back down, and
+# scrubs any test-created rows from the shared Neon DB. The OTP E2E test
+# auto-skips when E2E_OTP_EMAIL isn't set.
+if [ "${SKIP_E2E:-}" = "1" ]; then
+  warn "SKIP_E2E=1 set — skipping E2E suite (last-resort use only)"
+else
+  step "Running Playwright E2E suite"
+  # Ensure browser binaries exist (cheap no-op when already installed,
+  # but saves a confusing "Executable doesn't exist" wall-of-errors
+  # after a Playwright version bump or fresh checkout).
+  npx --no-install playwright install chromium 2>/dev/null || true
+  if ! npx --no-install playwright test 2>&1; then
+    die "Playwright reported failures — open the HTML report (npm run e2e:report) or re-run with SKIP_E2E=1 if you really mean it"
+  fi
+fi
+
+# ── 3. commit ─────────────────────────────────────────────────────────────
 MSG="${1:-dev: ship $(date +'%Y-%m-%d %H:%M')}"
 
 if ! git diff-index --quiet HEAD -- || [ -n "$(git ls-files --others --exclude-standard)" ]; then
@@ -79,26 +114,26 @@ else
   printf "${DIM}  working tree clean — skipping commit${RST}\n"
 fi
 
-# ── 3. push ───────────────────────────────────────────────────────────────
+# ── 4. push ───────────────────────────────────────────────────────────────
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 step "Pushing ${BRANCH} → origin (Vercel will start building)"
 git push origin HEAD
 
-# ── 4. db push ────────────────────────────────────────────────────────────
+# ── 5. db push ────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
   die ".env not found — can't read DATABASE_URL for db:push"
 fi
 step "drizzle-kit push (sync schema.ts → Neon)"
 npm run --silent db:push
 
-# ── 5. db migrate (journal advance) ───────────────────────────────────────
+# ── 6. db migrate (journal advance) ───────────────────────────────────────
 # Idempotent — drizzle's migrator skips entries already in the journal.
 # Failure here is non-fatal because db:push already applied the schema; we
 # warn so the journal drift is visible without blocking the deploy.
 step "drizzle migrate (advance migration journal)"
 npm run --silent db:migrate || warn "db:migrate returned non-zero (schema is already synced via db:push, but the journal may be out of step)"
 
-# ── 6. map-nav backfill ───────────────────────────────────────────────────
+# ── 7. map-nav backfill ───────────────────────────────────────────────────
 step "Rewriting legacy Google Maps URLs to dir_action=navigate"
 npm run --silent backfill-maps-nav || warn "backfill-maps-nav returned non-zero (usually harmless if no legacy rows)"
 

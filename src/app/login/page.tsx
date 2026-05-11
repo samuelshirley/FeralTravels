@@ -152,6 +152,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         >
           <button
             type="submit"
+            data-testid="login-google-button"
             style={{
               width: '100%',
               padding: '12px 16px',

@@ -15,6 +15,13 @@
     "backfill-maps-nav": "tsx scripts/backfill-google-maps-nav.ts",
     "verify-maps-waypoints": "tsx scripts/verify-maps-waypoints.ts",
     "smoke-api": "tsx scripts/smoke-api.ts",
+    "e2e": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test",
+    "e2e:smoke": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test e2e/existing-trip.spec.ts e2e/login-google-button.spec.ts e2e/login-otp.spec.ts e2e/vehicle-crud.spec.ts",
+    "e2e:headed": "playwright test --headed",
+    "e2e:ui": "playwright test --ui",
+    "e2e:seed": "tsx scripts/seed-e2e-fixture.ts",
+    "e2e:cleanup": "tsx scripts/cleanup-e2e.ts",
+    "e2e:report": "playwright show-report",
     "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
@@ -35,6 +42,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/google.maps": "^3.64.0",
     "@types/node": "^20.0.0",

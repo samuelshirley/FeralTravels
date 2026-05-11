@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
@@ -38,6 +38,57 @@ async function assertPlanFuelLegOwnedOnTrip(
 ): Promise<void> {
   const legTripId = await assertLegOwnedByUser(legId, userId);
   assertLegOnTrip(legTripId, tripId);
+}
+
+async function getLatestLegIdOnTrip(targetTripId: number): Promise<number | null> {
+  const rows = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, targetTripId))
+    .orderBy(desc(legs.sortOrder))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Penny's tool loop can propose `add_stop` with a hallucinated numeric id or an
+ * id from another trip; parallel tool-use blocks can't see sibling `add_leg`
+ * rows yet either. Prefer the queued ids from legs we already persisted in this
+ * batch, otherwise the newest leg row on `tripId` (same heuristic as grabbing
+ * the “current” segment for a mid-route stop).
+ */
+async function resolvePennyStopLegId(
+  proposedLegId: number,
+  tripId: number,
+  userId: string,
+  ctx: ReplanDispatchCtx
+): Promise<number> {
+  async function legMustBelongToThisTrip(candidate: number): Promise<void> {
+    const ownerTripId = await assertLegOwnedByUser(candidate, userId);
+    assertLegOnTrip(ownerTripId, tripId);
+  }
+
+  try {
+    await legMustBelongToThisTrip(proposedLegId);
+    return proposedLegId;
+  } catch (e) {
+    const wrongTrip =
+      e instanceof ForbiddenError && e.message === 'Leg is not part of this trip';
+    if (!(e instanceof NotFoundError) && !wrongTrip) throw e;
+
+    const queued =
+      ctx.newLegIdsQueue.length > 0
+        ? ctx.newLegIdsQueue[ctx.newLegIdsQueue.length - 1]
+        : null;
+    const latestOnTrip =
+      queued == null ? await getLatestLegIdOnTrip(tripId) : null;
+    const fallback = queued ?? latestOnTrip ?? null;
+
+    if (fallback == null) throw e;
+
+    await legMustBelongToThisTrip(fallback);
+    return fallback;
+  }
 }
 
 function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
@@ -501,8 +552,8 @@ async function dispatchAction(
     }
 
     case 'add_stop': {
-      const { leg_id, data } = action.input;
-      await assertLegOwnedByUser(leg_id, userId);
+      const { leg_id: proposedLegId, data } = action.input;
+      const leg_id = await resolvePennyStopLegId(proposedLegId, tripId, userId, ctx);
       await addStop({
         leg_id,
         stop_type: data.stop_type,

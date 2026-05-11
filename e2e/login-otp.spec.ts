@@ -1,0 +1,45 @@
+import { test, expect } from '@playwright/test';
+import { E2E_OTP_EMAIL, isOtpE2EConfigured } from './fixtures/constants';
+import { fetchOtpCodeForEmail } from './fixtures/otp-db';
+
+/**
+ * Real OTP UI flow: /login → submit email → Resend sends → /login/verify →
+ * enter the 6-digit code → /trips. The code is read from `email_otp_codes`
+ * (same value as in the email) so we don't need an inbox API or IMAP.
+ *
+ * Set E2E_OTP_EMAIL in .env to a dedicated address on your verified domain.
+ * Without it this file auto-skips so a fresh checkout still passes.
+ */
+test.describe('Email OTP login', () => {
+  test.skip(!isOtpE2EConfigured(), 'E2E_OTP_EMAIL not set — see .env.example');
+
+  test('round-trip: send code → verify with DB-backed code → land on /trips', async ({
+    page,
+  }) => {
+    await page.goto('/login');
+    await page.locator('input[name="email"]').fill(E2E_OTP_EMAIL);
+    await Promise.all([
+      page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
+      page.getByRole('button', { name: /email me a code/i }).click(),
+    ]);
+
+    await expect(page.locator('text=/6-digit code/i')).toBeVisible();
+
+    const code = await fetchOtpCodeForEmail(E2E_OTP_EMAIL);
+    expect(code).toMatch(/^\d{6}$/);
+
+    const firstDigit = page
+      .locator('input[aria-label="Digit 1 of 6"]')
+      .or(page.locator('input[autocomplete="one-time-code"]'))
+      .first();
+    await firstDigit.click();
+    // Parallel wait: if navigation to /trips never happens (bad code, partial OTP), fail at navigationTimeout instead of expect's default.
+    await Promise.all([
+      page.waitForURL(/\/trips(\?|$)/, { timeout: 30_000 }),
+      firstDigit.fill(code),
+    ]);
+
+    await expect(page).toHaveURL(/\/trips/);
+    await expect(page.locator('h1')).toHaveText(/Trips/i);
+  });
+});

@@ -153,7 +153,7 @@ export default function VehicleProfileSection() {
           </div>
 
           {editingId === 'new' ? (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 12 }} data-testid="vehicle-form">
               <VehicleForm
                 initial={emptyDraft()}
                 saving={saving}
@@ -163,6 +163,7 @@ export default function VehicleProfileSection() {
             </div>
           ) : (
             <button
+              data-testid="add-vehicle-button"
               onClick={() => setEditingId('new')}
               style={{
                 marginTop: 12,
@@ -219,6 +220,8 @@ function VehicleCard({
 
   return (
     <div
+      data-testid="vehicle-card"
+      data-vehicle-name={vehicle.name}
       style={{
         border: '1px solid var(--tp-border)',
         borderRadius: 10,
@@ -228,7 +231,7 @@ function VehicleCard({
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 15 }}>{vehicle.name}</strong>
+          <strong style={{ fontSize: 15 }} data-testid="vehicle-card-name">{vehicle.name}</strong>
           {vehicle.is_default && (
             <span
               style={{
@@ -385,6 +388,7 @@ function VehicleForm({
       <FieldGroup title="Identity">
         <Field label="Name" required wide>
           <input
+            data-testid="vehicle-name-input"
             value={d.name}
             onChange={(e) => setD((p) => ({ ...p, name: e.target.value }))}
             style={inputStyle}
@@ -469,7 +473,12 @@ function VehicleForm({
         <button onClick={onCancel} style={{ ...primaryBtn, background: 'transparent', color: 'var(--tp-muted)' }}>
           Cancel
         </button>
-        <button onClick={() => onSave(d)} disabled={saving} style={{ ...primaryBtn, opacity: saving ? 0.6 : 1 }}>
+        <button
+          data-testid="vehicle-save-button"
+          onClick={() => onSave(d)}
+          disabled={saving}
+          style={{ ...primaryBtn, opacity: saving ? 0.6 : 1 }}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>

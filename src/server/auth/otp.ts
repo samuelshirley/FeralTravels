@@ -161,13 +161,33 @@ export async function sendOtpCode(email: string): Promise<string> {
   return code;
 }
 
-// Auth.js session cookie config. In production (HTTPS), Auth.js uses the
-// __Secure- prefix. In dev (HTTP) it's just `authjs.session-token`.
+// Auth.js session cookie config. In production on HTTPS we use the
+// __Secure- prefix + Secure flag. On HTTP (e.g. local `next start` for E2E)
+// we must use the plain cookie name and secure: false or the browser never
+// sends the cookie — middleware then bounces /trips → /login after OTP.
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/**
+ * Whether to use Secure + __Secure- session cookies. Align with the actual
+ * public URL: NODE_ENV alone is wrong for `next start` (always production)
+ * hitting http://localhost — Secure cookies are not sent over HTTP.
+ */
+function useSecureSessionCookies(): boolean {
+  if (process.env.NODE_ENV !== 'production') return false;
+  const raw = process.env.AUTH_URL || process.env.NEXTAUTH_URL || '';
+  if (!raw.trim()) return true;
+  const siteUrl = raw.startsWith('http') ? raw : `https://${raw}`;
+  try {
+    return new URL(siteUrl).protocol === 'https:';
+  } catch {
+    return true;
+  }
+}
+
 function getSessionCookieName(): string {
-  const useSecure = process.env.NODE_ENV === 'production';
-  return useSecure ? '__Secure-authjs.session-token' : 'authjs.session-token';
+  return useSecureSessionCookies()
+    ? '__Secure-authjs.session-token'
+    : 'authjs.session-token';
 }
 
 /**
@@ -244,10 +264,10 @@ export async function signInWithOtp(email: string, code: string): Promise<string
 
   // 4. Set the session cookie so Auth.js picks it up.
   const cookieStore = await cookies();
-  const isSecure = process.env.NODE_ENV === 'production';
+  const secure = useSecureSessionCookies();
   cookieStore.set(getSessionCookieName(), sessionToken, {
     httpOnly: true,
-    secure: isSecure,
+    secure,
     sameSite: 'lax',
     path: '/',
     expires,

@@ -62,6 +62,9 @@ export default function TripCard({
   return (
     <>
       <div
+        data-testid="trip-card"
+        data-trip-id={id}
+        data-trip-name={name}
         style={{
           position: 'relative',
           WebkitUserSelect: 'none',

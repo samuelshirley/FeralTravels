@@ -479,7 +479,12 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
   }, [ready, selectedLegId, legs]);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      data-testid="trip-map"
+      data-map-ready={ready ? 'true' : 'false'}
+      data-leg-count={legs.length}
+      style={{ width: '100%', height: '100%', position: 'relative' }}
+    >
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: 'var(--tp-map-chrome)' }} />
       {loadError && (
         <div

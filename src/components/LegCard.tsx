@@ -126,6 +126,8 @@ export default function LegCard({
 
   return (
     <div
+      data-testid="leg-card"
+      data-leg-id={leg.id}
       style={{
         marginBottom: 2,
         background: expanded ? 'var(--tp-surface-muted)' : 'transparent',
