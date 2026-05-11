@@ -501,3 +501,21 @@ export const usageEvents = pgTable(
     providerIdx: index('usage_provider_idx').on(t.provider),
   })
 );
+
+// Foreground time aggregate by viewport band (mobile / tablet / desktop), same
+// breakpoints as src/lib/useMediaQuery.ts. Upserted from the client reporter.
+export const userViewportTime = pgTable(
+  'user_viewport_time',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    viewport: text('viewport').notNull().$type<'mobile' | 'tablet' | 'desktop'>(),
+    totalSeconds: bigint('total_seconds', { mode: 'number' }).notNull(),
+    updatedAt: timestamp('updated_at', { mode: 'date' }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.viewport] }),
+    userIdx: index('user_viewport_time_user_idx').on(t.userId),
+  })
+);

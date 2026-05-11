@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Onest } from 'next/font/google';
 import ErrorNotifier from '@/components/ErrorNotifier';
+import ViewportTimeReporter from '@/components/ViewportTimeReporter';
 
 const onest = Onest({
   subsets: ['latin'],
@@ -193,6 +194,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         {children}
+        <ViewportTimeReporter />
         <ErrorNotifier />
         <script
           dangerouslySetInnerHTML={{

@@ -8,6 +8,7 @@ import {
   chatHistory,
   gpxTrails,
   usageEvents,
+  userViewportTime,
   vehicles,
 } from '@/server/db/schema';
 
@@ -384,6 +385,7 @@ export async function getUserDetail(userId: string) {
     [{ microcents7d, requests7d }],
     recentErrorsForUser,
     recentChatForUser,
+    viewportRows,
   ] = await Promise.all([
     db
       .select({
@@ -466,9 +468,23 @@ export async function getUserDetail(userId: string) {
       .where(eq(trips.userId, userId))
       .orderBy(desc(chatHistory.createdAt))
       .limit(20),
+    db
+      .select({
+        viewport: userViewportTime.viewport,
+        totalSeconds: userViewportTime.totalSeconds,
+      })
+      .from(userViewportTime)
+      .where(eq(userViewportTime.userId, userId)),
   ]);
 
   if (!user) return null;
+
+  const viewportTime = { mobile: 0, tablet: 0, desktop: 0 };
+  for (const r of viewportRows) {
+    if (r.viewport === 'mobile' || r.viewport === 'tablet' || r.viewport === 'desktop') {
+      viewportTime[r.viewport] = Number(r.totalSeconds);
+    }
+  }
 
   return {
     user,
@@ -481,6 +497,7 @@ export async function getUserDetail(userId: string) {
     },
     recentErrors: recentErrorsForUser,
     recentChat: recentChatForUser,
+    viewportTime,
   };
 }
 

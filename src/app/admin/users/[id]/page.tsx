@@ -28,6 +28,17 @@ function fmtAbs(d: Date | string): string {
   return date.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+/** Whole seconds from DB → readable duration */
+function fmtDuration(totalSec: number): string {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return '—';
+  const s = Math.floor(totalSec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
 const card: React.CSSProperties = {
   background: 'var(--tp-surface)',
   border: '1px solid var(--tp-border)',
@@ -80,6 +91,14 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
 
   const activeTrips = detail.trips.filter((t) => !t.isTemplate);
   const templates = detail.trips.filter((t) => t.isTemplate);
+
+  const vt = detail.viewportTime;
+  const viewportTotalSec = vt.mobile + vt.tablet + vt.desktop;
+  const viewportRows = [
+    { key: 'mobile' as const, label: 'Mobile', sub: '< 768px', sec: vt.mobile },
+    { key: 'tablet' as const, label: 'Tablet', sub: '768–1023px', sec: vt.tablet },
+    { key: 'desktop' as const, label: 'Desktop', sub: '≥ 1024px', sec: vt.desktop },
+  ];
 
   return (
     <div className={styles.wrapper}>
@@ -177,6 +196,51 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
             </div>
           </div>
         </div>
+
+        <section style={{ ...card, marginBottom: 16 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 8 }}>
+            Time by screen size (foreground)
+          </h2>
+          <p style={{ fontSize: 11, color: 'var(--tp-subtle)', margin: '0 0 12px', lineHeight: 1.5 }}>
+            Approximate time in each viewport band while the tab was visible (same breakpoints as the
+            app). No backfill — counts only usage after this feature shipped.
+          </p>
+          {viewportTotalSec === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--tp-subtle)' }}>
+              No viewport time recorded yet — data collects while this user uses the app.
+            </div>
+          ) : (
+            <div className={styles.tableScroll}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Screen size</th>
+                    <th style={thStyle}>Time</th>
+                    <th style={thStyle}>Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewportRows.map((row) => {
+                    const pct =
+                      viewportTotalSec > 0 ? Math.round((row.sec / viewportTotalSec) * 100) : 0;
+                    return (
+                      <tr key={row.key}>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 600 }}>{row.label}</div>
+                          <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 2 }}>
+                            {row.sub}
+                          </div>
+                        </td>
+                        <td style={{ ...tdStyle, whiteSpace: 'nowrap' }}>{fmtDuration(row.sec)}</td>
+                        <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>{pct}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         <section style={{ ...card, marginBottom: 16 }}>
           <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 12 }}>
