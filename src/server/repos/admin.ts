@@ -84,6 +84,7 @@ export async function getAdminVehiclesOverview(limit = ADMIN_VEHICLES_LIST_LIMIT
       maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
       waterRefillDays: vehicles.waterRefillDays,
       blackwaterRefillDays: vehicles.blackwaterRefillDays,
+      waterTrackingEnabled: vehicles.waterTrackingEnabled,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })
@@ -111,6 +112,7 @@ export async function getAdminVehicleById(vehicleId: number) {
       maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
       waterRefillDays: vehicles.waterRefillDays,
       blackwaterRefillDays: vehicles.blackwaterRefillDays,
+      waterTrackingEnabled: vehicles.waterTrackingEnabled,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })

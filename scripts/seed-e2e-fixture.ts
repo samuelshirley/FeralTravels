@@ -102,6 +102,7 @@ async function main() {
         maxConsecutiveDriveDays: 5,
         waterRefillDays: 3,
         blackwaterRefillDays: 5,
+        waterTrackingEnabled: true,
       })
       .returning();
     console.log(`[seed-e2e] Created fixture vehicle ${vehicleRow.id}`);

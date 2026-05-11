@@ -6,10 +6,19 @@ import { kmToMi, miToKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
+  caravanWaterGateLabel,
   validateVehicleProfileDraftForSave,
   vehicleProfileGroupTitle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
+
+const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {
+  max_drive_hours_per_day: 'vehicle-max-drive-day-input',
+  max_drive_hours_per_week: 'vehicle-max-drive-week-input',
+  max_consecutive_drive_days: 'vehicle-max-consecutive-input',
+  water_refill_days: 'vehicle-water-refill-input',
+  blackwater_refill_days: 'vehicle-blackwater-input',
+};
 
 /**
  * Vehicle profile — the simplified shape introduced by migration 0007.
@@ -31,6 +40,8 @@ export interface Vehicle {
   max_consecutive_drive_days: number | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
+  /** Caravan gate: null means not chosen in Settings yet. */
+  water_tracking_enabled: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +57,7 @@ function emptyDraft(): Draft {
     max_consecutive_drive_days: null,
     water_refill_days: null,
     blackwater_refill_days: null,
+    water_tracking_enabled: null,
   };
 }
 
@@ -82,6 +94,7 @@ export default function VehicleProfileSection() {
           max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
           water_refill_days: draft.water_refill_days ?? null,
           blackwater_refill_days: draft.blackwater_refill_days ?? null,
+          water_tracking_enabled: draft.water_tracking_enabled ?? null,
           is_default: draft.is_default,
         },
         units
@@ -344,7 +357,10 @@ function VehicleForm({
   onSave: (d: Draft) => void;
   onCancel: () => void;
 }) {
-  const [d, setD] = useState<Draft>({ ...initial });
+  const [d, setD] = useState<Draft>(() => ({
+    ...initial,
+    water_tracking_enabled: initial.water_tracking_enabled ?? null,
+  }));
   const { units } = useUnits();
   const isImperial = units === 'imperial';
   const questions = buildVehicleProfileQuestions(units);
@@ -396,7 +412,46 @@ function VehicleForm({
     >
       {groups.map(({ group, items }) => (
         <FieldGroup key={group} title={vehicleProfileGroupTitle(group)}>
-          {items.map((q) => {
+          {group === 'water' && (
+            <Field label={caravanWaterGateLabel()} required wide>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="water-tracking"
+                    data-testid="vehicle-water-yes"
+                    checked={d.water_tracking_enabled === true}
+                    onChange={() =>
+                      setD((p) => ({
+                        ...p,
+                        water_tracking_enabled: true,
+                      }))
+                    }
+                  />
+                  Yes, track freshwater and waste timing
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="water-tracking"
+                    data-testid="vehicle-water-no"
+                    checked={d.water_tracking_enabled === false}
+                    onChange={() =>
+                      setD((p) => ({
+                        ...p,
+                        water_tracking_enabled: false,
+                        water_refill_days: null,
+                        blackwater_refill_days: null,
+                      }))
+                    }
+                  />
+                  No
+                </label>
+              </div>
+            </Field>
+          )}
+          {(!(group === 'water') || d.water_tracking_enabled === true) &&
+            items.map((q) => {
             if (q.key === 'name') {
               return (
                 <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
@@ -433,6 +488,7 @@ function VehicleForm({
               <Field key={q.key} label={q.label} required={!q.optional} hint={q.help}>
                 <input
                   type="number"
+                  data-testid={PROFILE_FIELD_TEST_IDS[q.key]}
                   step={step}
                   min={q.min}
                   max={q.max}
@@ -443,7 +499,7 @@ function VehicleForm({
                 />
               </Field>
             );
-          })}
+            })}
         </FieldGroup>
       ))}
 

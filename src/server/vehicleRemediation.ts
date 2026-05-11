@@ -1,0 +1,223 @@
+import 'server-only';
+import { HttpError } from '@/server/auth/guards';
+import type { Question } from '@/server/onboarding';
+import {
+  buildVehicleProfileQuestions,
+  caravanWaterGateLabel,
+  CARAVAN_WATER_GATE_KEY,
+  coerceVehicleProfileValue,
+  vehicleIsCompleteForRemediation,
+  type VehicleProfileQuestion,
+} from '@/lib/vehicleProfile';
+import type { UnitsPref } from '@/lib/units';
+import { miToKm } from '@/lib/units';
+import {
+  recalculateUserRemediationFlag,
+  userNeedsVehicleProfileRemediation,
+} from '@/server/repos/remediationFlags';
+import { getUnitsPref } from '@/server/repos/users';
+import {
+  listVehiclesForUser,
+  updateVehicle,
+  type VehicleApi,
+  type VehicleInput,
+} from '@/server/repos/vehicles';
+
+type ProfileStep = { t: 'profile'; q: VehicleProfileQuestion } | { t: 'gate' };
+
+function buildRemediationSteps(units: UnitsPref): ProfileStep[] {
+  const qs = buildVehicleProfileQuestions(units);
+  const wi = qs.findIndex((q) => q.group === 'water');
+  if (wi < 0) return qs.map((q) => ({ t: 'profile' as const, q }));
+  return [
+    ...qs.slice(0, wi).map((q) => ({ t: 'profile' as const, q })),
+    { t: 'gate' },
+    ...qs.slice(wi).map((q) => ({ t: 'profile' as const, q })),
+  ];
+}
+
+function vehicleHasProfileValue(vehicle: VehicleApi, key: string): boolean {
+  const raw = (vehicle as unknown as Record<string, unknown>)[key];
+  return raw !== null && raw !== undefined && raw !== '';
+}
+
+function waterGateResolvedDb(vehicle: VehicleApi): boolean {
+  const wt = vehicle.water_tracking_enabled;
+  return wt === true || wt === false;
+}
+
+function remediationProfileQuestionRequired(q: VehicleProfileQuestion, vehicle: VehicleApi): boolean {
+  if (!q.optional) return true;
+  return q.group === 'water' && vehicle.water_tracking_enabled === true;
+}
+
+function remediationProfileNeedsAsking(q: VehicleProfileQuestion, vehicle: VehicleApi): boolean {
+  if (q.group === 'water' && vehicle.water_tracking_enabled === false) return false;
+  const required = remediationProfileQuestionRequired(q, vehicle);
+  const hasVal = vehicleHasProfileValue(vehicle, q.key);
+  if (required) return !hasVal;
+  return false;
+}
+
+function nextRemediationQuestionInner(
+  vehicle: VehicleApi,
+  unitsPref: UnitsPref
+): { question: Question; progress: { current: number; total: number } } | null {
+  const gateLabel = caravanWaterGateLabel();
+  const steps = buildRemediationSteps(unitsPref);
+  const total = steps.length;
+
+  for (let s = 0; s < steps.length; s++) {
+    const step = steps[s];
+    if (step.t === 'gate') {
+      if (!waterGateResolvedDb(vehicle)) {
+        return {
+          question: {
+            key: CARAVAN_WATER_GATE_KEY,
+            kind: 'select',
+            label: gateLabel,
+            help: 'If not, we will skip freshwater and waste timing questions.',
+            options: [
+              { value: 'yes', label: 'Yes, track water and dump timing' },
+              { value: 'no', label: 'No' },
+            ],
+          },
+          progress: { current: s + 1, total },
+        };
+      }
+      continue;
+    }
+    const q = step.q;
+    if (remediationProfileNeedsAsking(q, vehicle)) {
+      const question: Question = {
+        ...(q as Question),
+        optional: q.optional && !(q.group === 'water' && vehicle.water_tracking_enabled === true),
+      };
+      return {
+        question,
+        progress: { current: s + 1, total },
+      };
+    }
+  }
+
+  return null;
+}
+
+function orderedIncompleteVehicles(all: VehicleApi[]): VehicleApi[] {
+  const bad = all.filter((v) => !vehicleIsCompleteForRemediation(v as Record<string, unknown>));
+  return bad.sort((a, b) => a.id - b.id);
+}
+
+export interface VehicleRemediationSnapshot {
+  needs_remediation: boolean;
+  done: boolean;
+  active_vehicle: { id: number; name: string } | null;
+  question: Question | null;
+  progress: { current: number; total: number } | null;
+}
+
+export async function getVehicleRemediationSnapshot(userId: string): Promise<VehicleRemediationSnapshot> {
+  const list = await listVehiclesForUser(userId);
+  const incompletes = orderedIncompleteVehicles(list);
+
+  if (incompletes.length === 0) {
+    await recalculateUserRemediationFlag(userId);
+    return {
+      needs_remediation: false,
+      done: true,
+      active_vehicle: null,
+      question: null,
+      progress: null,
+    };
+  }
+
+  const unitsPref = await getUnitsPref(userId);
+  const vehicle = incompletes[0];
+  const next = nextRemediationQuestionInner(vehicle, unitsPref);
+
+  const flagRow = await userNeedsVehicleProfileRemediation(userId);
+
+  if (!next) {
+    await recalculateUserRemediationFlag(userId);
+    return {
+      needs_remediation: await userNeedsVehicleProfileRemediation(userId),
+      done: true,
+      active_vehicle: null,
+      question: null,
+      progress: null,
+    };
+  }
+
+  return {
+    needs_remediation: flagRow || true,
+    done: false,
+    active_vehicle: { id: vehicle.id, name: vehicle.name },
+    question: next.question,
+    progress: next.progress,
+  };
+}
+
+export async function submitVehicleRemediationAnswer(
+  userId: string,
+  questionKey: string,
+  value: unknown
+): Promise<VehicleRemediationSnapshot> {
+  const list = await listVehiclesForUser(userId);
+  const incompletes = orderedIncompleteVehicles(list);
+  if (incompletes.length === 0) {
+    await recalculateUserRemediationFlag(userId);
+    return getVehicleRemediationSnapshot(userId);
+  }
+
+  const vehicle = incompletes[0];
+  const unitsPref = await getUnitsPref(userId);
+
+  const expected = nextRemediationQuestionInner(vehicle, unitsPref);
+  if (!expected || expected.question.key !== questionKey) {
+    throw new HttpError(409, 'This step is stale — reload the snapshot.');
+  }
+
+  if (questionKey === CARAVAN_WATER_GATE_KEY) {
+    const raw = typeof value === 'string' ? value : '';
+    if (raw !== 'yes' && raw !== 'no') throw new HttpError(400, 'Pick yes or no.');
+    await updateVehicle(userId, vehicle.id, {
+      water_tracking_enabled: raw === 'yes',
+      ...(raw === 'no' ? { water_refill_days: null, blackwater_refill_days: null } : {}),
+    });
+  } else {
+    const questions = buildVehicleProfileQuestions(unitsPref);
+    const question = questions.find((q) => q.key === questionKey);
+    if (!question) throw new HttpError(400, `Unknown question ${questionKey}`);
+
+    let qEffective = question;
+    if (
+      question.group === 'water' &&
+      vehicle.water_tracking_enabled === true &&
+      question.optional
+    ) {
+      qEffective = { ...question, optional: false };
+    }
+
+    const parsed = coerceVehicleProfileValue(qEffective, value);
+    const patch = {} as Partial<VehicleInput>;
+    if (question.key === 'refill_distance_km' && unitsPref === 'imperial') {
+      const km = parsed == null ? null : miToKm(parsed as number);
+      patch.refill_distance_km = km == null ? null : Math.round(km);
+    } else if (question.key === 'name') {
+      patch.name = parsed as string;
+    } else if (question.key === 'max_drive_hours_per_day') {
+      patch.max_drive_hours_per_day = parsed as number | null;
+    } else if (question.key === 'max_drive_hours_per_week') {
+      patch.max_drive_hours_per_week = parsed as number | null;
+    } else if (question.key === 'max_consecutive_drive_days') {
+      patch.max_consecutive_drive_days = parsed as number | null;
+    } else if (question.key === 'water_refill_days') {
+      patch.water_refill_days = parsed as number | null;
+    } else if (question.key === 'blackwater_refill_days') {
+      patch.blackwater_refill_days = parsed as number | null;
+    }
+    await updateVehicle(userId, vehicle.id, patch);
+  }
+
+  return getVehicleRemediationSnapshot(userId);
+}

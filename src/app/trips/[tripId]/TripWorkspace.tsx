@@ -14,6 +14,8 @@ import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage } from '@/types/trip';
 
+import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
+
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
 interface Props {
@@ -22,6 +24,7 @@ interface Props {
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin?: boolean;
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
+  needsVehicleRemediation?: boolean;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -69,6 +72,7 @@ export default function TripWorkspace({
   user,
   isAdmin = false,
   initialChat,
+  needsVehicleRemediation = false,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -443,10 +447,17 @@ export default function TripWorkspace({
     </div>
   ) : null;
 
+  const remediationOverlay =
+    needsVehicleRemediation && trip.onboarding_state === 'done' && !readonly ? (
+      <VehicleRemediationOverlay />
+    ) : null;
+
   // ───────── MOBILE (<768px): single pane + fixed bottom nav ─────────
   if (viewport === 'mobile') {
     return (
-      <div
+      <>
+        {remediationOverlay}
+        <div
         style={{
           height: '100dvh',
           display: 'flex',
@@ -534,6 +545,7 @@ export default function TripWorkspace({
           unread={unread}
         />
       </div>
+      </>
     );
   }
 
@@ -544,7 +556,9 @@ export default function TripWorkspace({
   // previous slide-in ChatDrawer pattern.
   if (viewport === 'tablet') {
     return (
-      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+      <>
+        {remediationOverlay}
+        <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={user}
           tripName={trip.name}
@@ -590,14 +604,17 @@ export default function TripWorkspace({
           </PanelGroup>
         </div>
       </div>
+      </>
     );
   }
 
-  // ───────── DESKTOP (>=1024px): three resizable panes (always on) ─────────
+  // ───────── DESKTOP (>=1024px):
   // Chat is permanently visible, so no toggle button in the header. Users who
   // want a wider itinerary can drag the chat panel narrow.
   return (
-    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+    <>
+      {remediationOverlay}
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}
         tripName={trip.name}
@@ -643,5 +660,6 @@ export default function TripWorkspace({
         </PanelGroup>
       </div>
     </div>
+    </>
   );
 }

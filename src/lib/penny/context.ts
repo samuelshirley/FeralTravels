@@ -45,6 +45,8 @@ export interface PennyVehicle {
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
+  /** Null = onboarding/remediation hasn't asked caravan gate yet. */
+  water_tracking_enabled: boolean | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
 }
@@ -175,6 +177,7 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
+    water_tracking_enabled: v.water_tracking_enabled ?? null,
     water_refill_days: v.water_refill_days,
     blackwater_refill_days: v.blackwater_refill_days,
   };

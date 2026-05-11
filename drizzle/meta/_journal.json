@@ -92,6 +92,13 @@
       "when": 1778889600000,
       "tag": "0012_user_viewport_time",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1778976000000,
+      "tag": "0013_vehicle_remediation",
+      "breakpoints": true
     }
   ]
 }

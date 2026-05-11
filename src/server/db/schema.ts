@@ -36,6 +36,10 @@ export const users = pgTable('users', {
   // NULL = not chosen yet — first trip shows units_pick. Existing rows keep
   // a value after migration; new signups omit this column until onboarding.
   unitsPref: text('units_pref'),
+  /** When true, owning at least one vehicle fails profile completeness → trip workspace shows remediation. */
+  needsVehicleProfileRemediation: boolean('needs_vehicle_profile_remediation')
+    .default(false)
+    .notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -139,6 +143,11 @@ export const vehicles = pgTable(
     // intervals between visits to a freshwater tap and to a dump station.)
     waterRefillDays: integer('water_refill_days'),
     blackwaterRefillDays: integer('blackwater_refill_days'),
+    /**
+     * Null = caravan/water gate not answered; remediation + onboarding ask.
+     * False = skip water cadence rows; True = enforce both water refill integers.
+     */
+    waterTrackingEnabled: boolean('water_tracking_enabled'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

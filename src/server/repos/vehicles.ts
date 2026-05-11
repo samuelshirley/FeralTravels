@@ -13,6 +13,7 @@ export interface VehicleInput {
   max_consecutive_drive_days?: number | null;
   water_refill_days?: number | null;
   blackwater_refill_days?: number | null;
+  water_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
@@ -28,6 +29,7 @@ function vehicleApi(r: VehicleRow) {
     max_consecutive_drive_days: r.maxConsecutiveDriveDays,
     water_refill_days: r.waterRefillDays,
     blackwater_refill_days: r.blackwaterRefillDays,
+    water_tracking_enabled: r.waterTrackingEnabled,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -93,6 +95,8 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   if (input.water_refill_days !== undefined) map.waterRefillDays = input.water_refill_days;
   if (input.blackwater_refill_days !== undefined)
     map.blackwaterRefillDays = input.blackwater_refill_days;
+  if (input.water_tracking_enabled !== undefined)
+    map.waterTrackingEnabled = input.water_tracking_enabled;
   return map;
 }
 
@@ -104,7 +108,7 @@ export async function addVehicle(userId: string, input: VehicleInput): Promise<V
   const isFirst = (existing[0]?.c ?? 0) === 0;
   const shouldBeDefault = input.is_default || isFirst;
 
-  return await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     if (shouldBeDefault) {
       await tx
         .update(vehicles)
@@ -122,6 +126,9 @@ export async function addVehicle(userId: string, input: VehicleInput): Promise<V
       .returning();
     return vehicleApi(row);
   });
+  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
+  await recalculateUserRemediationFlag(userId);
+  return result;
 }
 
 export async function updateVehicle(
@@ -132,7 +139,7 @@ export async function updateVehicle(
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return null;
 
-  return await db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     if (patch.is_default === true) {
       await tx
         .update(vehicles)
@@ -152,9 +159,15 @@ export async function updateVehicle(
       .limit(1);
     return row ? vehicleApi(row) : null;
   });
+  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
+  await recalculateUserRemediationFlag(userId);
+  return updated;
 }
 
-export async function deleteVehicle(userId: string, vehicleId: number): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function deleteVehicle(
+  userId: string,
+  vehicleId: number
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return { ok: false, error: 'Vehicle not found' };
 
@@ -173,6 +186,8 @@ export async function deleteVehicle(userId: string, vehicleId: number): Promise<
     };
   }
   await db.delete(vehicles).where(eq(vehicles.id, vehicleId));
+  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
+  await recalculateUserRemediationFlag(userId);
   return { ok: true };
 }
 

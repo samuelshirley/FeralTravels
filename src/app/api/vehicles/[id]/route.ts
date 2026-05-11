@@ -16,9 +16,10 @@ const patchSchema = z.object({
   refill_distance_km: z.number().int().positive().max(5000).nullish(),
   max_drive_hours_per_day: z.number().positive().max(24).nullish(),
   max_drive_hours_per_week: z.number().positive().max(168).nullish(),
-  max_consecutive_drive_days: z.number().int().positive().max(60).nullish(),
+  max_consecutive_drive_days: z.number().int().positive().max(14).nullish(),
   water_refill_days: z.number().int().positive().max(60).nullish(),
   blackwater_refill_days: z.number().int().positive().max(60).nullish(),
+  water_tracking_enabled: z.boolean().nullish(),
   is_default: z.boolean().optional(),
 });
 
@@ -75,6 +76,9 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       ...(body.water_refill_days !== undefined && { water_refill_days: body.water_refill_days }),
       ...(body.blackwater_refill_days !== undefined && {
         blackwater_refill_days: body.blackwater_refill_days,
+      }),
+      ...(body.water_tracking_enabled !== undefined && {
+        water_tracking_enabled: body.water_tracking_enabled,
       }),
     } as Record<string, unknown>;
 

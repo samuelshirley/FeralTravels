@@ -107,6 +107,17 @@ function waterGroupHasAnyValue(vehicle: VehicleApi, questions: VehicleProfileQue
   return questions.filter((q) => q.group === 'water').some((q) => vehicleHasProfileValue(vehicle, q.key));
 }
 
+/** Caravan gate resolved via DB (`water_tracking_enabled`) or legacy onboarding chat / populated water rows. */
+function caravanGateResolved(
+  vehicle: VehicleApi,
+  askedLabels: Set<string>,
+  questions: VehicleProfileQuestion[]
+): boolean {
+  const wt = vehicle.water_tracking_enabled;
+  if (wt === true || wt === false) return true;
+  return askedLabels.has(caravanWaterGateLabel()) || waterGroupHasAnyValue(vehicle, questions);
+}
+
 /**
  * Trips can only pick among vehicles that already have refill distance set;
  * otherwise we force vehicle_new so fuel planning cannot attach to an empty row.
@@ -143,8 +154,7 @@ function nextVehicleOnboardingQuestion(
   for (let s = 0; s < steps.length; s++) {
     const step = steps[s];
     if (step.t === 'gate') {
-      const gateResolved =
-        askedLabels.has(gateLabel) || waterGroupHasAnyValue(vehicle, questions);
+      const gateResolved = caravanGateResolved(vehicle, askedLabels, questions);
       if (!gateResolved) {
         return {
           question: {
@@ -404,6 +414,11 @@ export async function submitAnswer(
     if (input.questionKey === CARAVAN_WATER_GATE_KEY) {
       const raw = typeof input.value === 'string' ? input.value : '';
       if (raw !== 'yes' && raw !== 'no') throw new Error('Pick yes or no.');
+      if (!trip.vehicleId) throw new Error('Vehicle not ready for caravan gate.');
+      await updateVehicle(userId, trip.vehicleId, {
+        water_tracking_enabled: raw === 'yes',
+        ...(raw === 'no' ? { water_refill_days: null, blackwater_refill_days: null } : {}),
+      });
       if (raw === 'no') {
         const waterIdx = questions.findIndex((q) => q.group === 'water');
         if (waterIdx >= 0) {

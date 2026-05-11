@@ -52,6 +52,25 @@ export function vehicleMeetsCompletenessTier(
 /** Plan / docs name — same as {@link vehicleMeetsCompletenessTier}. */
 export const isVehicleCompleteForTier = vehicleMeetsCompletenessTier;
 
+/** Water cadence integers when tracking is enabled (matches question max default). */
+export function vehicleWaterCadenceIntegerValid(n: unknown, max = 60): boolean {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= max;
+}
+
+/**
+ * Full profile completeness for remediation nag + PATCH validation — strict driving,
+ * caravan gate persisted, water cadence iff water_tracking_enabled is true.
+ */
+export function vehicleIsCompleteForRemediation(vehicle: Record<string, unknown>): boolean {
+  if (!vehicleMeetsCompletenessTier(vehicle, 'strict_driving')) return false;
+  const wt = vehicle.water_tracking_enabled;
+  if (wt !== true && wt !== false) return false;
+  if (wt === false) return true;
+  return (
+    vehicleWaterCadenceIntegerValid(vehicle.water_refill_days) &&
+    vehicleWaterCadenceIntegerValid(vehicle.blackwater_refill_days)
+  );
+}
 export const VEHICLE_PROFILE_KEYS = [
   'name',
   'refill_distance_km',
@@ -118,7 +137,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '6',
       min: 1,
       max: 24,
-      optional: true,
     },
     {
       key: 'max_drive_hours_per_week',
@@ -128,7 +146,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '30',
       min: 1,
       max: 100,
-      optional: true,
     },
     {
       key: 'max_consecutive_drive_days',
@@ -138,7 +155,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '3',
       min: 1,
       max: 14,
-      optional: true,
     },
     {
       key: 'water_refill_days',
@@ -285,6 +301,8 @@ export interface VehicleProfileDraftInput {
   max_consecutive_drive_days: number | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
+  /** Required for Settings saves; caravan gate persisted on vehicles. */
+  water_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
@@ -298,9 +316,25 @@ export function validateVehicleProfileDraftForSave(
 ): { ok: true; payload: Record<string, unknown> } | { ok: false; error: string } {
   const questions = buildVehicleProfileQuestions(units);
   const payload: Record<string, unknown> = {};
+  const wt = draft.water_tracking_enabled;
+
+  if (wt !== true && wt !== false) {
+    return { ok: false, error: 'Choose whether to track freshwater and dump timing.' };
+  }
+
+  payload.water_tracking_enabled = wt;
+  if (wt === false) {
+    payload.water_refill_days = null;
+    payload.blackwater_refill_days = null;
+  }
 
   for (const q of questions) {
     try {
+      if (q.group === 'water' && wt === false) continue;
+
+      const qCoerce =
+        q.group === 'water' && wt === true ? ({ ...q, optional: false } as VehicleProfileQuestion) : q;
+
       let raw: unknown;
       if (q.key === 'name') {
         raw = draft.name;
@@ -317,7 +351,7 @@ export function validateVehicleProfileDraftForSave(
         else raw = v as number | null;
       }
 
-      const parsed = coerceVehicleProfileValue(q, raw);
+      const parsed = coerceVehicleProfileValue(qCoerce, raw);
 
       if (q.key === 'name') {
         payload.name = parsed;

@@ -1106,6 +1106,7 @@ export default function ChatPanel({
           </button>
           <textarea
             ref={textareaRef}
+            data-testid="trip-chat-composer"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
