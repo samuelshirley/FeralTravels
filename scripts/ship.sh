@@ -55,11 +55,8 @@
 #     velocity and have other coverage in place.
 #   - Vercel deploys asynchronously; this script returns as soon as the
 #     push is accepted, not when the build finishes.
-#   - db:push and db:migrate are deliberately both run. db:push is the
-#     authoritative sync (matches schema.ts to the live DB); db:migrate
-#     keeps the per-migration journal in step. They converge to the same
-#     state for additive changes, but the journal is what a future
-#     non-solo-dev workflow will lean on.
+#   - db:push and db:migrate run before E2E (step 1b) and again after push
+#     (steps 5–6); both pairs are idempotent.
 
 set -euo pipefail
 
