@@ -165,7 +165,12 @@ Each turn you receive a <context>…</context> block in the user message with th
                 fuel-tank or fuel-economy fields exist; the user-stated
                 cadence is the source of truth.)
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
-                drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[] }
+                drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[],
+                sort_order }
+                For every tool that takes leg_id, use the object's numeric **id**
+                field from legs[] above — never substitute sort_order,
+                ordinal position, or a day counter (e.g. "Day 2") for id. After one
+                turn changes legs, reload uses fresh ids from subsequent context.
   recentChat — last ~12 chat turns for short-term memory. Do NOT re-summarize them; just use them for continuity.
 </context_facts>
 

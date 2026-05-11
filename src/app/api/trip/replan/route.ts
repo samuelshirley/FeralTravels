@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
@@ -31,15 +31,6 @@ function assertLegOnTrip(legTripId: number, tripId: number): void {
   if (legTripId !== tripId) throw new ForbiddenError('Leg is not part of this trip');
 }
 
-async function assertPlanFuelLegOwnedOnTrip(
-  legId: number,
-  tripId: number,
-  userId: string
-): Promise<void> {
-  const legTripId = await assertLegOwnedByUser(legId, userId);
-  assertLegOnTrip(legTripId, tripId);
-}
-
 async function getLatestLegIdOnTrip(targetTripId: number): Promise<number | null> {
   const rows = await db
     .select({ id: legs.id })
@@ -51,12 +42,62 @@ async function getLatestLegIdOnTrip(targetTripId: number): Promise<number | null
 }
 
 /**
- * Penny's tool loop can propose `add_stop` with a hallucinated numeric id or an
- * id from another trip; parallel tool-use blocks can't see sibling `add_leg`
- * rows yet either. Prefer the queued ids from legs we already persisted in this
- * batch, otherwise the newest leg row on `tripId` (same heuristic as grabbing
- * the “current” segment for a mid-route stop).
+ * Map a Penny-proposed leg id onto a leg that actually belongs to this trip.
+ *
+ * Claude sometimes echoes `sort_order` (small integers like 2, 3), ids from stale
+ * context, or guesses before sibling `add_leg` rows exist. We validate with
+ * ownership + trip containment first; then try matching `sort_order` on `tripId`
+ * uniquely; lastly (when opts allow) we fall back like `plan_fuel_stops`:
+ * dequeue an id persisted earlier in this same dispatch batch.
  */
+async function resolvePennyLegIdOnTrip(
+  proposedLegId: number,
+  tripId: number,
+  userId: string,
+  ctx: ReplanDispatchCtx,
+  opts?: { dequeueNewLegFallback?: boolean }
+): Promise<number> {
+  async function resolveLeg(candidate: number): Promise<void> {
+    const ownerTripId = await assertLegOwnedByUser(candidate, userId);
+    assertLegOnTrip(ownerTripId, tripId);
+  }
+
+  try {
+    await resolveLeg(proposedLegId);
+    return proposedLegId;
+  } catch (e) {
+    const wrongTrip =
+      e instanceof ForbiddenError && e.message === 'Leg is not part of this trip';
+    if (!(e instanceof NotFoundError) && !wrongTrip) throw e;
+
+    const sortedByOrder = await db
+      .select({ id: legs.id })
+      .from(legs)
+      .where(and(eq(legs.tripId, tripId), eq(legs.sortOrder, proposedLegId)))
+      .limit(2);
+
+    if (sortedByOrder.length === 1) {
+      const candidate = sortedByOrder[0]!.id;
+      await resolveLeg(candidate);
+      return candidate;
+    }
+
+    if (opts?.dequeueNewLegFallback && ctx.newLegIdsQueue.length > 0) {
+      const fallback = ctx.newLegIdsQueue.shift()!;
+      try {
+        await resolveLeg(fallback);
+        return fallback;
+      } catch (e2) {
+        ctx.newLegIdsQueue.unshift(fallback);
+        throw e2;
+      }
+    }
+
+    throw e;
+  }
+}
+
+/** add_stop heel: peek latest queued/new leg rather than dequeue (see caller). */
 async function resolvePennyStopLegId(
   proposedLegId: number,
   tripId: number,
@@ -455,14 +496,16 @@ async function dispatchAction(
     }
 
     case 'delete_leg': {
-      await assertLegOwnedByUser(action.input.leg_id, userId);
-      await deleteLeg(action.input.leg_id);
+      const leg_id = await resolvePennyLegIdOnTrip(action.input.leg_id, tripId, userId, ctx);
+      await deleteLeg(leg_id);
       return;
     }
 
     case 'update_leg': {
-      const { leg_id, data } = action.input;
-      await assertLegOwnedByUser(leg_id, userId);
+      let { leg_id, data } = action.input;
+      leg_id = await resolvePennyLegIdOnTrip(leg_id, tripId, userId, ctx, {
+        dequeueNewLegFallback: true,
+      });
 
       // Manual update + per-row costs replacement preserved from the
       // pre-tool-use version. The shape mismatch (snake_case from Penny vs
@@ -513,8 +556,8 @@ async function dispatchAction(
     }
 
     case 'add_route': {
-      const { leg_id, data } = action.input;
-      await assertLegOwnedByUser(leg_id, userId);
+      const { data } = action.input;
+      const leg_id = await resolvePennyLegIdOnTrip(action.input.leg_id, tripId, userId, ctx);
       await addRoute({
         leg_id,
         label: data.label,
@@ -588,19 +631,9 @@ async function dispatchAction(
     }
 
     case 'plan_fuel_stops': {
-      const requested = action.input.leg_id;
-      try {
-        await assertPlanFuelLegOwnedOnTrip(requested, tripId, userId);
-      } catch (e) {
-        if (!(e instanceof NotFoundError) || ctx.newLegIdsQueue.length === 0) throw e;
-        const fallback = ctx.newLegIdsQueue.shift()!;
-        try {
-          await assertPlanFuelLegOwnedOnTrip(fallback, tripId, userId);
-        } catch (e2) {
-          ctx.newLegIdsQueue.unshift(fallback);
-          throw e2;
-        }
-      }
+      await resolvePennyLegIdOnTrip(action.input.leg_id, tripId, userId, ctx, {
+        dequeueNewLegFallback: true,
+      });
       // Trip-wide replen runs after the batch when `fuelReplenishQueued` is
       // set — keeps cumulative range across legs consistent.
       return;

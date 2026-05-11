@@ -23,7 +23,11 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['leg_id'],
     properties: {
-      leg_id: { type: 'integer' },
+      leg_id: {
+        type: 'integer',
+        description:
+          'Persisted legs[].id from context for this leg (same id you passed to add_leg or that already exists — not sort_order, not ordinal).',
+      },
     },
   },
 };

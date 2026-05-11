@@ -70,12 +70,15 @@ export function validator(ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: UPDATE_LEG,
   description:
-    'Update an existing leg by id. Only fields you supply in `data` are changed. Same drive-time cap as add_leg applies — if the route needs more time, split into multiple legs instead.',
+    'Update an existing leg by id. Only fields you supply in `data` are changed. Same drive-time cap as add_leg applies — if the route needs more time, split into multiple legs instead. leg_id must be the persistent database id from legs[].id in context (never sort_order nor "Day N").',
   input_schema: {
     type: 'object',
     required: ['leg_id', 'data'],
     properties: {
-      leg_id: { type: 'integer', description: 'The leg id to update.' },
+      leg_id: {
+        type: 'integer',
+        description: 'Persisted legs[].id from context for this trip (not sort_order, not ordinal).',
+      },
       data: {
         type: 'object',
         properties: {
