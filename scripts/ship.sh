@@ -5,6 +5,12 @@
 #   1. tsc --noEmit          → typecheck guard. We refuse to push code that
 #                              won't build on Vercel. Five seconds locally
 #                              beats a failed deploy on main.
+#   1b. drizzle-kit push +
+#       drizzle migrate     → (when .env exists) sync schema + migrations to
+#                              DATABASE_URL *before* E2E. The fixture seed and
+#                              app expect columns to match schema.ts — running
+#                              Playwright first against a stale Neon would
+#                              fail (e.g. nullable units_pref).
 #   2. playwright test       → full E2E suite against a self-spawned
 #                              `next start`. Catches broken login,
 #                              broken vehicle CRUD, and broken Penny
@@ -32,6 +38,9 @@
 #                                             # use only when you've manually
 #                                             # confirmed the change is safe,
 #                                             # e.g. docs-only edits)
+#   SKIP_DB_SYNC=1 ./scripts/ship.sh          # skip schema push/migrate before
+#                                             # E2E (only if DB already matches
+#                                             # schema.ts; seed may fail otherwise)
 #
 # Notes:
 #   - Since dev and prod currently share a single Neon database, running
@@ -77,6 +86,20 @@ else
   if ! npx --no-install tsc --noEmit --pretty false 2>&1; then
     die "tsc reported errors — fix them, or re-run with SKIP_TYPECHECK=1 if you really mean it"
   fi
+fi
+
+# ── 1b. db sync before E2E ──────────────────────────────────────────────────
+# Seed + server code assume schema.ts matches Neon. E2E runs before the
+# post-push db steps below, so we push/migrate here first when possible.
+if [ "${SKIP_DB_SYNC:-}" = "1" ]; then
+  warn "SKIP_DB_SYNC=1 — skipping db:push/db:migrate before E2E"
+elif [ ! -f .env ]; then
+  warn ".env not found — cannot db:push before E2E (ensure DATABASE_URL matches Playwright)"
+else
+  step "drizzle-kit push (sync schema → Neon before E2E)"
+  npm run --silent db:push
+  step "drizzle migrate (journal before E2E)"
+  npm run --silent db:migrate || warn "db:migrate returned non-zero before E2E"
 fi
 
 # ── 2. e2e (Playwright) ────────────────────────────────────────────────────
