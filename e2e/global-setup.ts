@@ -3,10 +3,10 @@
  *
  *   1. Sanity-check the env. Tests will fail in confusing ways if
  *      DATABASE_URL is missing — fail loud here instead.
- *   2. Idempotently re-seed the fixture user + their trip + a default
- *      vehicle. This is what the "existing user with a trip" tests assert
- *      against. Re-running is a no-op when nothing has changed; if a test
- *      mutated fixture data (it shouldn't, but…) we put it back.
+ *   2. Idempotently **wipe all trips + vehicles** for the fixture user, then
+ *      seed one canonical "E2E Fixture Trip" + vehicle again. Same Auth
+ *      identity every run — no unique signup emails — but app data is reset
+ *      like a fresh account (see scripts/seed-e2e-fixture.ts).
  *
  *      The seed may set users.units_pref to NULL (see migration 0011). If the
  *      DB still has NOT NULL on that column, run `npm run db:push` (or

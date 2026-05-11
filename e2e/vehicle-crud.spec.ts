@@ -47,22 +47,21 @@ test.describe('Vehicle CRUD', () => {
     await expect(card.getByTestId('vehicle-card-name')).toHaveText(vehicleName);
 
     // Reload to verify the row was actually persisted in Postgres rather
-    // than just rendered optimistically. apiFetch on settings page hits
-    // /api/vehicles which reads from Drizzle.
+    // than just rendered optimistically. VehicleProfileSection GETs
+    // /api/vehicles after hydration.
     //
-    // We wait for the GET /api/vehicles call to complete in addition to
-    // the visibility assertion: the React component renders "Loading
-    // vehicles…" until the fetch resolves, and on a freshly-reloaded
-    // page the JS bundle + hydration + useEffect chain can take a few
-    // seconds in headless mode. Without the response wait the assertion
-    // sometimes timed out at 10s on a cold cache.
-    await Promise.all([
-      page.waitForResponse(
-        (res) => res.url().endsWith('/api/vehicles') && res.request().method() === 'GET',
-        { timeout: 20_000 },
-      ),
-      page.reload(),
-    ]);
+    // Register waitForResponse *before* reload (not Promise.all with reload —
+    // the listener can miss the fetch if navigation wins the race). Match on
+    // URL substring because the browser reports the full origin + path.
+    const vehiclesLoaded = page.waitForResponse(
+      (res) =>
+        res.request().method() === 'GET' &&
+        res.url().includes('/api/vehicles') &&
+        !res.url().includes('/api/vehicles/'),
+      { timeout: 30_000 },
+    );
+    await page.reload({ waitUntil: 'load' });
+    await vehiclesLoaded;
     await expect(
       page.locator(`[data-testid="vehicle-card"][data-vehicle-name="${vehicleName}"]`),
     ).toBeVisible({ timeout: 15_000 });

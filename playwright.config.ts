@@ -17,12 +17,11 @@ import path from 'node:path';
  *   default 30s.
  *
  * - We hit the same Neon DB the dev app uses (DATABASE_URL from .env). Each
- *   run gets isolated by:
- *     1. A fixed seeded fixture user (created idempotently by
- *        `scripts/seed-e2e-fixture.ts`, persists between runs).
- *     2. Playwright-created trips/vehicles that all carry a
- *        `playwright-<runId>-` name prefix, deleted by `scripts/cleanup-e2e.ts`
- *        after the suite finishes (globalTeardown).
+ *   run starts from a clean fixture account *data-wise* (all trips + vehicles
+ *   for the fixture user are deleted, then re-seeded — see
+ *   `scripts/seed-e2e-fixture.ts`). During the suite, tests also create
+ *   `playwright-<runId>-` trips/vehicles; `scripts/cleanup-e2e.ts` removes
+ *   those rows at globalTeardown.
  *
  * - Single browser project (chromium) — we're not testing rendering quirks,
  *   we're testing app behaviour. Multiple browsers would ~3× the run time

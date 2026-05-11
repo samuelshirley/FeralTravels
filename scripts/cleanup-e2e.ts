@@ -1,8 +1,13 @@
 /**
  * Delete every test-created row from the shared Neon DB after a Playwright
- * suite finishes. The fixture user + their seeded trip/vehicle are NOT
- * touched — they're recreated idempotently on the next globalSetup, and
- * dropping them between runs would only slow the next setup down.
+ * suite finishes. Rows whose names start with `playwright-` are removed;
+ * cascading FKs sweep legs, stops, chat, etc.
+ *
+ * The fixture user's **entire** trip + vehicle set is *not* scrubbed here —
+ * globalSetup runs `seed-e2e-fixture.ts` before the next suite and wipes
+ * all of that user's trips/vehicles then rebuilds the known fixture. This
+ * teardown only catches stray `playwright-*` rows created mid-run in case
+ * a suite exits before the next globalSetup.
  *
  * What gets removed:
  *   - Any vehicles row whose name starts with `playwright-` (created by

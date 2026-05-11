@@ -33,6 +33,12 @@ const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
  * This test really does call Anthropic and burn real spend (~$0.05–0.20
  * per run depending on iteration count). Worth it to catch a broken
  * planner before it hits production.
+ *
+ * Prompt design: the request must be specific enough that Penny commits to
+ * the planning pipeline immediately. Open-ended or physically impossible asks
+ * (e.g. "only gravel across Europe") trigger discovery / routing-honesty
+ * replies instead of tools — the test would time out without "Changes applied"
+ * even though the product is behaving correctly.
  */
 test.describe('Penny — submit a trip plan', () => {
   test.skip(!ANTHROPIC_CONFIGURED, 'ANTHROPIC_API_KEY not set — skipped (set key to run Penny E2E)');
@@ -43,8 +49,9 @@ test.describe('Penny — submit a trip plan', () => {
   test.setTimeout(180_000);
 
   const PROMPT =
-    'I want to go from Girona, Spain to Berlin, Germany and I want to go ' +
-    'over the mountains from Italy to Austria on gravel roads.';
+    'Plan a driving route from Girona, Spain to Berlin, Germany over 14 days. ' +
+    'Route through the Alps: Italy into Austria, scenic where Google Directions can still find paved roads. ' +
+    'If a segment is tight on time, keep the itinerary feasible within the 14 days.';
 
   test('Girona → Berlin plan creates legs, applies changes, and renders on the map', async ({
     page,

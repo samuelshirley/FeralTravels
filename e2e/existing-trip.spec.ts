@@ -1,21 +1,26 @@
 import { test, expect } from '@playwright/test';
 import { loginAsFixtureUser } from './fixtures/auth';
-import { FIXTURE_TRIP_NAME } from './fixtures/constants';
+import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
 
 /**
- * Smoke-test the read path for an authenticated user with existing data:
+ * Smoke-test the read path for an **authenticated user with a fully set-up
+ * vehicle** and an existing trip (core happy path for trip workspace):
  *
  *   - /trips lists their seeded trip
- *   - Clicking through opens the workspace
+ *   - The trip opens with the fixture **default vehicle** on the chip
+ *     (all remediation-required fields filled in seed data — see
+ *     `vehicleIsCompleteForRemediation` / scripts/seed-e2e-fixture.ts)
+ *   - No vehicle-profile remediation overlay (`Update your vehicle`)
  *   - The itinerary renders the expected number of leg cards (2 days)
  *   - The map mounts and reports it loaded the right number of legs
  *
- * The fixture trip is rebuilt with a known shape on every globalSetup
- * (see scripts/seed-e2e-fixture.ts), so the assertions below pin to
- * literal numbers without being flaky.
+ * The fixture is rebuilt on every globalSetup (see scripts/seed-e2e-fixture.ts),
+ * so the assertions below pin to literal numbers without being flaky.
  */
 test.describe('Existing user with seeded trip', () => {
-  test('trip is visible on /trips, opens, and renders legs + map', async ({ page }) => {
+  test('trip on /trips opens with complete default vehicle, no remediation, legs + map', async ({
+    page,
+  }) => {
     await loginAsFixtureUser(page);
     await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible();
 
@@ -26,6 +31,13 @@ test.describe('Existing user with seeded trip', () => {
     // visible name link to open the workspace.
     await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
     await page.waitForURL(/\/trips\/\d+/, { timeout: 15_000 });
+
+    // Seeded user: one complete default vehicle (fuel + strict driving + water gate)
+    // and trip.vehicle_id pointed at it — Penny/fuel must not be blocked.
+    await expect(page.getByRole('heading', { name: 'Update your vehicle' })).not.toBeVisible();
+    const tripVehicleBtn = page.getByRole('button', { name: 'Change trip vehicle' });
+    await expect(tripVehicleBtn).toBeVisible();
+    await expect(tripVehicleBtn).toContainText(FIXTURE_VEHICLE_NAME);
 
     // Itinerary: `seed-e2e-fixture.ts` always inserts exactly two legs (Day 1 +
     // Day 2). Exact count catches silent seed drift / duplicate trips.

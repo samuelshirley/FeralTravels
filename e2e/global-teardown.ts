@@ -1,9 +1,8 @@
 /**
  * Runs once after all tests, regardless of pass/fail. Removes any
- * playwright-prefixed rows the suite created so the developer's Neon DB
- * doesn't accumulate junk between runs. The fixture user + their seeded
- * trip are left untouched — they're recreated idempotently on the next
- * globalSetup anyway.
+ * playwright-prefixed trips/vehicles the suite created so the DB stays tidy.
+ * The fixture user's canonical data is fully reset on the **next** globalSetup
+ * (`seed-e2e-fixture.ts` wipes all of that user's trips + vehicles).
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';

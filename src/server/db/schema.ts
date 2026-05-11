@@ -13,7 +13,6 @@ import {
   uniqueIndex,
   jsonb,
 } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
 // ============================================================================
@@ -165,6 +164,11 @@ export const trips = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     vehicleId: integer('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
+    /**
+     * DB-maintained: GENERATED ALWAYS AS (lower(trim(name))) STORED (migration 0015).
+     * Omitted on insert; used for case-insensitive unique trip names per user without an expression index (drizzle-kit #3062).
+     */
+    tripNameCiKey: text('trip_name_ci_key'),
     startDate: text('start_date'),
     endDate: text('end_date'),
     status: text('status').default('planning').notNull(),
@@ -189,13 +193,9 @@ export const trips = pgTable(
     userIdx: index('trips_user_idx').on(t.userId),
     templateIdx: index('trips_template_idx').on(t.isTemplate),
     // Trip names are unique per user, case-insensitive, ignoring surrounding
-    // whitespace. Enforced at the DB layer as a backstop for the app-level
-    // check in assertTripNameAvailable() — see migration 0005 and
-    // src/server/repos/trips.ts.
-    userNameUnique: uniqueIndex('trips_user_name_unique_idx').on(
-      t.userId,
-      sql`lower(trim(${t.name}))`
-    ),
+    // whitespace. Enforced at the DB layer via trip_name_ci_key + unique index
+    // (migrations 0005, 0015) as a backstop for assertTripNameAvailable().
+    userNameUnique: uniqueIndex('trips_user_name_unique_idx').on(t.userId, t.tripNameCiKey),
   })
 );
 

@@ -55,6 +55,10 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
   try {
     res = await fetch(buildUrl(path, opts.query), {
       method: opts.method || (opts.body ? 'POST' : 'GET'),
+      // Auth/session APIs must not be satisfied from the HTTP cache — breaks
+      // stale UI after mutations and makes Playwright miss network events when
+      // the suite waits on GET /api/* responses.
+      cache: 'no-store',
       headers: {
         ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(opts.headers || {}),

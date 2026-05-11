@@ -1,6 +1,17 @@
 /**
  * Single source of truth for E2E identifiers, prefixes, and timeouts.
  *
+ * **How tests model users and data** (three modes — full detail in e2e/TESTING-MODES.md):
+ *
+ * 1. **Stable fixture user + seeded trip** — `FIXTURE_EMAIL`, globalSetup runs
+ *    `seed-e2e-fixture.ts`, deterministic "E2E Fixture Trip" (e.g. existing-trip.spec).
+ * 2. **Same fixture user, wiped trips/vehicles each globalSetup** — stable
+ *    email; all rows for that user cleared, then one canonical van + trip
+ *    recreated. Plus `RUN_ID` + `playwrightName()` for mid-suite isolation;
+ *    teardown scrubs `playwright-*`.
+ * 3. **Real login flows** — optional OTP (`E2E_OTP_EMAIL`) or OAuth button checks;
+ *    distinct from cookie-based `loginAsFixtureUser`.
+ *
  * Why centralise this:
  *   - Several scripts need the same prefix (the seed creates rows with it,
  *     the cleanup script deletes rows that match it). Drift between them

@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ne, or } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
 import {
@@ -347,8 +347,8 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
  * trimmed). Pass `excludeTripId` when validating a rename so the trip being
  * renamed doesn't conflict with itself.
  *
- * The DB also has a unique index on (user_id, lower(trim(name))) — see
- * migration 0005 — so this check is for the nice error message; the index
+ * The DB also has a unique index on (user_id, trip_name_ci_key) — see
+ * migrations 0005 + 0015 — so this check is for the nice error message; the index
  * is the actual race-condition backstop.
  */
 export async function assertTripNameAvailable(
@@ -358,10 +358,7 @@ export async function assertTripNameAvailable(
 ): Promise<void> {
   const normalized = name.trim().toLowerCase();
   if (!normalized) return; // Zod already rejects empty names; this is just defensive.
-  const conditions = [
-    eq(trips.userId, userId),
-    sql`lower(trim(${trips.name})) = ${normalized}`,
-  ];
+  const conditions = [eq(trips.userId, userId), eq(trips.tripNameCiKey, normalized)];
   if (excludeTripId !== undefined) {
     conditions.push(ne(trips.id, excludeTripId));
   }
@@ -528,10 +525,10 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
 
   return await db.transaction(async (tx) => {
     // Find an available "(copy)" / "(copy 2)" / "(copy N)" suffix. The unique
-    // index on (user_id, lower(trim(name))) means a naive "(copy)" suffix
+    // index on (user_id, trip_name_ci_key) means a naive "(copy)" suffix
     // would crash the second time the same template is cloned. Probing inside
     // the transaction reduces (but doesn't eliminate) the race; the DB unique
-    // index is the actual backstop.
+    // index on (user_id, trip_name_ci_key) is the actual backstop.
     let newName = `${s.name} (copy)`;
     for (let i = 1; i < 100; i++) {
       const candidate = i === 1 ? `${s.name} (copy)` : `${s.name} (copy ${i})`;
@@ -541,7 +538,7 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
         .where(
           and(
             eq(trips.userId, userId),
-            sql`lower(trim(${trips.name})) = ${candidate.trim().toLowerCase()}`,
+            eq(trips.tripNameCiKey, candidate.trim().toLowerCase()),
           ),
         )
         .limit(1);
