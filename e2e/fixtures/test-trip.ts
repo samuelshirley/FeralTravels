@@ -109,6 +109,7 @@ export async function createOnboardingTrip(label: string): Promise<{
  */
 export async function createVehicleNewProfileTrip(label: string): Promise<{
   tripId: number;
+  vehicleId: number;
   name: string;
 }> {
   const db = getDb();
@@ -155,7 +156,22 @@ export async function createVehicleNewProfileTrip(label: string): Promise<{
     })
     .returning({ id: schema.trips.id });
 
-  return { tripId: trip.id, name };
+  return { tripId: trip.id, vehicleId: vehicle.id, name };
+}
+
+/**
+ * Remove the extra vehicle + trip created by {@link createVehicleNewProfileTrip}.
+ * Deletes the trip first (FK from trip → vehicle is on delete set null; trip
+ * cascades legs/chat), then the ad-hoc vehicle so later specs still see exactly
+ * one vehicle on {@link FIXTURE_EMAIL}.
+ */
+export async function deleteVehicleNewProfileFixture(opts: {
+  tripId: number;
+  vehicleId: number;
+}): Promise<void> {
+  const db = getDb();
+  await db.delete(schema.trips).where(eq(schema.trips.id, opts.tripId));
+  await db.delete(schema.vehicles).where(eq(schema.vehicles.id, opts.vehicleId));
 }
 
 /** Count the legs currently attached to a trip (post-Penny submit assertion). */

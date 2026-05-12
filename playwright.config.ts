@@ -21,7 +21,9 @@ import path from 'node:path';
  *   for the fixture user are deleted, then re-seeded — see
  *   `scripts/seed-e2e-fixture.ts`). During the suite, tests also create
  *   `playwright-<runId>-` trips/vehicles; `scripts/cleanup-e2e.ts` removes
- *   those rows at globalTeardown.
+ *   those rows at globalTeardown. Specs that insert an **extra** vehicle on
+ *   `FIXTURE_EMAIL` must clean it before later specs (e.g. vehicle CRUD assumes
+ *   a sole seeded van mid-run); teardown alone runs too late.
  *
  * - **One Playwright worker (`workers: 1`)** — every spec uses the same Auth
  *   identity and DB rows. Parallelizing across files caused cross-spec races
