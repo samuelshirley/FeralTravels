@@ -186,6 +186,38 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             0%, 49% { opacity: 1; }
             50%, 100% { opacity: 0; }
           }
+          @keyframes tp-new-trip-cue-pulse {
+            0%, 100% {
+              opacity: 1;
+              transform: scale(1);
+              box-shadow: 0 0 0 0 rgba(201, 123, 99, 0.55);
+            }
+            50% {
+              opacity: 0.4;
+              transform: scale(1.12);
+              box-shadow: 0 0 0 7px rgba(201, 123, 99, 0);
+            }
+          }
+          .new-trip-corner-cue {
+            position: absolute;
+            top: -4px;
+            left: -4px;
+            width: 12px;
+            height: 12px;
+            border-radius: 4px;
+            background: var(--tp-accent-warm);
+            pointer-events: none;
+            z-index: 1;
+            animation: tp-new-trip-cue-pulse 1.25s ease-in-out infinite;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .new-trip-corner-cue {
+              animation: none;
+              opacity: 1;
+              box-shadow: none;
+              transform: none;
+            }
+          }
           .loading-dot {
             display: inline-block;
             animation: tp-dot-pulse 1.2s infinite ease-in-out both;

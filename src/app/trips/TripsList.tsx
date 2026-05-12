@@ -116,7 +116,8 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             background: 'var(--tp-surface-muted)',
           }}
         >
-          You don&apos;t have any trips yet. Create a new one above, or clone the demo trip below.
+          You don&apos;t have any trips yet. Use <strong style={{ color: 'var(--tp-text)' }}>+ New trip</strong> above to
+          get started.
         </div>
       )}
 

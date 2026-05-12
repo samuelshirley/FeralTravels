@@ -13,9 +13,17 @@ interface NewTripButtonProps {
    * server still re-validates and is the authoritative source.
    */
   existingNames: string[];
+  /**
+   * When true, draw a subtle pulsing rust accent on the collapsed button so
+   * first-time users notice how to create a trip.
+   */
+  emphasizeWhenNoTrips?: boolean;
 }
 
-export default function NewTripButton({ existingNames }: NewTripButtonProps) {
+export default function NewTripButton({
+  existingNames,
+  emphasizeWhenNoTrips = false,
+}: NewTripButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -74,8 +82,10 @@ export default function NewTripButton({ existingNames }: NewTripButtonProps) {
   if (!open) {
     return (
       <button
+        type="button"
         onClick={() => setOpen(true)}
         style={{
+          position: 'relative',
           padding: '8px 16px',
           background: 'var(--tp-primary)',
           color: 'var(--tp-on-primary)',
@@ -87,6 +97,7 @@ export default function NewTripButton({ existingNames }: NewTripButtonProps) {
           boxShadow: 'var(--tp-shadow-sm)',
         }}
       >
+        {emphasizeWhenNoTrips && <span className="new-trip-corner-cue" aria-hidden />}
         + New trip
       </button>
     );
