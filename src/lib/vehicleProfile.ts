@@ -71,6 +71,48 @@ export function vehicleIsCompleteForRemediation(vehicle: Record<string, unknown>
     vehicleWaterCadenceIntegerValid(vehicle.blackwater_refill_days)
   );
 }
+
+/**
+ * True when onboarding/remediation must (re-)ask about this field: empty in DB **or**
+ * present but failing the same rules as {@link vehicleIsCompleteForRemediation} for that slice.
+ *
+ * Important: remediation used to treat any non-null cell as “filled”, so corrupt values such as
+ * `refill_distance_km: 0` or zeros on driving limits stranded users with `needs_remediation` set
+ * but no snapshot question (`VehicleRemediationOverlay` never appeared).
+ */
+export function storedVehicleProfileFieldNeedsRemediationRepair(
+  q: VehicleProfileQuestion,
+  raw: unknown
+): boolean {
+  const missing = raw === null || raw === undefined || raw === '';
+  if (missing) return true;
+
+  switch (q.key) {
+    case 'name':
+      return typeof raw !== 'string' || raw.trim().length === 0;
+    case 'refill_distance_km':
+      return !vehicleMeetsFuelPlanningMinimum({ refill_distance_km: raw });
+    case 'max_drive_hours_per_day':
+    case 'max_drive_hours_per_week': {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) return true;
+      if (raw <= 0) return true;
+      if (q.min !== undefined && raw < q.min) return true;
+      if (q.max !== undefined && raw > q.max) return true;
+      return false;
+    }
+    case 'max_consecutive_drive_days': {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) return true;
+      if (!Number.isInteger(raw)) return true;
+      if (raw <= 0) return true;
+      if (q.min !== undefined && raw < q.min) return true;
+      if (q.max !== undefined && raw > q.max) return true;
+      return false;
+    }
+    case 'water_refill_days':
+    case 'blackwater_refill_days':
+      return !vehicleWaterCadenceIntegerValid(raw);
+  }
+}
 export const VEHICLE_PROFILE_KEYS = [
   'name',
   'refill_distance_km',

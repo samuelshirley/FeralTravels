@@ -31,7 +31,7 @@ export default async function TripsPage() {
   // so the overlay renders instantly (no loading spinner for the first question).
   if (needsVehicleRemediation) {
     const snapshot = await getVehicleRemediationSnapshot(userId);
-    if (snapshot.needs_remediation && !snapshot.done && snapshot.question) {
+    if (snapshot.needs_remediation && !snapshot.done) {
       return (
         <UnitsProvider initialUnits={unitsPref}>
           <VehicleRemediationOverlay initialSnapshot={snapshot} />

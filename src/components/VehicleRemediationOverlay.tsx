@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ApiError, apiFetch } from '@/lib/api';
 import Spinner from '@/components/Spinner';
@@ -84,6 +85,7 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
   const [snapshot, setSnapshot] = useState<RemediationSnap | null>(initialSnapshot ?? null);
   const [loading, setLoading] = useState(!initialSnapshot);
   const [submitting, setSubmitting] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [msgs, setMsgs] = useState<OverlayMsg[]>(() => {
@@ -148,13 +150,14 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
         body: { questionKey: q.key, value },
       });
 
-      setSnapshot(data);
-
       if (data.done || !data.needs_remediation) {
+        setCompleted(true);
         setDraft('');
         router.refresh();
         return;
       }
+
+      setSnapshot(data);
 
       if (data.question) {
         setMsgs((prev) =>
@@ -167,6 +170,19 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (completed) {
+    return (
+      <div style={backdropStyle}>
+        <div role="status" aria-live="polite" style={mobileShell(isMobileViewport, true)}>
+          <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Spinner size={16} thickness={2} color="var(--tp-primary)" />
+            <span style={{ color: 'var(--tp-muted)', fontSize: 14 }}>Saving vehicle profile…</span>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (loading) {
@@ -187,9 +203,105 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
     );
   }
 
-  if (snapshot?.done || !snapshot?.question) return null;
+  if (!snapshot) {
+    return (
+      <div style={backdropStyle}>
+        <div
+          role="alert"
+          aria-labelledby={titleId}
+          style={{
+            ...mobileShell(isMobileViewport, true),
+            padding: 20,
+            maxWidth: 420,
+            width: '100%',
+          }}
+        >
+          <h2 id={titleId} style={{ ...headingStyle, marginBottom: 8 }}>
+            Could not load vehicle profile
+          </h2>
+          <p style={{ fontSize: 14, color: 'var(--tp-muted)', lineHeight: 1.45, margin: '0 0 16px' }}>
+            {error ?? 'Check your connection and try again, or update your vehicle in Settings.'}
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                void fetchSnapshot();
+              }}
+              style={primaryButtonStyle}
+            >
+              Retry
+            </button>
+            <Link href="/settings" style={{ ...skipButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+              Open Settings
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const q = snapshot.question;
+  const stranded =
+    snapshot.needs_remediation && !snapshot.done && snapshot.question === null;
+
+  if (!snapshot.needs_remediation || snapshot.done) {
+    return (
+      <div style={backdropStyle}>
+        <div role="status" aria-live="polite" style={mobileShell(isMobileViewport, true)}>
+          <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Spinner size={16} thickness={2} color="var(--tp-primary)" />
+            <span style={{ color: 'var(--tp-muted)', fontSize: 14 }}>Continuing…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (stranded) {
+    return (
+      <div style={backdropStyle}>
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          style={{
+            ...mobileShell(isMobileViewport, true),
+            padding: 20,
+            maxWidth: 440,
+            width: '100%',
+          }}
+        >
+          <h2 id={titleId} style={{ ...headingStyle, marginBottom: 8 }}>
+            Finish your vehicle in Settings
+          </h2>
+          <p style={{ fontSize: 14, color: 'var(--tp-muted)', lineHeight: 1.45, margin: '0 0 16px' }}>
+            Something on file does not match what we expect (for example outdated or invalid numbers).{' '}
+            {snapshot.active_vehicle ? (
+              <span>
+                Vehicle: <strong>{snapshot.active_vehicle.name}</strong>
+              </span>
+            ) : null}
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => router.refresh()}
+              style={primaryButtonStyle}
+            >
+              Reload
+            </button>
+            <Link href="/settings" style={{ ...primaryButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+              Open Settings
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const q = snapshot.question!;
 
   return (
     <div style={backdropStyle}>

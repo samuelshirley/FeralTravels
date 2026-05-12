@@ -7,13 +7,13 @@ import {
   CARAVAN_WATER_GATE_KEY,
   coerceVehicleProfileValue,
   vehicleIsCompleteForRemediation,
+  storedVehicleProfileFieldNeedsRemediationRepair,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 import type { UnitsPref } from '@/lib/units';
 import { miToKm } from '@/lib/units';
 import {
   recalculateUserRemediationFlag,
-  userNeedsVehicleProfileRemediation,
 } from '@/server/repos/remediationFlags';
 import { getUnitsPref } from '@/server/repos/users';
 import {
@@ -36,11 +36,6 @@ function buildRemediationSteps(units: UnitsPref): ProfileStep[] {
   ];
 }
 
-function vehicleHasProfileValue(vehicle: VehicleApi, key: string): boolean {
-  const raw = (vehicle as unknown as Record<string, unknown>)[key];
-  return raw !== null && raw !== undefined && raw !== '';
-}
-
 function waterGateResolvedDb(vehicle: VehicleApi): boolean {
   const wt = vehicle.water_tracking_enabled;
   return wt === true || wt === false;
@@ -54,9 +49,9 @@ function remediationProfileQuestionRequired(q: VehicleProfileQuestion, vehicle: 
 function remediationProfileNeedsAsking(q: VehicleProfileQuestion, vehicle: VehicleApi): boolean {
   if (q.group === 'water' && vehicle.water_tracking_enabled === false) return false;
   const required = remediationProfileQuestionRequired(q, vehicle);
-  const hasVal = vehicleHasProfileValue(vehicle, q.key);
-  if (required) return !hasVal;
-  return false;
+  if (!required) return false;
+  const raw = (vehicle as unknown as Record<string, unknown>)[q.key];
+  return storedVehicleProfileFieldNeedsRemediationRepair(q, raw);
 }
 
 function nextRemediationQuestionInner(
@@ -135,21 +130,27 @@ export async function getVehicleRemediationSnapshot(userId: string): Promise<Veh
   const vehicle = incompletes[0];
   const next = nextRemediationQuestionInner(vehicle, unitsPref);
 
-  const flagRow = await userNeedsVehicleProfileRemediation(userId);
+  await recalculateUserRemediationFlag(userId);
 
   if (!next) {
-    await recalculateUserRemediationFlag(userId);
+    // Defensive: incomplete vehicle rows should map to a question after
+    // `storedVehicleProfileFieldNeedsRemediationRepair` — if not, keep the
+    // user in remediation with a non-null overlay (settings / retry UX).
+    console.error('[vehicleRemediation] Incomplete vehicle without snapshot question', {
+      userId,
+      vehicleId: vehicle.id,
+    });
     return {
-      needs_remediation: await userNeedsVehicleProfileRemediation(userId),
-      done: true,
-      active_vehicle: null,
+      needs_remediation: true,
+      done: false,
+      active_vehicle: { id: vehicle.id, name: vehicle.name },
       question: null,
       progress: null,
     };
   }
 
   return {
-    needs_remediation: flagRow || true,
+    needs_remediation: true,
     done: false,
     active_vehicle: { id: vehicle.id, name: vehicle.name },
     question: next.question,

@@ -39,7 +39,7 @@ export default async function TripPage({ params }: Props) {
     const needsRemediation = await recalculateUserRemediationFlag(userId);
     if (needsRemediation) {
       const snapshot = await getVehicleRemediationSnapshot(userId);
-      if (snapshot.needs_remediation && !snapshot.done && snapshot.question) {
+      if (snapshot.needs_remediation && !snapshot.done) {
         return (
           <UnitsProvider initialUnits={unitsPref}>
             <VehicleRemediationOverlay initialSnapshot={snapshot} />
