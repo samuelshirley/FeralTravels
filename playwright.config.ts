@@ -23,6 +23,11 @@ import path from 'node:path';
  *   `playwright-<runId>-` trips/vehicles; `scripts/cleanup-e2e.ts` removes
  *   those rows at globalTeardown.
  *
+ * - **One Playwright worker (`workers: 1`)** — every spec uses the same Auth
+ *   identity and DB rows. Parallelizing across files caused cross-spec races
+ *   (e.g. fleet counts). See `TESTING-MODES.md` and the comment above
+ *   `defineConfig` for when that could change.
+ *
  * - Single browser project (chromium) — we're not testing rendering quirks,
  *   we're testing app behaviour. Multiple browsers would ~3× the run time
  *   without catching anything we'd actually act on.
@@ -46,24 +51,16 @@ const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // at an already-running app, e.g. a Vercel preview URL).
 const useExternalServer = !!process.env.E2E_BASE_URL;
 
-// Local: parallelise across spec files (still serial within a file). CI stays
-// single-worker to reduce DB fixture contention and Anthropic rate pressure.
-// Override any time: PW_WORKERS=1 npx playwright test
-const playwrightWorkers = process.env.PW_WORKERS
-  ? parseInt(process.env.PW_WORKERS, 10)
-  : process.env.CI
-    ? 1
-    : 5;
+// All specs hit the same `FIXTURE_EMAIL` row in Neon; globalSetup resets
+// that user's trips/vehicles once per run — not once per concurrent test.
+// Parallel workers therefore race across spec files (flaky fleet counts, trips
+// disappearing mid-step). Keeping `workers` at 1 is required until suites use
+// isolated users or partitioned databases per shard.
 
 export default defineConfig({
   testDir: path.join(__dirname, 'e2e'),
-  // E2E runs serially per file by default; tests within a file are
-  // independent and safe to parallelise. The Penny test calls Anthropic —
-  // locally we still default to several workers (see playwrightWorkers); CI
-  // uses 1. Use PW_WORKERS=1 if you see flakiness or quota issues.
   fullyParallel: false,
-  workers: Number.isFinite(playwrightWorkers) && playwrightWorkers > 0 ? playwrightWorkers : 1,
-  retries: process.env.CI ? 1 : 0,
+  workers: 1,
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],

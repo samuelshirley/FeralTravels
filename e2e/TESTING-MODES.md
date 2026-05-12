@@ -10,6 +10,8 @@ There are three intentional patterns. They share the same Neon database (solo-de
 
 **Use when:** You need deterministic data without signing up a new email every run — same identity as “last time,” empty history except the re-seeded trip.
 
+**Concurrency:** Playwright [`playwright.config.ts`](../playwright.config.ts) runs **`workers: 1`**. More workers would execute multiple specs at once against the same fixture rows (races on fleet counts, trips, onboarding). Faster CI needs shard-based splits with separate databases, not extra workers, until suites use isolated users.
+
 **Example:** [`existing-trip.spec.ts`](existing-trip.spec.ts) — asserts the trip card, **default vehicle chip** (name + complete profile), **no remediation overlay**, legs, and map.
 
 ---

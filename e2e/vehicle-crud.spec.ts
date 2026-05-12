@@ -1,6 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { eq, and, like } from 'drizzle-orm';
 import { loginAsFixtureUser } from './fixtures/auth';
-import { playwrightName } from './fixtures/constants';
+import {
+  playwrightName,
+  FIXTURE_EMAIL,
+  PLAYWRIGHT_NAME_PREFIX,
+} from './fixtures/constants';
+import { getDb, schema } from './fixtures/db';
 
 /**
  * Vehicle CRUD round-trip on the Settings page. Independent of every
@@ -8,9 +14,11 @@ import { playwrightName } from './fixtures/constants';
  * find and remove it after the suite finishes.
  *
  * What we cover here:
- *   - Add vehicle form opens and submits
- *   - The newly-created vehicle re-renders as a card with the right name
- *   - Reload persists the row (genuine save, not just optimistic UI)
+ *   - Solo vehicle: reminder banner + no Delete controls (exactly fixture van)
+ *   - Sole-vehicle DELETE returns 400
+ *   - Add a second vehicle, reload: reminder hidden; exactly two cards and two
+ *     Delete buttons (`workers: 1`; third test also wipes `playwright-*` vehicles
+ *     first so CI retries stay exact)
  *
  * What we don't cover (other tests already do, or it'd be redundant):
  *   - Edit / delete flows — the form is the same widget, exercising add
@@ -59,7 +67,27 @@ test.describe('Vehicle CRUD', () => {
     });
   });
 
-  test('second vehicle enables delete buttons on both cards', async ({ page }) => {
+  test('second vehicle enables Delete on both cards after reload', async ({ page }) => {
+    // CI retries replay this test against the real DB — a partial run may
+    // leave the playwright‑prefixed row. Clearing ad-hoc vehicles first makes
+    // "exactly two cards" deterministic (fixture van + the one we add below).
+    const db = getDb();
+    const [fixtureUser] = await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, FIXTURE_EMAIL))
+      .limit(1);
+    if (!fixtureUser)
+      throw new Error(`Fixture user missing: seed must create ${FIXTURE_EMAIL}`);
+    await db
+      .delete(schema.vehicles)
+      .where(
+        and(
+          eq(schema.vehicles.userId, fixtureUser.id),
+          like(schema.vehicles.name, `${PLAYWRIGHT_NAME_PREFIX}%`),
+        ),
+      );
+
     const vehicleName = playwrightName('Test Van');
 
     await loginAsFixtureUser(page, { redirectTo: '/settings' });
@@ -107,6 +135,7 @@ test.describe('Vehicle CRUD', () => {
     ).toBeVisible({ timeout: 15_000 });
 
     await expect(page.getByTestId('vehicle-solo-reminder')).toHaveCount(0);
+    await expect(page.getByTestId('vehicle-card')).toHaveCount(2);
     await expect(page.getByTestId('vehicle-delete-button')).toHaveCount(2);
   });
 });
