@@ -421,7 +421,7 @@ export default function TripWorkspace({
       initialMessages={initialChat?.messages ?? []}
       initialHasMore={initialChat?.hasMore ?? false}
       // When a trip hasn't finished onboarding, ChatPanel swaps its composer
-      // for the stepwise OnboardingForm. Defaulting to 'done' on readonly /
+      // for trip-setup questions in ChatPanel. Defaulting to 'done' on readonly /
       // demo trips is safe because ChatPanel also guards on `!readonly`.
       onboardingState={trip.onboarding_state}
       needsVehicleRemediation={needsVehicleRemediation}

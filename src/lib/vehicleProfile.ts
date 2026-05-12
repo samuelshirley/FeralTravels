@@ -9,20 +9,27 @@
 import type { UnitsPref } from '@/lib/units';
 import { kmToMi, miToKm } from '@/lib/units';
 
-/** Matches vehicles API / fuel planner upper bound. */
-export const REFILL_DISTANCE_KM_MAX = 5000;
+/** Stored km between planned fuel stops — enforced on all vehicle saves. */
+export const FUEL_STOP_SPACING_KM_MIN = 200;
+export const FUEL_STOP_SPACING_KM_MAX = 1500;
+
+/** Max consecutive driving days before a rest day (stored integer). */
+export const MAX_CONSECUTIVE_DRIVE_DAYS_CAP = 7;
+
+/** @deprecated Use {@link FUEL_STOP_SPACING_KM_MAX} */
+export const REFILL_DISTANCE_KM_MAX = FUEL_STOP_SPACING_KM_MAX;
 
 /**
- * Vehicles attached to trips or used for fuel planning must have a positive
- * refill distance in km. Shared by onboarding gating and API validation.
+ * Vehicles attached to trips or used for fuel planning must have refuel spacing
+ * within product bounds. Shared by onboarding gating and API validation.
  */
 export function vehicleMeetsFuelPlanningMinimum(vehicle: Record<string, unknown>): boolean {
   const r = vehicle.refill_distance_km;
   return (
     typeof r === 'number' &&
     Number.isInteger(r) &&
-    r > 0 &&
-    r <= REFILL_DISTANCE_KM_MAX
+    r >= FUEL_STOP_SPACING_KM_MIN &&
+    r <= FUEL_STOP_SPACING_KM_MAX
   );
 }
 
@@ -160,9 +167,13 @@ export interface VehicleProfileQuestion {
 export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQuestion[] {
   const isImperial = units === 'imperial';
   const distLabel = isImperial ? 'miles' : 'kilometers';
+  const distMin = isImperial
+    ? Math.round(kmToMi(FUEL_STOP_SPACING_KM_MIN)!)
+    : FUEL_STOP_SPACING_KM_MIN;
+  const distMax = isImperial
+    ? Math.round(kmToMi(FUEL_STOP_SPACING_KM_MAX)!)
+    : FUEL_STOP_SPACING_KM_MAX;
   const distPlaceholder = isImperial ? '250' : '400';
-  const distMin = isImperial ? 30 : 50;
-  const distMax = isImperial ? 1500 : 2500;
 
   return [
     {
@@ -200,7 +211,7 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       label: 'Max consecutive driving days before a rest day?',
       placeholder: '3',
       min: 1,
-      max: 14,
+      max: MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
     },
     {
       key: 'water_refill_days',
@@ -210,7 +221,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '4',
       min: 1,
       max: 30,
-      optional: true,
     },
     {
       key: 'blackwater_refill_days',
@@ -220,7 +230,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '5',
       min: 1,
       max: 30,
-      optional: true,
     },
   ];
 }
@@ -318,15 +327,33 @@ export function vehicleProfileFieldHasValue(
   return raw !== null && raw !== undefined && raw !== '';
 }
 
-/** Required = not optional in schema */
+/**
+ * Profile completion counts — water rows apply only when `water_tracking_enabled === true`.
+ */
 export function vehicleProfileRequiredCompletion(vehicle: Record<string, unknown>): {
   filled: number;
   total: number;
 } {
   const questions = buildVehicleProfileQuestions('metric');
-  const required = questions.filter((q) => !q.optional);
-  const filled = required.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
-  return { filled, total: required.length };
+  const wt = vehicle.water_tracking_enabled;
+  const applicable = questions.filter((q) => {
+    if (q.group === 'water') return wt === true;
+    return true;
+  });
+  const filled = applicable.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
+  return { filled, total: applicable.length };
+}
+
+/**
+ * Whether a profile answer may be omitted (null). Used by onboarding/remediation POST guards.
+ */
+export function vehicleProfileQuestionAllowsNull(
+  q: VehicleProfileQuestion,
+  vehicle: Record<string, unknown>
+): boolean {
+  if (q.optional === true) return true;
+  if (q.group === 'water' && vehicle.water_tracking_enabled !== true) return true;
+  return false;
 }
 
 const GROUP_TITLES: Record<VehicleProfileFieldGroup, string> = {

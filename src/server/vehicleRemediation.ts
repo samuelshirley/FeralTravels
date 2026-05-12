@@ -9,6 +9,7 @@ import {
   deriveMaxDriveHoursPerWeek,
   vehicleIsCompleteForRemediation,
   storedVehicleProfileFieldNeedsRemediationRepair,
+  vehicleProfileQuestionAllowsNull,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 import type { UnitsPref } from '@/lib/units';
@@ -243,16 +244,14 @@ export async function submitVehicleRemediationAnswer(
     const question = questions.find((q) => q.key === questionKey);
     if (!question) throw new HttpError(400, `Unknown question ${questionKey}`);
 
-    let qEffective = question;
     if (
-      question.group === 'water' &&
-      vehicle.water_tracking_enabled === true &&
-      question.optional
+      !vehicleProfileQuestionAllowsNull(question, vehicle as unknown as Record<string, unknown>) &&
+      (value === null || value === undefined || value === '')
     ) {
-      qEffective = { ...question, optional: false };
+      throw new HttpError(400, 'This field is required.');
     }
 
-    const parsed = coerceVehicleProfileValue(qEffective, value);
+    const parsed = coerceVehicleProfileValue(question, value);
     const patch = {} as Partial<VehicleInput>;
     if (question.key === 'refill_distance_km' && unitsPref === 'imperial') {
       const km = parsed == null ? null : miToKm(parsed as number);

@@ -102,6 +102,62 @@ export async function createOnboardingTrip(label: string): Promise<{
   return { tripId: trip.id, name };
 }
 
+/**
+ * Trip fixed in `vehicle_new` with an intentionally incomplete vehicle profile
+ * (refill + driving limits unset). Skips units/vehicle pick — for exercising
+ * numeric validation in the chat composer onboarding path.
+ */
+export async function createVehicleNewProfileTrip(label: string): Promise<{
+  tripId: number;
+  name: string;
+}> {
+  const db = getDb();
+
+  const userRow = (
+    await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, FIXTURE_EMAIL))
+      .limit(1)
+  )[0];
+  if (!userRow) {
+    throw new Error(
+      `[e2e/test-trip] Fixture user ${FIXTURE_EMAIL} not found. ` +
+        'Did global setup run? Try `npm run e2e:seed`.',
+    );
+  }
+
+  const name = playwrightName(label);
+  const [vehicle] = await db
+    .insert(schema.vehicles)
+    .values({
+      userId: userRow.id,
+      name: `${name} vehicle`,
+      isDefault: false,
+      refillDistanceKm: null,
+      maxDriveHoursPerDay: null,
+      maxDriveHoursPerWeek: null,
+      maxConsecutiveDriveDays: null,
+      waterRefillDays: null,
+      blackwaterRefillDays: null,
+      waterTrackingEnabled: null,
+    })
+    .returning({ id: schema.vehicles.id });
+
+  const [trip] = await db
+    .insert(schema.trips)
+    .values({
+      userId: userRow.id,
+      vehicleId: vehicle.id,
+      name,
+      status: 'planning',
+      onboardingState: 'vehicle_new',
+    })
+    .returning({ id: schema.trips.id });
+
+  return { tripId: trip.id, name };
+}
+
 /** Count the legs currently attached to a trip (post-Penny submit assertion). */
 export async function countLegs(tripId: number): Promise<number> {
   const db = getDb();

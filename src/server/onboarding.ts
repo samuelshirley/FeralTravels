@@ -22,6 +22,7 @@ import {
   deriveMaxDriveHoursPerWeek,
   humanizeVehicleProfileAnswer,
   vehicleMeetsFuelPlanningMinimum,
+  vehicleProfileQuestionAllowsNull,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 
@@ -454,11 +455,21 @@ export async function submitAnswer(
     const question = questions.find((q) => q.key === input.questionKey);
     if (!question) throw new Error(`Unknown question ${input.questionKey}`);
 
-    const parsed = coerceVehicleProfileValue(question, input.value);
-
     let vehicle: VehicleApi | null = trip.vehicleId
       ? await getVehicleForUser(userId, trip.vehicleId)
       : null;
+
+    const vehicleRecord = (vehicle ?? {
+      water_tracking_enabled: undefined,
+    }) as unknown as Record<string, unknown>;
+    if (
+      !vehicleProfileQuestionAllowsNull(question, vehicleRecord) &&
+      (input.value === null || input.value === undefined || input.value === '')
+    ) {
+      throw new Error('This field is required.');
+    }
+
+    const parsed = coerceVehicleProfileValue(question, input.value);
 
     if (!vehicle) {
       if (question.key !== 'name') {

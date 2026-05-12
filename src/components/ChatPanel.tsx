@@ -3,15 +3,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, OnboardingState } from '@/types/trip';
 import { tripApi, apiFetch } from '@/lib/api';
-import OnboardingForm from '@/components/OnboardingForm';
+import Spinner from '@/components/Spinner';
 
 interface ChatPanelProps {
   tripId: number;
   initialMessages: ChatMessage[];
   initialHasMore?: boolean;
   /**
-   * When not 'done', the composer is replaced by the OnboardingForm which
-   * walks the user through picking/creating a vehicle before Penny takes over.
+   * When not 'done', the normal composer submits answers to
+   * `/api/trips/:id/onboarding` until handoff, then Penny streams as usual.
    */
   onboardingState?: OnboardingState;
   /** When true, show vehicle remediation questions before normal chat. */
@@ -56,6 +56,20 @@ interface VehicleRemediationSnapshot {
   } | null;
   progress: { current: number; total: number } | null;
   garage_empty?: boolean;
+}
+
+/** GET `/api/trips/:id/onboarding` — shape matches server snapshot. */
+interface OnboardingSnapshot {
+  state: OnboardingState;
+  question: VehicleRemediationSnapshot['question'];
+  vehicles: Array<{ id: number; name: string; is_default: boolean }>;
+  progress: { current: number; total: number } | null;
+}
+
+interface OnboardingAnswerResult {
+  next: OnboardingSnapshot;
+  answerLabel: string;
+  didHandoff: boolean;
 }
 
 interface UIMessage extends ChatMessage {
@@ -121,8 +135,23 @@ export default function ChatPanel({
   readonly = false,
 }: ChatPanelProps) {
   const isOnboarding = onboardingState !== 'done' && !readonly;
+  const [onboardingSnapshot, setOnboardingSnapshot] = useState<OnboardingSnapshot | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
+  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const onboardingUiActive =
+    isOnboarding &&
+    onboardingSnapshot !== null &&
+    onboardingSnapshot.state !== 'done';
+  const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
+  const onboardingQuestion = onboardingUiActive ? onboardingSnapshot.question : null;
+  const onboardingSelectStep =
+    onboardingUiActive &&
+    onboardingQuestion &&
+    (onboardingQuestion.kind === 'select' || onboardingQuestion.kind === 'vehicle_pick');
   const [remediationDone, setRemediationDone] = useState(false);
   const showRemediation = needsVehicleRemediation && !remediationDone && !isOnboarding && !readonly;
+  const attachImagesAllowed = !showRemediation && !isOnboarding;
   const [remSnapshot, setRemSnapshot] = useState<VehicleRemediationSnapshot | null>(null);
   const [remLoading, setRemLoading] = useState(false);
   const [remSubmitting, setRemSubmitting] = useState(false);
@@ -226,6 +255,31 @@ export default function ChatPanel({
   }, [tripId]);
 
   useEffect(() => {
+    if (!isOnboarding) {
+      setOnboardingSnapshot(null);
+      setOnboardingError(null);
+      return;
+    }
+    let cancelled = false;
+    setOnboardingLoading(true);
+    void (async () => {
+      try {
+        const data = await apiFetch<OnboardingSnapshot>(`/api/trips/${tripId}/onboarding`);
+        if (cancelled) return;
+        setOnboardingSnapshot(data);
+        setOnboardingError(null);
+      } catch (e: unknown) {
+        if (!cancelled) setOnboardingError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setOnboardingLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOnboarding, tripId]);
+
+  useEffect(() => {
     if (!showRemediation) return;
     let cancelled = false;
     setRemLoading(true);
@@ -290,6 +344,30 @@ export default function ChatPanel({
       ];
     });
   }, [showRemediation, remLoading, remSnapshot, tripId]);
+
+  useEffect(() => {
+    if (!isOnboarding || onboardingLoading || !onboardingSnapshot || onboardingSnapshot.state === 'done') {
+      return;
+    }
+    const q = onboardingSnapshot.question;
+    if (!q) return;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.kind === 'form_question' && last.content === q.label) return prev;
+      return [
+        ...prev,
+        {
+          id: Date.now(),
+          trip_id: tripId,
+          role: 'assistant' as const,
+          content: q.label,
+          kind: 'form_question' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
+  }, [isOnboarding, onboardingLoading, onboardingSnapshot, tripId]);
 
   function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -640,12 +718,115 @@ export default function ChatPanel({
     }
   };
 
+  async function submitOnboardingPost(questionKey: string, value: unknown) {
+    if (!onboardingSnapshot?.question || onboardingSubmitting) return;
+    setOnboardingSubmitting(true);
+    setOnboardingError(null);
+    try {
+      const result = await apiFetch<OnboardingAnswerResult>(`/api/trips/${tripId}/onboarding`, {
+        method: 'POST',
+        body: { questionKey, value },
+      });
+      if (result.didHandoff) {
+        setOnboardingSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
+        setInput('');
+        await sendChatMessage(typeof value === 'string' ? value : String(value), []);
+        onTripUpdated();
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now(),
+            trip_id: tripId,
+            role: 'user' as const,
+            content: result.answerLabel,
+            kind: 'form_answer' as const,
+            changes_made: null,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        setOnboardingSnapshot(result.next);
+        setInput('');
+      }
+    } catch (e: unknown) {
+      setOnboardingError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOnboardingSubmitting(false);
+    }
+  }
+
+  async function submitOnboardingPick(rawValue: string | number) {
+    const q = onboardingSnapshot?.question;
+    if (!q || onboardingSubmitting || onboardingLoading) return;
+    if (q.kind !== 'select' && q.kind !== 'vehicle_pick') return;
+    await submitOnboardingPost(q.key, rawValue);
+  }
+
+  async function submitOnboardingTextAnswer(trimmed: string) {
+    const q = onboardingSnapshot?.question;
+    if (!q || onboardingSubmitting || onboardingLoading) return;
+
+    if (q.kind === 'handoff') {
+      if (!trimmed) {
+        setOnboardingError('Please describe your trip.');
+        return;
+      }
+      await submitOnboardingPost('handoff', trimmed);
+      return;
+    }
+    if (q.kind === 'text') {
+      if (!trimmed) {
+        setOnboardingError('This one is required.');
+        return;
+      }
+      await submitOnboardingPost(q.key, trimmed);
+      return;
+    }
+    if (q.kind === 'number' || q.kind === 'integer') {
+      if (!trimmed) {
+        setOnboardingError('This one is required.');
+        return;
+      }
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        setOnboardingError('Please enter a number.');
+        return;
+      }
+      if (q.kind === 'integer' && !Number.isInteger(n)) {
+        setOnboardingError('Please enter a whole number.');
+        return;
+      }
+      if (q.min !== undefined && n < q.min) {
+        setOnboardingError(`Must be at least ${q.min}.`);
+        return;
+      }
+      if (q.max !== undefined && n > q.max) {
+        setOnboardingError(`Must be at most ${q.max}.`);
+        return;
+      }
+      await submitOnboardingPost(q.key, n);
+    }
+  }
+
   // Thin wrapper — the composer path pulls text/images out of local state,
   // clears them, and delegates to the shared engine. Onboarding handoff
   // sidesteps this and calls sendChatMessage directly.
   const sendMessage = async () => {
     const trimmed = input.trim();
     const attachedImages = images;
+    if (onboardingUiActive) {
+      if (onboardingLoading || onboardingSubmitting) return;
+      const q = onboardingSnapshot?.question;
+      if (!q) return;
+      if (onboardingSelectStep) return;
+      if (!trimmed && attachedImages.length === 0) return;
+      if (attachedImages.length > 0) {
+        setOnboardingError("Images aren't available during trip setup.");
+        return;
+      }
+      await submitOnboardingTextAnswer(trimmed);
+      return;
+    }
     if (showRemediation) {
       if (remLoading || remSubmitting) return;
       if (!trimmed && attachedImages.length === 0) return;
@@ -767,26 +948,27 @@ export default function ChatPanel({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData?.files || []);
-    if (files.length && !showRemediation) {
+    if (files.length && attachImagesAllowed) {
       e.preventDefault();
       addImageFiles(files);
     }
   };
 
   useEffect(() => {
-    if (showRemediation) setImages([]);
-  }, [showRemediation]);
+    if (showRemediation || isOnboarding) setImages([]);
+  }, [showRemediation, isOnboarding]);
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
-    if (showRemediation) return;
+    if (showRemediation || isOnboarding) return;
     if (e.dataTransfer?.files?.length) {
       addImageFiles(e.dataTransfer.files);
     }
   };
 
   const remediationComposerBusy = showRemediation && (remLoading || remSubmitting);
+  const onboardingComposerBusy = onboardingUiActive && (onboardingLoading || onboardingSubmitting);
   const remediationSelectStep =
     showRemediation &&
     remSnapshot?.question?.kind === 'select' &&
@@ -797,7 +979,7 @@ export default function ChatPanel({
     <div
       onDragOver={(e) => {
         e.preventDefault();
-        if (!showRemediation && e.dataTransfer?.types?.includes('Files')) setDragOver(true);
+        if (!showRemediation && !isOnboarding && e.dataTransfer?.types?.includes('Files')) setDragOver(true);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget === e.target) setDragOver(false);
@@ -819,7 +1001,7 @@ export default function ChatPanel({
         position: 'relative',
       }}
     >
-      {dragOver && !showRemediation && (
+      {dragOver && attachImagesAllowed && (
         <div
           style={{
             position: 'absolute',
@@ -1244,69 +1426,172 @@ export default function ChatPanel({
         >
           Demo trip — clone it from the trips list to chat with Penny.
         </div>
-      ) : isOnboarding ? (
-        <OnboardingForm
-          tripId={tripId}
-          initialState={onboardingState}
-          onAnswer={(userLabel, questionLabel) => {
-            // Mirror the Q/A pair as optimistic bubbles so the chat surface
-            // feels alive even though the real rows are written server-side.
-            // We give assistant the question, user the answer — same order
-            // as the server writes them so the replay after router.refresh
-            // doesn't look any different.
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                trip_id: tripId,
-                role: 'assistant',
-                content: questionLabel,
-                kind: 'form_question',
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-              {
-                id: Date.now() + 1,
-                trip_id: tripId,
-                role: 'user',
-                content: userLabel,
-                kind: 'form_answer',
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-          }}
-          onHandoff={async (handoffText, questionLabel) => {
-            // Mirror the question that prompted the handoff as an optimistic
-            // assistant bubble — same shape `onAnswer` uses for the vehicle
-            // wizard. Without this, the user sees their long handoff text +
-            // Penny's reply but never the prompt that triggered it, which
-            // reads as a non-sequitur ("where do you want to go?" disappears
-            // when the form unmounts). The server now persists the same row
-            // as kind='form_question' (see onboarding.ts → submitAnswer), so
-            // a hard refresh keeps the question visible too.
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                trip_id: tripId,
-                role: 'assistant',
-                content: questionLabel,
-                kind: 'form_question',
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-            // Fire the real Penny call with the user's free-text answer, then
-            // bounce the server so TripWorkspace picks up onboarding_state='done'
-            // and any legs Penny created.
-            await sendChatMessage(handoffText, []);
-            onTripUpdated();
-          }}
-        />
       ) : (
         <>
-          {remediationSelectStep && remSnapshot.question?.options && (
+          {onboardingBlockingLoad ? (
+            <div
+              style={{
+                padding: '12px 16px',
+                borderTop: '1px solid var(--tp-border)',
+                flexShrink: 0,
+                background: 'var(--tp-surface-muted)',
+                color: 'var(--tp-muted)',
+                fontSize: 13,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+              }}
+            >
+              <Spinner size={12} thickness={2} color="var(--tp-primary)" /> Loading setup…
+            </div>
+          ) : (
+            <>
+              {onboardingUiActive && onboardingSnapshot?.progress && (
+                <div
+                  style={{
+                    padding: '8px 16px 0',
+                    flexShrink: 0,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: 'var(--tp-primary)',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    background: 'var(--tp-surface-muted)',
+                  }}
+                >
+                  Setup · {onboardingSnapshot.progress.current} of {onboardingSnapshot.progress.total}
+                </div>
+              )}
+              {onboardingUiActive &&
+                onboardingQuestion?.kind === 'select' &&
+                onboardingQuestion.options && (
+                  <div
+                    style={{
+                      padding: '10px 16px 0',
+                      flexShrink: 0,
+                      borderTop: '1px solid var(--tp-border)',
+                      background: 'var(--tp-surface-muted)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--tp-muted)',
+                        marginBottom: 6,
+                        letterSpacing: '0.03em',
+                      }}
+                    >
+                      Tap an option
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {onboardingQuestion.options.map((o) => (
+                        <button
+                          key={o.value}
+                          type="button"
+                          disabled={onboardingComposerBusy}
+                          onClick={() => void submitOnboardingPick(o.value)}
+                          style={{
+                            padding: '8px 14px',
+                            background: 'var(--tp-surface)',
+                            border: '1px solid var(--tp-border)',
+                            borderRadius: 999,
+                            color: 'var(--tp-text)',
+                            fontSize: 13,
+                            cursor: onboardingComposerBusy ? 'default' : 'pointer',
+                            opacity: onboardingComposerBusy ? 0.5 : 1,
+                          }}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              {onboardingUiActive &&
+                onboardingQuestion?.kind === 'vehicle_pick' &&
+                onboardingSnapshot && (
+                  <div
+                    style={{
+                      padding: '10px 16px 0',
+                      flexShrink: 0,
+                      borderTop: '1px solid var(--tp-border)',
+                      background: 'var(--tp-surface-muted)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--tp-muted)',
+                        marginBottom: 6,
+                        letterSpacing: '0.03em',
+                      }}
+                    >
+                      Tap a vehicle
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {onboardingSnapshot.vehicles.map((v) => (
+                        <button
+                          key={v.id}
+                          type="button"
+                          disabled={onboardingComposerBusy}
+                          onClick={() => void submitOnboardingPick(v.id)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '10px 12px',
+                            background: 'var(--tp-surface)',
+                            border: '1px solid var(--tp-border)',
+                            borderRadius: 'var(--tp-radius-sm)',
+                            color: 'var(--tp-text)',
+                            fontSize: 13,
+                            cursor: onboardingComposerBusy ? 'default' : 'pointer',
+                            textAlign: 'left',
+                            opacity: onboardingComposerBusy ? 0.5 : 1,
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>{v.name}</span>
+                          {v.is_default && (
+                            <span
+                              style={{
+                                padding: '2px 6px',
+                                fontSize: 10,
+                                background: 'var(--tp-success-muted)',
+                                color: 'var(--tp-success)',
+                                borderRadius: 4,
+                              }}
+                            >
+                              default
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={onboardingComposerBusy}
+                        onClick={() => void submitOnboardingPick('new')}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '10px 12px',
+                          background: 'var(--tp-surface)',
+                          border: '1px dashed var(--tp-border)',
+                          borderRadius: 'var(--tp-radius-sm)',
+                          color: 'var(--tp-text)',
+                          fontSize: 13,
+                          cursor: onboardingComposerBusy ? 'default' : 'pointer',
+                          textAlign: 'left',
+                          opacity: onboardingComposerBusy ? 0.5 : 1,
+                        }}
+                      >
+                        + Add a new vehicle
+                      </button>
+                    </div>
+                  </div>
+                )}
+              {remediationSelectStep && remSnapshot.question?.options && (
             <div
               style={{
                 padding: '10px 16px 0',
@@ -1397,6 +1682,9 @@ export default function ChatPanel({
         {remError && (
           <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{remError}</div>
         )}
+        {onboardingError && (
+          <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{onboardingError}</div>
+        )}
         <div
           style={{
             display: 'flex',
@@ -1409,7 +1697,7 @@ export default function ChatPanel({
             transition: 'border-color 0.15s',
           }}
         >
-          {!showRemediation && (
+          {attachImagesAllowed && (
           <button
             onClick={() => fileInputRef.current?.click()}
             title="Attach image"
@@ -1450,9 +1738,9 @@ export default function ChatPanel({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            readOnly={remediationSelectStep}
+            readOnly={Boolean(remediationSelectStep || onboardingSelectStep)}
             onFocus={(e) => {
-              if (showRemediation) return;
+              if (showRemediation || onboardingUiActive) return;
               const el = e.currentTarget;
               setTimeout(() => {
                 try {
@@ -1463,13 +1751,17 @@ export default function ChatPanel({
               }, 250);
             }}
             placeholder={
-              remediationSelectStep
+              onboardingSelectStep
                 ? 'Tap an option above…'
-                : showRemediation && remSnapshot?.question
-                  ? remSnapshot.question.placeholder ?? 'Type your answer…'
-                  : 'Ask Penny…'
+                : onboardingUiActive && onboardingQuestion
+                  ? onboardingQuestion.placeholder ?? 'Type your answer…'
+                  : remediationSelectStep
+                    ? 'Tap an option above…'
+                    : showRemediation && remSnapshot?.question
+                      ? remSnapshot.question.placeholder ?? 'Type your answer…'
+                      : 'Ask Penny…'
             }
-            disabled={loading || remediationComposerBusy}
+            disabled={loading || remediationComposerBusy || onboardingComposerBusy}
             rows={1}
             style={{
               flex: 1,
@@ -1497,13 +1789,21 @@ export default function ChatPanel({
             onClick={sendMessage}
             disabled={
               Boolean(
-              loading ||
-              remediationComposerBusy ||
-              (!showRemediation && !input.trim() && images.length === 0) ||
-              (showRemediation &&
-                remediationQuestion &&
-                !input.trim() &&
-                remediationQuestion.optional !== true)
+                loading ||
+                  remediationComposerBusy ||
+                  onboardingComposerBusy ||
+                  (!showRemediation &&
+                    !onboardingUiActive &&
+                    !input.trim() &&
+                    images.length === 0) ||
+                  (showRemediation &&
+                    remediationQuestion &&
+                    !input.trim() &&
+                    remediationQuestion.optional !== true) ||
+                  (onboardingUiActive &&
+                    onboardingQuestion &&
+                    !onboardingSelectStep &&
+                    !input.trim())
               )
             }
             aria-label="Send"
@@ -1514,31 +1814,52 @@ export default function ChatPanel({
               flexShrink: 0,
               padding: 0,
               background:
-                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                ((!showRemediation &&
+                  !onboardingUiActive &&
+                  (input.trim() || images.length > 0)) ||
                   (showRemediation &&
                     remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true))) &&
+                    (input.trim() || remSnapshot.question.optional === true)) ||
+                  (onboardingUiActive &&
+                    onboardingQuestion &&
+                    !onboardingSelectStep &&
+                    input.trim())) &&
                 !remediationComposerBusy &&
+                !onboardingComposerBusy &&
                 !loading
                   ? 'var(--tp-primary)'
                   : 'var(--tp-border)',
               border: 'none',
               borderRadius: 8,
               color:
-                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                ((!showRemediation &&
+                  !onboardingUiActive &&
+                  (input.trim() || images.length > 0)) ||
                   (showRemediation &&
                     remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true))) &&
+                    (input.trim() || remSnapshot.question.optional === true)) ||
+                  (onboardingUiActive &&
+                    onboardingQuestion &&
+                    !onboardingSelectStep &&
+                    input.trim())) &&
                 !remediationComposerBusy &&
+                !onboardingComposerBusy &&
                 !loading
                   ? 'var(--tp-on-primary)'
                   : 'var(--tp-subtle)',
               cursor:
-                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                ((!showRemediation &&
+                  !onboardingUiActive &&
+                  (input.trim() || images.length > 0)) ||
                   (showRemediation &&
                     remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true))) &&
+                    (input.trim() || remSnapshot.question.optional === true)) ||
+                  (onboardingUiActive &&
+                    onboardingQuestion &&
+                    !onboardingSelectStep &&
+                    input.trim())) &&
                 !remediationComposerBusy &&
+                !onboardingComposerBusy &&
                 !loading
                   ? 'pointer'
                   : 'default',
@@ -1564,11 +1885,15 @@ export default function ChatPanel({
             textAlign: 'center',
           }}
         >
-          {showRemediation
+          {onboardingUiActive
+            ? 'Enter to send · Trip setup'
+            : showRemediation
             ? 'Enter to send · Vehicle setup'
             : 'Enter to send · Shift+Enter for newline · drag/paste to attach'}
         </div>
       </div>
+            </>
+          )}
         </>
       )}
     </div>

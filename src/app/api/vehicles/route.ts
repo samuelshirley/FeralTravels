@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { HttpError, requireUserId, errorResponse } from '@/server/auth/guards';
-import { vehicleIsCompleteForRemediation } from '@/lib/vehicleProfile';
+import {
+  FUEL_STOP_SPACING_KM_MAX,
+  FUEL_STOP_SPACING_KM_MIN,
+  MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
+  vehicleIsCompleteForRemediation,
+} from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from '@/server/repos/vehicles';
 
 export const runtime = 'nodejs';
@@ -9,10 +14,18 @@ export const dynamic = 'force-dynamic';
 const createSchema = z
   .object({
     name: z.string().min(1).max(100),
-    refill_distance_km: z.number().int().positive().max(5000),
+    refill_distance_km: z
+      .number()
+      .int()
+      .min(FUEL_STOP_SPACING_KM_MIN)
+      .max(FUEL_STOP_SPACING_KM_MAX),
     max_drive_hours_per_day: z.number().positive().max(24),
     max_drive_hours_per_week: z.number().positive().max(168),
-    max_consecutive_drive_days: z.number().int().positive().max(14),
+    max_consecutive_drive_days: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_CONSECUTIVE_DRIVE_DAYS_CAP),
     water_tracking_enabled: z.boolean(),
     water_refill_days: z.number().int().positive().max(60).nullish(),
     blackwater_refill_days: z.number().int().positive().max(60).nullish(),

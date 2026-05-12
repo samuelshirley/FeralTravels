@@ -2,6 +2,11 @@ import 'server-only';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
+import {
+  FUEL_STOP_SPACING_KM_MAX,
+  FUEL_STOP_SPACING_KM_MIN,
+  MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
+} from '@/lib/vehicleProfile';
 
 export const UPDATE_VEHICLE = 'update_vehicle' as const;
 
@@ -32,14 +37,18 @@ const dataSchema = z.object({
     .number()
     .int()
     .positive()
-    .max(14, 'max_consecutive_drive_days cannot exceed 14')
+    .max(
+      MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
+      `max_consecutive_drive_days cannot exceed ${MAX_CONSECUTIVE_DRIVE_DAYS_CAP}`
+    )
     .nullish(),
 
   /** Preferred distance (km) between fuel refills. */
   refill_distance_km: z
     .number()
-    .positive()
-    .max(5000, 'refill_distance_km cannot exceed 5000 km')
+    .int()
+    .min(FUEL_STOP_SPACING_KM_MIN)
+    .max(FUEL_STOP_SPACING_KM_MAX)
     .nullish(),
 
   /** Days between fresh-water refills. */
@@ -77,7 +86,7 @@ Save updated vehicle driving preferences to the database. Call this whenever the
 - refuel cadence or range (km between fuel stops)
 - water or blackwater refill intervals
 
-The API requires a positive refill_distance_km for fuel planning. If the trip vehicle may still be missing that
+The API requires refill_distance_km between 200 and 1500 km for fuel planning. If the trip vehicle may still be missing that
 value (new or stub profile), include refill_distance_km in this update whenever the user gives a range or you
 infer one; otherwise PATCH may reject partial preference-only updates.
 
@@ -117,14 +126,14 @@ their planning request again so the updated values take effect.
           max_consecutive_drive_days: {
             type: 'integer',
             minimum: 1,
-            maximum: 14,
+            maximum: MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
             description:
               'Max days of driving in a row before a rest day. "3 days a week" → 3; "drive 5, rest 2" → 5.',
           },
           refill_distance_km: {
-            type: 'number',
-            minimum: 1,
-            maximum: 5000,
+            type: 'integer',
+            minimum: FUEL_STOP_SPACING_KM_MIN,
+            maximum: FUEL_STOP_SPACING_KM_MAX,
             description: 'Preferred km between fuel refills (the user-stated range).',
           },
           water_refill_days: {
