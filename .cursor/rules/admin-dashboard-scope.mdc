@@ -1,0 +1,26 @@
+---
+description: Skip admin dashboard code unless the user explicitly scopes work there
+alwaysApply: true
+---
+
+# Admin dashboard — out of scope by default
+
+Treat the **admin dashboard** as a separate concern from the main trip-planner app.
+
+## Unless the user clearly says they are working on the admin dashboard
+
+Do **not** proactively:
+
+- Open, edit, or search under `src/app/admin/`
+- Open or edit `src/server/repos/admin.ts`
+- Open or edit `src/app/api/admin/`
+
+Use minimal context from those areas when answering questions about the **main** app (trips, vehicles, Penny, auth flows, etc.). Prefer `schema.ts`, trip repos, and shared libs instead—even if an answer could mention admin aggregates.
+
+## When this rule does **not** apply
+
+If the user explicitly scopes admin work, e.g. they mention **admin dashboard**, **`/admin`**, **admin errors/users/chats pages**, or **“we’re working on admin”**, then use those paths normally.
+
+## Not admin-only (always in play)
+
+- `src/server/auth/admin.ts` — allowlist helper used across the app; not part of the “dashboard” exclusion.

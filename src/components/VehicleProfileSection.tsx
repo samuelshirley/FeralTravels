@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { fetchVehicles, invalidateVehicleCache } from '@/lib/vehicleCache';
 import { kmToMi, miToKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
@@ -21,13 +22,8 @@ const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = 
 };
 
 /**
- * Vehicle profile — the simplified shape introduced by migration 0007.
- *
- * Old fields that no longer exist (vehicle_type, dimensions, fuel_type,
- * fuel_economy_kmpl, fuel_tank_l, real_world_kmpl, fuel_timing_pref, water
- * capacities, notes) have been collapsed into `refill_distance_km` plus the
- * drive-limit + water-cadence fields. The UI lets the user enter the refill
- * distance in their preferred units (km or mi); the DB always stores km.
+ * Vehicle profile row shape — refill cadence + drive/water limits (`vehicles` table).
+ * Distances are stored in km; UI converts via units preference.
  */
 export interface Vehicle {
   id: number;
@@ -70,7 +66,7 @@ export default function VehicleProfileSection() {
 
   async function load() {
     try {
-      const list = await apiFetch<Vehicle[]>('/api/vehicles');
+      const list = await fetchVehicles();
       setVehicles(list);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to load vehicles.');
@@ -109,6 +105,7 @@ export default function VehicleProfileSection() {
       } else {
         await apiFetch(`/api/vehicles/${id}`, { method: 'PATCH', body: payload });
       }
+      invalidateVehicleCache();
       setEditingId(null);
       await load();
     } catch (e) {
@@ -123,6 +120,7 @@ export default function VehicleProfileSection() {
     setError(null);
     try {
       await apiFetch(`/api/vehicles/${id}`, { method: 'DELETE' });
+      invalidateVehicleCache();
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Delete failed.');
@@ -135,6 +133,7 @@ export default function VehicleProfileSection() {
         method: 'PATCH',
         body: { is_default: true },
       });
+      invalidateVehicleCache();
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to set default.');

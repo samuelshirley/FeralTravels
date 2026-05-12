@@ -467,7 +467,7 @@ export async function addLeg(input: {
   /**
    * Two-level grouping. Set both fields together when this driving day belongs
    * to a user-stated jump that takes more than one day; leave both null for
-   * single-day jumps or for legs you don't want grouped. See migration 0006.
+   * single-day jumps or for legs you don't want grouped.
    */
   segmentIndex?: number | null;
   segmentName?: string | null;

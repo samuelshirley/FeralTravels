@@ -33,13 +33,9 @@ export interface PennyContext {
 }
 
 /**
- * Trimmed vehicle shape Penny actually plans against. Mirrors the simplified
- * vehicles row introduced in migration 0007: a single user-stated refuel
- * cadence + drive limits + water cadence. The `effective_range_km` field is
- * a deliberate alias of `refill_distance_km` — kept under that name so the
- * fuel planner and the system prompt can refer to "effective range" without
- * caring whether it came from a tank-math computation (old model) or a
- * straight user preference (new model).
+ * Trimmed vehicle shape Penny plans against: user-stated refuel cadence +
+ * drive limits + optional water cadence. `effective_range_km` aliases
+ * `refill_distance_km` for prompts and the fuel planner.
  */
 export interface PennyVehicle {
   id: number;

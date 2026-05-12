@@ -13,7 +13,6 @@ import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
-import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
@@ -24,8 +23,6 @@ interface Props {
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin?: boolean;
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
-  needsVehicleRemediation?: boolean;
-  /** SSR onboarding state — lets us show remediation during client trip fetch */
   serverOnboardingState?: OnboardingState;
 }
 
@@ -74,7 +71,6 @@ export default function TripWorkspace({
   user,
   isAdmin = false,
   initialChat,
-  needsVehicleRemediation = false,
   serverOnboardingState,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
@@ -274,14 +270,10 @@ export default function TripWorkspace({
 
   const effectiveOnboardingState: OnboardingState =
     trip?.onboarding_state ?? serverOnboardingState ?? 'not_started';
-  const showVehicleRemediation =
-    needsVehicleRemediation && effectiveOnboardingState === 'done' && !readonly;
-  const remediationOverlay = showVehicleRemediation ? <VehicleRemediationOverlay /> : null;
 
   if (loading) {
     return (
       <>
-        {remediationOverlay}
         <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar user={user} isAdmin={isAdmin} />
         <div
@@ -320,7 +312,7 @@ export default function TripWorkspace({
   if (!trip) {
     return (
       <>
-        {remediationOverlay}
+
         <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar user={user} isAdmin={isAdmin} />
         <div
@@ -473,7 +465,7 @@ export default function TripWorkspace({
   if (viewport === 'mobile') {
     return (
       <>
-        {remediationOverlay}
+
         <div
         style={{
           height: '100dvh',
@@ -574,7 +566,7 @@ export default function TripWorkspace({
   if (viewport === 'tablet') {
     return (
       <>
-        {remediationOverlay}
+
         <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={user}
@@ -630,7 +622,6 @@ export default function TripWorkspace({
   // want a wider itinerary can drag the chat panel narrow.
   return (
     <>
-      {remediationOverlay}
       <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}

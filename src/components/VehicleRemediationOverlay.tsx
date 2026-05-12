@@ -71,23 +71,34 @@ function appendDeduped(prev: OverlayMsg[], msg: OverlayMsg): OverlayMsg[] {
   return [...prev, msg];
 }
 
-export default function VehicleRemediationOverlay() {
+interface OverlayProps {
+  /** SSR-prefetched snapshot — skips the initial client-side fetch. */
+  initialSnapshot?: RemediationSnap;
+}
+
+export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayProps = {}) {
   const router = useRouter();
   const viewport = useViewport();
   const { units } = useUnits();
 
-  const [snapshot, setSnapshot] = useState<RemediationSnap | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [snapshot, setSnapshot] = useState<RemediationSnap | null>(initialSnapshot ?? null);
+  const [loading, setLoading] = useState(!initialSnapshot);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [msgs, setMsgs] = useState<OverlayMsg[]>(() => [
-    {
-      role: 'assistant',
-      content:
-        'Before we dive into your trip plans, let’s tighten up one thing on file — missing vehicle profile details.',
-    },
-  ]);
+  const [msgs, setMsgs] = useState<OverlayMsg[]>(() => {
+    const initial: OverlayMsg[] = [
+      {
+        role: 'assistant',
+        content:
+          "Before we dive into your trip plans, let's tighten up one thing on file — missing vehicle profile details.",
+      },
+    ];
+    if (initialSnapshot?.question) {
+      initial.push({ role: 'assistant', content: initialSnapshot.question.label });
+    }
+    return initial;
+  });
   const titleId = 'vehicle-remediation-title';
   const scrollRef = useRef<HTMLDivElement>(null);
   const isMobileViewport = viewport === 'mobile';
@@ -112,8 +123,10 @@ export default function VehicleRemediationOverlay() {
   }, []);
 
   useEffect(() => {
+    // Skip initial fetch if we already have a prefetched snapshot
+    if (initialSnapshot) return;
     void fetchSnapshot();
-  }, [fetchSnapshot]);
+  }, [fetchSnapshot, initialSnapshot]);
 
   useEffect(() => {
     const el = scrollRef.current;

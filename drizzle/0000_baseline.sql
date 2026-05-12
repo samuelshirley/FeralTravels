@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS "chat_history" (
 	"role" text NOT NULL,
 	"content" text NOT NULL,
 	"changes_made" text,
+	"kind" text DEFAULT 'ai' NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -33,6 +34,15 @@ CREATE TABLE IF NOT EXISTS "costs" (
 	"item" text NOT NULL,
 	"estimate" text NOT NULL,
 	"is_total" boolean DEFAULT false NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "email_otp_codes" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"email" text NOT NULL,
+	"code" text NOT NULL,
+	"expires" timestamp NOT NULL,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "gpx_trails" (
@@ -55,6 +65,8 @@ CREATE TABLE IF NOT EXISTS "legs" (
 	"sort_order" integer NOT NULL,
 	"title" text NOT NULL,
 	"label" text,
+	"segment_index" integer,
+	"segment_name" text,
 	"start_name" text,
 	"end_name" text,
 	"start_lat" double precision,
@@ -69,6 +81,8 @@ CREATE TABLE IF NOT EXISTS "legs" (
 	"status" text DEFAULT 'planning' NOT NULL,
 	"color" text,
 	"notes" text,
+	"fuel_status" text DEFAULT 'none' NOT NULL,
+	"fuel_plan_error" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -116,13 +130,39 @@ CREATE TABLE IF NOT EXISTS "routes" (
 	"distance_km" double precision,
 	"surface" text,
 	"status" text DEFAULT 'option' NOT NULL,
-	"gpx_trail_id" integer
+	"gpx_trail_id" integer,
+	"end_lat" double precision,
+	"end_lng" double precision,
+	"end_name" text,
+	"end_source" text,
+	"end_source_url" text,
+	"drive_time_minutes" integer
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "sessions" (
 	"sessionToken" text PRIMARY KEY NOT NULL,
 	"userId" text NOT NULL,
 	"expires" timestamp NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "stops" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"leg_id" integer NOT NULL,
+	"sort_order" integer DEFAULT 0 NOT NULL,
+	"stop_type" text NOT NULL,
+	"status" text DEFAULT 'option' NOT NULL,
+	"name" text NOT NULL,
+	"lat" double precision,
+	"lng" double precision,
+	"distance_from_start_km" double precision,
+	"notes" text,
+	"fuel_type" text,
+	"fuel_amount_l" double precision,
+	"source" text,
+	"source_url" text,
+	"alternatives" jsonb,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "tasks" (
@@ -150,12 +190,38 @@ CREATE TABLE IF NOT EXISTS "trips" (
 	"user_id" text NOT NULL,
 	"vehicle_id" integer,
 	"name" text NOT NULL,
+	"trip_name_ci_key" text GENERATED ALWAYS AS (lower(trim("name"))) STORED,
 	"start_date" text,
 	"end_date" text,
 	"status" text DEFAULT 'planning' NOT NULL,
 	"is_template" boolean DEFAULT false NOT NULL,
+	"onboarding_state" text DEFAULT 'not_started' NOT NULL,
+	"prefer_avoid_highways" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "usage_events" (
+	"id" bigserial PRIMARY KEY NOT NULL,
+	"user_id" text,
+	"trip_id" integer,
+	"provider" text NOT NULL,
+	"model" text,
+	"input_tokens" integer,
+	"output_tokens" integer,
+	"requests" integer DEFAULT 1 NOT NULL,
+	"cost_microcents" bigint,
+	"success" boolean DEFAULT true NOT NULL,
+	"error_message" text,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "user_viewport_time" (
+	"user_id" text NOT NULL,
+	"viewport" text NOT NULL,
+	"total_seconds" bigint NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "user_viewport_time_user_id_viewport_pk" PRIMARY KEY("user_id","viewport")
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "users" (
@@ -164,6 +230,9 @@ CREATE TABLE IF NOT EXISTS "users" (
 	"email" text,
 	"emailVerified" timestamp,
 	"image" text,
+	"is_admin" boolean DEFAULT false NOT NULL,
+	"units_pref" text,
+	"needs_vehicle_profile_remediation" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "users_email_unique" UNIQUE("email")
 );
@@ -173,13 +242,13 @@ CREATE TABLE IF NOT EXISTS "vehicles" (
 	"user_id" text NOT NULL,
 	"name" text NOT NULL,
 	"is_default" boolean DEFAULT false NOT NULL,
-	"height_cm" integer,
-	"fuel_economy_kmpl" double precision,
-	"fuel_tank_l" double precision,
+	"refill_distance_km" integer,
 	"max_drive_hours_per_day" double precision,
 	"max_drive_hours_per_week" double precision,
+	"max_consecutive_drive_days" integer,
 	"water_refill_days" integer,
 	"blackwater_refill_days" integer,
+	"water_tracking_enabled" boolean,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -270,6 +339,12 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
+ ALTER TABLE "stops" ADD CONSTRAINT "stops_leg_id_legs_id_fk" FOREIGN KEY ("leg_id") REFERENCES "public"."legs"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
  ALTER TABLE "tasks" ADD CONSTRAINT "tasks_trip_id_trips_id_fk" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
@@ -294,6 +369,24 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
+ ALTER TABLE "usage_events" ADD CONSTRAINT "usage_events_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "usage_events" ADD CONSTRAINT "usage_events_trip_id_trips_id_fk" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE set null ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "user_viewport_time" ADD CONSTRAINT "user_viewport_time_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
  ALTER TABLE "vehicles" ADD CONSTRAINT "vehicles_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
@@ -301,6 +394,7 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "chat_trip_idx" ON "chat_history" USING btree ("trip_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "costs_leg_idx" ON "costs" USING btree ("leg_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "otp_email_idx" ON "email_otp_codes" USING btree ("email");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "gpx_trip_idx" ON "gpx_trails" USING btree ("trip_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "gpx_leg_idx" ON "gpx_trails" USING btree ("leg_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "legs_trip_idx" ON "legs" USING btree ("trip_id");--> statement-breakpoint
@@ -309,8 +403,14 @@ CREATE INDEX IF NOT EXISTS "pois_trip_idx" ON "pois" USING btree ("trip_id");-->
 CREATE INDEX IF NOT EXISTS "pois_leg_idx" ON "pois" USING btree ("leg_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "route_links_route_idx" ON "route_links" USING btree ("route_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "routes_leg_idx" ON "routes" USING btree ("leg_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stops_leg_idx" ON "stops" USING btree ("leg_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tasks_trip_idx" ON "tasks" USING btree ("trip_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tasks_leg_idx" ON "tasks" USING btree ("leg_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "trips_user_idx" ON "trips" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "trips_template_idx" ON "trips" USING btree ("is_template");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "trips_user_name_unique_idx" ON "trips" USING btree ("user_id","trip_name_ci_key");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "usage_user_idx" ON "usage_events" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "usage_created_idx" ON "usage_events" USING btree ("created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "usage_provider_idx" ON "usage_events" USING btree ("provider");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "user_viewport_time_user_idx" ON "user_viewport_time" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "vehicles_user_idx" ON "vehicles" USING btree ("user_id");

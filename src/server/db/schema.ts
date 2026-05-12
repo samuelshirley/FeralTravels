@@ -15,9 +15,16 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
-// ============================================================================
-// Auth.js (NextAuth v5) — Drizzle adapter standard schema
-// ============================================================================
+/**
+ * Drizzle schema — single Postgres source of truth.
+ *
+ * Domain: `users` own `vehicles` and `trips`. A trip has `legs`; each leg has
+ * `routes` (path options), `stops` (waypoints), plus `costs` / `links`. Trip-wide:
+ * `pois`, `gpx_trails`, `tasks`, `chat_history`. `usage_events` + `user_viewport_time`
+ * feed ops/analytics. `app_meta` is misc key/value (e.g. one-off migrations).
+ *
+ * Auth: NextAuth adapter tables + `email_otp_codes` for magic-link codes.
+ */
 
 export const users = pgTable('users', {
   id: text('id')
@@ -27,15 +34,11 @@ export const users = pgTable('users', {
   email: text('email').unique(),
   emailVerified: timestamp('emailVerified', { mode: 'date' }),
   image: text('image'),
-  // Silently set at sign-in for the hardcoded admin allowlist. Never trust
-  // session.user.email alone — always cross-check this flag against the
-  // hardcoded ADMIN_ALLOWLIST in src/server/auth/admin.ts.
+  /** Mirrors admin allowlist at sign-in; never infer admin from email alone. */
   isAdmin: boolean('is_admin').default(false).notNull(),
-  // 'metric' | 'imperial' once the user chooses (Settings or onboarding).
-  // NULL = not chosen yet — first trip shows units_pick. Existing rows keep
-  // a value after migration; new signups omit this column until onboarding.
+  /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
-  /** When true, owning at least one vehicle fails profile completeness → trip workspace shows remediation. */
+  /** True ⇒ workspace prompts until vehicle profile fields are complete. */
   needsVehicleProfileRemediation: boolean('needs_vehicle_profile_remediation')
     .default(false)
     .notNull(),
@@ -84,10 +87,7 @@ export const verificationTokens = pgTable(
   })
 );
 
-// OTP codes for email sign-in. A 6-digit numeric code is generated when the
-// user submits their email on /login and emailed via Resend. The user enters
-// it on /login/verify; on success the code is deleted and a session is created.
-// Codes expire after 10 minutes; after 5 failed attempts the code is invalidated.
+/** Email OTP for /login — short-lived, attempt-limited; see `server/auth/otp.ts`. */
 export const emailOtpCodes = pgTable(
   'email_otp_codes',
   {
@@ -103,22 +103,9 @@ export const emailOtpCodes = pgTable(
   })
 );
 
-// ============================================================================
-// Application schema
-// ============================================================================
+// --- Trip planning (per-user) ---
 
-// Vehicle profile — intentionally narrow.
-//
-// We used to capture make/model, dimensions, full fuel breakdown
-// (spec + real-world economy + tank + fuel type + timing preference), and
-// fresh/black-water capacities. In practice almost none of that drove a real
-// planning decision — the only thing the fuel planner actually needed was an
-// "effective range between fuel stops" number, derived from
-// `(real_world_kmpl ?? fuel_economy_kmpl) × fuel_tank_l × 0.8`. Migration
-// 0007 collapses the lot into a single user-stated `refill_distance_km` ("I
-// like to refuel every ~X km") and asks the user directly. That's both
-// closer to how overlanders actually reason about refueling and dramatically
-// shorter to fill in during onboarding.
+/** Vehicle profile: refill cadence + drive/water caps; distances stored in km. */
 export const vehicles = pgTable(
   'vehicles',
   {
@@ -128,24 +115,14 @@ export const vehicles = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     isDefault: boolean('is_default').default(false).notNull(),
-    // User-stated refuel cadence: how far they want to drive between fuel
-    // stops, in kilometers. Used directly by the auto fuel planner as the
-    // effective range. NULL = no preference set yet (planner skips this
-    // vehicle until the user fills it in). Always stored in km regardless
-    // of users.units_pref — the UI converts on display/input.
+    /** Target km between fuel stops; null ⇒ planner skips until set. */
     refillDistanceKm: integer('refill_distance_km'),
-    // Drive limits
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
     maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
-    // Water (just the cadence — no tank capacities. Penny treats these as
-    // intervals between visits to a freshwater tap and to a dump station.)
     waterRefillDays: integer('water_refill_days'),
     blackwaterRefillDays: integer('blackwater_refill_days'),
-    /**
-     * Null = caravan/water gate not answered; remediation + onboarding ask.
-     * False = skip water cadence rows; True = enforce both water refill integers.
-     */
+    /** Null = not answered; false = ignore water fields; true = both integers required. */
     waterTrackingEnabled: boolean('water_tracking_enabled'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -164,27 +141,15 @@ export const trips = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     vehicleId: integer('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
-    /**
-     * DB-maintained: GENERATED ALWAYS AS (lower(trim(name))) STORED (migration 0015).
-     * Omitted on insert; used for case-insensitive unique trip names per user without an expression index (drizzle-kit #3062).
-     */
+    /** DB-generated `lower(trim(name))`; unique per user via index (see baseline migration). */
     tripNameCiKey: text('trip_name_ci_key'),
     startDate: text('start_date'),
     endDate: text('end_date'),
     status: text('status').default('planning').notNull(),
     isTemplate: boolean('is_template').default(false).notNull(),
-    // Tracks where the user is in the pre-Penny vehicle/preferences setup.
-    // 'not_started' — trip just created, nothing asked yet
-    // 'vehicle_pick' — user has vehicles on file; chat is asking "which one?"
-    // 'vehicle_new' — collecting new-vehicle fields in chat
-    // 'preferences' — collecting trip-level prefs (pace, fuel-stop cadence, etc.)
-    // 'ready' — last static question ("where do you want to go?") is active
-    // 'done' — handed off to Anthropic; chat is live replanning
+    /** Static onboarding pipeline before live Penny chat (`server/onboarding.ts`). */
     onboardingState: text('onboarding_state').default('not_started').notNull(),
-    /**
-     * User wants Google Directions routes that omit motorways (Maps `avoid=highways`).
-     * Penny merges this with explicit `get_route.avoid`; does not imply gravel-only.
-     */
+    /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -192,9 +157,6 @@ export const trips = pgTable(
   (t) => ({
     userIdx: index('trips_user_idx').on(t.userId),
     templateIdx: index('trips_template_idx').on(t.isTemplate),
-    // Trip names are unique per user, case-insensitive, ignoring surrounding
-    // whitespace. Enforced at the DB layer via trip_name_ci_key + unique index
-    // (migrations 0005, 0015) as a backstop for assertTripNameAvailable().
     userNameUnique: uniqueIndex('trips_user_name_unique_idx').on(t.userId, t.tripNameCiKey),
   })
 );
@@ -209,17 +171,7 @@ export const legs = pgTable(
     sortOrder: integer('sort_order').notNull(),
     title: text('title').notNull(),
     label: text('label'),
-    // Two-level grouping ("leg = user-stated destination jump, day = driving
-    // day inside it"). Each leg row is a *driving day* in user terms; the
-    // segment_* columns optionally tag which user-stated leg this day belongs
-    // to. Null on both = ungrouped (flat list rendering). When set, all
-    // consecutive driving days that share a segment_index render under one
-    // header in the UI. segment_name is what the user actually said
-    // ("Girona → Berlin"); segment_index gives a stable ordering inside the
-    // trip without depending on string comparisons.
-    //
-    // Backwards compatible: legs predating this column have NULL on both,
-    // and the UI falls back to the flat-list rendering for those trips.
+    /** Optional multi-day grouping header (`segment_name` + stable `segment_index`). */
     segmentIndex: integer('segment_index'),
     segmentName: text('segment_name'),
     startName: text('start_name'),
@@ -236,14 +188,8 @@ export const legs = pgTable(
     status: text('status').default('planning').notNull(),
     color: text('color'),
     notes: text('notes'),
-    // Lifecycle of the auto-fuel-stop computation for this leg.
-    // 'none'     — no fuel planning requested (e.g. short leg, or vehicle has no fuel data)
-    // 'pending'  — queued, waiting for the worker
-    // 'computing'— Google Places lookup in flight (UI shows a spinner)
-    // 'ready'    — fuel stops have been inserted into `stops`
-    // 'failed'   — lookup errored; UI should surface a retry affordance
+    /** Auto fuel planner: none | pending | computing | ready | failed — see `server/fuel.ts`. */
     fuelStatus: text('fuel_status').default('none').notNull(),
-    /** Last planFuelStopsForLeg error; cleared when status is not failed. */
     fuelPlanError: text('fuel_plan_error'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -349,14 +295,11 @@ export const routes = pgTable(
     surface: text('surface'),
     status: text('status').default('option').notNull(),
     gpxTrailId: integer('gpx_trail_id').references(() => gpxTrails.id, { onDelete: 'set null' }),
-    // Per-route destination: when a route represents an overnight option, the
-    // end coords here override the leg's end_lat/end_lng so tapping "Go"
-    // navigates to that specific spot. Null for routes that share the leg
-    // destination (e.g. plain road-route options).
+    /** Optional route-specific destination (e.g. alternate overnight); overrides leg end when set. */
     endLat: doublePrecision('end_lat'),
     endLng: doublePrecision('end_lng'),
     endName: text('end_name'),
-    endSource: text('end_source'), // 'google_places'|'manual' (legacy 'ioverlander'|'park4night' rows were migrated to 'manual' in 0003)
+    endSource: text('end_source'),
     endSourceUrl: text('end_source_url'),
     driveTimeMinutes: integer('drive_time_minutes'),
   },
@@ -381,10 +324,7 @@ export const routeLinks = pgTable(
   })
 );
 
-// First-class per-leg stops (fuel, water, food, overnight, rest, other). Routes
-// describe HOW you drive the leg; stops describe WHERE you pause along it. The
-// selected stops (status='selected') become waypoints in the leg's generated
-// Google Maps directions URL.
+/** Leg waypoints (fuel/water/food/overnight/…); `selected` rows feed Maps URLs. */
 export const stops = pgTable(
   'stops',
   {
@@ -393,28 +333,18 @@ export const stops = pgTable(
       .notNull()
       .references(() => legs.id, { onDelete: 'cascade' }),
     sortOrder: integer('sort_order').default(0).notNull(),
-    stopType: text('stop_type').notNull(), // 'fuel'|'water'|'food'|'overnight'|'rest'|'other'
-    status: text('status').default('option').notNull(), // 'option'|'selected'|'dismissed'
+    stopType: text('stop_type').notNull(),
+    status: text('status').default('option').notNull(),
     name: text('name').notNull(),
     lat: doublePrecision('lat'),
     lng: doublePrecision('lng'),
-    // Kilometers from the start of the leg (not from the previous stop).
-    // Computed by Penny or the caller; used to sort waypoints and to display
-    // fuel stops along the vehicle's effective range.
     distanceFromStartKm: doublePrecision('distance_from_start_km'),
     notes: text('notes'),
-    // Fuel-specific helpers (ignored for non-fuel stops).
-    fuelType: text('fuel_type'), // 'diesel'|'petrol'|'premium'|'lpg'|null
+    fuelType: text('fuel_type'),
     fuelAmountL: doublePrecision('fuel_amount_l'),
-    // Provenance
-    source: text('source'), // 'penny'|'user'|'google_places'|'osm' (legacy 'ioverlander'|'park4night' rows were migrated to 'manual' in 0003)
+    source: text('source'),
     sourceUrl: text('source_url'),
-    // Up to 2 alternate candidates for this stop, persisted by the auto-fuel
-    // planner so the UI can offer a swap dropdown without re-querying Google
-    // Places. Shape: [{ name, lat, lng, place_id, distance_km }]. Null when
-    // there are no alternates (user-authored stops, water/food types, etc.).
-    // Used by /api/stops/:id/swap-primary to atomically swap a stop's
-    // primary fields with one of its alternates.
+    /** Fuel-stop alternates for swap UI (`StopAlternative[]`). */
     alternatives: jsonb('alternatives').$type<StopAlternative[]>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -472,12 +402,7 @@ export const chatHistory = pgTable(
     role: text('role').notNull(),
     content: text('content').notNull(),
     changesMade: text('changes_made'),
-    // Distinguishes the deterministic onboarding form from live Anthropic
-    // chat, so the UI can render them differently and so we don't accidentally
-    // feed form-question/answer rows back into Anthropic as conversation history.
-    // 'form_question' — static Penny question during onboarding
-    // 'form_answer'   — user's typed/selected answer to a form_question
-    // 'ai'            — live Anthropic chat (both user + assistant turns)
+    /** `form_question` | `form_answer` | `ai` — onboarding vs live chat. */
     kind: text('kind').default('ai').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
@@ -491,20 +416,20 @@ export const appMeta = pgTable('app_meta', {
   value: text('value'),
 });
 
-// Records every billable external API call (Anthropic, etc.) so we can surface
-// a usage + cost estimate in the admin dashboard and rate-limit per user.
+/** Billable API usage (Anthropic, Directions, …) — admin + accounting. */
 export const usageEvents = pgTable(
   'usage_events',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
     userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
     tripId: integer('trip_id').references(() => trips.id, { onDelete: 'set null' }),
-    provider: text('provider').notNull(), // 'anthropic' | 'google_directions' | etc
+    provider: text('provider').notNull(),
     model: text('model'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
     requests: integer('requests').default(1).notNull(),
-    costMicrocents: bigint('cost_microcents', { mode: 'number' }), // 1¢ = 1,000,000 microcents
+    /** Stored in microcents (1¢ = 1_000_000). */
+    costMicrocents: bigint('cost_microcents', { mode: 'number' }),
     success: boolean('success').default(true).notNull(),
     errorMessage: text('error_message'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -516,8 +441,7 @@ export const usageEvents = pgTable(
   })
 );
 
-// Foreground time aggregate by viewport band (mobile / tablet / desktop), same
-// breakpoints as src/lib/useMediaQuery.ts. Upserted from the client reporter.
+/** Client-reported active seconds per viewport band (`useMediaQuery` breakpoints). */
 export const userViewportTime = pgTable(
   'user_viewport_time',
   {

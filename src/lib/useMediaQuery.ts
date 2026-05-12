@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 export type Viewport = 'mobile' | 'tablet' | 'desktop';
 
@@ -14,27 +14,25 @@ export const BREAKPOINTS = {
 } as const;
 
 export function useMediaQuery(query: string): boolean {
-  // Initialize synchronously from matchMedia when available so the FIRST
-  // client render already knows the viewport. The previous "always false"
-  // default caused a one-frame flicker where mobile-only UI (e.g. the
-  // BottomNav on /settings) flashed off then on after the useEffect ran —
-  // and on slower client navigations it could "stick" off until the next
-  // re-render, making the footer appear missing entirely (bug 2026-05-09).
+  // IMPORTANT: always initialize to `false` so the first client render
+  // matches SSR output exactly. The previous approach — reading
+  // window.matchMedia in useState's initializer — produced a value on the
+  // client that differed from what the server rendered, triggering React
+  // hydration errors #425 / #418 / #423 on every mobile page load.
   //
-  // SSR still gets `false` (no `window`), which is fine: client hydration
-  // immediately swaps to the correct value via the lazy initializer and
-  // there's no visible mismatch because we never SSR the BottomNav itself
-  // (it's only rendered when matches=true).
-  const [matches, setMatches] = useState(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return false;
-    return window.matchMedia(query).matches;
-  });
+  // The trade-off is a single post-hydration re-render where `matches`
+  // flips from false → true on mobile. Components that conditionally
+  // render based on viewport (MobileFooter, VehicleRemediationOverlay)
+  // were already doing this before the 2026-05-09 "sync init" change;
+  // the flicker is sub-frame and invisible because the useEffect fires
+  // in the same microtask batch as the hydration commit.
+  const [matches, setMatches] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
     const mql = window.matchMedia(query);
     const apply = () => setMatches(mql.matches);
-    apply();
+    apply(); // sync to current value immediately post-hydration
     mql.addEventListener('change', apply);
     return () => mql.removeEventListener('change', apply);
   }, [query]);

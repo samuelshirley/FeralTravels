@@ -4,6 +4,7 @@ import { isAdmin } from '@/server/auth/guards';
 import { listTripsForUser } from '@/server/repos/trips';
 import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import { getUnitsPref } from '@/server/repos/users';
+import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import AppNavbar from '@/components/AppNavbar';
 import MobileFooter from '@/components/MobileFooter';
 import { UnitsProvider } from '@/components/UnitsContext';
@@ -24,6 +25,21 @@ export default async function TripsPage() {
     getUnitsPref(userId),
     recalculateUserRemediationFlag(userId),
   ]);
+
+  // If user has vehicles with missing required fields, gate them through the
+  // Penny remediation chat before showing trips. We prefetch the snapshot here
+  // so the overlay renders instantly (no loading spinner for the first question).
+  if (needsVehicleRemediation) {
+    const snapshot = await getVehicleRemediationSnapshot(userId);
+    if (snapshot.needs_remediation && !snapshot.done && snapshot.question) {
+      return (
+        <UnitsProvider initialUnits={unitsPref}>
+          <VehicleRemediationOverlay initialSnapshot={snapshot} />
+        </UnitsProvider>
+      );
+    }
+  }
+
   const myTrips = allTrips.filter((t) => t.user_id === userId);
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== userId);
 
@@ -66,15 +82,8 @@ export default async function TripsPage() {
             canDeleteTemplates={admin}
           />
         </main>
-        {/*
-          Persistent mobile footer — phone users get the same 4-button nav
-          on every top-level page (trips list, settings, admin). 'list' is
-          highlighted here because /trips IS the trip list. Footer hides
-          itself on tablet/desktop.
-        */}
         <MobileFooter active="list" />
       </div>
-      {needsVehicleRemediation ? <VehicleRemediationOverlay /> : null}
     </UnitsProvider>
   );
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Vehicle } from '@/components/VehicleProfileSection';
+import { fetchVehicles } from '@/lib/vehicleCache';
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 
 interface Props {
@@ -31,7 +32,7 @@ export default function TripVehicleChip({
 
   const loadVehicles = useCallback(async () => {
     try {
-      const list = await apiFetch<Vehicle[]>('/api/vehicles');
+      const list = await fetchVehicles();
       setVehicles(list);
     } catch {
       setVehicles([]);

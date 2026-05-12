@@ -5,7 +5,9 @@ import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags'
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
 import { getUnitsPref } from '@/server/repos/users';
+import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import { UnitsProvider } from '@/components/UnitsContext';
+import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import TripWorkspace from './TripWorkspace';
 
 export const dynamic = 'force-dynamic';
@@ -28,18 +30,27 @@ export default async function TripPage({ params }: Props) {
   const isOwner = trip.user_id === session.user.id;
   if (!isOwner && !trip.is_template) notFound();
 
-  // Recompute from vehicles every load — the cached column defaults false and was
-  // never set when users only had the legacy auto-created empty default row.
-  const needsVehicleRemediation =
-    isOwner && (await recalculateUserRemediationFlag(session.user.id as string));
+  const userId = session.user.id as string;
+  const unitsPref = await getUnitsPref(userId);
+
+  // Gate: if the user has vehicles with missing required fields, show the
+  // Penny remediation chat BEFORE loading the trip workspace.
+  if (isOwner) {
+    const needsRemediation = await recalculateUserRemediationFlag(userId);
+    if (needsRemediation) {
+      const snapshot = await getVehicleRemediationSnapshot(userId);
+      if (snapshot.needs_remediation && !snapshot.done && snapshot.question) {
+        return (
+          <UnitsProvider initialUnits={unitsPref}>
+            <VehicleRemediationOverlay initialSnapshot={snapshot} />
+          </UnitsProvider>
+        );
+      }
+    }
+  }
+
   const admin = await isAdmin(session.user.email);
-  // Ship the most-recent page of chat with the HTML so the chat panel isn't
-  // empty on hard refresh. Older messages are loaded lazily via GET /api/chat.
   const initialChat = await getChatPage({ tripId });
-  // Seed the UnitsProvider so distance labels (and the secondary mi line for
-  // imperial users) render correctly on first paint, before the client has a
-  // chance to fetch /api/me.
-  const unitsPref = await getUnitsPref(session.user.id as string);
 
   return (
     <UnitsProvider initialUnits={unitsPref}>
@@ -53,7 +64,6 @@ export default async function TripPage({ params }: Props) {
         }}
         isAdmin={admin}
         initialChat={initialChat}
-        needsVehicleRemediation={needsVehicleRemediation}
         serverOnboardingState={trip.onboarding_state}
       />
     </UnitsProvider>

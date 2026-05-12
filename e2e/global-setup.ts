@@ -8,7 +8,7 @@
  *      identity every run — no unique signup emails — but app data is reset
  *      like a fresh account (see scripts/seed-e2e-fixture.ts).
  *
- *      The seed may set users.units_pref to NULL (see migration 0011). If the
+ *      The seed may set users.units_pref to NULL until onboarding. If the
  *      DB still has NOT NULL on that column, run `npm run db:push` (or
  *      `npm run ship`, which syncs the schema before E2E) so Neon matches
  *      schema.ts before Playwright runs.
