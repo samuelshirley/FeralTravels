@@ -125,6 +125,11 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         {rightSlot}
         <div ref={ref} style={{ position: 'relative' }}>
           <button
+            type="button"
+            className={
+              'tp-app-navbar__account-btn ' +
+              (hasPhoto ? 'tp-app-navbar__account-btn--photo' : 'tp-app-navbar__account-btn--initials')
+            }
             onClick={() => setOpen((v) => !v)}
             style={{
               width: 32,
@@ -270,6 +275,27 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         room to breathe.
       */}
       <style jsx>{`
+        .tp-app-navbar__account-btn {
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Native button :active / :focus can repaint with system colors and wash out
+           initials (white text on cream). Lock the same palette through press + focus. */
+        .tp-app-navbar__account-btn--initials:hover,
+        .tp-app-navbar__account-btn--initials:active,
+        .tp-app-navbar__account-btn--initials:focus,
+        .tp-app-navbar__account-btn--initials:focus-visible {
+          background: var(--tp-primary-muted) !important;
+          color: var(--tp-primary) !important;
+        }
+
+        .tp-app-navbar__account-btn--photo:hover,
+        .tp-app-navbar__account-btn--photo:active,
+        .tp-app-navbar__account-btn--photo:focus,
+        .tp-app-navbar__account-btn--photo:focus-visible {
+          color: var(--tp-on-primary) !important;
+        }
+
         @media (max-width: 480px) {
           .tp-app-navbar {
             padding: 8px 12px !important;
