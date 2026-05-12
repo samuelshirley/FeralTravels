@@ -3,10 +3,9 @@
  *
  *   1. Sanity-check the env. Tests will fail in confusing ways if
  *      DATABASE_URL is missing — fail loud here instead.
- *   2. Idempotently **wipe all trips + vehicles** for the fixture user, then
- *      seed one canonical "E2E Fixture Trip" + vehicle again. Same Auth
- *      identity every run — no unique signup emails — but app data is reset
- *      like a fresh account (see scripts/seed-e2e-fixture.ts).
+ *   2. Idempotently **wipe all trips + vehicles** for each seeded E2E persona
+ *      (primary planner + remediation), then recreate their canonical vans +
+ *      trips — see scripts/seed-e2e-fixture.ts. Same Auth identities every run.
  *
  *      The seed may set users.units_pref to NULL until onboarding. If the
  *      DB still has NOT NULL on that column, run `npm run db:push` (or

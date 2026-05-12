@@ -9,7 +9,7 @@ import AppNavbar from '@/components/AppNavbar';
 import VehicleProfileSection from '@/components/VehicleProfileSection';
 import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
-import MobileFooter from '@/components/MobileFooter';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -226,7 +226,7 @@ export default async function SettingsPage() {
             </>
           )}
         </div>
-        <MobileFooter active="settings" />
+
       </div>
     </UnitsProvider>
   );

@@ -11,13 +11,10 @@
 #                              app expect columns to match schema.ts — running
 #                              Playwright first against a stale Neon would
 #                              fail (e.g. nullable units_pref).
-#   2. playwright test       → full E2E suite against a self-spawned
-#                              `next start`. Catches broken login,
-#                              broken vehicle CRUD, and broken Penny
-#                              before they hit production. The webServer
-#                              is configured in playwright.config.ts;
-#                              the suite reuses .next/ so iterating is
-#                              fast (~5s build after the first run).
+#   2. E2E fixture seed +
+#      playwright test      → `npm run e2e:seed` (planner + remediation personas),
+#                              then full Playwright suite (`next start`).
+#                              Global-setup re-runs the seed (idempotent).
 #   3. If the working tree is dirty, stages + commits everything with the
 #      message you pass as $1 (default: "dev: ship <timestamp>").
 #   4. git push origin HEAD  → triggers a Vercel deploy.
@@ -47,14 +44,17 @@
 #     db:push locally IS running it against prod. That's by design for
 #     solo-dev mode; splitting DBs later means running the db:push step
 #     with a prod DATABASE_URL instead.
-#   - The E2E suite also runs against the same Neon DB. It seeds a fixed
-#     fixture user + trip on first run and cleans up its own
-#     `playwright-*` rows when finished, so it's safe to run repeatedly.
+#   - The E2E suite runs against Neon; `npm run ship` invokes `npm run e2e:seed`
+#     before Playwright so both seeded personas exist in the log explicitly.
+#     Playwright global-setup runs the seed again idempotently. `playwright-*`
+#     rows created mid-suite are scrubbed at teardown.
 #   - The Penny submit-trip E2E test calls Anthropic for real, costing
 #     ~$0.05–0.20 per ship. Set SKIP_E2E=1 if you're shipping at high
 #     velocity and have other coverage in place.
-#   - Vercel deploys asynchronously; this script returns as soon as the
-#     push is accepted, not when the build finishes.
+#   - **Tests before push:** if Playwright fails, this script exits and never
+#     runs `git push`, so Vercel never gets the commit. Bypass only with SKIP_E2E=1.
+#   - Vercel deploy starts after a successful push; the script exits before push
+#     when CI steps fail above.
 #   - db:push and db:migrate run before E2E (step 1b) and again after push
 #     (steps 5–6); both pairs are idempotent.
 
@@ -99,14 +99,19 @@ else
   npm run --silent db:migrate || warn "db:migrate returned non-zero before E2E"
 fi
 
-# ── 2. e2e (Playwright) ────────────────────────────────────────────────────
-# Spins up `next start` on its own port, runs the suite (login, vehicle CRUD,
-# existing trip, Penny submit, map render), tears the server back down, and
-# scrubs any test-created rows from the shared Neon DB. The OTP E2E test
-# auto-skips when E2E_OTP_EMAIL isn't set.
+# ── 2. e2e seed + playwright ───────────────────────────────────────────────
+# Full suite: deterministic planner persona + remediation persona (see scripts/
+# seed-e2e-fixture.ts). Seed runs once here so `ship` always shows that step,
+# then again in Playwright global-setup (idempotent wipe + rebuild).
 if [ "${SKIP_E2E:-}" = "1" ]; then
   warn "SKIP_E2E=1 set — skipping E2E suite (last-resort use only)"
 else
+  step "E2E fixture seed (planner + remediation personas)"
+  if [ ! -f .env ]; then
+    die ".env missing — cannot run e2e:seed (needs DATABASE_URL)"
+  fi
+  npm run --silent e2e:seed || die "e2e:seed failed — fix DATABASE_URL / schema and retry"
+
   step "Running Playwright E2E suite"
   # Ensure browser binaries exist (cheap no-op when already installed,
   # but saves a confusing "Executable doesn't exist" wall-of-errors

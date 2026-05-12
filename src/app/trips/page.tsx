@@ -4,12 +4,9 @@ import { isAdmin } from '@/server/auth/guards';
 import { listTripsForUser } from '@/server/repos/trips';
 import { getUnitsPref } from '@/server/repos/users';
 import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
-import { logVehicleRemediationGate } from '@/server/vehicleRemediationGateLog';
 import AppNavbar from '@/components/AppNavbar';
-import MobileFooter from '@/components/MobileFooter';
-import TripsClientRemediationFence from '@/components/TripsClientRemediationFence';
+
 import { UnitsProvider } from '@/components/UnitsContext';
-import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import NewTripButton from './NewTripButton';
 import TripsList from './TripsList';
 
@@ -26,32 +23,21 @@ export default async function TripsPage() {
     getUnitsPref(userId),
   ]);
 
-  const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
-  logVehicleRemediationGate('trips/index', {
-    userId,
-    overlay: remediationSnapshot.needs_remediation && !remediationSnapshot.done,
-    needs_remediation: remediationSnapshot.needs_remediation,
-    done: remediationSnapshot.done,
-  });
+  const myTrips = allTrips.filter((t) => t.user_id === userId);
 
-  // If user has vehicles with missing required fields, gate them through the
-  // Penny remediation chat before showing trips. We prefetch the snapshot here
-  // so the overlay renders instantly (no loading spinner for the first question).
-  // `getVehicleRemediationSnapshot` reconciles the persisted flag from live rows.
-  if (remediationSnapshot.needs_remediation && !remediationSnapshot.done) {
-    return (
-      <UnitsProvider initialUnits={unitsPref}>
-        <VehicleRemediationOverlay initialSnapshot={remediationSnapshot} returnTo="/trips" />
-      </UnitsProvider>
-    );
+  // If user has vehicles with missing required fields, redirect them to their
+  // most recent trip where the ChatPanel remediation form will collect the data.
+  // No SSR overlay — avoids hydration mismatches on mobile.
+  const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
+  if (remediationSnapshot.needs_remediation && !remediationSnapshot.done && myTrips.length > 0) {
+    const latestTrip = [...myTrips].sort((a, b) => b.id - a.id)[0];
+    redirect(`/trips/${latestTrip.id}`);
   }
 
-  const myTrips = allTrips.filter((t) => t.user_id === userId);
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== userId);
 
   return (
     <UnitsProvider initialUnits={unitsPref}>
-      <TripsClientRemediationFence>
       <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={{
@@ -89,9 +75,8 @@ export default async function TripsPage() {
             canDeleteTemplates={admin}
           />
         </main>
-        <MobileFooter active="list" />
+
       </div>
-      </TripsClientRemediationFence>
     </UnitsProvider>
   );
 }

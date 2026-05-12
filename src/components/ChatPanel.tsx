@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, OnboardingState } from '@/types/trip';
 import { tripApi, apiFetch } from '@/lib/api';
 import OnboardingForm from '@/components/OnboardingForm';
+import VehicleRemediationForm from '@/components/VehicleRemediationForm';
 
 interface ChatPanelProps {
   tripId: number;
@@ -14,6 +15,8 @@ interface ChatPanelProps {
    * walks the user through picking/creating a vehicle before Penny takes over.
    */
   onboardingState?: OnboardingState;
+  /** When true, show vehicle remediation questions before normal chat. */
+  needsVehicleRemediation?: boolean;
   onTripUpdated: () => void;
   onActivity?: (event: 'thinking' | 'response' | 'error' | 'fuel-planning') => void;
   readonly?: boolean;
@@ -92,11 +95,14 @@ export default function ChatPanel({
   initialMessages,
   initialHasMore = false,
   onboardingState = 'done',
+  needsVehicleRemediation = false,
   onTripUpdated,
   onActivity,
   readonly = false,
 }: ChatPanelProps) {
   const isOnboarding = onboardingState !== 'done' && !readonly;
+  const [remediationDone, setRemediationDone] = useState(false);
+  const showRemediation = needsVehicleRemediation && !remediationDone && !isOnboarding && !readonly;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -995,6 +1001,47 @@ export default function ChatPanel({
         >
           Demo trip — clone it from the trips list to chat with Penny.
         </div>
+      ) : showRemediation ? (
+        <VehicleRemediationForm
+          onAnswer={(userLabel, questionLabel) => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now(),
+                trip_id: tripId,
+                role: 'assistant' as const,
+                content: questionLabel,
+                kind: 'form_question' as const,
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+              {
+                id: Date.now() + 1,
+                trip_id: tripId,
+                role: 'user' as const,
+                content: userLabel,
+                kind: 'form_answer' as const,
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }}
+          onComplete={() => {
+            setRemediationDone(true);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now(),
+                trip_id: tripId,
+                role: 'assistant' as const,
+                content: 'Vehicle profile updated! You\'re all set to plan your trip.',
+                kind: 'ai' as const,
+                changes_made: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }}
+        />
       ) : isOnboarding ? (
         <OnboardingForm
           tripId={tripId}

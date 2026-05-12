@@ -19,7 +19,7 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
-import MobileFooter from '@/components/MobileFooter';
+
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
 import styles from './admin.module.css';
@@ -694,7 +694,7 @@ export default async function AdminPage() {
           />
         </section>
       </main>
-      <MobileFooter />
+
     </div>
   );
 }

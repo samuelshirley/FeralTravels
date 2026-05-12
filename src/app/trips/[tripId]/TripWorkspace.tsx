@@ -11,10 +11,7 @@ import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
-import { tripApi, apiFetch } from '@/lib/api';
-import VehicleRemediationOverlay, {
-  type VehicleRemediationClientSnapshot,
-} from '@/components/VehicleRemediationOverlay';
+import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
@@ -33,6 +30,7 @@ interface Props {
   isAdmin?: boolean;
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
   serverOnboardingState?: OnboardingState;
+  needsVehicleRemediation?: boolean;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -82,6 +80,7 @@ export default function TripWorkspace({
   isAdmin = false,
   initialChat,
   serverOnboardingState,
+  needsVehicleRemediation = false,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -108,8 +107,6 @@ export default function TripWorkspace({
   // the pull gesture only engages when the itinerary tab is actually at
   // scrollTop=0 (vs the window, which is pinned on mobile).
   const [mobileListEl, setMobileListEl] = useState<HTMLDivElement | null>(null);
-  const [vehicleGateSnapshot, setVehicleGateSnapshot] =
-    useState<VehicleRemediationClientSnapshot | null>(null);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -170,25 +167,6 @@ export default function TripWorkspace({
     if (viewport !== 'mobile') setUnread(0);
   }, [mobileTab, viewport]);
 
-  useEffect(() => {
-    if (readonly) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const data = await apiFetch<VehicleRemediationClientSnapshot>(
-          '/api/me/vehicle-remediation'
-        );
-        if (!cancelled && data.needs_remediation && !data.done) {
-          setVehicleGateSnapshot(data);
-        }
-      } catch {
-        // Non-fatal: workspace stays usable if the snapshot API fails briefly.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [readonly, tripId]);
 
   // ---------------------------------------------------------------------------
   // Auto-replan with FORWARD-ONLY scoping.
@@ -299,15 +277,6 @@ export default function TripWorkspace({
     }, 3000);
     return () => clearTimeout(t);
   }, [legFingerprints, readonly, trip, replanBusy]);
-
-  if (!readonly && vehicleGateSnapshot) {
-    return (
-      <VehicleRemediationOverlay
-        initialSnapshot={vehicleGateSnapshot}
-        returnTo={`/trips/${tripId}`}
-      />
-    );
-  }
 
   const effectiveOnboardingState: OnboardingState =
     trip?.onboarding_state ?? serverOnboardingState ?? 'not_started';
@@ -455,6 +424,7 @@ export default function TripWorkspace({
       // for the stepwise OnboardingForm. Defaulting to 'done' on readonly /
       // demo trips is safe because ChatPanel also guards on `!readonly`.
       onboardingState={trip.onboarding_state}
+      needsVehicleRemediation={needsVehicleRemediation}
       onTripUpdated={loadTrip}
       onActivity={handleChatActivity}
       readonly={readonly}

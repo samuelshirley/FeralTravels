@@ -1,14 +1,14 @@
 # E2E testing modes (users and data)
 
-There are three intentional patterns. They share the same Neon database (solo-dev / CI); naming and cleanup keep them from stepping on each other.
+There are several intentional patterns. They share the same Neon database (solo-dev / CI); naming and cleanup keep them from stepping on each other.
 
-## 1. Stable fixture user + rebuilt seeded trip
+## 1. Seeded personas (stable emails, rebuilt graphs)
 
-**What it is:** One long-lived Auth user (`FIXTURE_EMAIL` in [`fixtures/constants.ts`](fixtures/constants.ts)) whose **all trips and vehicles are removed** at the start of each suite, then one canonical **"E2E Fixture Van"** and **"E2E Fixture Trip"** (two legs) are inserted fresh.
+**What it is:** Long-lived Auth users recreated each suite at known emails — **primary planner** (`FIXTURE_EMAIL`) with a complete default van + `"E2E Fixture Trip"`, and **remediation persona** (`REMEDIATION_FIXTURE_EMAIL`) with an incomplete van + `"E2E Remediation Trip"`. Separate users so remediation specs never contend with playwright throwaway trips on the planner account.
 
-**How it works:** [`global-setup.ts`](global-setup.ts) runs [`scripts/seed-e2e-fixture.ts`](../scripts/seed-e2e-fixture.ts), which upserts the `users` row, deletes every trip and vehicle for that user (cascade cleans legs, chat, …), clears onboarding/remediation-related user fields, then inserts the known fixture van + trip.
+**How it works:** [`global-setup.ts`](global-setup.ts) runs [`scripts/seed-e2e-fixture.ts`](../scripts/seed-e2e-fixture.ts), which upserts each `users` row, deletes **that user’s** trips and vehicles only, then inserts the canonical vehicle + trip for that persona.
 
-**Use when:** You need deterministic data without signing up a new email every run — same identity as “last time,” empty history except the re-seeded trip.
+**Use when:** You need deterministic rows without asserting numeric primary keys — look up by **trip/vehicle names** or use regex URL assertions; personas isolate cross-spec interference.
 
 **Concurrency:** Playwright [`playwright.config.ts`](../playwright.config.ts) runs **`workers: 1`**. More workers would execute multiple specs at once against the same fixture rows (races on fleet counts, trips, onboarding). Faster CI needs shard-based splits with separate databases, not extra workers, until suites use isolated users.
 
@@ -20,7 +20,7 @@ There are three intentional patterns. They share the same Neon database (solo-de
 
 **What it is:** Tests that need an **extra** trip or vehicle during the suite name it `playwright-<runId>-…` via [`playwrightName()`](fixtures/constants.ts).
 
-**How it works:** [`cleanup-e2e.ts`](../scripts/cleanup-e2e.ts) deletes those names at teardown. The next **`globalSetup` still wipes the entire fixture user** anyway, so this is mainly hygiene between rapid re-runs.
+**How it works:** [`cleanup-e2e.ts`](../scripts/cleanup-e2e.ts) deletes those names at teardown. The next **`globalSetup` still rebuilds seeded personas** anyway, so this is mainly hygiene between rapid re-runs.
 
 Helpers insert **targeted state** before navigation:
 
@@ -28,9 +28,10 @@ Helpers insert **targeted state** before navigation:
 |--------|--------|
 | [`createBlankPlanningTrip`](fixtures/test-trip.ts) | Empty trip, `onboarding_state=done`, optional default vehicle — Penny chat |
 | [`createOnboardingTrip`](fixtures/test-trip.ts) | `onboarding_state=not_started` — wizard |
-| [`createRemediationPlaywrightTrip`](fixtures/remediation-trip.ts) | Vehicle remediation flag + trip |
 
-**Examples:** [`penny-plan-trip.spec.ts`](penny-plan-trip.spec.ts), [`onboarding-flow.spec.ts`](onboarding-flow.spec.ts), [`vehicle-crud.spec.ts`](vehicle-crud.spec.ts), [`vehicle-remediation.spec.ts`](vehicle-remediation.spec.ts)
+**Examples:** [`penny-plan-trip.spec.ts`](penny-plan-trip.spec.ts), [`onboarding-flow.spec.ts`](onboarding-flow.spec.ts), [`vehicle-crud.spec.ts`](vehicle-crud.spec.ts)
+
+**Remediation:** Seeded remediation persona — [`loginAsE2eUser`](fixtures/auth.ts) with `REMEDIATION_FIXTURE_EMAIL`; see [`vehicle-remediation.spec.ts`](vehicle-remediation.spec.ts).
 
 ---
 
@@ -45,7 +46,7 @@ Helpers insert **targeted state** before navigation:
 
 **Use when:** You need confidence the **production login path** still works; OTP is skipped unless configured.
 
-[`loginAsFixtureUser`](fixtures/auth.ts) exists because Auth.js database sessions do not play nicely with the test backdoor — see comment in that file.
+[`loginAsFixtureUser`](fixtures/auth.ts) / [`loginAsE2eUser`](fixtures/auth.ts) exist because Auth.js database sessions do not play nicely with the test backdoor — see comment in that file.
 
 ---
 

@@ -51,11 +51,8 @@ const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // at an already-running app, e.g. a Vercel preview URL).
 const useExternalServer = !!process.env.E2E_BASE_URL;
 
-// All specs hit the same `FIXTURE_EMAIL` row in Neon; globalSetup resets
-// that user's trips/vehicles once per run — not once per concurrent test.
-// Parallel workers therefore race across spec files (flaky fleet counts, trips
-// disappearing mid-step). Keeping `workers` at 1 is required until suites use
-// isolated users or partitioned databases per shard.
+// Global setup resets seeded persona graphs once per run. `workers` stays 1 so
+// mid-suite playwright-* rows don't race unrelated specs until we shard DBs.
 
 export default defineConfig({
   testDir: path.join(__dirname, 'e2e'),

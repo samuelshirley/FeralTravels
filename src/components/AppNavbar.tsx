@@ -154,8 +154,12 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
                     color: 'var(--tp-on-primary)',
                   }
                 : {
-                    background: 'var(--tp-primary-muted)',
-                    color: 'var(--tp-primary)',
+                    // Use an opaque color instead of the 14%-opacity CSS var.
+                    // iOS standalone (PWA) mode applies UA button resets that
+                    // can override the translucent background, leaving the
+                    // initials invisible on white. A solid hex survives that.
+                    background: '#DFE5ED',
+                    color: '#4E7AB0',
                   }),
             }}
             aria-label="Account menu"
@@ -279,14 +283,19 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
           -webkit-tap-highlight-color: transparent;
         }
 
-        /* Native button :active / :focus can repaint with system colors and wash out
-           initials (white text on cream). Lock the same palette through press + focus. */
+        /* iOS standalone (PWA) mode and native button :active / :focus can
+           repaint with system colors, washing out initials. Pin the solid
+           palette across every state so the button is always legible. */
+        .tp-app-navbar__account-btn--initials {
+          background: #DFE5ED !important;
+          color: #4E7AB0 !important;
+        }
         .tp-app-navbar__account-btn--initials:hover,
         .tp-app-navbar__account-btn--initials:active,
         .tp-app-navbar__account-btn--initials:focus,
         .tp-app-navbar__account-btn--initials:focus-visible {
-          background: var(--tp-primary-muted) !important;
-          color: var(--tp-primary) !important;
+          background: #DFE5ED !important;
+          color: #4E7AB0 !important;
         }
 
         .tp-app-navbar__account-btn--photo:hover,

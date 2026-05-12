@@ -1,16 +1,14 @@
 /**
  * Single source of truth for E2E identifiers, prefixes, and timeouts.
  *
- * **How tests model users and data** (three modes — full detail in e2e/TESTING-MODES.md):
+ * **How tests model users and data** — full detail in e2e/TESTING-MODES.md:
  *
- * 1. **Stable fixture user + seeded trip** — `FIXTURE_EMAIL`, globalSetup runs
- *    `seed-e2e-fixture.ts`, deterministic "E2E Fixture Trip" (e.g. existing-trip.spec).
- * 2. **Same fixture user, wiped trips/vehicles each globalSetup** — stable
- *    email; all rows for that user cleared, then one canonical van + trip
- *    recreated. Plus `RUN_ID` + `playwrightName()` for mid-suite isolation;
- *    teardown scrubs `playwright-*`.
- * 3. **Real login flows** — optional OTP (`E2E_OTP_EMAIL`) or OAuth button checks;
- *    distinct from cookie-based `loginAsFixtureUser`.
+ * 1. **Seeded personas** — `FIXTURE_EMAIL` (planner) + `REMEDIATION_FIXTURE_EMAIL`
+ *    (incomplete vehicle gate); globalSetup runs `seed-e2e-fixture.ts` for both.
+ * 2. **Planner + `playwright-*` rows** — same primary user; mid-suite trips/vehicles
+ *    use `RUN_ID` + `playwrightName()`; teardown scrubs `playwright-*`.
+ * 3. **Real login flows** — optional OTP (`E2E_OTP_EMAIL`) or OAuth; distinct from
+ *    cookie-based `loginAsFixtureUser` / `loginAsE2eUser`.
  *
  * Why centralise this:
  *   - Several scripts need the same prefix (the seed creates rows with it,
@@ -35,6 +33,21 @@ export const FIXTURE_TRIP_NAME = 'E2E Fixture Trip';
 
 /** Seeded vehicle on the fixture user. Penny + the workspace use it. */
 export const FIXTURE_VEHICLE_NAME = 'E2E Fixture Van';
+
+/**
+ * **Remediation persona** — separate Auth user so remediation E2E never races
+ * the default planner fixture (no shared trips / vehicle IDs). Global seed
+ * wipes and rebuilds this user's graph like the primary fixture.
+ */
+export const REMEDIATION_FIXTURE_EMAIL =
+  process.env.E2E_REMEDIATION_FIXTURE_EMAIL || 'feral-e2e-remediation@feraltravels.test';
+
+export const REMEDIATION_USER_NAME = 'E2E Remediation Persona';
+
+export const REMEDIATION_TRIP_NAME = 'E2E Remediation Trip';
+
+/** Incomplete strict-driving profile; remediation flow fills the gaps. */
+export const REMEDIATION_VEHICLE_NAME = 'E2E Remediation Van';
 
 /**
  * Per-run identifier. Uses the high-resolution wall clock so two parallel

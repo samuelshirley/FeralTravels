@@ -7,8 +7,56 @@ import { getDb, schema } from './db';
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days, mirrors src/server/auth/otp.ts
 
 /**
- * Sign in as the seeded fixture user by creating a real Auth.js database
- * session row and dropping the cookie straight into the browser context.
+ * Sign in as any seeded E2E user by inserting an Auth.js database session +
+ * cookie (same mechanism as OTP sign-in — see fixtures header comment below).
+ */
+export async function loginAsE2eUser(page: Page, email: string, opts: { redirectTo?: string } = {}) {
+  const redirectTo = opts.redirectTo || '/trips';
+
+  const db = getDb();
+  const userRow = (
+    await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, email))
+      .limit(1)
+  )[0];
+  if (!userRow) {
+    throw new Error(
+      `[e2e/auth] E2E user ${email} not found. Did global setup run? Try \`npm run e2e:seed\`.`,
+    );
+  }
+
+  const sessionToken = randomUUID();
+  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
+  await db.insert(schema.sessions).values({
+    sessionToken,
+    userId: userRow.id,
+    expires,
+  });
+
+  const baseURL =
+    process.env.E2E_BASE_URL ||
+    `http://localhost:${process.env.E2E_PORT || 4444}`;
+  const url = new URL(baseURL);
+  await page.context().addCookies([
+    {
+      name: 'authjs.session-token',
+      value: sessionToken,
+      domain: url.hostname,
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+      expires: Math.floor(expires.getTime() / 1000),
+    },
+  ]);
+
+  await page.goto(redirectTo);
+}
+
+/**
+ * Sign in as the primary planner fixture user (`FIXTURE_EMAIL`).
  *
  * Why this instead of clicking the test-backdoor button:
  *   The app uses `session: { strategy: 'database' }`. Auth.js's
@@ -27,53 +75,5 @@ const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days, mirrors src/ser
  * Penny submit, map render).
  */
 export async function loginAsFixtureUser(page: Page, opts: { redirectTo?: string } = {}) {
-  const redirectTo = opts.redirectTo || '/trips';
-
-  const db = getDb();
-  const userRow = (
-    await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1)
-  )[0];
-  if (!userRow) {
-    throw new Error(
-      `[e2e/auth] Fixture user ${FIXTURE_EMAIL} not found. ` +
-        'Did global setup run? Try `npm run e2e:seed`.',
-    );
-  }
-
-  const sessionToken = randomUUID();
-  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
-  await db.insert(schema.sessions).values({
-    sessionToken,
-    userId: userRow.id,
-    expires,
-  });
-
-  // Dev cookie name: `authjs.session-token` (no __Secure- prefix because
-  // the test webServer serves over HTTP). The cookie domain must match
-  // the URL Playwright is hitting; we read it from the same env var the
-  // playwright config uses.
-  const baseURL =
-    process.env.E2E_BASE_URL ||
-    `http://localhost:${process.env.E2E_PORT || 4444}`;
-  const url = new URL(baseURL);
-  await page.context().addCookies([
-    {
-      name: 'authjs.session-token',
-      value: sessionToken,
-      domain: url.hostname,
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-      expires: Math.floor(expires.getTime() / 1000),
-    },
-  ]);
-
-  // Now navigate; the cookie is sent with the first request and the
-  // server resolves the session via DrizzleAdapter.
-  await page.goto(redirectTo);
+  return loginAsE2eUser(page, FIXTURE_EMAIL, opts);
 }

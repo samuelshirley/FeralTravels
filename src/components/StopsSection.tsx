@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
@@ -67,6 +67,41 @@ type NearbyRow = {
   distanceKm: number;
   within5Km: boolean;
 };
+
+/**
+ * Stable id for Nearby rows vs itinerary stops (coords when no place id).
+ * Survives leg card collapse/remount alongside module-level PARKS_NEARBY_CACHE.
+ */
+function nearbyRowKey(row: NearbyRow): string {
+  return row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+}
+
+/**
+ * Nearby Places payload cached per leg end anchor — component-local refs were
+ * lost when collapsing a leg unmouts StopsSection; this survives unmount.
+ */
+const PARKS_NEARBY_CACHE = new Map<
+  string,
+  { dogParks: NearbyRow[]; parks: NearbyRow[]; error?: string }
+>();
+
+function buildGooglePlacesItineraryKeySet(stopsArr: Stop[]): Set<string> {
+  const keys = new Set<string>();
+  for (const s of stopsArr) {
+    if (s.source !== 'google_places') continue;
+    if (s.stop_type !== 'overnight' && s.stop_type !== 'rest') continue;
+    if (s.status === 'dismissed') continue;
+    const m = s.source_url?.match(/place_id[:=]([^&?#'"]+)/);
+    if (m?.[1]) keys.add(m[1]);
+    if (s.lat != null && s.lng != null) keys.add(`${s.lat.toFixed(5)}:${s.lng.toFixed(5)}`);
+  }
+  return keys;
+}
+
+function googlePlacesSuggestionOnItinerary(row: NearbyRow, itineraryKeys: Set<string>): boolean {
+  if (row.placeId != null && itineraryKeys.has(row.placeId)) return true;
+  return itineraryKeys.has(`${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`);
+}
 
 /**
  * Quick haversine. We don't import from `@/lib/polyline` because that
@@ -145,10 +180,9 @@ export default function StopsSection({
   const [nearbyDog, setNearbyDog] = useState<NearbyRow[]>([]);
   const [nearbyParksGreen, setNearbyParksGreen] = useState<NearbyRow[]>([]);
   const [addingParkKey, setAddingParkKey] = useState<string | null>(null);
-
-  const parksCacheRef = useRef(
-    new Map<string, { dogParks: NearbyRow[]; parks: NearbyRow[]; error?: string }>()
-  );
+  /** User-chosen Places row keys (persist until leg anchor changes). */
+  const [pickedDogKey, setPickedDogKey] = useState<string | null>(null);
+  const [pickedParkKey, setPickedParkKey] = useState<string | null>(null);
 
   const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
   const pathname = usePathname();
@@ -179,10 +213,60 @@ export default function StopsSection({
     setStops(initialStops);
   }, [initialStops]);
 
+  const itineraryNearbyKeys = useMemo(() => buildGooglePlacesItineraryKeySet(stops), [stops]);
+
+  /** Reset category picks when the leg end anchor moves to another overnight area. */
+  useEffect(() => {
+    setPickedDogKey(null);
+    setPickedParkKey(null);
+  }, [parksMountKey]);
+
+  const topNearbyPair = useMemo(
+    () => pickTopPair(nearbyDog, nearbyParksGreen, 5),
+    [nearbyDog, nearbyParksGreen]
+  );
+
+  const primaryDogResolved = useMemo(() => {
+    if (nearbyDog.length === 0) return null;
+    if (pickedDogKey != null) {
+      const picked = nearbyDog.find((r) => nearbyRowKey(r) === pickedDogKey);
+      if (picked) return picked;
+    }
+    return topNearbyPair.dog;
+  }, [nearbyDog, pickedDogKey, topNearbyPair.dog]);
+
+  const primaryParkResolved = useMemo(() => {
+    if (nearbyParksGreen.length === 0) return null;
+    if (pickedParkKey != null) {
+      const picked = nearbyParksGreen.find((r) => nearbyRowKey(r) === pickedParkKey);
+      if (picked) return picked;
+    }
+    return topNearbyPair.park;
+  }, [nearbyParksGreen, pickedParkKey, topNearbyPair.park]);
+
+  const alternateDogRows = useMemo(
+    () =>
+      primaryDogResolved
+        ? nearbyDog.filter((r) => nearbyRowKey(r) !== nearbyRowKey(primaryDogResolved))
+        : [],
+    [nearbyDog, primaryDogResolved]
+  );
+
+  const alternateParkRows = useMemo(
+    () =>
+      primaryParkResolved
+        ? nearbyParksGreen.filter((r) => nearbyRowKey(r) !== nearbyRowKey(primaryParkResolved))
+        : [],
+    [nearbyParksGreen, primaryParkResolved]
+  );
+
+  const closestDogRow = nearbyDog[0] ?? null;
+  const closestParkRow = nearbyParksGreen[0] ?? null;
+
   useEffect(() => {
     if (!hasEndCoords || readonly || !parksMountKey || anchorLat == null || anchorLng == null)
       return;
-    const cached = parksCacheRef.current.get(parksMountKey);
+    const cached = PARKS_NEARBY_CACHE.get(parksMountKey);
     if (cached) {
       setNearbyDog(cached.dogParks);
       setNearbyParksGreen(cached.parks);
@@ -202,7 +286,7 @@ export default function StopsSection({
         const dogList = Array.isArray((data as any).dogParks) ? (data as any).dogParks : [];
         const parkList = Array.isArray((data as any).parks) ? (data as any).parks : [];
         const msg = typeof (data as any).error === 'string' ? (data as any).error : undefined;
-        parksCacheRef.current.set(parksMountKey, {
+        PARKS_NEARBY_CACHE.set(parksMountKey, {
           dogParks: dogList,
           parks: parkList,
           error: msg,
@@ -264,8 +348,7 @@ export default function StopsSection({
   }
 
   async function handleAddNearbyPlace(row: NearbyRow) {
-    const key =
-      row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+    const key = nearbyRowKey(row);
     if (addingParkKey) return;
     setAddingParkKey(key);
     try {
@@ -297,8 +380,7 @@ export default function StopsSection({
    * from the user directly and they can manage them by hand.
    */
   async function handleSetOvernight(row: NearbyRow) {
-    const key =
-      row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
+    const key = nearbyRowKey(row);
     if (addingParkKey) return;
     setAddingParkKey(key);
     try {
@@ -584,96 +666,45 @@ export default function StopsSection({
             nearbyParksGreen.length === 0 ? (
             <div style={{ fontSize: 11, color: 'var(--tp-danger)', lineHeight: 1.45 }}>{nearbyError}</div>
           ) : (
-            (() => {
-              // Curate to a single top dog park + a single top park that are
-              // ideally within ~5 km of each other (so the same camp serves
-              // both walks). Anything past that goes behind a "Show more"
-              // expander — the user told us the long flat list was too noisy.
-              const topPair = pickTopPair(nearbyDog, nearbyParksGreen, 5);
-              const restDog = nearbyDog.filter((r) => r !== topPair.dog);
-              const restParks = nearbyParksGreen.filter((r) => r !== topPair.park);
-              const hasMore = restDog.length > 0 || restParks.length > 0;
-              return (
-                <>
-                  <ParkSuggestionGroup
-                    label="DOG PARKS"
-                    rows={topPair.dog ? [topPair.dog] : []}
-                    readonly={readonly}
-                    accentColor="var(--tp-success)"
-                    accentBorder="rgba(74,139,122,0.35)"
-                    onAdd={handleAddNearbyPlace}
-                    onSetOvernight={handleSetOvernight}
-                    addingKey={addingParkKey}
-                    mapsHrefForRow={(row) =>
-                      row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
-                    }
-                  />
-                  <ParkSuggestionGroup
-                    label="PARKS"
-                    rows={topPair.park ? [topPair.park] : []}
-                    readonly={readonly}
-                    accentColor="var(--tp-accent-violet)"
-                    accentBorder="var(--tp-accent-violet-muted)"
-                    onAdd={handleAddNearbyPlace}
-                    onSetOvernight={handleSetOvernight}
-                    addingKey={addingParkKey}
-                    mapsHrefForRow={(row) =>
-                      row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)
-                    }
-                  />
-                  {hasMore && (
-                    <details style={{ marginTop: 4 }}>
-                      <summary
-                        style={{
-                          cursor: 'pointer',
-                          fontSize: 11,
-                          color: 'var(--tp-muted)',
-                          letterSpacing: '0.04em',
-                          padding: '4px 0',
-                        }}
-                      >
-                        Show more nearby places
-                      </summary>
-                      <div style={{ marginTop: 8 }}>
-                        {restDog.length > 0 && (
-                          <ParkSuggestionGroup
-                            label="MORE DOG PARKS"
-                            rows={restDog}
-                            readonly={readonly}
-                            accentColor="var(--tp-success)"
-                            accentBorder="rgba(74,139,122,0.35)"
-                            onAdd={handleAddNearbyPlace}
-                            addingKey={addingParkKey}
-                            mapsHrefForRow={(row) =>
-                              row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)
-                            }
-                          />
-                        )}
-                        {restParks.length > 0 && (
-                          <ParkSuggestionGroup
-                            label="MORE PARKS"
-                            rows={restParks}
-                            readonly={readonly}
-                            accentColor="var(--tp-accent-violet)"
-                            accentBorder="var(--tp-accent-violet-muted)"
-                            onAdd={handleAddNearbyPlace}
-                            addingKey={addingParkKey}
-                            mapsHrefForRow={(row) =>
-                              row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)
-                            }
-                          />
-                        )}
-                      </div>
-                    </details>
-                  )}
-                  {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
-                    <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>
-                      {nearbyError}
-                    </div>
-                  )}
-                </>
-              );
-            })()
+            <>
+              <ParkNearbyCategory
+                label="DOG PARKS"
+                primary={primaryDogResolved}
+                alternateRows={alternateDogRows}
+                closestRow={closestDogRow}
+                readonly={readonly}
+                accentColor="var(--tp-success)"
+                accentBorder="rgba(74,139,122,0.35)"
+                onPrimaryChange={(row) => setPickedDogKey(nearbyRowKey(row))}
+                onAdd={handleAddNearbyPlace}
+                onSetOvernight={handleSetOvernight}
+                addingKey={addingParkKey}
+                itineraryKeys={itineraryNearbyKeys}
+                mapsHrefForRow={(row) => row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)}
+                selectPrompt="More dog parks…"
+              />
+              <ParkNearbyCategory
+                label="PARKS"
+                primary={primaryParkResolved}
+                alternateRows={alternateParkRows}
+                closestRow={closestParkRow}
+                readonly={readonly}
+                accentColor="var(--tp-accent-violet)"
+                accentBorder="var(--tp-accent-violet-muted)"
+                onPrimaryChange={(row) => setPickedParkKey(nearbyRowKey(row))}
+                onAdd={handleAddNearbyPlace}
+                onSetOvernight={handleSetOvernight}
+                addingKey={addingParkKey}
+                itineraryKeys={itineraryNearbyKeys}
+                mapsHrefForRow={(row) => row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)}
+                selectPrompt="More parks…"
+              />
+              {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
+                <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>
+                  {nearbyError}
+                </div>
+              )}
+            </>
           )}
 
           <div
@@ -760,33 +791,38 @@ export default function StopsSection({
   );
 }
 
-function ParkSuggestionGroup({
+function ParkNearbyCategory({
   label,
-  rows,
+  primary,
+  alternateRows,
+  closestRow,
   readonly,
   accentColor,
   accentBorder,
+  onPrimaryChange,
   onAdd,
   onSetOvernight,
   addingKey,
   mapsHrefForRow,
+  itineraryKeys,
+  selectPrompt,
 }: {
   label: string;
-  rows: NearbyRow[];
+  primary: NearbyRow | null;
+  alternateRows: NearbyRow[];
+  closestRow: NearbyRow | null;
   readonly: boolean;
   accentColor: string;
   accentBorder: string;
+  onPrimaryChange: (row: NearbyRow) => void;
   onAdd: (row: NearbyRow) => void;
-  /**
-   * Optional. When provided, adds an "Add as overnight" primary button
-   * next to "Add as rest stop". Only the curated top-pick groups get this
-   * — the long "Show more" leftovers don't, to keep the affordance scarce.
-   */
   onSetOvernight?: (row: NearbyRow) => void;
   addingKey: string | null;
   mapsHrefForRow: (row: NearbyRow) => string;
+  itineraryKeys: Set<string>;
+  selectPrompt: string;
 }) {
-  if (!rows?.length) {
+  if (!primary) {
     return (
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 6, color: accentColor }}>
@@ -796,137 +832,184 @@ function ParkSuggestionGroup({
       </div>
     );
   }
+
+  const dedupe = nearbyRowKey(primary);
+  const mapsHref = mapsHrefForRow(primary);
+  const onTrip = googlePlacesSuggestionOnItinerary(primary, itineraryKeys);
+  const matchesClosest =
+    closestRow !== null && nearbyRowKey(primary) === nearbyRowKey(closestRow);
+  const busyAdd = addingKey !== null;
+  const buttonsDisabled = busyAdd || onTrip;
+
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, color: accentColor }}>
         {label}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rows.map((row, idx) => {
-          const dedupe =
-            row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
-          const mapsHref = mapsHrefForRow(row);
-          return (
-            <div
-              key={`${dedupe}-${idx}`}
-              style={{
-                paddingTop: idx === 0 ? 0 : 8,
-                paddingBottom: idx === rows.length - 1 ? 0 : 8,
-                borderTop: idx === 0 ? 'none' : '1px solid var(--tp-border)',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'baseline',
-                  gap: 6,
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-                  <span style={{ fontSize: 12, fontWeight: idx === 0 ? 600 : 400, color: 'var(--tp-text)' }}>
-                    {row.name}
-                  </span>{' '}
-                  {idx === 0 ? (
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        color: accentColor,
-                        border: `1px solid ${accentBorder}`,
-                        borderRadius: 3,
-                        padding: '2px 5px',
-                        marginLeft: 4,
-                      }}
-                    >
-                      Closest
-                    </span>
-                  ) : null}
-                  {!row.within5Km ? (
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        color: 'var(--tp-muted)',
-                        border: '1px solid var(--tp-border)',
-                        borderRadius: 3,
-                        padding: '2px 5px',
-                        marginLeft: 4,
-                      }}
-                    >
-                      Outside 5 km
-                    </span>
-                  ) : null}
-                  <Distance
-                    km={row.distanceKm}
-                    layout="inline"
-                    primaryOverride={`${row.distanceKm.toFixed(1)} km`}
-                    style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                <a
-                  href={mapsHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'baseline',
+              gap: 6,
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tp-text)' }}>{primary.name}</span>{' '}
+              {matchesClosest ? (
+                <span
                   style={{
-                    fontSize: 11,
-                    padding: '3px 10px',
-                    borderRadius: 4,
-                    textDecoration: 'none',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
                     color: accentColor,
                     border: `1px solid ${accentBorder}`,
+                    borderRadius: 3,
+                    padding: '2px 5px',
+                    marginLeft: 4,
                   }}
                 >
-                  Maps ↗
-                </a>
-                {!readonly && onSetOvernight && (
-                  <button
-                    type="button"
-                    onClick={() => onSetOvernight(row)}
-                    disabled={addingKey !== null}
-                    style={{
-                      fontSize: 11,
-                      padding: '3px 10px',
-                      borderRadius: 4,
-                      cursor: addingKey !== null ? 'wait' : 'pointer',
-                      background: 'var(--tp-primary)',
-                      border: '1px solid var(--tp-primary)',
-                      color: 'var(--tp-on-primary)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {addingKey === dedupe ? 'Adding…' : 'Use as overnight'}
-                  </button>
-                )}
-                {!readonly && (
-                  <button
-                    type="button"
-                    onClick={() => onAdd(row)}
-                    disabled={addingKey !== null}
-                    style={{
-                      fontSize: 11,
-                      padding: '3px 10px',
-                      borderRadius: 4,
-                      cursor: addingKey !== null ? 'wait' : 'pointer',
-                      background: 'rgba(124,181,232,0.18)',
-                      border: '1px solid rgba(124,181,232,0.35)',
-                      color: 'var(--tp-primary)',
-                    }}
-                  >
-                    {addingKey === dedupe ? 'Adding…' : 'Add as rest stop'}
-                  </button>
-                )}
-              </div>
+                  Closest
+                </span>
+              ) : null}
+              {onTrip ? (
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: 'var(--tp-success)',
+                    border: '1px solid rgba(74,139,122,0.35)',
+                    borderRadius: 3,
+                    padding: '2px 5px',
+                    marginLeft: 4,
+                  }}
+                  title="This place is already on your itinerary above"
+                >
+                  On itinerary
+                </span>
+              ) : null}
+              {!primary.within5Km ? (
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: 'var(--tp-muted)',
+                    border: '1px solid var(--tp-border)',
+                    borderRadius: 3,
+                    padding: '2px 5px',
+                    marginLeft: 4,
+                  }}
+                >
+                  Outside 5 km
+                </span>
+              ) : null}
+              <Distance
+                km={primary.distanceKm}
+                layout="inline"
+                primaryOverride={`${primary.distanceKm.toFixed(1)} km`}
+                style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}
+              />
             </div>
-          );
-        })}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, alignItems: 'center' }}>
+            <a
+              href={mapsHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 11,
+                padding: '3px 10px',
+                borderRadius: 4,
+                textDecoration: 'none',
+                color: accentColor,
+                border: `1px solid ${accentBorder}`,
+              }}
+            >
+              Maps ↗
+            </a>
+            {!readonly && onSetOvernight && (
+              <button
+                type="button"
+                onClick={() => onSetOvernight(primary)}
+                disabled={buttonsDisabled}
+                style={{
+                  fontSize: 11,
+                  padding: '3px 10px',
+                  borderRadius: 4,
+                  cursor: busyAdd ? 'wait' : onTrip ? 'default' : 'pointer',
+                  background: 'var(--tp-primary)',
+                  border: '1px solid var(--tp-primary)',
+                  color: 'var(--tp-on-primary)',
+                  fontWeight: 600,
+                  opacity: onTrip ? 0.55 : 1,
+                }}
+              >
+                {addingKey === dedupe ? 'Adding…' : 'Use as overnight'}
+              </button>
+            )}
+            {!readonly && (
+              <button
+                type="button"
+                onClick={() => onAdd(primary)}
+                disabled={buttonsDisabled}
+                style={{
+                  fontSize: 11,
+                  padding: '3px 10px',
+                  borderRadius: 4,
+                  cursor: busyAdd ? 'wait' : onTrip ? 'default' : 'pointer',
+                  background: 'rgba(124,181,232,0.18)',
+                  border: '1px solid rgba(124,181,232,0.35)',
+                  color: 'var(--tp-primary)',
+                  opacity: onTrip ? 0.55 : 1,
+                }}
+              >
+                {addingKey === dedupe ? 'Adding…' : 'Add as rest stop'}
+              </button>
+            )}
+            {!readonly && alternateRows.length > 0 && (
+              <select
+                aria-label={selectPrompt}
+                title={selectPrompt}
+                value=""
+                onChange={(e) => {
+                  const idx = parseInt(e.target.value, 10);
+                  if (Number.isNaN(idx)) return;
+                  const picked = alternateRows[idx];
+                  if (picked) onPrimaryChange(picked);
+                  e.currentTarget.value = '';
+                }}
+                style={{
+                  fontSize: 10,
+                  background: 'transparent',
+                  border: '1px solid var(--tp-border)',
+                  color: 'var(--tp-muted)',
+                  cursor: 'pointer',
+                  padding: '3px 6px',
+                  borderRadius: 3,
+                  flexShrink: 0,
+                  maxWidth: 200,
+                }}
+              >
+                <option value="" disabled>
+                  ▾ {selectPrompt}
+                </option>
+                {alternateRows.map((alt, idx) => (
+                  <option key={nearbyRowKey(alt)} value={idx}>
+                    {alt.name} ({alt.distanceKm.toFixed(1)} km)
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
