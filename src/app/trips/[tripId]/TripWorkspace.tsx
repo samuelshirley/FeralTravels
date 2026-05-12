@@ -11,7 +11,10 @@ import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
-import { tripApi } from '@/lib/api';
+import { tripApi, apiFetch } from '@/lib/api';
+import VehicleRemediationOverlay, {
+  type VehicleRemediationClientSnapshot,
+} from '@/components/VehicleRemediationOverlay';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
@@ -19,6 +22,12 @@ const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
 interface Props {
   tripId: number;
+  /** From RSC `getTripFull` — hydrates navbar chrome before client `/api/trip` resolves. */
+  serverTrip: {
+    name: string;
+    vehicle_id: number | null;
+    prefer_avoid_highways: boolean;
+  };
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin?: boolean;
@@ -67,6 +76,7 @@ function ResizeHandle({ direction = 'horizontal' }: { direction?: 'horizontal' |
 
 export default function TripWorkspace({
   tripId,
+  serverTrip,
   readonly,
   user,
   isAdmin = false,
@@ -98,6 +108,8 @@ export default function TripWorkspace({
   // the pull gesture only engages when the itinerary tab is actually at
   // scrollTop=0 (vs the window, which is pinned on mobile).
   const [mobileListEl, setMobileListEl] = useState<HTMLDivElement | null>(null);
+  const [vehicleGateSnapshot, setVehicleGateSnapshot] =
+    useState<VehicleRemediationClientSnapshot | null>(null);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -157,6 +169,26 @@ export default function TripWorkspace({
     if (viewport === 'mobile' && mobileTab === 'chat') setUnread(0);
     if (viewport !== 'mobile') setUnread(0);
   }, [mobileTab, viewport]);
+
+  useEffect(() => {
+    if (readonly) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await apiFetch<VehicleRemediationClientSnapshot>(
+          '/api/me/vehicle-remediation'
+        );
+        if (!cancelled && data.needs_remediation && !data.done) {
+          setVehicleGateSnapshot(data);
+        }
+      } catch {
+        // Non-fatal: workspace stays usable if the snapshot API fails briefly.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readonly, tripId]);
 
   // ---------------------------------------------------------------------------
   // Auto-replan with FORWARD-ONLY scoping.
@@ -268,14 +300,46 @@ export default function TripWorkspace({
     return () => clearTimeout(t);
   }, [legFingerprints, readonly, trip, replanBusy]);
 
+  if (!readonly && vehicleGateSnapshot) {
+    return (
+      <VehicleRemediationOverlay
+        initialSnapshot={vehicleGateSnapshot}
+        returnTo={`/trips/${tripId}`}
+      />
+    );
+  }
+
   const effectiveOnboardingState: OnboardingState =
     trip?.onboarding_state ?? serverOnboardingState ?? 'not_started';
+
+  const loadingNavbarRightSlot = !readonly ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      <TripPreferAvoidHighwaysToggle
+        tripId={tripId}
+        initial={serverTrip.prefer_avoid_highways}
+        readonly={readonly}
+        onUpdated={loadTrip}
+        compact={viewport === 'mobile'}
+      />
+      <TripVehicleChip
+        tripId={tripId}
+        initialVehicleId={serverTrip.vehicle_id}
+        readonly={readonly}
+        onTripUpdated={loadTrip}
+      />
+    </div>
+  ) : undefined;
 
   if (loading) {
     return (
       <>
         <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <AppNavbar user={user} isAdmin={isAdmin} />
+        <AppNavbar
+          user={user}
+          isAdmin={isAdmin}
+          tripName={serverTrip.name}
+          rightSlot={loadingNavbarRightSlot}
+        />
         <div
           style={{
             flex: 1,
@@ -314,7 +378,7 @@ export default function TripWorkspace({
       <>
 
         <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <AppNavbar user={user} isAdmin={isAdmin} />
+        <AppNavbar user={user} isAdmin={isAdmin} tripName={serverTrip.name} />
         <div
           style={{
             flex: 1,

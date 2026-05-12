@@ -32,6 +32,8 @@ test.describe('Existing user with seeded trip', () => {
     await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
     await page.waitForURL(/\/trips\/\d+/, { timeout: 15_000 });
 
+    await expect(page.getByText('Trip not found')).not.toBeVisible({ timeout: 10_000 });
+
     // Seeded user: one complete default vehicle (fuel + strict driving + water gate)
     // and trip.vehicle_id pointed at it — Penny/fuel must not be blocked.
     await expect(page.getByRole('heading', { name: 'Update your vehicle' })).not.toBeVisible();

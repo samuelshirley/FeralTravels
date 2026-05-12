@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { tripApi, ApiError } from '@/lib/api';
 import { buildDogParkSearchUrl, buildParkSearchUrl } from '@/lib/maps';
 import { parseCoords, needsServerResolution } from '@/lib/coords';
+import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
 import Spinner from './Spinner';
 import Distance from './Distance';
 
@@ -148,6 +151,11 @@ export default function StopsSection({
   );
 
   const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
+  const pathname = usePathname();
+  const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
+  const setupReturnTarget = pathname && pathname.startsWith('/') ? pathname : `/trips/${tripId}`;
+  const vehicleSetupHref = `/vehicle-setup?returnTo=${encodeURIComponent(setupReturnTarget)}`;
+
   const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
   const anchorLat = legEndCoords.lat as number | undefined;
   const anchorLng = legEndCoords.lng as number | undefined;
@@ -411,7 +419,65 @@ export default function StopsSection({
           </div>
         )}
 
-        {!readonly && fuelStatus === 'failed' && (
+        {!readonly && fuelStatus === 'failed' && fuelErrorCategory === 'user_vehicle_profile' && (
+          <div
+            style={{
+              marginBottom: 8,
+              padding: '8px 10px',
+              background: 'rgba(78,122,176,0.08)',
+              border: '1px solid rgba(78,122,176,0.28)',
+              borderRadius: 5,
+              fontSize: 11,
+              color: 'var(--tp-text)',
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: 'var(--tp-primary)' }}>Finish your vehicle profile</strong> so we can plan fuel
+            stops along this leg. This is a saved-profile issue, not a broken map.
+            {fuelPlanError ? (
+              <>
+                {' '}
+                <span style={{ color: 'var(--tp-muted)' }}>{fuelPlanError}</span>
+              </>
+            ) : null}
+            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <Link
+                href={vehicleSetupHref}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '4px 10px',
+                  borderRadius: 4,
+                  background: 'var(--tp-primary)',
+                  color: 'var(--tp-on-primary)',
+                  textDecoration: 'none',
+                  display: 'inline-block',
+                }}
+              >
+                Open vehicle setup
+              </Link>
+              <Link
+                href="/settings"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '4px 10px',
+                  borderRadius: 4,
+                  border: '1px solid var(--tp-border)',
+                  color: 'var(--tp-primary)',
+                  textDecoration: 'none',
+                  display: 'inline-block',
+                }}
+              >
+                Settings → Vehicle profile
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {!readonly &&
+          fuelStatus === 'failed' &&
+          fuelErrorCategory !== 'user_vehicle_profile' && (
           <div
             style={{
               marginBottom: 8,
@@ -424,18 +490,27 @@ export default function StopsSection({
               lineHeight: 1.5,
             }}
           >
-            <strong>Fuel planning failed.</strong> We&apos;ll retry automatically the next time you edit a stop or
-            change the route.
+            <strong>
+              {fuelErrorCategory === 'platform_config'
+                ? 'Fuel planning paused (Places / Maps setup).'
+                : 'Fuel planning failed.'}{' '}
+            </strong>
+            We&apos;ll retry automatically the next time you edit a stop or change the route.
             {fuelPlanError ? (
               <>
                 {' '}
                 <span style={{ color: 'var(--tp-muted)' }}>{fuelPlanError}</span>
               </>
-            ) : (
+            ) : fuelErrorCategory === 'unknown' ? (
               <>
                 {' '}
                 (If this keeps happening, enable &quot;Places API (New)&quot; in Google Cloud and set
                 GOOGLE_MAPS_SERVER_API_KEY for server-side Places calls.)
+              </>
+            ) : (
+              <>
+                {' '}
+                Ask your host to verify Google Places / Directions credentials and quotas.
               </>
             )}
           </div>

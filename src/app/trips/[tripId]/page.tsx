@@ -1,11 +1,11 @@
 import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
-import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
-import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
+import { getTripFull } from '@/server/repos/trips';
 import { getUnitsPref } from '@/server/repos/users';
 import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
+import { logVehicleRemediationGate } from '@/server/vehicleRemediationGateLog';
 import { UnitsProvider } from '@/components/UnitsContext';
 import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import TripWorkspace from './TripWorkspace';
@@ -33,19 +33,31 @@ export default async function TripPage({ params }: Props) {
   const userId = session.user.id as string;
   const unitsPref = await getUnitsPref(userId);
 
-  // Gate: if the user has vehicles with missing required fields, show the
-  // Penny remediation chat BEFORE loading the trip workspace.
+  // Gate: if the user's vehicles have missing required fields, show the Penny
+  // remediation flow before trip workspace. Mirrors /trips hub (see
+  // getVehicleRemediationSnapshot — single source of truth).
+  // Only owners need their own profile for planning; template viewers read
+  // foreign trips and should not be blocked on their garage row.
   if (isOwner) {
-    const needsRemediation = await recalculateUserRemediationFlag(userId);
-    if (needsRemediation) {
-      const snapshot = await getVehicleRemediationSnapshot(userId);
-      if (snapshot.needs_remediation && !snapshot.done) {
-        return (
-          <UnitsProvider initialUnits={unitsPref}>
-            <VehicleRemediationOverlay initialSnapshot={snapshot} />
-          </UnitsProvider>
-        );
-      }
+    const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
+    const showOverlay = remediationSnapshot.needs_remediation && !remediationSnapshot.done;
+    logVehicleRemediationGate(`trip/${tripId}`, {
+      userId,
+      tripId,
+      isOwner,
+      showOverlay,
+      needs_remediation: remediationSnapshot.needs_remediation,
+      done: remediationSnapshot.done,
+    });
+    if (showOverlay) {
+      return (
+        <UnitsProvider initialUnits={unitsPref}>
+          <VehicleRemediationOverlay
+            initialSnapshot={remediationSnapshot}
+            returnTo={`/trips/${tripId}`}
+          />
+        </UnitsProvider>
+      );
     }
   }
 
@@ -56,6 +68,11 @@ export default async function TripPage({ params }: Props) {
     <UnitsProvider initialUnits={unitsPref}>
       <TripWorkspace
         tripId={tripId}
+        serverTrip={{
+          name: trip.name,
+          vehicle_id: trip.vehicle_id ?? null,
+          prefer_avoid_highways: trip.prefer_avoid_highways,
+        }}
         readonly={!isOwner}
         user={{
           name: session.user.name,

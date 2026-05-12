@@ -1,4 +1,5 @@
 import 'server-only';
+import { vehicleIsCompleteForRemediation } from '@/lib/vehicleProfile';
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
 import {
@@ -30,6 +31,12 @@ export interface PennyContext {
   vehicle: PennyVehicle | null;
   legs: PennyLeg[];
   recentChat: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /**
+   * True when the driver's saved vehicle row fails strict profile completeness
+   * (fuel + driving caps + caravan water gate). Penny must steer to Settings
+   * or `/vehicle-setup` instead of implying automated fuel/routing succeeded.
+   */
+  vehicle_profile_blocked: boolean;
 }
 
 /**
@@ -146,6 +153,10 @@ export async function buildPennyContext(
     kinds: ['ai'],
   });
 
+  const vehicle_profile_blocked =
+    vehicle == null ||
+    !vehicleIsCompleteForRemediation(vehicleRecordFromApiForCompleteness(vehicle));
+
   return {
     trip: {
       id: trip.id,
@@ -158,6 +169,20 @@ export async function buildPennyContext(
     vehicle: vehicle ? projectVehicle(vehicle) : null,
     legs: trip.legs.map(projectLeg),
     recentChat: chatPage.messages.map(projectChat),
+    vehicle_profile_blocked,
+  };
+}
+
+function vehicleRecordFromApiForCompleteness(v: VehicleApi): Record<string, unknown> {
+  return {
+    name: v.name,
+    refill_distance_km: v.refill_distance_km,
+    max_drive_hours_per_day: v.max_drive_hours_per_day,
+    max_drive_hours_per_week: v.max_drive_hours_per_week,
+    max_consecutive_drive_days: v.max_consecutive_drive_days,
+    water_refill_days: v.water_refill_days,
+    blackwater_refill_days: v.blackwater_refill_days,
+    water_tracking_enabled: v.water_tracking_enabled,
   };
 }
 

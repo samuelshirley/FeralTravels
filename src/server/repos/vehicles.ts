@@ -1,5 +1,6 @@
 import 'server-only';
 import { and, asc, eq, ne, count } from 'drizzle-orm';
+import { coerceOptionalFiniteNumber, coerceOptionalInt } from '@/lib/vehicleNumericCoercion';
 import { db } from '@/server/db/client';
 import { vehicles } from '@/server/db/schema';
 
@@ -23,12 +24,12 @@ function vehicleApi(r: VehicleRow) {
     user_id: r.userId,
     name: r.name,
     is_default: r.isDefault,
-    refill_distance_km: r.refillDistanceKm,
-    max_drive_hours_per_day: r.maxDriveHoursPerDay,
-    max_drive_hours_per_week: r.maxDriveHoursPerWeek,
-    max_consecutive_drive_days: r.maxConsecutiveDriveDays,
-    water_refill_days: r.waterRefillDays,
-    blackwater_refill_days: r.blackwaterRefillDays,
+    refill_distance_km: coerceOptionalInt(r.refillDistanceKm),
+    max_drive_hours_per_day: coerceOptionalFiniteNumber(r.maxDriveHoursPerDay),
+    max_drive_hours_per_week: coerceOptionalFiniteNumber(r.maxDriveHoursPerWeek),
+    max_consecutive_drive_days: coerceOptionalInt(r.maxConsecutiveDriveDays),
+    water_refill_days: coerceOptionalInt(r.waterRefillDays),
+    blackwater_refill_days: coerceOptionalInt(r.blackwaterRefillDays),
     water_tracking_enabled: r.waterTrackingEnabled,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),

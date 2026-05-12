@@ -2,11 +2,12 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { listTripsForUser } from '@/server/repos/trips';
-import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import { getUnitsPref } from '@/server/repos/users';
 import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
+import { logVehicleRemediationGate } from '@/server/vehicleRemediationGateLog';
 import AppNavbar from '@/components/AppNavbar';
 import MobileFooter from '@/components/MobileFooter';
+import TripsClientRemediationFence from '@/components/TripsClientRemediationFence';
 import { UnitsProvider } from '@/components/UnitsContext';
 import VehicleRemediationOverlay from '@/components/VehicleRemediationOverlay';
 import NewTripButton from './NewTripButton';
@@ -19,25 +20,30 @@ export default async function TripsPage() {
   if (!session?.user) redirect('/login');
 
   const userId = session.user.id as string;
-  const [allTrips, admin, unitsPref, needsVehicleRemediation] = await Promise.all([
+  const [allTrips, admin, unitsPref] = await Promise.all([
     listTripsForUser(userId),
     isAdmin(session.user.email),
     getUnitsPref(userId),
-    recalculateUserRemediationFlag(userId),
   ]);
+
+  const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
+  logVehicleRemediationGate('trips/index', {
+    userId,
+    overlay: remediationSnapshot.needs_remediation && !remediationSnapshot.done,
+    needs_remediation: remediationSnapshot.needs_remediation,
+    done: remediationSnapshot.done,
+  });
 
   // If user has vehicles with missing required fields, gate them through the
   // Penny remediation chat before showing trips. We prefetch the snapshot here
   // so the overlay renders instantly (no loading spinner for the first question).
-  if (needsVehicleRemediation) {
-    const snapshot = await getVehicleRemediationSnapshot(userId);
-    if (snapshot.needs_remediation && !snapshot.done) {
-      return (
-        <UnitsProvider initialUnits={unitsPref}>
-          <VehicleRemediationOverlay initialSnapshot={snapshot} />
-        </UnitsProvider>
-      );
-    }
+  // `getVehicleRemediationSnapshot` reconciles the persisted flag from live rows.
+  if (remediationSnapshot.needs_remediation && !remediationSnapshot.done) {
+    return (
+      <UnitsProvider initialUnits={unitsPref}>
+        <VehicleRemediationOverlay initialSnapshot={remediationSnapshot} returnTo="/trips" />
+      </UnitsProvider>
+    );
   }
 
   const myTrips = allTrips.filter((t) => t.user_id === userId);
@@ -45,6 +51,7 @@ export default async function TripsPage() {
 
   return (
     <UnitsProvider initialUnits={unitsPref}>
+      <TripsClientRemediationFence>
       <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={{
@@ -84,6 +91,7 @@ export default async function TripsPage() {
         </main>
         <MobileFooter active="list" />
       </div>
+      </TripsClientRemediationFence>
     </UnitsProvider>
   );
 }

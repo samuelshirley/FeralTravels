@@ -33,7 +33,7 @@ type RemediationQuestion = {
   multiline?: boolean;
 };
 
-interface RemediationSnap {
+export interface VehicleRemediationClientSnapshot {
   needs_remediation: boolean;
   done: boolean;
   active_vehicle: { id: number; name: string } | null;
@@ -48,7 +48,7 @@ interface OverlayMsg {
 }
 
 function answerLabelFromSubmit(
-  q: RemediationSnap['question'],
+  q: VehicleRemediationClientSnapshot['question'],
   value: unknown,
   unitsPref: Parameters<typeof humanizeVehicleProfileAnswer>[2]
 ): string {
@@ -73,17 +73,32 @@ function appendDeduped(prev: OverlayMsg[], msg: OverlayMsg): OverlayMsg[] {
   return [...prev, msg];
 }
 
-interface OverlayProps {
-  /** SSR-prefetched snapshot — skips the initial client-side fetch. */
-  initialSnapshot?: RemediationSnap;
+function safeInternalReturnTo(path: string | undefined): string | null {
+  const v = path?.trim();
+  if (!v || !v.startsWith('/') || v.startsWith('//') || v.includes('\r') || v.includes('\n')) {
+    return null;
+  }
+  return v;
 }
 
-export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayProps = {}) {
+interface OverlayProps {
+  /** SSR-prefetched snapshot — skips the initial client-side fetch. */
+  initialSnapshot?: VehicleRemediationClientSnapshot;
+  /** Same-origin path only; after completion we navigate here instead of refresh-only. */
+  returnTo?: string;
+}
+
+export default function VehicleRemediationOverlay({
+  initialSnapshot,
+  returnTo,
+}: OverlayProps = {}) {
   const router = useRouter();
   const viewport = useViewport();
   const { units } = useUnits();
 
-  const [snapshot, setSnapshot] = useState<RemediationSnap | null>(initialSnapshot ?? null);
+  const [snapshot, setSnapshot] = useState<VehicleRemediationClientSnapshot | null>(
+    initialSnapshot ?? null
+  );
   const [loading, setLoading] = useState(!initialSnapshot);
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -108,7 +123,7 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
 
   const fetchSnapshot = useCallback(async (): Promise<boolean> => {
     try {
-      const data = await apiFetch<RemediationSnap>('/api/me/vehicle-remediation');
+      const data = await apiFetch<VehicleRemediationClientSnapshot>('/api/me/vehicle-remediation');
       setSnapshot(data);
       setDraft('');
       setError(null);
@@ -146,7 +161,7 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
       const userLabel = answerLabelFromSubmit(q, value, units);
       setMsgs((prev) => appendDeduped(prev, { role: 'user', content: userLabel }));
 
-      const data = await apiFetch<RemediationSnap>('/api/me/vehicle-remediation', {
+      const data = await apiFetch<VehicleRemediationClientSnapshot>('/api/me/vehicle-remediation', {
         method: 'POST',
         body: { questionKey: q.key, value },
       });
@@ -154,6 +169,17 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
       if (data.done || !data.needs_remediation) {
         setCompleted(true);
         setDraft('');
+        const dest = safeInternalReturnTo(returnTo);
+        /* When returnTo equals the current URL (e.g. /trips SSR gate),
+         * replace() is effectively a no-op and RSC never re-run — we'd stay stuck
+         * on this client tree. refresh() pulls the lifted server overlay away. */
+        if (
+          typeof window !== 'undefined' &&
+          dest != null &&
+          window.location.pathname !== dest
+        ) {
+          router.replace(dest);
+        }
         router.refresh();
         return;
       }
@@ -303,6 +329,16 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
             >
               Reload
             </button>
+            <Link
+              href={
+                safeInternalReturnTo(returnTo)
+                  ? `/vehicle-setup?returnTo=${encodeURIComponent(safeInternalReturnTo(returnTo)!)}`
+                  : '/vehicle-setup'
+              }
+              style={{ ...primaryButtonStyle, textDecoration: 'none', display: 'inline-block' }}
+            >
+              Vehicle setup
+            </Link>
             <Link href="/settings" style={{ ...primaryButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
               Open Settings
             </Link>
