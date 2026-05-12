@@ -39,6 +39,7 @@ interface RemediationSnap {
   active_vehicle: { id: number; name: string } | null;
   question: RemediationQuestion | null;
   progress: { current: number; total: number } | null;
+  garage_empty?: boolean;
 }
 
 interface OverlayMsg {
@@ -260,6 +261,7 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
   }
 
   if (stranded) {
+    const garageCopy = snapshot.garage_empty;
     return (
       <div style={backdropStyle}>
         <div
@@ -274,15 +276,24 @@ export default function VehicleRemediationOverlay({ initialSnapshot }: OverlayPr
           }}
         >
           <h2 id={titleId} style={{ ...headingStyle, marginBottom: 8 }}>
-            Finish your vehicle in Settings
+            {garageCopy ? 'Add your first vehicle' : 'Finish your vehicle in Settings'}
           </h2>
           <p style={{ fontSize: 14, color: 'var(--tp-muted)', lineHeight: 1.45, margin: '0 0 16px' }}>
-            Something on file does not match what we expect (for example outdated or invalid numbers).{' '}
-            {snapshot.active_vehicle ? (
-              <span>
-                Vehicle: <strong>{snapshot.active_vehicle.name}</strong>
-              </span>
-            ) : null}
+            {garageCopy ? (
+              <>
+                Trip planning needs a saved vehicle profile. Open Settings and add one — then come back here
+                and tap Reload (or revisit Trips).
+              </>
+            ) : (
+              <>
+                Something on file does not match what we expect (for example outdated or invalid numbers).{' '}
+                {snapshot.active_vehicle ? (
+                  <span>
+                    Vehicle: <strong>{snapshot.active_vehicle.name}</strong>
+                  </span>
+                ) : null}
+              </>
+            )}
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             <button

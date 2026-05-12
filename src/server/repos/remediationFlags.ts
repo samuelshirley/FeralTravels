@@ -24,6 +24,13 @@ export async function userNeedsVehicleProfileRemediation(userId: string): Promis
  */
 export async function recalculateUserRemediationFlag(userId: string): Promise<boolean> {
   const list = await listVehiclesForUser(userId);
+  if (list.length === 0) {
+    await db
+      .update(users)
+      .set({ needsVehicleProfileRemediation: true })
+      .where(eq(users.id, userId));
+    return true;
+  }
   const incomplete = list.some((v) => !vehicleIsCompleteForRemediation(v as Record<string, unknown>));
   await db
     .update(users)

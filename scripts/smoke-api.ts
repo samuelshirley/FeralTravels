@@ -9,6 +9,9 @@
  *   Copy the Cookie header from DevTools → Application → Cookies (after sign-in).
  *   SMOKE_COOKIE='authjs.session-token=...' SMOKE_TRIP_ID=123 npx tsx scripts/smoke-api.ts
  *
+ * Vehicle remediation snapshot (optional, same cookie):
+ *   Printed automatically when SMOKE_COOKIE is set — `GET /api/me/vehicle-remediation` body (full JSON).
+ *
  * Strict auth UI (optional): fail if /api/auth/providers is not 200
  *   SMOKE_STRICT_AUTH=1 npx tsx scripts/smoke-api.ts
  */
@@ -129,6 +132,23 @@ async function main() {
         pass(
           `/api/directions (${d.distance_km} km, ${(d.geometry as string).length > 0 ? 'polyline ok' : 'empty geom'})`
         );
+      }
+    }
+
+    const remediationRes = await fetch(`${base}/api/me/vehicle-remediation`, { headers });
+    if (remediationRes.status !== 200) {
+      fail(
+        `/api/me/vehicle-remediation expected 200, got ${remediationRes.status} ${(await remediationRes.text()).slice(0, 400)}`
+      );
+    } else {
+      const body = await remediationRes.text();
+      try {
+        const rem = JSON.parse(body) as Record<string, unknown>;
+        pass(
+          `/api/me/vehicle-remediation (copy for support): ${JSON.stringify(rem)}`
+        );
+      } catch {
+        fail('/api/me/vehicle-remediation body is not JSON');
       }
     }
 

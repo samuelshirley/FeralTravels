@@ -109,10 +109,25 @@ export interface VehicleRemediationSnapshot {
   active_vehicle: { id: number; name: string } | null;
   question: Question | null;
   progress: { current: number; total: number } | null;
+  /** Account has zero vehicles — prompts via overlay to add one in Settings. */
+  garage_empty?: boolean;
 }
 
 export async function getVehicleRemediationSnapshot(userId: string): Promise<VehicleRemediationSnapshot> {
   const list = await listVehiclesForUser(userId);
+
+  if (list.length === 0) {
+    await recalculateUserRemediationFlag(userId);
+    return {
+      needs_remediation: true,
+      done: false,
+      active_vehicle: null,
+      question: null,
+      progress: null,
+      garage_empty: true,
+    };
+  }
+
   const incompletes = orderedIncompleteVehicles(list);
 
   if (incompletes.length === 0) {
