@@ -290,13 +290,21 @@ export async function POST(req: Request) {
           }
 
           let appliedCount = 0;
+          /** Total failures incl. exhausted validation retries (legacy / ops). */
           let failedCount = 0;
           const failedActions: Array<{ action: string; error: string }> = [];
+          /** DB / feasibility outcomes only — authoritative for user-facing banners. */
+          let persistFailedCount = 0;
+          const persistFailedActions: Array<{ action: string; error: string }> = [];
+          const validationFailures: Array<{ action: string; error: string }> = [];
+
           const appliedActions: ValidatedAction[] = [];
 
           for (const v of final.failedValidations) {
             failedCount += 1;
-            failedActions.push({ action: v.tool, error: v.error });
+            const row = { action: v.tool, error: v.error };
+            failedActions.push(row);
+            validationFailures.push(row);
           }
 
           const feasibilityGateActive = final.extractIntentCalled;
@@ -309,13 +317,16 @@ export async function POST(req: Request) {
           for (const action of final.validatedActions) {
             if (feasibilityGateBlocks && action.name === 'add_leg') {
               failedCount += 1;
-              failedActions.push({
+              const row = {
                 action: 'add_leg',
                 error:
                   final.feasibilityVerdict === 'over_budget'
                     ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
                     : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
-              });
+              } as const;
+              failedActions.push(row);
+              persistFailedCount += 1;
+              persistFailedActions.push(row);
               continue;
             }
             try {
@@ -325,7 +336,10 @@ export async function POST(req: Request) {
             } catch (e) {
               failedCount += 1;
               const msg = e instanceof Error ? e.message : String(e);
-              failedActions.push({ action: action.name, error: msg });
+              const row = { action: action.name, error: msg };
+              failedActions.push(row);
+              persistFailedCount += 1;
+              persistFailedActions.push(row);
               console.error('Failed to apply validated action', action, e);
             }
           }
@@ -335,15 +349,19 @@ export async function POST(req: Request) {
           );
 
           const changesEnvelope = {
-            changes: final.validatedActions.map(actionToLegacyChange),
+            changes: appliedActions.map(actionToLegacyChange),
           };
+
+          const validatedQueuedCount = final.validatedActions.length;
 
           const assistantChangesMade =
             appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
           await addChatMessage(tripId, 'assistant', final.response, assistantChangesMade);
 
           // Terminal event. Same shape as the old JSON response so the
-          // client doesn't need two parsers.
+          // client doesn't need two parsers. `failedCount`/`failedActions`
+          // remain the merged total (validation + persist) for ops/logging;
+          // user-facing banners should use `persistFailed*` only.
           send({
             kind: 'applied',
             response: final.response,
@@ -351,6 +369,11 @@ export async function POST(req: Request) {
             appliedCount,
             failedCount,
             failedActions,
+            persistFailedCount,
+            persistFailedActions,
+            validationFailures,
+            /** Count of Penny actions that validated and queued for dispatch (incl. failed persist). */
+            validatedQueuedCount,
             fuelReplenishQueued,
             retryCount: final.retryCount,
             truncated: final.truncated,

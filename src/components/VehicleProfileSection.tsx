@@ -15,7 +15,6 @@ import {
 
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {
   max_drive_hours_per_day: 'vehicle-max-drive-day-input',
-  max_drive_hours_per_week: 'vehicle-max-drive-week-input',
   max_consecutive_drive_days: 'vehicle-max-consecutive-input',
   water_refill_days: 'vehicle-water-refill-input',
   blackwater_refill_days: 'vehicle-blackwater-input',

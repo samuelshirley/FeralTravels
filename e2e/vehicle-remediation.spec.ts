@@ -26,22 +26,17 @@ test.describe('Vehicle profile remediation gate', () => {
     await expect(page.getByText('Max hours you want to drive per day?')).toBeVisible({
       timeout: 15_000,
     });
-    await page.getByPlaceholder('6').fill('6');
-    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('trip-chat-composer').fill('6');
+    await page.getByTestId('trip-chat-composer').press('Enter');
 
-    // ── Q2: max drive hours per week ──
-    await expect(page.getByText('Max hours per week?')).toBeVisible({ timeout: 10_000 });
-    await page.getByPlaceholder('30').fill('30');
-    await page.getByRole('button', { name: 'Next' }).click();
-
-    // ── Q3: max consecutive driving days ──
+    // ── Q2: max consecutive driving days (weekly hours derived as day × streak) ──
     await expect(page.getByText(/Max consecutive driving days/i)).toBeVisible({
       timeout: 10_000,
     });
-    await page.getByPlaceholder('3').fill('3');
-    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('trip-chat-composer').fill('3');
+    await page.getByTestId('trip-chat-composer').press('Enter');
 
-    // ── Q4: caravan/water tracking gate ──
+    // ── Q3: caravan/water tracking gate ──
     await expect(page.getByText(/caravan|camper|motorhome/i)).toBeVisible({ timeout: 10_000 });
     await page.getByRole('button', { name: 'No' }).click();
 
@@ -74,7 +69,7 @@ test.describe('Vehicle profile remediation gate', () => {
     expect(vehicleRows).toHaveLength(1);
     const v = vehicleRows[0];
     expect(v.maxDriveHoursPerDay).toBe(6);
-    expect(v.maxDriveHoursPerWeek).toBe(30);
+    expect(v.maxDriveHoursPerWeek).toBe(18);
     expect(v.maxConsecutiveDriveDays).toBe(3);
     expect(v.waterTrackingEnabled).toBe(false);
     expect(v.refillDistanceKm).toBe(400);

@@ -6,6 +6,7 @@ import {
   caravanWaterGateLabel,
   CARAVAN_WATER_GATE_KEY,
   coerceVehicleProfileValue,
+  deriveMaxDriveHoursPerWeek,
   vehicleIsCompleteForRemediation,
   storedVehicleProfileFieldNeedsRemediationRepair,
   type VehicleProfileQuestion,
@@ -17,6 +18,7 @@ import {
 } from '@/server/repos/remediationFlags';
 import { getUnitsPref } from '@/server/repos/users';
 import {
+  getVehicleForUser,
   listVehiclesForUser,
   updateVehicle,
   type VehicleApi,
@@ -103,6 +105,24 @@ function orderedIncompleteVehicles(all: VehicleApi[]): VehicleApi[] {
   return bad.sort((a, b) => a.id - b.id);
 }
 
+/** Persist weekly hours = daily × consecutive streak when both are set (legacy rows may be null/stale). */
+async function maybeRepairDerivedWeeklyHours(userId: string, vehicle: VehicleApi): Promise<VehicleApi> {
+  const day = vehicle.max_drive_hours_per_day;
+  const consec = vehicle.max_consecutive_drive_days;
+  if (typeof day !== 'number' || day <= 0 || typeof consec !== 'number' || consec <= 0) {
+    return vehicle;
+  }
+  const target = deriveMaxDriveHoursPerWeek(day, consec);
+  const w = vehicle.max_drive_hours_per_week;
+  if (w == null || !Number.isFinite(w) || Math.abs(w - target) > 0.01) {
+    await updateVehicle(userId, vehicle.id, { max_drive_hours_per_week: target });
+    const fresh = await getVehicleForUser(userId, vehicle.id);
+    if (fresh) return fresh;
+    return { ...vehicle, max_drive_hours_per_week: target };
+  }
+  return vehicle;
+}
+
 export interface VehicleRemediationSnapshot {
   needs_remediation: boolean;
   done: boolean;
@@ -114,7 +134,7 @@ export interface VehicleRemediationSnapshot {
 }
 
 export async function getVehicleRemediationSnapshot(userId: string): Promise<VehicleRemediationSnapshot> {
-  const list = await listVehiclesForUser(userId);
+  let list = await listVehiclesForUser(userId);
 
   if (list.length === 0) {
     await recalculateUserRemediationFlag(userId);
@@ -128,7 +148,7 @@ export async function getVehicleRemediationSnapshot(userId: string): Promise<Veh
     };
   }
 
-  const incompletes = orderedIncompleteVehicles(list);
+  let incompletes = orderedIncompleteVehicles(list);
 
   if (incompletes.length === 0) {
     await recalculateUserRemediationFlag(userId);
@@ -142,7 +162,25 @@ export async function getVehicleRemediationSnapshot(userId: string): Promise<Veh
   }
 
   const unitsPref = await getUnitsPref(userId);
-  const vehicle = incompletes[0];
+
+  let vehicle = incompletes[0];
+  vehicle = await maybeRepairDerivedWeeklyHours(userId, vehicle);
+
+  list = await listVehiclesForUser(userId);
+  incompletes = orderedIncompleteVehicles(list);
+  if (incompletes.length === 0) {
+    await recalculateUserRemediationFlag(userId);
+    return {
+      needs_remediation: false,
+      done: true,
+      active_vehicle: null,
+      question: null,
+      progress: null,
+    };
+  }
+
+  vehicle = incompletes[0];
+
   const next = nextRemediationQuestionInner(vehicle, unitsPref);
 
   await recalculateUserRemediationFlag(userId);
@@ -223,14 +261,22 @@ export async function submitVehicleRemediationAnswer(
       patch.name = parsed as string;
     } else if (question.key === 'max_drive_hours_per_day') {
       patch.max_drive_hours_per_day = parsed as number | null;
-    } else if (question.key === 'max_drive_hours_per_week') {
-      patch.max_drive_hours_per_week = parsed as number | null;
     } else if (question.key === 'max_consecutive_drive_days') {
       patch.max_consecutive_drive_days = parsed as number | null;
     } else if (question.key === 'water_refill_days') {
       patch.water_refill_days = parsed as number | null;
     } else if (question.key === 'blackwater_refill_days') {
       patch.blackwater_refill_days = parsed as number | null;
+    }
+    const nextDay = patch.max_drive_hours_per_day ?? vehicle.max_drive_hours_per_day;
+    const nextConsec = patch.max_consecutive_drive_days ?? vehicle.max_consecutive_drive_days;
+    if (
+      typeof nextDay === 'number' &&
+      nextDay > 0 &&
+      typeof nextConsec === 'number' &&
+      nextConsec > 0
+    ) {
+      patch.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(nextDay, nextConsec);
     }
     await updateVehicle(userId, vehicle.id, patch);
   }

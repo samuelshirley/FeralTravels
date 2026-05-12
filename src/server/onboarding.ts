@@ -19,6 +19,7 @@ import {
   caravanWaterGateLabel,
   CARAVAN_WATER_GATE_KEY,
   coerceVehicleProfileValue,
+  deriveMaxDriveHoursPerWeek,
   humanizeVehicleProfileAnswer,
   vehicleMeetsFuelPlanningMinimum,
   type VehicleProfileQuestion,
@@ -477,6 +478,18 @@ export async function submitAnswer(
         patch.refill_distance_km = km == null ? null : Math.round(km);
       } else {
         patch[question.key] = parsed;
+      }
+      const nextDay =
+        (patch.max_drive_hours_per_day as number | undefined) ?? vehicle.max_drive_hours_per_day;
+      const nextConsec =
+        (patch.max_consecutive_drive_days as number | undefined) ?? vehicle.max_consecutive_drive_days;
+      if (
+        typeof nextDay === 'number' &&
+        nextDay > 0 &&
+        typeof nextConsec === 'number' &&
+        nextConsec > 0
+      ) {
+        patch.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(nextDay, nextConsec);
       }
       await updateVehicle(userId, vehicle.id, patch);
     }

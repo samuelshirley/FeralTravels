@@ -58,6 +58,19 @@ export function vehicleWaterCadenceIntegerValid(n: unknown, max = 60): boolean {
 }
 
 /**
+ * Weekly drive budget derived from daily limit × longest consecutive-drive streak
+ * (no separate "hours per week" prompt). Capped at 168.
+ */
+export function deriveMaxDriveHoursPerWeek(
+  hoursPerDay: number,
+  consecutiveDriveDays: number
+): number {
+  const raw = hoursPerDay * consecutiveDriveDays;
+  const capped = Math.min(168, raw);
+  return Math.round(capped * 10) / 10;
+}
+
+/**
  * Full profile completeness for remediation nag + PATCH validation — strict driving,
  * caravan gate persisted, water cadence iff water_tracking_enabled is true.
  */
@@ -179,15 +192,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: '6',
       min: 1,
       max: 24,
-    },
-    {
-      key: 'max_drive_hours_per_week',
-      kind: 'number',
-      group: 'driving',
-      label: 'Max hours per week?',
-      placeholder: '30',
-      min: 1,
-      max: 100,
     },
     {
       key: 'max_consecutive_drive_days',
@@ -410,6 +414,18 @@ export function validateVehicleProfileDraftForSave(
       const msg = e instanceof Error ? e.message : 'Invalid value.';
       return { ok: false, error: msg };
     }
+  }
+
+  const day = payload.max_drive_hours_per_day;
+  const consec = payload.max_consecutive_drive_days;
+  if (
+    typeof day === 'number' &&
+    day > 0 &&
+    typeof consec === 'number' &&
+    Number.isInteger(consec) &&
+    consec > 0
+  ) {
+    payload.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(day, consec);
   }
 
   if (draft.is_default !== undefined) {

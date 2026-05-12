@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, OnboardingState } from '@/types/trip';
 import { tripApi, apiFetch } from '@/lib/api';
 import OnboardingForm from '@/components/OnboardingForm';
-import VehicleRemediationForm from '@/components/VehicleRemediationForm';
 
 interface ChatPanelProps {
   tripId: number;
@@ -36,6 +35,27 @@ interface InFlightTool {
   label: string;
   /** Lifecycle: 'running' shows spinner, 'ok'/'error' fades the pill. */
   status: 'running' | 'ok' | 'error';
+}
+
+/** Mirrors `/api/me/vehicle-remediation` snapshot — keep aligned with server route. */
+interface VehicleRemediationSnapshot {
+  needs_remediation: boolean;
+  done: boolean;
+  active_vehicle: { id: number; name: string } | null;
+  question: {
+    key: string;
+    kind: 'text' | 'number' | 'integer' | 'select' | 'vehicle_pick' | 'handoff';
+    label: string;
+    placeholder?: string;
+    help?: string;
+    options?: Array<{ value: string; label: string }>;
+    optional?: boolean;
+    min?: number;
+    max?: number;
+    multiline?: boolean;
+  } | null;
+  progress: { current: number; total: number } | null;
+  garage_empty?: boolean;
 }
 
 interface UIMessage extends ChatMessage {
@@ -103,6 +123,11 @@ export default function ChatPanel({
   const isOnboarding = onboardingState !== 'done' && !readonly;
   const [remediationDone, setRemediationDone] = useState(false);
   const showRemediation = needsVehicleRemediation && !remediationDone && !isOnboarding && !readonly;
+  const [remSnapshot, setRemSnapshot] = useState<VehicleRemediationSnapshot | null>(null);
+  const [remLoading, setRemLoading] = useState(false);
+  const [remSubmitting, setRemSubmitting] = useState(false);
+  const [remError, setRemError] = useState<string | null>(null);
+  const remGarageEmptyWarned = useRef(false);
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -195,6 +220,76 @@ export default function ChatPanel({
     const next = Math.min(ta.scrollHeight, 200);
     ta.style.height = next + 'px';
   }, [input]);
+
+  useEffect(() => {
+    remGarageEmptyWarned.current = false;
+  }, [tripId]);
+
+  useEffect(() => {
+    if (!showRemediation) return;
+    let cancelled = false;
+    setRemLoading(true);
+    void (async () => {
+      try {
+        const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation');
+        if (cancelled) return;
+        setRemSnapshot(data);
+        setRemError(null);
+        if (data.done || !data.needs_remediation) {
+          setRemediationDone(true);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setRemError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) setRemLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showRemediation]);
+
+  useEffect(() => {
+    if (!showRemediation || remLoading) return;
+    if (remSnapshot?.garage_empty) {
+      if (remGarageEmptyWarned.current) return;
+      remGarageEmptyWarned.current = true;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          trip_id: tripId,
+          role: 'assistant' as const,
+          content:
+            'You need a vehicle on your account before we can plan fuel stops. Add one in Settings, then come back here.',
+          kind: 'ai' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
+    const q = remSnapshot?.question;
+    if (!q) return;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.kind === 'form_question' && last.content === q.label) return prev;
+      return [
+        ...prev,
+        {
+          id: Date.now(),
+          trip_id: tripId,
+          role: 'assistant' as const,
+          content: q.label,
+          kind: 'form_question' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
+  }, [showRemediation, remLoading, remSnapshot, tripId]);
 
   function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -340,6 +435,13 @@ export default function ChatPanel({
       appliedCount: number;
       failedCount: number;
       failedActions: Array<{ action: string; error: string }>;
+      /** DB / feasibility failures — use for user-visible save warnings (SSE from replan). */
+      persistFailedCount?: number;
+      persistFailedActions?: Array<{ action: string; error: string }>;
+      /** Exhausted validation retries; not indicative of unsuccessful writes. */
+      validationFailures?: Array<{ action: string; error: string }>;
+      /** Validated tool actions queued this turn — may exceed `changes.changes` when saves failed or were gated. */
+      validatedQueuedCount?: number;
       fuelReplenishQueued: boolean;
       truncated: boolean;
     };
@@ -454,21 +556,44 @@ export default function ChatPanel({
         appliedCount,
         failedCount,
         failedActions,
+        persistFailedCount: persistFailedCountRaw,
+        persistFailedActions: persistFailedActionsRaw,
+        validatedQueuedCount: validatedQueuedCountRaw,
         fuelReplenishQueued,
         truncated,
       } = appliedEvent;
-      const hadProposedChanges = Array.isArray(changes?.changes)
-        ? changes.changes.length > 0
-        : false;
+      const persistFieldsPresent =
+        typeof persistFailedCountRaw === 'number' || Array.isArray(persistFailedActionsRaw);
+
+      /** Legacy replan responses omitted persist* — preserve old behavior for those payloads only. */
+      const persistFailedActions = persistFieldsPresent
+        ? Array.isArray(persistFailedActionsRaw)
+          ? persistFailedActionsRaw
+          : []
+        : Array.isArray(failedActions)
+          ? failedActions
+          : [];
+
+      const persistFailedCount = persistFieldsPresent
+        ? typeof persistFailedCountRaw === 'number'
+          ? persistFailedCountRaw
+          : persistFailedActions.length
+        : failedCount;
+
+      const changeLen = Array.isArray(changes?.changes) ? changes.changes.length : 0;
+      /** Number of Penny actions validated and queued for dispatch (may be 0 while validationFailures are non-empty). */
+      const hadProposedChanges =
+        changeLen > 0 ||
+        (typeof validatedQueuedCountRaw === 'number' && validatedQueuedCountRaw > 0);
       let applyError: string | null = null;
       let partialApplyWarning: string | null = null;
-      if (hadProposedChanges && appliedCount === 0) {
+      if (persistFailedCount > 0 && appliedCount > 0) {
+        partialApplyWarning = `Some edits didn't save: ${persistFailedActions.map((f) => f.action).join(', ')}`;
+      } else if (persistFailedCount > 0) {
+        applyError = `Changes failed to save: ${persistFailedActions.map((f) => f.action).join(', ')}`;
+      } else if (hadProposedChanges && appliedCount === 0) {
         applyError =
           'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
-      } else if (failedCount > 0 && appliedCount > 0 && Array.isArray(failedActions)) {
-        partialApplyWarning = `Some edits didn't save: ${failedActions.map((f) => f.action).join(', ')}`;
-      } else if (failedCount > 0 && Array.isArray(failedActions)) {
-        applyError = `Changes failed to save: ${failedActions.map((f) => f.action).join(', ')}`;
       }
 
       setMessages((prev) =>
@@ -521,11 +646,117 @@ export default function ChatPanel({
   const sendMessage = async () => {
     const trimmed = input.trim();
     const attachedImages = images;
+    if (showRemediation) {
+      if (remLoading || remSubmitting) return;
+      if (!trimmed && attachedImages.length === 0) return;
+      await submitRemediationTextAnswer(trimmed);
+      return;
+    }
     if ((!trimmed && attachedImages.length === 0) || loading) return;
     setInput('');
     setImages([]);
     await sendChatMessage(trimmed, attachedImages);
   };
+
+  async function applyRemediationSnapshot(data: VehicleRemediationSnapshot, answeredLabel: string) {
+    setRemSnapshot(data);
+    setRemError(null);
+    setInput('');
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        trip_id: tripId,
+        role: 'user' as const,
+        content: answeredLabel,
+        kind: 'form_answer' as const,
+        changes_made: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    if (data.done || !data.needs_remediation) {
+      setRemediationDone(true);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          trip_id: tripId,
+          role: 'assistant' as const,
+          content: "Vehicle profile updated! You're all set to plan your trip.",
+          kind: 'ai' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+  }
+
+  async function submitRemediationTextAnswer(trimmed: string) {
+    const q = remSnapshot?.question;
+    if (!q || remSubmitting || q.kind === 'select') return;
+
+    let value: string | number | null = trimmed;
+    if (trimmed === '' && q.optional) {
+      value = null;
+    } else if (trimmed === '' && !q.optional) {
+      setRemError('This one is required.');
+      return;
+    }
+
+    if (q.kind === 'number' || q.kind === 'integer') {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        setRemError('Please enter a number.');
+        return;
+      }
+      if (q.kind === 'integer' && !Number.isInteger(n)) {
+        setRemError('Please enter a whole number.');
+        return;
+      }
+      if (q.min !== undefined && n < q.min) {
+        setRemError(`Must be at least ${q.min}.`);
+        return;
+      }
+      if (q.max !== undefined && n > q.max) {
+        setRemError(`Must be at most ${q.max}.`);
+        return;
+      }
+      value = n;
+    }
+
+    let userLabel = trimmed === '' ? 'Skipped' : trimmed;
+    if (value !== null && typeof value === 'number') userLabel = String(value);
+
+    setRemSubmitting(true);
+    try {
+      const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation', {
+        method: 'POST',
+        body: { questionKey: q.key, value },
+      });
+      await applyRemediationSnapshot(data, userLabel);
+    } catch (e: unknown) {
+      setRemError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemSubmitting(false);
+    }
+  }
+
+  async function submitRemediationSelect(value: string, userLabel: string) {
+    const q = remSnapshot?.question;
+    if (!q || q.kind !== 'select' || remSubmitting) return;
+    setRemSubmitting(true);
+    try {
+      const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation', {
+        method: 'POST',
+        body: { questionKey: q.key, value },
+      });
+      await applyRemediationSnapshot(data, userLabel);
+    } catch (e: unknown) {
+      setRemError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemSubmitting(false);
+    }
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -536,25 +767,37 @@ export default function ChatPanel({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData?.files || []);
-    if (files.length) {
+    if (files.length && !showRemediation) {
       e.preventDefault();
       addImageFiles(files);
     }
   };
 
+  useEffect(() => {
+    if (showRemediation) setImages([]);
+  }, [showRemediation]);
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
+    if (showRemediation) return;
     if (e.dataTransfer?.files?.length) {
       addImageFiles(e.dataTransfer.files);
     }
   };
 
+  const remediationComposerBusy = showRemediation && (remLoading || remSubmitting);
+  const remediationSelectStep =
+    showRemediation &&
+    remSnapshot?.question?.kind === 'select' &&
+    !remSnapshot?.garage_empty;
+  const remediationQuestion = remSnapshot?.question ?? null;
+
   return (
     <div
       onDragOver={(e) => {
         e.preventDefault();
-        if (e.dataTransfer?.types?.includes('Files')) setDragOver(true);
+        if (!showRemediation && e.dataTransfer?.types?.includes('Files')) setDragOver(true);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget === e.target) setDragOver(false);
@@ -576,7 +819,7 @@ export default function ChatPanel({
         position: 'relative',
       }}
     >
-      {dragOver && (
+      {dragOver && !showRemediation && (
         <div
           style={{
             position: 'absolute',
@@ -932,7 +1175,7 @@ export default function ChatPanel({
       </div>
 
       {/* Attachment thumbnails */}
-      {images.length > 0 && (
+      {images.length > 0 && !showRemediation && (
         <div
           style={{
             display: 'flex',
@@ -1001,47 +1244,6 @@ export default function ChatPanel({
         >
           Demo trip — clone it from the trips list to chat with Penny.
         </div>
-      ) : showRemediation ? (
-        <VehicleRemediationForm
-          onAnswer={(userLabel, questionLabel) => {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                trip_id: tripId,
-                role: 'assistant' as const,
-                content: questionLabel,
-                kind: 'form_question' as const,
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-              {
-                id: Date.now() + 1,
-                trip_id: tripId,
-                role: 'user' as const,
-                content: userLabel,
-                kind: 'form_answer' as const,
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-          }}
-          onComplete={() => {
-            setRemediationDone(true);
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                trip_id: tripId,
-                role: 'assistant' as const,
-                content: 'Vehicle profile updated! You\'re all set to plan your trip.',
-                kind: 'ai' as const,
-                changes_made: null,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-          }}
-        />
       ) : isOnboarding ? (
         <OnboardingForm
           tripId={tripId}
@@ -1103,7 +1305,70 @@ export default function ChatPanel({
           }}
         />
       ) : (
-      <div
+        <>
+          {remediationSelectStep && remSnapshot.question?.options && (
+            <div
+              style={{
+                padding: '10px 16px 0',
+                flexShrink: 0,
+                borderTop: '1px solid var(--tp-border)',
+                background: 'var(--tp-surface-muted)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--tp-muted)',
+                  marginBottom: 6,
+                  letterSpacing: '0.03em',
+                }}
+              >
+                Tap an option
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {remSnapshot.question.options.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    disabled={remediationComposerBusy}
+                    onClick={() => void submitRemediationSelect(o.value, o.label)}
+                    style={{
+                      padding: '8px 14px',
+                      background: 'var(--tp-surface)',
+                      border: '1px solid var(--tp-border)',
+                      borderRadius: 999,
+                      color: 'var(--tp-text)',
+                      fontSize: 13,
+                      cursor: remediationComposerBusy ? 'default' : 'pointer',
+                      opacity: remediationComposerBusy ? 0.5 : 1,
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {showRemediation && remSnapshot?.active_vehicle && !remSnapshot.garage_empty && (
+            <div
+              style={{
+                padding: '8px 16px 0',
+                flexShrink: 0,
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--tp-primary)',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                background: 'var(--tp-surface-muted)',
+              }}
+            >
+              Vehicle: {remSnapshot.active_vehicle.name}
+              {remSnapshot.progress
+                ? ` · ${remSnapshot.progress.current} of ${remSnapshot.progress.total}`
+                : ''}
+            </div>
+          )}
+          <div
         style={{
           padding: '12px 16px',
           borderTop: '1px solid var(--tp-border)',
@@ -1129,6 +1394,9 @@ export default function ChatPanel({
             e.target.value = '';
           }}
         />
+        {remError && (
+          <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{remError}</div>
+        )}
         <div
           style={{
             display: 'flex',
@@ -1141,6 +1409,7 @@ export default function ChatPanel({
             transition: 'border-color 0.15s',
           }}
         >
+          {!showRemediation && (
           <button
             onClick={() => fileInputRef.current?.click()}
             title="Attach image"
@@ -1173,6 +1442,7 @@ export default function ChatPanel({
               <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>
+          )}
           <textarea
             ref={textareaRef}
             data-testid="trip-chat-composer"
@@ -1180,10 +1450,9 @@ export default function ChatPanel({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            readOnly={remediationSelectStep}
             onFocus={(e) => {
-              // iOS Safari slides the soft keyboard up over absolutely-positioned
-              // bottom UI; nudge the textarea into view after the keyboard
-              // animation has settled (~250ms) so the user sees what they type.
+              if (showRemediation) return;
               const el = e.currentTarget;
               setTimeout(() => {
                 try {
@@ -1193,8 +1462,14 @@ export default function ChatPanel({
                 }
               }, 250);
             }}
-            placeholder="Ask Penny…"
-            disabled={loading}
+            placeholder={
+              remediationSelectStep
+                ? 'Tap an option above…'
+                : showRemediation && remSnapshot?.question
+                  ? remSnapshot.question.placeholder ?? 'Type your answer…'
+                  : 'Ask Penny…'
+            }
+            disabled={loading || remediationComposerBusy}
             rows={1}
             style={{
               flex: 1,
@@ -1220,7 +1495,17 @@ export default function ChatPanel({
           />
           <button
             onClick={sendMessage}
-            disabled={loading || (!input.trim() && images.length === 0)}
+            disabled={
+              Boolean(
+              loading ||
+              remediationComposerBusy ||
+              (!showRemediation && !input.trim() && images.length === 0) ||
+              (showRemediation &&
+                remediationQuestion &&
+                !input.trim() &&
+                remediationQuestion.optional !== true)
+              )
+            }
             aria-label="Send"
             title="Send"
             style={{
@@ -1228,11 +1513,35 @@ export default function ChatPanel({
               height: 32,
               flexShrink: 0,
               padding: 0,
-              background: input.trim() || images.length > 0 ? 'var(--tp-primary)' : 'var(--tp-border)',
+              background:
+                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                  (showRemediation &&
+                    remSnapshot?.question &&
+                    (input.trim() || remSnapshot.question.optional === true))) &&
+                !remediationComposerBusy &&
+                !loading
+                  ? 'var(--tp-primary)'
+                  : 'var(--tp-border)',
               border: 'none',
               borderRadius: 8,
-              color: input.trim() || images.length > 0 ? 'var(--tp-on-primary)' : 'var(--tp-subtle)',
-              cursor: input.trim() || images.length > 0 ? 'pointer' : 'default',
+              color:
+                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                  (showRemediation &&
+                    remSnapshot?.question &&
+                    (input.trim() || remSnapshot.question.optional === true))) &&
+                !remediationComposerBusy &&
+                !loading
+                  ? 'var(--tp-on-primary)'
+                  : 'var(--tp-subtle)',
+              cursor:
+                ((!showRemediation && (input.trim() || images.length > 0)) ||
+                  (showRemediation &&
+                    remSnapshot?.question &&
+                    (input.trim() || remSnapshot.question.optional === true))) &&
+                !remediationComposerBusy &&
+                !loading
+                  ? 'pointer'
+                  : 'default',
               transition: 'background 0.15s, color 0.15s',
               display: 'inline-flex',
               alignItems: 'center',
@@ -1255,9 +1564,12 @@ export default function ChatPanel({
             textAlign: 'center',
           }}
         >
-          Enter to send · Shift+Enter for newline · drag/paste to attach
+          {showRemediation
+            ? 'Enter to send · Vehicle setup'
+            : 'Enter to send · Shift+Enter for newline · drag/paste to attach'}
         </div>
       </div>
+        </>
       )}
     </div>
   );
