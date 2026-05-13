@@ -1,7 +1,7 @@
-import 'server-only';
-import Anthropic from '@anthropic-ai/sdk';
-import { logAnthropicUsage } from '@/server/repos/usage';
-import { buildPennyContext, type PennyContext } from '@/lib/penny/context';
+import "server-only";
+import Anthropic from "@anthropic-ai/sdk";
+import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
+import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
   ACTION_TOOL_NAMES,
   LOOKUP_TOOL_NAMES,
@@ -11,15 +11,15 @@ import {
   getRoute as getRouteTool,
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
-} from '@/lib/penny/tools';
-import { zodErrorToFeedback } from '@/lib/penny/tools/shared';
-import { getDirections } from '@/lib/google/directions';
-import { mergedDirectionsAvoidFromPenny } from '@/lib/penny/routingAvoidMerge';
-import { splitLegByDriveTime } from '@/lib/penny/split-route';
+} from "@/lib/penny/tools";
+import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
+import { getDirections } from "@/lib/google/directions";
+import { mergedDirectionsAvoidFromPenny } from "@/lib/penny/routingAvoidMerge";
+import { splitLegByDriveTime } from "@/lib/penny/split-route";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = "claude-sonnet-4-20250514";
 
 // ---------------------------------------------------------------------------
 // Prompt caching
@@ -330,12 +330,7 @@ export interface ReplanResult {
    * or null if the tool was never called. The dispatcher uses this to
    * gate add_leg actions — null or 'over_budget' means reject.
    */
-  feasibilityVerdict:
-    | 'fits'
-    | 'tight'
-    | 'over_budget'
-    | 'no_budget'
-    | null;
+  feasibilityVerdict: "fits" | "tight" | "over_budget" | "no_budget" | null;
 }
 
 /**
@@ -350,60 +345,64 @@ export interface ReplanResult {
  * code paths).
  */
 export type ReplanEvent =
-  | { kind: 'iteration_start'; index: number }
-  | { kind: 'text'; chunk: string }
-  | { kind: 'tool_started'; name: string; toolUseId: string }
+  | { kind: "iteration_start"; index: number }
+  | { kind: "text"; chunk: string }
+  | { kind: "tool_started"; name: string; toolUseId: string }
   | {
-      kind: 'tool_done';
+      kind: "tool_done";
       name: string;
       toolUseId: string;
       ok: boolean;
       error?: string;
     }
-  | { kind: 'done'; result: ReplanResult };
+  | { kind: "done"; result: ReplanResult };
 
 export async function replan(
   userMessage: string,
   tripId: number,
   images: InputImage[] = [],
-  userId?: string
+  userId?: string,
 ): Promise<ReplanResult> {
   for await (const ev of replanStream(userMessage, tripId, images, userId)) {
-    if (ev.kind === 'done') return ev.result;
+    if (ev.kind === "done") return ev.result;
   }
-  throw new Error('replanStream finished without yielding done');
+  throw new Error("replanStream finished without yielding done");
 }
 
 export async function* replanStream(
   userMessage: string,
   tripId: number,
   images: InputImage[] = [],
-  userId?: string
+  userId?: string,
 ): AsyncGenerator<ReplanEvent, void, void> {
-  if (!userId) throw new Error('userId is required for Penny replan');
+  if (!userId) throw new Error("userId is required for Penny replan");
   const context = await buildPennyContext(tripId, userId);
-  if (!context) throw new Error('Trip not found');
+  if (!context) throw new Error("Trip not found");
 
-  const userContent: Array<Anthropic.ImageBlockParam | Anthropic.TextBlockParam> = [];
+  const userContent: Array<
+    Anthropic.ImageBlockParam | Anthropic.TextBlockParam
+  > = [];
   for (const img of images) {
     const match = img.dataUrl.match(/^data:([^;]+);base64,(.*)$/);
     if (!match) continue;
     const mediaType = (img.mediaType || match[1]) as
-      | 'image/jpeg'
-      | 'image/png'
-      | 'image/gif'
-      | 'image/webp';
+      | "image/jpeg"
+      | "image/png"
+      | "image/gif"
+      | "image/webp";
     userContent.push({
-      type: 'image',
-      source: { type: 'base64', media_type: mediaType, data: match[2] },
+      type: "image",
+      source: { type: "base64", media_type: mediaType, data: match[2] },
     });
   }
   userContent.push({
-    type: 'text',
+    type: "text",
     text: renderContextMessage(context, userMessage),
   });
 
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }];
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: userContent },
+  ];
   const textChunks: string[] = [];
   const validatedActions: ValidatedAction[] = [];
   const failedValidations: Array<{ tool: string; error: string }> = [];
@@ -417,33 +416,309 @@ export async function* replanStream(
   // System prompt + tools as cacheable structures. Built once per replan so
   // we're not rebuilding the array on every iteration.
   const cachedSystem: Anthropic.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
   ];
   const cachedTools: Anthropic.Tool[] = TOOLS.map((tool, i) =>
     i === TOOLS.length - 1
-      ? { ...tool, cache_control: { type: 'ephemeral' } }
-      : tool
+      ? { ...tool, cache_control: { type: "ephemeral" } }
+      : tool,
   );
   // Workflow gate tracking. The dispatcher in /api/trip/replan uses these
   // to decide whether add_leg actions are allowed: if extract_trip_intent
   // was called, this is a fresh plan and check_trip_feasibility must have
   // passed (or returned 'no_budget') before add_legs can land.
   let extractIntentCalled = false;
-  let feasibilityVerdict: ReplanResult['feasibilityVerdict'] = null;
+  let feasibilityVerdict: ReplanResult["feasibilityVerdict"] = null;
 
-  for (let iteration = 0; iteration < MAX_TOOL_USE_ITERATIONS; iteration++) {
-    yield { kind: 'iteration_start', index: iteration };
-    let response: Anthropic.Message;
-    try {
-      response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 4096,
-        system: cachedSystem,
-        tools: cachedTools,
-        messages,
-      });
-    } catch (err) {
-      await logAnthropicUsage({
+  let anthropicAccountingPersisted = false;
+  let attemptedFinalAnthropicAccounting = false;
+  const anthropicTokenVolume = (): number =>
+    totalInputTokens +
+    totalOutputTokens +
+    totalCacheCreationTokens +
+    totalCacheReadTokens;
+
+  try {
+    for (let iteration = 0; iteration < MAX_TOOL_USE_ITERATIONS; iteration++) {
+      yield { kind: "iteration_start", index: iteration };
+      let response: Anthropic.Message;
+      try {
+        response = await client.messages.create({
+          model: MODEL,
+          max_tokens: 4096,
+          system: cachedSystem,
+          tools: cachedTools,
+          messages,
+        });
+      } catch (err) {
+        const ok = await logAnthropicUsageWithFallback({
+          userId,
+          tripId,
+          model: MODEL,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cacheCreationInputTokens: totalCacheCreationTokens,
+          cacheReadInputTokens: totalCacheReadTokens,
+          success: false,
+          errorMessage: String((err as Error)?.message ?? err).slice(0, 500),
+        });
+        if (ok) anthropicAccountingPersisted = true;
+        throw err;
+      }
+
+      totalInputTokens += response.usage?.input_tokens ?? 0;
+      totalOutputTokens += response.usage?.output_tokens ?? 0;
+      // Anthropic returns these as separate fields on usage. Sum them so we
+      // can bill at the correct rates and observe cache hit rate per replan.
+      totalCacheCreationTokens +=
+        response.usage?.cache_creation_input_tokens ?? 0;
+      totalCacheReadTokens += response.usage?.cache_read_input_tokens ?? 0;
+
+      // Collect text blocks from this iteration. We yield them live so the
+      // SSE consumer can append paragraphs to the assistant message bubble
+      // as they arrive — the user sees Penny "thinking out loud" instead of
+      // waiting for the full turn to land.
+      for (const block of response.content) {
+        if (block.type === "text" && block.text.trim().length > 0) {
+          textChunks.push(block.text);
+          yield { kind: "text", chunk: block.text };
+        }
+      }
+
+      const toolUses = response.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+      );
+
+      // No tool calls this iteration → Penny is done. Either she chatted, or
+      // she wrapped up after a previous round of tool calls.
+      if (toolUses.length === 0) {
+        break;
+      }
+
+      // Process each tool_use block. For lookup tools (get_route) we execute
+      // server-side and feed the data back. For action tools we validate; on
+      // success we accumulate, on failure we surface the error so Claude can
+      // correct.
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      let hadValidationFailure = false;
+
+      for (const tu of toolUses) {
+        if (LOOKUP_TOOL_NAMES.has(tu.name)) {
+          yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
+          const result = await executeLookupTool(tu, context);
+          yield {
+            kind: "tool_done",
+            name: tu.name,
+            toolUseId: tu.id,
+            ok: !result.is_error,
+            error: result.is_error
+              ? typeof result.content === "string"
+                ? result.content.slice(0, 200)
+                : "Unknown error"
+              : undefined,
+          };
+          // Workflow tracking — must happen here in the loop because each
+          // iteration creates new tool_results, and we need cumulative state.
+          // We track on success only; a failed extract_trip_intent doesn't
+          // count as "fresh plan in progress".
+          if (
+            !result.is_error &&
+            tu.name === extractTripIntentTool.EXTRACT_TRIP_INTENT
+          ) {
+            extractIntentCalled = true;
+          }
+          if (
+            !result.is_error &&
+            tu.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY &&
+            result.feasibilityVerdict
+          ) {
+            // Latest verdict wins — Penny may revise inputs and recheck.
+            feasibilityVerdict = result.feasibilityVerdict;
+          }
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            is_error: result.is_error,
+            content: result.content,
+          });
+          continue;
+        }
+
+        if (!ACTION_TOOL_NAMES.has(tu.name)) {
+          yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
+          yield {
+            kind: "tool_done",
+            name: tu.name,
+            toolUseId: tu.id,
+            ok: false,
+            error: `Unknown tool: ${tu.name}.`,
+          };
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            is_error: true,
+            content: `Unknown tool: ${tu.name}.`,
+          });
+          hadValidationFailure = true;
+          continue;
+        }
+
+        yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
+        const validatorFactory = VALIDATORS[tu.name];
+        const schema = validatorFactory(context);
+        const parsed = schema.safeParse(tu.input);
+        if (parsed.success) {
+          validatedActions.push({
+            name: tu.name as ValidatedAction["name"],
+            input: parsed.data,
+          } as ValidatedAction);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            is_error: false,
+            content: "Validated and queued. Do not re-emit this call.",
+          });
+          yield {
+            kind: "tool_done",
+            name: tu.name,
+            toolUseId: tu.id,
+            ok: true,
+          };
+        } else {
+          hadValidationFailure = true;
+          const feedback = zodErrorToFeedback(parsed.error);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            is_error: true,
+            content: `Validation error: ${feedback}. Emit a corrected call addressing this specific issue.`,
+          });
+          yield {
+            kind: "tool_done",
+            name: tu.name,
+            toolUseId: tu.id,
+            ok: false,
+            error: feedback.slice(0, 200),
+          };
+        }
+      }
+
+      // Append the assistant turn and our tool_results so Claude can continue.
+      messages.push({ role: "assistant", content: response.content });
+
+      // Move the rolling cache breakpoint forward: strip cache_control from any
+      // prior tool_result block, then mark the last tool_result of THIS turn so
+      // it caches the system + tools + complete history up to here. The next
+      // iteration reads everything up to this point at 0.10× input price.
+      //
+      // We strip first because Anthropic caps requests at 4 cache_control
+      // markers — without removal, we'd accumulate one per iteration and hit
+      // the cap by iteration 4.
+      for (const msg of messages) {
+        if (msg.role === "user" && Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (
+              block.type === "tool_result" &&
+              (block as Anthropic.ToolResultBlockParam).cache_control
+            ) {
+              delete (block as { cache_control?: unknown }).cache_control;
+            }
+          }
+        }
+      }
+      if (toolResults.length > 0) {
+        toolResults[toolResults.length - 1] = {
+          ...toolResults[toolResults.length - 1],
+          cache_control: { type: "ephemeral" },
+        };
+      }
+      messages.push({ role: "user", content: toolResults });
+
+      // If this round had validation failures, count it as a retry.
+      if (hadValidationFailure) {
+        retryCount += 1;
+        if (retryCount > MAX_VALIDATION_RETRIES) {
+          // Out of retries — collect any still-failing actions for the user
+          // response and bail.
+          for (let i = 0; i < toolUses.length; i++) {
+            const tu = toolUses[i];
+            const tr = toolResults[i];
+            if (tr.is_error && ACTION_TOOL_NAMES.has(tu.name)) {
+              failedValidations.push({
+                tool: tu.name,
+                error:
+                  typeof tr.content === "string"
+                    ? tr.content
+                    : "Unknown validation error.",
+              });
+            }
+          }
+          break;
+        }
+      }
+
+      // Anthropic signals "I'm done with tool calls" via stop_reason. If she
+      // stopped without producing more tool_use, we'll exit on the next
+      // iteration's empty toolUses check; we don't break early here because
+      // we want to give her one more turn to acknowledge tool_results.
+      if (response.stop_reason === "end_turn" && !hadValidationFailure) {
+        // Nothing more for Claude to do; exit before the extra round-trip.
+        break;
+      }
+
+      if (iteration === MAX_TOOL_USE_ITERATIONS - 1) {
+        truncated = true;
+      }
+    }
+
+    // Quick visibility on cache effectiveness. Useful when tuning breakpoints
+    // and after deploying — a healthy run should show cacheReadTokens dwarfing
+    // cacheCreationTokens after iteration 1. If reads stay low, caching isn't
+    // landing (e.g., system prompt being mutated, or 5-min TTL expired).
+    const cacheTotal = totalCacheCreationTokens + totalCacheReadTokens;
+    const cacheHitRate =
+      cacheTotal > 0 ? (totalCacheReadTokens / cacheTotal).toFixed(2) : "n/a";
+    console.log(
+      `[penny.replan] tripId=${tripId} input=${totalInputTokens} output=${totalOutputTokens} cacheWrite=${totalCacheCreationTokens} cacheRead=${totalCacheReadTokens} cacheHitRate=${cacheHitRate}`,
+    );
+
+    const okFinal = await logAnthropicUsageWithFallback({
+      userId,
+      tripId,
+      model: MODEL,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cacheCreationInputTokens: totalCacheCreationTokens,
+      cacheReadInputTokens: totalCacheReadTokens,
+      success: true,
+    });
+    if (okFinal) anthropicAccountingPersisted = true;
+    attemptedFinalAnthropicAccounting = true;
+
+    yield {
+      kind: "done",
+      result: {
+        response: textChunks.join("\n\n").trim(),
+        validatedActions,
+        retryCount,
+        failedValidations,
+        truncated,
+        extractIntentCalled,
+        feasibilityVerdict,
+      },
+    };
+  } finally {
+    // Consumer abort / timeout / stray throw after Anthropic billed tokens —
+    // still record accumulated cost once, unless we already wrote a row from
+    // the happy path or a messages.create error handler. Skip when the model
+    // loop finished and we already attempted terminal accounting (avoids a
+    // second row if that insert failed and we fell back to logUsageEvent only).
+    if (
+      !anthropicAccountingPersisted &&
+      anthropicTokenVolume() > 0 &&
+      !attemptedFinalAnthropicAccounting
+    ) {
+      await logAnthropicUsageWithFallback({
         userId,
         tripId,
         model: MODEL,
@@ -452,246 +727,11 @@ export async function* replanStream(
         cacheCreationInputTokens: totalCacheCreationTokens,
         cacheReadInputTokens: totalCacheReadTokens,
         success: false,
-        errorMessage: String((err as Error)?.message ?? err).slice(0, 500),
-      }).catch(() => {});
-      throw err;
-    }
-
-    totalInputTokens += response.usage?.input_tokens ?? 0;
-    totalOutputTokens += response.usage?.output_tokens ?? 0;
-    // Anthropic returns these as separate fields on usage. Sum them so we
-    // can bill at the correct rates and observe cache hit rate per replan.
-    totalCacheCreationTokens += response.usage?.cache_creation_input_tokens ?? 0;
-    totalCacheReadTokens += response.usage?.cache_read_input_tokens ?? 0;
-
-    // Collect text blocks from this iteration. We yield them live so the
-    // SSE consumer can append paragraphs to the assistant message bubble
-    // as they arrive — the user sees Penny "thinking out loud" instead of
-    // waiting for the full turn to land.
-    for (const block of response.content) {
-      if (block.type === 'text' && block.text.trim().length > 0) {
-        textChunks.push(block.text);
-        yield { kind: 'text', chunk: block.text };
-      }
-    }
-
-    const toolUses = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
-    );
-
-    // No tool calls this iteration → Penny is done. Either she chatted, or
-    // she wrapped up after a previous round of tool calls.
-    if (toolUses.length === 0) {
-      break;
-    }
-
-    // Process each tool_use block. For lookup tools (get_route) we execute
-    // server-side and feed the data back. For action tools we validate; on
-    // success we accumulate, on failure we surface the error so Claude can
-    // correct.
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    let hadValidationFailure = false;
-
-    for (const tu of toolUses) {
-      if (LOOKUP_TOOL_NAMES.has(tu.name)) {
-        yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
-        const result = await executeLookupTool(tu, context);
-        yield {
-          kind: 'tool_done',
-          name: tu.name,
-          toolUseId: tu.id,
-          ok: !result.is_error,
-          error: result.is_error
-            ? typeof result.content === 'string'
-              ? result.content.slice(0, 200)
-              : 'Unknown error'
-            : undefined,
-        };
-        // Workflow tracking — must happen here in the loop because each
-        // iteration creates new tool_results, and we need cumulative state.
-        // We track on success only; a failed extract_trip_intent doesn't
-        // count as "fresh plan in progress".
-        if (
-          !result.is_error &&
-          tu.name === extractTripIntentTool.EXTRACT_TRIP_INTENT
-        ) {
-          extractIntentCalled = true;
-        }
-        if (
-          !result.is_error &&
-          tu.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY &&
-          result.feasibilityVerdict
-        ) {
-          // Latest verdict wins — Penny may revise inputs and recheck.
-          feasibilityVerdict = result.feasibilityVerdict;
-        }
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tu.id,
-          is_error: result.is_error,
-          content: result.content,
-        });
-        continue;
-      }
-
-      if (!ACTION_TOOL_NAMES.has(tu.name)) {
-        yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
-        yield {
-          kind: 'tool_done',
-          name: tu.name,
-          toolUseId: tu.id,
-          ok: false,
-          error: `Unknown tool: ${tu.name}.`,
-        };
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tu.id,
-          is_error: true,
-          content: `Unknown tool: ${tu.name}.`,
-        });
-        hadValidationFailure = true;
-        continue;
-      }
-
-      yield { kind: 'tool_started', name: tu.name, toolUseId: tu.id };
-      const validatorFactory = VALIDATORS[tu.name];
-      const schema = validatorFactory(context);
-      const parsed = schema.safeParse(tu.input);
-      if (parsed.success) {
-        validatedActions.push({
-          name: tu.name as ValidatedAction['name'],
-          input: parsed.data,
-        } as ValidatedAction);
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tu.id,
-          is_error: false,
-          content: 'Validated and queued. Do not re-emit this call.',
-        });
-        yield {
-          kind: 'tool_done',
-          name: tu.name,
-          toolUseId: tu.id,
-          ok: true,
-        };
-      } else {
-        hadValidationFailure = true;
-        const feedback = zodErrorToFeedback(parsed.error);
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tu.id,
-          is_error: true,
-          content: `Validation error: ${feedback}. Emit a corrected call addressing this specific issue.`,
-        });
-        yield {
-          kind: 'tool_done',
-          name: tu.name,
-          toolUseId: tu.id,
-          ok: false,
-          error: feedback.slice(0, 200),
-        };
-      }
-    }
-
-    // Append the assistant turn and our tool_results so Claude can continue.
-    messages.push({ role: 'assistant', content: response.content });
-
-    // Move the rolling cache breakpoint forward: strip cache_control from any
-    // prior tool_result block, then mark the last tool_result of THIS turn so
-    // it caches the system + tools + complete history up to here. The next
-    // iteration reads everything up to this point at 0.10× input price.
-    //
-    // We strip first because Anthropic caps requests at 4 cache_control
-    // markers — without removal, we'd accumulate one per iteration and hit
-    // the cap by iteration 4.
-    for (const msg of messages) {
-      if (msg.role === 'user' && Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (
-            block.type === 'tool_result' &&
-            (block as Anthropic.ToolResultBlockParam).cache_control
-          ) {
-            delete (block as { cache_control?: unknown }).cache_control;
-          }
-        }
-      }
-    }
-    if (toolResults.length > 0) {
-      toolResults[toolResults.length - 1] = {
-        ...toolResults[toolResults.length - 1],
-        cache_control: { type: 'ephemeral' },
-      };
-    }
-    messages.push({ role: 'user', content: toolResults });
-
-    // If this round had validation failures, count it as a retry.
-    if (hadValidationFailure) {
-      retryCount += 1;
-      if (retryCount > MAX_VALIDATION_RETRIES) {
-        // Out of retries — collect any still-failing actions for the user
-        // response and bail.
-        for (let i = 0; i < toolUses.length; i++) {
-          const tu = toolUses[i];
-          const tr = toolResults[i];
-          if (tr.is_error && ACTION_TOOL_NAMES.has(tu.name)) {
-            failedValidations.push({
-              tool: tu.name,
-              error: typeof tr.content === 'string' ? tr.content : 'Unknown validation error.',
-            });
-          }
-        }
-        break;
-      }
-    }
-
-    // Anthropic signals "I'm done with tool calls" via stop_reason. If she
-    // stopped without producing more tool_use, we'll exit on the next
-    // iteration's empty toolUses check; we don't break early here because
-    // we want to give her one more turn to acknowledge tool_results.
-    if (response.stop_reason === 'end_turn' && !hadValidationFailure) {
-      // Nothing more for Claude to do; exit before the extra round-trip.
-      break;
-    }
-
-    if (iteration === MAX_TOOL_USE_ITERATIONS - 1) {
-      truncated = true;
+        errorMessage:
+          "replanStream ended before terminal accounting (SSE disconnect, timeout, or internal error)",
+      });
     }
   }
-
-  // Quick visibility on cache effectiveness. Useful when tuning breakpoints
-  // and after deploying — a healthy run should show cacheReadTokens dwarfing
-  // cacheCreationTokens after iteration 1. If reads stay low, caching isn't
-  // landing (e.g., system prompt being mutated, or 5-min TTL expired).
-  const cacheTotal = totalCacheCreationTokens + totalCacheReadTokens;
-  const cacheHitRate =
-    cacheTotal > 0 ? (totalCacheReadTokens / cacheTotal).toFixed(2) : 'n/a';
-  console.log(
-    `[penny.replan] tripId=${tripId} input=${totalInputTokens} output=${totalOutputTokens} cacheWrite=${totalCacheCreationTokens} cacheRead=${totalCacheReadTokens} cacheHitRate=${cacheHitRate}`
-  );
-
-  await logAnthropicUsage({
-    userId,
-    tripId,
-    model: MODEL,
-    inputTokens: totalInputTokens,
-    outputTokens: totalOutputTokens,
-    cacheCreationInputTokens: totalCacheCreationTokens,
-    cacheReadInputTokens: totalCacheReadTokens,
-    success: true,
-  }).catch((e) => console.warn('logAnthropicUsage failed:', e));
-
-  yield {
-    kind: 'done',
-    result: {
-      response: textChunks.join('\n\n').trim(),
-      validatedActions,
-      retryCount,
-      failedValidations,
-      truncated,
-      extractIntentCalled,
-      feasibilityVerdict,
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -706,12 +746,12 @@ interface LookupResult {
    * the replan() loop so the dispatcher can gate add_leg actions on it.
    * Other lookup tools leave this undefined.
    */
-  feasibilityVerdict?: ReplanResult['feasibilityVerdict'];
+  feasibilityVerdict?: ReplanResult["feasibilityVerdict"];
 }
 
 async function executeLookupTool(
   toolUse: Anthropic.ToolUseBlock,
-  context: PennyContext
+  context: PennyContext,
 ): Promise<LookupResult> {
   if (toolUse.name === getRouteTool.GET_ROUTE) {
     return executeGetRoute(toolUse, context);
@@ -739,7 +779,7 @@ async function executeLookupTool(
  */
 async function executeCheckTripFeasibility(
   toolUse: Anthropic.ToolUseBlock,
-  context: PennyContext
+  context: PennyContext,
 ): Promise<LookupResult> {
   const schema = checkTripFeasibilityTool.validator(context);
   const parsed = schema.safeParse(toolUse.input);
@@ -751,7 +791,7 @@ async function executeCheckTripFeasibility(
   }
 
   const result = checkTripFeasibilityTool.computeFeasibility(
-    parsed.data as checkTripFeasibilityTool.CheckTripFeasibilityInput
+    parsed.data as checkTripFeasibilityTool.CheckTripFeasibilityInput,
   );
 
   return {
@@ -775,7 +815,7 @@ async function executeCheckTripFeasibility(
  */
 async function executeExtractTripIntent(
   toolUse: Anthropic.ToolUseBlock,
-  context: PennyContext
+  context: PennyContext,
 ): Promise<LookupResult> {
   const schema = extractTripIntentTool.validator(context);
   const parsed = schema.safeParse(toolUse.input);
@@ -793,12 +833,12 @@ async function executeExtractTripIntent(
   const warnings: string[] = [];
   if (intent.time_budget_days == null) {
     warnings.push(
-      'No time_budget_days specified. The user did not state a trip length — proceed assuming flexible timing, or ask the user before committing to a long plan.'
+      "No time_budget_days specified. The user did not state a trip length — proceed assuming flexible timing, or ask the user before committing to a long plan.",
     );
   }
   if (intent.mandatory_waypoints.length === 0) {
     warnings.push(
-      'No mandatory_waypoints. If the user just wants the shortest A→B, that is fine — otherwise re-read their message for stops you may have missed.'
+      "No mandatory_waypoints. If the user just wants the shortest A→B, that is fine — otherwise re-read their message for stops you may have missed.",
     );
   }
 
@@ -806,7 +846,7 @@ async function executeExtractTripIntent(
   // for the feasibility check (driving_days + overnight_nights ≤ time_budget_days).
   const total_overnight_nights = intent.mandatory_waypoints.reduce(
     (sum, wp) => sum + wp.nights,
-    0
+    0,
   );
 
   return {
@@ -817,14 +857,14 @@ async function executeExtractTripIntent(
       total_overnight_nights,
       warnings,
       next_step:
-        'Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.',
+        "Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.",
     }),
   };
 }
 
 async function executeGetRoute(
   toolUse: Anthropic.ToolUseBlock,
-  context: PennyContext
+  context: PennyContext,
 ): Promise<LookupResult> {
   // Validate Penny's inputs through the same Zod schema as everything else
   // — this gives us bounded lat/lng before we hit the Google API.
@@ -845,16 +885,16 @@ async function executeGetRoute(
   const directions = await getDirections(
     { lat: input.origin_lat, lng: input.origin_lng },
     { lat: input.destination_lat, lng: input.destination_lng },
-    { avoid: avoidMerged }
+    { avoid: avoidMerged },
   );
 
   if (!directions.ok) {
     return {
       is_error: true,
       content: `get_route failed: ${directions.kind} — ${directions.message}. ${
-        directions.kind === 'no_results'
-          ? 'Try alternative coordinates or ask the user for a different start/end.'
-          : 'Tell the user this lookup is temporarily unavailable; do not invent the numbers.'
+        directions.kind === "no_results"
+          ? "Try alternative coordinates or ask the user for a different start/end."
+          : "Tell the user this lookup is temporarily unavailable; do not invent the numbers."
       }`,
     };
   }
@@ -898,15 +938,16 @@ async function executeGetRoute(
     exceeds_daily_cap: exceedsCap,
     daily_cap_minutes: cap != null ? cap * 60 : null,
     min_driving_days: minDrivingDays,
-    suggested_split: suggestedSplit?.map((leg) => ({
-      day_index: leg.day_index,
-      start_lat: round5(leg.start_lat),
-      start_lng: round5(leg.start_lng),
-      end_lat: round5(leg.end_lat),
-      end_lng: round5(leg.end_lng),
-      distance_km: leg.distance_km,
-      drive_time_minutes: leg.drive_time_minutes,
-    })) ?? null,
+    suggested_split:
+      suggestedSplit?.map((leg) => ({
+        day_index: leg.day_index,
+        start_lat: round5(leg.start_lat),
+        start_lng: round5(leg.start_lng),
+        end_lat: round5(leg.end_lat),
+        end_lng: round5(leg.end_lng),
+        distance_km: leg.distance_km,
+        drive_time_minutes: leg.drive_time_minutes,
+      })) ?? null,
   };
 
   return {
@@ -925,6 +966,6 @@ function round5(n: number): number {
 
 function renderContextMessage(ctx: PennyContext, userMessage: string): string {
   const contextJson = JSON.stringify(ctx, null, 2);
-  const request = userMessage?.trim() || '(no text — see attached image(s))';
+  const request = userMessage?.trim() || "(no text — see attached image(s))";
   return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}`;
 }

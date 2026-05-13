@@ -58,6 +58,42 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
   });
 }
 
+/**
+ * Like `logAnthropicUsage`, but never throws. On DB failure, logs loudly and
+ * writes `provider: anthropic:accounting-write-failed` so admin can correlate.
+ * Returns whether the primary `anthropic` row was inserted successfully.
+ */
+export async function logAnthropicUsageWithFallback(
+  input: LogAnthropicUsageInput
+): Promise<boolean> {
+  try {
+    await logAnthropicUsage(input);
+    return true;
+  } catch (err) {
+    console.error('[usage] logAnthropicUsage failed', {
+      userId: input.userId,
+      tripId: input.tripId,
+      accountingSuccessFlag: input.success ?? true,
+      err,
+    });
+    await logUsageEvent({
+      userId: input.userId,
+      tripId: input.tripId,
+      provider: 'anthropic:accounting-write-failed',
+      requests: 1,
+      success: false,
+      errorMessage: [
+        input.errorMessage ?? null,
+        err instanceof Error ? err.message : String(err),
+      ]
+        .filter(Boolean)
+        .join(' | ')
+        .slice(0, 500),
+    }).catch((e) => console.error('[usage] logUsageEvent (accounting fallback) failed:', e));
+    return false;
+  }
+}
+
 export async function logUsageEvent(input: {
   userId?: string | null;
   tripId?: number | null;

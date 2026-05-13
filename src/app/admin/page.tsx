@@ -1077,6 +1077,23 @@ function AllTimeUsageTable({
         );
       })}
     </div>
+    <div
+      style={{
+        fontSize: 11,
+        color: 'var(--tp-subtle)',
+        marginTop: 12,
+        lineHeight: 1.45,
+      }}
+    >
+      Dollar amounts sum{' '}
+      <code style={{ fontSize: 10 }}>usage_events</code> rows with{' '}
+      <code style={{ fontSize: 10 }}>provider = anthropic</code> only (list-price estimate). Google usage
+      and diagnostic providers such as <code style={{ fontSize: 10 }}>anthropic:replan</code> are not included
+      in this ranking. Turns that disconnect before Penny finishes still record Anthropic totals when billing
+      did occur; failures to persist the accounting row emit{' '}
+      <code style={{ fontSize: 10 }}>anthropic:accounting-write-failed</code> for the Recent errors panel. Trip
+      counts exclude templates (see averages above).
+    </div>
     </>
   );
 }
