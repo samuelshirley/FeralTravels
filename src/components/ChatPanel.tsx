@@ -80,6 +80,8 @@ interface UIMessage extends ChatMessage {
   applyError?: string | null;
   /** When some writes succeeded AND some failed — show success + this warning */
   partialApplyWarning?: string | null;
+  /** Server-generated deterministic route summary from actual DB leg state. */
+  routeSummary?: string | null;
   // True when the replan response had truncated=true — i.e. Penny hit the
   // tool-use iteration cap mid-plan and only persisted partial work. We
   // surface a warning + 'Continue planning' button on the bubble. UI-only;
@@ -521,6 +523,8 @@ export default function ChatPanel({
       /** Validated tool actions queued this turn — may exceed `changes.changes` when saves failed or were gated. */
       validatedQueuedCount?: number;
       fuelReplenishQueued: boolean;
+      /** Server-generated deterministic route summary from actual DB leg state. */
+      routeSummary?: string | null;
       truncated: boolean;
     };
     let appliedEvent: AppliedEvent | null = null;
@@ -606,10 +610,12 @@ export default function ChatPanel({
                 break;
               }
               case 'error': {
-                const msg =
-                  typeof ev.message === 'string'
-                    ? `Error: ${ev.message}`
-                    : 'Something went wrong while updating your trip.';
+                const raw = typeof ev.message === 'string' ? ev.message : '';
+                // Strip noisy stack traces / internal paths — keep the first sentence
+                const cleaned = raw.split('\n')[0]?.slice(0, 200) || '';
+                const msg = cleaned
+                  ? `Error: ${cleaned}`
+                  : 'Something went wrong while updating your trip.';
                 failAssistant(msg);
                 break;
               }
@@ -637,7 +643,9 @@ export default function ChatPanel({
         persistFailedCount: persistFailedCountRaw,
         persistFailedActions: persistFailedActionsRaw,
         validatedQueuedCount: validatedQueuedCountRaw,
+        validationFailures: validationFailuresRaw,
         fuelReplenishQueued,
+        routeSummary: routeSummaryRaw,
         truncated,
       } = appliedEvent;
       const persistFieldsPresent =
@@ -668,10 +676,16 @@ export default function ChatPanel({
       if (persistFailedCount > 0 && appliedCount > 0) {
         partialApplyWarning = `Some edits didn't save: ${persistFailedActions.map((f) => f.action).join(', ')}`;
       } else if (persistFailedCount > 0) {
-        applyError = `Changes failed to save: ${persistFailedActions.map((f) => f.action).join(', ')}`;
+        const details = persistFailedActions.map((f) => `${f.action}: ${f.error}`).join('; ');
+        applyError = `Changes failed to save — ${details}`;
       } else if (hadProposedChanges && appliedCount === 0) {
+        // Include validation failure details if present
+        const valFailures = Array.isArray(validationFailuresRaw) ? validationFailuresRaw : [];
+        const valDetails = valFailures.length > 0
+          ? ` (${valFailures.map((v: { action: string; error: string }) => `${v.action}: ${v.error.slice(0, 80)}`).join('; ')})`
+          : '';
         applyError =
-          'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
+          `Penny proposed changes but nothing was saved${valDetails}. Re-ask her with more detail (e.g. starting point, destination).`;
       }
 
       setMessages((prev) =>
@@ -688,6 +702,7 @@ export default function ChatPanel({
                   appliedCount > 0 ? JSON.stringify(changes ?? { changes: [] }) : null,
                 applyError,
                 partialApplyWarning,
+                routeSummary: typeof routeSummaryRaw === 'string' ? routeSummaryRaw : null,
                 truncated,
                 streaming: false,
                 inFlightTools: undefined,
@@ -1249,10 +1264,31 @@ export default function ChatPanel({
                   border: '1px solid rgba(74, 139, 122, 0.28)',
                   fontSize: 11,
                   color: 'var(--tp-success)',
-                  
+
                 }}
               >
                 Changes applied to trip
+              </div>
+            )}
+            {msg.routeSummary && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: '8px 10px',
+                  background: 'var(--tp-surface)',
+                  borderRadius: 4,
+                  border: '1px solid var(--tp-border)',
+                  fontSize: 11,
+                  color: 'var(--tp-text-muted)',
+                  lineHeight: 1.55,
+                  whiteSpace: 'pre-line',
+                }}
+              >
+                <span style={{ fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--tp-text-muted)' }}>
+                  Verified route
+                </span>
+                <br />
+                {msg.routeSummary}
               </div>
             )}
             {msg.partialApplyWarning && (

@@ -56,6 +56,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
   const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null);
   const layersRef = useRef<{
     routePolylines: Map<number, google.maps.Polyline>;
+    gapPolylines: google.maps.Polyline[];
     legMarkers: Map<number, google.maps.Marker>;
     finalMarker: google.maps.Marker | null;
     poiMarkers: google.maps.Marker[];
@@ -64,6 +65,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     infoWindow: google.maps.InfoWindow | null;
   }>({
     routePolylines: new Map(),
+    gapPolylines: [],
     legMarkers: new Map(),
     finalMarker: null,
     poiMarkers: [],
@@ -214,6 +216,8 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     // Wipe existing
     layers.routePolylines.forEach((p) => p.setMap(null));
     layers.routePolylines.clear();
+    layers.gapPolylines.forEach((p) => p.setMap(null));
+    layers.gapPolylines = [];
     layers.legMarkers.forEach((m) => m.setMap(null));
     layers.legMarkers.clear();
     if (layers.finalMarker) layers.finalMarker.setMap(null);
@@ -273,6 +277,47 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         );
       }
     });
+
+    // Gap polylines: dashed red lines between non-contiguous consecutive legs
+    // so the user can see where Penny left a hole in the route.
+    for (let i = 0; i < legs.length - 1; i++) {
+      const curr = legs[i];
+      const next = legs[i + 1];
+      if (
+        curr.end_lat != null && curr.end_lng != null &&
+        next.start_lat != null && next.start_lng != null
+      ) {
+        // Only draw if gap is meaningful (>25km as-the-crow-flies)
+        const dlat = curr.end_lat - next.start_lat;
+        const dlng = curr.end_lng - next.start_lng;
+        const approxKm = Math.sqrt(dlat * dlat + dlng * dlng) * 111;
+        if (approxKm > 25) {
+          const gapPoly = new google.maps.Polyline({
+            path: [
+              { lat: curr.end_lat, lng: curr.end_lng },
+              { lat: next.start_lat, lng: next.start_lng },
+            ],
+            map,
+            strokeColor: '#c65d4a',
+            strokeOpacity: 0,
+            strokeWeight: 3,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.7, strokeColor: '#c65d4a', scale: 3 },
+                offset: '0',
+                repeat: '12px',
+              },
+            ],
+            zIndex: 0,
+          });
+          layers.gapPolylines.push(gapPoly);
+          allPoints.push(
+            { lat: curr.end_lat, lng: curr.end_lng },
+            { lat: next.start_lat, lng: next.start_lng }
+          );
+        }
+      }
+    }
 
     // Leg start markers
     legs.forEach((leg) => {

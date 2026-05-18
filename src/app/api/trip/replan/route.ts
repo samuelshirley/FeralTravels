@@ -258,10 +258,20 @@ export async function POST(req: Request) {
     // synthetic `applied` event with the same shape the old JSON response
     // used. See ChatPanel.sendChatMessage for the consumer.
     const encoder = new TextEncoder();
+    let clientDisconnected = false;
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
+        // Wrap enqueue so a client disconnect (PWA closed, tab closed,
+        // network drop) doesn't kill the entire async function. We still
+        // want the dispatch to complete and persist changes even if nobody
+        // is reading the SSE stream anymore.
         const send = (e: Record<string, unknown>) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
+          if (clientDisconnected) return;
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
+          } catch {
+            clientDisconnected = true;
+          }
         };
         try {
           let final: ReplanResult | null = null;
@@ -313,6 +323,15 @@ export async function POST(req: Request) {
             (final.feasibilityVerdict === null ||
               final.feasibilityVerdict === 'over_budget');
 
+          // Pre-dispatch contiguity gate: simulate the final leg state and
+          // reject any delete_leg that would leave a gap in the route. Penny
+          // sometimes deletes a leg without updating the neighbor to close
+          // the gap, leaving a hole in the map.
+          const blockedDeleteLegIds = await findGapCreatingDeletes(
+            tripId,
+            final.validatedActions
+          );
+
           const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
           for (const action of final.validatedActions) {
             if (feasibilityGateBlocks && action.name === 'add_leg') {
@@ -329,6 +348,28 @@ export async function POST(req: Request) {
               persistFailedActions.push(row);
               continue;
             }
+            // Block delete_leg actions that would create a contiguity gap
+            if (action.name === 'delete_leg' && blockedDeleteLegIds.has(action.input.leg_id)) {
+              failedCount += 1;
+              const row = {
+                action: 'delete_leg',
+                error:
+                  'Blocked: deleting this leg would break route continuity. ' +
+                  'The neighboring leg must be updated to close the gap first.',
+              };
+              failedActions.push(row);
+              persistFailedCount += 1;
+              persistFailedActions.push(row);
+              logUsageEvent({
+                userId,
+                tripId,
+                provider: 'penny:contiguity-blocked-delete',
+                requests: 0,
+                success: false,
+                errorMessage: `delete_leg ${action.input.leg_id} blocked by pre-dispatch contiguity gate`,
+              }).catch(() => {});
+              continue;
+            }
             try {
               await dispatchAction(action, tripId, userId, dispatchCtx);
               appliedActions.push(action);
@@ -341,7 +382,25 @@ export async function POST(req: Request) {
               persistFailedCount += 1;
               persistFailedActions.push(row);
               console.error('Failed to apply validated action', action, e);
+              // Log each persist failure individually so they appear in admin errors
+              logUsageEvent({
+                userId,
+                tripId,
+                provider: `penny:persist-fail:${action.name}`,
+                requests: 0,
+                success: false,
+                errorMessage: `${action.name}: ${msg}`.slice(0, 500),
+              }).catch(() => {});
             }
+          }
+
+          // Post-dispatch leg contiguity check: detect if Penny left a gap
+          // (e.g. deleted a leg without updating the neighbor). Log so it
+          // shows up in admin errors — don't block the response.
+          if (appliedCount > 0) {
+            checkLegContiguity(tripId, userId).catch((e) =>
+              console.warn('[contiguity-check] failed', e)
+            );
           }
 
           const fuelReplenishQueued = appliedActions.some(
@@ -353,6 +412,21 @@ export async function POST(req: Request) {
           };
 
           const validatedQueuedCount = final.validatedActions.length;
+
+          // Build a deterministic route summary from the actual DB state
+          // after actions land. This is the ground truth — Penny's prose
+          // may say "through Italy" while the legs actually go through
+          // Switzerland. The client can display this so the user always
+          // sees what the route *actually* is, regardless of Penny's
+          // autoregressive text.
+          let routeSummary: string | null = null;
+          if (appliedCount > 0) {
+            try {
+              routeSummary = await buildRouteSummary(tripId);
+            } catch (e) {
+              console.warn('[route-summary] failed to build', e);
+            }
+          }
 
           const assistantChangesMade =
             appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
@@ -375,6 +449,7 @@ export async function POST(req: Request) {
             /** Count of Penny actions that validated and queued for dispatch (incl. failed persist). */
             validatedQueuedCount,
             fuelReplenishQueued,
+            routeSummary,
             retryCount: final.retryCount,
             truncated: final.truncated,
           });
@@ -403,7 +478,11 @@ export async function POST(req: Request) {
             message: err instanceof Error ? err.message : String(err),
           });
         } finally {
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            // Already closed or client disconnected — safe to ignore
+          }
         }
       },
     });
@@ -698,6 +777,373 @@ async function dispatchAction(
       throw new Error(`Unhandled action: ${(_exhaustive as { name: string }).name}`);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-dispatch contiguity gate
+//
+// Before committing actions, simulate the final leg state and reject any
+// delete_leg that would leave a gap (>50 km) between consecutive legs. Penny
+// sometimes deletes a leg without updating the neighbor to close the gap.
+// Returns the set of Penny-proposed leg_ids (pre-resolution) that should be
+// blocked from dispatch.
+// ---------------------------------------------------------------------------
+
+type SimLeg = {
+  id: number;
+  sortOrder: number | null;
+  startLat: number | null;
+  startLng: number | null;
+  endLat: number | null;
+  endLng: number | null;
+};
+
+/**
+ * In-memory resolve: mirrors resolvePennyLegIdOnTrip but against a Map
+ * instead of the DB. Returns the real leg id or null if unresolvable.
+ */
+function simResolveId(proposedId: number, legMap: Map<number, SimLeg>): number | null {
+  if (legMap.has(proposedId)) return proposedId;
+  // Penny sometimes passes sort_order instead of id
+  const matches: SimLeg[] = [];
+  for (const leg of legMap.values()) {
+    if (leg.sortOrder === proposedId) matches.push(leg);
+  }
+  if (matches.length === 1) return matches[0].id;
+  return null;
+}
+
+/** Check whether a sorted leg array has any contiguity gap >threshold. */
+function simHasGaps(sortedLegs: SimLeg[]): boolean {
+  for (let i = 0; i < sortedLegs.length - 1; i++) {
+    const curr = sortedLegs[i];
+    const next = sortedLegs[i + 1];
+    if (
+      curr.endLat == null || curr.endLng == null ||
+      next.startLat == null || next.startLng == null
+    ) continue;
+    if (haversineKm(curr.endLat, curr.endLng, next.startLat, next.startLng) > LEG_GAP_THRESHOLD_KM) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function findGapCreatingDeletes(
+  tripId: number,
+  actions: ValidatedAction[]
+): Promise<Set<number>> {
+  // 1. Load current legs
+  const currentLegs = await db
+    .select({
+      id: legs.id,
+      sortOrder: legs.sortOrder,
+      startLat: legs.startLat,
+      startLng: legs.startLng,
+      endLat: legs.endLat,
+      endLng: legs.endLng,
+    })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(legs.sortOrder);
+
+  const deleteActions = actions.filter(
+    (a): a is ValidatedAction & { name: 'delete_leg' } => a.name === 'delete_leg'
+  );
+
+  // No deletes or fewer than 2 legs → nothing to check
+  if (deleteActions.length === 0 || currentLegs.length < 2) return new Set();
+
+  // 2. Simulate all actions on a mutable copy
+  const legMap = new Map<number, SimLeg>();
+  for (const leg of currentLegs) {
+    legMap.set(leg.id, { ...leg });
+  }
+
+  // Max sort_order for add_leg entries without an explicit sort_order
+  let maxSort = currentLegs.reduce(
+    (mx, l) => Math.max(mx, l.sortOrder ?? 0),
+    0
+  );
+  let nextSyntheticId = -1;
+
+  for (const action of actions) {
+    switch (action.name) {
+      case 'update_leg': {
+        const resolved = simResolveId(action.input.leg_id, legMap);
+        if (resolved != null) {
+          const leg = legMap.get(resolved)!;
+          const d = action.input.data;
+          if (d.start_lat !== undefined) leg.startLat = d.start_lat ?? null;
+          if (d.start_lng !== undefined) leg.startLng = d.start_lng ?? null;
+          if (d.end_lat !== undefined) leg.endLat = d.end_lat ?? null;
+          if (d.end_lng !== undefined) leg.endLng = d.end_lng ?? null;
+        }
+        break;
+      }
+      case 'add_leg': {
+        const synId = nextSyntheticId--;
+        const so = action.input.sort_order ?? ++maxSort;
+        legMap.set(synId, {
+          id: synId,
+          sortOrder: so,
+          startLat: action.input.start_lat ?? null,
+          startLng: action.input.start_lng ?? null,
+          endLat: action.input.end_lat ?? null,
+          endLng: action.input.end_lng ?? null,
+        });
+        break;
+      }
+      case 'delete_leg': {
+        const resolved = simResolveId(action.input.leg_id, legMap);
+        if (resolved != null) legMap.delete(resolved);
+        break;
+      }
+      // Other action types don't affect leg geometry
+      default:
+        break;
+    }
+  }
+
+  // 3. Sort remaining legs and check for gaps
+  const finalLegs = [...legMap.values()].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  );
+
+  if (finalLegs.length < 2 || !simHasGaps(finalLegs)) {
+    return new Set();
+  }
+
+  // 4. Gaps detected — identify culprit deletes by re-simulating without each
+  //    one. If un-deleting a leg removes all gaps, that delete is the culprit.
+  const blockedIds = new Set<number>();
+
+  for (const del of deleteActions) {
+    // Rebuild simulated state skipping this one delete
+    const testMap = new Map<number, SimLeg>();
+    for (const leg of currentLegs) {
+      testMap.set(leg.id, { ...leg });
+    }
+    let testMaxSort = maxSort;
+    let testSynId = -1;
+
+    // Resolve this delete's target so we can skip it
+    const delResolved = simResolveId(
+      del.input.leg_id,
+      // Use a fresh map for resolution (before any mutations)
+      new Map(currentLegs.map((l) => [l.id, { ...l }]))
+    );
+
+    for (const action of actions) {
+      switch (action.name) {
+        case 'update_leg': {
+          const r = simResolveId(action.input.leg_id, testMap);
+          if (r != null) {
+            const leg = testMap.get(r)!;
+            const d = action.input.data;
+            if (d.start_lat !== undefined) leg.startLat = d.start_lat ?? null;
+            if (d.start_lng !== undefined) leg.startLng = d.start_lng ?? null;
+            if (d.end_lat !== undefined) leg.endLat = d.end_lat ?? null;
+            if (d.end_lng !== undefined) leg.endLng = d.end_lng ?? null;
+          }
+          break;
+        }
+        case 'add_leg': {
+          const synId = testSynId--;
+          const so = action.input.sort_order ?? ++testMaxSort;
+          testMap.set(synId, {
+            id: synId,
+            sortOrder: so,
+            startLat: action.input.start_lat ?? null,
+            startLng: action.input.start_lng ?? null,
+            endLat: action.input.end_lat ?? null,
+            endLng: action.input.end_lng ?? null,
+          });
+          break;
+        }
+        case 'delete_leg': {
+          const r = simResolveId(action.input.leg_id, testMap);
+          // Skip the delete we're testing
+          if (r != null && r !== delResolved) {
+            testMap.delete(r);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    const testFinal = [...testMap.values()].sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+    );
+    if (!simHasGaps(testFinal)) {
+      blockedIds.add(del.input.leg_id);
+    }
+  }
+
+  // If gaps exist but no single delete is the isolated cause (e.g., two
+  // deletes each partially contribute), block all deletes conservatively.
+  // A leg that stays is always safer than a gap in the route.
+  if (blockedIds.size === 0) {
+    for (const del of deleteActions) {
+      blockedIds.add(del.input.leg_id);
+    }
+  }
+
+  return blockedIds;
+}
+
+// ---------------------------------------------------------------------------
+// Post-dispatch deterministic route summary
+//
+// After actions land, read the actual leg state from the DB and produce a
+// short, factual description of the route. This is the ground truth that the
+// frontend can display underneath Penny's prose — eliminating the hallucination
+// problem where Penny says "through Italy" but the legs go through Switzerland.
+// ---------------------------------------------------------------------------
+
+async function buildRouteSummary(tripId: number): Promise<string | null> {
+  const tripLegs = await db
+    .select({
+      sortOrder: legs.sortOrder,
+      startName: legs.startName,
+      endName: legs.endName,
+      distanceKm: legs.distanceKm,
+      driveTimeMinutes: legs.driveTimeMinutes,
+      dates: legs.dates,
+      title: legs.title,
+    })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(legs.sortOrder);
+
+  if (tripLegs.length === 0) return null;
+
+  // Build a concise day-by-day summary:
+  // "Day 1: Girona → Montpellier (350 km, ~4.5 hrs) | Day 2: Montpellier → Annecy (420 km, ~5 hrs) | ..."
+  const dayParts: string[] = [];
+  let totalKm = 0;
+  let totalMinutes = 0;
+
+  for (let i = 0; i < tripLegs.length; i++) {
+    const leg = tripLegs[i];
+    const label = leg.title || `Day ${i + 1}`;
+    const from = leg.startName || '?';
+    const to = leg.endName || '?';
+
+    let details = `${from} → ${to}`;
+    const parts: string[] = [];
+    if (leg.distanceKm != null) {
+      parts.push(`${Math.round(leg.distanceKm)} km`);
+      totalKm += leg.distanceKm;
+    }
+    if (leg.driveTimeMinutes != null) {
+      const hrs = Math.floor(leg.driveTimeMinutes / 60);
+      const mins = Math.round(leg.driveTimeMinutes % 60);
+      parts.push(hrs > 0 ? `~${hrs}h${mins > 0 ? ` ${mins}m` : ''}` : `~${mins}m`);
+      totalMinutes += leg.driveTimeMinutes;
+    }
+    if (parts.length > 0) {
+      details += ` (${parts.join(', ')})`;
+    }
+
+    dayParts.push(`${label}: ${details}`);
+  }
+
+  // Totals line
+  const totalParts: string[] = [];
+  if (totalKm > 0) totalParts.push(`${Math.round(totalKm)} km`);
+  if (totalMinutes > 0) {
+    const h = Math.floor(totalMinutes / 60);
+    const m = Math.round(totalMinutes % 60);
+    totalParts.push(h > 0 ? `~${h}h${m > 0 ? ` ${m}m` : ''} driving` : `~${m}m driving`);
+  }
+  const totalLine = totalParts.length > 0
+    ? `\nTotal: ${totalParts.join(', ')} over ${tripLegs.length} day${tripLegs.length !== 1 ? 's' : ''}`
+    : '';
+
+  return dayParts.join(' | ') + totalLine;
+}
+
+// ---------------------------------------------------------------------------
+// Post-dispatch leg contiguity check
+//
+// After Penny's tool calls land, verify that consecutive legs chain properly
+// (leg N end ≈ leg N+1 start). A gap means Penny deleted a leg without
+// updating the neighbor — the map will show a broken route.
+// ---------------------------------------------------------------------------
+const LEG_GAP_THRESHOLD_KM = 50; // anything >50km between consecutive legs is suspect
+
+async function checkLegContiguity(tripId: number, userId: string): Promise<void> {
+  const tripLegs = await db
+    .select({
+      id: legs.id,
+      sortOrder: legs.sortOrder,
+      startName: legs.startName,
+      endName: legs.endName,
+      startLat: legs.startLat,
+      startLng: legs.startLng,
+      endLat: legs.endLat,
+      endLng: legs.endLng,
+    })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(legs.sortOrder);
+
+  if (tripLegs.length < 2) return;
+
+  for (let i = 0; i < tripLegs.length - 1; i++) {
+    const current = tripLegs[i];
+    const next = tripLegs[i + 1];
+    if (
+      current.endLat == null ||
+      current.endLng == null ||
+      next.startLat == null ||
+      next.startLng == null
+    ) {
+      continue; // can't check without coords
+    }
+    const gapKm = haversineKm(
+      current.endLat,
+      current.endLng,
+      next.startLat,
+      next.startLng
+    );
+    if (gapKm > LEG_GAP_THRESHOLD_KM) {
+      const msg =
+        `Leg contiguity gap on trip ${tripId}: ` +
+        `leg ${current.id} ("${current.endName}") → leg ${next.id} ("${next.startName}") ` +
+        `gap=${Math.round(gapKm)}km (threshold=${LEG_GAP_THRESHOLD_KM}km). ` +
+        `sort_orders: ${current.sortOrder} → ${next.sortOrder}`;
+      console.error('[contiguity-check]', msg);
+      await logUsageEvent({
+        userId,
+        tripId,
+        provider: 'penny:contiguity-gap',
+        requests: 0,
+        success: false,
+        errorMessage: msg,
+      }).catch(() => {});
+    }
+  }
+}
+
+function haversineKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 // ---------------------------------------------------------------------------

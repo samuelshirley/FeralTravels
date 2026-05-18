@@ -258,6 +258,16 @@ export async function getOnboardingSnapshot(
         .where(eq(trips.id, tripId));
       return getOnboardingSnapshot(tripId, userId);
     }
+    // Auto-select when there's only one complete vehicle — skip the question
+    if (pickable.length === 1) {
+      const only = pickable[0];
+      await db
+        .update(trips)
+        .set({ vehicleId: only.id, onboardingState: 'ready', updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      await writeQA(tripId, 'Which vehicle are you taking on this trip?', `Using ${only.name}`);
+      return { state: 'ready' as OnboardingState, question: HANDOFF_QUESTION, vehicles: [], progress: null };
+    }
     return {
       state,
       question: {
