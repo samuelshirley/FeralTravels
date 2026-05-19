@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { buildLegDirectionsUrl, buildSegmentedNavUrls, legDirectionsWaypoints } from '@/lib/maps';
+import { useNextStop } from '@/lib/useNextStop';
 import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
@@ -67,13 +68,24 @@ export default function LegCard({
   const navWaypointCount = legDirectionsWaypoints(leg.stops).length;
   const navSegments = buildSegmentedNavUrls({
     legCoords,
-    startName: leg.start_name,
     endName: leg.end_name,
     selectedRoute,
     stops: leg.stops,
   });
   // Fallback single URL for the syncing state (doesn't need segments)
   const directionsUrl = buildLegDirectionsUrl({ legCoords, selectedRoute, stops: leg.stops });
+
+  // GPS-aware "next stop" — only requests location when card is expanded.
+  const legStart = leg.start_lat != null && leg.start_lng != null
+    ? { lat: leg.start_lat, lng: leg.start_lng }
+    : null;
+  const { nextStop, allSegments, isNearRoute, gpsStatus } = useNextStop(
+    navSegments,
+    legStart,
+    expanded,
+  );
+  // Show the smart single button when GPS is active and user is near the route.
+  const showSmartNav = gpsStatus === 'active' && isNearRoute && nextStop != null;
 
   const [trails, setTrails] = useState<AttachedTrail[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -269,10 +281,10 @@ export default function LegCard({
             ))}
           </div>
 
-          {navSegments && navSegments.length > 0 && (
+          {allSegments.length > 0 && (
             <div style={{ marginTop: 10 }}>
               {isFuelSyncing ? (
-                /* Syncing state — single placeholder link while fuel stops refresh */
+                /* Syncing state — placeholder while fuel stops refresh */
                 <a
                   href={directionsUrl ?? '#'}
                   target="_blank"
@@ -304,14 +316,15 @@ export default function LegCard({
                   <Spinner size={12} thickness={2} color="var(--tp-gold)" />
                   <span>Updating route…</span>
                 </a>
-              ) : navSegments.length === 1 ? (
-                /* Single segment (no intermediate stops) — one button */
+              ) : showSmartNav ? (
+                /* GPS-aware: single button to next stop */
                 <a
-                  href={navSegments[0].url}
+                  href={nextStop!.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  title="Open in Google Maps — starts turn-by-turn navigation"
+                  data-testid="nav-next-stop"
+                  title={`Navigate to ${nextStop!.label}`}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -328,10 +341,10 @@ export default function LegCard({
                   }}
                 >
                   <span>▶</span>
-                  Navigate in Google Maps
+                  Navigate to {nextStop!.label}
                 </a>
               ) : (
-                /* Multiple segments — numbered step links */
+                /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div
                     style={{
@@ -342,16 +355,19 @@ export default function LegCard({
                       marginBottom: 2,
                     }}
                   >
-                    NAVIGATE ({navSegments.length} SEGMENTS)
+                    {gpsStatus === 'pending'
+                      ? 'FINDING YOUR LOCATION…'
+                      : `NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? '' : 'S'})`}
                   </div>
-                  {navSegments.map((seg, i) => (
+                  {allSegments.map((seg, i) => (
                     <a
                       key={i}
                       href={seg.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      title={`Navigate: ${seg.label}`}
+                      data-testid="nav-stop-link"
+                      title={`Navigate to ${seg.label}`}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -368,16 +384,7 @@ export default function LegCard({
                         width: 'fit-content',
                       }}
                     >
-                      <span style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        background: 'rgba(0,0,0,0.2)',
-                        padding: '1px 6px',
-                        borderRadius: 10,
-                        flexShrink: 0,
-                      }}>
-                        {i + 1}
-                      </span>
+                      <span>▶</span>
                       {seg.label}
                     </a>
                   ))}
@@ -396,7 +403,7 @@ export default function LegCard({
                   {navWaypointCount > 0 ? (
                     <>
                       Shown driving time (~{driveHours} h) is the leg headline start→destination only — it excludes
-                      detours via added stops. Each segment opens turn-by-turn navigation directly.
+                      detours via added stops.
                     </>
                   ) : (
                     <>

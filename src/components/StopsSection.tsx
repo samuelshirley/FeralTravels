@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
-import { tripApi, ApiError } from '@/lib/api';
-import { buildDogParkSearchUrl, buildParkSearchUrl } from '@/lib/maps';
-import { parseCoords, needsServerResolution } from '@/lib/coords';
 import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
+import { StopCard, MoreStopsModal } from './stops';
+import { useStopActions } from './stops/useStopActions';
+import type { MoreStopsData, SearchMode, StopPhoto } from './stops';
 import Spinner from './Spinner';
-import Distance from './Distance';
 
 interface StopsSectionProps {
   tripId: number;
@@ -18,19 +17,13 @@ interface StopsSectionProps {
   legEndCoords: { lat: number | null; lng: number | null };
   legStartCoords?: { lat: number | null; lng: number | null };
   initialStops: Stop[];
-  /**
-   * Per-leg auto fuel lifecycle from the server (`computing` while trip-wide
-   * replan runs).
-   */
   fuelStatus?: FuelStatus;
-  /** Last server-side fuel planner error when fuelStatus is failed. */
   fuelPlanError?: string | null;
   onChanged?: () => void;
   readonly?: boolean;
 }
 
-/** Matches TRAILS / GPX subsection shell in [`LegCard.tsx`](/src/components/LegCard.tsx). */
-const legSubsectionCardStyle: CSSProperties = {
+const sectionCardStyle: CSSProperties = {
   marginTop: 12,
   padding: '10px 14px',
   background: 'var(--tp-surface-muted)',
@@ -38,7 +31,7 @@ const legSubsectionCardStyle: CSSProperties = {
   border: '1px solid var(--tp-border)',
 };
 
-const legSubsectionTitleStyle: CSSProperties = {
+const sectionTitleStyle: CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.08em',
@@ -48,107 +41,12 @@ const legSubsectionTitleStyle: CSSProperties = {
 
 const TYPE_ORDER: StopType[] = ['fuel', 'water', 'food', 'overnight', 'rest', 'other'];
 
-const TYPE_META: Record<StopType, { label: string; color: string; icon: string }> = {
-  fuel: { label: 'Fuel', color: 'var(--tp-gold)', icon: '⛽' },
-  water: { label: 'Water', color: 'var(--tp-primary)', icon: '💧' },
-  food: { label: 'Food', color: 'var(--tp-accent-warm)', icon: '🍴' },
-  overnight: { label: 'Overnight', color: '#8B7AB8', icon: '🌙' },
-  rest: { label: 'Rest', color: 'var(--tp-success)', icon: '☕' },
-  other: { label: 'Other', color: 'var(--tp-muted)', icon: '📍' },
-};
-
-type NearbyRow = {
-  name: string;
-  lat: number;
-  lng: number;
-  placeId: string | null;
-  primaryType: string | null;
-  googleMapsUri: string | null;
-  distanceKm: number;
-  within5Km: boolean;
-};
-
-/**
- * Stable id for Nearby rows vs itinerary stops (coords when no place id).
- * Survives leg card collapse/remount alongside module-level PARKS_NEARBY_CACHE.
- */
-function nearbyRowKey(row: NearbyRow): string {
-  return row.placeId ?? `${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`;
-}
-
-/**
- * Nearby Places payload cached per leg end anchor — component-local refs were
- * lost when collapsing a leg unmouts StopsSection; this survives unmount.
- */
-const PARKS_NEARBY_CACHE = new Map<
-  string,
-  { dogParks: NearbyRow[]; parks: NearbyRow[]; error?: string }
->();
-
-function buildGooglePlacesItineraryKeySet(stopsArr: Stop[]): Set<string> {
-  const keys = new Set<string>();
-  for (const s of stopsArr) {
-    if (s.source !== 'google_places') continue;
-    if (s.stop_type !== 'overnight' && s.stop_type !== 'rest') continue;
-    if (s.status === 'dismissed') continue;
-    const m = s.source_url?.match(/place_id[:=]([^&?#'"]+)/);
-    if (m?.[1]) keys.add(m[1]);
-    if (s.lat != null && s.lng != null) keys.add(`${s.lat.toFixed(5)}:${s.lng.toFixed(5)}`);
-  }
-  return keys;
-}
-
-function googlePlacesSuggestionOnItinerary(row: NearbyRow, itineraryKeys: Set<string>): boolean {
-  if (row.placeId != null && itineraryKeys.has(row.placeId)) return true;
-  return itineraryKeys.has(`${row.lat.toFixed(5)}:${row.lng.toFixed(5)}`);
-}
-
-/**
- * Quick haversine. We don't import from `@/lib/polyline` because that
- * module also pulls in the polyline decoder which we don't need on the
- * client for the parks list.
- */
-function haversineKmLocal(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const sinDLat = Math.sin(dLat / 2);
-  const sinDLng = Math.sin(dLng / 2);
-  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-/**
- * Pick the top dog park + top park to surface as the leg's curated
- * overnight suggestion. We prefer a pair within `maxKm` of each other so
- * the same campsite serves both walks. If no pair qualifies, fall back to
- * the closest entry in each list independently.
- */
-function pickTopPair(
-  dogs: NearbyRow[],
-  parks: NearbyRow[],
-  maxKm: number
-): { dog: NearbyRow | null; park: NearbyRow | null } {
-  if (dogs.length === 0 && parks.length === 0) return { dog: null, park: null };
-  if (dogs.length === 0) return { dog: null, park: parks[0] ?? null };
-  if (parks.length === 0) return { dog: dogs[0] ?? null, park: null };
-  for (const d of dogs) {
-    for (const p of parks) {
-      if (haversineKmLocal({ lat: d.lat, lng: d.lng }, { lat: p.lat, lng: p.lng }) <= maxKm) {
-        return { dog: d, park: p };
-      }
-    }
-  }
-  return { dog: dogs[0], park: parks[0] };
-}
+// Photos are now read directly from stop.photos (persisted in DB at planning time).
 
 export default function StopsSection({
   tripId,
   legId,
-  legEndName,
+  legEndName: _legEndName,
   legEndCoords,
   legStartCoords: _legStartCoords,
   initialStops,
@@ -157,343 +55,132 @@ export default function StopsSection({
   onChanged,
   readonly = false,
 }: StopsSectionProps) {
-  const api = useMemo(() => tripApi(tripId), [tripId]);
+  void _legEndName;
   void _legStartCoords;
-  void legEndName;
 
-  const [stops, setStops] = useState<Stop[]>(initialStops);
-  const [pasteValue, setPasteValue] = useState('');
-  const [pasteBusy, setPasteBusy] = useState(false);
-  const [pasteError, setPasteError] = useState<string | null>(null);
-  const addingType: StopType = 'overnight';
+  const {
+    activeStops,
+    dismissedStops,
+    syncInitialStops,
+    pasteValue,
+    setPasteValue,
+    pasteBusy,
+    pasteError,
+    addFromPaste,
+  } = useStopActions({ tripId, legId, initialStops, onChanged });
 
-  const [nearbyBusy, setNearbyBusy] = useState(
-    () =>
-      Boolean(
-        legEndCoords.lat != null &&
-          legEndCoords.lng != null &&
-          typeof legId === 'number' &&
-          !readonly
-      )
-  );
-  const [nearbyError, setNearbyError] = useState<string | null>(null);
-  const [nearbyDog, setNearbyDog] = useState<NearbyRow[]>([]);
-  const [nearbyParksGreen, setNearbyParksGreen] = useState<NearbyRow[]>([]);
-  const [addingParkKey, setAddingParkKey] = useState<string | null>(null);
-  /** User-chosen Places row keys (persist until leg anchor changes). */
-  const [pickedDogKey, setPickedDogKey] = useState<string | null>(null);
-  const [pickedParkKey, setPickedParkKey] = useState<string | null>(null);
+  useEffect(() => {
+    syncInitialStops(initialStops);
+  }, [initialStops, syncInitialStops]);
 
+  // --- Fuel planning UI state ---
   const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
   const pathname = usePathname();
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
-  const setupReturnTarget = pathname && pathname.startsWith('/') ? pathname : `/trips/${tripId}`;
+  const setupReturnTarget = pathname?.startsWith('/') ? pathname : `/trips/${tripId}`;
   const vehicleSetupHref = `/vehicle-setup?returnTo=${encodeURIComponent(setupReturnTarget)}`;
 
+  // --- Photos state ---
+  // Photos are now persisted in the DB at planning time — no external API calls.
+  // Build the photosMap from stop.photos directly.
+  const photosMap = useMemo(() => {
+    const map = new Map<string, StopPhoto[]>();
+    for (const stop of activeStops) {
+      map.set(stop.id.toString(), stop.photos ?? []);
+    }
+    return map;
+  }, [activeStops]);
+
+  // --- More Stops modal ---
+  const [modalOpen, setModalOpen] = useState(false);
+  const [moreStops, setMoreStops] = useState<MoreStopsData>({
+    fuel: [],
+    groceries: [],
+    water: [],
+    parks: [],
+  });
+  const [moreStopsLoading, setMoreStopsLoading] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>('along-route');
+
   const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
-  const anchorLat = legEndCoords.lat as number | undefined;
-  const anchorLng = legEndCoords.lng as number | undefined;
 
-  const parksMountKey =
-    anchorLat !== undefined && anchorLng !== undefined
-      ? `${legId}:${anchorLat.toFixed(4)}:${anchorLng.toFixed(4)}`
-      : '';
+  const fetchMoreStops = useCallback(
+    async (mode: SearchMode) => {
+      if (!hasEndCoords) return;
+      setMoreStopsLoading(true);
 
-  async function reload() {
-    try {
-      const data = await api.listStopsForLeg(legId);
-      if (Array.isArray(data)) setStops(data as Stop[]);
-      onChanged?.();
-    } catch {
-      /* ignore */
-    }
-  }
+      const lat = legEndCoords.lat!;
+      const lng = legEndCoords.lng!;
+      const categories = ['fuel', 'groceries', 'water', 'parks'] as const;
 
-  useEffect(() => {
-    setStops(initialStops);
-  }, [initialStops]);
-
-  const itineraryNearbyKeys = useMemo(() => buildGooglePlacesItineraryKeySet(stops), [stops]);
-
-  /** Reset category picks when the leg end anchor moves to another overnight area. */
-  useEffect(() => {
-    setPickedDogKey(null);
-    setPickedParkKey(null);
-  }, [parksMountKey]);
-
-  const topNearbyPair = useMemo(
-    () => pickTopPair(nearbyDog, nearbyParksGreen, 5),
-    [nearbyDog, nearbyParksGreen]
-  );
-
-  const primaryDogResolved = useMemo(() => {
-    if (nearbyDog.length === 0) return null;
-    if (pickedDogKey != null) {
-      const picked = nearbyDog.find((r) => nearbyRowKey(r) === pickedDogKey);
-      if (picked) return picked;
-    }
-    return topNearbyPair.dog;
-  }, [nearbyDog, pickedDogKey, topNearbyPair.dog]);
-
-  const primaryParkResolved = useMemo(() => {
-    if (nearbyParksGreen.length === 0) return null;
-    if (pickedParkKey != null) {
-      const picked = nearbyParksGreen.find((r) => nearbyRowKey(r) === pickedParkKey);
-      if (picked) return picked;
-    }
-    return topNearbyPair.park;
-  }, [nearbyParksGreen, pickedParkKey, topNearbyPair.park]);
-
-  const alternateDogRows = useMemo(
-    () =>
-      primaryDogResolved
-        ? nearbyDog.filter((r) => nearbyRowKey(r) !== nearbyRowKey(primaryDogResolved))
-        : [],
-    [nearbyDog, primaryDogResolved]
-  );
-
-  const alternateParkRows = useMemo(
-    () =>
-      primaryParkResolved
-        ? nearbyParksGreen.filter((r) => nearbyRowKey(r) !== nearbyRowKey(primaryParkResolved))
-        : [],
-    [nearbyParksGreen, primaryParkResolved]
-  );
-
-  const closestDogRow = nearbyDog[0] ?? null;
-  const closestParkRow = nearbyParksGreen[0] ?? null;
-
-  useEffect(() => {
-    if (!hasEndCoords || readonly || !parksMountKey || anchorLat == null || anchorLng == null)
-      return;
-    const cached = PARKS_NEARBY_CACHE.get(parksMountKey);
-    if (cached) {
-      setNearbyDog(cached.dogParks);
-      setNearbyParksGreen(cached.parks);
-      setNearbyError(cached.error ?? null);
-      setNearbyBusy(false);
-      return;
-    }
-
-    const ac = new AbortController();
-    setNearbyBusy(true);
-    setNearbyError(null);
-
-    api
-      .nearbyParks(legId, { lat: anchorLat, lng: anchorLng }, { signal: ac.signal, skipGlobalErrorReport: true })
-      .then((data) => {
-        if (!data || typeof data !== 'object') return;
-        const dogList = Array.isArray((data as any).dogParks) ? (data as any).dogParks : [];
-        const parkList = Array.isArray((data as any).parks) ? (data as any).parks : [];
-        const msg = typeof (data as any).error === 'string' ? (data as any).error : undefined;
-        PARKS_NEARBY_CACHE.set(parksMountKey, {
-          dogParks: dogList,
-          parks: parkList,
-          error: msg,
-        });
-        setNearbyDog(dogList);
-        setNearbyParksGreen(parkList);
-        setNearbyError(msg ?? null);
-      })
-      .catch((err: unknown) => {
-        if (ac.signal.aborted) return;
-        const msg =
-          err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Could not load nearby parks.';
-        setNearbyDog([]);
-        setNearbyParksGreen([]);
-        setNearbyError(msg);
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setNearbyBusy(false);
-      });
-
-    return () => ac.abort();
-  }, [anchorLat, anchorLng, api, hasEndCoords, legId, parksMountKey, readonly]);
-
-  async function handleAddFromPaste() {
-    const raw = pasteValue.trim();
-    if (!raw) return;
-    setPasteBusy(true);
-    setPasteError(null);
-    try {
-      const parsed = parseCoords(raw);
-      let coords = parsed;
-      if (!coords && needsServerResolution(raw)) {
-        coords = (await api.parseCoords(raw)) as typeof parsed;
-      }
-      if (!coords) {
-        setPasteError(
-          'Could not read coordinates from that — try decimal "lat, lng" or a Google Maps URL. (For iOverlander / Park4Night spots, copy the coords from their app and paste them here.)'
-        );
-        return;
-      }
-      await api.addStop(legId, {
-        stop_type: addingType,
-        name: coords.name || `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`,
-        lat: coords.lat,
-        lng: coords.lng,
-        status: 'selected',
-        source: coords.source ?? 'user',
-        source_url: coords.source_url ?? null,
-      });
-      setPasteValue('');
-      await reload();
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to add stop';
-      setPasteError(msg);
-    } finally {
-      setPasteBusy(false);
-    }
-  }
-
-  async function handleAddNearbyPlace(row: NearbyRow) {
-    const key = nearbyRowKey(row);
-    if (addingParkKey) return;
-    setAddingParkKey(key);
-    try {
-      await api.addStop(legId, {
-        stop_type: 'rest',
-        name: row.name,
-        lat: row.lat,
-        lng: row.lng,
-        status: 'selected',
-        source: 'google_places',
-        source_url: row.googleMapsUri ?? null,
-      });
-      await reload();
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to add stop';
-      setNearbyError(msg);
-    } finally {
-      setAddingParkKey(null);
-    }
-  }
-
-  /**
-   * Promote a nearby park / dog park into the leg's overnight slot. We
-   * dismiss any existing google_places-sourced overnight options first so
-   * the leg only has one active overnight at a time, then insert the new
-   * row as stop_type='overnight', status='selected'. User-authored
-   * overnights (source != 'google_places') are NOT touched — those came
-   * from the user directly and they can manage them by hand.
-   */
-  async function handleSetOvernight(row: NearbyRow) {
-    const key = nearbyRowKey(row);
-    if (addingParkKey) return;
-    setAddingParkKey(key);
-    try {
-      const existingOvernights = stops.filter(
-        (s) =>
-          s.stop_type === 'overnight' &&
-          s.status !== 'dismissed' &&
-          s.source === 'google_places'
+      const results = await Promise.all(
+        categories.map(async (category) => {
+          try {
+            const params = new URLSearchParams({
+              tripId: tripId.toString(),
+              legId: legId.toString(),
+              lat: lat.toString(),
+              lng: lng.toString(),
+              category,
+            });
+            const res = await fetch(`/api/places/nearby-stops?${params}`);
+            const data = await res.json();
+            return { category, results: data.results ?? [] };
+          } catch {
+            return { category, results: [] };
+          }
+        })
       );
-      for (const existing of existingOvernights) {
-        await api
-          .updateStop(existing.id, { status: 'dismissed' }, { skipGlobalErrorReport: true })
-          .catch(() => {
-            /* stale id from auto-replan — fine, we'll reload below */
-          });
+
+      const data: MoreStopsData = { fuel: [], groceries: [], water: [], parks: [] };
+      for (const r of results) {
+        data[r.category] = r.results;
       }
-      await api.addStop(legId, {
-        stop_type: 'overnight',
-        name: row.name,
-        lat: row.lat,
-        lng: row.lng,
-        status: 'selected',
-        source: 'google_places',
-        source_url: row.googleMapsUri ?? null,
-      });
-      await reload();
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to add stop';
-      setNearbyError(msg);
-    } finally {
-      setAddingParkKey(null);
-    }
-  }
+      setMoreStops(data);
+      setMoreStopsLoading(false);
+    },
+    [hasEndCoords, legEndCoords.lat, legEndCoords.lng, legId, tripId]
+  );
 
-  /**
-   * Stop IDs can disappear out from under the UI when an auto fuel replan
-   * runs and rewrites the auto-suggested rows. The user sees the old row in
-   * the list, clicks it, and the server returns 404 because that ID is gone.
-   * We treat 404 as "stale optimistic state" — silently reload the leg's
-   * stops so the user sees the fresh rows. Other errors fall through to the
-   * global notifier.
-   */
-  /**
-   * Stop IDs can disappear out from under the UI when an auto fuel replan
-   * runs and rewrites the auto-suggested rows. The user sees the old row in
-   * the list, clicks it, and the server returns 404 because that ID is gone.
-   * We pass `skipGlobalErrorReport` so the global toast doesn't fire on a
-   * stale-id 404; we silently reload the leg's stops instead. Non-404 errors
-   * we re-throw so the global notifier can still surface real failures.
-   */
-  async function handleSelect(id: number) {
-    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'selected' } : s)));
-    try {
-      await api.selectStop(id, { skipGlobalErrorReport: true });
-      await reload();
-    } catch (err) {
-      await reload();
-      if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    }
-  }
+  const handleOpenModal = useCallback(() => {
+    setModalOpen(true);
+    fetchMoreStops(searchMode);
+  }, [fetchMoreStops, searchMode]);
 
-  async function handleDismiss(id: number) {
-    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'dismissed' } : s)));
-    try {
-      await api.updateStop(id, { status: 'dismissed' }, { skipGlobalErrorReport: true });
-      await reload();
-    } catch (err) {
-      await reload();
-      if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    }
-  }
+  const handleSearchModeChange = useCallback(
+    (mode: SearchMode) => {
+      setSearchMode(mode);
+      fetchMoreStops(mode);
+    },
+    [fetchMoreStops]
+  );
 
-  async function handleDelete(id: number) {
-    if (!confirm('Delete this stop?')) return;
-    try {
-      await api.deleteStop(id, { skipGlobalErrorReport: true });
-      await reload();
-    } catch (err) {
-      await reload();
-      if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    }
-  }
+  // --- Sort stops for display ---
+  const sortedStops = useMemo(() => {
+    return [...activeStops].sort((a, b) => {
+      const typeA = TYPE_ORDER.indexOf(a.stop_type);
+      const typeB = TYPE_ORDER.indexOf(b.stop_type);
+      // Overnight always last (before "more stops" button)
+      if (a.stop_type === 'overnight' && b.stop_type !== 'overnight') return 1;
+      if (b.stop_type === 'overnight' && a.stop_type !== 'overnight') return -1;
+      // Then by distance from start
+      const distA = a.distance_from_start_km ?? Infinity;
+      const distB = b.distance_from_start_km ?? Infinity;
+      if (distA !== distB) return distA - distB;
+      return typeA - typeB;
+    });
+  }, [activeStops]);
 
-  /**
-   * Swap a fuel/rest stop's primary fields with one of its persisted
-   * alternates so the user can flip between Google Places candidates
-   * without us re-querying Google. Server-side dispatch is in
-   * /api/stops/:id/swap-primary; same 404-as-stale-id treatment as the
-   * other mutation handlers above.
-   */
-  async function handleSwapAlternate(id: number, altIndex: number) {
-    try {
-      await api.swapStopPrimary(id, altIndex, { skipGlobalErrorReport: true });
-      await reload();
-    } catch (err) {
-      await reload();
-      if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    }
-  }
-
-  const groups: Array<[StopType, Stop[]]> = TYPE_ORDER.map((t) => [
-    t,
-    stops.filter((s) => s.stop_type === t && s.status !== 'dismissed'),
-  ]).filter(([, arr]) => arr.length > 0) as Array<[StopType, Stop[]]>;
-  const dismissed = stops.filter((s) => s.status === 'dismissed');
+  const overnightStops = sortedStops.filter((s) => s.stop_type === 'overnight');
+  const waypointStops = sortedStops.filter((s) => s.stop_type !== 'overnight');
 
   return (
     <>
       {/* STOPS */}
-      <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
-        <div style={legSubsectionTitleStyle}>STOPS</div>
+      <div style={sectionCardStyle} onClick={(e) => e.stopPropagation()}>
+        <div style={sectionTitleStyle}>STOPS</div>
 
+        {/* Fuel planning status */}
         {!readonly && fuelPlanning && (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <Spinner size={10} thickness={2} color="var(--tp-gold)" />
@@ -501,6 +188,7 @@ export default function StopsSection({
           </div>
         )}
 
+        {/* Fuel error: vehicle profile */}
         {!readonly && fuelStatus === 'failed' && fuelErrorCategory === 'user_vehicle_profile' && (
           <div
             style={{
@@ -514,14 +202,11 @@ export default function StopsSection({
               lineHeight: 1.5,
             }}
           >
-            <strong style={{ color: 'var(--tp-primary)' }}>Finish your vehicle profile</strong> so we can plan fuel
-            stops along this leg. This is a saved-profile issue, not a broken map.
-            {fuelPlanError ? (
-              <>
-                {' '}
-                <span style={{ color: 'var(--tp-muted)' }}>{fuelPlanError}</span>
-              </>
-            ) : null}
+            <strong style={{ color: 'var(--tp-primary)' }}>Finish your vehicle profile</strong> so we
+            can plan fuel stops along this leg.
+            {fuelPlanError && (
+              <span style={{ color: 'var(--tp-muted)' }}> {fuelPlanError}</span>
+            )}
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <Link
                 href={vehicleSetupHref}
@@ -533,33 +218,16 @@ export default function StopsSection({
                   background: 'var(--tp-primary)',
                   color: 'var(--tp-on-primary)',
                   textDecoration: 'none',
-                  display: 'inline-block',
                 }}
               >
                 Open vehicle setup
-              </Link>
-              <Link
-                href="/settings"
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: '4px 10px',
-                  borderRadius: 4,
-                  border: '1px solid var(--tp-border)',
-                  color: 'var(--tp-primary)',
-                  textDecoration: 'none',
-                  display: 'inline-block',
-                }}
-              >
-                Settings → Vehicle profile
               </Link>
             </div>
           </div>
         )}
 
-        {!readonly &&
-          fuelStatus === 'failed' &&
-          fuelErrorCategory !== 'user_vehicle_profile' && (
+        {/* Fuel error: platform */}
+        {!readonly && fuelStatus === 'failed' && fuelErrorCategory !== 'user_vehicle_profile' && (
           <div
             style={{
               marginBottom: 8,
@@ -575,49 +243,67 @@ export default function StopsSection({
             <strong>
               {fuelErrorCategory === 'platform_config'
                 ? 'Fuel planning paused (Places / Maps setup).'
-                : 'Fuel planning failed.'}{' '}
-            </strong>
+                : 'Fuel planning failed.'}
+            </strong>{' '}
             We&apos;ll retry automatically the next time you edit a stop or change the route.
-            {fuelPlanError ? (
-              <>
-                {' '}
-                <span style={{ color: 'var(--tp-muted)' }}>{fuelPlanError}</span>
-              </>
-            ) : fuelErrorCategory === 'unknown' ? (
-              <>
-                {' '}
-                (If this keeps happening, enable &quot;Places API (New)&quot; in Google Cloud and set
-                GOOGLE_MAPS_SERVER_API_KEY for server-side Places calls.)
-              </>
-            ) : (
-              <>
-                {' '}
-                Ask your host to verify Google Places / Directions credentials and quotas.
-              </>
+            {fuelPlanError && (
+              <span style={{ color: 'var(--tp-muted)' }}> {fuelPlanError}</span>
             )}
           </div>
         )}
 
-        {groups.map(([type, arr]) => (
-          <StopGroup
-            key={type}
-            type={type}
-            stops={arr}
-            onSelect={handleSelect}
-            onDismiss={handleDismiss}
-            onDelete={handleDelete}
-            onSwapAlternate={handleSwapAlternate}
-            readonly={readonly}
+        {/* Waypoint stops (non-overnight) */}
+        {waypointStops.map((stop) => (
+          <StopCard
+            key={stop.id}
+            stopType={stop.stop_type}
+            name={stop.name}
+            distanceFromStartKm={stop.distance_from_start_km}
+            photos={photosMap.get(stop.id.toString()) ?? []}
+            photosLoading={false}
+            googleMapsUri={
+              stop.lat != null && stop.lng != null
+                ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
+                : null
+            }
+            lat={stop.lat}
+            lng={stop.lng}
           />
         ))}
 
-        {groups.length === 0 && !fuelPlanning && fuelStatus !== 'failed' && (
+        {waypointStops.length === 0 && !fuelPlanning && fuelStatus !== 'failed' && (
           <div style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
             {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
           </div>
         )}
 
-        {dismissed.length > 0 && (
+        {/* Overnight */}
+        {overnightStops.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={sectionTitleStyle}>OVERNIGHT</div>
+            {overnightStops.map((stop) => (
+              <StopCard
+                key={stop.id}
+                stopType="overnight"
+                variant="overnight"
+                name={stop.name}
+                distanceFromStartKm={stop.distance_from_start_km}
+                photos={photosMap.get(stop.id.toString()) ?? []}
+                photosLoading={false}
+                googleMapsUri={
+                  stop.lat != null && stop.lng != null
+                    ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
+                    : null
+                }
+                lat={stop.lat}
+                lng={stop.lng}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Dismissed stops (collapsed) */}
+        {dismissedStops.length > 0 && (
           <details style={{ marginTop: 8 }}>
             <summary
               style={{
@@ -627,129 +313,66 @@ export default function StopsSection({
                 letterSpacing: '0.08em',
               }}
             >
-              {dismissed.length} DISMISSED
+              {dismissedStops.length} DISMISSED
             </summary>
             <div style={{ marginTop: 6 }}>
-              {dismissed.map((s) => (
-                <StopRow
-                  key={s.id}
-                  stop={s}
-                  onSelect={handleSelect}
-                  onDismiss={handleDismiss}
-                  onDelete={handleDelete}
-                  readonly={readonly}
+              {dismissedStops.map((stop) => (
+                <StopCard
+                  key={stop.id}
+                  stopType={stop.stop_type}
+                  name={stop.name}
+                  distanceFromStartKm={stop.distance_from_start_km}
+                  photos={[]}
+                  googleMapsUri={
+                    stop.lat != null && stop.lng != null
+                      ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
+                      : null
+                  }
+                  lat={stop.lat}
+                  lng={stop.lng}
                 />
               ))}
             </div>
           </details>
         )}
-      </div>
 
-      {/* PARKS NEAR STOP — leg end anchor (overnight-area discovery). */}
-      {hasEndCoords && !readonly && anchorLat != null && anchorLng != null && (
-        <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
-          <div style={legSubsectionTitleStyle}>PARKS NEAR STOP</div>
-
-          <p style={{ fontSize: 11, color: 'var(--tp-muted)', margin: '0 0 8px 0', lineHeight: 1.45 }}>
-            Google Places ideas near the destination for scouting stops or camping — optional, not prescribed. Planned
-            mid-leg stretch stops (Places dog parks/parks along the route) show as Rest rows after fuel planning when your
-            vehicle has max drive hours/day set.
-          </p>
-
-          {nearbyBusy ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--tp-muted)' }}>
-              <Spinner size={10} thickness={2} color="var(--tp-primary)" />
-              Loading nearby places…
-            </div>
-          ) : nearbyError &&
-            nearbyDog.length === 0 &&
-            nearbyParksGreen.length === 0 ? (
-            <div style={{ fontSize: 11, color: 'var(--tp-danger)', lineHeight: 1.45 }}>{nearbyError}</div>
-          ) : (
-            <>
-              <ParkNearbyCategory
-                label="DOG PARKS"
-                primary={primaryDogResolved}
-                alternateRows={alternateDogRows}
-                closestRow={closestDogRow}
-                readonly={readonly}
-                accentColor="var(--tp-success)"
-                accentBorder="rgba(74,139,122,0.35)"
-                onPrimaryChange={(row) => setPickedDogKey(nearbyRowKey(row))}
-                onAdd={handleAddNearbyPlace}
-                onSetOvernight={handleSetOvernight}
-                addingKey={addingParkKey}
-                itineraryKeys={itineraryNearbyKeys}
-                mapsHrefForRow={(row) => row.googleMapsUri ?? buildDogParkSearchUrl(row.lat, row.lng)}
-                selectPrompt="More dog parks…"
-              />
-              <ParkNearbyCategory
-                label="PARKS"
-                primary={primaryParkResolved}
-                alternateRows={alternateParkRows}
-                closestRow={closestParkRow}
-                readonly={readonly}
-                accentColor="var(--tp-accent-violet)"
-                accentBorder="var(--tp-accent-violet-muted)"
-                onPrimaryChange={(row) => setPickedParkKey(nearbyRowKey(row))}
-                onAdd={handleAddNearbyPlace}
-                onSetOvernight={handleSetOvernight}
-                addingKey={addingParkKey}
-                itineraryKeys={itineraryNearbyKeys}
-                mapsHrefForRow={(row) => row.googleMapsUri ?? buildParkSearchUrl(row.lat, row.lng)}
-                selectPrompt="More parks…"
-              />
-              {(nearbyDog.length > 0 || nearbyParksGreen.length > 0) && nearbyError && (
-                <div style={{ fontSize: 10, color: 'var(--tp-muted)', marginTop: 8 }}>
-                  {nearbyError}
-                </div>
-              )}
-            </>
-          )}
-
-          <div
+        {/* More Stops button */}
+        {!readonly && hasEndCoords && (
+          <button
+            onClick={handleOpenModal}
             style={{
               display: 'flex',
-              gap: 12,
-              flexWrap: 'wrap',
-              marginTop: 10,
-              fontSize: 11,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              width: '100%',
+              padding: 10,
+              marginTop: 8,
+              background: 'var(--tp-primary-muted)',
+              border: '1px solid transparent',
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
               color: 'var(--tp-primary)',
+              cursor: 'pointer',
+              transition: 'background 0.15s',
             }}
           >
-            <a
-              href={buildDogParkSearchUrl(anchorLat, anchorLng)}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: 'var(--tp-primary)', textDecoration: 'underline' }}
-            >
-              Browse all dog parks ↗
-            </a>
-            <a
-              href={buildParkSearchUrl(anchorLat, anchorLng)}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: 'var(--tp-primary)', textDecoration: 'underline' }}
-            >
-              Browse all parks ↗
-            </a>
-          </div>
-        </div>
-      )}
+            + More stop options
+          </button>
+        )}
+      </div>
 
-      {/* Paste GPS */}
+      {/* Paste GPS (kept for power users) */}
       {!readonly && (
-        <div style={legSubsectionCardStyle} onClick={(e) => e.stopPropagation()}>
-          <div style={legSubsectionTitleStyle}>PASTE GPS</div>
-          <p style={{ fontSize: 11, color: 'var(--tp-muted)', margin: '0 0 8px 0', lineHeight: 1.45 }}>
-            Add a waypoint from decimal coordinates or a Google Maps link (still stored as overnight).
-          </p>
+        <div style={sectionCardStyle} onClick={(e) => e.stopPropagation()}>
+          <div style={sectionTitleStyle}>PASTE GPS</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <input
               value={pasteValue}
               onChange={(e) => setPasteValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAddFromPaste();
+                if (e.key === 'Enter') addFromPaste();
               }}
               placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
               disabled={pasteBusy}
@@ -766,7 +389,7 @@ export default function StopsSection({
               }}
             />
             <button
-              onClick={handleAddFromPaste}
+              onClick={addFromPaste}
               disabled={pasteBusy || !pasteValue.trim()}
               style={{
                 fontSize: 11,
@@ -783,527 +406,23 @@ export default function StopsSection({
             </button>
           </div>
           {pasteError && (
-            <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>{pasteError}</div>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-function ParkNearbyCategory({
-  label,
-  primary,
-  alternateRows,
-  closestRow,
-  readonly,
-  accentColor,
-  accentBorder,
-  onPrimaryChange,
-  onAdd,
-  onSetOvernight,
-  addingKey,
-  mapsHrefForRow,
-  itineraryKeys,
-  selectPrompt,
-}: {
-  label: string;
-  primary: NearbyRow | null;
-  alternateRows: NearbyRow[];
-  closestRow: NearbyRow | null;
-  readonly: boolean;
-  accentColor: string;
-  accentBorder: string;
-  onPrimaryChange: (row: NearbyRow) => void;
-  onAdd: (row: NearbyRow) => void;
-  onSetOvernight?: (row: NearbyRow) => void;
-  addingKey: string | null;
-  mapsHrefForRow: (row: NearbyRow) => string;
-  itineraryKeys: Set<string>;
-  selectPrompt: string;
-}) {
-  if (!primary) {
-    return (
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 6, color: accentColor }}>
-          {label}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--tp-subtle)', fontStyle: 'italic' }}>No Places hits in reach.</div>
-      </div>
-    );
-  }
-
-  const dedupe = nearbyRowKey(primary);
-  const mapsHref = mapsHrefForRow(primary);
-  const onTrip = googlePlacesSuggestionOnItinerary(primary, itineraryKeys);
-  const matchesClosest =
-    closestRow !== null && nearbyRowKey(primary) === nearbyRowKey(closestRow);
-  const busyAdd = addingKey !== null;
-  const buttonsDisabled = busyAdd || onTrip;
-
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, color: accentColor }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'baseline',
-              gap: 6,
-              justifyContent: 'space-between',
-            }}
-          >
-            <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tp-text)' }}>{primary.name}</span>{' '}
-              {matchesClosest ? (
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    color: accentColor,
-                    border: `1px solid ${accentBorder}`,
-                    borderRadius: 3,
-                    padding: '2px 5px',
-                    marginLeft: 4,
-                  }}
-                >
-                  Closest
-                </span>
-              ) : null}
-              {onTrip ? (
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    color: 'var(--tp-success)',
-                    border: '1px solid rgba(74,139,122,0.35)',
-                    borderRadius: 3,
-                    padding: '2px 5px',
-                    marginLeft: 4,
-                  }}
-                  title="This place is already on your itinerary above"
-                >
-                  On itinerary
-                </span>
-              ) : null}
-              {!primary.within5Km ? (
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    color: 'var(--tp-muted)',
-                    border: '1px solid var(--tp-border)',
-                    borderRadius: 3,
-                    padding: '2px 5px',
-                    marginLeft: 4,
-                  }}
-                >
-                  Outside 5 km
-                </span>
-              ) : null}
-              <Distance
-                km={primary.distanceKm}
-                layout="inline"
-                primaryOverride={`${primary.distanceKm.toFixed(1)} km`}
-                style={{ marginLeft: 8, fontSize: 11, color: 'var(--tp-muted)' }}
-              />
+            <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>
+              {pasteError}
             </div>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, alignItems: 'center' }}>
-            <a
-              href={mapsHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                fontSize: 11,
-                padding: '3px 10px',
-                borderRadius: 4,
-                textDecoration: 'none',
-                color: accentColor,
-                border: `1px solid ${accentBorder}`,
-              }}
-            >
-              Maps ↗
-            </a>
-            {!readonly && onSetOvernight && (
-              <button
-                type="button"
-                onClick={() => onSetOvernight(primary)}
-                disabled={buttonsDisabled}
-                style={{
-                  fontSize: 11,
-                  padding: '3px 10px',
-                  borderRadius: 4,
-                  cursor: busyAdd ? 'wait' : onTrip ? 'default' : 'pointer',
-                  background: 'var(--tp-primary)',
-                  border: '1px solid var(--tp-primary)',
-                  color: 'var(--tp-on-primary)',
-                  fontWeight: 600,
-                  opacity: onTrip ? 0.55 : 1,
-                }}
-              >
-                {addingKey === dedupe ? 'Adding…' : 'Use as overnight'}
-              </button>
-            )}
-            {!readonly && (
-              <button
-                type="button"
-                onClick={() => onAdd(primary)}
-                disabled={buttonsDisabled}
-                style={{
-                  fontSize: 11,
-                  padding: '3px 10px',
-                  borderRadius: 4,
-                  cursor: busyAdd ? 'wait' : onTrip ? 'default' : 'pointer',
-                  background: 'rgba(124,181,232,0.18)',
-                  border: '1px solid rgba(124,181,232,0.35)',
-                  color: 'var(--tp-primary)',
-                  opacity: onTrip ? 0.55 : 1,
-                }}
-              >
-                {addingKey === dedupe ? 'Adding…' : 'Add as rest stop'}
-              </button>
-            )}
-            {!readonly && alternateRows.length > 0 && (
-              <select
-                aria-label={selectPrompt}
-                title={selectPrompt}
-                value=""
-                onChange={(e) => {
-                  const idx = parseInt(e.target.value, 10);
-                  if (Number.isNaN(idx)) return;
-                  const picked = alternateRows[idx];
-                  if (picked) onPrimaryChange(picked);
-                  e.currentTarget.value = '';
-                }}
-                style={{
-                  fontSize: 10,
-                  background: 'transparent',
-                  border: '1px solid var(--tp-border)',
-                  color: 'var(--tp-muted)',
-                  cursor: 'pointer',
-                  padding: '3px 6px',
-                  borderRadius: 3,
-                  flexShrink: 0,
-                  maxWidth: 200,
-                }}
-              >
-                <option value="" disabled>
-                  ▾ {selectPrompt}
-                </option>
-                {alternateRows.map((alt, idx) => (
-                  <option key={nearbyRowKey(alt)} value={idx}>
-                    {alt.name} ({alt.distanceKm.toFixed(1)} km)
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StopGroup({
-  type,
-  stops,
-  onSelect,
-  onDismiss,
-  onDelete,
-  onSwapAlternate,
-  readonly,
-}: {
-  type: StopType;
-  stops: Stop[];
-  onSelect: (id: number) => void;
-  onDismiss: (id: number) => void;
-  onDelete: (id: number) => void;
-  onSwapAlternate?: (id: number, altIndex: number) => void;
-  readonly: boolean;
-}) {
-  const meta = TYPE_META[type];
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div
-        style={{
-          fontSize: 10,
-          color: meta.color,
-          letterSpacing: '0.08em',
-          marginBottom: 4,
-        }}
-      >
-        {meta.icon} {meta.label.toUpperCase()}
-      </div>
-      {stops.map((s) => (
-        <StopRow
-          key={s.id}
-          stop={s}
-          onSelect={onSelect}
-          onDismiss={onDismiss}
-          onDelete={onDelete}
-          onSwapAlternate={onSwapAlternate}
-          readonly={readonly}
-        />
-      ))}
-    </div>
-  );
-}
-
-function StopRow({
-  stop,
-  onSelect,
-  onDismiss,
-  onDelete,
-  onSwapAlternate,
-  readonly,
-}: {
-  stop: Stop;
-  onSelect: (id: number) => void;
-  onDismiss: (id: number) => void;
-  onDelete: (id: number) => void;
-  onSwapAlternate?: (id: number, altIndex: number) => void;
-  readonly: boolean;
-}) {
-  const selected = stop.status === 'selected';
-  const dismissed = stop.status === 'dismissed';
-  const hasCoords = stop.lat != null && stop.lng != null;
-  const [copied, setCopied] = useState(false);
-  // Auto-fuel rows from src/server/fuel.ts persist up to 2 alternate
-  // gas-station candidates so the user can swap without us round-tripping
-  // Google. Only show the dropdown for fuel rows (rest auto-stretch rows
-  // currently come with no alternates).
-  const hasSwapOptions =
-    !readonly &&
-    !dismissed &&
-    stop.stop_type === 'fuel' &&
-    stop.alternatives != null &&
-    stop.alternatives.length > 0 &&
-    onSwapAlternate != null;
-
-  async function handleCopyCoords() {
-    if (!hasCoords) return;
-    const text = `${stop.lat},${stop.lng}`;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const el = document.createElement('textarea');
-        el.value = text;
-        el.style.position = 'fixed';
-        el.style.opacity = '0';
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand('copy');
-        document.body.removeChild(el);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '5px 0',
-        fontSize: 12,
-        color: dismissed ? 'var(--tp-subtle)' : 'var(--tp-text)',
-        borderTop: '1px solid var(--tp-border)',
-        opacity: dismissed ? 0.6 : 1,
-      }}
-    >
-      {!readonly && !dismissed && (
-        <button
-          onClick={() => onSelect(stop.id)}
-          title={selected ? 'Selected — included as a waypoint' : 'Select this stop'}
-          style={{
-            width: 14,
-            height: 14,
-            borderRadius: '50%',
-            border: `1.5px solid ${selected ? 'var(--tp-success)' : 'var(--tp-border-strong)'}`,
-            background: selected ? 'var(--tp-success)' : 'transparent',
-            cursor: 'pointer',
-            padding: 0,
-            flexShrink: 0,
-          }}
-        />
-      )}
-      {(readonly || dismissed) && (
-        <div
-          style={{
-            width: 14,
-            height: 14,
-            borderRadius: '50%',
-            border: `1.5px solid ${selected ? 'var(--tp-success)' : 'var(--tp-border)'}`,
-            background: selected ? 'var(--tp-success)' : 'transparent',
-            flexShrink: 0,
-          }}
-        />
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <span
-            style={{
-              fontWeight: selected ? 600 : 400,
-              color: selected ? 'var(--tp-text)' : 'inherit',
-              textDecoration: dismissed ? 'line-through' : 'none',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {stop.name}
-          </span>
-          {stop.distance_from_start_km != null && (
-            <Distance
-              km={stop.distance_from_start_km}
-              layout="inline"
-              primaryOverride={`~${stop.distance_from_start_km} km`}
-              style={{ fontSize: 10, color: 'var(--tp-muted)' }}
-            />
-          )}
-          {stop.fuel_type && (
-            <span style={{ fontSize: 10, color: 'var(--tp-muted)' }}>{stop.fuel_type}</span>
           )}
         </div>
-        {(stop.notes || stop.source_url) && (
-          <div style={{ fontSize: 10, color: 'var(--tp-subtle)', marginTop: 2 }}>
-            {stop.notes ? <span>{stop.notes}</span> : null}
-            {stop.source_url ? (
-              <>
-                {stop.notes ? ' · ' : null}
-                <a
-                  href={stop.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--tp-primary)', textDecoration: 'none' }}
-                >
-                  {stop.source || 'source'} →
-                </a>
-              </>
-            ) : null}
-          </div>
-        )}
-      </div>
-      {hasCoords && (
-        <button
-          onClick={handleCopyCoords}
-          title="Copy GPS coordinates to clipboard (paste into iOverlander, Park4Night, or any map app)"
-          style={{
-            fontSize: 10,
-            background: 'transparent',
-            border: '1px solid var(--tp-border)',
-            color: copied ? 'var(--tp-success)' : 'var(--tp-muted)',
-            cursor: 'pointer',
-            padding: '2px 6px',
-            borderRadius: 3,
-            flexShrink: 0,
-          }}
-        >
-          {copied ? '✓ Copied' : '📋 GPS'}
-        </button>
       )}
-      {hasSwapOptions && stop.alternatives && (
-        <select
-          aria-label="Swap to a different gas station"
-          title="Swap to a different gas station nearby"
-          // Reset the select back to the placeholder after every change so
-          // the user can re-open it and pick again. We treat the select
-          // purely as a one-shot menu — the row's actual primary lives in
-          // stop.name above.
-          value=""
-          onChange={(e) => {
-            const idx = parseInt(e.target.value, 10);
-            if (Number.isNaN(idx)) return;
-            onSwapAlternate?.(stop.id, idx);
-            e.currentTarget.value = '';
-          }}
-          style={{
-            fontSize: 10,
-            background: 'transparent',
-            border: '1px solid var(--tp-border)',
-            color: 'var(--tp-muted)',
-            cursor: 'pointer',
-            padding: '2px 4px',
-            borderRadius: 3,
-            flexShrink: 0,
-            maxWidth: 110,
-          }}
-        >
-          <option value="" disabled>
-            ▾ Swap
-          </option>
-          {stop.alternatives.map((alt, idx) => (
-            <option key={`${alt.place_id ?? idx}`} value={idx}>
-              {alt.name} ({alt.distance_km.toFixed(1)} km)
-            </option>
-          ))}
-        </select>
-      )}
-      {hasCoords && (
-        <a
-          href={`https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Preview on Google Maps"
-          style={{
-            fontSize: 10,
-            color: 'rgba(124,181,232,0.7)',
-            textDecoration: 'none',
-            padding: '2px 6px',
-            flexShrink: 0,
-          }}
-        >
-          map ↗
-        </a>
-      )}
-      {!readonly && !dismissed && (
-        <button
-          onClick={() => onDismiss(stop.id)}
-          title="Dismiss (keeps it for reference)"
-          style={{
-            fontSize: 10,
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--tp-muted)',
-            cursor: 'pointer',
-            padding: '2px 4px',
-          }}
-        >
-          dismiss
-        </button>
-      )}
-      {!readonly && (
-        <button
-          onClick={() => onDelete(stop.id)}
-          title="Delete"
-          style={{
-            fontSize: 14,
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--tp-muted)',
-            cursor: 'pointer',
-            padding: '2px 6px',
-          }}
-        >
-          ×
-        </button>
-      )}
-    </div>
+
+      {/* More Stops Modal */}
+      <MoreStopsModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        legLabel={`Day ${legId}`}
+        stops={moreStops}
+        loading={moreStopsLoading}
+        searchMode={searchMode}
+        onSearchModeChange={handleSearchModeChange}
+      />
+    </>
   );
 }

@@ -177,21 +177,26 @@ export function buildLegDirectionsUrl(input: {
   );
 }
 
-/** One segment of a multi-stop navigation — no waypoints, so mobile shows Start. */
+/** One navigation button — destination only, no origin (uses device GPS). */
 export type NavSegment = { label: string; url: string };
 
 /**
- * Split a leg into sequential point-to-point segments, each with zero
- * waypoints. Google Maps on mobile only shows the "Start navigation" button
- * when there are no intermediate waypoints, so this is the only way to get
- * true turn-by-turn for multi-stop legs.
+ * Build a list of "navigate from current location → stop" buttons for a leg.
  *
- * Returns `null` when coords are insufficient, or a single-element array
- * when there are no intermediate stops (origin → destination).
+ * Each URL omits `origin` so Google Maps defaults to the device's GPS
+ * position and always shows the "Start" turn-by-turn button on mobile.
+ * (Google Maps suppresses the Start button when `waypoints` are present,
+ * and setting an explicit `origin` when the user has already driven past
+ * it produces a U-turn at the top of the route.)
+ *
+ * The list includes every qualifying intermediate stop (sorted by distance)
+ * followed by the leg's final destination. For a leg with zero stops this
+ * returns a single-element array pointing at the destination.
+ *
+ * Returns `null` when destination coords are missing.
  */
 export function buildSegmentedNavUrls(input: {
   legCoords: LegCoords;
-  startName?: string | null;
   endName?: string | null;
   selectedRoute?: {
     end_lat: number | null;
@@ -199,49 +204,30 @@ export function buildSegmentedNavUrls(input: {
   } | null;
   stops?: LegDirectionsStopInput[] | null;
 }): NavSegment[] | null {
-  const { legCoords, startName, endName, selectedRoute, stops } = input;
+  const { legCoords, endName, selectedRoute, stops } = input;
   const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
   const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
   if (destLat == null || destLng == null) return null;
 
   const resolved = resolveDirectionsStops(stops ?? []);
 
-  // Build ordered list of all points: origin, ...stops, destination
-  type Point = { lat: number; lng: number; name: string };
-  const points: Point[] = [];
-
-  if (legCoords.start_lat != null && legCoords.start_lng != null) {
-    points.push({
-      lat: legCoords.start_lat,
-      lng: legCoords.start_lng,
-      name: startName || 'Start',
-    });
-  }
-  for (const w of resolved) {
-    points.push(w);
-  }
-  points.push({
-    lat: destLat,
-    lng: destLng,
-    name: endName || 'Destination',
-  });
-
-  if (points.length < 2) return null;
+  // Ordered destinations: intermediate stops, then final destination.
+  type Dest = { lat: number; lng: number; name: string };
+  const destinations: Dest[] = [
+    ...resolved,
+    { lat: destLat, lng: destLng, name: endName || 'Destination' },
+  ];
 
   const segments: NavSegment[] = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const from = points[i];
-    const to = points[i + 1];
+  for (const dest of destinations) {
+    // No origin → Google Maps uses device GPS = always shows "Start" button.
     const url = buildNavUrl(
-      { start_lat: from.lat, start_lng: from.lng, end_lat: to.lat, end_lng: to.lng },
+      { end_lat: dest.lat, end_lng: dest.lng },
       undefined,
       { navigate: true }
     );
     if (url) {
-      segments.push({
-        label: `${from.name} → ${to.name}`,
-        url,
-      });
+      segments.push({ label: dest.name, url });
     }
   }
 

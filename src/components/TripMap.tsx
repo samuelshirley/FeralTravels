@@ -53,7 +53,7 @@ function legKey(leg: LegWithDetails): string {
 export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trailsVersion = 0, tripId }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
-  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null);
+  // directionsServiceRef removed — routes come from stored DB geometry now
   const layersRef = useRef<{
     routePolylines: Map<number, google.maps.Polyline>;
     gapPolylines: google.maps.Polyline[];
@@ -107,9 +107,8 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
 
     (async () => {
       try {
-        const [{ Map: GMap }, { DirectionsService }] = await Promise.all([
+        const [{ Map: GMap }] = await Promise.all([
           importLibrary('maps'),
-          importLibrary('routes'),
         ]);
         if (cancelled || !el.isConnected || mapRef.current) return;
 
@@ -129,7 +128,6 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
         });
 
         mapRef.current = map;
-        directionsServiceRef.current = new DirectionsService();
         layersRef.current.infoWindow = new google.maps.InfoWindow();
         setReady(true);
       } catch (err: any) {
@@ -155,56 +153,28 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
       if (layers.fallbackPolyline) layers.fallbackPolyline.setMap(null);
       layers.fallbackPolyline = null;
       mapRef.current = null;
-      directionsServiceRef.current = null;
+      // directionsServiceRef cleanup removed
     };
   }, []);
 
-  // Fetch road-following routes for each leg via Directions API (cached)
+  // Populate route cache from stored geometry (persisted at planning time).
+  // No external API calls — the polyline comes from the DB via getTripFull().
   useEffect(() => {
     if (!ready) return;
-    const service = directionsServiceRef.current;
-    if (!service) return;
 
-    let cancelled = false;
-    (async () => {
-      let added = false;
-      for (const leg of legs) {
-        if (
-          leg.start_lat == null ||
-          leg.start_lng == null ||
-          leg.end_lat == null ||
-          leg.end_lng == null
-        )
-          continue;
+    let added = false;
+    for (const leg of legs) {
+      const key = legKey(leg);
+      if (routeCacheRef.current.has(key)) continue;
 
-        const key = legKey(leg);
-        if (routeCacheRef.current.has(key)) continue;
-
-        try {
-          const result = await service.route({
-            origin: { lat: leg.start_lat, lng: leg.start_lng },
-            destination: { lat: leg.end_lat, lng: leg.end_lng },
-            travelMode: google.maps.TravelMode.DRIVING,
-          });
-          if (cancelled) return;
-          const path = result.routes[0]?.overview_path?.map((p) => ({
-            lat: p.lat(),
-            lng: p.lng(),
-          }));
-          if (path?.length) {
-            routeCacheRef.current.set(key, path);
-            added = true;
-          }
-        } catch (err) {
-          console.warn(`Directions failed for leg ${leg.id}:`, err);
-        }
+      if (leg.geometry && leg.geometry.coordinates.length > 0) {
+        // GeoJSON uses [lng, lat] — Google Maps needs { lat, lng }
+        const path = leg.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+        routeCacheRef.current.set(key, path);
+        added = true;
       }
-      if (added && !cancelled) setRoutesVersion((v) => v + 1);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    }
+    if (added) setRoutesVersion((v) => v + 1);
   }, [ready, legs]);
 
   // Render markers + route polylines whenever data or selection changes

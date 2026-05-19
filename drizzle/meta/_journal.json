@@ -8,6 +8,13 @@
       "when": 1778582710331,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779214872384,
+      "tag": "0001_fantastic_otto_octavius",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,22 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
+// ── Shared JSONB types ──────────────────────────────────────────────────────
+
+/** GeoJSON LineString — stored as JSONB on legs for driving route geometry. */
+export interface GeoJSONLineString {
+  type: 'LineString';
+  coordinates: [number, number][]; // [lng, lat] pairs
+}
+
+/** Photo persisted on a stop at planning time (avoids Places API calls during viewing). */
+export interface StopPhoto {
+  url: string;
+  attribution: string;
+  width_px: number;
+  height_px: number;
+}
+
 /**
  * Drizzle schema — single Postgres source of truth.
  *
@@ -191,6 +207,11 @@ export const legs = pgTable(
     /** Auto fuel planner: none | pending | computing | ready | failed — see `server/fuel.ts`. */
     fuelStatus: text('fuel_status').default('none').notNull(),
     fuelPlanError: text('fuel_plan_error'),
+    /**
+     * Driving route geometry stored as GeoJSON LineString (from Directions/OSRM).
+     * Persisted at planning time so the UI never calls external APIs during viewing.
+     */
+    geometry: jsonb('geometry').$type<GeoJSONLineString | null>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -346,6 +367,12 @@ export const stops = pgTable(
     sourceUrl: text('source_url'),
     /** Fuel-stop alternates for swap UI (`StopAlternative[]`). */
     alternatives: jsonb('alternatives').$type<StopAlternative[]>(),
+    /** Google Place ID — enables direct link construction without extra API calls. */
+    placeId: text('place_id'),
+    /** Direct Google Maps link — persisted at planning time. */
+    googleMapsUri: text('google_maps_uri'),
+    /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
+    photos: jsonb('photos').$type<StopPhoto[]>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

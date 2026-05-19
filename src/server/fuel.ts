@@ -414,6 +414,10 @@ export async function planFuelStopsForLeg(
           sourceUrl: row.station.place_id
             ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
             : null,
+          placeId: row.station.place_id ?? null,
+          googleMapsUri: row.station.place_id
+            ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
+            : null,
           notes: `Auto-suggested refuel ≈${Math.round(row.distance_km)} km into the leg.`,
           alternatives:
             row.alternates.length > 0
@@ -443,6 +447,8 @@ export async function planFuelStopsForLeg(
             (row.place.placeId
               ? `https://www.google.com/maps/place/?q=place_id:${row.place.placeId}`
               : null),
+          placeId: row.place.placeId ?? null,
+          googleMapsUri: row.place.googleMapsUri ?? null,
           notes: `${AUTO_STRETCH_BREAK_NOTE_PREFIX} (targets ≤${maxDailyLabel} h driving/day, ${Math.round(SEGMENT_TIME_BUFFER * 100)}% pessimism) ≈${Math.round(row.distance_km)} km along this leg.`,
         });
       }

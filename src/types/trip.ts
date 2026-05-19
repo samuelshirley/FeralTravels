@@ -35,6 +35,12 @@ export type FuelStatus =
   | 'ready'
   | 'failed';
 
+/** GeoJSON LineString for driving route geometry. */
+export interface GeoJSONLineString {
+  type: 'LineString';
+  coordinates: [number, number][]; // [lng, lat] pairs
+}
+
 export interface Leg {
   id: number;
   trip_id: number;
@@ -64,6 +70,8 @@ export interface Leg {
   fuel_status: FuelStatus;
   /** Populated when fuel_status is failed; human-readable diagnosis. */
   fuel_plan_error: string | null;
+  /** Driving route geometry — GeoJSON LineString persisted at planning time. */
+  geometry: GeoJSONLineString | null;
   created_at: string;
   updated_at: string;
 }
@@ -193,6 +201,13 @@ export interface StopAlternative {
   distance_km: number;
 }
 
+export interface StopPhoto {
+  url: string;
+  attribution: string;
+  width_px: number;
+  height_px: number;
+}
+
 export interface Stop {
   id: number;
   leg_id: number;
@@ -211,6 +226,12 @@ export interface Stop {
   // Up to 2 alternate gas-station / rest-stop candidates persisted by the
   // auto-fuel planner. Null on user-authored stops, water/food types, etc.
   alternatives: StopAlternative[] | null;
+  /** Google Place ID. */
+  place_id: string | null;
+  /** Direct Google Maps link — persisted at planning time. */
+  google_maps_uri: string | null;
+  /** Photos from Places API — persisted at planning time to avoid API calls during viewing. */
+  photos: StopPhoto[] | null;
   created_at: string;
   updated_at: string;
 }

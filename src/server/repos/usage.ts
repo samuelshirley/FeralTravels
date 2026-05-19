@@ -137,10 +137,17 @@ export type GooglePlacesEndpoint =
  * of 2024-2025). We subtract these from the calendar-month call counts when
  * rendering "billable" Google spend on the admin dashboard.
  *
- * Defaults reflect the Maps Platform free tier as of late 2024 — Google
- * updates these periodically, so they're env-configurable. Verify against
- * https://developers.google.com/maps/billing-and-pricing/pricing and your
- * own Google Cloud Console → Billing → Reports view.
+ * IMPORTANT: This only tracks Places Nearby Search calls. Other Google API
+ * costs NOT tracked here include:
+ *   - Directions API ($5/1000 requests) — called by get_route + add_leg
+ *   - Place Details ($5-25/1000 depending on fields) — photos endpoint
+ *   - Street View Static API ($7/1000) — photo fallback
+ *   - Maps JavaScript API (Dynamic Maps $7/1000 loads)
+ * The dashboard underreports total Google spend. Cross-check against
+ * Google Cloud Console → Billing → Reports monthly.
+ *
+ * Defaults are env-configurable. Verify against
+ * https://developers.google.com/maps/billing-and-pricing/pricing
  */
 export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, number> = {
   'nearby-search-essentials': Number(

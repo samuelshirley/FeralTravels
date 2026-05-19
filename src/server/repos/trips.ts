@@ -12,6 +12,7 @@ import {
   stops,
   tasks,
   pois,
+  type GeoJSONLineString,
 } from '@/server/db/schema';
 import type {
   Leg,
@@ -77,6 +78,7 @@ function legRow(r: typeof legs.$inferSelect) {
     notes: r.notes,
     fuel_status: (r.fuelStatus as Leg['fuel_status']) ?? 'none',
     fuel_plan_error: r.fuelPlanError ?? null,
+    geometry: r.geometry ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -150,6 +152,9 @@ function stopRow(r: typeof stops.$inferSelect): Stop {
     source: (r.source as StopSource | null) ?? null,
     source_url: r.sourceUrl,
     alternatives: r.alternatives ?? null,
+    place_id: r.placeId ?? null,
+    google_maps_uri: r.googleMapsUri ?? null,
+    photos: r.photos ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -471,6 +476,8 @@ export async function addLeg(input: {
    */
   segmentIndex?: number | null;
   segmentName?: string | null;
+  /** GeoJSON LineString for the driving route — persisted at planning time. */
+  geometry?: GeoJSONLineString | null;
 }): Promise<number> {
   let sortOrder = input.sortOrder;
   if (sortOrder == null) {
@@ -504,6 +511,7 @@ export async function addLeg(input: {
       notes: input.notes ?? null,
       segmentIndex: input.segmentIndex ?? null,
       segmentName: input.segmentName ?? null,
+      geometry: input.geometry ?? null,
     })
     .returning({ id: legs.id });
   return row.id;

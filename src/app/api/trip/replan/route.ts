@@ -23,6 +23,8 @@ import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
 import { addLeg, deleteLeg, getTripFull } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
+import { getDirections } from '@/lib/google/directions';
+import type { GeoJSONLineString } from '@/server/db/schema';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
 type ReplanDispatchCtx = { newLegIdsQueue: number[] };
@@ -571,6 +573,26 @@ async function dispatchAction(
 
     case 'add_leg': {
       const d = action.input;
+
+      // Fetch driving geometry at creation time so the UI never needs to call
+      // external APIs. This uses the same Google Directions API that get_route
+      // calls — the polyline is already cached if Penny just called get_route
+      // for these coords (24h LRU in directions.ts).
+      let geometry: GeoJSONLineString | null = null;
+      if (d.start_lat != null && d.start_lng != null && d.end_lat != null && d.end_lng != null) {
+        const dir = await getDirections(
+          { lat: d.start_lat, lng: d.start_lng },
+          { lat: d.end_lat, lng: d.end_lng },
+        );
+        if (dir.ok && dir.polyline_points.length > 0) {
+          geometry = {
+            type: 'LineString',
+            // GeoJSON uses [lng, lat] order
+            coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+          };
+        }
+      }
+
       const newLegId = await addLeg({
         tripId,
         title: d.title,
@@ -592,6 +614,7 @@ async function dispatchAction(
         sortOrder: d.sort_order ?? null,
         segmentIndex: d.segment_index ?? null,
         segmentName: d.segment_name ?? null,
+        geometry,
       });
       ctx.newLegIdsQueue.push(newLegId);
       return;
@@ -634,6 +657,35 @@ async function dispatchAction(
         legUpdate.notes = Array.isArray(data.notes) ? JSON.stringify(data.notes) : null;
       if (data.segment_index !== undefined) legUpdate.segmentIndex = data.segment_index;
       if (data.segment_name !== undefined) legUpdate.segmentName = data.segment_name;
+
+      // If start or end coords changed, re-fetch driving geometry so the
+      // stored polyline stays in sync with the leg endpoints.
+      const coordsChanged =
+        data.start_lat !== undefined ||
+        data.start_lng !== undefined ||
+        data.end_lat !== undefined ||
+        data.end_lng !== undefined;
+      if (coordsChanged) {
+        // Resolve final coords: use updated values where provided, fall back
+        // to existing DB values for unchanged coords.
+        const existing = await db.select().from(legs).where(eq(legs.id, leg_id)).limit(1);
+        const cur = existing[0];
+        const sLat = data.start_lat ?? cur?.startLat;
+        const sLng = data.start_lng ?? cur?.startLng;
+        const eLat = data.end_lat ?? cur?.endLat;
+        const eLng = data.end_lng ?? cur?.endLng;
+        if (sLat != null && sLng != null && eLat != null && eLng != null) {
+          const dir = await getDirections({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
+          if (dir.ok && dir.polyline_points.length > 0) {
+            legUpdate.geometry = {
+              type: 'LineString',
+              coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+            };
+          } else {
+            legUpdate.geometry = null;
+          }
+        }
+      }
 
       // updatedAt is always set; only run the SQL update if at least one
       // real column changed.

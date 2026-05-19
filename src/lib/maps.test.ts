@@ -143,16 +143,17 @@ describe('buildSegmentedNavUrls', () => {
   it('returns a single segment when there are no stops', () => {
     const segments = buildSegmentedNavUrls({
       legCoords: LEG_COORDS,
-      startName: 'Paris',
       endName: 'Strasbourg',
     })!;
     expect(segments).toHaveLength(1);
-    expect(segments[0].label).toBe('Paris → Strasbourg');
+    // Labels are destination-only (no origin) since URLs use device GPS
+    expect(segments[0].label).toBe('Strasbourg');
 
-    // The URL should have no waypoints and should have dir_action=navigate
     const u = new URL(segments[0].url);
     expect(u.searchParams.has('waypoints')).toBe(false);
     expect(u.searchParams.get('dir_action')).toBe('navigate');
+    // No origin param — Google Maps uses device GPS
+    expect(u.searchParams.has('origin')).toBe(false);
   });
 
   it('splits into N+1 segments for N intermediate stops', () => {
@@ -163,28 +164,28 @@ describe('buildSegmentedNavUrls', () => {
 
     const segments = buildSegmentedNavUrls({
       legCoords: LEG_COORDS,
-      startName: 'Paris',
       endName: 'Strasbourg',
       stops,
     })!;
 
     expect(segments).toHaveLength(3);
-    expect(segments[0].label).toBe('Paris → Nancy fuel');
-    expect(segments[1].label).toBe('Nancy fuel → Metz fuel');
-    expect(segments[2].label).toBe('Metz fuel → Strasbourg');
+    expect(segments[0].label).toBe('Nancy fuel');
+    expect(segments[1].label).toBe('Metz fuel');
+    expect(segments[2].label).toBe('Strasbourg');
 
-    // Every segment must have dir_action=navigate and zero waypoints
+    // Every segment: dir_action=navigate, no waypoints, no origin
     for (const seg of segments) {
       const u = new URL(seg.url);
       expect(u.searchParams.get('dir_action')).toBe('navigate');
       expect(u.searchParams.has('waypoints')).toBe(false);
+      expect(u.searchParams.has('origin')).toBe(false);
     }
   });
 
   it('uses default labels when start/end names are not provided', () => {
     const segments = buildSegmentedNavUrls({ legCoords: LEG_COORDS })!;
     expect(segments).toHaveLength(1);
-    expect(segments[0].label).toBe('Start → Destination');
+    expect(segments[0].label).toBe('Destination');
   });
 
   it('excludes dismissed stops from segments', () => {
@@ -194,19 +195,17 @@ describe('buildSegmentedNavUrls', () => {
     ];
     const segments = buildSegmentedNavUrls({
       legCoords: LEG_COORDS,
-      startName: 'Paris',
       endName: 'Strasbourg',
       stops,
     })!;
     expect(segments).toHaveLength(2);
-    expect(segments[0].label).toBe('Paris → Metz fuel');
-    expect(segments[1].label).toBe('Metz fuel → Strasbourg');
+    expect(segments[0].label).toBe('Metz fuel');
+    expect(segments[1].label).toBe('Strasbourg');
   });
 
   it('uses selectedRoute end coords when provided', () => {
     const segments = buildSegmentedNavUrls({
       legCoords: LEG_COORDS,
-      startName: 'Paris',
       endName: 'Stuttgart',
       selectedRoute: { end_lat: 48.7758, end_lng: 9.1829 },
     })!;
@@ -215,25 +214,24 @@ describe('buildSegmentedNavUrls', () => {
     expect(u.searchParams.get('destination')).toBe('48.7758,9.1829');
   });
 
-  it('segment origin coords chain correctly', () => {
+  it('segment destinations have correct coords', () => {
     const stops: LegDirectionsStopInput[] = [
       makeStop({ ...NANCY, name: 'Nancy', distance_from_start_km: 200 }),
     ];
     const segments = buildSegmentedNavUrls({
       legCoords: LEG_COORDS,
-      startName: 'Paris',
       endName: 'Strasbourg',
       stops,
     })!;
 
-    // Segment 1: Paris → Nancy
+    // Segment 1: navigate to Nancy (no origin — uses device GPS)
     const u1 = new URL(segments[0].url);
-    expect(u1.searchParams.get('origin')).toBe(`${PARIS.lat},${PARIS.lng}`);
+    expect(u1.searchParams.has('origin')).toBe(false);
     expect(u1.searchParams.get('destination')).toBe(`${NANCY.lat},${NANCY.lng}`);
 
-    // Segment 2: Nancy → Strasbourg
+    // Segment 2: navigate to Strasbourg
     const u2 = new URL(segments[1].url);
-    expect(u2.searchParams.get('origin')).toBe(`${NANCY.lat},${NANCY.lng}`);
+    expect(u2.searchParams.has('origin')).toBe(false);
     expect(u2.searchParams.get('destination')).toBe(`${STRASBOURG.lat},${STRASBOURG.lng}`);
   });
 });
