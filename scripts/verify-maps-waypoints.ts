@@ -10,6 +10,7 @@ const stops = [
     lng: 3.1,
     status: 'option',
     stop_type: 'fuel',
+    name: 'Fuel stop near Montpellier',
     source: 'penny' as const,
     distance_from_start_km: 200,
     sort_order: 1,
@@ -19,6 +20,7 @@ const stops = [
     lng: 2.0,
     status: 'option',
     stop_type: 'fuel',
+    name: 'Fuel stop near Clermont-Ferrand',
     source: 'google_places' as const,
     distance_from_start_km: 450,
     sort_order: 2,
@@ -40,8 +42,11 @@ const url = buildLegDirectionsUrl({
 if (!url) throw new Error('expected URL');
 const u = new URL(url);
 if (!u.searchParams.get('waypoints')) throw new Error(`missing waypoints in ${url}`);
-if (u.searchParams.get('dir_action') === 'navigate') {
-  throw new Error('expected preview mode (no dir_action) when waypoints exist');
+// buildLegDirectionsUrl always sets dir_action=navigate (kept as fallback URL).
+// The primary UX now uses buildSegmentedNavUrls which produces individual
+// waypoint-free links that reliably launch turn-by-turn on mobile.
+if (u.searchParams.get('dir_action') !== 'navigate') {
+  throw new Error('expected dir_action=navigate in fallback URL');
 }
 console.log('verify-maps-waypoints: ok');
 console.log(url);

@@ -104,13 +104,17 @@ export type LegDirectionsStopInput = {
   lng: number | null;
   status: string;
   stop_type: string;
+  name: string;
   source: string | null;
   distance_from_start_km?: number | null;
   sort_order?: number | null;
 };
 
-/** Sorted intermediate coords for leg directions (badge counts, tests). */
-export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[number, number]> {
+/** A resolved waypoint with coords and name. */
+export type ResolvedWaypoint = { lat: number; lng: number; name: string };
+
+/** Filter & sort stops into the set that appear in directions URLs. */
+function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoint[] {
   const fuelWithCoords = (s: LegDirectionsStopInput) =>
     s.stop_type === 'fuel' && s.lat != null && s.lng != null;
   const nonFuelSelected = (s: LegDirectionsStopInput) =>
@@ -131,7 +135,12 @@ export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[
       if (ad !== bd) return ad - bd;
       return (a.sort_order ?? 0) - (b.sort_order ?? 0);
     })
-    .map((s) => [s.lat as number, s.lng as number] as [number, number]);
+    .map((s) => ({ lat: s.lat as number, lng: s.lng as number, name: s.name }));
+}
+
+/** Sorted intermediate coords for leg directions (badge counts, tests). */
+export function legDirectionsWaypoints(stops: LegDirectionsStopInput[]): Array<[number, number]> {
+  return resolveDirectionsStops(stops).map((w) => [w.lat, w.lng] as [number, number]);
 }
 
 /**
@@ -166,6 +175,77 @@ export function buildLegDirectionsUrl(input: {
     waypoints.length > 0 ? waypoints : undefined,
     { navigate: true }
   );
+}
+
+/** One segment of a multi-stop navigation — no waypoints, so mobile shows Start. */
+export type NavSegment = { label: string; url: string };
+
+/**
+ * Split a leg into sequential point-to-point segments, each with zero
+ * waypoints. Google Maps on mobile only shows the "Start navigation" button
+ * when there are no intermediate waypoints, so this is the only way to get
+ * true turn-by-turn for multi-stop legs.
+ *
+ * Returns `null` when coords are insufficient, or a single-element array
+ * when there are no intermediate stops (origin → destination).
+ */
+export function buildSegmentedNavUrls(input: {
+  legCoords: LegCoords;
+  startName?: string | null;
+  endName?: string | null;
+  selectedRoute?: {
+    end_lat: number | null;
+    end_lng: number | null;
+  } | null;
+  stops?: LegDirectionsStopInput[] | null;
+}): NavSegment[] | null {
+  const { legCoords, startName, endName, selectedRoute, stops } = input;
+  const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
+  const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
+  if (destLat == null || destLng == null) return null;
+
+  const resolved = resolveDirectionsStops(stops ?? []);
+
+  // Build ordered list of all points: origin, ...stops, destination
+  type Point = { lat: number; lng: number; name: string };
+  const points: Point[] = [];
+
+  if (legCoords.start_lat != null && legCoords.start_lng != null) {
+    points.push({
+      lat: legCoords.start_lat,
+      lng: legCoords.start_lng,
+      name: startName || 'Start',
+    });
+  }
+  for (const w of resolved) {
+    points.push(w);
+  }
+  points.push({
+    lat: destLat,
+    lng: destLng,
+    name: endName || 'Destination',
+  });
+
+  if (points.length < 2) return null;
+
+  const segments: NavSegment[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const from = points[i];
+    const to = points[i + 1];
+    const url = buildNavUrl(
+      { start_lat: from.lat, start_lng: from.lng, end_lat: to.lat, end_lng: to.lng },
+      undefined,
+      { navigate: true }
+    );
+    if (url) {
+      segments.push({
+        label: `${from.name} → ${to.name}`,
+        url,
+      });
+    }
+  }
+
+  return segments.length > 0 ? segments : null;
 }
 
 /**

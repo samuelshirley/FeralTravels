@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
-import { buildLegDirectionsUrl, legDirectionsWaypoints } from '@/lib/maps';
+import { buildLegDirectionsUrl, buildSegmentedNavUrls, legDirectionsWaypoints } from '@/lib/maps';
 import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
@@ -58,17 +58,22 @@ export default function LegCard({
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
   const selectedRoute = leg.routes.find((r) => r.status === 'selected') ?? null;
+  const legCoords = {
+    start_lat: leg.start_lat,
+    start_lng: leg.start_lng,
+    end_lat: leg.end_lat,
+    end_lng: leg.end_lng,
+  };
   const navWaypointCount = legDirectionsWaypoints(leg.stops).length;
-  const directionsUrl = buildLegDirectionsUrl({
-    legCoords: {
-      start_lat: leg.start_lat,
-      start_lng: leg.start_lng,
-      end_lat: leg.end_lat,
-      end_lng: leg.end_lng,
-    },
+  const navSegments = buildSegmentedNavUrls({
+    legCoords,
+    startName: leg.start_name,
+    endName: leg.end_name,
     selectedRoute,
     stops: leg.stops,
   });
+  // Fallback single URL for the syncing state (doesn't need segments)
+  const directionsUrl = buildLegDirectionsUrl({ legCoords, selectedRoute, stops: leg.stops });
 
   const [trails, setTrails] = useState<AttachedTrail[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -264,20 +269,12 @@ export default function LegCard({
             ))}
           </div>
 
-          {directionsUrl && (
+          {navSegments && navSegments.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              {/*
-                Two visual states for this button:
-                  - normal       → "▶ Open in Google Maps  (+N stops)"
-                  - fuel-syncing → spinner + "Updating route…"  (link still
-                                   works; waypoints will refresh momentarily)
-                The syncing state is reachable on every viewport — we don't
-                rely on a hover tooltip alone — because mobile/tablet have no
-                hover. The native `title` is kept as a desktop courtesy.
-              */}
               {isFuelSyncing ? (
+                /* Syncing state — single placeholder link while fuel stops refresh */
                 <a
-                  href={directionsUrl}
+                  href={directionsUrl ?? '#'}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
@@ -286,8 +283,8 @@ export default function LegCard({
                     fuelSyncTotalLegs && fuelSyncTotalLegs > 0
                       ? `Refreshing fuel stops across ${fuelSyncTotalLegs} leg${
                           fuelSyncTotalLegs === 1 ? '' : 's'
-                        } — link will include the latest waypoints in a moment.`
-                      : 'Refreshing fuel stops — link will include the latest waypoints in a moment.'
+                        } — links will update in a moment.`
+                      : 'Refreshing fuel stops — links will update in a moment.'
                   }
                   style={{
                     display: 'inline-flex',
@@ -307,26 +304,20 @@ export default function LegCard({
                   <Spinner size={12} thickness={2} color="var(--tp-gold)" />
                   <span>Updating route…</span>
                 </a>
-              ) : (
+              ) : navSegments.length === 1 ? (
+                /* Single segment (no intermediate stops) — one button */
                 <a
-                  href={directionsUrl}
+                  href={navSegments[0].url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  title={
-                    navWaypointCount > 0
-                      ? `Open leg in Google Maps with ${navWaypointCount} waypoint${
-                          navWaypointCount === 1 ? '' : 's'
-                        }`
-                      : 'Open leg in Google Maps'
-                  }
+                  title="Open in Google Maps — starts turn-by-turn navigation"
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 8,
                     fontSize: 12,
                     fontWeight: 600,
-
                     letterSpacing: '0.04em',
                     color: '#000',
                     background: 'var(--tp-primary)',
@@ -337,21 +328,60 @@ export default function LegCard({
                   }}
                 >
                   <span>▶</span>
-                  Open in Google Maps
-                  {navWaypointCount > 0 && (
-                    <span
+                  Navigate in Google Maps
+                </a>
+              ) : (
+                /* Multiple segments — numbered step links */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: '0.08em',
+                      color: 'var(--tp-subtle)',
+                      marginBottom: 2,
+                    }}
+                  >
+                    NAVIGATE ({navSegments.length} SEGMENTS)
+                  </div>
+                  {navSegments.map((seg, i) => (
+                    <a
+                      key={i}
+                      href={seg.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title={`Navigate: ${seg.label}`}
                       style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        letterSpacing: '0.04em',
+                        color: '#000',
+                        background: 'var(--tp-primary)',
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        textDecoration: 'none',
+                        boxShadow: '0 2px 8px rgba(124,181,232,0.15)',
+                        width: 'fit-content',
+                      }}
+                    >
+                      <span style={{
                         fontSize: 10,
                         fontWeight: 700,
                         background: 'rgba(0,0,0,0.2)',
                         padding: '1px 6px',
                         borderRadius: 10,
-                      }}
-                    >
-                      +{navWaypointCount} stop{navWaypointCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </a>
+                        flexShrink: 0,
+                      }}>
+                        {i + 1}
+                      </span>
+                      {seg.label}
+                    </a>
+                  ))}
+                </div>
               )}
               {driveHours ? (
                 <p
@@ -366,7 +396,7 @@ export default function LegCard({
                   {navWaypointCount > 0 ? (
                     <>
                       Shown driving time (~{driveHours} h) is the leg headline start→destination only — it excludes
-                      detours via added stops; Open in Maps with waypoints typically takes longer on the clock.
+                      detours via added stops. Each segment opens turn-by-turn navigation directly.
                     </>
                   ) : (
                     <>

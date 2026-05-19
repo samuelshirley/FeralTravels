@@ -63,4 +63,45 @@ test.describe('Existing user with seeded trip', () => {
     // NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
     await expect(map.locator('.gm-style').first()).toBeVisible({ timeout: 30_000 });
   });
+
+  test('leg cards render segmented navigation links to Google Maps', async ({ page }) => {
+    await loginAsFixtureUser(page);
+
+    const fixtureCard = page.locator(`[data-testid="trip-card"][data-trip-name="${FIXTURE_TRIP_NAME}"]`);
+    await expect(fixtureCard).toBeVisible();
+    await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
+    await page.waitForURL(/\/trips\/\d+/, { timeout: 15_000 });
+
+    const legCards = page.getByTestId('leg-card');
+    await expect(legCards.first()).toBeVisible({ timeout: 15_000 });
+
+    // Expand the first leg card to reveal the navigation link.
+    await legCards.first().click();
+
+    // Seeded legs have no intermediate stops, so each leg should render
+    // a single "Navigate in Google Maps" link (one segment).
+    const navLink = legCards.first().getByRole('link', { name: /Navigate in Google Maps/i });
+    await expect(navLink).toBeVisible({ timeout: 5_000 });
+
+    // The link should point to Google Maps directions with dir_action=navigate
+    // and NO waypoints param (single-segment link = guaranteed Start button).
+    const href = await navLink.getAttribute('href');
+    expect(href).toBeTruthy();
+    const url = new URL(href!);
+    expect(url.hostname).toContain('google.com');
+    expect(url.pathname).toBe('/maps/dir/');
+    expect(url.searchParams.get('dir_action')).toBe('navigate');
+    expect(url.searchParams.get('travelmode')).toBe('driving');
+    expect(url.searchParams.has('waypoints')).toBe(false);
+    // Origin and destination should be set (Paris → Strasbourg for Day 1).
+    expect(url.searchParams.get('origin')).toBeTruthy();
+    expect(url.searchParams.get('destination')).toBeTruthy();
+
+    // The link should open in a new tab (target=_blank).
+    expect(await navLink.getAttribute('target')).toBe('_blank');
+
+    // There should NOT be a multi-segment "NAVIGATE (N SEGMENTS)" header
+    // since the seeded legs have zero stops.
+    await expect(legCards.first().getByText(/NAVIGATE.*SEGMENTS/i)).not.toBeVisible();
+  });
 });
