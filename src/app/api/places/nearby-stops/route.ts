@@ -1,92 +1,12 @@
-import {
-  assertTripReadableByUser,
-  errorResponse,
-  requireUserId,
-} from '@/server/auth/guards';
-import { getLegTripId } from '@/server/repos/tasks';
-import {
-  nearbyStopsByCategory,
-  type StopCategory,
-} from '@/server/places/nearby-stops';
-import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
-import { logGooglePlacesUsage } from '@/server/repos/usage';
-import { parseUUID } from '@/lib/validation';
+// DEPRECATED: The "More Stops" modal has been removed.
+// Users now ask Penny for stop suggestions instead.
+// This file can be safely deleted.
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
 
-const VALID_CATEGORIES: StopCategory[] = ['fuel', 'groceries', 'water', 'parks'];
-
-/**
- * GET /api/places/nearby-stops?tripId=X&legId=Y&lat=A&lng=B&category=fuel
- *
- * Search for nearby places of a specific stop category.
- * Used by the "More Stops" modal to populate category tabs.
- */
-export async function GET(request: Request) {
-  try {
-    const userId = await requireUserId();
-    const url = new URL(request.url);
-    const tripIdRaw = url.searchParams.get('tripId');
-    const legIdRaw = url.searchParams.get('legId');
-    const latRaw = url.searchParams.get('lat');
-    const lngRaw = url.searchParams.get('lng');
-    const category = url.searchParams.get('category') as StopCategory | null;
-
-    const tripId = tripIdRaw ? parseUUID(tripIdRaw) : null;
-    const legId = legIdRaw ? parseUUID(legIdRaw) : null;
-    const lat = latRaw ? parseFloat(latRaw) : NaN;
-    const lng = lngRaw ? parseFloat(lngRaw) : NaN;
-
-    if (!tripId) {
-      return Response.json({ error: 'tripId is required' }, { status: 400 });
-    }
-    if (!legId) {
-      return Response.json({ error: 'legId is required' }, { status: 400 });
-    }
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return Response.json({ error: 'lat and lng must be valid numbers' }, { status: 400 });
-    }
-    if (!category || !VALID_CATEGORIES.includes(category)) {
-      return Response.json(
-        { error: `category must be one of: ${VALID_CATEGORIES.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    const tripFromLeg = await getLegTripId(legId);
-    if (!tripFromLeg || tripFromLeg !== tripId) {
-      return Response.json({ error: 'Leg does not belong to this trip' }, { status: 404 });
-    }
-    await assertTripReadableByUser(tripId, userId);
-
-    const apiKey = googleMapsApiKeyForServer();
-    if (!apiKey) {
-      return Response.json({ results: [], error: 'Places API unavailable' }, { status: 503 });
-    }
-
-    const { results, error } = await nearbyStopsByCategory(
-      { lat, lng },
-      category,
-      apiKey,
-      { radiusM: 10000, maxResults: 10 }
-    );
-
-    // Log Places API usage — this endpoint requests googleMapsUri (Pro tier).
-    logGooglePlacesUsage({
-      userId,
-      tripId,
-      endpoint: 'nearby-search-pro',
-      requests: 1,
-      success: !error,
-      errorMessage: error ?? null,
-    }).catch((e) => console.warn('[usage] logGooglePlacesUsage failed:', e));
-
-    return Response.json(
-      error ? { results, error } : { results },
-      { status: 200 }
-    );
-  } catch (err) {
-    return errorResponse(err);
-  }
+export async function GET() {
+  return NextResponse.json(
+    { error: 'This endpoint has been removed. Use Penny to find stops.' },
+    { status: 410 }
+  );
 }

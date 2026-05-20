@@ -173,7 +173,7 @@ describe('StopsSection (refactored)', () => {
     expect(screen.getByText('1 DISMISSED')).toBeInTheDocument();
   });
 
-  it('shows "More stop options" button when not readonly', () => {
+  it('shows Penny prompt when not readonly', () => {
     render(
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
@@ -183,10 +183,10 @@ describe('StopsSection (refactored)', () => {
         initialStops={[mockFuelStop]}
       />
     );
-    expect(screen.getByText('+ More stop options')).toBeInTheDocument();
+    expect(screen.getByText('Ask Penny for fuel, groceries, or other stops along the route')).toBeInTheDocument();
   });
 
-  it('hides "More stop options" button when readonly', () => {
+  it('hides Penny prompt when readonly', () => {
     render(
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
@@ -197,7 +197,7 @@ describe('StopsSection (refactored)', () => {
         readonly
       />
     );
-    expect(screen.queryByText('+ More stop options')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ask Penny for fuel, groceries, or other stops along the route')).not.toBeInTheDocument();
   });
 
   it('renders paste GPS section when not readonly', () => {

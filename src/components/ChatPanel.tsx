@@ -253,6 +253,32 @@ export default function ChatPanel({
     ta.style.height = next + 'px';
   }, [input]);
 
+  // Re-focus the textarea after an onboarding/remediation submission completes
+  // so the mobile keyboard stays open for continuous back-and-forth chat.
+  // We track "was submitting" → "no longer submitting" transitions.
+  const wasOnboardingSubmitting = useRef(false);
+  const wasRemSubmitting = useRef(false);
+
+  useEffect(() => {
+    if (onboardingSubmitting) {
+      wasOnboardingSubmitting.current = true;
+    } else if (wasOnboardingSubmitting.current) {
+      wasOnboardingSubmitting.current = false;
+      // Small delay lets React finish the re-render (new question rendered)
+      // before we grab focus. requestAnimationFrame is enough on iOS.
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [onboardingSubmitting]);
+
+  useEffect(() => {
+    if (remSubmitting) {
+      wasRemSubmitting.current = true;
+    } else if (wasRemSubmitting.current) {
+      wasRemSubmitting.current = false;
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [remSubmitting]);
+
   useEffect(() => {
     remGarageEmptyWarned.current = false;
   }, [tripId]);
@@ -985,6 +1011,14 @@ export default function ChatPanel({
 
   const remediationComposerBusy = showRemediation && (remLoading || remSubmitting);
   const onboardingComposerBusy = onboardingUiActive && (onboardingLoading || onboardingSubmitting);
+
+  // For the disabled prop we only include the *loading* states (initial fetch)
+  // — not the *submitting* states. Disabling the textarea during submit blurs
+  // it, which closes the mobile keyboard and breaks the back-and-forth chat
+  // feel. Double-submit is already guarded by early-returns in sendMessage /
+  // submitOnboardingTextAnswer / submitRemediationTextAnswer.
+  const remediationComposerDisabled = showRemediation && remLoading;
+  const onboardingComposerDisabled = onboardingUiActive && onboardingLoading;
   const remediationSelectStep =
     showRemediation &&
     remSnapshot?.question?.kind === 'select' &&
@@ -1505,7 +1539,7 @@ export default function ChatPanel({
                 onboardingQuestion.options && (
                   <div
                     style={{
-                      padding: '10px 16px 0',
+                      padding: '10px 16px 10px',
                       flexShrink: 0,
                       borderTop: '1px solid var(--tp-border)',
                       background: 'var(--tp-surface-muted)',
@@ -1798,7 +1832,7 @@ export default function ChatPanel({
                       ? remSnapshot.question.placeholder ?? 'Type your answer…'
                       : 'Ask Penny…'
             }
-            disabled={loading || remediationComposerBusy || onboardingComposerBusy}
+            disabled={loading || remediationComposerDisabled || onboardingComposerDisabled}
             rows={1}
             style={{
               flex: 1,

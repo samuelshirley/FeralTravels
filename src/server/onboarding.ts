@@ -239,7 +239,7 @@ export async function getOnboardingSnapshot(
         help: 'Fuel planning and the database always use kilometers; this only affects how questions are worded.',
         options: [
           { value: 'metric', label: 'Metric (km)' },
-          { value: 'imperial', label: 'Imperial (miles)' },
+          { value: 'imperial', label: 'Imperial (cheeseburgers)' },
         ],
       },
       vehicles: [],

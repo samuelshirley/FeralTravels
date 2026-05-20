@@ -11,6 +11,7 @@ import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
+import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
@@ -87,6 +88,7 @@ export default function TripWorkspace({
   // re-fetch loop hammering /api/trip and /api/pois.
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const viewport = useViewport();
+  const keyboardOpen = useKeyboardOpen();
 
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
@@ -571,7 +573,9 @@ export default function TripWorkspace({
               top: 0,
               left: 0,
               right: 0,
-              bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+              bottom: keyboardOpen
+                ? 0
+                : `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
               display: mobileTab === 'chat' ? 'flex' : 'none',
               flexDirection: 'column',
               background: 'var(--tp-surface-muted)',
@@ -581,12 +585,14 @@ export default function TripWorkspace({
             {chatPane}
           </div>
         </div>
+        {!keyboardOpen && (
         <BottomNav
           active={mobileTab}
           onChange={setMobileTab}
           thinking={thinking || tripFuelBusy}
           unread={unread}
         />
+        )}
       </div>
       </>
     );

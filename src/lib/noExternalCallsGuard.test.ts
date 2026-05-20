@@ -49,13 +49,10 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
 ];
 
 /**
- * Files explicitly allowed to contain these patterns (e.g. the "More Stops"
- * modal which is a deliberate user-initiated action, not passive viewing).
+ * Files explicitly allowed to contain these patterns (e.g. deliberate
+ * user-initiated actions, not passive viewing).
  */
-const ALLOWED_FILES = new Set([
-  // The "More Stops" modal is user-triggered (not page-load) and searches for
-  // new places — that's a write-path action, not a view-path read.
-  'stops/MoreStopsModal.tsx',
+const ALLOWED_FILES = new Set<string>([
 ]);
 
 function getAllTsxFiles(dir: string): string[] {

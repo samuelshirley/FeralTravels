@@ -1,20 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
-import { StopCard, MoreStopsModal } from './stops';
+import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
-import type { MoreStopsData, SearchMode, StopPhoto } from './stops';
+import type { StopPhoto } from './stops';
 import Spinner from './Spinner';
 
 interface StopsSectionProps {
   tripId: string;
   legId: string;
   legEndName: string | null;
-  legEndCoords: { lat: number | null; lng: number | null };
+  legEndCoords?: { lat: number | null; lng: number | null };
   legStartCoords?: { lat: number | null; lng: number | null };
   initialStops: Stop[];
   fuelStatus?: FuelStatus;
@@ -47,7 +47,7 @@ export default function StopsSection({
   tripId,
   legId,
   legEndName: _legEndName,
-  legEndCoords,
+  legEndCoords: _legEndCoords,
   legStartCoords: _legStartCoords,
   initialStops,
   fuelStatus = 'none',
@@ -57,6 +57,7 @@ export default function StopsSection({
 }: StopsSectionProps) {
   void _legEndName;
   void _legStartCoords;
+  void _legEndCoords;
 
   const {
     activeStops,
@@ -91,76 +92,12 @@ export default function StopsSection({
     return map;
   }, [activeStops]);
 
-  // --- More Stops modal ---
-  const [modalOpen, setModalOpen] = useState(false);
-  const [moreStops, setMoreStops] = useState<MoreStopsData>({
-    fuel: [],
-    groceries: [],
-    water: [],
-    parks: [],
-  });
-  const [moreStopsLoading, setMoreStopsLoading] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchMode>('along-route');
-
-  const hasEndCoords = legEndCoords.lat != null && legEndCoords.lng != null;
-
-  const fetchMoreStops = useCallback(
-    async (mode: SearchMode) => {
-      if (!hasEndCoords) return;
-      setMoreStopsLoading(true);
-
-      const lat = legEndCoords.lat!;
-      const lng = legEndCoords.lng!;
-      const categories = ['fuel', 'groceries', 'water', 'parks'] as const;
-
-      const results = await Promise.all(
-        categories.map(async (category) => {
-          try {
-            const params = new URLSearchParams({
-              tripId: tripId.toString(),
-              legId: legId.toString(),
-              lat: lat.toString(),
-              lng: lng.toString(),
-              category,
-            });
-            const res = await fetch(`/api/places/nearby-stops?${params}`);
-            const data = await res.json();
-            return { category, results: data.results ?? [] };
-          } catch {
-            return { category, results: [] };
-          }
-        })
-      );
-
-      const data: MoreStopsData = { fuel: [], groceries: [], water: [], parks: [] };
-      for (const r of results) {
-        data[r.category] = r.results;
-      }
-      setMoreStops(data);
-      setMoreStopsLoading(false);
-    },
-    [hasEndCoords, legEndCoords.lat, legEndCoords.lng, legId, tripId]
-  );
-
-  const handleOpenModal = useCallback(() => {
-    setModalOpen(true);
-    fetchMoreStops(searchMode);
-  }, [fetchMoreStops, searchMode]);
-
-  const handleSearchModeChange = useCallback(
-    (mode: SearchMode) => {
-      setSearchMode(mode);
-      fetchMoreStops(mode);
-    },
-    [fetchMoreStops]
-  );
-
   // --- Sort stops for display ---
   const sortedStops = useMemo(() => {
     return [...activeStops].sort((a, b) => {
       const typeA = TYPE_ORDER.indexOf(a.stop_type);
       const typeB = TYPE_ORDER.indexOf(b.stop_type);
-      // Overnight always last (before "more stops" button)
+      // Overnight always last
       if (a.stop_type === 'overnight' && b.stop_type !== 'overnight') return 1;
       if (b.stop_type === 'overnight' && a.stop_type !== 'overnight') return -1;
       // Then by distance from start
@@ -336,30 +273,19 @@ export default function StopsSection({
           </details>
         )}
 
-        {/* More Stops button */}
-        {!readonly && hasEndCoords && (
-          <button
-            onClick={handleOpenModal}
+        {/* Penny prompt for additional stops */}
+        {!readonly && (
+          <div
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: 10,
               marginTop: 8,
-              background: 'var(--tp-primary-muted)',
-              border: '1px solid transparent',
-              borderRadius: 8,
-              fontSize: 13,
-              fontWeight: 600,
-              color: 'var(--tp-primary)',
-              cursor: 'pointer',
-              transition: 'background 0.15s',
+              fontSize: 11,
+              color: 'var(--tp-muted)',
+              textAlign: 'center',
+              lineHeight: 1.5,
             }}
           >
-            + More stop options
-          </button>
+            Ask Penny for fuel, groceries, or other stops along the route
+          </div>
         )}
       </div>
 
@@ -413,16 +339,6 @@ export default function StopsSection({
         </div>
       )}
 
-      {/* More Stops Modal */}
-      <MoreStopsModal
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        legLabel={`Day ${legId}`}
-        stops={moreStops}
-        loading={moreStopsLoading}
-        searchMode={searchMode}
-        onSearchModeChange={handleSearchModeChange}
-      />
     </>
   );
 }
