@@ -12,18 +12,20 @@ const onest = Onest({
 
 export const metadata: Metadata = {
   title: 'Feral Travels',
-  description: 'Map-first overlanding trip planner — Feral Travels',
+  description: 'Penny — your automated trip assistant',
   manifest: '/manifest.json',
   openGraph: {
     title: 'Feral Travels',
-    description: 'Map-first road trip planner.',
+    description: 'Penny — your automated trip assistant',
     siteName: 'Feral Travels',
     type: 'website',
+    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'Finn the dog' }],
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'Feral Travels',
-    description: 'Map-first road trip planner.',
+    description: 'Penny — your automated trip assistant',
+    images: ['/og-image.jpg'],
   },
 };
 

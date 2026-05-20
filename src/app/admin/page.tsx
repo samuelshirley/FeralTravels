@@ -13,6 +13,7 @@ import {
   getAllTimeAnthropicSpend,
   getAnthropicHealthAlert,
 } from '@/server/repos/admin';
+import { getAnnouncementStats } from '@/server/repos/announcements';
 import {
   getGlobalUsage,
   microcentsToDollars,
@@ -96,6 +97,7 @@ export default async function AdminPage() {
     // the whole dashboard. Parallelized into this batch so it doesn't add
     // sequential latency to the page render.
     googleBillable,
+    announcementStats,
   ] = await Promise.all([
     getAdminOverview(),
     getRecentUsers(15),
@@ -113,6 +115,7 @@ export default async function AdminPage() {
     getAllTimeAnthropicSpend(),
     getAnthropicHealthAlert(),
     getGoogleBillableThisMonth(),
+    getAnnouncementStats(),
   ]);
 
   const usd24 = usage24
@@ -184,6 +187,12 @@ export default async function AdminPage() {
       label: 'Google billable (mo)',
       value: fmtMoney(googleBillable.billableUsd),
       sub: googleSubLabel(googleBillable),
+    },
+    {
+      label: 'Announcements',
+      value: announcementStats.activeCount,
+      sub: `${announcementStats.totalCount} total`,
+      href: '/admin/announcements',
     },
   ];
 

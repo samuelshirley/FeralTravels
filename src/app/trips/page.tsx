@@ -7,6 +7,7 @@ import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import AppNavbar from '@/components/AppNavbar';
 
 import { UnitsProvider } from '@/components/UnitsContext';
+import AnnouncementModal from '@/components/AnnouncementModal';
 import NewTripButton from './NewTripButton';
 import TripsList from './TripsList';
 
@@ -38,6 +39,7 @@ export default async function TripsPage() {
 
   return (
     <UnitsProvider initialUnits={unitsPref}>
+      <AnnouncementModal />
       <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={{

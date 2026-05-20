@@ -495,3 +495,40 @@ export const userViewportTime = pgTable(
     userIdx: index('user_viewport_time_user_idx').on(t.userId),
   })
 );
+
+// ── Announcements ───────────────────────────────────────────────────────────
+
+/**
+ * One-time announcements / update notices shown to users on login.
+ * Admin creates rows via /admin/announcements; users dismiss them once.
+ */
+export const announcements = pgTable('announcements', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Short title shown at the top of the modal. */
+  title: text('title').notNull(),
+  /** Body text — the main message. */
+  body: text('body').notNull(),
+  /** Label on the dismiss button (e.g. "Wow nice job Sam"). */
+  buttonText: text('button_text').notNull().default('Got it'),
+  /** Only active announcements are shown; flip to false to retire. */
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+/** Tracks which users have dismissed which announcements (one row = dismissed). */
+export const announcementDismissals = pgTable(
+  'announcement_dismissals',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    announcementId: uuid('announcement_id')
+      .notNull()
+      .references(() => announcements.id, { onDelete: 'cascade' }),
+    dismissedAt: timestamp('dismissed_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.announcementId] }),
+    userIdx: index('announcement_dismissals_user_idx').on(t.userId),
+  })
+);
