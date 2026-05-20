@@ -8,7 +8,7 @@ export interface AdminErrorRow {
   createdAt: string; // ISO from server
   provider: string;
   errorMessage: string | null;
-  tripId: number | null;
+  tripId: string | null;
   userId: string | null;
   userEmail: string | null;
   userName: string | null;

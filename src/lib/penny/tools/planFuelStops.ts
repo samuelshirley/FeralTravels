@@ -6,7 +6,7 @@ import type { PennyContext } from '@/lib/penny/context';
 export const PLAN_FUEL_STOPS = 'plan_fuel_stops' as const;
 
 const baseSchema = z.object({
-  leg_id: z.number().int().positive(),
+  leg_id: z.string().uuid(),
 });
 
 export type PlanFuelStopsInput = z.infer<typeof baseSchema>;
@@ -24,9 +24,10 @@ export const tool: Anthropic.Tool = {
     required: ['leg_id'],
     properties: {
       leg_id: {
-        type: 'integer',
+        type: 'string',
+        format: 'uuid',
         description:
-          'Persisted legs[].id from context for this leg (same id you passed to add_leg or that already exists — not sort_order, not ordinal).',
+          'Persisted legs[].id (UUID) from context for this leg (same id you passed to add_leg or that already exists — not sort_order, not ordinal).',
       },
     },
   },

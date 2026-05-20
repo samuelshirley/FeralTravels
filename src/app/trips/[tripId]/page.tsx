@@ -18,8 +18,7 @@ export default async function TripPage({ params }: Props) {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
-  const tripId = parseInt(params.tripId, 10);
-  if (Number.isNaN(tripId)) notFound();
+  const tripId = params.tripId;
 
   const trip = await getTripFull(tripId);
   if (!trip) notFound();

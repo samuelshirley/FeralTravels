@@ -6,8 +6,8 @@ import { tripApi } from '@/lib/api';
 import Distance from './Distance';
 
 interface RoutesSectionProps {
-  tripId: number;
-  legId: number;
+  tripId: string;
+  legId: string;
   initialRoutes: RouteWithLinks[];
   onChanged?: () => void;
   readonly?: boolean;
@@ -94,7 +94,7 @@ export default function RoutesSection({
     }
   }
 
-  async function handleDeleteRoute(id: number) {
+  async function handleDeleteRoute(id: string) {
     if (!confirm('Delete this route option?')) return;
     try {
       await api.deleteRoute(id);
@@ -104,7 +104,7 @@ export default function RoutesSection({
     }
   }
 
-  async function handleSelectRoute(id: number) {
+  async function handleSelectRoute(id: string) {
     // Optimistic: flip status locally so the radio dot moves immediately,
     // then reconcile with server response.
     setRoutes((prev) =>

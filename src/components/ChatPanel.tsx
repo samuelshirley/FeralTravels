@@ -6,7 +6,7 @@ import { tripApi, apiFetch } from '@/lib/api';
 import Spinner from '@/components/Spinner';
 
 interface ChatPanelProps {
-  tripId: number;
+  tripId: string;
   initialMessages: ChatMessage[];
   initialHasMore?: boolean;
   /**
@@ -41,7 +41,7 @@ interface InFlightTool {
 interface VehicleRemediationSnapshot {
   needs_remediation: boolean;
   done: boolean;
-  active_vehicle: { id: number; name: string } | null;
+  active_vehicle: { id: string; name: string } | null;
   question: {
     key: string;
     kind: 'text' | 'number' | 'integer' | 'select' | 'vehicle_pick' | 'handoff';
@@ -62,7 +62,7 @@ interface VehicleRemediationSnapshot {
 interface OnboardingSnapshot {
   state: OnboardingState;
   question: VehicleRemediationSnapshot['question'];
-  vehicles: Array<{ id: number; name: string; is_default: boolean }>;
+  vehicles: Array<{ id: string; name: string; is_default: boolean }>;
   progress: { current: number; total: number } | null;
 }
 
@@ -72,7 +72,9 @@ interface OnboardingAnswerResult {
   didHandoff: boolean;
 }
 
-interface UIMessage extends ChatMessage {
+interface UIMessage extends Omit<ChatMessage, 'seq'> {
+  /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
+  seq?: number;
   imageDataUrls?: string[];
   // Populated when Penny proposed changes but the server couldn't apply them
   // (unknown action, owner mismatch, DB error). We surface this so the user
@@ -188,10 +190,9 @@ export default function ChatPanel({
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || messages.length === 0) return;
-    // Optimistic messages have `Date.now()` ids (13-digit ms timestamps) which
-    // are always higher than any real DB id, so we walk up from the front to
-    // find the earliest persisted id — that's our "before" cursor.
-    const earliest = messages.find((m) => m.id < 1_000_000_000_000);
+    // Optimistic messages have no `seq` (or seq=0). Walk from the front to
+    // find the earliest persisted message with a real seq — that's our cursor.
+    const earliest = messages.find((m) => (m.seq ?? 0) > 0);
     if (!earliest) return;
     setLoadingOlder(true);
     const scrollEl = scrollRef.current;
@@ -201,7 +202,7 @@ export default function ChatPanel({
     try {
       const data = await apiFetch<{ messages: ChatMessage[]; hasMore: boolean }>(
         `/api/chat`,
-        { query: { tripId, before: earliest.id } }
+        { query: { tripId, beforeSeq: earliest.seq } }
       );
       setMessages((prev) => [...data.messages, ...prev]);
       setHasMore(data.hasMore);
@@ -315,7 +316,7 @@ export default function ChatPanel({
       setMessages((prev) => [
         ...prev,
         {
-          id: Date.now(),
+          id: `optimistic-${Date.now()}`,
           trip_id: tripId,
           role: 'assistant' as const,
           content:
@@ -335,7 +336,7 @@ export default function ChatPanel({
       return [
         ...prev,
         {
-          id: Date.now(),
+          id: `optimistic-${Date.now()}`,
           trip_id: tripId,
           role: 'assistant' as const,
           content: q.label,
@@ -359,7 +360,7 @@ export default function ChatPanel({
       return [
         ...prev,
         {
-          id: Date.now(),
+          id: `optimistic-${Date.now()}`,
           trip_id: tripId,
           role: 'assistant' as const,
           content: q.label,
@@ -421,8 +422,8 @@ export default function ChatPanel({
   ): Promise<void> => {
     if ((!trimmed && attachedImages.length === 0) || loading) return;
 
-    const userMsgId = Date.now();
-    const assistantMsgId = userMsgId + 1;
+    const userMsgId = `optimistic-${Date.now()}`;
+    const assistantMsgId = `optimistic-${Date.now() + 1}`;
 
     const tempUserMsg: UIMessage = {
       id: userMsgId,
@@ -751,7 +752,7 @@ export default function ChatPanel({
         setMessages((prev) => [
           ...prev,
           {
-            id: Date.now(),
+            id: `optimistic-${Date.now()}`,
             trip_id: tripId,
             role: 'user' as const,
             content: result.answerLabel,
@@ -861,7 +862,7 @@ export default function ChatPanel({
     setMessages((prev) => [
       ...prev,
       {
-        id: Date.now(),
+        id: `optimistic-${Date.now()}`,
         trip_id: tripId,
         role: 'user' as const,
         content: answeredLabel,
@@ -875,7 +876,7 @@ export default function ChatPanel({
       setMessages((prev) => [
         ...prev,
         {
-          id: Date.now(),
+          id: `optimistic-${Date.now()}`,
           trip_id: tripId,
           role: 'assistant' as const,
           content: "Vehicle profile updated! You're all set to plan your trip.",

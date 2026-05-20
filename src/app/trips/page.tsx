@@ -30,7 +30,7 @@ export default async function TripsPage() {
   // No SSR overlay — avoids hydration mismatches on mobile.
   const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
   if (remediationSnapshot.needs_remediation && !remediationSnapshot.done && myTrips.length > 0) {
-    const latestTrip = [...myTrips].sort((a, b) => b.id - a.id)[0];
+    const latestTrip = [...myTrips].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))[0];
     redirect(`/trips/${latestTrip.id}`);
   }
 

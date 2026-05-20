@@ -21,6 +21,7 @@ import {
 } from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
 import { replenishFuelStopsForTrip } from '@/server/fuel';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,8 +31,8 @@ const patchSchema = z.object({
   start_date: z.string().nullish(),
   end_date: z.string().nullish(),
   status: z.string().max(40).optional(),
-  // null = explicitly clear; number = set to a vehicle the user owns.
-  vehicle_id: z.number().int().positive().nullable().optional(),
+  // null = explicitly clear; string UUID = set to a vehicle the user owns.
+  vehicle_id: z.string().uuid().nullable().optional(),
   /** Google Directions `avoid=highways` (motorways); merged into Penny get_route */
   prefer_avoid_highways: z.boolean().optional(),
 });
@@ -39,8 +40,8 @@ const patchSchema = z.object({
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const tripId = parseInt(ctx.params.id, 10);
-    if (Number.isNaN(tripId)) {
+    const tripId = parseUUID(ctx.params.id);
+    if (!tripId) {
       return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     }
     await assertTripOwnedByUser(tripId, userId);
@@ -58,7 +59,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     // If vehicle_id is being set, verify the user actually owns that vehicle
     // — otherwise a malicious client could attach someone else's vehicle to
     // their trip.
-    if (typeof body.vehicle_id === 'number') {
+    if (typeof body.vehicle_id === 'string') {
       const owned = await db
         .select({ id: vehicles.id })
         .from(vehicles)
@@ -118,8 +119,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const tripId = parseInt(ctx.params.id, 10);
-    if (Number.isNaN(tripId)) {
+    const tripId = parseUUID(ctx.params.id);
+    if (!tripId) {
       return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     }
 

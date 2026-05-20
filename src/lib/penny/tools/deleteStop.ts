@@ -6,7 +6,7 @@ import type { PennyContext } from '@/lib/penny/context';
 export const DELETE_STOP = 'delete_stop' as const;
 
 const baseSchema = z.object({
-  stop_id: z.number().int().positive(),
+  stop_id: z.string().uuid(),
 });
 
 export type DeleteStopInput = z.infer<typeof baseSchema>;
@@ -22,7 +22,7 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['stop_id'],
     properties: {
-      stop_id: { type: 'integer' },
+      stop_id: { type: 'string', format: 'uuid' },
     },
   },
 };

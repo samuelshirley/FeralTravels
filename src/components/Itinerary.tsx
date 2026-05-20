@@ -18,9 +18,9 @@ const INCREMENTAL_BATCH_SIZE = 10;
 const BATCH_REVEAL_DELAY_MS = 220;
 
 interface ItineraryProps {
-  tripId: number;
+  tripId: string;
   trip: TripWithLegs;
-  onLegSelect: (legId: number) => void;
+  onLegSelect: (legId: string) => void;
   onTrailsChanged?: () => void;
   onChanged?: () => void;
   readonly?: boolean;
@@ -43,7 +43,7 @@ export default function Itinerary({
   isFuelSyncing = false,
 }: ItineraryProps) {
   const legs = trip.legs;
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // ── Lazy rendering ─────────────────────────────────────────────────────
   // We mount the first INITIAL_VISIBLE_LEGS leg cards and reveal more in
@@ -100,7 +100,7 @@ export default function Itinerary({
     return () => io.disconnect();
   }, [visibleCount, legs.length]);
 
-  const toggle = (id: number) => {
+  const toggle = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {

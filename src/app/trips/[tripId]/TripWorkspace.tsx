@@ -18,11 +18,11 @@ import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysT
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
 interface Props {
-  tripId: number;
+  tripId: string;
   /** From RSC `getTripFull` — hydrates navbar chrome before client `/api/trip` resolves. */
   serverTrip: {
     name: string;
-    vehicle_id: number | null;
+    vehicle_id: string | null;
     prefer_avoid_highways: boolean;
   };
   readonly: boolean;
@@ -90,7 +90,7 @@ export default function TripWorkspace({
 
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
-  const [selectedLegId, setSelectedLegId] = useState<number | null>(null);
+  const [selectedLegId, setSelectedLegId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
 

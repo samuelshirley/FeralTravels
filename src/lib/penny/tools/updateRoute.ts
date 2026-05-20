@@ -31,7 +31,7 @@ const dataSchema = z.object({
 });
 
 const baseSchema = z.object({
-  route_id: z.number().int().positive(),
+  route_id: z.string().uuid(),
   data: dataSchema,
 });
 
@@ -49,7 +49,7 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['route_id', 'data'],
     properties: {
-      route_id: { type: 'integer' },
+      route_id: { type: 'string', format: 'uuid' },
       data: {
         type: 'object',
         properties: {

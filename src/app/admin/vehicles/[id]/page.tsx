@@ -95,8 +95,7 @@ export default async function AdminVehicleDetailPage({ params }: PageProps) {
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
-  const vehicleId = parseInt(params.id, 10);
-  if (!Number.isFinite(vehicleId)) notFound();
+  const vehicleId = params.id;
 
   const row = await getAdminVehicleById(vehicleId);
   if (!row) notFound();

@@ -5,8 +5,8 @@ import type { Task, TaskPriority, TaskStatus } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 
 interface TasksSectionProps {
-  tripId: number;
-  legId: number;
+  tripId: string;
+  legId: string;
   initialTasks: Task[];
   onChanged?: () => void;
   readonly?: boolean;
@@ -31,7 +31,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
   const [newTitle, setNewTitle] = useState('');
   const [newRefUrl, setNewRefUrl] = useState('');
   const [newPriority, setNewPriority] = useState<TaskPriority>('normal');
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editAnswer, setEditAnswer] = useState('');
 
   useEffect(() => {
@@ -68,7 +68,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
     }
   }
 
-  async function patchTask(id: number, data: Partial<Task>) {
+  async function patchTask(id: string, data: Partial<Task>) {
     try {
       await api.updateTask(id, data as Record<string, unknown>);
       reload();
@@ -77,7 +77,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     if (!confirm('Delete this task?')) return;
     try {
       await api.deleteTask(id);
@@ -92,7 +92,7 @@ export default function TasksSection({ tripId, legId, initialTasks, onChanged, r
     setEditAnswer(task.answer || '');
   }
 
-  async function saveResolve(id: number) {
+  async function saveResolve(id: string) {
     await patchTask(id, { status: 'answered', answer: editAnswer.trim() || null });
     setEditingId(null);
     setEditAnswer('');

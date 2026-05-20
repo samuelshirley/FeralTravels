@@ -7,7 +7,7 @@
  *
  * Authenticated checks (optional):
  *   Copy the Cookie header from DevTools → Application → Cookies (after sign-in).
- *   SMOKE_COOKIE='authjs.session-token=...' SMOKE_TRIP_ID=123 npx tsx scripts/smoke-api.ts
+ *   SMOKE_COOKIE='authjs.session-token=...' SMOKE_TRIP_ID=<uuid> npx tsx scripts/smoke-api.ts
  *
  * Vehicle remediation snapshot (optional, same cookie):
  *   Printed automatically when SMOKE_COOKIE is set — `GET /api/me/vehicle-remediation` body (full JSON).
@@ -153,22 +153,17 @@ async function main() {
     }
 
     if (tripId) {
-      const tid = parseInt(tripId, 10);
-      if (Number.isNaN(tid)) {
-        fail(`SMOKE_TRIP_ID invalid: ${tripId}`);
+      const tripRes = await fetch(`${base}/api/trip?tripId=${tripId}`, { headers });
+      if (tripRes.status !== 200) {
+        fail(
+          `/api/trip?tripId= expected 200: ${tripRes.status} ${(await tripRes.text()).slice(0, 300)}`
+        );
       } else {
-        const tripRes = await fetch(`${base}/api/trip?tripId=${tid}`, { headers });
-        if (tripRes.status !== 200) {
-          fail(
-            `/api/trip?tripId= expected 200: ${tripRes.status} ${(await tripRes.text()).slice(0, 300)}`
-          );
+        const trip = (await tripRes.json()) as { name?: string; legs?: unknown[] };
+        if (!Array.isArray(trip.legs)) {
+          fail('/api/trip body should include legs[]');
         } else {
-          const trip = (await tripRes.json()) as { name?: string; legs?: unknown[] };
-          if (!Array.isArray(trip.legs)) {
-            fail('/api/trip body should include legs[]');
-          } else {
-            pass(`/api/trip?tripId=${tid} (name=${String(trip.name)}, legs=${trip.legs.length})`);
-          }
+          pass(`/api/trip?tripId=${tripId} (name=${String(trip.name)}, legs=${trip.legs.length})`);
         }
       }
     }

@@ -17,10 +17,13 @@ interface ApiOptions {
 export class ApiError extends Error {
   status: number;
   payload: unknown;
-  constructor(status: number, message: string, payload: unknown) {
+  /** Server-assigned correlation ID for finding this error in Vercel logs. */
+  errorId: string | null;
+  constructor(status: number, message: string, payload: unknown, errorId?: string) {
     super(message);
     this.status = status;
     this.payload = payload;
+    this.errorId = errorId ?? null;
   }
 }
 
@@ -31,7 +34,7 @@ export class ApiError extends Error {
 //
 // Kept as a module-level binding rather than a React context so non-component
 // code (e.g. Spinner fallbacks, service-worker messages) can trigger it too.
-type GlobalErrorReporter = (err: unknown, context: { path: string; status: number | null }) => void;
+type GlobalErrorReporter = (err: unknown, context: { path: string; status: number | null; errorId?: string }) => void;
 let globalErrorReporter: GlobalErrorReporter | null = null;
 
 export function registerGlobalErrorReporter(fn: GlobalErrorReporter | null): void {
@@ -95,9 +98,13 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
       (data && typeof data === 'object' && 'error' in data && typeof (data as any).error === 'string'
         ? (data as any).error
         : null) || res.statusText || `HTTP ${res.status}`;
-    const err = new ApiError(res.status, message, data);
+    const errorId =
+      data && typeof data === 'object' && 'errorId' in data && typeof (data as any).errorId === 'string'
+        ? (data as any).errorId
+        : undefined;
+    const err = new ApiError(res.status, message, data, errorId);
     if (!opts.skipGlobalErrorReport && globalErrorReporter) {
-      globalErrorReporter(err, { path, status: res.status });
+      globalErrorReporter(err, { path, status: res.status, errorId });
     }
     throw err;
   }
@@ -109,24 +116,24 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
 // Trip-scoped helpers — pass tripId once, reuse everywhere.
 // ---------------------------------------------------------------------------
 
-export function tripApi(tripId: number) {
+export function tripApi(tripId: string) {
   return {
     getTrip: () => apiFetch(`/api/trip`, { query: { tripId } }),
     replan: (message: string, images: Array<{ dataUrl: string; mediaType: string }> = []) =>
       apiFetch(`/api/trip/replan`, { body: { tripId, message, images } }),
 
-    listRoutes: (legId: number) => apiFetch(`/api/routes`, { query: { tripId, legId } }),
-    addRoute: (legId: number, payload: Record<string, unknown>) =>
+    listRoutes: (legId: string) => apiFetch(`/api/routes`, { query: { tripId, legId } }),
+    addRoute: (legId: string, payload: Record<string, unknown>) =>
       apiFetch(`/api/routes`, { body: { tripId, leg_id: legId, ...payload } }),
-    updateRoute: (routeId: number, data: Record<string, unknown>) =>
+    updateRoute: (routeId: string, data: Record<string, unknown>) =>
       apiFetch(`/api/routes/${routeId}`, { method: 'PATCH', body: { tripId, ...data } }),
-    deleteRoute: (routeId: number) =>
+    deleteRoute: (routeId: string) =>
       apiFetch(`/api/routes/${routeId}`, { method: 'DELETE', query: { tripId } }),
-    selectRoute: (routeId: number) =>
+    selectRoute: (routeId: string) =>
       apiFetch(`/api/routes/${routeId}/select`, { method: 'POST', body: {} }),
-    addRouteLink: (routeId: number, payload: Record<string, unknown>) =>
+    addRouteLink: (routeId: string, payload: Record<string, unknown>) =>
       apiFetch(`/api/routes/${routeId}/links`, { body: { tripId, ...payload } }),
-    deleteRouteLink: (routeId: number, linkId: number) =>
+    deleteRouteLink: (routeId: string, linkId: string) =>
       apiFetch(`/api/routes/${routeId}/links`, {
         method: 'DELETE',
         query: { tripId, linkId },
@@ -137,9 +144,9 @@ export function tripApi(tripId: number) {
      * `{ status: 'ready'|'failed'|'skipped', stopsCreated?, reason? }`.
      * See src/server/fuel.ts for the algorithm.
      */
-    planFuelStops: (legId: number) =>
+    planFuelStops: (legId: string) =>
       apiFetch<{
-        legId: number;
+        legId: string;
         status: 'ready' | 'failed' | 'skipped';
         stopsCreated?: number;
         reason?: string;
@@ -161,8 +168,8 @@ export function tripApi(tripId: number) {
             : {},
       }),
 
-    listStopsForLeg: (legId: number) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
-    addStop: (legId: number, payload: Record<string, unknown>) =>
+    listStopsForLeg: (legId: string) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
+    addStop: (legId: string, payload: Record<string, unknown>) =>
       apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),
     /**
      * Mutating-stop calls (`updateStop`, `deleteStop`, `selectStop`) accept
@@ -171,7 +178,7 @@ export function tripApi(tripId: number) {
      * this to silently re-fetch instead of showing the global error toast.
      */
     updateStop: (
-      stopId: number,
+      stopId: string,
       data: Record<string, unknown>,
       opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>
     ) =>
@@ -180,13 +187,13 @@ export function tripApi(tripId: number) {
         body: { tripId, ...data },
         ...opts,
       }),
-    deleteStop: (stopId: number, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
+    deleteStop: (stopId: string, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
       apiFetch(`/api/stops/${stopId}`, {
         method: 'DELETE',
         query: { tripId },
         ...opts,
       }),
-    selectStop: (stopId: number, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
+    selectStop: (stopId: string, opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>) =>
       apiFetch(`/api/stops/${stopId}/select`, {
         method: 'POST',
         body: {},
@@ -198,7 +205,7 @@ export function tripApi(tripId: number) {
      * round-trip. See /api/stops/:id/swap-primary.
      */
     swapStopPrimary: (
-      stopId: number,
+      stopId: string,
       altIndex: number,
       opts?: Pick<ApiOptions, 'skipGlobalErrorReport'>
     ) =>
@@ -219,7 +226,7 @@ export function tripApi(tripId: number) {
 
     /** Nearby dog parks / parks via Places API (server). Errors may return 200 + `error` or 503. */
     nearbyParks: (
-      legId: number,
+      legId: string,
       coords: { lat: number; lng: number },
       opts?: Pick<ApiOptions, 'signal' | 'skipGlobalErrorReport'>
     ) =>
@@ -250,17 +257,17 @@ export function tripApi(tripId: number) {
         ...opts,
       }),
 
-    listTasksForLeg: (legId: number) => apiFetch(`/api/tasks`, { query: { tripId, legId } }),
+    listTasksForLeg: (legId: string) => apiFetch(`/api/tasks`, { query: { tripId, legId } }),
     listTasksForTrip: () => apiFetch(`/api/tasks`, { query: { tripId } }),
     addTask: (payload: Record<string, unknown>) =>
       apiFetch(`/api/tasks`, { body: { tripId, ...payload } }),
-    updateTask: (taskId: number, data: Record<string, unknown>) =>
+    updateTask: (taskId: string, data: Record<string, unknown>) =>
       apiFetch(`/api/tasks/${taskId}`, { method: 'PATCH', body: { tripId, ...data } }),
-    deleteTask: (taskId: number) =>
+    deleteTask: (taskId: string) =>
       apiFetch(`/api/tasks/${taskId}`, { method: 'DELETE', query: { tripId } }),
 
-    listGpxForLeg: (legId: number) => apiFetch(`/api/gpx`, { query: { tripId, legId } }),
-    uploadGpx: (legId: number, file: File, name?: string, source?: string, sourceUrl?: string) => {
+    listGpxForLeg: (legId: string) => apiFetch(`/api/gpx`, { query: { tripId, legId } }),
+    uploadGpx: (legId: string, file: File, name?: string, source?: string, sourceUrl?: string) => {
       const form = new FormData();
       form.append('file', file);
       form.append('tripId', String(tripId));
@@ -270,7 +277,7 @@ export function tripApi(tripId: number) {
       if (sourceUrl) form.append('sourceUrl', sourceUrl);
       return apiFetch(`/api/gpx`, { body: form });
     },
-    deleteGpx: (gpxId: number) =>
+    deleteGpx: (gpxId: string) =>
       apiFetch(`/api/gpx/${gpxId}`, { method: 'DELETE', query: { tripId } }),
 
     listPois: () => apiFetch(`/api/pois`, { query: { tripId } }),

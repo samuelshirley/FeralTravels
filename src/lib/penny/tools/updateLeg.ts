@@ -46,7 +46,7 @@ const dataSchema = z.object({
 });
 
 const baseSchema = z.object({
-  leg_id: z.number().int().positive(),
+  leg_id: z.string().uuid(),
   data: dataSchema,
 });
 
@@ -76,8 +76,9 @@ export const tool: Anthropic.Tool = {
     required: ['leg_id', 'data'],
     properties: {
       leg_id: {
-        type: 'integer',
-        description: 'Persisted legs[].id from context for this trip (not sort_order, not ordinal).',
+        type: 'string',
+        format: 'uuid',
+        description: 'Persisted legs[].id (UUID) from context for this trip (not sort_order, not ordinal).',
       },
       data: {
         type: 'object',

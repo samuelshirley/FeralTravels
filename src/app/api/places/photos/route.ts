@@ -6,6 +6,7 @@ import {
 import { getLegTripId } from '@/server/repos/tasks';
 import { placePhotos, coordPhotos } from '@/server/places/photos';
 import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,13 +28,13 @@ export async function GET(request: Request) {
     const latRaw = url.searchParams.get('lat');
     const lngRaw = url.searchParams.get('lng');
 
-    const tripId = tripIdRaw ? parseInt(tripIdRaw, 10) : NaN;
-    const legId = legIdRaw ? parseInt(legIdRaw, 10) : NaN;
+    const tripId = tripIdRaw ? parseUUID(tripIdRaw) : null;
+    const legId = legIdRaw ? parseUUID(legIdRaw) : null;
 
-    if (Number.isNaN(tripId) || tripId <= 0) {
+    if (!tripId) {
       return Response.json({ error: 'tripId is required' }, { status: 400 });
     }
-    if (Number.isNaN(legId) || legId <= 0) {
+    if (!legId) {
       return Response.json({ error: 'legId is required' }, { status: 400 });
     }
 

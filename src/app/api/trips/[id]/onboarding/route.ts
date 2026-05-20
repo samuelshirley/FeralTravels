@@ -5,20 +5,16 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { getOnboardingSnapshot, submitAnswer } from '@/server/onboarding';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function parseId(raw: string): number | null {
-  const n = parseInt(raw, 10);
-  return Number.isNaN(n) ? null : n;
-}
-
 export async function GET(_req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const tripId = parseId(ctx.params.id);
-    if (tripId == null) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
+    const tripId = parseUUID(ctx.params.id);
+    if (!tripId) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     await assertTripOwnedByUser(tripId, userId);
     const snapshot = await getOnboardingSnapshot(tripId, userId);
     return Response.json(snapshot);
@@ -38,8 +34,8 @@ const answerSchema = z.object({
 export async function POST(req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const tripId = parseId(ctx.params.id);
-    if (tripId == null) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
+    const tripId = parseUUID(ctx.params.id);
+    if (!tripId) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     await assertTripOwnedByUser(tripId, userId);
     const body = answerSchema.parse(await req.json());
     const result = await submitAnswer(tripId, userId, body);

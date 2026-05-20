@@ -49,7 +49,7 @@ export async function listVehiclesForUser(userId: string): Promise<VehicleApi[]>
 
 export async function getVehicleForUser(
   userId: string,
-  vehicleId: number
+  vehicleId: string
 ): Promise<VehicleApi | null> {
   const rows = await db
     .select()
@@ -59,7 +59,7 @@ export async function getVehicleForUser(
   return rows[0] ? vehicleApi(rows[0]) : null;
 }
 
-export async function getDefaultVehicleId(userId: string): Promise<number | null> {
+export async function getDefaultVehicleId(userId: string): Promise<string | null> {
   const r = await db
     .select({ id: vehicles.id })
     .from(vehicles)
@@ -134,7 +134,7 @@ export async function addVehicle(userId: string, input: VehicleInput): Promise<V
 
 export async function updateVehicle(
   userId: string,
-  vehicleId: number,
+  vehicleId: string,
   patch: Partial<VehicleInput>
 ): Promise<VehicleApi | null> {
   const owned = await getVehicleForUser(userId, vehicleId);
@@ -167,7 +167,7 @@ export async function updateVehicle(
 
 export async function deleteVehicle(
   userId: string,
-  vehicleId: number
+  vehicleId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return { ok: false, error: 'Vehicle not found' };
@@ -196,7 +196,7 @@ export async function deleteVehicle(
 
 export async function setDefaultVehicle(
   userId: string,
-  vehicleId: number
+  vehicleId: string
 ): Promise<VehicleApi | null> {
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return null;

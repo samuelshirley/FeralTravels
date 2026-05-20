@@ -80,7 +80,7 @@ const KNOT_MERGE_GAP_KM = 12;
 export const AUTO_STRETCH_BREAK_NOTE_PREFIX = 'Auto-suggested stretch break';
 
 export interface FuelPlanResult {
-  legId: number;
+  legId: string;
   status: 'ready' | 'failed' | 'skipped';
   reason?: string;
   stopsCreated?: number;
@@ -88,7 +88,7 @@ export interface FuelPlanResult {
 
 /** Quick status mutation; clears `fuel_plan_error` whenever status is not failed. */
 async function setFuelStatus(
-  legId: number,
+  legId: string,
   status: 'none' | 'pending' | 'computing' | 'ready' | 'failed',
   fuelPlanError: string | null = null
 ) {
@@ -104,7 +104,7 @@ async function setFuelStatus(
  * already have authorized `userId` against the leg's trip.
  */
 export async function planFuelStopsForLeg(
-  legId: number,
+  legId: string,
   userId: string
 ): Promise<FuelPlanResult> {
   // 1. Load leg + its trip so we know which vehicle to use.
@@ -513,7 +513,7 @@ function matchesExistingSelected(
   return false;
 }
 
-function autoPlannerGooglePlacesOptionSql(legId: number) {
+function autoPlannerGooglePlacesOptionSql(legId: string) {
   return and(
     eq(stops.legId, legId),
     eq(stops.source, 'google_places'),
@@ -525,7 +525,7 @@ function autoPlannerGooglePlacesOptionSql(legId: number) {
   );
 }
 
-async function clearAutoPlannerGooglePlacesOptionStops(legId: number): Promise<void> {
+async function clearAutoPlannerGooglePlacesOptionStops(legId: string): Promise<void> {
   await db.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
 }
 
@@ -538,7 +538,7 @@ async function clearAutoPlannerGooglePlacesOptionStops(legId: number): Promise<v
  */
 async function logPlacesUsageSafe(input: {
   userId: string;
-  tripId: number | null;
+  tripId: string | null;
   essentialsCalls: number;
   proCalls: number;
   success: boolean;
@@ -595,7 +595,7 @@ export interface ReplenishFuelStopsOptions {
  * rest still run. Pass `startFromSortOrder` to skip legs ahead of an edit.
  */
 export async function replenishFuelStopsForTrip(
-  tripId: number,
+  tripId: string,
   userId: string,
   opts: ReplenishFuelStopsOptions = {}
 ): Promise<void> {
@@ -621,7 +621,7 @@ export async function replenishFuelStopsForTrip(
 }
 
 async function resolveVehicleForTrip(
-  tripId: number | null,
+  tripId: string | null,
   userId: string
 ): Promise<{
   refill_distance_km: number | null;
@@ -675,7 +675,7 @@ async function resolveVehicleForTrip(
  * - Returns 0 for the first leg of a trip (no preceding legs).
  */
 async function computeKmBurnedSinceLastRefuel(
-  tripId: number,
+  tripId: string,
   thisLegSortOrder: number
 ): Promise<number> {
   const previous = await db

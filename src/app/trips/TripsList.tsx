@@ -8,7 +8,7 @@ import { LoadingOverlay } from '@/components/Spinner';
 import PullToRefresh from '@/components/PullToRefresh';
 
 interface TripSummary {
-  id: number;
+  id: string;
   name: string;
   start_date: string | null;
   end_date: string | null;
@@ -29,20 +29,20 @@ interface Props {
 export default function TripsList({ myTrips, templates, canDeleteTemplates }: Props) {
   const router = useRouter();
   const [editMode, setEditMode] = useState(false);
-  const [cloning, setCloning] = useState<number | null>(null);
+  const [cloning, setCloning] = useState<string | null>(null);
   const [myTripsLocal, setMyTripsLocal] = useState(myTrips);
   const [templatesLocal, setTemplatesLocal] = useState(templates);
 
-  function handleTripDeleted(id: number) {
+  function handleTripDeleted(id: string) {
     setMyTripsLocal((prev) => prev.filter((t) => t.id !== id));
     setTemplatesLocal((prev) => prev.filter((t) => t.id !== id));
     router.refresh();
   }
 
-  async function onCloneClick(id: number) {
+  async function onCloneClick(id: string) {
     setCloning(id);
     try {
-      const trip = await apiFetch<{ id: number }>(`/api/trips/${id}/clone`, { method: 'POST' });
+      const trip = await apiFetch<{ id: string }>(`/api/trips/${id}/clone`, { method: 'POST' });
       router.push(`/trips/${trip.id}`);
     } catch (err) {
       console.error(err);

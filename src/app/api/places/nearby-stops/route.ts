@@ -10,6 +10,7 @@ import {
 } from '@/server/places/nearby-stops';
 import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,15 +33,15 @@ export async function GET(request: Request) {
     const lngRaw = url.searchParams.get('lng');
     const category = url.searchParams.get('category') as StopCategory | null;
 
-    const tripId = tripIdRaw ? parseInt(tripIdRaw, 10) : NaN;
-    const legId = legIdRaw ? parseInt(legIdRaw, 10) : NaN;
+    const tripId = tripIdRaw ? parseUUID(tripIdRaw) : null;
+    const legId = legIdRaw ? parseUUID(legIdRaw) : null;
     const lat = latRaw ? parseFloat(latRaw) : NaN;
     const lng = lngRaw ? parseFloat(lngRaw) : NaN;
 
-    if (Number.isNaN(tripId) || tripId <= 0) {
+    if (!tripId) {
       return Response.json({ error: 'tripId is required' }, { status: 400 });
     }
-    if (Number.isNaN(legId) || legId <= 0) {
+    if (!legId) {
       return Response.json({ error: 'legId is required' }, { status: 400 });
     }
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {

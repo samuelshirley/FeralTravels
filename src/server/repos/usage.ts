@@ -12,7 +12,7 @@ export { dollarsToMicrocents, estimateAnthropicCostUsd, microcentsToDollars };
 
 export interface LogAnthropicUsageInput {
   userId: string;
-  tripId?: number | null;
+  tripId?: string | null;
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -96,7 +96,7 @@ export async function logAnthropicUsageWithFallback(
 
 export async function logUsageEvent(input: {
   userId?: string | null;
-  tripId?: number | null;
+  tripId?: string | null;
   provider: string;
   requests?: number;
   success?: boolean;
@@ -163,7 +163,7 @@ export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, nu
 
 export interface LogGooglePlacesUsageInput {
   userId: string;
-  tripId?: number | null;
+  tripId?: string | null;
   endpoint: GooglePlacesEndpoint;
   /** How many Places calls this row covers — usually batched per leg/replan. */
   requests: number;

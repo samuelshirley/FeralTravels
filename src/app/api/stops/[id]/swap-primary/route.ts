@@ -9,6 +9,7 @@ import {
 import { db } from '@/server/db/client';
 import { stops, type StopAlternative } from '@/server/db/schema';
 import { getStop } from '@/server/repos/stops';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,9 +39,9 @@ const bodySchema = z.object({
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) {
-      return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) {
+      return Response.json({ error: 'Invalid stop id' }, { status: 400 });
     }
     await assertStopOwnedByUser(id, userId);
 

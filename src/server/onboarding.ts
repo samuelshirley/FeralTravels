@@ -82,7 +82,7 @@ export interface OnboardingSnapshot {
   /** Next question to ask, or null if onboarding is done. */
   question: Question | null;
   /** For 'vehicle_pick', the candidate vehicles. */
-  vehicles: Array<{ id: number; name: string; is_default: boolean }>;
+  vehicles: Array<{ id: string; name: string; is_default: boolean }>;
   /** Progress counter — "3 of 8" style. */
   progress: { current: number; total: number } | null;
 }
@@ -194,7 +194,7 @@ function nextVehicleOnboardingQuestion(
  * form_question rows. Used to detect "user already saw this question" for
  * optional fields that might legitimately still be null after a skip.
  */
-async function loadAskedLabels(tripId: number): Promise<Set<string>> {
+async function loadAskedLabels(tripId: string): Promise<Set<string>> {
   const rows = await db
     .select({ content: chatHistory.content })
     .from(chatHistory)
@@ -203,7 +203,7 @@ async function loadAskedLabels(tripId: number): Promise<Set<string>> {
 }
 
 export async function getOnboardingSnapshot(
-  tripId: number,
+  tripId: string,
   userId: string
 ): Promise<OnboardingSnapshot> {
   const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
@@ -354,7 +354,7 @@ export interface SubmitAnswerResult {
 }
 
 export async function submitAnswer(
-  tripId: number,
+  tripId: string,
   userId: string,
   input: SubmitAnswerInput
 ): Promise<SubmitAnswerResult> {
@@ -399,8 +399,8 @@ export async function submitAnswer(
         didHandoff: false,
       };
     }
-    const vehicleId = Number(input.value);
-    if (!Number.isFinite(vehicleId)) throw new Error('Invalid vehicle id');
+    const vehicleId = String(input.value);
+    if (!vehicleId) throw new Error('Invalid vehicle id');
     const chosen = await getVehicleForUser(userId, vehicleId);
     if (!chosen) throw new Error('Vehicle not found');
     const complete = vehicleMeetsFuelPlanningMinimum(chosen as Record<string, unknown>);
@@ -552,7 +552,7 @@ export async function submitAnswer(
 
 // ---------------------------------------------------------------------------
 
-async function writeQA(tripId: number, question: string, answer: string) {
+async function writeQA(tripId: string, question: string, answer: string) {
   await addChatMessage(tripId, 'assistant', question, null, 'form_question');
   await addChatMessage(tripId, 'user', answer, null, 'form_answer');
 }

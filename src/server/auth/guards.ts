@@ -87,7 +87,7 @@ export async function isAdmin(email?: string | null): Promise<boolean> {
   return isAdminEmail(email);
 }
 
-export async function assertTripOwnedByUser(tripId: number, userId: string): Promise<void> {
+export async function assertTripOwnedByUser(tripId: string, userId: string): Promise<void> {
   const row = await db
     .select({ userId: trips.userId })
     .from(trips)
@@ -101,7 +101,7 @@ export async function assertTripOwnedByUser(tripId: number, userId: string): Pro
  * Allow read access if the user owns the trip OR the trip is a public template.
  * Templates are read-only for non-owners; mutations should still go through assertTripOwnedByUser.
  */
-export async function assertTripReadableByUser(tripId: number, userId: string): Promise<void> {
+export async function assertTripReadableByUser(tripId: string, userId: string): Promise<void> {
   const row = await db
     .select({ userId: trips.userId, isTemplate: trips.isTemplate })
     .from(trips)
@@ -113,7 +113,7 @@ export async function assertTripReadableByUser(tripId: number, userId: string): 
   throw new ForbiddenError();
 }
 
-export async function assertLegOwnedByUser(legId: number, userId: string): Promise<number> {
+export async function assertLegOwnedByUser(legId: string, userId: string): Promise<string> {
   const row = await db
     .select({ tripId: legs.tripId, userId: trips.userId })
     .from(legs)
@@ -125,7 +125,7 @@ export async function assertLegOwnedByUser(legId: number, userId: string): Promi
   return row[0].tripId;
 }
 
-export async function assertRouteOwnedByUser(routeId: number, userId: string): Promise<number> {
+export async function assertRouteOwnedByUser(routeId: string, userId: string): Promise<string> {
   const row = await db
     .select({ legId: routes.legId, userId: trips.userId })
     .from(routes)
@@ -138,7 +138,7 @@ export async function assertRouteOwnedByUser(routeId: number, userId: string): P
   return row[0].legId;
 }
 
-export async function assertStopOwnedByUser(stopId: number, userId: string): Promise<number> {
+export async function assertStopOwnedByUser(stopId: string, userId: string): Promise<string> {
   const row = await db
     .select({ legId: stops.legId, userId: trips.userId })
     .from(stops)
@@ -151,7 +151,7 @@ export async function assertStopOwnedByUser(stopId: number, userId: string): Pro
   return row[0].legId;
 }
 
-export async function assertTaskOwnedByUser(taskId: number, userId: string): Promise<number> {
+export async function assertTaskOwnedByUser(taskId: string, userId: string): Promise<string> {
   const row = await db
     .select({ tripId: tasks.tripId, userId: trips.userId })
     .from(tasks)
@@ -163,7 +163,7 @@ export async function assertTaskOwnedByUser(taskId: number, userId: string): Pro
   return row[0].tripId;
 }
 
-export async function assertGpxOwnedByUser(gpxId: number, userId: string): Promise<number> {
+export async function assertGpxOwnedByUser(gpxId: string, userId: string): Promise<string> {
   const row = await db
     .select({ tripId: gpxTrails.tripId, userId: trips.userId })
     .from(gpxTrails)
@@ -176,13 +176,40 @@ export async function assertGpxOwnedByUser(gpxId: number, userId: string): Promi
 }
 
 /**
+ * Generate a short, unique error correlation ID.
+ * Format: "ERR-<timestamp36>-<random>" e.g. "ERR-m3x7k9-a1b2"
+ * Short enough for users to read out loud, unique enough to find in Vercel logs.
+ */
+function generateErrorId(): string {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `ERR-${ts}-${rand}`;
+}
+
+/**
  * Convert any thrown HttpError into a JSON Response. Use inside API route try/catch.
+ *
+ * Every error response includes an `errorId` field — a unique correlation ID
+ * that is also logged server-side. Search Vercel logs for the errorId to find
+ * the full stack trace and request context.
  */
 export function errorResponse(err: unknown): Response {
+  const errorId = generateErrorId();
+
   if (err instanceof HttpError) {
-    return Response.json({ error: err.message }, { status: err.status });
+    // 4xx errors: log at warn level (expected client errors)
+    console.warn(`[${errorId}] HTTP ${err.status}: ${err.message}`);
+    return Response.json(
+      { error: err.message, errorId },
+      { status: err.status },
+    );
   }
-  console.error('Unhandled API error:', err);
+
+  // 5xx: log the full error at error level for debugging
+  console.error(`[${errorId}] Unhandled API error:`, err);
   const message = err instanceof Error ? err.message : 'Internal error';
-  return Response.json({ error: message }, { status: 500 });
+  return Response.json(
+    { error: message, errorId },
+    { status: 500 },
+  );
 }

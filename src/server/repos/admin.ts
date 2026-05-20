@@ -96,7 +96,7 @@ export async function getAdminVehiclesOverview(limit = ADMIN_VEHICLES_LIST_LIMIT
 
 export type AdminVehicleListRow = Awaited<ReturnType<typeof getAdminVehiclesOverview>>[number];
 
-export async function getAdminVehicleById(vehicleId: number) {
+export async function getAdminVehicleById(vehicleId: string) {
   const rows = await db
     .select({
       vehicleId: vehicles.id,
@@ -578,7 +578,7 @@ export async function listErrorProviders(): Promise<string[]> {
  * /admin/chats/[tripId] for read-only conversation review. Returns NULL if
  * the trip doesn't exist so the page can 404.
  */
-export async function getChatForTrip(tripId: number) {
+export async function getChatForTrip(tripId: string) {
   const [trip] = await db
     .select({
       id: trips.id,

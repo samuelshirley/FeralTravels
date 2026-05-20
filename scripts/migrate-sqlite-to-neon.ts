@@ -92,7 +92,7 @@ async function main() {
       console.log(`Imported trip "${t.name}" -> #${newTrip.id} (template=${isTemplate})`);
 
       const legs = sqlite.prepare('SELECT * FROM legs WHERE trip_id = ? ORDER BY sort_order').all(t.id) as any[];
-      const legIdMap = new Map<number, number>();
+      const legIdMap = new Map<number, string>();
       for (const l of legs) {
         const [nl] = await db
           .insert(schema.legs)
@@ -120,7 +120,7 @@ async function main() {
         legIdMap.set(l.id, nl.id);
       }
 
-      const copyTable = async (sql: string, build: (row: any, newLegId: number) => any, table: any) => {
+      const copyTable = async (sql: string, build: (row: any, newLegId: string) => any, table: any) => {
         const rows = sqlite.prepare(sql).all(t.id) as any[];
         for (const row of rows) {
           const newLegId = legIdMap.get(row.leg_id);
@@ -149,7 +149,7 @@ async function main() {
       const sqlRoutes = sqlite
         .prepare('SELECT r.* FROM routes r JOIN legs l ON r.leg_id = l.id WHERE l.trip_id = ?')
         .all(t.id) as any[];
-      const routeIdMap = new Map<number, number>();
+      const routeIdMap = new Map<number, string>();
       for (const r of sqlRoutes) {
         const newLegId = legIdMap.get(r.leg_id);
         if (!newLegId) continue;

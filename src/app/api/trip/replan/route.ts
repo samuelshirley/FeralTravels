@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { and, desc, eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
@@ -27,13 +27,13 @@ import { getDirections } from '@/lib/google/directions';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
-type ReplanDispatchCtx = { newLegIdsQueue: number[] };
+type ReplanDispatchCtx = { newLegIdsQueue: string[] };
 
-function assertLegOnTrip(legTripId: number, tripId: number): void {
+function assertLegOnTrip(legTripId: string, tripId: string): void {
   if (legTripId !== tripId) throw new ForbiddenError('Leg is not part of this trip');
 }
 
-async function getLatestLegIdOnTrip(targetTripId: number): Promise<number | null> {
+async function getLatestLegIdOnTrip(targetTripId: string): Promise<string | null> {
   const rows = await db
     .select({ id: legs.id })
     .from(legs)
@@ -46,20 +46,22 @@ async function getLatestLegIdOnTrip(targetTripId: number): Promise<number | null
 /**
  * Map a Penny-proposed leg id onto a leg that actually belongs to this trip.
  *
- * Claude sometimes echoes `sort_order` (small integers like 2, 3), ids from stale
- * context, or guesses before sibling `add_leg` rows exist. We validate with
- * ownership + trip containment first; then try matching `sort_order` on `tripId`
- * uniquely; lastly (when opts allow) we fall back like `plan_fuel_stops`:
- * dequeue an id persisted earlier in this same dispatch batch.
+ * Claude sometimes sends ids from stale context or guesses before sibling
+ * `add_leg` rows exist. We validate with ownership + trip containment first;
+ * then (when opts allow) fall back like `plan_fuel_stops`: dequeue an id
+ * persisted earlier in this same dispatch batch.
+ *
+ * Note: the old sort_order fallback (matching small integers Penny sometimes
+ * echoed) has been removed since UUIDs can't be confused with sort_orders.
  */
 async function resolvePennyLegIdOnTrip(
-  proposedLegId: number,
-  tripId: number,
+  proposedLegId: string,
+  tripId: string,
   userId: string,
   ctx: ReplanDispatchCtx,
   opts?: { dequeueNewLegFallback?: boolean }
-): Promise<number> {
-  async function resolveLeg(candidate: number): Promise<void> {
+): Promise<string> {
+  async function resolveLeg(candidate: string): Promise<void> {
     const ownerTripId = await assertLegOwnedByUser(candidate, userId);
     assertLegOnTrip(ownerTripId, tripId);
   }
@@ -71,18 +73,6 @@ async function resolvePennyLegIdOnTrip(
     const wrongTrip =
       e instanceof ForbiddenError && e.message === 'Leg is not part of this trip';
     if (!(e instanceof NotFoundError) && !wrongTrip) throw e;
-
-    const sortedByOrder = await db
-      .select({ id: legs.id })
-      .from(legs)
-      .where(and(eq(legs.tripId, tripId), eq(legs.sortOrder, proposedLegId)))
-      .limit(2);
-
-    if (sortedByOrder.length === 1) {
-      const candidate = sortedByOrder[0]!.id;
-      await resolveLeg(candidate);
-      return candidate;
-    }
 
     if (opts?.dequeueNewLegFallback && ctx.newLegIdsQueue.length > 0) {
       const fallback = ctx.newLegIdsQueue.shift()!;
@@ -99,39 +89,25 @@ async function resolvePennyLegIdOnTrip(
   }
 }
 
-/** add_stop heel: peek latest queued/new leg rather than dequeue (see caller). */
+/**
+ * Resolve a Penny-proposed leg id for add_stop.
+ *
+ * With UUIDs there's no sort_order confusion — the proposed id is either a
+ * valid leg UUID on this trip or it isn't. No silent fallback to the latest
+ * leg — that caused stops to land on completely unrelated legs.
+ *
+ * If the proposed id is not a valid leg on this trip, we throw so the action
+ * fails visibly and Penny can retry with correct data.
+ */
 async function resolvePennyStopLegId(
-  proposedLegId: number,
-  tripId: number,
+  proposedLegId: string,
+  tripId: string,
   userId: string,
-  ctx: ReplanDispatchCtx
-): Promise<number> {
-  async function legMustBelongToThisTrip(candidate: number): Promise<void> {
-    const ownerTripId = await assertLegOwnedByUser(candidate, userId);
-    assertLegOnTrip(ownerTripId, tripId);
-  }
-
-  try {
-    await legMustBelongToThisTrip(proposedLegId);
-    return proposedLegId;
-  } catch (e) {
-    const wrongTrip =
-      e instanceof ForbiddenError && e.message === 'Leg is not part of this trip';
-    if (!(e instanceof NotFoundError) && !wrongTrip) throw e;
-
-    const queued =
-      ctx.newLegIdsQueue.length > 0
-        ? ctx.newLegIdsQueue[ctx.newLegIdsQueue.length - 1]
-        : null;
-    const latestOnTrip =
-      queued == null ? await getLatestLegIdOnTrip(tripId) : null;
-    const fallback = queued ?? latestOnTrip ?? null;
-
-    if (fallback == null) throw e;
-
-    await legMustBelongToThisTrip(fallback);
-    return fallback;
-  }
+  _ctx: ReplanDispatchCtx
+): Promise<string> {
+  const ownerTripId = await assertLegOwnedByUser(proposedLegId, userId);
+  assertLegOnTrip(ownerTripId, tripId);
+  return proposedLegId;
 }
 
 function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
@@ -173,7 +149,7 @@ export const maxDuration = 300; // Anthropic calls can take >60s on complex trip
 const MAX_MESSAGE_CHARS = 4000;
 
 const inputSchema = z.object({
-  tripId: z.number().int().positive(),
+  tripId: z.string().uuid(),
   message: z.string().max(MAX_MESSAGE_CHARS).optional().default(''),
   images: z
     .array(z.object({ dataUrl: z.string(), mediaType: z.string() }))
@@ -185,7 +161,7 @@ export async function POST(req: Request) {
   // Hoisted so the catch can attribute the failure to the right user/trip in
   // usage_events even when the failure happens mid-Anthropic-call.
   let userIdForLog: string | null = null;
-  let tripIdForLog: number | null = null;
+  let tripIdForLog: string | null = null;
   /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
   let userTurnSaved = false;
   try {
@@ -535,7 +511,7 @@ export async function POST(req: Request) {
 // ---------------------------------------------------------------------------
 async function dispatchAction(
   action: ValidatedAction,
-  tripId: number,
+  tripId: string,
   userId: string,
   ctx: ReplanDispatchCtx
 ): Promise<void> {
@@ -550,7 +526,7 @@ async function dispatchAction(
       const trip = await getTripFull(tripId);
       if (!trip) throw new NotFoundError('Trip not found');
 
-      let vehicleId: number | null = trip.vehicle_id ?? null;
+      let vehicleId: string | null = trip.vehicle_id ?? null;
       if (vehicleId == null) {
         const def = await getDefaultVehicleForUser(userId);
         vehicleId = def?.id ?? null;
@@ -842,7 +818,7 @@ async function dispatchAction(
 // ---------------------------------------------------------------------------
 
 type SimLeg = {
-  id: number;
+  id: string;
   sortOrder: number | null;
   startLat: number | null;
   startLng: number | null;
@@ -853,15 +829,10 @@ type SimLeg = {
 /**
  * In-memory resolve: mirrors resolvePennyLegIdOnTrip but against a Map
  * instead of the DB. Returns the real leg id or null if unresolvable.
+ * With UUIDs there's no sort_order confusion — just a direct Map lookup.
  */
-function simResolveId(proposedId: number, legMap: Map<number, SimLeg>): number | null {
+function simResolveId(proposedId: string, legMap: Map<string, SimLeg>): string | null {
   if (legMap.has(proposedId)) return proposedId;
-  // Penny sometimes passes sort_order instead of id
-  const matches: SimLeg[] = [];
-  for (const leg of legMap.values()) {
-    if (leg.sortOrder === proposedId) matches.push(leg);
-  }
-  if (matches.length === 1) return matches[0].id;
   return null;
 }
 
@@ -882,9 +853,9 @@ function simHasGaps(sortedLegs: SimLeg[]): boolean {
 }
 
 async function findGapCreatingDeletes(
-  tripId: number,
+  tripId: string,
   actions: ValidatedAction[]
-): Promise<Set<number>> {
+): Promise<Set<string>> {
   // 1. Load current legs
   const currentLegs = await db
     .select({
@@ -907,7 +878,7 @@ async function findGapCreatingDeletes(
   if (deleteActions.length === 0 || currentLegs.length < 2) return new Set();
 
   // 2. Simulate all actions on a mutable copy
-  const legMap = new Map<number, SimLeg>();
+  const legMap = new Map<string, SimLeg>();
   for (const leg of currentLegs) {
     legMap.set(leg.id, { ...leg });
   }
@@ -917,7 +888,7 @@ async function findGapCreatingDeletes(
     (mx, l) => Math.max(mx, l.sortOrder ?? 0),
     0
   );
-  let nextSyntheticId = -1;
+  let syntheticIdCounter = 0;
 
   for (const action of actions) {
     switch (action.name) {
@@ -934,7 +905,7 @@ async function findGapCreatingDeletes(
         break;
       }
       case 'add_leg': {
-        const synId = nextSyntheticId--;
+        const synId = `__synthetic_${syntheticIdCounter++}`;
         const so = action.input.sort_order ?? ++maxSort;
         legMap.set(synId, {
           id: synId,
@@ -968,22 +939,22 @@ async function findGapCreatingDeletes(
 
   // 4. Gaps detected — identify culprit deletes by re-simulating without each
   //    one. If un-deleting a leg removes all gaps, that delete is the culprit.
-  const blockedIds = new Set<number>();
+  const blockedIds = new Set<string>();
 
   for (const del of deleteActions) {
     // Rebuild simulated state skipping this one delete
-    const testMap = new Map<number, SimLeg>();
+    const testMap = new Map<string, SimLeg>();
     for (const leg of currentLegs) {
       testMap.set(leg.id, { ...leg });
     }
     let testMaxSort = maxSort;
-    let testSynId = -1;
+    let testSynCounter = 0;
 
     // Resolve this delete's target so we can skip it
     const delResolved = simResolveId(
       del.input.leg_id,
       // Use a fresh map for resolution (before any mutations)
-      new Map(currentLegs.map((l) => [l.id, { ...l }]))
+      new Map<string, SimLeg>(currentLegs.map((l) => [l.id, { ...l }]))
     );
 
     for (const action of actions) {
@@ -1001,7 +972,7 @@ async function findGapCreatingDeletes(
           break;
         }
         case 'add_leg': {
-          const synId = testSynId--;
+          const synId = `__test_synthetic_${testSynCounter++}`;
           const so = action.input.sort_order ?? ++testMaxSort;
           testMap.set(synId, {
             id: synId,
@@ -1055,7 +1026,7 @@ async function findGapCreatingDeletes(
 // problem where Penny says "through Italy" but the legs go through Switzerland.
 // ---------------------------------------------------------------------------
 
-async function buildRouteSummary(tripId: number): Promise<string | null> {
+async function buildRouteSummary(tripId: string): Promise<string | null> {
   const tripLegs = await db
     .select({
       sortOrder: legs.sortOrder,
@@ -1127,7 +1098,7 @@ async function buildRouteSummary(tripId: number): Promise<string | null> {
 // ---------------------------------------------------------------------------
 const LEG_GAP_THRESHOLD_KM = 50; // anything >50km between consecutive legs is suspect
 
-async function checkLegContiguity(tripId: number, userId: string): Promise<void> {
+async function checkLegContiguity(tripId: string, userId: string): Promise<void> {
   const tripLegs = await db
     .select({
       id: legs.id,

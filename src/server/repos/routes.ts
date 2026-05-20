@@ -5,7 +5,7 @@ import { routes, routeLinks } from '@/server/db/schema';
 import type { RouteWithLinks, RouteLink, RouteLinkType, Route } from '@/types/trip';
 import { rowMappers } from './trips';
 
-export async function getRoutesForLeg(legId: number): Promise<RouteWithLinks[]> {
+export async function getRoutesForLeg(legId: string): Promise<RouteWithLinks[]> {
   const routeRows = await db
     .select()
     .from(routes)
@@ -24,7 +24,7 @@ export async function getRoutesForLeg(legId: number): Promise<RouteWithLinks[]> 
     .where(inArray(routeLinks.routeId, routeIds))
     .orderBy(asc(routeLinks.id));
 
-  const linksById = new Map<number, RouteLink[]>();
+  const linksById = new Map<string, RouteLink[]>();
   for (const r of linkRows) {
     const arr = linksById.get(r.routeId) || [];
     arr.push(rowMappers.routeLinkRow(r));
@@ -33,7 +33,7 @@ export async function getRoutesForLeg(legId: number): Promise<RouteWithLinks[]> 
   return routeRows.map((r) => ({ ...rowMappers.routeRow(r), links: linksById.get(r.id) || [] }));
 }
 
-export async function getRoute(id: number): Promise<RouteWithLinks | null> {
+export async function getRoute(id: string): Promise<RouteWithLinks | null> {
   const r = await db.select().from(routes).where(eq(routes.id, id)).limit(1);
   if (r.length === 0) return null;
   const lnks = await db
@@ -45,13 +45,13 @@ export async function getRoute(id: number): Promise<RouteWithLinks | null> {
 }
 
 export async function addRoute(input: {
-  leg_id: number;
+  leg_id: string;
   label: string;
   description?: string | null;
   distance_km?: number | null;
   surface?: string | null;
   status?: string | null;
-  gpx_trail_id?: number | null;
+  gpx_trail_id?: string | null;
   sort_order?: number | null;
   end_lat?: number | null;
   end_lng?: number | null;
@@ -104,14 +104,14 @@ export async function addRoute(input: {
 }
 
 export async function updateRoute(
-  id: number,
+  id: string,
   data: Partial<{
     label: string;
     description: string | null;
     distance_km: number | null;
     surface: string | null;
     status: string;
-    gpx_trail_id: number | null;
+    gpx_trail_id: string | null;
     sort_order: number;
     end_lat: number | null;
     end_lng: number | null;
@@ -147,8 +147,8 @@ export async function updateRoute(
  * callers can react (e.g. mark a "Pick tonight's stop" task as answered).
  */
 export async function selectRoute(
-  routeId: number
-): Promise<{ route: RouteWithLinks; legId: number } | null> {
+  routeId: string
+): Promise<{ route: RouteWithLinks; legId: string } | null> {
   const existing = await db
     .select({ legId: routes.legId })
     .from(routes)
@@ -169,13 +169,13 @@ export async function selectRoute(
   return { route, legId };
 }
 
-export async function deleteRoute(id: number): Promise<boolean> {
+export async function deleteRoute(id: string): Promise<boolean> {
   const result = await db.delete(routes).where(eq(routes.id, id)).returning({ id: routes.id });
   return result.length > 0;
 }
 
 export async function addRouteLink(input: {
-  route_id: number;
+  route_id: string;
   label: string;
   url: string;
   type?: string;
@@ -192,7 +192,7 @@ export async function addRouteLink(input: {
   return rowMappers.routeLinkRow(row);
 }
 
-export async function deleteRouteLink(id: number): Promise<boolean> {
+export async function deleteRouteLink(id: string): Promise<boolean> {
   const result = await db
     .delete(routeLinks)
     .where(eq(routeLinks.id, id))

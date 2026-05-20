@@ -25,7 +25,7 @@ const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = 
  * Distances are stored in km; UI converts via units preference.
  */
 export interface Vehicle {
-  id: number;
+  id: string;
   user_id: string;
   name: string;
   is_default: boolean;
@@ -60,7 +60,7 @@ export default function VehicleProfileSection() {
   const { units } = useUnits();
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -76,7 +76,7 @@ export default function VehicleProfileSection() {
     load();
   }, []);
 
-  async function handleSave(draft: Draft, id: number | 'new') {
+  async function handleSave(draft: Draft, id: string | 'new') {
     setSaving(true);
     setError(null);
     try {
@@ -114,7 +114,7 @@ export default function VehicleProfileSection() {
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     if (!confirm('Delete this vehicle?')) return;
     setError(null);
     try {
@@ -126,7 +126,7 @@ export default function VehicleProfileSection() {
     }
   }
 
-  async function handleSetDefault(id: number) {
+  async function handleSetDefault(id: string) {
     try {
       await apiFetch(`/api/vehicles/${id}`, {
         method: 'PATCH',

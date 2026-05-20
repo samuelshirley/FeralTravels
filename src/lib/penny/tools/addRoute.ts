@@ -22,7 +22,7 @@ const dataSchema = z
     distance_km: distanceKmSchema.nullish(),
     surface: surfaceSchema.nullish(),
     status: routeStatusSchema.nullish(),
-    gpx_trail_id: z.number().int().nullish(),
+    gpx_trail_id: z.string().uuid().nullish(),
     end_lat: latSchema.nullish(),
     end_lng: lngSchema.nullish(),
     end_name: z.string().nullish(),
@@ -40,7 +40,7 @@ const dataSchema = z
   );
 
 const baseSchema = z.object({
-  leg_id: z.number().int().positive(),
+  leg_id: z.string().uuid(),
   data: dataSchema,
 });
 
@@ -58,7 +58,7 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['leg_id', 'data'],
     properties: {
-      leg_id: { type: 'integer' },
+      leg_id: { type: 'string', format: 'uuid' },
       data: {
         type: 'object',
         required: ['label'],
@@ -68,7 +68,7 @@ export const tool: Anthropic.Tool = {
           distance_km: { type: 'number', minimum: 0 },
           surface: { type: 'string', enum: ['paved', 'gravel', 'mix'] },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
-          gpx_trail_id: { type: 'integer' },
+          gpx_trail_id: { type: 'string', format: 'uuid' },
           end_lat: { type: 'number', minimum: -90, maximum: 90 },
           end_lng: { type: 'number', minimum: -180, maximum: 180 },
           end_name: { type: 'string' },

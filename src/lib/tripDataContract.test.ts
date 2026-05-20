@@ -19,8 +19,8 @@ import type { Leg, LegWithDetails, Stop, TripWithLegs } from '@/types/trip';
 
 function makeLeg(overrides: Partial<Leg> = {}): Leg {
   return {
-    id: 1,
-    trip_id: 1,
+    id: '00000000-0000-0000-0000-000000000001',
+    trip_id: '00000000-0000-0000-0000-000000000001',
     sort_order: 0,
     title: 'Day 1: Girona → Lyon',
     label: null,
@@ -58,8 +58,8 @@ function makeLeg(overrides: Partial<Leg> = {}): Leg {
 
 function makeStop(overrides: Partial<Stop> = {}): Stop {
   return {
-    id: 1,
-    leg_id: 1,
+    id: '00000000-0000-0000-0000-000000000001',
+    leg_id: '00000000-0000-0000-0000-000000000001',
     sort_order: 0,
     stop_type: 'fuel',
     status: 'option',
@@ -188,7 +188,7 @@ describe('Trip data contract — fields required by the UI', () => {
   describe('TripWithLegs completeness', () => {
     it('all UI-required fields are present on a complete trip', () => {
       const trip: TripWithLegs = {
-        id: 1,
+        id: '00000000-0000-0000-0000-000000000001',
         name: 'Test Road Trip',
         start_date: '2024-06-01',
         end_date: '2024-06-15',
@@ -197,8 +197,8 @@ describe('Trip data contract — fields required by the UI', () => {
         prefer_avoid_highways: false,
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-01T00:00:00Z',
-        user_id: 'user_1',
-        vehicle_id: 1,
+        user_id: '00000000-0000-0000-0000-000000000099',
+        vehicle_id: '00000000-0000-0000-0000-000000000050',
         is_template: false,
         legs: [makeLegWithDetails()],
       };

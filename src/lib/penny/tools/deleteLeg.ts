@@ -6,7 +6,7 @@ import type { PennyContext } from '@/lib/penny/context';
 export const DELETE_LEG = 'delete_leg' as const;
 
 const baseSchema = z.object({
-  leg_id: z.number().int().positive(),
+  leg_id: z.string().uuid(),
 });
 
 export type DeleteLegInput = z.infer<typeof baseSchema>;
@@ -22,7 +22,7 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['leg_id'],
     properties: {
-      leg_id: { type: 'integer' },
+      leg_id: { type: 'string', format: 'uuid' },
     },
   },
 };

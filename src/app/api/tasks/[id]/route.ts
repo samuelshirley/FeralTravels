@@ -5,12 +5,13 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { updateTask, deleteTask, getTask } from '@/server/repos/tasks';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const patchSchema = z.object({
-  tripId: z.number().int().positive().optional(),
+  tripId: z.string().uuid().optional(),
   title: z.string().optional(),
   description: z.string().nullish(),
   priority: z.string().optional(),
@@ -27,8 +28,8 @@ const patchSchema = z.object({
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) return Response.json({ error: 'Invalid task id' }, { status: 400 });
     await assertTaskOwnedByUser(id, userId);
     const body = patchSchema.parse(await request.json());
     const { tripId: _t, ...data } = body;
@@ -43,8 +44,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 export async function DELETE(_request: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) return Response.json({ error: 'Invalid task id' }, { status: 400 });
     await assertTaskOwnedByUser(id, userId);
     if (!(await getTask(id))) return Response.json({ error: 'Not found' }, { status: 404 });
     await deleteTask(id);

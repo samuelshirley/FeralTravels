@@ -7,6 +7,7 @@ import { getLegTripId } from '@/server/repos/tasks';
 import { nearbyParksAround } from '@/server/places/nearby-parks';
 import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,13 +21,13 @@ export async function GET(request: Request) {
     const latRaw = url.searchParams.get('lat');
     const lngRaw = url.searchParams.get('lng');
 
-    const tripId = tripIdRaw ? parseInt(tripIdRaw, 10) : NaN;
-    const legId = legIdRaw ? parseInt(legIdRaw, 10) : NaN;
-    if (Number.isNaN(tripId) || tripId <= 0) {
-      return Response.json({ error: 'tripId is required and must be a positive integer' }, { status: 400 });
+    const tripId = tripIdRaw ? parseUUID(tripIdRaw) : null;
+    const legId = legIdRaw ? parseUUID(legIdRaw) : null;
+    if (!tripId) {
+      return Response.json({ error: 'tripId is required and must be a valid UUID' }, { status: 400 });
     }
-    if (Number.isNaN(legId) || legId <= 0) {
-      return Response.json({ error: 'legId is required and must be a positive integer' }, { status: 400 });
+    if (!legId) {
+      return Response.json({ error: 'legId is required and must be a valid UUID' }, { status: 400 });
     }
     const lat = latRaw ? parseFloat(latRaw) : NaN;
     const lng = lngRaw ? parseFloat(lngRaw) : NaN;

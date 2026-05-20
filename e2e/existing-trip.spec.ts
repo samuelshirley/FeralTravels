@@ -30,7 +30,7 @@ test.describe('Existing user with seeded trip', () => {
     // The card itself contains an <a> wrapper to /trips/<id>; click the
     // visible name link to open the workspace.
     await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
-    await page.waitForURL(/\/trips\/\d+/, { timeout: 15_000 });
+    await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 15_000 });
 
     await expect(page.getByText('Trip not found')).not.toBeVisible({ timeout: 10_000 });
 
@@ -70,7 +70,7 @@ test.describe('Existing user with seeded trip', () => {
     const fixtureCard = page.locator(`[data-testid="trip-card"][data-trip-name="${FIXTURE_TRIP_NAME}"]`);
     await expect(fixtureCard).toBeVisible();
     await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
-    await page.waitForURL(/\/trips\/\d+/, { timeout: 15_000 });
+    await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 15_000 });
 
     const legCards = page.getByTestId('leg-card');
     await expect(legCards.first()).toBeVisible({ timeout: 15_000 });

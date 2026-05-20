@@ -8,7 +8,7 @@ export type OnboardingState =
   | 'done';
 
 export interface Trip {
-  id: number;
+  id: string;
   name: string;
   start_date: string | null;
   end_date: string | null;
@@ -19,7 +19,7 @@ export interface Trip {
   created_at: string;
   updated_at: string;
   user_id: string;
-  vehicle_id: number | null;
+  vehicle_id: string | null;
   is_template: boolean;
 }
 
@@ -42,8 +42,8 @@ export interface GeoJSONLineString {
 }
 
 export interface Leg {
-  id: number;
-  trip_id: number;
+  id: string;
+  trip_id: string;
   sort_order: number;
   title: string;
   label: string | null;
@@ -77,16 +77,16 @@ export interface Leg {
 }
 
 export interface Cost {
-  id: number;
-  leg_id: number;
+  id: string;
+  leg_id: string;
   item: string;
   estimate: string;
   is_total: boolean;
 }
 
 export interface POI {
-  id: number;
-  leg_id: number | null;
+  id: string;
+  leg_id: string | null;
   source: string;
   external_id: string | null;
   name: string;
@@ -102,8 +102,8 @@ export interface POI {
 }
 
 export interface GPXTrail {
-  id: number;
-  leg_id: number | null;
+  id: string;
+  leg_id: string | null;
   name: string;
   filename: string;
   source: string | null;
@@ -115,8 +115,8 @@ export interface GPXTrail {
 }
 
 export interface Link {
-  id: number;
-  leg_id: number;
+  id: string;
+  leg_id: string;
   label: string;
   url: string;
   type: string;
@@ -130,8 +130,10 @@ export interface Link {
 export type ChatKind = 'ai' | 'form_question' | 'form_answer';
 
 export interface ChatMessage {
-  id: number;
-  trip_id: number;
+  id: string;
+  /** Sequential ordering number for cursor-based pagination. */
+  seq: number;
+  trip_id: string;
   role: 'user' | 'assistant';
   content: string;
   kind: ChatKind;
@@ -152,15 +154,15 @@ export type RouteLinkType =
 export type RouteEndSource = 'google_places' | 'manual';
 
 export interface Route {
-  id: number;
-  leg_id: number;
+  id: string;
+  leg_id: string;
   sort_order: number;
   label: string;
   description: string | null;
   distance_km: number | null;
   surface: string | null;
   status: string;
-  gpx_trail_id: number | null;
+  gpx_trail_id: string | null;
   // Per-route destination (for overnight options). When set, "Go" navigates
   // to this point instead of the leg's end coords.
   end_lat: number | null;
@@ -172,8 +174,8 @@ export interface Route {
 }
 
 export interface RouteLink {
-  id: number;
-  route_id: number;
+  id: string;
+  route_id: string;
   label: string;
   url: string;
   type: RouteLinkType;
@@ -209,8 +211,8 @@ export interface StopPhoto {
 }
 
 export interface Stop {
-  id: number;
-  leg_id: number;
+  id: string;
+  leg_id: string;
   sort_order: number;
   stop_type: StopType;
   status: StopStatus;
@@ -241,9 +243,9 @@ export type TaskPriority = 'low' | 'normal' | 'high';
 export type TaskCreator = 'user' | 'penny';
 
 export interface Task {
-  id: number;
-  trip_id: number;
-  leg_id: number | null;
+  id: string;
+  trip_id: string;
+  leg_id: string | null;
   title: string;
   description: string | null;
   priority: TaskPriority;

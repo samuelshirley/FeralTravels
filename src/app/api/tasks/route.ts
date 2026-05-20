@@ -7,6 +7,7 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { getTasksForTrip, getTasksForLeg, addTask, getLegTripId } from '@/server/repos/tasks';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,17 +20,17 @@ export async function GET(request: Request) {
     const legIdRaw = url.searchParams.get('legId');
 
     if (legIdRaw) {
-      const legId = parseInt(legIdRaw, 10);
-      if (Number.isNaN(legId)) return Response.json({ error: 'legId must be a number' }, { status: 400 });
-      const inferredTripId = tripIdRaw ? parseInt(tripIdRaw, 10) : await getLegTripId(legId);
+      const legId = parseUUID(legIdRaw);
+      if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
+      const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
       if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
       await assertTripReadableByUser(inferredTripId, userId);
       return Response.json(await getTasksForLeg(legId));
     }
 
     if (!tripIdRaw) return Response.json({ error: 'tripId is required' }, { status: 400 });
-    const tripId = parseInt(tripIdRaw, 10);
-    if (Number.isNaN(tripId)) return Response.json({ error: 'tripId must be a number' }, { status: 400 });
+    const tripId = parseUUID(tripIdRaw);
+    if (!tripId) return Response.json({ error: 'tripId must be a valid UUID' }, { status: 400 });
     await assertTripReadableByUser(tripId, userId);
     return Response.json(await getTasksForTrip(tripId));
   } catch (err) {
@@ -38,9 +39,9 @@ export async function GET(request: Request) {
 }
 
 const createSchema = z.object({
-  tripId: z.number().int().positive().optional(),
-  trip_id: z.number().int().positive().optional(),
-  leg_id: z.number().int().positive().nullish(),
+  tripId: z.string().uuid().optional(),
+  trip_id: z.string().uuid().optional(),
+  leg_id: z.string().uuid().nullish(),
   title: z.string().min(1),
   description: z.string().nullish(),
   priority: z.string().nullish(),
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
     const userId = await requireUserId();
     const body = createSchema.parse(await request.json());
 
-    let tripId: number | null = body.trip_id ?? body.tripId ?? null;
+    let tripId: string | null = body.trip_id ?? body.tripId ?? null;
     const legId = body.leg_id ?? null;
     if (!tripId && legId) tripId = await getLegTripId(legId);
     if (!tripId) return Response.json({ error: 'tripId required' }, { status: 400 });

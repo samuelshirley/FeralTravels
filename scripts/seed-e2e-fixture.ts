@@ -69,7 +69,7 @@ const CANONICAL_TWO_LEGS = [
   },
 ];
 
-async function insertTwoLegs(db: ReturnType<typeof getDb>, tripId: number) {
+async function insertTwoLegs(db: ReturnType<typeof getDb>, tripId: string) {
   for (const seed of CANONICAL_TWO_LEGS) {
     await db.insert(schema.legs).values({ tripId, ...seed });
   }

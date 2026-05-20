@@ -13,7 +13,7 @@ import { FIXTURE_EMAIL, playwrightName } from './constants';
  * can navigate directly to /trips/<id>.
  */
 export async function createBlankPlanningTrip(label: string): Promise<{
-  tripId: number;
+  tripId: string;
   name: string;
 }> {
   const db = getDb();
@@ -68,7 +68,7 @@ export async function createBlankPlanningTrip(label: string): Promise<{
  * metric/imperial step — use this to exercise the wizard without Anthropic.
  */
 export async function createOnboardingTrip(label: string): Promise<{
-  tripId: number;
+  tripId: string;
   name: string;
 }> {
   const db = getDb();
@@ -108,8 +108,8 @@ export async function createOnboardingTrip(label: string): Promise<{
  * numeric validation in the chat composer onboarding path.
  */
 export async function createVehicleNewProfileTrip(label: string): Promise<{
-  tripId: number;
-  vehicleId: number;
+  tripId: string;
+  vehicleId: string;
   name: string;
 }> {
   const db = getDb();
@@ -166,8 +166,8 @@ export async function createVehicleNewProfileTrip(label: string): Promise<{
  * one vehicle on {@link FIXTURE_EMAIL}.
  */
 export async function deleteVehicleNewProfileFixture(opts: {
-  tripId: number;
-  vehicleId: number;
+  tripId: string;
+  vehicleId: string;
 }): Promise<void> {
   const db = getDb();
   await db.delete(schema.trips).where(eq(schema.trips.id, opts.tripId));
@@ -175,7 +175,7 @@ export async function deleteVehicleNewProfileFixture(opts: {
 }
 
 /** Count the legs currently attached to a trip (post-Penny submit assertion). */
-export async function countLegs(tripId: number): Promise<number> {
+export async function countLegs(tripId: string): Promise<number> {
   const db = getDb();
   const rows = await db
     .select({ id: schema.legs.id })

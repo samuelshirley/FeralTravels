@@ -7,6 +7,7 @@ import type { ChatKind, ChatMessage } from '@/types/trip';
 function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
   return {
     id: r.id,
+    seq: r.seq,
     trip_id: r.tripId,
     role: r.role as 'user' | 'assistant',
     content: r.content,
@@ -23,7 +24,7 @@ export const CHAT_PAGE_SIZE = 50;
  * Kept for compatibility; prefer {@link getChatPage} for anything user-facing
  * so we never pay to serialize a multi-thousand-message transcript.
  */
-export async function getChatHistory(tripId: number): Promise<ChatMessage[]> {
+export async function getChatHistory(tripId: string): Promise<ChatMessage[]> {
   const rows = await db
     .select()
     .from(chatHistory)
@@ -34,13 +35,13 @@ export async function getChatHistory(tripId: number): Promise<ChatMessage[]> {
 
 /**
  * Cursor-paginated chat page. Returns up to `limit` messages that come BEFORE
- * `beforeId` (exclusive) in chronological order, sorted ascending so the UI
+ * `beforeSeq` (exclusive) in chronological order, sorted ascending so the UI
  * can just prepend the batch. `hasMore` tells the client whether to keep
  * offering "load older".
  */
 export async function getChatPage(params: {
-  tripId: number;
-  beforeId?: number | null;
+  tripId: string;
+  beforeSeq?: number | null;
   limit?: number;
   /**
    * Restrict to certain chat kinds. Omit to include everything (default). Penny
@@ -51,7 +52,7 @@ export async function getChatPage(params: {
 }): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
   const limit = Math.min(Math.max(params.limit ?? CHAT_PAGE_SIZE, 1), 200);
   const conditions = [eq(chatHistory.tripId, params.tripId)];
-  if (params.beforeId != null) conditions.push(lt(chatHistory.id, params.beforeId));
+  if (params.beforeSeq != null) conditions.push(lt(chatHistory.seq, params.beforeSeq));
   if (params.kinds && params.kinds.length > 0) {
     conditions.push(inArray(chatHistory.kind, params.kinds));
   }
@@ -62,7 +63,7 @@ export async function getChatPage(params: {
     .select()
     .from(chatHistory)
     .where(conditions.length === 1 ? conditions[0] : and(...conditions))
-    .orderBy(desc(chatHistory.id))
+    .orderBy(desc(chatHistory.seq))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
@@ -72,7 +73,7 @@ export async function getChatPage(params: {
 }
 
 export async function addChatMessage(
-  tripId: number,
+  tripId: string,
   role: 'user' | 'assistant',
   content: string,
   changesMade?: string | null,

@@ -5,7 +5,7 @@ import { tasks, legs } from '@/server/db/schema';
 import type { Task } from '@/types/trip';
 import { rowMappers } from './trips';
 
-export async function getTasksForTrip(tripId: number): Promise<Task[]> {
+export async function getTasksForTrip(tripId: string): Promise<Task[]> {
   const rows = await db
     .select()
     .from(tasks)
@@ -18,7 +18,7 @@ export async function getTasksForTrip(tripId: number): Promise<Task[]> {
   });
 }
 
-export async function getTasksForLeg(legId: number): Promise<Task[]> {
+export async function getTasksForLeg(legId: string): Promise<Task[]> {
   const rows = await db
     .select()
     .from(tasks)
@@ -31,15 +31,15 @@ export async function getTasksForLeg(legId: number): Promise<Task[]> {
   });
 }
 
-export async function getTask(id: number): Promise<Task | null> {
+export async function getTask(id: string): Promise<Task | null> {
   const rows = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
   if (rows.length === 0) return null;
   return rowMappers.taskRow(rows[0]);
 }
 
 export async function addTask(input: {
-  trip_id: number;
-  leg_id?: number | null;
+  trip_id: string;
+  leg_id?: string | null;
   title: string;
   description?: string | null;
   priority?: string | null;
@@ -70,7 +70,7 @@ export async function addTask(input: {
 }
 
 export async function updateTask(
-  id: number,
+  id: string,
   data: Partial<{
     title: string;
     description: string | null;
@@ -101,12 +101,12 @@ export async function updateTask(
   return getTask(id);
 }
 
-export async function deleteTask(id: number): Promise<boolean> {
+export async function deleteTask(id: string): Promise<boolean> {
   const result = await db.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id });
   return result.length > 0;
 }
 
-export async function getLegTripId(legId: number): Promise<number | null> {
+export async function getLegTripId(legId: string): Promise<string | null> {
   const r = await db.select({ tripId: legs.tripId }).from(legs).where(eq(legs.id, legId)).limit(1);
   return r[0]?.tripId ?? null;
 }

@@ -49,7 +49,7 @@ test.describe('Vehicle CRUD', () => {
       const listRes = await fetch('/api/vehicles');
       if (!listRes.ok)
         return { ok: false, step: 'list', status: listRes.status };
-      const list = (await listRes.json()) as { id: number }[];
+      const list = (await listRes.json()) as { id: string }[];
       if (list.length !== 1)
         return { ok: false, step: 'count', status: list.length };
       const delRes = await fetch(`/api/vehicles/${list[0].id}`, { method: 'DELETE' });

@@ -21,16 +21,16 @@ const createSchema = z.object({
   name: z.string().min(1).max(200),
   start_date: z.string().nullish(),
   end_date: z.string().nullish(),
-  vehicle_id: z.number().int().positive().nullish(),
+  vehicle_id: z.string().uuid().nullish(),
 });
 
 export async function POST(req: Request) {
   try {
     const userId = await requireUserId();
     const body = createSchema.parse(await req.json());
-    let vehicleId: number | null = body.vehicle_id ?? (await getDefaultVehicleId(userId));
+    let vehicleId: string | null = body.vehicle_id ?? (await getDefaultVehicleId(userId));
 
-    if (typeof body.vehicle_id === 'number') {
+    if (typeof body.vehicle_id === 'string') {
       const v = await getVehicleForUser(userId, body.vehicle_id);
       if (!v) {
         return Response.json({ error: 'Vehicle not found' }, { status: 404 });

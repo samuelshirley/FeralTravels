@@ -9,10 +9,10 @@ let optionsConfigured = false;
 interface TripMapProps {
   legs: LegWithDetails[];
   pois: POI[];
-  selectedLegId: number | null;
-  onLegSelect: (legId: number) => void;
+  selectedLegId: string | null;
+  onLegSelect: (legId: string) => void;
   trailsVersion?: number;
-  tripId: number;
+  tripId: string;
 }
 
 interface GpxFeatureCollection {
@@ -55,9 +55,9 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
   const mapRef = useRef<google.maps.Map | null>(null);
   // directionsServiceRef removed — routes come from stored DB geometry now
   const layersRef = useRef<{
-    routePolylines: Map<number, google.maps.Polyline>;
+    routePolylines: Map<string, google.maps.Polyline>;
     gapPolylines: google.maps.Polyline[];
-    legMarkers: Map<number, google.maps.Marker>;
+    legMarkers: Map<string, google.maps.Marker>;
     finalMarker: google.maps.Marker | null;
     poiMarkers: google.maps.Marker[];
     gpxPolylines: Map<string, google.maps.Polyline[]>;
@@ -410,7 +410,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
           const res = await fetch(`/api/gpx?tripId=${tripId}&legId=${leg.id}`);
           if (!res.ok) continue;
           const trails = (await res.json()) as Array<{
-            id: number;
+            id: string;
             name: string;
             geojson: GpxFeatureCollection;
             color?: string;

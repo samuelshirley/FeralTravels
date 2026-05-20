@@ -12,6 +12,7 @@ import {
   index,
   uniqueIndex,
   jsonb,
+  uuid,
 } from 'drizzle-orm/pg-core';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
@@ -125,7 +126,7 @@ export const emailOtpCodes = pgTable(
 export const vehicles = pgTable(
   'vehicles',
   {
-    id: serial('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -151,11 +152,11 @@ export const vehicles = pgTable(
 export const trips = pgTable(
   'trips',
   {
-    id: serial('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    vehicleId: integer('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
+    vehicleId: uuid('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     /** DB-generated `lower(trim(name))`; unique per user via index (see baseline migration). */
     tripNameCiKey: text('trip_name_ci_key'),
@@ -180,8 +181,8 @@ export const trips = pgTable(
 export const legs = pgTable(
   'legs',
   {
-    id: serial('id').primaryKey(),
-    tripId: integer('trip_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    tripId: uuid('trip_id')
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     sortOrder: integer('sort_order').notNull(),
@@ -223,8 +224,8 @@ export const legs = pgTable(
 export const costs = pgTable(
   'costs',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id')
       .notNull()
       .references(() => legs.id, { onDelete: 'cascade' }),
     item: text('item').notNull(),
@@ -239,9 +240,9 @@ export const costs = pgTable(
 export const pois = pgTable(
   'pois',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
-    tripId: integer('trip_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
+    tripId: uuid('trip_id')
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     source: text('source').notNull(),
@@ -266,8 +267,8 @@ export const pois = pgTable(
 export const links = pgTable(
   'links',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id')
       .notNull()
       .references(() => legs.id, { onDelete: 'cascade' }),
     label: text('label').notNull(),
@@ -282,9 +283,9 @@ export const links = pgTable(
 export const gpxTrails = pgTable(
   'gpx_trails',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
-    tripId: integer('trip_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
+    tripId: uuid('trip_id')
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
@@ -305,8 +306,8 @@ export const gpxTrails = pgTable(
 export const routes = pgTable(
   'routes',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id')
       .notNull()
       .references(() => legs.id, { onDelete: 'cascade' }),
     sortOrder: integer('sort_order').default(0).notNull(),
@@ -315,7 +316,7 @@ export const routes = pgTable(
     distanceKm: doublePrecision('distance_km'),
     surface: text('surface'),
     status: text('status').default('option').notNull(),
-    gpxTrailId: integer('gpx_trail_id').references(() => gpxTrails.id, { onDelete: 'set null' }),
+    gpxTrailId: uuid('gpx_trail_id').references(() => gpxTrails.id, { onDelete: 'set null' }),
     /** Optional route-specific destination (e.g. alternate overnight); overrides leg end when set. */
     endLat: doublePrecision('end_lat'),
     endLng: doublePrecision('end_lng'),
@@ -332,8 +333,8 @@ export const routes = pgTable(
 export const routeLinks = pgTable(
   'route_links',
   {
-    id: serial('id').primaryKey(),
-    routeId: integer('route_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    routeId: uuid('route_id')
       .notNull()
       .references(() => routes.id, { onDelete: 'cascade' }),
     label: text('label').notNull(),
@@ -349,8 +350,8 @@ export const routeLinks = pgTable(
 export const stops = pgTable(
   'stops',
   {
-    id: serial('id').primaryKey(),
-    legId: integer('leg_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id')
       .notNull()
       .references(() => legs.id, { onDelete: 'cascade' }),
     sortOrder: integer('sort_order').default(0).notNull(),
@@ -393,11 +394,11 @@ export interface StopAlternative {
 export const tasks = pgTable(
   'tasks',
   {
-    id: serial('id').primaryKey(),
-    tripId: integer('trip_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    tripId: uuid('trip_id')
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
-    legId: integer('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
+    legId: uuid('leg_id').references(() => legs.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     description: text('description'),
     priority: text('priority').default('normal').notNull(),
@@ -422,8 +423,10 @@ export const tasks = pgTable(
 export const chatHistory = pgTable(
   'chat_history',
   {
-    id: serial('id').primaryKey(),
-    tripId: integer('trip_id')
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Auto-incrementing sequence for cursor-based pagination (ORDER BY seq DESC). */
+    seq: serial('seq').notNull(),
+    tripId: uuid('trip_id')
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     role: text('role').notNull(),
@@ -449,7 +452,7 @@ export const usageEvents = pgTable(
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
     userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-    tripId: integer('trip_id').references(() => trips.id, { onDelete: 'set null' }),
+    tripId: uuid('trip_id').references(() => trips.id, { onDelete: 'set null' }),
     provider: text('provider').notNull(),
     model: text('model'),
     inputTokens: integer('input_tokens'),

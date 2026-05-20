@@ -53,7 +53,7 @@ export default function NewTripButton({
     setBusy(true);
     setErr(null);
     try {
-      const trip = await apiFetch<{ id: number }>(`/api/trips`, {
+      const trip = await apiFetch<{ id: string }>(`/api/trips`, {
         method: 'POST',
         body: { name: trimmed },
         // We render our own inline error — opt out of the global toast so a

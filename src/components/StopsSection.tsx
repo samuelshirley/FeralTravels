@@ -11,8 +11,8 @@ import type { MoreStopsData, SearchMode, StopPhoto } from './stops';
 import Spinner from './Spinner';
 
 interface StopsSectionProps {
-  tripId: number;
-  legId: number;
+  tripId: string;
+  legId: string;
   legEndName: string | null;
   legEndCoords: { lat: number | null; lng: number | null };
   legStartCoords?: { lat: number | null; lng: number | null };

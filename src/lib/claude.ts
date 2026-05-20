@@ -189,10 +189,14 @@ Each turn you receive a <context>…</context> block in the user message with th
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
                 drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[],
                 sort_order }
-                For every tool that takes leg_id, use the object's numeric **id**
-                field from legs[] above — never substitute sort_order,
-                ordinal position, or a day counter (e.g. "Day 2") for id. After one
-                turn changes legs, reload uses fresh ids from subsequent context.
+                CRITICAL: For every tool that takes leg_id, use the object's
+                **id** field from legs[] above. The id is a UUID string
+                (e.g. 'a3f7b2c1-9e4d-4f2a-8b5c-1234abcd5678'), NOT the
+                sort_order (1, 2, 3) or day number ("Day 2"). Always look up
+                the id from the legs array — never guess. If a stop belongs
+                geographically on a specific leg, find that leg by matching
+                start/end coordinates, then use its id. After one turn changes
+                legs, reload uses fresh ids from subsequent context.
   recentChat — last ~12 chat turns for short-term memory. Do NOT re-summarize them; just use them for continuity.
   vehicle_profile_blocked — boolean. When true, the driver's garage row is missing mandatory fields (fuel cadence caps, driving-hour caps, and/or caravan water gate). Automated fuel-distance checks and trustworthy routing runs are NOT reliable until fixed.
 </context_facts>
@@ -370,7 +374,7 @@ export type ReplanEvent =
 
 export async function replan(
   userMessage: string,
-  tripId: number,
+  tripId: string,
   images: InputImage[] = [],
   userId?: string,
 ): Promise<ReplanResult> {
@@ -382,7 +386,7 @@ export async function replan(
 
 export async function* replanStream(
   userMessage: string,
-  tripId: number,
+  tripId: string,
   images: InputImage[] = [],
   userId?: string,
 ): AsyncGenerator<ReplanEvent, void, void> {

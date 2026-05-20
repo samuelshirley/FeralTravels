@@ -19,14 +19,14 @@ function gpxRow(r: typeof gpxTrails.$inferSelect): GPXTrail {
   };
 }
 
-export async function getGpxTrailsForLeg(legId: number): Promise<GPXTrail[]> {
+export async function getGpxTrailsForLeg(legId: string): Promise<GPXTrail[]> {
   const rows = await db.select().from(gpxTrails).where(eq(gpxTrails.legId, legId));
   return rows.map(gpxRow);
 }
 
 export async function addGpxTrail(input: {
-  trip_id: number;
-  leg_id: number;
+  trip_id: string;
+  leg_id: string;
   name: string;
   filename: string;
   source?: string | null;
@@ -52,7 +52,7 @@ export async function addGpxTrail(input: {
   return gpxRow(row);
 }
 
-export async function deleteGpxTrail(id: number): Promise<GPXTrail | null> {
+export async function deleteGpxTrail(id: string): Promise<GPXTrail | null> {
   const rows = await db.select().from(gpxTrails).where(eq(gpxTrails.id, id)).limit(1);
   if (rows.length === 0) return null;
   await db.delete(gpxTrails).where(eq(gpxTrails.id, id));

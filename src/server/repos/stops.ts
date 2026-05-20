@@ -12,7 +12,7 @@ import type {
 } from '@/types/trip';
 import { rowMappers } from './trips';
 
-export async function getStopsForLeg(legId: number): Promise<Stop[]> {
+export async function getStopsForLeg(legId: string): Promise<Stop[]> {
   const rows = await db
     .select()
     .from(stops)
@@ -21,13 +21,13 @@ export async function getStopsForLeg(legId: number): Promise<Stop[]> {
   return rows.map(rowMappers.stopRow);
 }
 
-export async function getStop(id: number): Promise<Stop | null> {
+export async function getStop(id: string): Promise<Stop | null> {
   const rows = await db.select().from(stops).where(eq(stops.id, id)).limit(1);
   return rows[0] ? rowMappers.stopRow(rows[0]) : null;
 }
 
 export interface CreateStopInput {
-  leg_id: number;
+  leg_id: string;
   stop_type: StopType;
   name: string;
   status?: StopStatus;
@@ -94,7 +94,7 @@ export type UpdateStopInput = Partial<{
   photos: StopPhoto[] | null;
 }>;
 
-export async function updateStop(id: number, data: UpdateStopInput): Promise<Stop | null> {
+export async function updateStop(id: string, data: UpdateStopInput): Promise<Stop | null> {
   const update: Record<string, unknown> = {};
   if (data.stop_type !== undefined) update.stopType = data.stop_type;
   if (data.status !== undefined) update.status = data.status;
@@ -118,7 +118,7 @@ export async function updateStop(id: number, data: UpdateStopInput): Promise<Sto
   return getStop(id);
 }
 
-export async function deleteStop(id: number): Promise<boolean> {
+export async function deleteStop(id: string): Promise<boolean> {
   const result = await db.delete(stops).where(eq(stops.id, id)).returning({ id: stops.id });
   return result.length > 0;
 }
@@ -128,7 +128,7 @@ export async function deleteStop(id: number): Promise<boolean> {
  * Maps URL. Unlike routes, multiple stops can be selected per leg (each becomes
  * its own waypoint in travel order).
  */
-export async function selectStop(id: number): Promise<{ stop: Stop; legId: number } | null> {
+export async function selectStop(id: string): Promise<{ stop: Stop; legId: string } | null> {
   const existing = await db
     .select({ legId: stops.legId })
     .from(stops)
@@ -145,7 +145,7 @@ export async function selectStop(id: number): Promise<{ stop: Stop; legId: numbe
   return { stop, legId };
 }
 
-export async function dismissStop(id: number): Promise<Stop | null> {
+export async function dismissStop(id: string): Promise<Stop | null> {
   await db
     .update(stops)
     .set({ status: 'dismissed', updatedAt: new Date() })

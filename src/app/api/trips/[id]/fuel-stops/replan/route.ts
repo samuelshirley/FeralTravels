@@ -5,6 +5,7 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { replenishFuelStopsForTrip } from '@/server/fuel';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,8 +29,8 @@ const replanBody = z
 export async function POST(req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const tripId = parseInt(ctx.params.id, 10);
-    if (Number.isNaN(tripId)) {
+    const tripId = parseUUID(ctx.params.id);
+    if (!tripId) {
       return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     }
     await assertTripOwnedByUser(tripId, userId);

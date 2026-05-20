@@ -7,6 +7,7 @@ import {
 import { selectRoute } from '@/server/repos/routes';
 import { db } from '@/server/db/client';
 import { tasks } from '@/server/db/schema';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,9 +24,9 @@ export const dynamic = 'force-dynamic';
 export async function POST(_request: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) {
-      return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) {
+      return Response.json({ error: 'Invalid route id' }, { status: 400 });
     }
     await assertRouteOwnedByUser(id, userId);
 

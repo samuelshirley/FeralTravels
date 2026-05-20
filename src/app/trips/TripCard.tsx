@@ -6,7 +6,7 @@ import { apiFetch } from '@/lib/api';
 import Spinner from '@/components/Spinner';
 
 interface Props {
-  id: number;
+  id: string;
   name: string;
   startDate: string | null;
   endDate: string | null;
@@ -24,10 +24,10 @@ interface Props {
    * their own copy yet.
    */
   showClone?: boolean;
-  onCloneClick?: (id: number) => void;
+  onCloneClick?: (id: string) => void;
   cloneBusy?: boolean;
   /** Called after a successful delete so the parent can remove this card immediately. */
-  onDeleted?: (id: number) => void;
+  onDeleted?: (id: string) => void;
 }
 
 export default function TripCard({

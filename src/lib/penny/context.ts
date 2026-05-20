@@ -17,7 +17,7 @@ import type { ChatMessage, LegWithDetails, TripWithLegs } from '@/types/trip';
  */
 export interface PennyContext {
   trip: {
-    id: number;
+    id: string;
     name: string;
     start_date: string | null;
     end_date: string | null;
@@ -45,7 +45,7 @@ export interface PennyContext {
  * `refill_distance_km` for prompts and the fuel planner.
  */
 export interface PennyVehicle {
-  id: number;
+  id: string;
   name: string;
   refill_distance_km: number | null;
   /** Alias of refill_distance_km — kept for prompt/system-side stability. */
@@ -60,7 +60,7 @@ export interface PennyVehicle {
 }
 
 export interface PennyLeg {
-  id: number;
+  id: string;
   sort_order: number;
   title: string;
   label: string | null;
@@ -77,7 +77,7 @@ export interface PennyLeg {
   status: string;
   notes: string[];
   routes: Array<{
-    id: number;
+    id: string;
     label: string;
     status: string;
     distance_km: number | null;
@@ -88,7 +88,7 @@ export interface PennyLeg {
     end_lng: number | null;
   }>;
   stops: Array<{
-    id: number;
+    id: string;
     stop_type: string;
     status: string;
     name: string;
@@ -101,7 +101,7 @@ export interface PennyLeg {
     notes: string | null;
   }>;
   tasks: Array<{
-    id: number;
+    id: string;
     title: string;
     description: string | null;
     priority: string;
@@ -137,7 +137,7 @@ export function computeEffectiveRangeKm(
  * without defensive JSON checks.
  */
 export async function buildPennyContext(
-  tripId: number,
+  tripId: string,
   userId: string,
   options: { recentChatLimit?: number } = {}
 ): Promise<PennyContext | null> {

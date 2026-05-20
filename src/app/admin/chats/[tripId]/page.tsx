@@ -82,8 +82,7 @@ export default async function AdminChatViewerPage({ params }: PageProps) {
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
-  const tripId = parseInt(params.tripId, 10);
-  if (!Number.isFinite(tripId)) notFound();
+  const tripId = params.tripId;
 
   const data = await getChatForTrip(tripId);
   if (!data) notFound();

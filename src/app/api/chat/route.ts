@@ -10,16 +10,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const querySchema = z.object({
-  tripId: z.coerce.number().int().positive(),
-  before: z.coerce.number().int().positive().optional(),
+  tripId: z.string().uuid(),
+  beforeSeq: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
 /**
  * Cursor-paginated chat history.
  *
- *   GET /api/chat?tripId=123                → last 50 messages (ascending)
- *   GET /api/chat?tripId=123&before=987     → 50 messages older than id 987
+ *   GET /api/chat?tripId=<uuid>                     → last 50 messages (ascending)
+ *   GET /api/chat?tripId=<uuid>&beforeSeq=987       → 50 messages older than seq 987
  *
  * Response: { messages: ChatMessage[], hasMore: boolean }
  *
@@ -32,7 +32,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const q = querySchema.parse({
       tripId: url.searchParams.get('tripId'),
-      before: url.searchParams.get('before') ?? undefined,
+      beforeSeq: url.searchParams.get('beforeSeq') ?? undefined,
       limit: url.searchParams.get('limit') ?? undefined,
     });
 
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 
     const { messages, hasMore } = await getChatPage({
       tripId: q.tripId,
-      beforeId: q.before ?? null,
+      beforeSeq: q.beforeSeq ?? null,
       limit: q.limit ?? CHAT_PAGE_SIZE,
     });
     return Response.json({ messages, hasMore });

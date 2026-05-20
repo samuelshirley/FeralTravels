@@ -14,7 +14,7 @@ const dataSchema = z.object({
 });
 
 const baseSchema = z.object({
-  task_id: z.number().int().positive(),
+  task_id: z.string().uuid(),
   data: dataSchema,
 });
 
@@ -32,7 +32,7 @@ export const tool: Anthropic.Tool = {
     type: 'object',
     required: ['task_id', 'data'],
     properties: {
-      task_id: { type: 'integer' },
+      task_id: { type: 'string', format: 'uuid' },
       data: {
         type: 'object',
         properties: {

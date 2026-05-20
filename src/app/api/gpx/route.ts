@@ -8,6 +8,7 @@ import {
 import { getGpxTrailsForLeg, addGpxTrail } from '@/server/repos/gpx';
 import { getLegTripId } from '@/server/repos/tasks';
 import { approxDistanceKm, readGpxAsGeoJson, writeGpxFile, sanitizeFilename } from '@/lib/gpx';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,9 +20,9 @@ export async function GET(request: Request) {
     const tripIdRaw = url.searchParams.get('tripId');
     const legIdRaw = url.searchParams.get('legId');
     if (!legIdRaw) return Response.json({ error: 'legId is required' }, { status: 400 });
-    const legId = parseInt(legIdRaw, 10);
-    if (Number.isNaN(legId)) return Response.json({ error: 'legId must be a number' }, { status: 400 });
-    const inferredTripId = tripIdRaw ? parseInt(tripIdRaw, 10) : await getLegTripId(legId);
+    const legId = parseUUID(legIdRaw);
+    if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
+    const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
     if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
     await assertTripReadableByUser(inferredTripId, userId);
 
@@ -79,12 +80,12 @@ export async function POST(request: Request) {
 
     if (!(file instanceof File)) return Response.json({ error: 'file field is required' }, { status: 400 });
     if (!legIdRaw) return Response.json({ error: 'legId is required' }, { status: 400 });
-    const legId = parseInt(String(legIdRaw), 10);
-    if (Number.isNaN(legId)) return Response.json({ error: 'legId must be a number' }, { status: 400 });
+    const legId = parseUUID(String(legIdRaw));
+    if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
     if (!file.name.toLowerCase().endsWith('.gpx'))
       return Response.json({ error: 'File must be .gpx' }, { status: 400 });
 
-    const tripId = tripIdRaw ? parseInt(String(tripIdRaw), 10) : await getLegTripId(legId);
+    const tripId = tripIdRaw ? parseUUID(String(tripIdRaw)) : await getLegTripId(legId);
     if (!tripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
     await assertTripOwnedByUser(tripId, userId);
     await assertLegOwnedByUser(legId, userId);

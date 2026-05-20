@@ -103,7 +103,7 @@ function nextRemediationQuestionInner(
 
 function orderedIncompleteVehicles(all: VehicleApi[]): VehicleApi[] {
   const bad = all.filter((v) => !vehicleIsCompleteForRemediation(v as Record<string, unknown>));
-  return bad.sort((a, b) => a.id - b.id);
+  return bad.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** Persist weekly hours = daily × consecutive streak when both are set (legacy rows may be null/stale). */
@@ -127,7 +127,7 @@ async function maybeRepairDerivedWeeklyHours(userId: string, vehicle: VehicleApi
 export interface VehicleRemediationSnapshot {
   needs_remediation: boolean;
   done: boolean;
-  active_vehicle: { id: number; name: string } | null;
+  active_vehicle: { id: string; name: string } | null;
   question: Question | null;
   progress: { current: number; total: number } | null;
   /** Account has zero vehicles — prompts via overlay to add one in Settings. */

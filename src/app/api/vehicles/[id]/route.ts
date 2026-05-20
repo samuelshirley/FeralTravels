@@ -12,6 +12,7 @@ import {
   MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
   vehicleMeetsFuelPlanningMinimum,
 } from '@/lib/vehicleProfile';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,16 +39,11 @@ const patchSchema = z.object({
   is_default: z.boolean().optional(),
 });
 
-function parseId(raw: string): number | null {
-  const id = parseInt(raw, 10);
-  return Number.isNaN(id) ? null : id;
-}
-
 export async function GET(_req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseId(ctx.params.id);
-    if (id == null) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
+    const id = parseUUID(ctx.params.id);
+    if (!id) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
     const v = await getVehicleForUser(userId, id);
     if (!v) return Response.json({ error: 'Not found' }, { status: 404 });
     return Response.json(v);
@@ -59,8 +55,8 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseId(ctx.params.id);
-    if (id == null) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
+    const id = parseUUID(ctx.params.id);
+    if (!id) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
     const body = patchSchema.parse(await req.json());
 
     // PATCH { is_default: true } as the ONLY field is the dedicated
@@ -115,8 +111,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseId(ctx.params.id);
-    if (id == null) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
+    const id = parseUUID(ctx.params.id);
+    if (!id) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
     const result = await deleteVehicle(userId, id);
     if (!result.ok) return Response.json({ error: result.error }, { status: 400 });
     return Response.json({ ok: true });

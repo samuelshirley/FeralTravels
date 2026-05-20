@@ -6,8 +6,8 @@ import { tripApi, ApiError } from '@/lib/api';
 import { parseCoords, needsServerResolution } from '@/lib/coords';
 
 export interface UseStopActionsOptions {
-  tripId: number;
-  legId: number;
+  tripId: string;
+  legId: string;
   initialStops: Stop[];
   onChanged?: () => void;
 }
@@ -72,7 +72,7 @@ export function useStopActions({
   }
 
   const select = useCallback(
-    async (id: number) => {
+    async (id: string) => {
       await resilientMutation(
         () => api.selectStop(id, { skipGlobalErrorReport: true }),
         () => setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'selected' } : s)))
@@ -82,7 +82,7 @@ export function useStopActions({
   );
 
   const dismiss = useCallback(
-    async (id: number) => {
+    async (id: string) => {
       await resilientMutation(
         () => api.updateStop(id, { status: 'dismissed' }, { skipGlobalErrorReport: true }),
         () => setStops((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'dismissed' } : s)))
@@ -92,7 +92,7 @@ export function useStopActions({
   );
 
   const remove = useCallback(
-    async (id: number) => {
+    async (id: string) => {
       if (!confirm('Delete this stop?')) return;
       await resilientMutation(() =>
         api.deleteStop(id, { skipGlobalErrorReport: true })
@@ -102,7 +102,7 @@ export function useStopActions({
   );
 
   const swapAlternate = useCallback(
-    async (id: number, altIndex: number) => {
+    async (id: string, altIndex: number) => {
       await resilientMutation(() =>
         api.swapStopPrimary(id, altIndex, { skipGlobalErrorReport: true })
       );

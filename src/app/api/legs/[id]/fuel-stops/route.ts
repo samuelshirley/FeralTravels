@@ -4,14 +4,10 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { planFuelStopsForLeg } from '@/server/fuel';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function parseId(raw: string): number | null {
-  const n = parseInt(raw, 10);
-  return Number.isNaN(n) ? null : n;
-}
 
 /**
  * POST /api/legs/:id/fuel-stops — compute (or recompute) auto fuel stops
@@ -25,8 +21,8 @@ function parseId(raw: string): number | null {
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const legId = parseId(ctx.params.id);
-    if (legId == null)
+    const legId = parseUUID(ctx.params.id);
+    if (!legId)
       return Response.json({ error: 'Invalid leg id' }, { status: 400 });
     await assertLegOwnedByUser(legId, userId);
     const result = await planFuelStopsForLeg(legId, userId);

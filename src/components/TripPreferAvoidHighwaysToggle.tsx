@@ -4,7 +4,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { apiFetch } from '@/lib/api';
 
 type Props = {
-  tripId: number;
+  tripId: string;
   initial: boolean;
   readonly: boolean;
   onUpdated: () => void;

@@ -4,7 +4,7 @@ import type { Stop } from '@/types/trip';
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/trips/1',
+  usePathname: () => '/trips/00000000-0000-0000-0000-000000000001',
 }));
 
 // Mock the API module
@@ -44,8 +44,8 @@ import StopsSection from '../StopsSection';
 afterEach(cleanup);
 
 const mockFuelStop: Stop = {
-  id: 1,
-  leg_id: 10,
+  id: '00000000-0000-0000-0000-000000000001',
+  leg_id: '00000000-0000-0000-0000-000000000010',
   sort_order: 1,
   stop_type: 'fuel',
   status: 'selected',
@@ -67,8 +67,8 @@ const mockFuelStop: Stop = {
 };
 
 const mockOvernightStop: Stop = {
-  id: 2,
-  leg_id: 10,
+  id: '00000000-0000-0000-0000-000000000002',
+  leg_id: '00000000-0000-0000-0000-000000000010',
   sort_order: 2,
   stop_type: 'overnight',
   status: 'selected',
@@ -91,7 +91,7 @@ const mockOvernightStop: Stop = {
 
 const mockDismissedStop: Stop = {
   ...mockFuelStop,
-  id: 3,
+  id: '00000000-0000-0000-0000-000000000003',
   name: 'Old BP Station',
   status: 'dismissed',
 };
@@ -107,8 +107,8 @@ describe('StopsSection (refactored)', () => {
   it('renders stop cards for active stops', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, mockOvernightStop]}
@@ -121,8 +121,8 @@ describe('StopsSection (refactored)', () => {
   it('separates overnight stops into their own section', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, mockOvernightStop]}
@@ -136,8 +136,8 @@ describe('StopsSection (refactored)', () => {
   it('shows fuel planning spinner', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -150,8 +150,8 @@ describe('StopsSection (refactored)', () => {
   it('shows "no stops yet" when empty', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -163,8 +163,8 @@ describe('StopsSection (refactored)', () => {
   it('shows dismissed count in collapsed section', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, mockDismissedStop]}
@@ -176,8 +176,8 @@ describe('StopsSection (refactored)', () => {
   it('shows "More stop options" button when not readonly', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}
@@ -189,8 +189,8 @@ describe('StopsSection (refactored)', () => {
   it('hides "More stop options" button when readonly', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}
@@ -203,8 +203,8 @@ describe('StopsSection (refactored)', () => {
   it('renders paste GPS section when not readonly', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -216,15 +216,15 @@ describe('StopsSection (refactored)', () => {
   it('renders StopCard with correct type labels', () => {
     const waterStop: Stop = {
       ...mockFuelStop,
-      id: 4,
+      id: '00000000-0000-0000-0000-000000000004',
       stop_type: 'water',
       name: 'Fuente Carrionas',
       distance_from_start_km: 145,
     };
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, waterStop]}
@@ -237,8 +237,8 @@ describe('StopsSection (refactored)', () => {
   it('stop cards link to Google Maps', () => {
     render(
       <StopsSection
-        tripId={1}
-        legId={10}
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}

@@ -224,7 +224,7 @@ export async function listTripsForUser(userId: string) {
   return rows.map(tripRow);
 }
 
-export async function getTripFull(tripId: number): Promise<TripWithLegs | null> {
+export async function getTripFull(tripId: string): Promise<TripWithLegs | null> {
   const tripRows = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (tripRows.length === 0) return null;
   const trip = tripRow(tripRows[0]);
@@ -264,22 +264,22 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
       db.select().from(tasks).where(eq(tasks.tripId, tripId)).orderBy(asc(tasks.createdAt)),
     ]);
 
-  const costsByLeg = new Map<number, Cost[]>();
+  const costsByLeg = new Map<string, Cost[]>();
   costRows.forEach(({ c }) => {
     const arr = costsByLeg.get(c.legId) || [];
     arr.push(costRow(c));
     costsByLeg.set(c.legId, arr);
   });
 
-  const linksByLeg = new Map<number, Link[]>();
+  const linksByLeg = new Map<string, Link[]>();
   linkRows.forEach(({ l }) => {
     const arr = linksByLeg.get(l.legId) || [];
     arr.push(linkRow(l));
     linksByLeg.set(l.legId, arr);
   });
 
-  const routesById = new Map<number, RouteWithLinks>();
-  const routesByLeg = new Map<number, RouteWithLinks[]>();
+  const routesById = new Map<string, RouteWithLinks>();
+  const routesByLeg = new Map<string, RouteWithLinks[]>();
   routeRows.forEach(({ r }) => {
     const built = routeRow(r);
     routesById.set(r.id, built);
@@ -292,14 +292,14 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
     if (route) route.links.push(routeLinkRow(rl));
   });
 
-  const stopsByLeg = new Map<number, Stop[]>();
+  const stopsByLeg = new Map<string, Stop[]>();
   stopRows.forEach(({ s }) => {
     const arr = stopsByLeg.get(s.legId) || [];
     arr.push(stopRow(s));
     stopsByLeg.set(s.legId, arr);
   });
 
-  const tasksByLeg = new Map<number, Task[]>();
+  const tasksByLeg = new Map<string, Task[]>();
   const orphanTasks: Task[] = [];
   taskRows.forEach((t) => {
     const built = taskRow(t);
@@ -359,7 +359,7 @@ export async function getTripFull(tripId: number): Promise<TripWithLegs | null> 
 export async function assertTripNameAvailable(
   userId: string,
   name: string,
-  excludeTripId?: number,
+  excludeTripId?: string,
 ): Promise<void> {
   const normalized = name.trim().toLowerCase();
   if (!normalized) return; // Zod already rejects empty names; this is just defensive.
@@ -423,7 +423,7 @@ export async function createTrip(input: {
   name: string;
   startDate?: string | null;
   endDate?: string | null;
-  vehicleId?: number | null;
+  vehicleId?: string | null;
 }) {
   assertTripDurationWithinLimit(input.startDate, input.endDate);
   await assertTripNameAvailable(input.userId, input.name);
@@ -440,7 +440,7 @@ export async function createTrip(input: {
   return tripRow(row);
 }
 
-export async function deleteTrip(tripId: number) {
+export async function deleteTrip(tripId: string) {
   await db.delete(trips).where(eq(trips.id, tripId));
 }
 
@@ -451,7 +451,7 @@ export async function deleteTrip(tripId: number) {
  * leg's id.
  */
 export async function addLeg(input: {
-  tripId: number;
+  tripId: string;
   title: string;
   label?: string | null;
   startName?: string | null;
@@ -478,7 +478,7 @@ export async function addLeg(input: {
   segmentName?: string | null;
   /** GeoJSON LineString for the driving route — persisted at planning time. */
   geometry?: GeoJSONLineString | null;
-}): Promise<number> {
+}): Promise<string> {
   let sortOrder = input.sortOrder;
   if (sortOrder == null) {
     const existing = await db
@@ -517,7 +517,7 @@ export async function addLeg(input: {
   return row.id;
 }
 
-export async function deleteLeg(legId: number): Promise<void> {
+export async function deleteLeg(legId: string): Promise<void> {
   await db.delete(legs).where(eq(legs.id, legId));
 }
 
@@ -526,7 +526,7 @@ export async function deleteLeg(legId: number): Promise<void> {
  * Copies legs, costs, links, routes, route_links, tasks, gpx trails, pois.
  * Chat history is NOT copied.
  */
-export async function cloneTrip(sourceTripId: number, userId: string): Promise<number> {
+export async function cloneTrip(sourceTripId: string, userId: string): Promise<string> {
   const src = await db.select().from(trips).where(eq(trips.id, sourceTripId)).limit(1);
   if (src.length === 0) throw new Error('Source trip not found');
   const s = src[0];
@@ -574,7 +574,7 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
     const newTripId = newTrip.id;
 
     const srcLegs = await tx.select().from(legs).where(eq(legs.tripId, sourceTripId));
-    const legIdMap = new Map<number, number>();
+    const legIdMap = new Map<string, string>();
     for (const l of srcLegs) {
       const [nl] = await tx
         .insert(legs)
@@ -644,7 +644,7 @@ export async function cloneTrip(sourceTripId: number, userId: string): Promise<n
         .from(routes)
         .innerJoin(legs, eq(routes.legId, legs.id))
         .where(eq(legs.tripId, sourceTripId));
-      const routeIdMap = new Map<number, number>();
+      const routeIdMap = new Map<string, string>();
       for (const { routes: r } of srcRoutes) {
         const newLegId = legIdMap.get(r.legId);
         if (!newLegId) continue;

@@ -17,7 +17,7 @@ test.describe('Vehicle profile remediation gate', () => {
     // Remediation persona has exactly one seeded trip; /trips redirects there
     // (newest-by-id). Do not assert a literal trip PK — IDs change each seed.
     await loginAsE2eUser(page, REMEDIATION_FIXTURE_EMAIL, { redirectTo: '/trips' });
-    await expect(page).toHaveURL(/\/trips\/\d+/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 15_000 });
     await expect(page.getByText(REMEDIATION_TRIP_NAME, { exact: false })).toBeVisible({
       timeout: 15_000,
     });

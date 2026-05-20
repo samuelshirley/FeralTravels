@@ -7,6 +7,7 @@ import {
 } from '@/server/auth/guards';
 import { getRoutesForLeg, addRoute } from '@/server/repos/routes';
 import { getLegTripId } from '@/server/repos/tasks';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,9 +19,9 @@ export async function GET(request: Request) {
     const tripIdRaw = url.searchParams.get('tripId');
     const legIdRaw = url.searchParams.get('legId');
     if (!legIdRaw) return Response.json({ error: 'legId is required' }, { status: 400 });
-    const legId = parseInt(legIdRaw, 10);
-    if (Number.isNaN(legId)) return Response.json({ error: 'legId must be a number' }, { status: 400 });
-    const inferredTripId = tripIdRaw ? parseInt(tripIdRaw, 10) : await getLegTripId(legId);
+    const legId = parseUUID(legIdRaw);
+    if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
+    const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
     if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
     await assertTripReadableByUser(inferredTripId, userId);
     return Response.json(await getRoutesForLeg(legId));
@@ -30,14 +31,14 @@ export async function GET(request: Request) {
 }
 
 const createSchema = z.object({
-  tripId: z.number().int().positive().optional(),
-  leg_id: z.number().int().positive(),
+  tripId: z.string().uuid().optional(),
+  leg_id: z.string().uuid(),
   label: z.string().min(1),
   description: z.string().nullish(),
   distance_km: z.number().nullish(),
   surface: z.string().nullish(),
   status: z.string().nullish(),
-  gpx_trail_id: z.number().int().positive().nullish(),
+  gpx_trail_id: z.string().uuid().nullish(),
   sort_order: z.number().int().nullish(),
   end_lat: z.number().min(-90).max(90).nullish(),
   end_lng: z.number().min(-180).max(180).nullish(),

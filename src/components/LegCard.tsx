@@ -11,7 +11,7 @@ import StopsSection from './StopsSection';
 import Distance from './Distance';
 
 interface LegCardProps {
-  tripId: number;
+  tripId: string;
   leg: LegWithDetails;
   expanded: boolean;
   onToggle: () => void;
@@ -33,7 +33,7 @@ interface LegCardProps {
 }
 
 interface AttachedTrail {
-  id: number;
+  id: string;
   name: string;
   source: string | null;
   source_url: string | null;
@@ -131,7 +131,7 @@ export default function LegCard({
     }
   };
 
-  const handleDeleteTrail = async (trailId: number) => {
+  const handleDeleteTrail = async (trailId: string) => {
     try {
       await api.deleteGpx(trailId);
       await loadTrails();

@@ -22,6 +22,7 @@ interface ToastState {
   status: number;
   message: string;
   path: string;
+  errorId?: string;
 }
 
 interface ModalState {
@@ -29,6 +30,7 @@ interface ModalState {
   detail: string;
   path: string;
   status: number | null;
+  errorId?: string;
 }
 
 // Status codes we route to toast vs modal.
@@ -49,9 +51,10 @@ export default function ErrorNotifier() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const report = useCallback(
-    (err: unknown, ctx: { path: string; status: number | null }) => {
+    (err: unknown, ctx: { path: string; status: number | null; errorId?: string }) => {
       const status = ctx.status;
       const surface = classify(status);
+      const errorId = ctx.errorId ?? (err instanceof ApiError ? err.errorId ?? undefined : undefined);
       const message =
         err instanceof ApiError
           ? err.message
@@ -65,6 +68,7 @@ export default function ErrorNotifier() {
           status: status ?? 0,
           message,
           path: ctx.path,
+          errorId,
         });
         toastTimer.current = setTimeout(() => setToast(null), 5000);
       } else {
@@ -73,6 +77,7 @@ export default function ErrorNotifier() {
           detail: message,
           path: ctx.path,
           status,
+          errorId,
         });
       }
     },
@@ -147,7 +152,7 @@ function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
     >
       <span
         style={{
-          
+
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.08em',
@@ -160,6 +165,9 @@ function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
         {toast.status || 'ERR'}
       </span>
       <span style={{ flex: 1, wordBreak: 'break-word' }}>{toast.message}</span>
+      {toast.errorId && (
+        <ErrorIdBadge errorId={toast.errorId} />
+      )}
       <button
         onClick={onClose}
         aria-label="Dismiss"
@@ -327,6 +335,11 @@ function SillyModal({
         >
           {showDetail ? 'Hide' : 'Show'} technical details
         </button>
+        {modal.errorId && (
+          <div style={{ marginTop: 14 }}>
+            <ErrorIdBadge errorId={modal.errorId} variant="modal" />
+          </div>
+        )}
         {showDetail && (
           <div
             style={{
@@ -338,10 +351,13 @@ function SillyModal({
               textAlign: 'left',
               fontSize: 11,
               color: 'var(--tp-muted)',
-              
+
               wordBreak: 'break-word',
             }}
           >
+            {modal.errorId && (
+              <div style={{ marginBottom: 4 }}>ID: {modal.errorId}</div>
+            )}
             <div>{modal.status != null ? `HTTP ${modal.status}` : 'Network error'}</div>
             <div style={{ color: 'var(--tp-subtle)', marginTop: 4 }}>{modal.path}</div>
             <div style={{ color: 'var(--tp-subtle)', marginTop: 4 }}>{modal.detail}</div>
@@ -349,5 +365,51 @@ function SillyModal({
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Copyable error ID badge — used in both toast and modal
+// ---------------------------------------------------------------------------
+
+function ErrorIdBadge({
+  errorId,
+  variant = 'toast',
+}: {
+  errorId: string;
+  variant?: 'toast' | 'modal';
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(errorId).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const isModal = variant === 'modal';
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={`Copy error ID: ${errorId}`}
+      style={{
+        background: isModal ? 'var(--tp-surface-muted)' : 'rgba(0,0,0,0.25)',
+        border: isModal ? '1px solid var(--tp-border)' : '1px solid rgba(255,255,255,0.15)',
+        color: isModal ? 'var(--tp-muted)' : 'rgba(255,255,255,0.85)',
+        padding: '3px 8px',
+        borderRadius: 4,
+        fontSize: 10,
+        fontFamily: 'monospace',
+        cursor: 'pointer',
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
+        letterSpacing: '0.03em',
+        transition: 'background 0.15s',
+      }}
+    >
+      {copied ? 'Copied!' : errorId}
+    </button>
   );
 }

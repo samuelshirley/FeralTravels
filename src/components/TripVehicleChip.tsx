@@ -7,8 +7,8 @@ import { fetchVehicles } from '@/lib/vehicleCache';
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 
 interface Props {
-  tripId: number;
-  initialVehicleId: number | null;
+  tripId: string;
+  initialVehicleId: string | null;
   readonly?: boolean;
   /** Called after the trip's vehicle_id is successfully PATCHed (refresh legs / fuel state). */
   onTripUpdated?: () => void | Promise<void>;
@@ -21,7 +21,7 @@ export default function TripVehicleChip({
   onTripUpdated,
 }: Props) {
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
-  const [vehicleId, setVehicleId] = useState<number | null>(initialVehicleId);
+  const [vehicleId, setVehicleId] = useState<string | null>(initialVehicleId);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ export default function TripVehicleChip({
     vehicles?.filter((v) => vehicleMeetsFuelPlanningMinimum(v as unknown as Record<string, unknown>)) ??
     null;
 
-  async function pick(id: number | null) {
+  async function pick(id: string | null) {
     if (busy) return;
     setBusy(true);
     try {

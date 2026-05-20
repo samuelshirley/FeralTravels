@@ -5,18 +5,19 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { getRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
+import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const patchSchema = z.object({
-  tripId: z.number().int().positive().optional(),
+  tripId: z.string().uuid().optional(),
   label: z.string().optional(),
   description: z.string().nullish(),
   distance_km: z.number().nullish(),
   surface: z.string().nullish(),
   status: z.string().optional(),
-  gpx_trail_id: z.number().int().positive().nullish(),
+  gpx_trail_id: z.string().uuid().nullish(),
   sort_order: z.number().int().optional(),
   end_lat: z.number().min(-90).max(90).nullish(),
   end_lng: z.number().min(-180).max(180).nullish(),
@@ -29,8 +30,8 @@ const patchSchema = z.object({
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) return Response.json({ error: 'Invalid route id' }, { status: 400 });
     await assertRouteOwnedByUser(id, userId);
     const body = patchSchema.parse(await request.json());
     const { tripId: _t, ...data } = body;
@@ -45,8 +46,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 export async function DELETE(_request: Request, { params }: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
-    const id = parseInt(params.id, 10);
-    if (Number.isNaN(id)) return Response.json({ error: 'id must be a number' }, { status: 400 });
+    const id = parseUUID(params.id);
+    if (!id) return Response.json({ error: 'Invalid route id' }, { status: 400 });
     await assertRouteOwnedByUser(id, userId);
     if (!(await getRoute(id))) return Response.json({ error: 'Not found' }, { status: 404 });
     await deleteRoute(id);
