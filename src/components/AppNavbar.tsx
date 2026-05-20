@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
+import SupportModal from './SupportModal';
 
 interface AppNavbarProps {
   user: { name?: string | null; email?: string | null; image?: string | null };
@@ -14,6 +15,7 @@ interface AppNavbarProps {
 
 export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightSlot, isAdmin = false }: AppNavbarProps) {
   const [open, setOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -248,6 +250,26 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
                 </Link>
               )}
               <button
+                onClick={() => {
+                  setOpen(false);
+                  setSupportOpen(true);
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  color: 'var(--tp-text)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderTop: '1px solid var(--tp-border)',
+                  cursor: 'pointer',
+                }}
+              >
+                Contact Support
+              </button>
+              <button
                 onClick={() => signOut({ callbackUrl: '/login' })}
                 style={{
                   display: 'block',
@@ -268,6 +290,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
           )}
         </div>
       </div>
+
+      <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
 
       {/*
         Mobile-friendly tweaks. On a phone the brand slot used to be hidden
