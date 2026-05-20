@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { legs, costs } from '@/server/db/schema';
+import { legs, costs, trips } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
 import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
@@ -20,10 +20,11 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
+import { planDumpStationStopForLeg } from '@/server/dump-stations';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
@@ -252,6 +253,12 @@ export async function POST(req: Request) {
           }
         };
         try {
+          // Message lifecycle events for the chat UX. `received` fires
+          // right after the user message is persisted (≈ "delivered"),
+          // and `reading` fires before we call Claude (≈ "read / typing").
+          send({ kind: 'received' });
+          send({ kind: 'reading' });
+
           let final: ReplanResult | null = null;
           for await (const ev of replanStream(message, tripId, images, userId)) {
             // The model loop yields a terminal `done` event with the full
@@ -547,6 +554,15 @@ async function dispatchAction(
       return;
     }
 
+    case 'rename_trip': {
+      await assertTripNameAvailable(userId, action.input.name, tripId);
+      await db
+        .update(trips)
+        .set({ name: action.input.name, updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      return;
+    }
+
     case 'add_leg': {
       const d = action.input;
 
@@ -767,6 +783,22 @@ async function dispatchAction(
       });
       // Trip-wide replen runs after the batch when `fuelReplenishQueued` is
       // set — keeps cumulative range across legs consistent.
+      return;
+    }
+
+    case 'plan_dump_station_stops': {
+      const resolvedLegId = await resolvePennyLegIdOnTrip(
+        action.input.leg_id,
+        tripId,
+        userId,
+        ctx,
+        { dequeueNewLegFallback: true },
+      );
+      await planDumpStationStopForLeg(
+        resolvedLegId,
+        userId,
+        action.input.country_code ?? null,
+      );
       return;
     }
 
@@ -1206,6 +1238,8 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
       return { action: 'delete_stop', stop_id: action.input.stop_id };
     case 'plan_fuel_stops':
       return { action: 'plan_fuel_stops', leg_id: action.input.leg_id };
+    case 'plan_dump_station_stops':
+      return { action: 'plan_dump_station_stops', leg_id: action.input.leg_id, country_code: action.input.country_code ?? null };
     case 'add_task':
       return {
         action: 'add_task',
@@ -1214,5 +1248,7 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
       };
     case 'update_task':
       return { action: 'update_task', task_id: action.input.task_id, data: action.input.data };
+    case 'rename_trip':
+      return { action: 'rename_trip', name: action.input.name };
   }
 }

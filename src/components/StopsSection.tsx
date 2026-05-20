@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
+import { apiFetch } from '@/lib/api';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import type { StopPhoto } from './stops';
@@ -39,7 +40,7 @@ const sectionTitleStyle: CSSProperties = {
   marginBottom: 6,
 };
 
-const TYPE_ORDER: StopType[] = ['fuel', 'water', 'food', 'overnight', 'rest', 'other'];
+const TYPE_ORDER: StopType[] = ['fuel', 'dump_station', 'food', 'overnight', 'rest', 'other'];
 
 // Photos are now read directly from stop.photos (persisted in DB at planning time).
 
@@ -73,6 +74,24 @@ export default function StopsSection({
   useEffect(() => {
     syncInitialStops(initialStops);
   }, [initialStops, syncInitialStops]);
+
+  // --- "Find other station" state for dump station stops ---
+  const [findingAlt, setFindingAlt] = useState<string | null>(null);
+
+  const handleFindAlternative = useCallback(async (stopId: string) => {
+    setFindingAlt(stopId);
+    try {
+      await apiFetch(`/api/stops/${stopId}/find-alternative`, {
+        method: 'POST',
+        body: {},
+      });
+      onChanged?.();
+    } catch (err) {
+      console.error('[StopsSection] find-alternative failed:', err);
+    } finally {
+      setFindingAlt(null);
+    }
+  }, [onChanged]);
 
   // --- Fuel planning UI state ---
   const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
@@ -191,21 +210,43 @@ export default function StopsSection({
 
         {/* Waypoint stops (non-overnight) */}
         {waypointStops.map((stop) => (
-          <StopCard
-            key={stop.id}
-            stopType={stop.stop_type}
-            name={stop.name}
-            distanceFromStartKm={stop.distance_from_start_km}
-            photos={photosMap.get(stop.id.toString()) ?? []}
-            photosLoading={false}
-            googleMapsUri={
-              stop.lat != null && stop.lng != null
-                ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                : null
-            }
-            lat={stop.lat}
-            lng={stop.lng}
-          />
+          <div key={stop.id}>
+            <StopCard
+              stopType={stop.stop_type}
+              name={stop.name}
+              distanceFromStartKm={stop.distance_from_start_km}
+              photos={photosMap.get(stop.id.toString()) ?? []}
+              photosLoading={false}
+              googleMapsUri={
+                stop.lat != null && stop.lng != null
+                  ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
+                  : null
+              }
+              lat={stop.lat}
+              lng={stop.lng}
+              loading={findingAlt === stop.id.toString()}
+            />
+            {!readonly && stop.stop_type === 'dump_station' && (
+              <div style={{ textAlign: 'right', marginTop: -2, marginBottom: 6 }}>
+                <button
+                  onClick={() => handleFindAlternative(stop.id.toString())}
+                  disabled={findingAlt != null}
+                  style={{
+                    fontSize: 11,
+                    color: findingAlt === stop.id.toString() ? 'var(--tp-muted)' : 'var(--tp-primary)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: findingAlt != null ? 'default' : 'pointer',
+                    padding: '2px 4px',
+                    fontWeight: 500,
+                    opacity: findingAlt != null && findingAlt !== stop.id.toString() ? 0.5 : 1,
+                  }}
+                >
+                  {findingAlt === stop.id.toString() ? 'Searching…' : 'Find other station'}
+                </button>
+              </div>
+            )}
+          </div>
         ))}
 
         {waypointStops.length === 0 && !fuelPlanning && fuelStatus !== 'failed' && (

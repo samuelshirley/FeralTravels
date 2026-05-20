@@ -13,9 +13,8 @@ export interface VehicleInput {
   max_drive_hours_per_week?: number | null;
   max_consecutive_drive_days?: number | null;
   rest_days_after_driving?: number | null;
-  water_refill_days?: number | null;
-  blackwater_refill_days?: number | null;
-  water_tracking_enabled?: boolean | null;
+  dump_station_interval_days?: number | null;
+  dump_station_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
@@ -30,9 +29,8 @@ function vehicleApi(r: VehicleRow) {
     max_drive_hours_per_week: coerceOptionalFiniteNumber(r.maxDriveHoursPerWeek),
     max_consecutive_drive_days: coerceOptionalInt(r.maxConsecutiveDriveDays),
     rest_days_after_driving: coerceOptionalInt(r.restDaysAfterDriving),
-    water_refill_days: coerceOptionalInt(r.waterRefillDays),
-    blackwater_refill_days: coerceOptionalInt(r.blackwaterRefillDays),
-    water_tracking_enabled: r.waterTrackingEnabled,
+    dump_station_interval_days: coerceOptionalInt(r.dumpStationIntervalDays),
+    dump_station_tracking_enabled: r.dumpStationTrackingEnabled,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -97,11 +95,10 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
     map.maxConsecutiveDriveDays = input.max_consecutive_drive_days;
   if (input.rest_days_after_driving !== undefined)
     map.restDaysAfterDriving = input.rest_days_after_driving;
-  if (input.water_refill_days !== undefined) map.waterRefillDays = input.water_refill_days;
-  if (input.blackwater_refill_days !== undefined)
-    map.blackwaterRefillDays = input.blackwater_refill_days;
-  if (input.water_tracking_enabled !== undefined)
-    map.waterTrackingEnabled = input.water_tracking_enabled;
+  if (input.dump_station_interval_days !== undefined)
+    map.dumpStationIntervalDays = input.dump_station_interval_days;
+  if (input.dump_station_tracking_enabled !== undefined)
+    map.dumpStationTrackingEnabled = input.dump_station_tracking_enabled;
   return map;
 }
 

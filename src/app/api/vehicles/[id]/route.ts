@@ -33,9 +33,8 @@ const patchSchema = z.object({
     .positive()
     .max(MAX_CONSECUTIVE_DRIVE_DAYS_CAP)
     .nullish(),
-  water_refill_days: z.number().int().positive().max(60).nullish(),
-  blackwater_refill_days: z.number().int().positive().max(60).nullish(),
-  water_tracking_enabled: z.boolean().nullish(),
+  dump_station_interval_days: z.number().int().positive().max(60).nullish(),
+  dump_station_tracking_enabled: z.boolean().nullish(),
   is_default: z.boolean().optional(),
 });
 
@@ -84,12 +83,11 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       ...(body.max_consecutive_drive_days !== undefined && {
         max_consecutive_drive_days: body.max_consecutive_drive_days,
       }),
-      ...(body.water_refill_days !== undefined && { water_refill_days: body.water_refill_days }),
-      ...(body.blackwater_refill_days !== undefined && {
-        blackwater_refill_days: body.blackwater_refill_days,
+      ...(body.dump_station_interval_days !== undefined && {
+        dump_station_interval_days: body.dump_station_interval_days,
       }),
-      ...(body.water_tracking_enabled !== undefined && {
-        water_tracking_enabled: body.water_tracking_enabled,
+      ...(body.dump_station_tracking_enabled !== undefined && {
+        dump_station_tracking_enabled: body.dump_station_tracking_enabled,
       }),
     } as Record<string, unknown>;
 

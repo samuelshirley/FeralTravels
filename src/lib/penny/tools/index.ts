@@ -13,12 +13,14 @@ import * as addStop from './addStop';
 import * as updateStop from './updateStop';
 import * as deleteStop from './deleteStop';
 import * as planFuelStops from './planFuelStops';
+import * as planDumpStationStops from './planDumpStationStops';
 import * as addTask from './addTask';
 import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
 import * as extractTripIntent from './extractTripIntent';
 import * as checkTripFeasibility from './checkTripFeasibility';
 import * as updateVehicle from './updateVehicle';
+import * as renameTrip from './renameTrip';
 
 export {
   addLeg,
@@ -31,12 +33,14 @@ export {
   updateStop,
   deleteStop,
   planFuelStops,
+  planDumpStationStops,
   addTask,
   updateTask,
   getRoute,
   extractTripIntent,
   checkTripFeasibility,
   updateVehicle,
+  renameTrip,
 };
 
 /**
@@ -52,6 +56,7 @@ export const TOOLS: Anthropic.Tool[] = [
   getRoute.tool,
   checkTripFeasibility.tool,
   updateVehicle.tool,
+  renameTrip.tool,
   addLeg.tool,
   updateLeg.tool,
   deleteLeg.tool,
@@ -62,6 +67,7 @@ export const TOOLS: Anthropic.Tool[] = [
   updateStop.tool,
   deleteStop.tool,
   planFuelStops.tool,
+  planDumpStationStops.tool,
   addTask.tool,
   updateTask.tool,
 ];
@@ -73,6 +79,7 @@ export const TOOLS: Anthropic.Tool[] = [
  */
 export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
   updateVehicle.UPDATE_VEHICLE,
+  renameTrip.RENAME_TRIP,
   addLeg.ADD_LEG,
   updateLeg.UPDATE_LEG,
   deleteLeg.DELETE_LEG,
@@ -83,6 +90,7 @@ export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
   updateStop.UPDATE_STOP,
   deleteStop.DELETE_STOP,
   planFuelStops.PLAN_FUEL_STOPS,
+  planDumpStationStops.PLAN_DUMP_STATION_STOPS,
   addTask.ADD_TASK,
   updateTask.UPDATE_TASK,
 ]);
@@ -106,6 +114,7 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unknown>> = {
   [updateVehicle.UPDATE_VEHICLE]: updateVehicle.validator,
+  [renameTrip.RENAME_TRIP]: renameTrip.validator,
   [addLeg.ADD_LEG]: addLeg.validator,
   [updateLeg.UPDATE_LEG]: updateLeg.validator,
   [deleteLeg.DELETE_LEG]: deleteLeg.validator,
@@ -116,6 +125,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [updateStop.UPDATE_STOP]: updateStop.validator,
   [deleteStop.DELETE_STOP]: deleteStop.validator,
   [planFuelStops.PLAN_FUEL_STOPS]: planFuelStops.validator,
+  [planDumpStationStops.PLAN_DUMP_STATION_STOPS]: planDumpStationStops.validator,
   [addTask.ADD_TASK]: addTask.validator,
   [updateTask.UPDATE_TASK]: updateTask.validator,
   [getRoute.GET_ROUTE]: getRoute.validator,
@@ -125,6 +135,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
 
 export type ValidatedAction =
   | { name: typeof updateVehicle.UPDATE_VEHICLE; input: updateVehicle.UpdateVehicleInput }
+  | { name: typeof renameTrip.RENAME_TRIP; input: renameTrip.RenameTripInput }
   | { name: typeof addLeg.ADD_LEG; input: addLeg.AddLegInput }
   | { name: typeof updateLeg.UPDATE_LEG; input: updateLeg.UpdateLegInput }
   | { name: typeof deleteLeg.DELETE_LEG; input: deleteLeg.DeleteLegInput }
@@ -135,5 +146,6 @@ export type ValidatedAction =
   | { name: typeof updateStop.UPDATE_STOP; input: updateStop.UpdateStopInput }
   | { name: typeof deleteStop.DELETE_STOP; input: deleteStop.DeleteStopInput }
   | { name: typeof planFuelStops.PLAN_FUEL_STOPS; input: planFuelStops.PlanFuelStopsInput }
+  | { name: typeof planDumpStationStops.PLAN_DUMP_STATION_STOPS; input: planDumpStationStops.PlanDumpStationStopsInput }
   | { name: typeof addTask.ADD_TASK; input: addTask.AddTaskInput }
   | { name: typeof updateTask.UPDATE_TASK; input: updateTask.UpdateTaskInput };

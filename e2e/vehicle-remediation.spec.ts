@@ -71,7 +71,7 @@ test.describe('Vehicle profile remediation gate', () => {
     expect(v.maxDriveHoursPerDay).toBe(6);
     expect(v.maxDriveHoursPerWeek).toBe(18);
     expect(v.maxConsecutiveDriveDays).toBe(3);
-    expect(v.waterTrackingEnabled).toBe(false);
+    expect(v.dumpStationTrackingEnabled).toBe(false);
     expect(v.refillDistanceKm).toBe(400);
 
     const userRows = await db

@@ -44,7 +44,7 @@ interface VehicleRemediationSnapshot {
   active_vehicle: { id: string; name: string } | null;
   question: {
     key: string;
-    kind: 'text' | 'number' | 'integer' | 'select' | 'vehicle_pick' | 'handoff';
+    kind: 'text' | 'number' | 'integer' | 'select' | 'handoff';
     label: string;
     placeholder?: string;
     help?: string;
@@ -70,7 +70,21 @@ interface OnboardingAnswerResult {
   next: OnboardingSnapshot;
   answerLabel: string;
   didHandoff: boolean;
+  /** The stored trip intent to send to Penny when onboarding is done. */
+  tripIntent?: string;
 }
+
+/**
+ * Message delivery lifecycle — mirrors iMessage/WhatsApp status indicators.
+ * Each state maps to a real server-side event:
+ *   queued     → user sent while Penny was thinking; will fire when Penny finishes
+ *   sending    → fetch() fired, waiting for server acknowledgement
+ *   delivered  → server persisted the user message (SSE `received` event)
+ *   read       → Penny is building context / about to call Claude (SSE `reading` event)
+ *   typing     → first text chunk or tool event arrived (Penny is actively responding)
+ *   responded  → Penny's full response is complete (SSE `applied` event)
+ */
+type DeliveryStatus = 'queued' | 'sending' | 'delivered' | 'read' | 'typing' | 'responded';
 
 interface UIMessage extends Omit<ChatMessage, 'seq'> {
   /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
@@ -95,6 +109,8 @@ interface UIMessage extends Omit<ChatMessage, 'seq'> {
   inFlightTools?: InFlightTool[];
   /** True while the SSE stream is still appending paragraphs. */
   streaming?: boolean;
+  /** Delivery lifecycle for user messages (sending → delivered → read → typing → responded). */
+  deliveryStatus?: DeliveryStatus;
 }
 
 /**
@@ -104,6 +120,7 @@ interface UIMessage extends Omit<ChatMessage, 'seq'> {
  * the point — it surfaces missing labels for follow-up tweaks).
  */
 const PENNY_TOOL_LABELS: Record<string, string> = {
+  rename_trip: 'Naming your trip',
   extract_trip_intent: 'Reading your request',
   get_route: 'Looking up routes',
   check_trip_feasibility: 'Checking feasibility',
@@ -115,6 +132,7 @@ const PENNY_TOOL_LABELS: Record<string, string> = {
   update_stop: 'Saving stops',
   delete_stop: 'Saving stops',
   plan_fuel_stops: 'Planning fuel',
+  plan_dump_station_stops: 'Finding dump stations',
   add_route: 'Saving routes',
   update_route: 'Saving routes',
   delete_route: 'Saving routes',
@@ -152,7 +170,7 @@ export default function ChatPanel({
   const onboardingSelectStep =
     onboardingUiActive &&
     onboardingQuestion &&
-    (onboardingQuestion.kind === 'select' || onboardingQuestion.kind === 'vehicle_pick');
+    onboardingQuestion.kind === 'select';
   const [remediationDone, setRemediationDone] = useState(false);
   const showRemediation = needsVehicleRemediation && !remediationDone && !isOnboarding && !readonly;
   const attachImagesAllowed = !showRemediation && !isOnboarding;
@@ -165,6 +183,10 @@ export default function ChatPanel({
   const [input, setInput] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [loading, setLoading] = useState(false);
+  /** True while Penny's intro typing animation plays (first visit only). */
+  const [introTyping, setIntroTyping] = useState(false);
+  /** Queue of messages sent while Penny is thinking — drained one-at-a-time. */
+  const messageQueueRef = useRef<Array<{ text: string; images: AttachedImage[]; msgId: string }>>([]);
   const [dragOver, setDragOver] = useState(false);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -400,23 +422,39 @@ export default function ChatPanel({
     }
     const q = onboardingSnapshot.question;
     if (!q) return;
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.kind === 'form_question' && last.content === q.label) return prev;
-      return [
-        ...prev,
-        {
-          id: `optimistic-${Date.now()}`,
-          trip_id: tripId,
-          role: 'assistant' as const,
-          content: q.label,
-          kind: 'form_question' as const,
-          changes_made: null,
-          created_at: new Date().toISOString(),
-        },
-      ];
-    });
-  }, [isOnboarding, onboardingLoading, onboardingSnapshot, tripId]);
+
+    const addQuestionBubble = () => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.kind === 'form_question' && last.content === q.label) return prev;
+        return [
+          ...prev,
+          {
+            id: `optimistic-${Date.now()}`,
+            trip_id: tripId,
+            role: 'assistant' as const,
+            content: q.label,
+            kind: 'form_question' as const,
+            changes_made: null,
+            created_at: new Date().toISOString(),
+          },
+        ];
+      });
+    };
+
+    // First question (Penny's greeting) — show typing indicator for ~3 seconds
+    // before revealing, but only if there are no messages yet (fresh trip).
+    if (onboardingSnapshot.state === 'trip_intent' && messages.length === 0) {
+      setIntroTyping(true);
+      const timer = setTimeout(() => {
+        setIntroTyping(false);
+        addQuestionBubble();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+
+    addQuestionBubble();
+  }, [isOnboarding, onboardingLoading, onboardingSnapshot, tripId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -464,35 +502,62 @@ export default function ChatPanel({
   // fuel replenish.
   const sendChatMessage = async (
     trimmed: string,
-    attachedImages: AttachedImage[] = []
+    attachedImages: AttachedImage[] = [],
+    /** When draining the queue, pass the existing optimistic message id to reuse it. */
+    existingUserMsgId?: string,
   ): Promise<void> => {
-    if ((!trimmed && attachedImages.length === 0) || loading) return;
+    if (!trimmed && attachedImages.length === 0) return;
 
-    const userMsgId = `optimistic-${Date.now()}`;
+    const userMsgId = existingUserMsgId ?? `optimistic-${Date.now()}`;
     const assistantMsgId = `optimistic-${Date.now() + 1}`;
 
-    const tempUserMsg: UIMessage = {
-      id: userMsgId,
-      trip_id: tripId,
-      role: 'user',
-      content: trimmed,
-      kind: 'ai',
-      changes_made: null,
-      created_at: new Date().toISOString(),
-      imageDataUrls: attachedImages.map((i) => i.dataUrl),
-    };
-    const pendingAssistantMsg: UIMessage = {
-      id: assistantMsgId,
-      trip_id: tripId,
-      role: 'assistant',
-      content: '',
-      kind: 'ai',
-      changes_made: null,
-      created_at: new Date().toISOString(),
-      streaming: true,
-      inFlightTools: [],
-    };
-    setMessages((prev) => [...prev, tempUserMsg, pendingAssistantMsg]);
+    if (existingUserMsgId) {
+      // Reuse the existing queued user bubble — just update its status and
+      // append the pending assistant bubble after it.
+      setMessages((prev) => {
+        const updated = prev.map((m) =>
+          m.id === existingUserMsgId ? { ...m, deliveryStatus: 'sending' as DeliveryStatus } : m
+        );
+        return [
+          ...updated,
+          {
+            id: assistantMsgId,
+            trip_id: tripId,
+            role: 'assistant' as const,
+            content: '',
+            kind: 'ai' as const,
+            changes_made: null,
+            created_at: new Date().toISOString(),
+            streaming: true,
+            inFlightTools: [],
+          },
+        ];
+      });
+    } else {
+      const tempUserMsg: UIMessage = {
+        id: userMsgId,
+        trip_id: tripId,
+        role: 'user',
+        content: trimmed,
+        kind: 'ai',
+        changes_made: null,
+        created_at: new Date().toISOString(),
+        imageDataUrls: attachedImages.map((i) => i.dataUrl),
+        deliveryStatus: 'sending',
+      };
+      const pendingAssistantMsg: UIMessage = {
+        id: assistantMsgId,
+        trip_id: tripId,
+        role: 'assistant',
+        content: '',
+        kind: 'ai',
+        changes_made: null,
+        created_at: new Date().toISOString(),
+        streaming: true,
+        inFlightTools: [],
+      };
+      setMessages((prev) => [...prev, tempUserMsg, pendingAssistantMsg]);
+    }
     setLoading(true);
     onActivity?.('thinking');
 
@@ -536,6 +601,15 @@ export default function ChatPanel({
           next[idx] = { ...next[idx], ...patch };
           return { ...m, inFlightTools: next };
         })
+      );
+    };
+
+    /** Update the delivery status on the most recent user message. */
+    const setDeliveryStatus = (status: DeliveryStatus) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === userMsgId ? { ...m, deliveryStatus: status } : m
+        )
       );
     };
 
@@ -595,11 +669,13 @@ export default function ChatPanel({
         // as plain JSON like before.
         const data = await res.json().catch(() => ({}));
         const errMsg = (data as { error?: string }).error ?? `Request failed (${res.status})`;
+        setDeliveryStatus('responded');
         failAssistant(`Error: ${errMsg}`);
         onActivity?.('error');
         return;
       }
       if (!res.body) {
+        setDeliveryStatus('responded');
         failAssistant('Stream not supported by this browser.');
         onActivity?.('error');
         return;
@@ -632,15 +708,27 @@ export default function ChatPanel({
               continue;
             }
             switch (ev.kind) {
+              case 'received':
+                // Server persisted the user message — "Delivered"
+                setDeliveryStatus('delivered');
+                break;
+              case 'reading':
+                // Penny is building context / about to call Claude — "Read"
+                setDeliveryStatus('read');
+                break;
               case 'iteration_start':
                 // No UI change — the next text/tool event drives the bubble.
                 break;
               case 'text': {
                 const chunk = typeof ev.chunk === 'string' ? ev.chunk : '';
-                if (chunk) appendText(chunk);
+                if (chunk) {
+                  setDeliveryStatus('typing');
+                  appendText(chunk);
+                }
                 break;
               }
               case 'tool_started': {
+                setDeliveryStatus('typing');
                 const name = typeof ev.name === 'string' ? ev.name : 'tool';
                 const id = typeof ev.toolUseId === 'string' ? ev.toolUseId : `${Date.now()}-${Math.random()}`;
                 upsertTool(id, { label: pennyToolLabel(name), status: 'running' });
@@ -735,6 +823,7 @@ export default function ChatPanel({
           `Penny proposed changes but nothing was saved${valDetails}. Re-ask her with more detail (e.g. starting point, destination).`;
       }
 
+      setDeliveryStatus('responded');
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
@@ -773,10 +862,21 @@ export default function ChatPanel({
       onActivity?.(applyError ? 'error' : 'response');
     } catch (err) {
       console.warn('replan stream errored', err);
+      setDeliveryStatus('responded');
       failAssistant('Something went wrong. Please try again.');
       onActivity?.('error');
     } finally {
       setLoading(false);
+      // Drain the message queue — send the next queued message now that Penny
+      // is free. We shift one item at a time; each call to sendChatMessage
+      // will re-enter this finally block and drain the next.
+      const next = messageQueueRef.current.shift();
+      if (next) {
+        // Small delay so the UI can render setLoading(false) before the
+        // next stream starts.
+        await new Promise((r) => setTimeout(r, 50));
+        sendChatMessage(next.text, next.images, next.msgId);
+      }
     }
   };
 
@@ -792,7 +892,9 @@ export default function ChatPanel({
       if (result.didHandoff) {
         setOnboardingSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
         setInput('');
-        await sendChatMessage(typeof value === 'string' ? value : String(value), []);
+        // Fire the stored trip intent at Penny (not the last answer — that was a vehicle question)
+        const intent = result.tripIntent ?? (typeof value === 'string' ? value : String(value));
+        await sendChatMessage(intent, []);
         onTripUpdated();
       } else {
         setMessages((prev) => [
@@ -820,7 +922,7 @@ export default function ChatPanel({
   async function submitOnboardingPick(rawValue: string | number) {
     const q = onboardingSnapshot?.question;
     if (!q || onboardingSubmitting || onboardingLoading) return;
-    if (q.kind !== 'select' && q.kind !== 'vehicle_pick') return;
+    if (q.kind !== 'select') return;
     await submitOnboardingPost(q.key, rawValue);
   }
 
@@ -833,7 +935,7 @@ export default function ChatPanel({
         setOnboardingError('Please describe your trip.');
         return;
       }
-      await submitOnboardingPost('handoff', trimmed);
+      await submitOnboardingPost(q.key, trimmed);
       return;
     }
     if (q.kind === 'text') {
@@ -895,9 +997,31 @@ export default function ChatPanel({
       await submitRemediationTextAnswer(trimmed);
       return;
     }
-    if ((!trimmed && attachedImages.length === 0) || loading) return;
+    if (!trimmed && attachedImages.length === 0) return;
     setInput('');
     setImages([]);
+
+    if (loading) {
+      // Penny is still thinking — queue this message to send when she finishes.
+      const queuedMsgId = `optimistic-${Date.now()}`;
+      messageQueueRef.current.push({ text: trimmed, images: attachedImages, msgId: queuedMsgId });
+      // Show the queued message as an optimistic bubble with 'queued' status.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: queuedMsgId,
+          trip_id: tripId,
+          role: 'user' as const,
+          content: trimmed,
+          kind: 'ai' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+          imageDataUrls: attachedImages.map((i) => i.dataUrl),
+          deliveryStatus: 'queued' as DeliveryStatus,
+        },
+      ]);
+      return;
+    }
     await sendChatMessage(trimmed, attachedImages);
   };
 
@@ -1038,7 +1162,7 @@ export default function ChatPanel({
   // feel. Double-submit is already guarded by early-returns in sendMessage /
   // submitOnboardingTextAnswer / submitRemediationTextAnswer.
   const remediationComposerDisabled = showRemediation && remLoading;
-  const onboardingComposerDisabled = onboardingUiActive && onboardingLoading;
+  const onboardingComposerDisabled = onboardingUiActive && (onboardingLoading || introTyping);
   const remediationSelectStep =
     showRemediation &&
     remSnapshot?.question?.kind === 'select' &&
@@ -1188,14 +1312,8 @@ export default function ChatPanel({
           </div>
         )}
         {messages.length === 0 && (
-          <div style={{ color: 'var(--tp-muted)', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
-            Ask Penny to modify your trip plan. For example:
-            <br />
-            <em>&quot;Move the Nürburgring day to after Denmark&quot;</em>
-            <br />
-            <em>&quot;Plan fuel stops for the drive to Trondheim&quot;</em>
-            <br />
-            <em>&quot;Add a rest day in Hamburg&quot;</em>
+          <div style={{ color: 'var(--tp-muted)', fontSize: 13, textAlign: 'center', marginTop: 40, lineHeight: 1.6 }}>
+            Tell Penny where you want to go — she&apos;ll handle the rest.
             <br />
             <span style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
               Drag, paste, or click 📎 to attach a screenshot.
@@ -1209,6 +1327,13 @@ export default function ChatPanel({
             style={{
               maxWidth: '85%',
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+            }}
+          >
+          <div
+            style={{
               padding: '10px 14px',
               borderRadius: 10,
               background: msg.role === 'user' ? 'var(--tp-primary-muted)' : 'var(--tp-surface)',
@@ -1427,21 +1552,78 @@ export default function ChatPanel({
               </div>
             )}
           </div>
+          {/* Delivery receipt — only on user messages with a deliveryStatus */}
+          {msg.role === 'user' && msg.deliveryStatus && (
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--tp-subtle)',
+                marginTop: 3,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                transition: 'opacity 0.3s ease',
+              }}
+            >
+              {msg.deliveryStatus === 'queued' && (
+                <span style={{ color: 'var(--tp-subtle)', fontStyle: 'italic' }}>Queued</span>
+              )}
+              {msg.deliveryStatus === 'sending' && (
+                <span style={{ color: 'var(--tp-subtle)' }}>Sending…</span>
+              )}
+              {msg.deliveryStatus === 'delivered' && (
+                <span style={{ color: 'var(--tp-muted)' }}>Delivered</span>
+              )}
+              {msg.deliveryStatus === 'read' && (
+                <span style={{ color: 'var(--tp-primary)' }}>Read</span>
+              )}
+              {msg.deliveryStatus === 'typing' && (
+                <span style={{ color: 'var(--tp-primary)', fontStyle: 'italic' }}>Penny is typing…</span>
+              )}
+              {msg.deliveryStatus === 'responded' && (
+                <span style={{ color: 'var(--tp-muted)' }}>
+                  <span style={{ fontSize: 10 }}>✓✓</span> Read
+                </span>
+              )}
+            </div>
+          )}
+          </div>
         ))}
 
-        {loading && (
+        {/* Typing indicator — shown when Penny has "read" the message
+            but hasn't started responding yet (no text chunks received),
+            or during the intro typing animation on first visit. */}
+        {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.content))) && (
           <div
             style={{
               alignSelf: 'flex-start',
-              padding: '10px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 16px',
               borderRadius: 10,
-              background: 'var(--tp-surface-muted)',
+              background: 'var(--tp-surface)',
               border: '1px solid var(--tp-border)',
-              fontSize: 14,
-              color: 'var(--tp-muted)',
             }}
           >
-            Thinking...
+            <div style={{ display: 'flex', gap: 4 }}>
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    display: 'block',
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: 'var(--tp-muted)',
+                    animation: `tp-dot-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                  }}
+                />
+              ))}
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--tp-subtle)', fontStyle: 'italic' }}>
+              Penny is typing
+            </span>
           </div>
         )}
         <div ref={bottomRef} />
@@ -1596,89 +1778,6 @@ export default function ChatPanel({
                           {o.label}
                         </button>
                       ))}
-                    </div>
-                  </div>
-                )}
-              {onboardingUiActive &&
-                onboardingQuestion?.kind === 'vehicle_pick' &&
-                onboardingSnapshot && (
-                  <div
-                    style={{
-                      padding: '10px 16px 0',
-                      flexShrink: 0,
-                      borderTop: '1px solid var(--tp-border)',
-                      background: 'var(--tp-surface-muted)',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--tp-muted)',
-                        marginBottom: 6,
-                        letterSpacing: '0.03em',
-                      }}
-                    >
-                      Tap a vehicle
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {onboardingSnapshot.vehicles.map((v) => (
-                        <button
-                          key={v.id}
-                          type="button"
-                          disabled={onboardingComposerBusy}
-                          onClick={() => void submitOnboardingPick(v.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '10px 12px',
-                            background: 'var(--tp-surface)',
-                            border: '1px solid var(--tp-border)',
-                            borderRadius: 'var(--tp-radius-sm)',
-                            color: 'var(--tp-text)',
-                            fontSize: 13,
-                            cursor: onboardingComposerBusy ? 'default' : 'pointer',
-                            textAlign: 'left',
-                            opacity: onboardingComposerBusy ? 0.5 : 1,
-                          }}
-                        >
-                          <span style={{ fontWeight: 600 }}>{v.name}</span>
-                          {v.is_default && (
-                            <span
-                              style={{
-                                padding: '2px 6px',
-                                fontSize: 10,
-                                background: 'var(--tp-success-muted)',
-                                color: 'var(--tp-success)',
-                                borderRadius: 4,
-                              }}
-                            >
-                              default
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        disabled={onboardingComposerBusy}
-                        onClick={() => void submitOnboardingPick('new')}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '10px 12px',
-                          background: 'var(--tp-surface)',
-                          border: '1px dashed var(--tp-border)',
-                          borderRadius: 'var(--tp-radius-sm)',
-                          color: 'var(--tp-text)',
-                          fontSize: 13,
-                          cursor: onboardingComposerBusy ? 'default' : 'pointer',
-                          textAlign: 'left',
-                          opacity: onboardingComposerBusy ? 0.5 : 1,
-                        }}
-                      >
-                        + Add a new vehicle
-                      </button>
                     </div>
                   </div>
                 )}
@@ -1852,7 +1951,7 @@ export default function ChatPanel({
                       ? remSnapshot.question.placeholder ?? 'Type your answer…'
                       : 'Ask Penny…'
             }
-            disabled={loading || remediationComposerDisabled || onboardingComposerDisabled}
+            disabled={remediationComposerDisabled || onboardingComposerDisabled}
             rows={1}
             style={{
               flex: 1,
@@ -1880,8 +1979,7 @@ export default function ChatPanel({
             onClick={sendMessage}
             disabled={
               Boolean(
-                loading ||
-                  remediationComposerBusy ||
+                remediationComposerBusy ||
                   onboardingComposerBusy ||
                   (!showRemediation &&
                     !onboardingUiActive &&
@@ -1916,8 +2014,7 @@ export default function ChatPanel({
                     !onboardingSelectStep &&
                     input.trim())) &&
                 !remediationComposerBusy &&
-                !onboardingComposerBusy &&
-                !loading
+                !onboardingComposerBusy
                   ? 'var(--tp-primary)'
                   : 'var(--tp-border)',
               border: 'none',
@@ -1934,8 +2031,7 @@ export default function ChatPanel({
                     !onboardingSelectStep &&
                     input.trim())) &&
                 !remediationComposerBusy &&
-                !onboardingComposerBusy &&
-                !loading
+                !onboardingComposerBusy
                   ? 'var(--tp-on-primary)'
                   : 'var(--tp-subtle)',
               cursor:
@@ -1950,8 +2046,7 @@ export default function ChatPanel({
                     !onboardingSelectStep &&
                     input.trim())) &&
                 !remediationComposerBusy &&
-                !onboardingComposerBusy &&
-                !loading
+                !onboardingComposerBusy
                   ? 'pointer'
                   : 'default',
               transition: 'background 0.15s, color 0.15s',

@@ -124,12 +124,14 @@ const GOOGLE_PLACES_PRICING_PER_CALL_USD: Record<string, number> = {
   'nearby-search-essentials': 0.005,
   'nearby-search-pro': 0.025,
   'nearby-search-enterprise': 0.040,
+  'text-search': 0.032,
 };
 
 export type GooglePlacesEndpoint =
   | 'nearby-search-essentials'
   | 'nearby-search-pro'
-  | 'nearby-search-enterprise';
+  | 'nearby-search-enterprise'
+  | 'text-search';
 
 /**
  * Per-SKU monthly free-call allowance from Google Maps Platform's free tier.
@@ -158,6 +160,9 @@ export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, nu
   ),
   'nearby-search-enterprise': Number(
     process.env.GOOGLE_PLACES_FREE_CALLS_ENTERPRISE_PER_MONTH ?? 1000
+  ),
+  'text-search': Number(
+    process.env.GOOGLE_PLACES_FREE_CALLS_TEXT_SEARCH_PER_MONTH ?? 5000
   ),
 };
 

@@ -22,6 +22,8 @@ export interface StopCardProps {
   variant?: 'default' | 'overnight';
   /** Show shimmer placeholders instead of photos. */
   photosLoading?: boolean;
+  /** When true, dims the card and shows a spinner overlay. */
+  loading?: boolean;
 }
 
 /**
@@ -44,11 +46,11 @@ const STOP_DISPLAY: Record<
     iconBg: 'rgba(201,123,99,0.15)',
     icon: '🛒',
   },
-  water: {
-    label: 'WATER FILL',
+  dump_station: {
+    label: 'DUMP STATION',
     color: 'var(--tp-primary)',
     iconBg: 'rgba(78,122,176,0.15)',
-    icon: '💧',
+    icon: '🚿',
   },
   overnight: {
     label: 'OVERNIGHT',
@@ -90,6 +92,7 @@ export default function StopCard({
   lng,
   variant = 'default',
   photosLoading = false,
+  loading = false,
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
 
@@ -214,15 +217,49 @@ export default function StopCard({
     </>
   );
 
+  const loadingOverlay = loading ? (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(var(--tp-surface-rgb, 30,30,30), 0.6)',
+        borderRadius: 8,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2,
+      }}
+    >
+      <div
+        style={{
+          width: 18,
+          height: 18,
+          border: '2px solid var(--tp-border)',
+          borderTopColor: 'var(--tp-primary)',
+          borderRadius: '50%',
+          animation: 'tp-spin 0.8s linear infinite',
+        }}
+      />
+    </div>
+  ) : null;
+
+  const wrappedCardStyle: React.CSSProperties = {
+    ...cardStyle,
+    position: 'relative',
+    opacity: loading ? 0.6 : 1,
+    pointerEvents: loading ? 'none' : undefined,
+  };
+
   if (href) {
     return (
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        style={cardStyle}
+        style={wrappedCardStyle}
         className={isOvernight ? 'stop-card overnight' : 'stop-card'}
       >
+        {loadingOverlay}
         {content}
       </a>
     );
@@ -230,9 +267,10 @@ export default function StopCard({
 
   return (
     <div
-      style={cardStyle}
+      style={wrappedCardStyle}
       className={isOvernight ? 'stop-card overnight' : 'stop-card'}
     >
+      {loadingOverlay}
       {content}
     </div>
   );

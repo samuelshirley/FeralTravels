@@ -59,11 +59,8 @@ const dataSchema = z.object({
     .max(FUEL_STOP_SPACING_KM_MAX)
     .nullish(),
 
-  /** Days between fresh-water refills. */
-  water_refill_days: z.number().int().positive().max(30).nullish(),
-
-  /** Days between blackwater (waste) tank empties. */
-  blackwater_refill_days: z.number().int().positive().max(30).nullish(),
+  /** Days between dump station visits. */
+  dump_station_interval_days: z.number().int().positive().max(30).nullish(),
 });
 
 const baseSchema = z.object({
@@ -92,7 +89,7 @@ Save updated vehicle driving preferences to the database. Call this whenever the
 - daily driving limit (max hours per day)
 - weekly driving cadence (e.g. "3 days a week", "drive 4 days then rest 3")
 - refuel cadence or range (km between fuel stops)
-- water or blackwater refill intervals
+- dump station intervals
 
 The API requires refill_distance_km between 200 and 1500 km for fuel planning. If the trip vehicle may still be missing that
 value (new or stub profile), include refill_distance_km in this update whenever the user gives a range or you
@@ -153,17 +150,11 @@ their planning request again so the updated values take effect.
             maximum: FUEL_STOP_SPACING_KM_MAX,
             description: 'Preferred km between fuel refills (the user-stated range).',
           },
-          water_refill_days: {
+          dump_station_interval_days: {
             type: 'integer',
             minimum: 1,
             maximum: 30,
-            description: 'Days between fresh-water refills.',
-          },
-          blackwater_refill_days: {
-            type: 'integer',
-            minimum: 1,
-            maximum: 30,
-            description: 'Days between blackwater (waste) tank empties.',
+            description: 'Days between dump station visits.',
           },
         },
       },

@@ -27,9 +27,8 @@ function vehicleRowToRemediationRecord(row: typeof vehicles.$inferSelect): Recor
     max_drive_hours_per_day: row.maxDriveHoursPerDay,
     max_drive_hours_per_week: row.maxDriveHoursPerWeek,
     max_consecutive_drive_days: row.maxConsecutiveDriveDays,
-    water_refill_days: row.waterRefillDays,
-    blackwater_refill_days: row.blackwaterRefillDays,
-    water_tracking_enabled: row.waterTrackingEnabled,
+    dump_station_interval_days: row.dumpStationIntervalDays,
+    dump_station_tracking_enabled: row.dumpStationTrackingEnabled,
   };
 }
 

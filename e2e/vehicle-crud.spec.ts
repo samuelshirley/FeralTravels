@@ -106,7 +106,7 @@ test.describe('Vehicle CRUD', () => {
     await page.getByTestId('vehicle-max-drive-day-input').fill('6');
     await page.getByTestId('vehicle-max-consecutive-input').fill('3');
     // Weekly drive hours have no Settings input — validateVehicleProfileDraftForSave derives them from day × consecutive days.
-    await page.getByTestId('vehicle-water-no').check();
+    await page.getByTestId('vehicle-dump-station-no').check();
     await page.getByTestId('vehicle-save-button').click();
 
     // After save the form unmounts and a new VehicleCard appears.

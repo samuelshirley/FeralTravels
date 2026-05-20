@@ -7,7 +7,7 @@ import { kmToMi, miToKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
-  caravanWaterGateLabel,
+  caravanDumpStationGateLabel,
   validateVehicleProfileDraftForSave,
   vehicleProfileGroupTitle,
   type VehicleProfileFieldKey,
@@ -17,8 +17,7 @@ const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = 
   max_drive_hours_per_day: 'vehicle-max-drive-day-input',
   max_consecutive_drive_days: 'vehicle-max-consecutive-input',
   rest_days_after_driving: 'vehicle-rest-days-input',
-  water_refill_days: 'vehicle-water-refill-input',
-  blackwater_refill_days: 'vehicle-blackwater-input',
+  dump_station_interval_days: 'vehicle-dump-station-input',
 };
 
 /**
@@ -35,10 +34,9 @@ export interface Vehicle {
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
   rest_days_after_driving: number | null;
-  water_refill_days: number | null;
-  blackwater_refill_days: number | null;
+  dump_station_interval_days: number | null;
   /** Caravan gate: null means not chosen in Settings yet. */
-  water_tracking_enabled: boolean | null;
+  dump_station_tracking_enabled: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,9 +51,8 @@ function emptyDraft(): Draft {
     max_drive_hours_per_week: null,
     max_consecutive_drive_days: null,
     rest_days_after_driving: null,
-    water_refill_days: null,
-    blackwater_refill_days: null,
-    water_tracking_enabled: null,
+    dump_station_interval_days: null,
+    dump_station_tracking_enabled: null,
   };
 }
 
@@ -91,9 +88,8 @@ export default function VehicleProfileSection() {
           max_drive_hours_per_week: draft.max_drive_hours_per_week ?? null,
           max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
           rest_days_after_driving: draft.rest_days_after_driving ?? null,
-          water_refill_days: draft.water_refill_days ?? null,
-          blackwater_refill_days: draft.blackwater_refill_days ?? null,
-          water_tracking_enabled: draft.water_tracking_enabled ?? null,
+          dump_station_interval_days: draft.dump_station_interval_days ?? null,
+          dump_station_tracking_enabled: draft.dump_station_tracking_enabled ?? null,
           is_default: draft.is_default,
         },
         units
@@ -334,11 +330,8 @@ function VehicleCard({
         {vehicle.max_consecutive_drive_days != null && (
           <Stat label="Consec. days" value={`${vehicle.max_consecutive_drive_days}`} />
         )}
-        {vehicle.water_refill_days != null && (
-          <Stat label="Water refill" value={`every ${vehicle.water_refill_days}d`} />
-        )}
-        {vehicle.blackwater_refill_days != null && (
-          <Stat label="Water dump" value={`every ${vehicle.blackwater_refill_days}d`} />
+        {vehicle.dump_station_interval_days != null && (
+          <Stat label="Dump station" value={`every ${vehicle.dump_station_interval_days}d`} />
         )}
       </div>
     </div>
@@ -387,12 +380,12 @@ function VehicleForm({
 }) {
   const [d, setD] = useState<Draft>(() => ({
     ...initial,
-    water_tracking_enabled: initial.water_tracking_enabled ?? null,
+    dump_station_tracking_enabled: initial.dump_station_tracking_enabled ?? null,
   }));
   const { units } = useUnits();
   const isImperial = units === 'imperial';
   const questions = buildVehicleProfileQuestions(units);
-  const groups = (['identity', 'driving', 'water'] as const).map((g) => ({
+  const groups = (['identity', 'driving', 'dump_station'] as const).map((g) => ({
     group: g,
     items: questions.filter((q) => q.group === g),
   }));
@@ -440,36 +433,35 @@ function VehicleForm({
     >
       {groups.map(({ group, items }) => (
         <FieldGroup key={group} title={vehicleProfileGroupTitle(group)}>
-          {group === 'water' && (
-            <Field label={caravanWaterGateLabel()} required wide>
+          {group === 'dump_station' && (
+            <Field label={caravanDumpStationGateLabel()} required wide>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                   <input
                     type="radio"
-                    name="water-tracking"
-                    data-testid="vehicle-water-yes"
-                    checked={d.water_tracking_enabled === true}
+                    name="dump-station-tracking"
+                    data-testid="vehicle-dump-station-yes"
+                    checked={d.dump_station_tracking_enabled === true}
                     onChange={() =>
                       setD((p) => ({
                         ...p,
-                        water_tracking_enabled: true,
+                        dump_station_tracking_enabled: true,
                       }))
                     }
                   />
-                  Yes, track freshwater and waste timing
+                  Yes, track dump station visits
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                   <input
                     type="radio"
-                    name="water-tracking"
-                    data-testid="vehicle-water-no"
-                    checked={d.water_tracking_enabled === false}
+                    name="dump-station-tracking"
+                    data-testid="vehicle-dump-station-no"
+                    checked={d.dump_station_tracking_enabled === false}
                     onChange={() =>
                       setD((p) => ({
                         ...p,
-                        water_tracking_enabled: false,
-                        water_refill_days: null,
-                        blackwater_refill_days: null,
+                        dump_station_tracking_enabled: false,
+                        dump_station_interval_days: null,
                       }))
                     }
                   />
@@ -478,7 +470,7 @@ function VehicleForm({
               </div>
             </Field>
           )}
-          {(!(group === 'water') || d.water_tracking_enabled === true) &&
+          {(!(group === 'dump_station') || d.dump_station_tracking_enabled === true) &&
             items.map((q) => {
             if (q.key === 'name') {
               return (

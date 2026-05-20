@@ -52,8 +52,8 @@ describe('StopCard', () => {
     expect(screen.getByText('GROCERIES')).toBeInTheDocument();
     unmount();
 
-    const { unmount: u2 } = render(<StopCard {...baseProps} stopType="water" />);
-    expect(screen.getByText('WATER FILL')).toBeInTheDocument();
+    const { unmount: u2 } = render(<StopCard {...baseProps} stopType="dump_station" />);
+    expect(screen.getByText('DUMP STATION')).toBeInTheDocument();
     u2();
 
     const { unmount: u3 } = render(<StopCard {...baseProps} stopType="rest" />);

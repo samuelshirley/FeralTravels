@@ -33,7 +33,7 @@ export interface PennyContext {
   recentChat: Array<{ role: 'user' | 'assistant'; content: string }>;
   /**
    * True when the driver's saved vehicle row fails strict profile completeness
-   * (fuel + driving caps + caravan water gate). Penny must steer to Settings
+   * (fuel + driving caps + caravan dump station gate). Penny must steer to Settings
    * or `/vehicle-setup` instead of implying automated fuel/routing succeeded.
    */
   vehicle_profile_blocked: boolean;
@@ -41,7 +41,7 @@ export interface PennyContext {
 
 /**
  * Trimmed vehicle shape Penny plans against: user-stated refuel cadence +
- * drive limits + optional water cadence. `effective_range_km` aliases
+ * drive limits + optional dump station cadence. `effective_range_km` aliases
  * `refill_distance_km` for prompts and the fuel planner.
  */
 export interface PennyVehicle {
@@ -60,9 +60,8 @@ export interface PennyVehicle {
    */
   rest_days_after_driving: number | null;
   /** Null = onboarding/remediation hasn't asked caravan gate yet. */
-  water_tracking_enabled: boolean | null;
-  water_refill_days: number | null;
-  blackwater_refill_days: number | null;
+  dump_station_tracking_enabled: boolean | null;
+  dump_station_interval_days: number | null;
 }
 
 export interface PennyLeg {
@@ -188,9 +187,8 @@ function vehicleRecordFromApiForCompleteness(v: VehicleApi): Record<string, unkn
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
-    water_refill_days: v.water_refill_days,
-    blackwater_refill_days: v.blackwater_refill_days,
-    water_tracking_enabled: v.water_tracking_enabled,
+    dump_station_interval_days: v.dump_station_interval_days,
+    dump_station_tracking_enabled: v.dump_station_tracking_enabled,
   };
 }
 
@@ -213,9 +211,8 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
     rest_days_after_driving: v.rest_days_after_driving ?? null,
-    water_tracking_enabled: v.water_tracking_enabled ?? null,
-    water_refill_days: v.water_refill_days,
-    blackwater_refill_days: v.blackwater_refill_days,
+    dump_station_tracking_enabled: v.dump_station_tracking_enabled ?? null,
+    dump_station_interval_days: v.dump_station_interval_days ?? null,
   };
 }
 

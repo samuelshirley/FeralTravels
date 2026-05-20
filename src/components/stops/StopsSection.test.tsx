@@ -217,7 +217,7 @@ describe('StopsSection (refactored)', () => {
     const waterStop: Stop = {
       ...mockFuelStop,
       id: '00000000-0000-0000-0000-000000000004',
-      stop_type: 'water',
+      stop_type: 'dump_station',
       name: 'Fuente Carrionas',
       distance_from_start_km: 145,
     };
@@ -231,7 +231,7 @@ describe('StopsSection (refactored)', () => {
       />
     );
     expect(screen.getByText('FUEL')).toBeInTheDocument();
-    expect(screen.getByText('WATER FILL')).toBeInTheDocument();
+    expect(screen.getByText('DUMP STATION')).toBeInTheDocument();
   });
 
   it('stop cards link to Google Maps', () => {

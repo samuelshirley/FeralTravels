@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
-import { listTripsForUser } from '@/server/repos/trips';
+import { listTripsForUser, createTrip } from '@/server/repos/trips';
+import { getDefaultVehicleId, getVehicleForUser } from '@/server/repos/vehicles';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { getUnitsPref } from '@/server/repos/users';
 import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import AppNavbar from '@/components/AppNavbar';
@@ -25,6 +27,25 @@ export default async function TripsPage() {
   ]);
 
   const myTrips = allTrips.filter((t) => t.user_id === userId);
+
+  // First-time user: auto-create an untitled trip and send them straight to
+  // the workspace where Penny's intro message is waiting. Penny will ask for
+  // a trip name as her first follow-up.
+  if (myTrips.length === 0) {
+    let vehicleId: string | null = await getDefaultVehicleId(userId);
+    if (vehicleId) {
+      const v = await getVehicleForUser(userId, vehicleId);
+      if (!v || !vehicleMeetsFuelPlanningMinimum(v as Record<string, unknown>)) {
+        vehicleId = null;
+      }
+    }
+    const trip = await createTrip({
+      userId,
+      name: 'Untitled Trip',
+      vehicleId,
+    });
+    redirect(`/trips/${trip.id}`);
+  }
 
   // If user has vehicles with missing required fields, redirect them to their
   // most recent trip where the ChatPanel remediation form will collect the data.

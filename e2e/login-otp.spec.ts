@@ -40,9 +40,8 @@ test.describe('Email OTP login', () => {
       maxDriveHoursPerDay: 8,
       maxDriveHoursPerWeek: 40,
       maxConsecutiveDriveDays: 5,
-      waterTrackingEnabled: false,
-      waterRefillDays: null,
-      blackwaterRefillDays: null,
+      dumpStationTrackingEnabled: false,
+      dumpStationIntervalDays: null,
     };
 
     if (existing.length) {
@@ -60,6 +59,23 @@ test.describe('Email OTP login', () => {
       .update(schema.users)
       .set({ needsVehicleProfileRemediation: false })
       .where(eq(schema.users.id, user.id));
+
+    // Ensure the user has at least one trip so /trips renders the list page
+    // instead of auto-creating an "Untitled Trip" and redirecting to it.
+    const existingTrips = await db
+      .select({ id: schema.trips.id })
+      .from(schema.trips)
+      .where(eq(schema.trips.userId, user.id))
+      .limit(1);
+
+    if (!existingTrips.length) {
+      await db.insert(schema.trips).values({
+        userId: user.id,
+        name: 'OTP E2E Trip',
+        status: 'planning',
+        onboardingState: 'done',
+      });
+    }
   });
 
   test('round-trip: send code → verify with DB-backed code → land on /trips', async ({

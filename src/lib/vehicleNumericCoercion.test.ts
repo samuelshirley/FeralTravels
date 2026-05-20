@@ -46,9 +46,8 @@ describe('vehicle completeness after coercion helpers', () => {
       max_drive_hours_per_day: 6,
       max_drive_hours_per_week: 30,
       max_consecutive_drive_days: 3,
-      water_tracking_enabled: false,
-      water_refill_days: null,
-      blackwater_refill_days: null,
+      dump_station_tracking_enabled: false,
+      dump_station_interval_days: null,
     } as unknown as Record<string, unknown>;
     expect(vehicleIsCompleteForRemediation(row)).toBe(false);
   });
@@ -60,9 +59,8 @@ describe('vehicle completeness after coercion helpers', () => {
       max_drive_hours_per_day: coerceOptionalFiniteNumber('6'),
       max_drive_hours_per_week: coerceOptionalFiniteNumber('30'),
       max_consecutive_drive_days: coerceOptionalInt('3'),
-      water_tracking_enabled: false,
-      water_refill_days: null,
-      blackwater_refill_days: null,
+      dump_station_tracking_enabled: false,
+      dump_station_interval_days: null,
     };
     expect(vehicleIsCompleteForRemediation(row)).toBe(true);
   });

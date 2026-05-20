@@ -61,10 +61,8 @@ function rawValueForField(key: string, row: AdminVehicleRow): unknown {
       return row.maxDriveHoursPerWeek;
     case 'max_consecutive_drive_days':
       return row.maxConsecutiveDriveDays;
-    case 'water_refill_days':
-      return row.waterRefillDays;
-    case 'blackwater_refill_days':
-      return row.blackwaterRefillDays;
+    case 'dump_station_interval_days':
+      return row.dumpStationIntervalDays;
     default:
       return null;
   }

@@ -1,10 +1,12 @@
 export type OnboardingState =
   | 'not_started'
+  | 'trip_intent'
+  | 'trip_name'
   | 'units_pick'
-  | 'vehicle_pick'
+  | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
   | 'vehicle_new'
-  | 'preferences'
-  | 'ready'
+  | 'preferences'    // legacy only
+  | 'ready'          // legacy only
   | 'done';
 
 export interface Trip {
@@ -189,7 +191,7 @@ export interface RouteWithLinks extends Route {
   links: RouteLink[];
 }
 
-export type StopType = 'fuel' | 'water' | 'food' | 'overnight' | 'rest' | 'other';
+export type StopType = 'fuel' | 'dump_station' | 'food' | 'overnight' | 'rest' | 'other';
 export type StopStatus = 'option' | 'selected' | 'dismissed';
 export type StopSource =
   | 'penny'

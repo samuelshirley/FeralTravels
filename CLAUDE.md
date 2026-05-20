@@ -2,6 +2,10 @@
 
 > **For AI assistants:** Use this file as your map — it tells you where everything is so you don't need to scan the whole codebase to orient yourself. Read specific files to verify details when a task requires it, but start here first.
 
+## Vision
+
+Personal automated travel agent for overlanders. The user tells Penny where they want to go and what they need along the way (fuel, water, groceries, rest stops) — Penny does all the legwork: builds the route, finds stops, plans fuel, and keeps the itinerary updated as things change. The user just drives and enjoys. Think of it as a copilot that actually knows how to read a map and plan logistics for a self-sufficient road trip.
+
 ## What this is
 
 Overland trip planner. Next.js 14 app with an AI chat assistant ("Penny") that helps users plan multi-leg road trips with stops, routes, fuel planning, and GPX import. Deployed on Vercel, backed by Neon Postgres.
@@ -66,7 +70,7 @@ src/
       geo.ts          # Geo utilities for Penny
       split-route.ts  # Route splitting logic
       routingAvoidMerge.ts  # Avoid-highway merge logic
-      tools/          # 17 Penny tools (see Penny Tools below)
+      tools/          # 18 Penny tools (see Penny Tools below)
   server/
     db/
       schema.ts       # All tables (see Schema below)
@@ -95,7 +99,7 @@ api/trips                 api/trips/[id]          api/trips/[id]/clone
 api/trips/[id]/onboarding api/trips/[id]/fuel-stops/replan
 api/trip                  api/trip/replan
 api/stops                 api/stops/[id]          api/stops/[id]/select
-api/stops/[id]/swap-primary
+api/stops/[id]/swap-primary                        api/stops/[id]/find-alternative
 api/routes                api/routes/[id]         api/routes/[id]/select
 api/routes/[id]/links
 api/legs/[id]/fuel-stops
@@ -121,7 +125,7 @@ trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, rem
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
-addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, checkTripFeasibility, planFuelStops, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
+addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, renameTrip, checkTripFeasibility, planFuelStops, planDumpStationStops, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
 
 ### Scripts (`scripts/`)
 

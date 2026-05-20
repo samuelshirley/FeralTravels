@@ -142,9 +142,8 @@ async function seedPrimaryPlannerPersona(db: ReturnType<typeof getDb>) {
       maxDriveHoursPerDay: 6,
       maxDriveHoursPerWeek: 30,
       maxConsecutiveDriveDays: 5,
-      waterRefillDays: 3,
-      blackwaterRefillDays: 5,
-      waterTrackingEnabled: true,
+      dumpStationIntervalDays: 3,
+      dumpStationTrackingEnabled: true,
     })
     .returning();
   console.log(`[seed-e2e] Created fixture vehicle ${vehicleRow.id}`);
@@ -238,9 +237,8 @@ async function seedRemediationPersona(db: ReturnType<typeof getDb>) {
       maxDriveHoursPerDay: null,
       maxDriveHoursPerWeek: null,
       maxConsecutiveDriveDays: null,
-      waterRefillDays: null,
-      blackwaterRefillDays: null,
-      waterTrackingEnabled: null,
+      dumpStationIntervalDays: null,
+      dumpStationTrackingEnabled: null,
     })
     .returning();
   console.log(`[seed-e2e] Created remediation vehicle ${vehicleRow.id} (incomplete profile)`);

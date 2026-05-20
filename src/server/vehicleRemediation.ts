@@ -3,8 +3,8 @@ import { HttpError } from '@/server/auth/guards';
 import type { Question } from '@/server/onboarding';
 import {
   buildVehicleProfileQuestions,
-  caravanWaterGateLabel,
-  CARAVAN_WATER_GATE_KEY,
+  caravanDumpStationGateLabel,
+  CARAVAN_DUMP_STATION_GATE_KEY,
   coerceVehicleProfileValue,
   deriveMaxDriveHoursPerWeek,
   vehicleIsCompleteForRemediation,
@@ -30,7 +30,7 @@ type ProfileStep = { t: 'profile'; q: VehicleProfileQuestion } | { t: 'gate' };
 
 function buildRemediationSteps(units: UnitsPref): ProfileStep[] {
   const qs = buildVehicleProfileQuestions(units);
-  const wi = qs.findIndex((q) => q.group === 'water');
+  const wi = qs.findIndex((q) => q.group === 'dump_station');
   if (wi < 0) return qs.map((q) => ({ t: 'profile' as const, q }));
   return [
     ...qs.slice(0, wi).map((q) => ({ t: 'profile' as const, q })),
@@ -39,18 +39,18 @@ function buildRemediationSteps(units: UnitsPref): ProfileStep[] {
   ];
 }
 
-function waterGateResolvedDb(vehicle: VehicleApi): boolean {
-  const wt = vehicle.water_tracking_enabled;
+function dumpStationGateResolvedDb(vehicle: VehicleApi): boolean {
+  const wt = vehicle.dump_station_tracking_enabled;
   return wt === true || wt === false;
 }
 
 function remediationProfileQuestionRequired(q: VehicleProfileQuestion, vehicle: VehicleApi): boolean {
   if (!q.optional) return true;
-  return q.group === 'water' && vehicle.water_tracking_enabled === true;
+  return q.group === 'dump_station' && vehicle.dump_station_tracking_enabled === true;
 }
 
 function remediationProfileNeedsAsking(q: VehicleProfileQuestion, vehicle: VehicleApi): boolean {
-  if (q.group === 'water' && vehicle.water_tracking_enabled === false) return false;
+  if (q.group === 'dump_station' && vehicle.dump_station_tracking_enabled === false) return false;
   const required = remediationProfileQuestionRequired(q, vehicle);
   if (!required) return false;
   const raw = (vehicle as unknown as Record<string, unknown>)[q.key];
@@ -61,22 +61,22 @@ function nextRemediationQuestionInner(
   vehicle: VehicleApi,
   unitsPref: UnitsPref
 ): { question: Question; progress: { current: number; total: number } } | null {
-  const gateLabel = caravanWaterGateLabel();
+  const gateLabel = caravanDumpStationGateLabel();
   const steps = buildRemediationSteps(unitsPref);
   const total = steps.length;
 
   for (let s = 0; s < steps.length; s++) {
     const step = steps[s];
     if (step.t === 'gate') {
-      if (!waterGateResolvedDb(vehicle)) {
+      if (!dumpStationGateResolvedDb(vehicle)) {
         return {
           question: {
-            key: CARAVAN_WATER_GATE_KEY,
+            key: CARAVAN_DUMP_STATION_GATE_KEY,
             kind: 'select',
             label: gateLabel,
-            help: 'If not, we will skip freshwater and waste timing questions.',
+            help: 'If not, we will skip dump station timing questions.',
             options: [
-              { value: 'yes', label: 'Yes, track water and dump timing' },
+              { value: 'yes', label: 'Yes, track dump station visits' },
               { value: 'no', label: 'No' },
             ],
           },
@@ -89,7 +89,7 @@ function nextRemediationQuestionInner(
     if (remediationProfileNeedsAsking(q, vehicle)) {
       const question: Question = {
         ...(q as Question),
-        optional: q.optional && !(q.group === 'water' && vehicle.water_tracking_enabled === true),
+        optional: q.optional && !(q.group === 'dump_station' && vehicle.dump_station_tracking_enabled === true),
       };
       return {
         question,
@@ -232,12 +232,12 @@ export async function submitVehicleRemediationAnswer(
     throw new HttpError(409, 'This step is stale — reload the snapshot.');
   }
 
-  if (questionKey === CARAVAN_WATER_GATE_KEY) {
+  if (questionKey === CARAVAN_DUMP_STATION_GATE_KEY) {
     const raw = typeof value === 'string' ? value : '';
     if (raw !== 'yes' && raw !== 'no') throw new HttpError(400, 'Pick yes or no.');
     await updateVehicle(userId, vehicle.id, {
-      water_tracking_enabled: raw === 'yes',
-      ...(raw === 'no' ? { water_refill_days: null, blackwater_refill_days: null } : {}),
+      dump_station_tracking_enabled: raw === 'yes',
+      ...(raw === 'no' ? { dump_station_interval_days: null } : {}),
     });
   } else {
     const questions = buildVehicleProfileQuestions(unitsPref);
@@ -262,10 +262,8 @@ export async function submitVehicleRemediationAnswer(
       patch.max_drive_hours_per_day = parsed as number | null;
     } else if (question.key === 'max_consecutive_drive_days') {
       patch.max_consecutive_drive_days = parsed as number | null;
-    } else if (question.key === 'water_refill_days') {
-      patch.water_refill_days = parsed as number | null;
-    } else if (question.key === 'blackwater_refill_days') {
-      patch.blackwater_refill_days = parsed as number | null;
+    } else if (question.key === 'dump_station_interval_days') {
+      patch.dump_station_interval_days = parsed as number | null;
     }
     const nextDay = patch.max_drive_hours_per_day ?? vehicle.max_drive_hours_per_day;
     const nextConsec = patch.max_consecutive_drive_days ?? vehicle.max_consecutive_drive_days;

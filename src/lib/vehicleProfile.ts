@@ -59,8 +59,8 @@ export function vehicleMeetsCompletenessTier(
 /** Plan / docs name — same as {@link vehicleMeetsCompletenessTier}. */
 export const isVehicleCompleteForTier = vehicleMeetsCompletenessTier;
 
-/** Water cadence integers when tracking is enabled (matches question max default). */
-export function vehicleWaterCadenceIntegerValid(n: unknown, max = 60): boolean {
+/** Dump station interval integers when tracking is enabled (matches question max default). */
+export function dumpStationCadenceIntegerValid(n: unknown, max = 60): boolean {
   return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= max;
 }
 
@@ -79,17 +79,14 @@ export function deriveMaxDriveHoursPerWeek(
 
 /**
  * Full profile completeness for remediation nag + PATCH validation — strict driving,
- * caravan gate persisted, water cadence iff water_tracking_enabled is true.
+ * caravan gate persisted, dump station cadence iff dump_station_tracking_enabled is true.
  */
 export function vehicleIsCompleteForRemediation(vehicle: Record<string, unknown>): boolean {
   if (!vehicleMeetsCompletenessTier(vehicle, 'strict_driving')) return false;
-  const wt = vehicle.water_tracking_enabled;
+  const wt = vehicle.dump_station_tracking_enabled;
   if (wt !== true && wt !== false) return false;
   if (wt === false) return true;
-  return (
-    vehicleWaterCadenceIntegerValid(vehicle.water_refill_days) &&
-    vehicleWaterCadenceIntegerValid(vehicle.blackwater_refill_days)
-  );
+  return dumpStationCadenceIntegerValid(vehicle.dump_station_interval_days);
 }
 
 /**
@@ -130,9 +127,8 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
       if (q.max !== undefined && raw > q.max) return true;
       return false;
     }
-    case 'water_refill_days':
-    case 'blackwater_refill_days':
-      return !vehicleWaterCadenceIntegerValid(raw);
+    case 'dump_station_interval_days':
+      return !dumpStationCadenceIntegerValid(raw);
   }
 }
 export const VEHICLE_PROFILE_KEYS = [
@@ -142,15 +138,14 @@ export const VEHICLE_PROFILE_KEYS = [
   'max_drive_hours_per_week',
   'max_consecutive_drive_days',
   'rest_days_after_driving',
-  'water_refill_days',
-  'blackwater_refill_days',
+  'dump_station_interval_days',
 ] as const;
 
 export type VehicleProfileFieldKey = (typeof VEHICLE_PROFILE_KEYS)[number];
 
 export type VehicleProfileQuestionKind = 'text' | 'number' | 'integer';
 
-export type VehicleProfileFieldGroup = 'identity' | 'driving' | 'water';
+export type VehicleProfileFieldGroup = 'identity' | 'driving' | 'dump_station';
 
 export interface VehicleProfileQuestion {
   key: VehicleProfileFieldKey;
@@ -228,20 +223,11 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       optional: true,
     },
     {
-      key: 'water_refill_days',
+      key: 'dump_station_interval_days',
       kind: 'integer',
-      group: 'water',
-      label: 'How many days between freshwater refills?',
+      group: 'dump_station',
+      label: 'How many days between dump station visits?',
       placeholder: '4',
-      min: 1,
-      max: 30,
-    },
-    {
-      key: 'blackwater_refill_days',
-      kind: 'integer',
-      group: 'water',
-      label: 'How many days between black/grey water dumps?',
-      placeholder: '5',
       min: 1,
       max: 30,
     },
@@ -250,16 +236,15 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
 
 export const VEHICLE_PROFILE_QUESTION_COUNT = VEHICLE_PROFILE_KEYS.length;
 
-/** Caravan / RV gate — inserted in onboarding before water questions. */
-export const CARAVAN_WATER_GATE_KEY = 'caravan_water_tracking';
+/** Caravan / RV gate — inserted in onboarding before dump station questions. */
+export const CARAVAN_DUMP_STATION_GATE_KEY = 'caravan_dump_station_tracking';
 
-export function caravanWaterGateLabel(): string {
-  return 'Is this a caravan, camper, or motorhome where you want to track freshwater refill and grey/black water dump timing?';
+export function caravanDumpStationGateLabel(): string {
+  return 'Is this a caravan, camper, or motorhome where you want to track dump station visits?';
 }
 
 const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {
-  water_refill_days: ' days',
-  blackwater_refill_days: ' days',
+  dump_station_interval_days: ' days',
   max_drive_hours_per_day: ' h/day',
   max_drive_hours_per_week: ' h/week',
   max_consecutive_drive_days: ' days',
@@ -343,16 +328,16 @@ export function vehicleProfileFieldHasValue(
 }
 
 /**
- * Profile completion counts — water rows apply only when `water_tracking_enabled === true`.
+ * Profile completion counts — dump station rows apply only when `dump_station_tracking_enabled === true`.
  */
 export function vehicleProfileRequiredCompletion(vehicle: Record<string, unknown>): {
   filled: number;
   total: number;
 } {
   const questions = buildVehicleProfileQuestions('metric');
-  const wt = vehicle.water_tracking_enabled;
+  const wt = vehicle.dump_station_tracking_enabled;
   const applicable = questions.filter((q) => {
-    if (q.group === 'water') return wt === true;
+    if (q.group === 'dump_station') return wt === true;
     return true;
   });
   const filled = applicable.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
@@ -367,14 +352,14 @@ export function vehicleProfileQuestionAllowsNull(
   vehicle: Record<string, unknown>
 ): boolean {
   if (q.optional === true) return true;
-  if (q.group === 'water' && vehicle.water_tracking_enabled !== true) return true;
+  if (q.group === 'dump_station' && vehicle.dump_station_tracking_enabled !== true) return true;
   return false;
 }
 
 const GROUP_TITLES: Record<VehicleProfileFieldGroup, string> = {
   identity: 'Identity',
   driving: 'Driving limits',
-  water: 'Water',
+  dump_station: 'Dump station',
 };
 
 export function vehicleProfileGroupTitle(group: VehicleProfileFieldGroup): string {
@@ -388,10 +373,9 @@ export interface VehicleProfileDraftInput {
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
   rest_days_after_driving: number | null;
-  water_refill_days: number | null;
-  blackwater_refill_days: number | null;
+  dump_station_interval_days: number | null;
   /** Required for Settings saves; caravan gate persisted on vehicles. */
-  water_tracking_enabled?: boolean | null;
+  dump_station_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
@@ -405,24 +389,23 @@ export function validateVehicleProfileDraftForSave(
 ): { ok: true; payload: Record<string, unknown> } | { ok: false; error: string } {
   const questions = buildVehicleProfileQuestions(units);
   const payload: Record<string, unknown> = {};
-  const wt = draft.water_tracking_enabled;
+  const wt = draft.dump_station_tracking_enabled;
 
   if (wt !== true && wt !== false) {
-    return { ok: false, error: 'Choose whether to track freshwater and dump timing.' };
+    return { ok: false, error: 'Choose whether to track dump station visits.' };
   }
 
-  payload.water_tracking_enabled = wt;
+  payload.dump_station_tracking_enabled = wt;
   if (wt === false) {
-    payload.water_refill_days = null;
-    payload.blackwater_refill_days = null;
+    payload.dump_station_interval_days = null;
   }
 
   for (const q of questions) {
     try {
-      if (q.group === 'water' && wt === false) continue;
+      if (q.group === 'dump_station' && wt === false) continue;
 
       const qCoerce =
-        q.group === 'water' && wt === true ? ({ ...q, optional: false } as VehicleProfileQuestion) : q;
+        q.group === 'dump_station' && wt === true ? ({ ...q, optional: false } as VehicleProfileQuestion) : q;
 
       let raw: unknown;
       if (q.key === 'name') {

@@ -26,24 +26,17 @@ const createSchema = z
       .int()
       .positive()
       .max(MAX_CONSECUTIVE_DRIVE_DAYS_CAP),
-    water_tracking_enabled: z.boolean(),
-    water_refill_days: z.number().int().positive().max(60).nullish(),
-    blackwater_refill_days: z.number().int().positive().max(60).nullish(),
+    dump_station_tracking_enabled: z.boolean(),
+    dump_station_interval_days: z.number().int().positive().max(60).nullish(),
     is_default: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.water_tracking_enabled) {
-      if (data.water_refill_days == null) {
+    if (data.dump_station_tracking_enabled) {
+      if (data.dump_station_interval_days == null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            'When tracking water, set water_refill_days (days between freshwater refills).',
-        });
-      }
-      if (data.blackwater_refill_days == null) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'When tracking water, set blackwater_refill_days (days between dumps).',
+            'When tracking dump stations, set dump_station_interval_days (days between visits).',
         });
       }
     }
@@ -70,9 +63,8 @@ export async function POST(req: Request) {
       max_drive_hours_per_day: body.max_drive_hours_per_day,
       max_drive_hours_per_week: body.max_drive_hours_per_week,
       max_consecutive_drive_days: body.max_consecutive_drive_days,
-      water_tracking_enabled: body.water_tracking_enabled,
-      water_refill_days: body.water_refill_days ?? null,
-      blackwater_refill_days: body.blackwater_refill_days ?? null,
+      dump_station_tracking_enabled: body.dump_station_tracking_enabled,
+      dump_station_interval_days: body.dump_station_interval_days ?? null,
     };
 
     if (!vehicleIsCompleteForRemediation(mergedRecord)) {
@@ -85,9 +77,8 @@ export async function POST(req: Request) {
       max_drive_hours_per_day: body.max_drive_hours_per_day,
       max_drive_hours_per_week: body.max_drive_hours_per_week,
       max_consecutive_drive_days: body.max_consecutive_drive_days,
-      water_tracking_enabled: body.water_tracking_enabled,
-      water_refill_days: body.water_refill_days ?? null,
-      blackwater_refill_days: body.blackwater_refill_days ?? null,
+      dump_station_tracking_enabled: body.dump_station_tracking_enabled,
+      dump_station_interval_days: body.dump_station_interval_days ?? null,
       is_default: body.is_default,
     });
     return Response.json(vehicle);

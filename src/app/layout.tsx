@@ -179,6 +179,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             .mobile-wrap { flex-wrap: wrap; }
           }
 
+          /* ---- Spinner rotation ---- */
+          @keyframes tp-spin {
+            to { transform: rotate(360deg); }
+          }
+
           /* ---- Animated loading dots ---- */
           @keyframes tp-dot-pulse {
             0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }

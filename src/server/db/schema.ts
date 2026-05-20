@@ -139,10 +139,9 @@ export const vehicles = pgTable(
     maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
     /** How many rest (non-driving) days the user needs after a driving streak. */
     restDaysAfterDriving: integer('rest_days_after_driving'),
-    waterRefillDays: integer('water_refill_days'),
-    blackwaterRefillDays: integer('blackwater_refill_days'),
-    /** Null = not answered; false = ignore water fields; true = both integers required. */
-    waterTrackingEnabled: boolean('water_tracking_enabled'),
+    dumpStationIntervalDays: integer('dump_station_interval_days'),
+    /** Null = not answered; false = no dump station tracking; true = interval required. */
+    dumpStationTrackingEnabled: boolean('dump_station_tracking_enabled'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -168,6 +167,8 @@ export const trips = pgTable(
     isTemplate: boolean('is_template').default(false).notNull(),
     /** Static onboarding pipeline before live Penny chat (`server/onboarding.ts`). */
     onboardingState: text('onboarding_state').default('not_started').notNull(),
+    /** Stores the user's trip description during onboarding, before the LLM is called. Cleared after handoff. */
+    pendingIntent: text('pending_intent'),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),

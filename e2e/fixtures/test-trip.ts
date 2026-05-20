@@ -64,8 +64,9 @@ export async function createBlankPlanningTrip(label: string): Promise<{
 
 /**
  * Trip that has not run onboarding yet (`not_started`). The first GET to
- * `/api/trips/:id/onboarding` bumps the row to `units_pick` and shows the
- * metric/imperial step — use this to exercise the wizard without Anthropic.
+ * `/api/trips/:id/onboarding` bumps the row to `trip_intent` and shows
+ * Penny's greeting — the wizard then walks through trip_intent → trip_name
+ * → units_pick → vehicle setup. No Anthropic calls needed.
  */
 export async function createOnboardingTrip(label: string): Promise<{
   tripId: string;
@@ -139,9 +140,8 @@ export async function createVehicleNewProfileTrip(label: string): Promise<{
       maxDriveHoursPerDay: null,
       maxDriveHoursPerWeek: null,
       maxConsecutiveDriveDays: null,
-      waterRefillDays: null,
-      blackwaterRefillDays: null,
-      waterTrackingEnabled: null,
+      dumpStationIntervalDays: null,
+      dumpStationTrackingEnabled: null,
     })
     .returning({ id: schema.vehicles.id });
 

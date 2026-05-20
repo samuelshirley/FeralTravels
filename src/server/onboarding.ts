@@ -14,14 +14,14 @@ import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/user
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
+import { assertTripNameAvailable } from '@/server/repos/trips';
 import {
   buildVehicleProfileQuestions,
-  caravanWaterGateLabel,
-  CARAVAN_WATER_GATE_KEY,
+  caravanDumpStationGateLabel,
+  CARAVAN_DUMP_STATION_GATE_KEY,
   coerceVehicleProfileValue,
   deriveMaxDriveHoursPerWeek,
   humanizeVehicleProfileAnswer,
-  vehicleMeetsFuelPlanningMinimum,
   vehicleProfileQuestionAllowsNull,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
@@ -30,12 +30,16 @@ import {
 // Onboarding is a deterministic form-in-chat that gathers everything Penny
 // needs BEFORE the first real Anthropic call. Flow:
 //
-//   not_started  → units_pick (if units_pref NULL) | else vehicle_pick | vehicle_new
-//   units_pick   → metric/imperial persisted → vehicle_pick | vehicle_new
-//   vehicle_pick → existing & complete → ready | incomplete → vehicle_new
-//                  "new" → vehicle_new
-//   vehicle_new  → profile questions + caravan gate → ready
-//   ready        → handoff → done → Penny
+//   not_started  → trip_intent (Penny greeting + "where do you want to go?")
+//   trip_intent  → trip_name ("what would you like to name this trip?")
+//   trip_name    → units_pick (if units_pref NULL) | else vehicle_new
+//   units_pick   → metric/imperial persisted → vehicle_new
+//   vehicle_new  → profile questions + caravan gate → done (handoff)
+//
+// New users never have existing vehicles, so there is no vehicle_pick step.
+// When the final question is answered, onboarding transitions to 'done' and
+// the stored pending_intent (from trip_intent) is returned so the client can
+// fire the LLM with it.
 // ---------------------------------------------------------------------------
 
 export type QuestionKind =
@@ -43,7 +47,6 @@ export type QuestionKind =
   | 'number'
   | 'integer'
   | 'select'
-  | 'vehicle_pick'
   | 'handoff';
 
 export interface SelectOption {
@@ -65,13 +68,27 @@ export interface Question {
   multiline?: boolean;
 }
 
-export const HANDOFF_QUESTION: Question = {
-  key: 'handoff',
+// ---------------------------------------------------------------------------
+// Onboarding questions
+// ---------------------------------------------------------------------------
+
+export const TRIP_INTENT_QUESTION: Question = {
+  key: 'trip_intent',
   kind: 'handoff',
-  label: "Where do you want to go? Tell me like you would a friend.",
-  placeholder: 'e.g. Spain → Portugal over three weeks, leaving mid-June, chasing beaches and tapas',
+  label: "Hi, I'm Penny — your personal travel assistant.\n\nTell me where you want to go. Is there anything cool along the way you want or need to stop at? I'll go do all the legwork so all you have to do is drive and enjoy.\n\nI can also update anything on the itinerary anytime. If you need a gas stop sooner just let me know and I'll find one for you along the route.\n\nExample: \"I wanna do a roadtrip from where I live in Girona Spain to the Gorafe desert, I will need groceries along the way, and I need to fill up my water tank\"",
+  placeholder: "e.g. I wanna do a roadtrip from where I live in Girona Spain to the Gorafe desert, I will need groceries along the way, and I need to fill up my water tank",
   multiline: true,
 };
+
+const TRIP_NAME_QUESTION: Question = {
+  key: 'trip_name',
+  kind: 'text',
+  label: 'What would you like to name this trip?',
+  placeholder: 'e.g. Spain Desert Run, Nordic Adventure',
+};
+
+/** @deprecated Kept for backwards compatibility with old onboarding states. */
+export const HANDOFF_QUESTION = TRIP_INTENT_QUESTION;
 
 const UNITS_PREF_KEY = 'units_pref';
 
@@ -81,7 +98,7 @@ export interface OnboardingSnapshot {
   state: OnboardingState;
   /** Next question to ask, or null if onboarding is done. */
   question: Question | null;
-  /** For 'vehicle_pick', the candidate vehicles. */
+  /** @deprecated Legacy field — vehicle_pick no longer part of onboarding. Always empty. */
   vehicles: Array<{ id: string; name: string; is_default: boolean }>;
   /** Progress counter — "3 of 8" style. */
   progress: { current: number; total: number } | null;
@@ -91,7 +108,7 @@ type OnboardingStep = { t: 'profile'; q: VehicleProfileQuestion } | { t: 'gate' 
 
 function buildOnboardingSteps(units: UnitsPref): OnboardingStep[] {
   const qs = buildVehicleProfileQuestions(units);
-  const wi = qs.findIndex((q) => q.group === 'water');
+  const wi = qs.findIndex((q) => q.group === 'dump_station');
   if (wi < 0) return qs.map((q) => ({ t: 'profile' as const, q }));
   return [
     ...qs.slice(0, wi).map((q) => ({ t: 'profile' as const, q })),
@@ -105,29 +122,28 @@ function vehicleHasProfileValue(vehicle: VehicleApi, key: string): boolean {
   return raw !== null && raw !== undefined && raw !== '';
 }
 
-function waterGroupHasAnyValue(vehicle: VehicleApi, questions: VehicleProfileQuestion[]): boolean {
-  return questions.filter((q) => q.group === 'water').some((q) => vehicleHasProfileValue(vehicle, q.key));
+function dumpStationGroupHasAnyValue(vehicle: VehicleApi, questions: VehicleProfileQuestion[]): boolean {
+  return questions.filter((q) => q.group === 'dump_station').some((q) => vehicleHasProfileValue(vehicle, q.key));
 }
 
-/** Caravan gate resolved via DB (`water_tracking_enabled`) or legacy onboarding chat / populated water rows. */
+/** Caravan gate resolved via DB (`dump_station_tracking_enabled`) or legacy onboarding chat / populated dump station rows. */
 function caravanGateResolved(
   vehicle: VehicleApi,
   askedLabels: Set<string>,
   questions: VehicleProfileQuestion[]
 ): boolean {
-  const wt = vehicle.water_tracking_enabled;
+  const wt = vehicle.dump_station_tracking_enabled;
   if (wt === true || wt === false) return true;
-  return askedLabels.has(caravanWaterGateLabel()) || waterGroupHasAnyValue(vehicle, questions);
+  return askedLabels.has(caravanDumpStationGateLabel()) || dumpStationGroupHasAnyValue(vehicle, questions);
 }
 
 /**
- * Trips can only pick among vehicles that already have refill distance set;
- * otherwise we force vehicle_new so fuel planning cannot attach to an empty row.
+ * Determine the next state after trip_name: units_pick (if not yet chosen),
+ * or straight to vehicle_new (new users always create a vehicle).
  */
-async function resolveStart(userId: string): Promise<OnboardingState> {
-  const vehicles = await listVehiclesForUser(userId);
-  const anyComplete = vehicles.some((v) => vehicleMeetsFuelPlanningMinimum(v as Record<string, unknown>));
-  return anyComplete ? 'vehicle_pick' : 'vehicle_new';
+async function resolvePostNameState(userId: string): Promise<OnboardingState> {
+  const unitsChosen = (await getRawUnitsPref(userId)) != null;
+  return unitsChosen ? 'vehicle_new' : 'units_pick';
 }
 
 /**
@@ -142,7 +158,7 @@ function nextVehicleOnboardingQuestion(
   const questions = buildVehicleProfileQuestions(unitsPref);
   const steps = buildOnboardingSteps(unitsPref);
   const total = steps.length;
-  const gateLabel = caravanWaterGateLabel();
+  const gateLabel = caravanDumpStationGateLabel();
 
   if (!vehicle) {
     const first = steps[0];
@@ -160,12 +176,12 @@ function nextVehicleOnboardingQuestion(
       if (!gateResolved) {
         return {
           question: {
-            key: CARAVAN_WATER_GATE_KEY,
+            key: CARAVAN_DUMP_STATION_GATE_KEY,
             kind: 'select',
             label: gateLabel,
-            help: 'If not, we will skip freshwater and waste timing questions.',
+            help: 'If not, we will skip dump station timing questions.',
             options: [
-              { value: 'yes', label: 'Yes, track water and dump timing' },
+              { value: 'yes', label: 'Yes, track dump station visits' },
               { value: 'no', label: 'No' },
             ],
           },
@@ -202,6 +218,32 @@ async function loadAskedLabels(tripId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.content));
 }
 
+/**
+ * Complete onboarding: set state to 'done', return the stored intent for
+ * the client to fire at the LLM.
+ */
+async function completeOnboarding(
+  tripId: string,
+): Promise<SubmitAnswerResult> {
+  const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
+  const pendingIntent = trip?.pendingIntent ?? '';
+  // Clear pendingIntent now that we're handing off
+  await db
+    .update(trips)
+    .set({ onboardingState: 'done', pendingIntent: null, updatedAt: new Date() })
+    .where(eq(trips.id, tripId));
+  return {
+    next: { state: 'done', question: null, vehicles: [], progress: null },
+    answerLabel: '',
+    didHandoff: true,
+    tripIntent: pendingIntent,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot: returns the current onboarding question for a trip
+// ---------------------------------------------------------------------------
+
 export async function getOnboardingSnapshot(
   tripId: string,
   userId: string
@@ -211,22 +253,31 @@ export async function getOnboardingSnapshot(
 
   let state = trip.onboardingState as OnboardingState;
 
+  // First visit — show Penny's greeting + trip intent question
   if (state === 'not_started') {
-    const unitsChosen = (await getRawUnitsPref(userId)) != null;
-    if (!unitsChosen) {
-      await db
-        .update(trips)
-        .set({ onboardingState: 'units_pick', updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      state = 'units_pick';
-    } else {
-      const nextState = await resolveStart(userId);
-      await db
-        .update(trips)
-        .set({ onboardingState: nextState, updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      state = nextState;
-    }
+    await db
+      .update(trips)
+      .set({ onboardingState: 'trip_intent', updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    state = 'trip_intent';
+  }
+
+  if (state === 'trip_intent') {
+    return {
+      state: 'trip_intent',
+      question: TRIP_INTENT_QUESTION,
+      vehicles: [],
+      progress: null,
+    };
+  }
+
+  if (state === 'trip_name') {
+    return {
+      state: 'trip_name',
+      question: TRIP_NAME_QUESTION,
+      vehicles: [],
+      progress: null,
+    };
   }
 
   if (state === 'units_pick') {
@@ -247,41 +298,13 @@ export async function getOnboardingSnapshot(
     };
   }
 
-  const vehicles = await listVehiclesForUser(userId);
-
   if (state === 'vehicle_pick') {
-    const pickable = vehicles.filter((v) => vehicleMeetsFuelPlanningMinimum(v as Record<string, unknown>));
-    if (pickable.length === 0) {
-      await db
-        .update(trips)
-        .set({ onboardingState: 'vehicle_new', vehicleId: null, updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      return getOnboardingSnapshot(tripId, userId);
-    }
-    // Auto-select when there's only one complete vehicle — skip the question
-    if (pickable.length === 1) {
-      const only = pickable[0];
-      await db
-        .update(trips)
-        .set({ vehicleId: only.id, onboardingState: 'ready', updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      await writeQA(tripId, 'Which vehicle are you taking on this trip?', `Using ${only.name}`);
-      return { state: 'ready' as OnboardingState, question: HANDOFF_QUESTION, vehicles: [], progress: null };
-    }
-    return {
-      state,
-      question: {
-        key: 'vehicle_pick',
-        kind: 'vehicle_pick',
-        label: 'Which vehicle are you taking on this trip?',
-      },
-      vehicles: pickable.map((v) => ({
-        id: v.id,
-        name: v.name,
-        is_default: v.is_default,
-      })),
-      progress: null,
-    };
+    // Legacy: vehicle_pick no longer exists in onboarding — redirect to vehicle_new
+    await db
+      .update(trips)
+      .set({ onboardingState: 'vehicle_new', updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    return getOnboardingSnapshot(tripId, userId);
   }
 
   if (state === 'vehicle_new') {
@@ -306,16 +329,12 @@ export async function getOnboardingSnapshot(
     const unitsPref = await getUnitsPref(userId);
     const next = nextVehicleOnboardingQuestion(currentVehicle, askedLabels, unitsPref);
     if (!next) {
+      // All vehicle questions answered — complete onboarding
       await db
         .update(trips)
-        .set({ onboardingState: 'ready', updatedAt: new Date() })
+        .set({ onboardingState: 'done', updatedAt: new Date() })
         .where(eq(trips.id, tripId));
-      return {
-        state: 'ready',
-        question: HANDOFF_QUESTION,
-        vehicles: [],
-        progress: null,
-      };
+      return { state: 'done', question: null, vehicles: [], progress: null };
     }
     return {
       state,
@@ -325,21 +344,37 @@ export async function getOnboardingSnapshot(
     };
   }
 
+  // Legacy states — map to the new flow
   if (state === 'ready') {
-    return { state, question: HANDOFF_QUESTION, vehicles: [], progress: null };
+    // Old state where HANDOFF was shown. Now equivalent to trip_intent if
+    // no pending_intent exists, or done if it does.
+    if (trip.pendingIntent) {
+      await db
+        .update(trips)
+        .set({ onboardingState: 'done', updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      return { state: 'done', question: null, vehicles: [], progress: null };
+    }
+    await db
+      .update(trips)
+      .set({ onboardingState: 'trip_intent', updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    return getOnboardingSnapshot(tripId, userId);
   }
 
   if (state === 'preferences') {
     await db
       .update(trips)
-      .set({ onboardingState: 'ready', updatedAt: new Date() })
+      .set({ onboardingState: 'trip_intent', updatedAt: new Date() })
       .where(eq(trips.id, tripId));
-    return { state: 'ready', question: HANDOFF_QUESTION, vehicles: [], progress: null };
+    return getOnboardingSnapshot(tripId, userId);
   }
 
   return { state: 'done', question: null, vehicles: [], progress: null };
 }
 
+// ---------------------------------------------------------------------------
+// Submit answer
 // ---------------------------------------------------------------------------
 
 export interface SubmitAnswerInput {
@@ -351,6 +386,8 @@ export interface SubmitAnswerResult {
   next: OnboardingSnapshot;
   answerLabel: string;
   didHandoff: boolean;
+  /** The stored trip intent to send to Penny when onboarding is done. */
+  tripIntent?: string;
 }
 
 export async function submitAnswer(
@@ -362,13 +399,55 @@ export async function submitAnswer(
   if (!trip || trip.userId !== userId) throw new Error('Trip not found');
   const state = trip.onboardingState as OnboardingState;
 
+  // ---- Trip intent (first question) ----
+  if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
+    const text = typeof input.value === 'string' ? input.value.trim() : '';
+    if (!text) throw new Error('Please describe your trip.');
+    // Store the intent on the trip for later handoff
+    await db
+      .update(trips)
+      .set({ pendingIntent: text, onboardingState: 'trip_name', updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
+    return {
+      next: await getOnboardingSnapshot(tripId, userId),
+      answerLabel: text,
+      didHandoff: false,
+    };
+  }
+
+  // ---- Trip name (second question) ----
+  if (state === 'trip_name' && input.questionKey === 'trip_name') {
+    const name = typeof input.value === 'string' ? input.value.trim() : '';
+    if (!name) throw new Error('Please name your trip.');
+    // Validate uniqueness and rename the trip
+    await assertTripNameAvailable(userId, name, tripId);
+    await db
+      .update(trips)
+      .set({ name, updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    // Determine next state: units if not chosen, else vehicle flow
+    const nextState = await resolvePostNameState(userId);
+    await db
+      .update(trips)
+      .set({ onboardingState: nextState, updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    await writeQA(tripId, TRIP_NAME_QUESTION.label, name);
+    return {
+      next: await getOnboardingSnapshot(tripId, userId),
+      answerLabel: name,
+      didHandoff: false,
+    };
+  }
+
+  // ---- Units preference ----
   if (state === 'units_pick' && input.questionKey === UNITS_PREF_KEY) {
     const raw = input.value;
     if (raw !== 'metric' && raw !== 'imperial') {
       throw new Error('Choose metric or imperial.');
     }
     await setUnitsPref(userId, raw);
-    const nextState = await resolveStart(userId);
+    const nextState: OnboardingState = 'vehicle_new';
     await db
       .update(trips)
       .set({ onboardingState: nextState, updatedAt: new Date() })
@@ -386,77 +465,37 @@ export async function submitAnswer(
     };
   }
 
-  if (state === 'vehicle_pick' && input.questionKey === 'vehicle_pick') {
-    if (input.value === 'new') {
-      await db
-        .update(trips)
-        .set({ onboardingState: 'vehicle_new', vehicleId: null, updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      await writeQA(tripId, 'Which vehicle are you taking on this trip?', 'Add a new vehicle');
-      return {
-        next: await getOnboardingSnapshot(tripId, userId),
-        answerLabel: 'Add a new vehicle',
-        didHandoff: false,
-      };
-    }
-    const vehicleId = String(input.value);
-    if (!vehicleId) throw new Error('Invalid vehicle id');
-    const chosen = await getVehicleForUser(userId, vehicleId);
-    if (!chosen) throw new Error('Vehicle not found');
-    const complete = vehicleMeetsFuelPlanningMinimum(chosen as Record<string, unknown>);
-    if (complete) {
-      await db
-        .update(trips)
-        .set({ vehicleId, onboardingState: 'ready', updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      await writeQA(
-        tripId,
-        'Which vehicle are you taking on this trip?',
-        `Using ${chosen.name}`
-      );
-    } else {
-      await db
-        .update(trips)
-        .set({ vehicleId, onboardingState: 'vehicle_new', updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      await writeQA(
-        tripId,
-        'Which vehicle are you taking on this trip?',
-        `${chosen.name} — complete its profile next`
-      );
-    }
-    return {
-      next: await getOnboardingSnapshot(tripId, userId),
-      answerLabel: complete ? `Using ${chosen.name}` : `${chosen.name} — finish setup`,
-      didHandoff: false,
-    };
-  }
-
+  // ---- Vehicle new / profile questions ----
   if (state === 'vehicle_new') {
     const unitsPref = await getUnitsPref(userId);
     const questions = buildVehicleProfileQuestions(unitsPref);
-    const gateLabel = caravanWaterGateLabel();
+    const gateLabel = caravanDumpStationGateLabel();
 
-    if (input.questionKey === CARAVAN_WATER_GATE_KEY) {
+    if (input.questionKey === CARAVAN_DUMP_STATION_GATE_KEY) {
       const raw = typeof input.value === 'string' ? input.value : '';
       if (raw !== 'yes' && raw !== 'no') throw new Error('Pick yes or no.');
       if (!trip.vehicleId) throw new Error('Vehicle not ready for caravan gate.');
       await updateVehicle(userId, trip.vehicleId, {
-        water_tracking_enabled: raw === 'yes',
-        ...(raw === 'no' ? { water_refill_days: null, blackwater_refill_days: null } : {}),
+        dump_station_tracking_enabled: raw === 'yes',
+        ...(raw === 'no' ? { dump_station_interval_days: null } : {}),
       });
       if (raw === 'no') {
-        const waterIdx = questions.findIndex((q) => q.group === 'water');
-        if (waterIdx >= 0) {
-          for (const wq of questions.slice(waterIdx)) {
+        const dsIdx = questions.findIndex((q) => q.group === 'dump_station');
+        if (dsIdx >= 0) {
+          for (const wq of questions.slice(dsIdx)) {
             await addChatMessage(tripId, 'assistant', wq.label, null, 'form_question');
             await addChatMessage(tripId, 'user', 'Not applicable', null, 'form_answer');
           }
         }
       }
       await writeQA(tripId, gateLabel, raw === 'yes' ? 'Yes' : 'No');
+      // Check if that was the last question
+      const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+      if (afterSnapshot.state === 'done') {
+        return completeOnboarding(tripId);
+      }
       return {
-        next: await getOnboardingSnapshot(tripId, userId),
+        next: afterSnapshot,
         answerLabel: raw === 'yes' ? 'Yes' : 'No',
         didHandoff: false,
       };
@@ -470,7 +509,7 @@ export async function submitAnswer(
       : null;
 
     const vehicleRecord = (vehicle ?? {
-      water_tracking_enabled: undefined,
+      dump_station_tracking_enabled: undefined,
     }) as unknown as Record<string, unknown>;
     if (
       !vehicleProfileQuestionAllowsNull(question, vehicleRecord) &&
@@ -519,6 +558,10 @@ export async function submitAnswer(
     await writeQA(tripId, question.label, answerLabel);
 
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+    // If all vehicle questions are done, complete onboarding and handoff
+    if (afterSnapshot.state === 'done') {
+      return completeOnboarding(tripId);
+    }
     return {
       next: afterSnapshot,
       answerLabel,
@@ -526,16 +569,11 @@ export async function submitAnswer(
     };
   }
 
+  // ---- Legacy: 'ready' state with 'handoff' key (old clients) ----
   if (state === 'ready' && input.questionKey === 'handoff') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
-    await addChatMessage(
-      tripId,
-      'assistant',
-      HANDOFF_QUESTION.label,
-      null,
-      'form_question'
-    );
+    await addChatMessage(tripId, 'assistant', TRIP_INTENT_QUESTION.label, null, 'form_question');
     await db
       .update(trips)
       .set({ onboardingState: 'done', updatedAt: new Date() })
@@ -544,6 +582,7 @@ export async function submitAnswer(
       next: { state: 'done', question: null, vehicles: [], progress: null },
       answerLabel: text,
       didHandoff: true,
+      tripIntent: text,
     };
   }
 
