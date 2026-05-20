@@ -188,6 +188,26 @@ export default function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, loading]);
 
+  // Listen for "Add to this day" button clicks from rest-day LegCards.
+  // Pre-fills the chat input with a contextual prompt for Penny.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        legId: string;
+        dayTitle: string;
+        location: string;
+        dates: string | null;
+      };
+      const locationStr = detail.location || 'this location';
+      const prompt = `I want to add plans for ${detail.dayTitle} in ${locationStr} — what should I do there?`;
+      setInput(prompt);
+      textareaRef.current?.focus();
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+    window.addEventListener('penny:prefill', handler);
+    return () => window.removeEventListener('penny:prefill', handler);
+  }, []);
+
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || messages.length === 0) return;
     // Optimistic messages have no `seq` (or seq=0). Walk from the front to

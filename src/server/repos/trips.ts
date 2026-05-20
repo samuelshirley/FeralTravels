@@ -58,6 +58,7 @@ function legRow(r: typeof legs.$inferSelect) {
     id: r.id,
     trip_id: r.tripId,
     sort_order: r.sortOrder,
+    leg_type: (r.legType as Leg['leg_type']) ?? 'drive',
     title: r.title,
     label: r.label,
     segment_index: r.segmentIndex,
@@ -453,6 +454,8 @@ export async function deleteTrip(tripId: string) {
 export async function addLeg(input: {
   tripId: string;
   title: string;
+  /** 'drive' (default) or 'rest' for non-driving stop days. */
+  legType?: string | null;
   label?: string | null;
   startName?: string | null;
   endName?: string | null;
@@ -493,6 +496,7 @@ export async function addLeg(input: {
     .values({
       tripId: input.tripId,
       sortOrder,
+      legType: input.legType ?? 'drive',
       title: input.title,
       label: input.label ?? null,
       startName: input.startName ?? null,

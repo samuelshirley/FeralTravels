@@ -171,6 +171,8 @@ export default function Itinerary({
   }
 
   const totalDist = legs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
+  const drivingDays = legs.filter((l) => (l.leg_type ?? 'drive') !== 'rest').length;
+  const restDays = legs.filter((l) => (l.leg_type ?? 'drive') === 'rest').length;
 
   return (
     <div>
@@ -212,13 +214,12 @@ export default function Itinerary({
                 />
               ),
             },
-            // When the trip is grouped, surface both granularities so the
-            // stat block matches the rendered structure (segments above,
-            // days inside). Otherwise just show the day count.
-            ...(shouldGroup
+            // Show total days, with driving/rest breakdown when rest days exist.
+            ...(restDays > 0
               ? [
-                  { label: 'LEGS', value: `${distinctSegments}` as React.ReactNode },
-                  { label: 'DAYS', value: `${legs.length}` as React.ReactNode },
+                  { label: 'TOTAL DAYS', value: `${legs.length}` as React.ReactNode },
+                  { label: 'DRIVING', value: `${drivingDays}` as React.ReactNode },
+                  { label: 'REST', value: `${restDays}` as React.ReactNode },
                 ]
               : [{ label: 'DAYS', value: `${legs.length}` as React.ReactNode }]),
             { label: 'STATUS', value: trip.status as React.ReactNode },

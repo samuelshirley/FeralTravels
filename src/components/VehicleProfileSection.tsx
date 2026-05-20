@@ -16,6 +16,7 @@ import {
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {
   max_drive_hours_per_day: 'vehicle-max-drive-day-input',
   max_consecutive_drive_days: 'vehicle-max-consecutive-input',
+  rest_days_after_driving: 'vehicle-rest-days-input',
   water_refill_days: 'vehicle-water-refill-input',
   blackwater_refill_days: 'vehicle-blackwater-input',
 };
@@ -33,6 +34,7 @@ export interface Vehicle {
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
+  rest_days_after_driving: number | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
   /** Caravan gate: null means not chosen in Settings yet. */
@@ -50,6 +52,7 @@ function emptyDraft(): Draft {
     max_drive_hours_per_day: null,
     max_drive_hours_per_week: null,
     max_consecutive_drive_days: null,
+    rest_days_after_driving: null,
     water_refill_days: null,
     blackwater_refill_days: null,
     water_tracking_enabled: null,
@@ -87,6 +90,7 @@ export default function VehicleProfileSection() {
           max_drive_hours_per_day: draft.max_drive_hours_per_day ?? null,
           max_drive_hours_per_week: draft.max_drive_hours_per_week ?? null,
           max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
+          rest_days_after_driving: draft.rest_days_after_driving ?? null,
           water_refill_days: draft.water_refill_days ?? null,
           blackwater_refill_days: draft.blackwater_refill_days ?? null,
           water_tracking_enabled: draft.water_tracking_enabled ?? null,

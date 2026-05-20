@@ -58,8 +58,17 @@ const baseSchema = z.object({
   destination: z.string().min(1).max(200),
 
   /**
-   * Stops the user explicitly named as required. Empty array is legal —
-   * a single A-to-B trip with no constraints is a valid intent.
+   * Nights the user plans to stay at the final destination. These are
+   * NOT counted against the transit budget — they happen after arrival.
+   * 0 or null when the user didn't specify a destination stay.
+   */
+  destination_nights: z.number().int().min(0).max(60).nullable().optional().default(null),
+
+  /**
+   * Stops the user explicitly named as required ALONG THE ROUTE (transit
+   * stops). Empty array is legal — a single A-to-B trip with no
+   * constraints is a valid intent. Do NOT include the final destination
+   * here — its nights go in destination_nights above.
    */
   mandatory_waypoints: z.array(waypointSchema).max(20),
 
@@ -67,6 +76,11 @@ const baseSchema = z.object({
    * Total trip length budget in days, parsed from the user's message
    * ("two weeks" → 14, "10 days" → 10). null when the user gave no
    * budget — Penny treats that as "flexible, plan minimum needed".
+   *
+   * IMPORTANT: This is the TRANSIT budget — the number of days the user
+   * has to ARRIVE at the destination. It does NOT include nights at the
+   * final destination. Parse "I need to be there by June 3" as the
+   * number of days from departure to arrival.
    *
    * Bounds: 1-365. A 0-day trip is meaningless; >365 days is almost
    * certainly a parse error or someone abusing the input.
@@ -105,10 +119,17 @@ export const tool: Anthropic.Tool = {
         type: 'string',
         description: 'Free-text destination place name (e.g. "Seattle, Washington").',
       },
+      destination_nights: {
+        type: ['integer', 'null'],
+        minimum: 0,
+        maximum: 60,
+        description:
+          'Nights the user plans to stay AT the final destination. These happen AFTER arrival and are NOT counted against the transit budget. Use null or 0 if the user didn\'t specify a destination stay. Example: "4 days in Bad Kissingen" → destination_nights: 4.',
+      },
       mandatory_waypoints: {
         type: 'array',
         description:
-          'Stops the user explicitly required, in the order they appear in the user message. Use [] if the user named none.',
+          'TRANSIT stops the user explicitly required along the route, in order. Do NOT include the final destination here — its nights go in destination_nights. Use [] if the user named no transit stops.',
         items: {
           type: 'object',
           required: ['name', 'nights'],

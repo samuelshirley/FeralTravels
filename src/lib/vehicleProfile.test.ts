@@ -38,11 +38,14 @@ describe('vehicleProfile bounds', () => {
       max_drive_hours_per_day: 6,
       max_drive_hours_per_week: 30,
       max_consecutive_drive_days: 3,
+      rest_days_after_driving: 1,
       water_tracking_enabled: false,
       water_refill_days: null,
       blackwater_refill_days: null,
     });
-    expect(comp.total).toBe(4);
-    expect(comp.filled).toBe(4);
+    // 5 driving fields: name, refill_distance_km, max_drive_hours_per_day,
+    // max_consecutive_drive_days, rest_days_after_driving (water excluded)
+    expect(comp.total).toBe(5);
+    expect(comp.filled).toBe(5);
   });
 });

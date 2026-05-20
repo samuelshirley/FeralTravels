@@ -54,6 +54,7 @@ export default function LegCard({
   fuelSyncTotalLegs,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
+  const isRestDay = leg.leg_type === 'rest';
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
@@ -141,16 +142,27 @@ export default function LegCard({
     }
   };
 
+  // Rest day accent color — softer green vs driving day blue
+  const restDayColor = '#6BA368';
+  const driveColor = leg.color || '#4E7AB0';
+  const dotColor = isRestDay ? restDayColor : driveColor;
+
   return (
     <div
       data-testid="leg-card"
       data-leg-id={leg.id}
+      data-leg-type={leg.leg_type ?? 'drive'}
       style={{
         marginBottom: 2,
-        background: expanded ? 'var(--tp-surface-muted)' : 'transparent',
+        background: expanded
+          ? isRestDay
+            ? 'rgba(107, 163, 104, 0.06)'
+            : 'var(--tp-surface-muted)'
+          : 'transparent',
         borderRadius: 8,
         overflow: 'hidden',
         transition: 'background 0.2s',
+        borderLeft: isRestDay ? `3px solid ${restDayColor}40` : 'none',
       }}
     >
       <div
@@ -168,10 +180,10 @@ export default function LegCard({
           style={{
             width: 10,
             height: 10,
-            borderRadius: '50%',
-            background: leg.color || '#4E7AB0',
+            borderRadius: isRestDay ? 3 : '50%',
+            background: dotColor,
             flexShrink: 0,
-            boxShadow: `0 0 8px ${leg.color || '#4E7AB0'}40`,
+            boxShadow: `0 0 8px ${dotColor}40`,
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -181,11 +193,10 @@ export default function LegCard({
                 fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.1em',
-                color: 'var(--tp-subtle)',
-                
+                color: isRestDay ? restDayColor : 'var(--tp-subtle)',
               }}
             >
-              {leg.label}
+              {isRestDay ? 'REST' : leg.label}
             </span>
             <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>{leg.title}</span>
           </div>
@@ -194,29 +205,32 @@ export default function LegCard({
               style={{
                 fontSize: 12,
                 color: 'var(--tp-muted)',
-                
               }}
             >
               {leg.dates}
             </span>
-            {leg.distance_km ? (
+            {!isRestDay && leg.distance_km ? (
               <Distance
                 km={leg.distance_km}
                 layout="inline"
                 style={{ fontSize: 12, color: 'var(--tp-subtle)' }}
               />
             ) : null}
-            {driveHours ? (
+            {!isRestDay && driveHours ? (
               <span
                 style={{
                   fontSize: 12,
                   color: 'var(--tp-subtle)',
-                  
                 }}
               >
                 {driveHours} hrs
               </span>
             ) : null}
+            {isRestDay && leg.end_name && (
+              <span style={{ fontSize: 12, color: restDayColor }}>
+                {leg.end_name}
+              </span>
+            )}
           </div>
         </div>
         <StatusBadge status={leg.status} />
@@ -232,7 +246,100 @@ export default function LegCard({
         </span>
       </div>
 
-      {expanded && (
+      {expanded && isRestDay && (
+        <div style={{ padding: '0 16px 16px 40px' }}>
+          {/* Location */}
+          <div style={{ display: 'flex', gap: 24, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: restDayColor,
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  marginBottom: 2,
+                }}
+              >
+                LOCATION
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--tp-muted)' }}>
+                {leg.end_name || leg.overnight || '—'}
+              </div>
+            </div>
+          </div>
+
+          {/* Notes */}
+          {leg.parsedNotes.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: restDayColor,
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  marginBottom: 6,
+                }}
+              >
+                PLANS & NOTES
+              </div>
+              {leg.parsedNotes.map((note: string, i: number) => (
+                <div
+                  key={i}
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--tp-muted)',
+                    lineHeight: 1.5,
+                    padding: '3px 0 3px 12px',
+                    borderLeft: `2px solid ${restDayColor}40`,
+                    marginBottom: 2,
+                  }}
+                >
+                  {note}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add to this day button — links to Penny chat */}
+          {!readonly && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                // Dispatch a custom event that ChatPanel listens for to
+                // pre-fill Penny's input with context about this rest day.
+                const detail = {
+                  legId: leg.id,
+                  dayTitle: leg.title,
+                  location: leg.end_name || leg.overnight || '',
+                  dates: leg.dates,
+                };
+                window.dispatchEvent(
+                  new CustomEvent('penny:prefill', { detail })
+                );
+              }}
+              style={{
+                marginTop: 14,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                color: restDayColor,
+                background: `${restDayColor}12`,
+                border: `1px solid ${restDayColor}30`,
+                padding: '7px 14px',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              + Add to this day
+            </button>
+          )}
+        </div>
+      )}
+
+      {expanded && !isRestDay && (
         <div style={{ padding: '0 16px 16px 40px' }}>
           <div style={{ display: 'flex', gap: 24, marginBottom: 10, flexWrap: 'wrap' }}>
             <div>
@@ -240,7 +347,6 @@ export default function LegCard({
                 style={{
                   fontSize: 10,
                   color: 'var(--tp-subtle)',
-                  
                   marginBottom: 2,
                 }}
               >
@@ -253,7 +359,6 @@ export default function LegCard({
                 style={{
                   fontSize: 10,
                   color: 'var(--tp-subtle)',
-                  
                   marginBottom: 2,
                 }}
               >

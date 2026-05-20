@@ -41,10 +41,14 @@ export interface GeoJSONLineString {
   coordinates: [number, number][]; // [lng, lat] pairs
 }
 
+export type LegType = 'drive' | 'rest';
+
 export interface Leg {
   id: string;
   trip_id: string;
   sort_order: number;
+  /** 'drive' for driving days, 'rest' for non-driving stop days. */
+  leg_type: LegType;
   title: string;
   label: string | null;
   // Two-level grouping. Each leg row is a *driving day* in user terms; these

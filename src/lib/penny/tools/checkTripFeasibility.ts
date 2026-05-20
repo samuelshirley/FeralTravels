@@ -41,13 +41,27 @@ const baseSchema = z.object({
   segment_drive_days: z.array(z.number().int().min(1).max(60)).min(1).max(200),
 
   /**
-   * One entry per mandatory waypoint, in route order. Source: nights
-   * field from each waypoint in extract_trip_intent's parsed output.
+   * One entry per mandatory TRANSIT waypoint, in route order. Source:
+   * nights field from each waypoint in extract_trip_intent's parsed
+   * output, EXCLUDING the final destination.
+   *
+   * These are stops along the way where the driver pauses before
+   * continuing (e.g. 2 nights in Innsbruck en route to Bad Kissingen).
+   * The final destination's nights do NOT belong here — they happen
+   * AFTER arrival and don't affect transit feasibility.
    *
    * Empty array is legal (an A→B trip with no overnight stops).
    * Per-waypoint cap of 30 nights matches the extract_trip_intent cap.
    */
   waypoint_nights: z.array(z.number().int().min(0).max(30)).max(50),
+
+  /**
+   * Nights at the final destination. These are NOT counted against the
+   * transit budget — they happen after arrival. Tracked here for
+   * informational display but excluded from the feasibility formula.
+   * Null or 0 when the user didn't specify a stay at the destination.
+   */
+  destination_nights: z.number().int().min(0).max(60).nullable().optional().default(null),
 
   /**
    * User's stated budget. Null = no budget; the tool returns verdict
@@ -72,7 +86,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: CHECK_TRIP_FEASIBILITY,
   description:
-    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each waypoint in your parsed intent (in route order) as waypoint_nights. The server does the math and returns a verdict. If verdict is "over_budget" you MUST stop, relay the numbers to the user in plain prose, and ask them to extend the trip or drop a stop — do NOT call add_leg. The dispatcher will reject add_leg actions if this check did not pass.',
+    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each TRANSIT waypoint (EXCLUDING the final destination) as waypoint_nights. Pass the final destination\'s nights separately as destination_nights — these are NOT counted against the transit budget because they happen after arrival. The server does the math and returns a verdict. If verdict is "over_budget" you MUST stop, relay the numbers to the user in plain prose, and ask them to extend the trip or drop a stop — do NOT call add_leg. The dispatcher will reject add_leg actions if this check did not pass.',
   input_schema: {
     type: 'object',
     required: ['segment_drive_days', 'waypoint_nights', 'time_budget_days'],
@@ -87,7 +101,14 @@ export const tool: Anthropic.Tool = {
         type: 'array',
         items: { type: 'integer', minimum: 0, maximum: 30 },
         description:
-          'nights from each mandatory_waypoint in extract_trip_intent, in route order. Empty array if no mandatory overnight stops.',
+          'nights from each TRANSIT waypoint in extract_trip_intent, in route order. EXCLUDE the final destination\'s nights — those happen after arrival and don\'t affect transit feasibility. Empty array if no mandatory overnight stops along the way.',
+      },
+      destination_nights: {
+        type: ['integer', 'null'],
+        minimum: 0,
+        maximum: 60,
+        description:
+          'Nights the user plans to stay at the FINAL destination. These are excluded from the transit budget calculation but shown in the summary for completeness. Use null or 0 if the user didn\'t specify a destination stay.',
       },
       time_budget_days: {
         type: ['integer', 'null'],
@@ -116,9 +137,15 @@ export type FeasibilityVerdict = 'fits' | 'tight' | 'over_budget' | 'no_budget';
 export interface FeasibilityResult {
   feasible: boolean;
   total_driving_days: number;
-  total_overnight_nights: number;
+  /** Nights at TRANSIT waypoints (counted toward budget). */
+  total_transit_nights: number;
+  /** Nights at the FINAL destination (NOT counted toward budget). */
+  destination_nights: number;
   buffer_days: number;
+  /** Transit days only: driving + transit nights + buffer. */
   total_min_days_needed: number;
+  /** Full trip length including destination stay (informational). */
+  total_trip_days: number;
   budget_days: number | null;
   shortfall_days: number | null;
   slack_days: number | null;
@@ -128,24 +155,36 @@ export interface FeasibilityResult {
 
 export function computeFeasibility(input: CheckTripFeasibilityInput): FeasibilityResult {
   const total_driving_days = input.segment_drive_days.reduce((a, b) => a + b, 0);
-  const total_overnight_nights = input.waypoint_nights.reduce((a, b) => a + b, 0);
+  const total_transit_nights = input.waypoint_nights.reduce((a, b) => a + b, 0);
+  const destination_nights = input.destination_nights ?? 0;
   const buffer_days = input.buffer_days ?? 0;
-  const total_min_days_needed = total_driving_days + total_overnight_nights + buffer_days;
+
+  // Transit budget: only driving days + transit stop nights + buffer.
+  // Destination nights happen AFTER arrival and don't affect "can I get there?"
+  const total_min_days_needed = total_driving_days + total_transit_nights + buffer_days;
+
+  // Full trip length for informational display.
+  const total_trip_days = total_min_days_needed + destination_nights;
 
   if (input.time_budget_days == null) {
+    const destNote = destination_nights > 0
+      ? ` + ${destination_nights} nights at destination`
+      : '';
     return {
       feasible: true,
       total_driving_days,
-      total_overnight_nights,
+      total_transit_nights,
+      destination_nights,
       buffer_days,
       total_min_days_needed,
+      total_trip_days,
       budget_days: null,
       shortfall_days: null,
       slack_days: null,
       verdict: 'no_budget',
-      summary: `${total_driving_days} driving days + ${total_overnight_nights} overnight nights${
+      summary: `Transit: ${total_driving_days} driving days + ${total_transit_nights} transit nights${
         buffer_days > 0 ? ` + ${buffer_days} buffer` : ''
-      } = ${total_min_days_needed} days. No budget set — proceed.`,
+      } = ${total_min_days_needed} days to arrive${destNote} (${total_trip_days} total trip days). No budget set — proceed.`,
     };
   }
 
@@ -166,22 +205,27 @@ export function computeFeasibility(input: CheckTripFeasibilityInput): Feasibilit
 
   const shortfall_days = diff < 0 ? -diff : null;
   const slack_days = diff >= 0 ? diff : null;
+  const destNote = destination_nights > 0
+    ? ` Then ${destination_nights} nights at the destination (not counted against transit budget).`
+    : '';
 
   let summary: string;
   if (verdict === 'over_budget') {
-    summary = `OVER BUDGET: ${total_min_days_needed} days needed, ${budget} days allowed (short by ${shortfall_days}). Stop and ask the user to extend the trip or drop a stop. Do NOT call add_leg.`;
+    summary = `OVER BUDGET: ${total_min_days_needed} transit days needed (${total_driving_days} driving + ${total_transit_nights} transit nights), ${budget} days allowed (short by ${shortfall_days}).${destNote} Stop and ask the user to extend the trip or drop a stop. Do NOT call add_leg.`;
   } else if (verdict === 'tight') {
-    summary = `Tight fit: ${total_min_days_needed} days needed, ${budget} days allowed (zero slack). Proceed but mention the lack of buffer in your response.`;
+    summary = `Tight fit: ${total_min_days_needed} transit days needed, ${budget} days allowed (zero slack).${destNote} Proceed but mention the lack of buffer in your response.`;
   } else {
-    summary = `Fits: ${total_min_days_needed} days needed, ${budget} days allowed (${slack_days} days slack). Proceed with add_leg.`;
+    summary = `Fits: ${total_min_days_needed} transit days needed, ${budget} days allowed (${slack_days} days slack).${destNote} Proceed with add_leg.`;
   }
 
   return {
     feasible: verdict !== 'over_budget',
     total_driving_days,
-    total_overnight_nights,
+    total_transit_nights,
+    destination_nights,
     buffer_days,
     total_min_days_needed,
+    total_trip_days,
     budget_days: budget,
     shortfall_days,
     slack_days,

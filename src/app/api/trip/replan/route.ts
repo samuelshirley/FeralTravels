@@ -572,6 +572,7 @@ async function dispatchAction(
       const newLegId = await addLeg({
         tripId,
         title: d.title,
+        legType: d.leg_type ?? 'drive',
         label: d.label ?? null,
         startName: d.start_name ?? null,
         endName: d.end_name ?? null,

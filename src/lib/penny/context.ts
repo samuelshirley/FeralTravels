@@ -53,6 +53,12 @@ export interface PennyVehicle {
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
+  /**
+   * How many non-driving (rest) days the user needs after a streak of
+   * consecutive driving days. E.g. "I can drive 3 days then need 1 rest day"
+   * → max_consecutive_drive_days=3, rest_days_after_driving=1.
+   */
+  rest_days_after_driving: number | null;
   /** Null = onboarding/remediation hasn't asked caravan gate yet. */
   water_tracking_enabled: boolean | null;
   water_refill_days: number | null;
@@ -62,6 +68,8 @@ export interface PennyVehicle {
 export interface PennyLeg {
   id: string;
   sort_order: number;
+  /** 'drive' for driving days, 'rest' for non-driving stop days. */
+  leg_type: string;
   title: string;
   label: string | null;
   start_name: string | null;
@@ -204,6 +212,7 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
+    rest_days_after_driving: v.rest_days_after_driving ?? null,
     water_tracking_enabled: v.water_tracking_enabled ?? null,
     water_refill_days: v.water_refill_days,
     blackwater_refill_days: v.blackwater_refill_days,
@@ -214,6 +223,7 @@ function projectLeg(leg: LegWithDetails): PennyLeg {
   return {
     id: leg.id,
     sort_order: leg.sort_order,
+    leg_type: leg.leg_type ?? 'drive',
     title: leg.title,
     label: leg.label,
     start_name: leg.start_name,

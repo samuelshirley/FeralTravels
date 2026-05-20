@@ -22,6 +22,7 @@ function makeLeg(overrides: Partial<Leg> = {}): Leg {
     id: '00000000-0000-0000-0000-000000000001',
     trip_id: '00000000-0000-0000-0000-000000000001',
     sort_order: 0,
+    leg_type: 'drive',
     title: 'Day 1: Girona → Lyon',
     label: null,
     segment_index: null,

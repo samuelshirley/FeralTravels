@@ -137,6 +137,8 @@ export const vehicles = pgTable(
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
     maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
+    /** How many rest (non-driving) days the user needs after a driving streak. */
+    restDaysAfterDriving: integer('rest_days_after_driving'),
     waterRefillDays: integer('water_refill_days'),
     blackwaterRefillDays: integer('blackwater_refill_days'),
     /** Null = not answered; false = ignore water fields; true = both integers required. */
@@ -186,6 +188,12 @@ export const legs = pgTable(
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     sortOrder: integer('sort_order').notNull(),
+    /**
+     * 'drive' = a driving day (the original leg type).
+     * 'rest'  = a non-driving rest/stop day at a location.
+     * Default 'drive' for backward compatibility with existing legs.
+     */
+    legType: text('leg_type').default('drive').notNull(),
     title: text('title').notNull(),
     label: text('label'),
     /** Optional multi-day grouping header (`segment_name` + stable `segment_index`). */

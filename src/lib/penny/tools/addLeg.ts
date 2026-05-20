@@ -24,6 +24,12 @@ export const ADD_LEG = 'add_leg' as const;
 
 const baseSchema = z.object({
   title: z.string().min(1, 'title must be a non-empty string'),
+  /**
+   * 'drive' for a driving day (default). 'rest' for a non-driving rest/stop day.
+   * Rest days have no drive_time_minutes or distance_km — they represent days
+   * spent at a location (e.g. 2 nights in Innsbruck).
+   */
+  leg_type: z.enum(['drive', 'rest']).nullish().default('drive'),
   label: z.string().nullish(),
   start_name: z.string().nullish(),
   end_name: z.string().nullish(),
@@ -58,6 +64,8 @@ export type AddLegInput = z.infer<typeof baseSchema>;
 export function validator(ctx: PennyContext) {
   return baseSchema.refine(
     (d) => {
+      // Rest days have no driving — skip the cap check.
+      if (d.leg_type === 'rest') return true;
       const cap = ctx.vehicle?.max_drive_hours_per_day;
       if (cap == null) return true;
       if (d.drive_time_minutes == null) return true;
@@ -72,7 +80,13 @@ export function validator(ctx: PennyContext) {
 
 export const tool: Anthropic.Tool = {
   name: ADD_LEG,
-  description: `Add a new driving leg to the trip. ${HEADING.callOrderRule} Each leg you add represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
+  description: `Add a new leg to the trip — either a driving day or a rest/stop day. ${HEADING.callOrderRule}
+
+DRIVING DAYS (leg_type: "drive" or omitted): Each driving leg represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
+
+REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Day N: Innsbruck (rest day)". Add notes about planned activities if the user mentions any.
+
+TOTAL TRIP DAY NUMBERING: Number ALL days sequentially as total trip days — driving AND rest. If the trip is: Day 1 drive, Day 2 drive, Day 3-4 rest in Innsbruck, Day 5 drive — use "Day 1", "Day 2", "Day 3", "Day 4", "Day 5" in titles. The user sees total trip days, not just driving day count.
 
 GROUPING (segment_index / segment_name): When the user describes a destination jump that takes more than one driving day — e.g. "Girona to Berlin" stretching over 5 days — give every day in that jump the SAME segment_index (an integer, 0 for the first jump, 1 for the second, …) and the SAME segment_name (the user's words: "Girona → Berlin"). This is what lets the UI render long trips as collapsible sections.
 
@@ -85,7 +99,12 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
     properties: {
       title: {
         type: 'string',
-        description: 'Human-readable leg title, e.g. "Day 1: Girona → Lyon" or "Girona → Nice".',
+        description: 'Human-readable leg title. For driving days: "Day 1: Girona → Lyon". For rest days: "Day 3: Innsbruck (rest day)". Use total trip day numbering.',
+      },
+      leg_type: {
+        type: 'string',
+        enum: ['drive', 'rest'],
+        description: '"drive" (default) for a driving day, "rest" for a non-driving rest/stop day at a location.',
       },
       label: { type: 'string', description: 'Optional short label for compact UI rendering.' },
       start_name: { type: 'string', description: 'Free-text name of the start point.' },

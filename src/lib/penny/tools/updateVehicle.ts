@@ -43,6 +43,14 @@ const dataSchema = z.object({
     )
     .nullish(),
 
+  /** How many rest (non-driving) days needed after a driving streak. */
+  rest_days_after_driving: z
+    .number()
+    .int()
+    .positive()
+    .max(7, 'rest_days_after_driving cannot exceed 7')
+    .nullish(),
+
   /** Preferred distance (km) between fuel refills. */
   refill_distance_km: z
     .number()
@@ -95,6 +103,8 @@ Common patterns:
   "6 hours a day, 3 days a week" → max_drive_hours_per_day: 6, max_consecutive_drive_days: 3
   "I like to refuel every 400 km" → refill_distance_km: 400
   "drive for 4 days then take a break" → max_consecutive_drive_days: 4
+  "3 days driving, 1 day rest" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
+  "I need 2 rest days after 3 driving days" → max_consecutive_drive_days: 3, rest_days_after_driving: 2
 
 After calling this tool and receiving success, confirm the saved values in one sentence
 and proceed with planning using the new preferences. Note: leg validation in the current
@@ -129,6 +139,13 @@ their planning request again so the updated values take effect.
             maximum: MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
             description:
               'Max days of driving in a row before a rest day. "3 days a week" → 3; "drive 5, rest 2" → 5.',
+          },
+          rest_days_after_driving: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 7,
+            description:
+              'How many non-driving (rest) days the user needs after completing their max consecutive driving days. "drive 3 then rest 1" → 1; "3 on 2 off" → 2.',
           },
           refill_distance_km: {
             type: 'integer',

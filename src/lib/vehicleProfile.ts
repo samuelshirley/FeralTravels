@@ -120,7 +120,9 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
       if (q.max !== undefined && raw > q.max) return true;
       return false;
     }
-    case 'max_consecutive_drive_days': {
+    case 'max_consecutive_drive_days':
+    case 'rest_days_after_driving': {
+      if (q.optional && (raw === null || raw === undefined)) return false;
       if (typeof raw !== 'number' || !Number.isFinite(raw)) return true;
       if (!Number.isInteger(raw)) return true;
       if (raw <= 0) return true;
@@ -139,6 +141,7 @@ export const VEHICLE_PROFILE_KEYS = [
   'max_drive_hours_per_day',
   'max_drive_hours_per_week',
   'max_consecutive_drive_days',
+  'rest_days_after_driving',
   'water_refill_days',
   'blackwater_refill_days',
 ] as const;
@@ -214,6 +217,17 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       max: MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
     },
     {
+      key: 'rest_days_after_driving',
+      kind: 'integer',
+      group: 'driving',
+      label: 'How many rest (non-driving) days do you need after a driving streak?',
+      placeholder: '1',
+      help: 'After your max consecutive driving days, how many days do you want to rest before driving again?',
+      min: 1,
+      max: 7,
+      optional: true,
+    },
+    {
       key: 'water_refill_days',
       kind: 'integer',
       group: 'water',
@@ -249,6 +263,7 @@ const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {
   max_drive_hours_per_day: ' h/day',
   max_drive_hours_per_week: ' h/week',
   max_consecutive_drive_days: ' days',
+  rest_days_after_driving: ' rest days',
 };
 
 /**
@@ -372,6 +387,7 @@ export interface VehicleProfileDraftInput {
   max_drive_hours_per_day: number | null;
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
+  rest_days_after_driving: number | null;
   water_refill_days: number | null;
   blackwater_refill_days: number | null;
   /** Required for Settings saves; caravan gate persisted on vehicles. */
