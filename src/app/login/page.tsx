@@ -94,7 +94,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         >
           FERAL TRAVELS
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 4 }}>Sign in</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 4 }}>Password-less Sign in / Sign-up</h1>
         <p
           style={{
             fontSize: 13,
@@ -106,6 +106,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         >
           Sign in with Google, or enter your email and we&apos;ll send you a 6-digit code. The same
           email always maps to one account.
+          <br />
+          <br />
+          passwords are dumb
         </p>
 
         {testBackdoorOn && testBackdoorEmail && (

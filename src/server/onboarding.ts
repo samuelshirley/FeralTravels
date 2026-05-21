@@ -470,8 +470,15 @@ export async function submitAnswer(
       .set({ onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     await writeQA(tripId, TRIP_NAME_QUESTION.label, name);
+    const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+    // Returning user with units + vehicle already set: onboarding may jump
+    // straight to 'done'. Complete the handoff so the client fires the
+    // stored trip intent at Penny.
+    if (afterSnapshot.state === 'done') {
+      return completeOnboarding(tripId);
+    }
     return {
-      next: await getOnboardingSnapshot(tripId, userId),
+      next: afterSnapshot,
       answerLabel: name,
       didHandoff: false,
     };
@@ -495,8 +502,15 @@ export async function submitAnswer(
       'Do you want distances in metric (kilometers) or imperial (miles)?',
       answerLabel
     );
+    const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+    // Returning user with vehicle already set: onboarding may jump straight
+    // to 'done' after units are chosen. Complete the handoff so the client
+    // fires the stored trip intent at Penny.
+    if (afterSnapshot.state === 'done') {
+      return completeOnboarding(tripId);
+    }
     return {
-      next: await getOnboardingSnapshot(tripId, userId),
+      next: afterSnapshot,
       answerLabel,
       didHandoff: false,
     };
