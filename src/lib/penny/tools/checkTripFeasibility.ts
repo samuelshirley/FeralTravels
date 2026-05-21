@@ -86,7 +86,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: CHECK_TRIP_FEASIBILITY,
   description:
-    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each TRANSIT waypoint (EXCLUDING the final destination) as waypoint_nights. Pass the final destination\'s nights separately as destination_nights — these are NOT counted against the transit budget because they happen after arrival. The server does the math and returns a verdict. If verdict is "over_budget" you MUST stop, relay the numbers to the user in plain prose, and ask them to extend the trip or drop a stop — do NOT call add_leg. The dispatcher will reject add_leg actions if this check did not pass.',
+    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each TRANSIT waypoint (EXCLUDING the final destination) as waypoint_nights. Pass the final destination\'s nights separately as destination_nights — these are NOT counted against the transit budget because they happen after arrival. The server does the math and returns a verdict. If verdict is "over_budget", adjust the plan yourself (reduce waypoint nights or drop a waypoint), then call extract_trip_intent with revised numbers and re-run this check — do NOT call add_leg until this check passes. Only ask the user if adjustments alone cannot make it fit. The dispatcher will reject add_leg actions if this check did not pass.',
   input_schema: {
     type: 'object',
     required: ['segment_drive_days', 'waypoint_nights', 'time_budget_days'],
@@ -211,7 +211,7 @@ export function computeFeasibility(input: CheckTripFeasibilityInput): Feasibilit
 
   let summary: string;
   if (verdict === 'over_budget') {
-    summary = `OVER BUDGET: ${total_min_days_needed} transit days needed (${total_driving_days} driving + ${total_transit_nights} transit nights), ${budget} days allowed (short by ${shortfall_days}).${destNote} Stop and ask the user to extend the trip or drop a stop. Do NOT call add_leg.`;
+    summary = `OVER BUDGET: ${total_min_days_needed} transit days needed (${total_driving_days} driving + ${total_transit_nights} transit nights), ${budget} days allowed (short by ${shortfall_days}).${destNote} Adjust the plan to fit: reduce waypoint nights or drop a waypoint, then re-run extract_trip_intent and check_trip_feasibility with the revised numbers. Do NOT call add_leg until this check passes.`;
   } else if (verdict === 'tight') {
     summary = `Tight fit: ${total_min_days_needed} transit days needed, ${budget} days allowed (zero slack).${destNote} Proceed but mention the lack of buffer in your response.`;
   } else {
