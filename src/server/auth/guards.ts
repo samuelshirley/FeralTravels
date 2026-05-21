@@ -205,6 +205,20 @@ export function errorResponse(err: unknown): Response {
     );
   }
 
+  // Connection-level noise: the client disconnected before the server finished.
+  // Not actionable — downgrade to debug so it doesn't clutter logs/CI output.
+  if (
+    err instanceof Error &&
+    ('code' in err && (err as NodeJS.ErrnoException).code === 'ECONNRESET' ||
+      err.message === 'aborted')
+  ) {
+    console.debug(`[${errorId}] Client disconnected (${err.message})`);
+    return Response.json(
+      { error: 'Client disconnected', errorId },
+      { status: 499 },
+    );
+  }
+
   // 5xx: log the full error at error level for debugging
   console.error(`[${errorId}] Unhandled API error:`, err);
   const message = err instanceof Error ? err.message : 'Internal error';

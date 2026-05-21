@@ -37,9 +37,10 @@ test.describe('Existing user with seeded trip', () => {
     // Seeded user: one complete default vehicle (fuel + strict driving + water gate)
     // and trip.vehicle_id pointed at it — Penny/fuel must not be blocked.
     await expect(page.getByRole('heading', { name: 'Update your vehicle' })).not.toBeVisible();
-    const tripVehicleBtn = page.getByRole('button', { name: 'Change trip vehicle' });
-    await expect(tripVehicleBtn).toBeVisible();
-    await expect(tripVehicleBtn).toContainText(FIXTURE_VEHICLE_NAME);
+    // Vehicle chip is display-only (no picker) — just shows the vehicle name.
+    const vehicleChip = page.getByTitle(`Trip vehicle: ${FIXTURE_VEHICLE_NAME}`);
+    await expect(vehicleChip).toBeVisible();
+    await expect(vehicleChip).toContainText(FIXTURE_VEHICLE_NAME);
 
     // Itinerary: `seed-e2e-fixture.ts` always inserts exactly two legs (Day 1 +
     // Day 2). Exact count catches silent seed drift / duplicate trips.

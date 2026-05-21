@@ -1320,18 +1320,23 @@ export default function ChatPanel({
           padding: '16px 16px 8px',
           display: 'flex',
           flexDirection: 'column',
-          // No fixed gap — grouping uses tight 2px for same-sender,
-          // 10px between different senders (set via marginTop per bubble).
           WebkitOverflowScrolling: 'touch',
         }}
       >
+        {/* Spacer: pushes messages to the bottom (like iMessage) when there
+            are only a few. `flex: 1` absorbs all leftover space but collapses
+            to zero once messages overflow — so you can always scroll to the
+            first message. Don't use justifyContent:flex-end because that makes
+            the top messages unreachable in an overflow container. */}
+        <div style={{ flex: 1 }} />
+
         {hasMore && (
           <div
             style={{
               textAlign: 'center',
               fontSize: 11,
               color: 'var(--tp-subtle)',
-              
+
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
               padding: '4px 0 6px',
@@ -1361,13 +1366,7 @@ export default function ChatPanel({
           </div>
         )}
         {messages.length === 0 && (
-          <div style={{ color: 'var(--tp-muted)', fontSize: 13, textAlign: 'center', marginTop: 40, lineHeight: 1.6 }}>
-            Tell Penny where you want to go — she&apos;ll handle the rest.
-            <br />
-            <span style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
-              Drag, paste, or click 📎 to attach a screenshot.
-            </span>
-          </div>
+          <div />
         )}
 
         {messages.map((msg, msgIdx) => {

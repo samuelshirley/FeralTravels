@@ -76,7 +76,7 @@ export const TRIP_INTENT_QUESTION: Question = {
   key: 'trip_intent',
   kind: 'handoff',
   label: "Hi, I'm Penny — your personal travel assistant.\n\nTell me where you want to go. Is there anything cool along the way you want or need to stop at? I'll go do all the legwork so all you have to do is drive and enjoy.\n\nI can also update anything on the itinerary anytime. If you need a gas stop sooner just let me know and I'll find one for you along the route.\n\nExample: \"I wanna do a roadtrip from where I live in Girona Spain to the Gorafe desert, I will need groceries along the way, and I need to fill up my water tank\"",
-  placeholder: "e.g. I wanna do a roadtrip from where I live in Girona Spain to the Gorafe desert, I will need groceries along the way, and I need to fill up my water tank",
+  placeholder: "Tell Penny about your trip…",
   multiline: true,
 };
 
