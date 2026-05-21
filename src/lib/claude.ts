@@ -14,7 +14,6 @@ import {
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
-import { mergedDirectionsAvoidFromPenny } from "@/lib/penny/routingAvoidMerge";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -107,7 +106,7 @@ Rules:
 - For that iteration, respond in plain prose ONLY. Do NOT call extract_trip_intent, get_route, check_trip_feasibility, or add_leg while you are still missing answers you need them to consciously choose (or explicitly delegate). Exception: call update_vehicle immediately when they state concrete driving/refuel cadence (same rule as vehicle_preference_updates).
 - Stay compact — default ONE focused question bundling related details, or TWO short questions tops. Optionally start with ONE sentence reflecting what you heard ("Cross-Alpine corridor, roughly two weeks-ish?") so they can correct you.
 - When relevant, surface ONE tradeoff they'd care about rather than listing everything:
-  pace vs winding roads (mention trip.prefer_avoid_highways in context — if true, motorways are already off for routing; only nudge toggling when it conflicts with their stated goal); rough day-count vs feasibility; paved routing limits vs gravel dreams (<routing_engine_limits>); tolerance for tolls/long sea legs if their geography implies it.
+  pace vs winding roads; rough day-count vs feasibility; paved routing limits vs gravel dreams (<routing_engine_limits>); tolerance for tolls/long sea legs if their geography implies it.
 - Escape hatch: if they explicitly defer ("you decide", "just wire it up", "no preference"), stop interviewing — if that same message already names enough geography and duration cues, proceed with extract_trip_intent in that response; otherwise one line acknowledging sensible defaults then extract_trip_intent on their next reply once origin/destination exists per <leg_planning_rules>.
 
 SKIP discovery when the request is already concrete (clear O/D, duration or clearly flexible okay, manageable waypoint list), when the trip already has legs and they're requesting a tweak, or when they are plainly answering prior discovery prompts — then run extract_trip_intent once you have enough to commit without guessing hidden preferences.
@@ -182,10 +181,7 @@ The "I don't recognize" line from the units section is ONLY for imperial units (
 
 <context_facts>
 Each turn you receive a <context>…</context> block in the user message with this shape:
-  trip       — { id, name, start_date, end_date, status, prefer_avoid_highways }
-                When prefer_avoid_highways is true, the server UNIONs Google's
-                avoid=highways (motorway-class omission) into every get_route —
-                you don't have to repeat it unless the user revokes off-highway routing.
+  trip       — { id, name, start_date, end_date, status }
   vehicle    — { name, refill_distance_km, effective_range_km,
                   max_drive_hours_per_day, max_drive_hours_per_week,
                   max_consecutive_drive_days, rest_days_after_driving,
@@ -937,14 +933,10 @@ async function executeGetRoute(
   }
 
   const input = parsed.data as getRouteTool.GetRouteInput;
-  const avoidMerged = mergedDirectionsAvoidFromPenny({
-    tripPreferAvoidHighways: context.trip.prefer_avoid_highways,
-    modelAvoid: input.avoid,
-  });
   const directions = await getDirections(
     { lat: input.origin_lat, lng: input.origin_lng },
     { lat: input.destination_lat, lng: input.destination_lng },
-    { avoid: avoidMerged },
+    { avoid: input.avoid ?? undefined },
   );
 
   if (!directions.ok) {
@@ -987,7 +979,7 @@ async function executeGetRoute(
   // Claude needs to plan with.
   const payload = {
     ok: true,
-    effective_avoid: avoidMerged ?? null,
+    effective_avoid: input.avoid ?? null,
     distance_km: directions.distance_km,
     drive_time_minutes: directions.drive_time_minutes,
     start_address: directions.start_address,

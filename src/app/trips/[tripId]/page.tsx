@@ -48,7 +48,6 @@ export default async function TripPage({ params }: Props) {
         serverTrip={{
           name: trip.name,
           vehicle_id: trip.vehicle_id ?? null,
-          prefer_avoid_highways: trip.prefer_avoid_highways,
         }}
         readonly={!isOwner}
         user={{

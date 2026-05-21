@@ -14,7 +14,6 @@ import { useViewport } from '@/lib/useMediaQuery';
 import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
-import TripPreferAvoidHighwaysToggle from '@/components/TripPreferAvoidHighwaysToggle';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
@@ -24,7 +23,6 @@ interface Props {
   serverTrip: {
     name: string;
     vehicle_id: string | null;
-    prefer_avoid_highways: boolean;
   };
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
@@ -285,13 +283,6 @@ export default function TripWorkspace({
 
   const loadingNavbarRightSlot = !readonly ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      <TripPreferAvoidHighwaysToggle
-        tripId={tripId}
-        initial={serverTrip.prefer_avoid_highways}
-        readonly={readonly}
-        onUpdated={loadTrip}
-        compact={viewport === 'mobile'}
-      />
       <TripVehicleChip
         tripId={tripId}
         initialVehicleId={serverTrip.vehicle_id}
@@ -481,13 +472,6 @@ export default function TripWorkspace({
           {viewport !== 'mobile' && <span>Fuel…</span>}
         </span>
       )}
-      <TripPreferAvoidHighwaysToggle
-        tripId={tripId}
-        initial={trip.prefer_avoid_highways}
-        readonly={readonly}
-        onUpdated={loadTrip}
-        compact={viewport === 'mobile'}
-      />
       <TripVehicleChip
         tripId={tripId}
         initialVehicleId={trip.vehicle_id ?? null}

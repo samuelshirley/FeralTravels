@@ -6,6 +6,7 @@ import { getAdminOverview } from '@/server/repos/admin';
 import { getGlobalUsage, microcentsToDollars } from '@/server/repos/usage';
 import { getUnitsPref } from '@/server/repos/users';
 import AppNavbar from '@/components/AppNavbar';
+import BottomNav from '@/components/BottomNav';
 import VehicleProfileSection from '@/components/VehicleProfileSection';
 import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
@@ -227,6 +228,7 @@ export default async function SettingsPage() {
           )}
         </div>
 
+        <BottomNav active="settings" />
       </div>
     </UnitsProvider>
   );

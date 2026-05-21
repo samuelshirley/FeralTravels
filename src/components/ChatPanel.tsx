@@ -146,6 +146,44 @@ function pennyToolLabel(name: string): string {
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+/* ── iMessage-style grouping ─────────────────────────────────────────────
+ * Consecutive messages from the same role are visually grouped: tighter
+ * spacing, varied corner radii, and a tail on the last bubble only.
+ * This mirrors iMessage's grouping behaviour. */
+interface GroupPosition {
+  isFirst: boolean;
+  isLast: boolean;
+}
+
+function getGroupPosition(
+  messages: { role: string }[],
+  index: number,
+): GroupPosition {
+  const msg = messages[index];
+  const prev = index > 0 ? messages[index - 1] : null;
+  const next = index < messages.length - 1 ? messages[index + 1] : null;
+  return {
+    isFirst: !prev || prev.role !== msg.role,
+    isLast: !next || next.role !== msg.role,
+  };
+}
+
+/** Returns the iMessage-style border-radius string for a bubble. */
+function bubbleRadius(role: string, pos: GroupPosition): string {
+  const R = 18; // full radius
+  const r = 4;  // grouped-side radius
+  if (role === 'user') {
+    // Right side grouped: top-right and bottom-right shrink for non-edge
+    const tr = pos.isFirst ? R : r;
+    const br = pos.isLast ? R : r;
+    return `${R}px ${tr}px ${br}px ${R}px`;
+  }
+  // Assistant: left side grouped
+  const tl = pos.isFirst ? R : r;
+  const bl = pos.isLast ? R : r;
+  return `${tl}px ${R}px ${R}px ${bl}px`;
+}
+
 export default function ChatPanel({
   tripId,
   initialMessages,
@@ -198,17 +236,27 @@ export default function ChatPanel({
   const pendingRestoreScroll = useRef<{ prevHeight: number } | null>(null);
 
   // Jump to the bottom on first render (so the last message is visible) and
-  // smooth-scroll on every subsequent new message or loading toggle. We only
-  // snap instantly the first time because smooth-scrolling on first mount
-  // visibly "falls" the chat in which looks janky.
+  // smooth-scroll on every subsequent new message or loading toggle. We use
+  // scrollTop instead of scrollIntoView because on iOS Safari, scrollIntoView
+  // can trigger viewport-level scrolling that dismisses the keyboard mid-send.
+  const scrollToBottom = useCallback((instant?: boolean) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (instant) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, []);
+
   useEffect(() => {
     if (!didInitialScroll.current) {
-      bottomRef.current?.scrollIntoView({ block: 'end' });
+      scrollToBottom(true);
       didInitialScroll.current = true;
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, loading]);
+    scrollToBottom();
+  }, [messages.length, loading, scrollToBottom]);
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -224,11 +272,11 @@ export default function ChatPanel({
       const prompt = `I want to add plans for ${detail.dayTitle} in ${locationStr} — what should I do there?`;
       setInput(prompt);
       textareaRef.current?.focus();
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      scrollToBottom();
     };
     window.addEventListener('penny:prefill', handler);
     return () => window.removeEventListener('penny:prefill', handler);
-  }, []);
+  }, [scrollToBottom]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || messages.length === 0) return;
@@ -1269,10 +1317,11 @@ export default function ChatPanel({
           flex: 1,
           minHeight: 0,
           overflowY: 'auto',
-          padding: '16px',
+          padding: '16px 16px 8px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 12,
+          // No fixed gap — grouping uses tight 2px for same-sender,
+          // 10px between different senders (set via marginTop per bubble).
           WebkitOverflowScrolling: 'touch',
         }}
       >
@@ -1321,23 +1370,32 @@ export default function ChatPanel({
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, msgIdx) => {
+          const gp = getGroupPosition(messages, msgIdx);
+          // Tight 2px gap inside a group, 10px between groups.
+          const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
+          const isQueued = msg.deliveryStatus === 'queued';
+          return (
           <div
             key={msg.id}
             style={{
-              maxWidth: '85%',
+              maxWidth: '80%',
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
               display: 'flex',
               flexDirection: 'column',
               alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              marginTop,
+              opacity: isQueued ? 0.5 : 1,
+              transition: 'opacity 0.3s ease',
             }}
           >
           <div
             style={{
-              padding: '10px 14px',
-              borderRadius: 10,
-              background: msg.role === 'user' ? 'var(--tp-primary-muted)' : 'var(--tp-surface)',
-              border: `1px solid ${msg.role === 'user' ? 'rgba(78, 122, 176, 0.28)' : 'var(--tp-border)'}`,
+              padding: '8px 14px',
+              borderRadius: bubbleRadius(msg.role, gp),
+              background: msg.role === 'user'
+                ? 'var(--tp-primary-muted)'
+                : 'var(--tp-surface)',
               fontSize: 14,
               color: 'var(--tp-text)',
               lineHeight: 1.5,
@@ -1361,62 +1419,6 @@ export default function ChatPanel({
                     }}
                   />
                 ))}
-              </div>
-            )}
-            {msg.inFlightTools && msg.inFlightTools.length > 0 && (
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 6,
-                  marginBottom: msg.content ? 8 : 0,
-                }}
-              >
-                {msg.inFlightTools.map((tool) => {
-                  const palette =
-                    tool.status === 'error'
-                      ? {
-                          bg: 'var(--tp-danger-muted)',
-                          fg: 'var(--tp-danger)',
-                          border: 'rgba(198, 93, 74, 0.35)',
-                        }
-                      : tool.status === 'ok'
-                        ? {
-                            bg: 'var(--tp-success-muted)',
-                            fg: 'var(--tp-success)',
-                            border: 'rgba(74, 139, 122, 0.28)',
-                          }
-                        : {
-                            bg: 'var(--tp-primary-muted)',
-                            fg: 'var(--tp-primary)',
-                            border: 'rgba(78, 122, 176, 0.28)',
-                          };
-                  const glyph =
-                    tool.status === 'ok' ? '✓' : tool.status === 'error' ? '!' : '…';
-                  return (
-                    <span
-                      key={tool.toolUseId}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: '3px 8px',
-                        background: palette.bg,
-                        border: `1px solid ${palette.border}`,
-                        color: palette.fg,
-                        borderRadius: 999,
-                        fontSize: 11,
-                        lineHeight: 1.2,
-                        opacity: tool.status === 'running' ? 1 : 0.85,
-                      }}
-                    >
-                      <span aria-hidden style={{ fontWeight: 700 }}>
-                        {glyph}
-                      </span>
-                      {tool.label}
-                    </span>
-                  );
-                })}
               </div>
             )}
             {msg.content}
@@ -1552,25 +1554,23 @@ export default function ChatPanel({
               </div>
             )}
           </div>
-          {/* Delivery receipt — only on user messages with a deliveryStatus */}
-          {msg.role === 'user' && msg.deliveryStatus && (
+          {/* Delivery receipt — iMessage shows status on the last user message
+              only, not every message. We check that this is the final user msg
+              in the list (no later user message exists). */}
+          {msg.role === 'user' &&
+            msg.deliveryStatus &&
+            !messages.slice(msgIdx + 1).some((m) => m.role === 'user') && (
             <div
               style={{
                 fontSize: 11,
                 color: 'var(--tp-subtle)',
-                marginTop: 3,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
+                marginTop: 2,
+                textAlign: 'right',
                 transition: 'opacity 0.3s ease',
               }}
             >
-              {msg.deliveryStatus === 'queued' && (
-                <span style={{ color: 'var(--tp-subtle)', fontStyle: 'italic' }}>Queued</span>
-              )}
-              {msg.deliveryStatus === 'sending' && (
-                <span style={{ color: 'var(--tp-subtle)' }}>Sending…</span>
-              )}
+              {msg.deliveryStatus === 'queued' && 'Queued'}
+              {msg.deliveryStatus === 'sending' && 'Sending…'}
               {msg.deliveryStatus === 'delivered' && (
                 <span style={{ color: 'var(--tp-muted)' }}>Delivered</span>
               )}
@@ -1581,14 +1581,13 @@ export default function ChatPanel({
                 <span style={{ color: 'var(--tp-primary)', fontStyle: 'italic' }}>Penny is typing…</span>
               )}
               {msg.deliveryStatus === 'responded' && (
-                <span style={{ color: 'var(--tp-muted)' }}>
-                  <span style={{ fontSize: 10 }}>✓✓</span> Read
-                </span>
+                <span style={{ color: 'var(--tp-muted)' }}>Read</span>
               )}
             </div>
           )}
           </div>
-        ))}
+          );
+        })}
 
         {/* Typing indicator — shown when Penny has "read" the message
             but hasn't started responding yet (no text chunks received),
@@ -1597,33 +1596,29 @@ export default function ChatPanel({
           <div
             style={{
               alignSelf: 'flex-start',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              justifyContent: 'center',
+              gap: 5,
               padding: '12px 16px',
-              borderRadius: 10,
+              borderRadius: 18,
               background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
+              marginTop: 10,
             }}
           >
-            <div style={{ display: 'flex', gap: 4 }}>
-              {[0, 1, 2].map((i) => (
-                <span
-                  key={i}
-                  style={{
-                    display: 'block',
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    background: 'var(--tp-muted)',
-                    animation: `tp-dot-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-                  }}
-                />
-              ))}
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--tp-subtle)', fontStyle: 'italic' }}>
-              Penny is typing
-            </span>
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                style={{
+                  display: 'block',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: 'var(--tp-muted)',
+                  animation: `tp-dot-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                }}
+              />
+            ))}
           </div>
         )}
         <div ref={bottomRef} />
@@ -1882,13 +1877,14 @@ export default function ChatPanel({
             gap: 6,
             background: 'var(--tp-surface)',
             border: '1px solid var(--tp-border)',
-            borderRadius: 12,
-            padding: 6,
+            borderRadius: 20,
+            padding: '4px 6px',
             transition: 'border-color 0.15s',
           }}
         >
           {attachImagesAllowed && (
           <button
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
             title="Attach image"
             aria-label="Attach image"
@@ -1929,16 +1925,14 @@ export default function ChatPanel({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             readOnly={Boolean(remediationSelectStep || onboardingSelectStep)}
-            onFocus={(e) => {
+            enterKeyHint="send"
+            onFocus={() => {
               if (showRemediation || onboardingUiActive) return;
-              const el = e.currentTarget;
-              setTimeout(() => {
-                try {
-                  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                } catch {
-                  /* ignore — older Safari throws on smooth */
-                }
-              }, 250);
+              // Scroll the messages container to bottom when the textarea
+              // gets focus — keeps the latest messages visible above the
+              // keyboard. We use scrollToBottom (scrollTop-based) instead of
+              // scrollIntoView to avoid iOS Safari dismissing the keyboard.
+              setTimeout(() => scrollToBottom(), 250);
             }}
             placeholder={
               onboardingSelectStep
@@ -1976,6 +1970,7 @@ export default function ChatPanel({
             }}
           />
           <button
+            onMouseDown={(e) => e.preventDefault()}
             onClick={sendMessage}
             disabled={
               Boolean(
@@ -1998,8 +1993,8 @@ export default function ChatPanel({
             aria-label="Send"
             title="Send"
             style={{
-              width: 32,
-              height: 32,
+              width: 30,
+              height: 30,
               flexShrink: 0,
               padding: 0,
               background:
@@ -2018,7 +2013,7 @@ export default function ChatPanel({
                   ? 'var(--tp-primary)'
                   : 'var(--tp-border)',
               border: 'none',
-              borderRadius: 8,
+              borderRadius: '50%',
               color:
                 ((!showRemediation &&
                   !onboardingUiActive &&
@@ -2061,22 +2056,21 @@ export default function ChatPanel({
             </svg>
           </button>
         </div>
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: 10,
-            color: 'var(--tp-subtle)',
-            
-            letterSpacing: '0.04em',
-            textAlign: 'center',
-          }}
-        >
-          {onboardingUiActive
-            ? 'Enter to send · Trip setup'
-            : showRemediation
-            ? 'Enter to send · Vehicle setup'
-            : 'Enter to send · Shift+Enter for newline · drag/paste to attach'}
-        </div>
+        {/* Hint text — only shown during setup flows. Normal chat is clean
+            like iMessage (no helper text under the composer). */}
+        {(onboardingUiActive || showRemediation) && (
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 10,
+              color: 'var(--tp-subtle)',
+              letterSpacing: '0.04em',
+              textAlign: 'center',
+            }}
+          >
+            {onboardingUiActive ? 'Trip setup' : 'Vehicle setup'}
+          </div>
+        )}
       </div>
             </>
           )}
