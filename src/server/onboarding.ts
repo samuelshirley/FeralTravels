@@ -157,8 +157,16 @@ function nextVehicleOnboardingQuestion(
 ): { question: Question; progress: { current: number; total: number } } | null {
   const questions = buildVehicleProfileQuestions(unitsPref);
   const steps = buildOnboardingSteps(unitsPref);
-  const total = steps.length;
   const gateLabel = caravanDumpStationGateLabel();
+
+  // When the user said "No" to caravan tracking, exclude the gate step and
+  // all dump_station profile steps from the total count so progress shows
+  // e.g. "4 of 5" instead of "4 of 7".
+  const dumpStationDisabled = vehicle?.dump_station_tracking_enabled === false;
+  const visibleSteps = dumpStationDisabled
+    ? steps.filter((s) => s.t !== 'gate' && !(s.t === 'profile' && s.q.group === 'dump_station'))
+    : steps;
+  const total = visibleSteps.length;
 
   if (!vehicle) {
     const first = steps[0];
@@ -169,9 +177,13 @@ function nextVehicleOnboardingQuestion(
     };
   }
 
+  // Track position within the visible steps for progress display.
+  let visibleIdx = 0;
   for (let s = 0; s < steps.length; s++) {
     const step = steps[s];
+
     if (step.t === 'gate') {
+      if (dumpStationDisabled) continue; // gate already answered "no" — skip
       const gateResolved = caravanGateResolved(vehicle, askedLabels, questions);
       if (!gateResolved) {
         return {
@@ -185,21 +197,27 @@ function nextVehicleOnboardingQuestion(
               { value: 'no', label: 'No' },
             ],
           },
-          progress: { current: s + 1, total },
+          progress: { current: visibleIdx + 1, total },
         };
       }
+      visibleIdx++;
       continue;
     }
 
     const q = step.q;
+
+    // Skip dump_station questions entirely when tracking is disabled.
+    if (dumpStationDisabled && q.group === 'dump_station') continue;
+
     const hasVal = vehicleHasProfileValue(vehicle, q.key);
     const resolved = q.optional ? hasVal || askedLabels.has(q.label) : hasVal;
     if (!resolved) {
       return {
         question: q as Question,
-        progress: { current: s + 1, total },
+        progress: { current: visibleIdx + 1, total },
       };
     }
+    visibleIdx++;
   }
 
   return null;
@@ -262,6 +280,14 @@ export async function getOnboardingSnapshot(
     state = 'trip_intent';
   }
 
+  // Pre-vehicle steps: trip_intent + trip_name + units_pick (if not yet set).
+  // We count them so the progress bar reflects the full onboarding, not just
+  // the vehicle-profile portion.
+  const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
+  // trip_intent doesn't count in the numbered progress (it's the greeting).
+  // Steps shown in progress: trip_name, [units_pick], then vehicle steps.
+  const preVehicleSteps = unitsAlreadyChosen ? 1 : 2; // trip_name [+ units_pick]
+
   if (state === 'trip_intent') {
     return {
       state: 'trip_intent',
@@ -271,12 +297,18 @@ export async function getOnboardingSnapshot(
     };
   }
 
+  // Compute total for progress: preVehicleSteps + vehicle profile steps.
+  // We need units pref for vehicle questions — use 'metric' as default since
+  // we might not know yet, but the count is the same either way.
+  const vehicleSteps = buildOnboardingSteps(unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric');
+  const totalSteps = preVehicleSteps + vehicleSteps.length;
+
   if (state === 'trip_name') {
     return {
       state: 'trip_name',
       question: TRIP_NAME_QUESTION,
       vehicles: [],
-      progress: null,
+      progress: { current: 1, total: totalSteps },
     };
   }
 
@@ -294,7 +326,7 @@ export async function getOnboardingSnapshot(
         ],
       },
       vehicles: [],
-      progress: null,
+      progress: { current: 2, total: totalSteps },
     };
   }
 
@@ -336,11 +368,16 @@ export async function getOnboardingSnapshot(
         .where(eq(trips.id, tripId));
       return { state: 'done', question: null, vehicles: [], progress: null };
     }
+    // Offset vehicle progress by the pre-vehicle steps so the counter
+    // reflects the full onboarding flow (trip_name + [units_pick] + vehicle).
     return {
       state,
       question: next.question,
       vehicles: [],
-      progress: next.progress,
+      progress: {
+        current: preVehicleSteps + next.progress.current,
+        total: preVehicleSteps + next.progress.total,
+      },
     };
   }
 

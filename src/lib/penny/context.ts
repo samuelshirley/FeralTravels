@@ -7,6 +7,8 @@ import {
   getVehicleForUser,
   type VehicleApi,
 } from '@/server/repos/vehicles';
+import { getUnitsPref } from '@/server/repos/users';
+import type { UnitsPref } from '@/lib/units';
 import type { ChatMessage, LegWithDetails, TripWithLegs } from '@/types/trip';
 
 /**
@@ -32,6 +34,8 @@ export interface PennyContext {
    * or `/vehicle-setup` instead of implying automated fuel/routing succeeded.
    */
   vehicle_profile_blocked: boolean;
+  /** User's preferred distance units — 'metric' or 'imperial'. */
+  units_pref: UnitsPref;
 }
 
 /**
@@ -146,7 +150,10 @@ export async function buildPennyContext(
   const trip = await getTripFull(tripId);
   if (!trip) return null;
 
-  const vehicle = await resolveVehicle(trip, userId);
+  const [vehicle, unitsPref] = await Promise.all([
+    resolveVehicle(trip, userId),
+    getUnitsPref(userId),
+  ]);
   const chatPage = await getChatPage({
     tripId,
     limit: options.recentChatLimit ?? 12,
@@ -171,6 +178,7 @@ export async function buildPennyContext(
     legs: trip.legs.map(projectLeg),
     recentChat: chatPage.messages.map(projectChat),
     vehicle_profile_blocked,
+    units_pref: unitsPref,
   };
 }
 

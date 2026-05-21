@@ -488,7 +488,11 @@ export default function TripWorkspace({
 
         <div
         style={{
-          height: '100dvh',
+          // Use position:fixed instead of height:100dvh so that iOS Safari
+          // cannot scroll the page when the soft keyboard opens — this keeps
+          // the AppNavbar pinned at the top at all times.
+          position: 'fixed',
+          inset: 0,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

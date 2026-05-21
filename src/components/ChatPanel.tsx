@@ -490,18 +490,18 @@ export default function ChatPanel({
       });
     };
 
-    // First question (Penny's greeting) — show typing indicator for ~3 seconds
-    // before revealing, but only if there are no messages yet (fresh trip).
-    if (onboardingSnapshot.state === 'trip_intent' && messages.length === 0) {
-      setIntroTyping(true);
-      const timer = setTimeout(() => {
-        setIntroTyping(false);
-        addQuestionBubble();
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
+    // Show typing indicator before each onboarding question so the flow
+    // feels like a real conversation. First question gets 3s (the greeting
+    // is longer), subsequent questions get 2s.
+    const isFirstQuestion = onboardingSnapshot.state === 'trip_intent' && messages.length === 0;
+    const delay = isFirstQuestion ? 3000 : 2000;
 
-    addQuestionBubble();
+    setIntroTyping(true);
+    const timer = setTimeout(() => {
+      setIntroTyping(false);
+      addQuestionBubble();
+    }, delay);
+    return () => clearTimeout(timer);
   }, [isOnboarding, onboardingLoading, onboardingSnapshot, tripId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function fileToDataUrl(file: File): Promise<string> {
@@ -944,6 +944,9 @@ export default function ChatPanel({
         const intent = result.tripIntent ?? (typeof value === 'string' ? value : String(value));
         await sendChatMessage(intent, []);
         onTripUpdated();
+        // Re-focus the textarea so the keyboard stays open on mobile during
+        // the transition from onboarding to normal chat.
+        setTimeout(() => textareaRef.current?.focus(), 100);
       } else {
         setMessages((prev) => [
           ...prev,
@@ -1370,6 +1373,11 @@ export default function ChatPanel({
         )}
 
         {messages.map((msg, msgIdx) => {
+          // Hide the empty assistant bubble while waiting for Penny's first
+          // chunk — the 3-dot typing indicator covers this state.
+          if (msg.role === 'assistant' && msg.streaming && !msg.content && !(msg.inFlightTools?.length)) {
+            return null;
+          }
           const gp = getGroupPosition(messages, msgIdx);
           // Tight 2px gap inside a group, 10px between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
@@ -1421,7 +1429,7 @@ export default function ChatPanel({
               </div>
             )}
             {msg.content}
-            {msg.streaming && (
+            {msg.streaming && msg.content && (
               <span
                 aria-hidden
                 style={{
@@ -1590,7 +1598,7 @@ export default function ChatPanel({
 
         {/* Typing indicator — shown when Penny has "read" the message
             but hasn't started responding yet (no text chunks received),
-            or during the intro typing animation on first visit. */}
+            or during the typing animation before each onboarding question. */}
         {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.content))) && (
           <div
             style={{
@@ -1757,6 +1765,7 @@ export default function ChatPanel({
                           key={o.value}
                           type="button"
                           disabled={onboardingComposerBusy}
+                          onMouseDown={(e) => e.preventDefault()}
                           onClick={() => void submitOnboardingPick(o.value)}
                           style={{
                             padding: '8px 14px',
@@ -2055,9 +2064,9 @@ export default function ChatPanel({
             </svg>
           </button>
         </div>
-        {/* Hint text — only shown during setup flows. Normal chat is clean
-            like iMessage (no helper text under the composer). */}
-        {(onboardingUiActive || showRemediation) && (
+        {/* Hint text — only shown during remediation. Onboarding no longer
+            shows helper text under the composer. */}
+        {showRemediation && (
           <div
             style={{
               marginTop: 6,
@@ -2067,7 +2076,7 @@ export default function ChatPanel({
               textAlign: 'center',
             }}
           >
-            {onboardingUiActive ? 'Trip setup' : 'Vehicle setup'}
+            Vehicle setup
           </div>
         )}
       </div>

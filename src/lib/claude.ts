@@ -150,13 +150,15 @@ Skip this format on small tweaks (single leg edits, single stop additions, conve
 </plan_summary_format>
 
 <units>
-This app is metric-only. Always express distances in kilometers (km), driving times in hours/minutes, fuel volumes in liters, temperatures in Celsius. NEVER use miles, mph, gallons, Fahrenheit, or any other imperial unit in your responses, even if the user uses them.
+The database stores all distances in kilometers. Check \`context.units_pref\` to know the user's display preference:
 
-If the user mentions an imperial unit (miles, mph, gallons, °F, feet, etc.), respond with one short deadpan line that you don't recognize that unit, then plan in metric using your best metric estimate. Examples:
-  - User: "drive 500 miles tomorrow" → "I don't know what a 'mile' is — planning ~805 km."
-  - User: "fill up 10 gallons" → "I don't speak imperial. Working in liters (~38 L)."
-  - User: "it'll be 80°F" → "°F is not a unit I use. Planning around ~27°C."
-Keep it dry — one short line, then proceed. Do not lecture, apologize, or explain why. Do not ask the user to switch units. Do not offer a unit selector. Just convert and move on.
+- **metric** (units_pref = "metric"): Express distances in km, speeds in km/h, fuel in liters, temperatures in °C. This is the default.
+- **imperial** (units_pref = "imperial"): Express distances in miles, speeds in mph, fuel in gallons, temperatures in °F in your text responses. Convert from the km values you receive in context: 1 km ≈ 0.62 mi. Your tool calls ALWAYS use kilometers (the DB schema is metric), but your prose to the user should use their preferred units.
+
+When the user mentions a unit that doesn't match their preference, silently convert and respond in their preferred units. Do not lecture about unit systems. Example for an imperial user:
+  - User: "drive 800 km tomorrow" → respond with "~497 miles", plan with km in tools.
+Example for a metric user:
+  - User: "drive 500 miles tomorrow" → respond with "~805 km", plan with km in tools.
 </units>
 
 <vehicle_preference_updates>
@@ -529,14 +531,14 @@ export async function* replanStream(
         response.usage?.cache_creation_input_tokens ?? 0;
       totalCacheReadTokens += response.usage?.cache_read_input_tokens ?? 0;
 
-      // Collect text blocks from this iteration. We yield them live so the
-      // SSE consumer can append paragraphs to the assistant message bubble
-      // as they arrive — the user sees Penny "thinking out loud" instead of
-      // waiting for the full turn to land.
+      // Buffer text from this iteration. We only surface it to the user
+      // when this is the final iteration (no tool calls follow). Intermediate
+      // "Let me check…" text is AI thinking and just adds noise — the user
+      // sees tool-status pills and a typing indicator instead.
+      const iterationText: string[] = [];
       for (const block of response.content) {
         if (block.type === "text" && block.text.trim().length > 0) {
-          textChunks.push(block.text);
-          yield { kind: "text", chunk: block.text };
+          iterationText.push(block.text);
         }
       }
 
@@ -544,11 +546,17 @@ export async function* replanStream(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
 
-      // No tool calls this iteration → Penny is done. Either she chatted, or
-      // she wrapped up after a previous round of tool calls.
+      // No tool calls this iteration → Penny is done. Flush the buffered
+      // text to the client and break out of the loop.
       if (toolUses.length === 0) {
+        for (const chunk of iterationText) {
+          textChunks.push(chunk);
+          yield { kind: "text", chunk };
+        }
         break;
       }
+
+      // Intermediate iteration — discard thinking text, process tools below.
 
       // Process each tool_use block. For lookup tools (get_route) we execute
       // server-side and feed the data back. For action tools we validate; on
