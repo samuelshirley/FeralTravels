@@ -1,6 +1,6 @@
-CREATE TYPE "public"."constraint_type" AS ENUM('arrive_by', 'depart_after', 'flexible');--> statement-breakpoint
-CREATE TYPE "public"."travel_style" AS ENUM('scenic_cruiser', 'road_tripper', 'get_me_there');--> statement-breakpoint
-CREATE TYPE "public"."trip_status" AS ENUM('draft', 'active', 'paused', 'completed');--> statement-breakpoint
+DO $$ BEGIN CREATE TYPE "public"."constraint_type" AS ENUM('arrive_by', 'depart_after', 'flexible'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
+DO $$ BEGIN CREATE TYPE "public"."travel_style" AS ENUM('scenic_cruiser', 'road_tripper', 'get_me_there'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
+DO $$ BEGIN CREATE TYPE "public"."trip_status" AS ENUM('draft', 'active', 'paused', 'completed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "announcement_dismissals" (
 	"user_id" text NOT NULL,
 	"announcement_id" uuid NOT NULL,

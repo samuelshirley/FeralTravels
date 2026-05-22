@@ -52,7 +52,11 @@ export async function loginAsE2eUser(page: Page, email: string, opts: { redirect
     },
   ]);
 
-  await page.goto(redirectTo);
+  // Use domcontentloaded — the full 'load' event can stall on slow
+  // sub-resources (fonts, analytics, Google Maps JS) while the page is
+  // already interactive. Every test waits for its own content assertions
+  // after login anyway.
+  await page.goto(redirectTo, { waitUntil: 'domcontentloaded' });
 }
 
 /**
