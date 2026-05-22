@@ -833,11 +833,13 @@ export async function updateTripStatus(
  * Fetch all trips that should be checked by the nightly cron.
  * Returns raw rows (not mapped) for efficiency — caller maps what it needs.
  */
-export async function getActiveTrips() {
+export async function getActiveTrips(onlyUserId?: string) {
+  const conditions = [eq(trips.tripStatus, 'active')];
+  if (onlyUserId) conditions.push(eq(trips.userId, onlyUserId));
   return db
     .select()
     .from(trips)
-    .where(eq(trips.tripStatus, 'active'));
+    .where(and(...conditions));
 }
 
 /**
@@ -847,7 +849,7 @@ export async function getActiveTrips() {
  *
  * Returns counts for logging.
  */
-export async function autoTransitionTripStatuses(): Promise<{
+export async function autoTransitionTripStatuses(onlyUserId?: string): Promise<{
   activated: number;
   completed: number;
 }> {
@@ -856,16 +858,17 @@ export async function autoTransitionTripStatuses(): Promise<{
   let completed = 0;
 
   // draft → active (only trips with at least one leg)
+  const draftConditions = [
+    eq(trips.tripStatus, 'draft'),
+    isNotNull(trips.startDateParsed),
+    lte(trips.startDateParsed, today),
+  ];
+  if (onlyUserId) draftConditions.push(eq(trips.userId, onlyUserId));
+
   const draftTrips = await db
     .select({ id: trips.id, startDateParsed: trips.startDateParsed })
     .from(trips)
-    .where(
-      and(
-        eq(trips.tripStatus, 'draft'),
-        isNotNull(trips.startDateParsed),
-        lte(trips.startDateParsed, today),
-      ),
-    );
+    .where(and(...draftConditions));
 
   for (const t of draftTrips) {
     const legCount = await db
@@ -883,16 +886,17 @@ export async function autoTransitionTripStatuses(): Promise<{
   }
 
   // active → completed (endDateParsed < today)
+  const completedConditions = [
+    eq(trips.tripStatus, 'active'),
+    isNotNull(trips.endDateParsed),
+    lt(trips.endDateParsed, today),
+  ];
+  if (onlyUserId) completedConditions.push(eq(trips.userId, onlyUserId));
+
   const result = await db
     .update(trips)
     .set({ tripStatus: 'completed', updatedAt: new Date() })
-    .where(
-      and(
-        eq(trips.tripStatus, 'active'),
-        isNotNull(trips.endDateParsed),
-        lt(trips.endDateParsed, today),
-      ),
-    )
+    .where(and(...completedConditions))
     .returning({ id: trips.id });
   completed = result.length;
 

@@ -30,6 +30,12 @@ export const maxDuration = 300; // 5 min for Vercel Pro
 const CRON_SECRET = process.env.CRON_SECRET;
 
 /**
+ * Temporary gate: only run cron for this user to limit Vercel usage.
+ * Remove this (and the onlyUserId filtering below) when ready to open up.
+ */
+const ALLOWED_CRON_EMAIL = 'samuelashirley@gmail.com';
+
+/**
  * Check if it's approximately 2am at the given GPS position.
  * Uses a ±30 minute window. Returns false if position is missing.
  */
@@ -96,11 +102,28 @@ export async function POST(req: NextRequest) {
   let skippedCount = 0;
 
   try {
-    // Step 1: Auto-transition trip statuses (draft→active, active→completed)
-    const transitions = await autoTransitionTripStatuses();
+    // Look up the allowed user's ID to scope all cron work
+    const { users } = await import('@/server/db/schema');
+    const allowedRows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, ALLOWED_CRON_EMAIL))
+      .limit(1);
+    const onlyUserId = allowedRows[0]?.id;
 
-    // Step 2: Get all active trips
-    const activeTrips = await getActiveTrips();
+    if (!onlyUserId) {
+      return Response.json({
+        ok: true,
+        skipped: true,
+        reason: `Allowed cron user (${ALLOWED_CRON_EMAIL}) not found in DB`,
+      });
+    }
+
+    // Step 1: Auto-transition trip statuses (draft→active, active→completed)
+    const transitions = await autoTransitionTripStatuses(onlyUserId);
+
+    // Step 2: Get all active trips (filtered to allowed user only)
+    const activeTrips = await getActiveTrips(onlyUserId);
     activeCount = activeTrips.length;
 
     // Step 3: Process each active trip
