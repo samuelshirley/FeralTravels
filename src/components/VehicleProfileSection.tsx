@@ -8,13 +8,15 @@ import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
   caravanDumpStationGateLabel,
+  TRAVEL_STYLE_OPTIONS,
   validateVehicleProfileDraftForSave,
   vehicleProfileGroupTitle,
+  type TravelStyle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
 
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {
-  max_drive_hours_per_day: 'vehicle-max-drive-day-input',
+  travel_style: 'vehicle-travel-style-select',
   max_consecutive_drive_days: 'vehicle-max-consecutive-input',
   rest_days_after_driving: 'vehicle-rest-days-input',
   dump_station_interval_days: 'vehicle-dump-station-input',
@@ -30,7 +32,12 @@ export interface Vehicle {
   name: string;
   is_default: boolean;
   refill_distance_km: number | null;
+  travel_style: TravelStyle | null;
+  cruise_max_drive_hours: number | null;
+  transit_max_drive_hours: number | null;
+  /** @deprecated Legacy field — equals transit cap. */
   max_drive_hours_per_day: number | null;
+  /** @deprecated Derived legacy field. */
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
   rest_days_after_driving: number | null;
@@ -47,8 +54,7 @@ function emptyDraft(): Draft {
   return {
     name: '',
     refill_distance_km: null,
-    max_drive_hours_per_day: null,
-    max_drive_hours_per_week: null,
+    travel_style: null,
     max_consecutive_drive_days: null,
     rest_days_after_driving: null,
     dump_station_interval_days: null,
@@ -84,8 +90,7 @@ export default function VehicleProfileSection() {
         {
           name: draft.name ?? '',
           refill_distance_km: draft.refill_distance_km ?? null,
-          max_drive_hours_per_day: draft.max_drive_hours_per_day ?? null,
-          max_drive_hours_per_week: draft.max_drive_hours_per_week ?? null,
+          travel_style: draft.travel_style ?? null,
           max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
           rest_days_after_driving: draft.rest_days_after_driving ?? null,
           dump_station_interval_days: draft.dump_station_interval_days ?? null,
@@ -321,11 +326,17 @@ function VehicleCard({
         }}
       >
         {refillLabel && <Stat label="Refill every" value={refillLabel} />}
-        {vehicle.max_drive_hours_per_day != null && (
-          <Stat label="Drive/day" value={`${vehicle.max_drive_hours_per_day}h`} />
+        {vehicle.travel_style != null && (
+          <Stat
+            label="Style"
+            value={TRAVEL_STYLE_OPTIONS.find((o) => o.value === vehicle.travel_style)?.label ?? vehicle.travel_style}
+          />
         )}
-        {vehicle.max_drive_hours_per_week != null && (
-          <Stat label="Drive/week" value={`${vehicle.max_drive_hours_per_week}h`} />
+        {vehicle.cruise_max_drive_hours != null && (
+          <Stat label="Cruise" value={`${vehicle.cruise_max_drive_hours}h`} />
+        )}
+        {vehicle.transit_max_drive_hours != null && (
+          <Stat label="Transit" value={`${vehicle.transit_max_drive_hours}h`} />
         )}
         {vehicle.max_consecutive_drive_days != null && (
           <Stat label="Consec. days" value={`${vehicle.max_consecutive_drive_days}`} />
@@ -499,6 +510,25 @@ function VehicleForm({
                     placeholder={q.placeholder}
                     style={inputStyle}
                   />
+                </Field>
+              );
+            }
+            if (q.kind === 'select' && q.options) {
+              return (
+                <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
+                  <select
+                    data-testid={PROFILE_FIELD_TEST_IDS[q.key]}
+                    value={(d as Record<string, unknown>)[q.key] as string ?? ''}
+                    onChange={(e) => setD((p) => ({ ...p, [q.key]: e.target.value || null }))}
+                    style={inputStyle}
+                  >
+                    <option value="">— Choose —</option>
+                    {q.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}{opt.description ? ` — ${opt.description}` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
               );
             }

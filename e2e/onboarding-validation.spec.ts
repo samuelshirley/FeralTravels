@@ -22,7 +22,7 @@ test.describe('Onboarding composer validation', () => {
       await composer.fill('400');
       await composer.press('Enter');
 
-      await expect(page.getByText(/Max hours you want to drive per day/i)).toBeVisible({
+      await expect(page.getByText(/What's your travel style/i)).toBeVisible({
         timeout: 20_000,
       });
     } finally {

@@ -4,7 +4,9 @@ import {
   FUEL_STOP_SPACING_KM_MAX,
   FUEL_STOP_SPACING_KM_MIN,
   MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
+  deriveFromTravelStyle,
   vehicleIsCompleteForRemediation,
+  type TravelStyle,
 } from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from '@/server/repos/vehicles';
 
@@ -19,8 +21,12 @@ const createSchema = z
       .int()
       .min(FUEL_STOP_SPACING_KM_MIN)
       .max(FUEL_STOP_SPACING_KM_MAX),
-    max_drive_hours_per_day: z.number().positive().max(24),
-    max_drive_hours_per_week: z.number().positive().max(168),
+    travel_style: z.enum(['scenic_cruiser', 'road_tripper', 'get_me_there']),
+    // Legacy fields — accepted for backward compat but ignored when travel_style is set
+    max_drive_hours_per_day: z.number().positive().max(24).optional(),
+    max_drive_hours_per_week: z.number().positive().max(168).optional(),
+    cruise_max_drive_hours: z.number().positive().max(24).optional(),
+    transit_max_drive_hours: z.number().positive().max(24).optional(),
     max_consecutive_drive_days: z
       .number()
       .int()
@@ -57,11 +63,15 @@ export async function POST(req: Request) {
     const userId = await requireUserId();
     const body = createSchema.parse(await req.json());
 
+    // Derive hour caps from travel style
+    const derived = deriveFromTravelStyle(body.travel_style as TravelStyle);
+
     const mergedRecord: Record<string, unknown> = {
       name: body.name,
       refill_distance_km: body.refill_distance_km,
-      max_drive_hours_per_day: body.max_drive_hours_per_day,
-      max_drive_hours_per_week: body.max_drive_hours_per_week,
+      travel_style: body.travel_style,
+      max_drive_hours_per_day: derived.max_drive_hours_per_day,
+      max_drive_hours_per_week: derived.max_drive_hours_per_day * body.max_consecutive_drive_days,
       max_consecutive_drive_days: body.max_consecutive_drive_days,
       dump_station_tracking_enabled: body.dump_station_tracking_enabled,
       dump_station_interval_days: body.dump_station_interval_days ?? null,
@@ -74,8 +84,11 @@ export async function POST(req: Request) {
     const vehicle = await addVehicle(userId, {
       name: body.name,
       refill_distance_km: body.refill_distance_km,
-      max_drive_hours_per_day: body.max_drive_hours_per_day,
-      max_drive_hours_per_week: body.max_drive_hours_per_week,
+      travel_style: body.travel_style,
+      cruise_max_drive_hours: derived.cruise_max_drive_hours,
+      transit_max_drive_hours: derived.transit_max_drive_hours,
+      max_drive_hours_per_day: derived.max_drive_hours_per_day,
+      max_drive_hours_per_week: derived.max_drive_hours_per_day * body.max_consecutive_drive_days,
       max_consecutive_drive_days: body.max_consecutive_drive_days,
       dump_station_tracking_enabled: body.dump_station_tracking_enabled,
       dump_station_interval_days: body.dump_station_interval_days ?? null,

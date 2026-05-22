@@ -55,15 +55,20 @@ export type UpdateLegInput = z.infer<typeof baseSchema>;
 export function validator(ctx: PennyContext) {
   return baseSchema.refine(
     (input) => {
-      const cap = ctx.vehicle?.max_drive_hours_per_day;
+      const cap = ctx.vehicle?.transit_max_drive_hours
+        ?? ctx.vehicle?.max_drive_hours_per_day;
       if (cap == null) return true;
       if (input.data.drive_time_minutes == null) return true;
       return input.data.drive_time_minutes <= cap * 60;
     },
-    (input) => ({
-      message: `data.drive_time_minutes (${input.data.drive_time_minutes}) exceeds vehicle.max_drive_hours_per_day (${ctx.vehicle?.max_drive_hours_per_day}h). If the route really needs more, split into separate legs via add_leg instead of growing this one.`,
-      path: ['data', 'drive_time_minutes'],
-    })
+    (input) => {
+      const cap = ctx.vehicle?.transit_max_drive_hours
+        ?? ctx.vehicle?.max_drive_hours_per_day;
+      return {
+        message: `data.drive_time_minutes (${input.data.drive_time_minutes}) exceeds vehicle drive cap (${cap}h). If the route really needs more, split into separate legs via add_leg instead of growing this one.`,
+        path: ['data', 'drive_time_minutes'],
+      };
+    }
   );
 }
 

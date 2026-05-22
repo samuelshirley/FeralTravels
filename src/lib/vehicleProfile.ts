@@ -9,6 +9,52 @@
 import type { UnitsPref } from '@/lib/units';
 import { kmToMi, miToKm } from '@/lib/units';
 
+// ── Travel style ────────────────────────────────────────────────────────────
+
+export type TravelStyle = 'scenic_cruiser' | 'road_tripper' | 'get_me_there';
+
+export const TRAVEL_STYLE_OPTIONS: Array<{
+  value: TravelStyle;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'scenic_cruiser',
+    label: 'Scenic cruiser',
+    description: 'Short driving days (~4h), lots of stops — the drive IS the trip.',
+  },
+  {
+    value: 'road_tripper',
+    label: 'Road tripper',
+    description: 'Moderate days (~6h) with a good balance of driving and exploring.',
+  },
+  {
+    value: 'get_me_there',
+    label: 'Get me there',
+    description: 'Long driving days (~8h cruise, up to 12h transit) — you just want to arrive.',
+  },
+];
+
+/**
+ * Derive cruise + transit hour caps from a travel style. Also populates
+ * the legacy `max_drive_hours_per_day` (= transit cap) for backward compat.
+ */
+export function deriveFromTravelStyle(style: TravelStyle): {
+  cruise_max_drive_hours: number;
+  transit_max_drive_hours: number;
+  /** @deprecated Legacy field, equals transit cap. */
+  max_drive_hours_per_day: number;
+} {
+  switch (style) {
+    case 'scenic_cruiser':
+      return { cruise_max_drive_hours: 4, transit_max_drive_hours: 8, max_drive_hours_per_day: 8 };
+    case 'road_tripper':
+      return { cruise_max_drive_hours: 6, transit_max_drive_hours: 10, max_drive_hours_per_day: 10 };
+    case 'get_me_there':
+      return { cruise_max_drive_hours: 8, transit_max_drive_hours: 12, max_drive_hours_per_day: 12 };
+  }
+}
+
 /** Stored km between planned fuel stops — enforced on all vehicle saves. */
 export const FUEL_STOP_SPACING_KM_MIN = 200;
 export const FUEL_STOP_SPACING_KM_MAX = 1500;
@@ -42,18 +88,20 @@ export function vehicleMeetsCompletenessTier(
 ): boolean {
   if (!vehicleMeetsFuelPlanningMinimum(vehicle)) return false;
   if (tier === 'fuel_plannable') return true;
+
+  // New path: travel_style drives everything
+  const ts = vehicle.travel_style;
+  const hasStyle = typeof ts === 'string' && ['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(ts);
+
+  // Legacy path: accept old fields too (pre-migration vehicles)
   const d = vehicle.max_drive_hours_per_day;
   const w = vehicle.max_drive_hours_per_week;
+  const hasLegacy = typeof d === 'number' && d > 0 && typeof w === 'number' && w > 0;
+
   const c = vehicle.max_consecutive_drive_days;
-  return (
-    typeof d === 'number' &&
-    d > 0 &&
-    typeof w === 'number' &&
-    w > 0 &&
-    typeof c === 'number' &&
-    Number.isInteger(c) &&
-    c > 0
-  );
+  const hasConsec = typeof c === 'number' && Number.isInteger(c) && c > 0;
+
+  return (hasStyle || hasLegacy) && hasConsec;
 }
 
 /** Plan / docs name — same as {@link vehicleMeetsCompletenessTier}. */
@@ -109,14 +157,8 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
       return typeof raw !== 'string' || raw.trim().length === 0;
     case 'refill_distance_km':
       return !vehicleMeetsFuelPlanningMinimum({ refill_distance_km: raw });
-    case 'max_drive_hours_per_day':
-    case 'max_drive_hours_per_week': {
-      if (typeof raw !== 'number' || !Number.isFinite(raw)) return true;
-      if (raw <= 0) return true;
-      if (q.min !== undefined && raw < q.min) return true;
-      if (q.max !== undefined && raw > q.max) return true;
-      return false;
-    }
+    case 'travel_style':
+      return typeof raw !== 'string' || !['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(raw);
     case 'max_consecutive_drive_days':
     case 'rest_days_after_driving': {
       if (q.optional && (raw === null || raw === undefined)) return false;
@@ -134,8 +176,7 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
 export const VEHICLE_PROFILE_KEYS = [
   'name',
   'refill_distance_km',
-  'max_drive_hours_per_day',
-  'max_drive_hours_per_week',
+  'travel_style',
   'max_consecutive_drive_days',
   'rest_days_after_driving',
   'dump_station_interval_days',
@@ -143,7 +184,7 @@ export const VEHICLE_PROFILE_KEYS = [
 
 export type VehicleProfileFieldKey = (typeof VEHICLE_PROFILE_KEYS)[number];
 
-export type VehicleProfileQuestionKind = 'text' | 'number' | 'integer';
+export type VehicleProfileQuestionKind = 'text' | 'number' | 'integer' | 'select';
 
 export type VehicleProfileFieldGroup = 'identity' | 'driving' | 'dump_station';
 
@@ -157,6 +198,8 @@ export interface VehicleProfileQuestion {
   min?: number;
   max?: number;
   group: VehicleProfileFieldGroup;
+  /** For `kind: 'select'` — the available options. */
+  options?: Array<{ value: string; label: string; description?: string }>;
 }
 
 /**
@@ -194,13 +237,14 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       max: distMax,
     },
     {
-      key: 'max_drive_hours_per_day',
-      kind: 'number',
+      key: 'travel_style',
+      kind: 'select',
       group: 'driving',
-      label: 'Max hours you want to drive per day?',
-      placeholder: '6',
-      min: 1,
-      max: 24,
+      label: "What's your travel style?",
+      help:
+        'This sets how long your driving days are. Scenic cruisers stop often and keep drives short; ' +
+        '"get me there" travelers are happy to grind a long transit day to maximize time at destinations.',
+      options: TRAVEL_STYLE_OPTIONS,
     },
     {
       key: 'max_consecutive_drive_days',
@@ -245,8 +289,6 @@ export function caravanDumpStationGateLabel(): string {
 
 const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {
   dump_station_interval_days: ' days',
-  max_drive_hours_per_day: ' h/day',
-  max_drive_hours_per_week: ' h/week',
   max_consecutive_drive_days: ' days',
   rest_days_after_driving: ' rest days',
 };
@@ -267,6 +309,12 @@ export function coerceVehicleProfileValue(
       const s = raw.trim();
       if (!q.optional && !s) throw new Error(`${q.key} is required`);
       return s;
+    }
+    case 'select': {
+      if (typeof raw !== 'string') throw new Error(`Expected string for ${q.key}`);
+      const valid = (q.options ?? []).map((o) => o.value);
+      if (!valid.includes(raw)) throw new Error(`${q.key} must be one of: ${valid.join(', ')}`);
+      return raw;
     }
     case 'number':
     case 'integer': {
@@ -300,6 +348,10 @@ export function humanizeVehicleProfileAnswer(
   units: UnitsPref
 ): string {
   if (value === null || value === undefined || value === '') return '(skipped)';
+  if (q.kind === 'select' && q.options) {
+    const opt = q.options.find((o) => o.value === value);
+    return opt?.label ?? String(value);
+  }
   if (q.key === 'refill_distance_km') {
     return `${value}${units === 'imperial' ? ' mi' : ' km'}`;
   }
@@ -313,6 +365,10 @@ export function formatVehicleProfileFieldDisplay(
   units: UnitsPref
 ): string {
   if (value === null || value === undefined || value === '') return '—';
+  if (q.kind === 'select' && q.options) {
+    const opt = q.options.find((o) => o.value === value);
+    return opt?.label ?? String(value);
+  }
   if (q.key === 'refill_distance_km') {
     return `${value} ${units === 'imperial' ? 'mi' : 'km'}`;
   }
@@ -369,8 +425,7 @@ export function vehicleProfileGroupTitle(group: VehicleProfileFieldGroup): strin
 export interface VehicleProfileDraftInput {
   name: string;
   refill_distance_km: number | null;
-  max_drive_hours_per_day: number | null;
-  max_drive_hours_per_week: number | null;
+  travel_style: TravelStyle | null;
   max_consecutive_drive_days: number | null;
   rest_days_after_driving: number | null;
   dump_station_interval_days: number | null;
@@ -420,7 +475,7 @@ export function validateVehicleProfileDraftForSave(
         const v = draft[q.key as keyof VehicleProfileDraftInput];
         if (v === null || v === undefined) raw = null;
         else if (typeof v === 'string' && v === '') raw = null;
-        else raw = v as number | null;
+        else raw = v as number | string | null;
       }
 
       const parsed = coerceVehicleProfileValue(qCoerce, raw);
@@ -442,16 +497,21 @@ export function validateVehicleProfileDraftForSave(
     }
   }
 
-  const day = payload.max_drive_hours_per_day;
-  const consec = payload.max_consecutive_drive_days;
-  if (
-    typeof day === 'number' &&
-    day > 0 &&
-    typeof consec === 'number' &&
-    Number.isInteger(consec) &&
-    consec > 0
-  ) {
-    payload.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(day, consec);
+  // Derive hour caps + legacy fields from travel_style
+  const ts = payload.travel_style;
+  if (typeof ts === 'string' && ['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(ts)) {
+    const derived = deriveFromTravelStyle(ts as TravelStyle);
+    payload.cruise_max_drive_hours = derived.cruise_max_drive_hours;
+    payload.transit_max_drive_hours = derived.transit_max_drive_hours;
+    payload.max_drive_hours_per_day = derived.max_drive_hours_per_day;
+
+    const consec = payload.max_consecutive_drive_days;
+    if (typeof consec === 'number' && Number.isInteger(consec) && consec > 0) {
+      payload.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(
+        derived.max_drive_hours_per_day,
+        consec
+      );
+    }
   }
 
   if (draft.is_default !== undefined) {

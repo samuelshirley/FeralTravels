@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, ne, or } from 'drizzle-orm';
+import { and, asc, eq, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
 import {
@@ -12,13 +12,17 @@ import {
   stops,
   tasks,
   pois,
+  legConstraints,
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import type {
   Leg,
   Trip,
   TripWithLegs,
+  TripStatus,
   LegWithDetails,
+  LegConstraint,
+  ConstraintType,
   Cost,
   Link,
   RouteWithLinks,
@@ -42,14 +46,32 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     name: r.name,
     start_date: r.startDate,
     end_date: r.endDate,
+    start_date_parsed: r.startDateParsed ?? null,
+    end_date_parsed: r.endDateParsed ?? null,
     status: r.status,
+    trip_status: (r.tripStatus as TripStatus) ?? 'draft',
     onboarding_state: r.onboardingState as Trip['onboarding_state'],
     prefer_avoid_highways: !!r.preferAvoidHighways,
+    last_known_lat: r.lastKnownLat ?? null,
+    last_known_lng: r.lastKnownLng ?? null,
+    position_updated_at: r.positionUpdatedAt ? r.positionUpdatedAt.toISOString() : null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
     vehicle_id: r.vehicleId,
     is_template: r.isTemplate,
+  };
+}
+
+function legConstraintRow(r: typeof legConstraints.$inferSelect): LegConstraint {
+  return {
+    id: r.id,
+    leg_id: r.legId,
+    constraint_type: r.constraintType as ConstraintType,
+    constraint_datetime: r.constraintDatetime ? r.constraintDatetime.toISOString() : null,
+    buffer_minutes: r.bufferMinutes,
+    note: r.note,
+    created_at: r.createdAt.toISOString(),
   };
 }
 
@@ -205,6 +227,7 @@ function poiRow(r: typeof pois.$inferSelect): POI {
 export const rowMappers = {
   tripRow,
   legRow,
+  legConstraintRow,
   costRow,
   linkRow,
   routeRow,
@@ -230,7 +253,7 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
   if (tripRows.length === 0) return null;
   const trip = tripRow(tripRows[0]);
 
-  const [legRows, costRows, linkRows, routeRows, routeLinkRows, stopRows, taskRows] =
+  const [legRows, costRows, linkRows, routeRows, routeLinkRows, stopRows, taskRows, constraintRows] =
     await Promise.all([
       db.select().from(legs).where(eq(legs.tripId, tripId)).orderBy(asc(legs.sortOrder)),
       db
@@ -263,6 +286,12 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
         .where(eq(legs.tripId, tripId))
         .orderBy(asc(stops.sortOrder), asc(stops.id)),
       db.select().from(tasks).where(eq(tasks.tripId, tripId)).orderBy(asc(tasks.createdAt)),
+      db
+        .select({ lc: legConstraints })
+        .from(legConstraints)
+        .innerJoin(legs, eq(legConstraints.legId, legs.id))
+        .where(eq(legs.tripId, tripId))
+        .orderBy(asc(legConstraints.createdAt)),
     ]);
 
   const costsByLeg = new Map<string, Cost[]>();
@@ -298,6 +327,13 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     const arr = stopsByLeg.get(s.legId) || [];
     arr.push(stopRow(s));
     stopsByLeg.set(s.legId, arr);
+  });
+
+  const constraintsByLeg = new Map<string, LegConstraint[]>();
+  constraintRows.forEach(({ lc }) => {
+    const arr = constraintsByLeg.get(lc.legId) || [];
+    arr.push(legConstraintRow(lc));
+    constraintsByLeg.set(lc.legId, arr);
   });
 
   const tasksByLeg = new Map<string, Task[]>();
@@ -337,6 +373,7 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
       routes: routesByLeg.get(leg.id) || [],
       stops: stopsByLeg.get(leg.id) || [],
       tasks: legTasks,
+      constraints: constraintsByLeg.get(leg.id) || [],
       parsedNotes,
     };
   });
@@ -760,4 +797,180 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
 
     return newTripId;
   });
+}
+
+// ── GPS position ────────────────────────────────────────────────────────────
+
+export async function updateTripPosition(
+  tripId: string,
+  lat: number,
+  lng: number,
+) {
+  await db
+    .update(trips)
+    .set({
+      lastKnownLat: lat,
+      lastKnownLng: lng,
+      positionUpdatedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(trips.id, tripId));
+}
+
+// ── Trip status ─────────────────────────────────────────────────────────────
+
+export async function updateTripStatus(
+  tripId: string,
+  tripStatus: TripStatus,
+) {
+  await db
+    .update(trips)
+    .set({ tripStatus, updatedAt: new Date() })
+    .where(eq(trips.id, tripId));
+}
+
+/**
+ * Fetch all trips that should be checked by the nightly cron.
+ * Returns raw rows (not mapped) for efficiency — caller maps what it needs.
+ */
+export async function getActiveTrips() {
+  return db
+    .select()
+    .from(trips)
+    .where(eq(trips.tripStatus, 'active'));
+}
+
+/**
+ * Auto-transition trips based on parsed dates:
+ * - draft → active when startDateParsed <= today and trip has ≥1 leg
+ * - active → completed when endDateParsed < today
+ *
+ * Returns counts for logging.
+ */
+export async function autoTransitionTripStatuses(): Promise<{
+  activated: number;
+  completed: number;
+}> {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  let activated = 0;
+  let completed = 0;
+
+  // draft → active (only trips with at least one leg)
+  const draftTrips = await db
+    .select({ id: trips.id, startDateParsed: trips.startDateParsed })
+    .from(trips)
+    .where(
+      and(
+        eq(trips.tripStatus, 'draft'),
+        isNotNull(trips.startDateParsed),
+        lte(trips.startDateParsed, today),
+      ),
+    );
+
+  for (const t of draftTrips) {
+    const legCount = await db
+      .select({ id: legs.id })
+      .from(legs)
+      .where(eq(legs.tripId, t.id))
+      .limit(1);
+    if (legCount.length > 0) {
+      await db
+        .update(trips)
+        .set({ tripStatus: 'active', updatedAt: new Date() })
+        .where(eq(trips.id, t.id));
+      activated++;
+    }
+  }
+
+  // active → completed (endDateParsed < today)
+  const result = await db
+    .update(trips)
+    .set({ tripStatus: 'completed', updatedAt: new Date() })
+    .where(
+      and(
+        eq(trips.tripStatus, 'active'),
+        isNotNull(trips.endDateParsed),
+        lt(trips.endDateParsed, today),
+      ),
+    )
+    .returning({ id: trips.id });
+  completed = result.length;
+
+  return { activated, completed };
+}
+
+// ── Leg constraints ─────────────────────────────────────────────────────────
+
+export async function addLegConstraint(input: {
+  legId: string;
+  constraintType: ConstraintType;
+  constraintDatetime?: string | null;
+  bufferMinutes?: number;
+  note?: string | null;
+}): Promise<LegConstraint> {
+  const [row] = await db
+    .insert(legConstraints)
+    .values({
+      legId: input.legId,
+      constraintType: input.constraintType,
+      constraintDatetime: input.constraintDatetime
+        ? new Date(input.constraintDatetime)
+        : null,
+      bufferMinutes: input.bufferMinutes ?? 60,
+      note: input.note ?? null,
+    })
+    .returning();
+  return legConstraintRow(row);
+}
+
+export async function deleteLegConstraint(constraintId: string) {
+  await db.delete(legConstraints).where(eq(legConstraints.id, constraintId));
+}
+
+export async function getConstraintsForLeg(legId: string): Promise<LegConstraint[]> {
+  const rows = await db
+    .select()
+    .from(legConstraints)
+    .where(eq(legConstraints.legId, legId))
+    .orderBy(asc(legConstraints.createdAt));
+  return rows.map(legConstraintRow);
+}
+
+/**
+ * Get all constraints for all legs in a trip, grouped by leg ID.
+ */
+export async function getConstraintsForTrip(
+  tripId: string,
+): Promise<Map<string, LegConstraint[]>> {
+  const rows = await db
+    .select({ lc: legConstraints })
+    .from(legConstraints)
+    .innerJoin(legs, eq(legConstraints.legId, legs.id))
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legConstraints.createdAt));
+
+  const map = new Map<string, LegConstraint[]>();
+  for (const { lc } of rows) {
+    const arr = map.get(lc.legId) || [];
+    arr.push(legConstraintRow(lc));
+    map.set(lc.legId, arr);
+  }
+  return map;
+}
+
+// ── Parsed date updates ─────────────────────────────────────────────────────
+
+export async function updateTripParsedDates(
+  tripId: string,
+  startDateParsed: string | null,
+  endDateParsed: string | null,
+) {
+  await db
+    .update(trips)
+    .set({
+      startDateParsed,
+      endDateParsed,
+      updatedAt: new Date(),
+    })
+    .where(eq(trips.id, tripId));
 }

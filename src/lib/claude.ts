@@ -160,21 +160,29 @@ Example for a metric user:
 </units>
 
 <vehicle_preference_updates>
-When the user states or changes a driving preference in chat (daily hours, weekly driving days, refuel cadence, dump station intervals) — whether you asked for it or they volunteered it — call update_vehicle immediately.
+When the user states or changes a driving preference in chat — whether you asked for it or they volunteered it — call update_vehicle immediately.
 
-Parse their freeform answer into metric numbers:
-  "6 hours a day, 3 days a week" → max_drive_hours_per_day: 6, max_consecutive_drive_days: 3, max_drive_hours_per_week: 18
+The user's travel_style determines two drive-hour caps:
+  scenic_cruiser → cruise 4h, transit 8h
+  road_tripper   → cruise 6h, transit 10h
+  get_me_there   → cruise 8h, transit 12h
+
+"Cruise" legs are when the drive IS the experience (stops, scenery, exploring).
+"Transit" legs are just covering ground to reach a destination.
+
+Parse their freeform answer:
+  "I like to take it slow, lots of stops" → travel_style: scenic_cruiser
+  "I don't mind long days to get there" → travel_style: get_me_there
+  "balanced, maybe 6 hours cruising" → travel_style: road_tripper
   "refuel every 400 km" → refill_distance_km: 400
   "drive 5 days then rest" → max_consecutive_drive_days: 5
   "drive 3 days then 1 rest day" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
-  "I need a day off after 3 driving days" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
-  "3 days driving, 2 days rest" → max_consecutive_drive_days: 3, rest_days_after_driving: 2
 
 Only supply fields the user actually stated — leave the rest out of the call so existing values aren't overwritten.
 
-After update_vehicle succeeds, confirm in one sentence ("Saved: 6 h/day, 3 consecutive days.") and proceed with planning. Do NOT ask the user to restate preferences in a different format. Do NOT say you don't recognize the input.
+After update_vehicle succeeds, confirm in one sentence ("Saved: road tripper style, 3 consecutive days.") and proceed with planning. Do NOT ask the user to restate preferences in a different format. Do NOT say you don't recognize the input.
 
-Important: leg validation in the SAME turn still uses the vehicle values from before the update. If you've just updated the daily cap and need to add legs that depend on it, tell the user the preferences are saved and ask them to send the planning request again — it will pick up the new cap.
+Important: leg validation in the SAME turn still uses the vehicle values from before the update. If you've just updated the travel style and need to add legs that depend on it, tell the user the preferences are saved and ask them to send the planning request again — it will pick up the new caps.
 
 The "I don't recognize" line from the units section is ONLY for imperial units (miles, gallons, °F, etc.). Never apply it to driving-time or cadence preferences stated in hours, days, or weeks.
 </vehicle_preference_updates>
@@ -183,14 +191,20 @@ The "I don't recognize" line from the units section is ONLY for imperial units (
 Each turn you receive a <context>…</context> block in the user message with this shape:
   trip       — { id, name, start_date, end_date, status }
   vehicle    — { name, refill_distance_km, effective_range_km,
+                  travel_style, cruise_max_drive_hours, transit_max_drive_hours,
                   max_drive_hours_per_day, max_drive_hours_per_week,
                   max_consecutive_drive_days, rest_days_after_driving,
                   dump_station_tracking_enabled, dump_station_interval_days }
                 effective_range_km mirrors refill_distance_km — the user's
                 stated preferred distance between fuel stops. Treat it as the
-                furthest distance you may plan between fuel stops. (No
-                fuel-tank or fuel-economy fields exist; the user-stated
-                cadence is the source of truth.)
+                furthest distance you may plan between fuel stops.
+
+                travel_style is one of: scenic_cruiser, road_tripper, get_me_there.
+                It determines TWO drive-hour caps:
+                  cruise_max_drive_hours — for legs where the drive is the experience
+                  transit_max_drive_hours — for legs that are just covering ground
+                Use the correct cap when planning each leg based on its purpose.
+                max_drive_hours_per_day is the legacy field (= transit cap) for backward compat.
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
                 drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[],
                 sort_order }
@@ -278,7 +292,13 @@ This is the most common mistake to avoid. Read carefully:
 <driving_defaults_summary>
 When building a NEW trip plan, use the driving preferences from the vehicle context as-is — do NOT ask the user to confirm them as a separate step. They already set these preferences; re-asking wastes a round trip.
 
-If any key fields are null (max_drive_hours_per_day, max_consecutive_drive_days, rest_days_after_driving), mention what's missing in your response and ask — you can't plan without driving caps. Otherwise, just use them and mention them in passing in your plan summary (e.g. "Planned around your 7h/day driving cap with rest days every 4 days.").
+If travel_style is null (and max_drive_hours_per_day is also null), mention that travel style hasn't been set and ask the user to pick one. If max_consecutive_drive_days is null, mention what's missing. You can't plan without these.
+
+Otherwise, use them and mention them in passing (e.g. "Planning as a road tripper — ~6h cruise days, up to 10h when you need to cover ground, with rest days every 3 days.").
+
+For each leg, decide if it's a cruise or transit leg:
+- Transit: the leg exists just to get between places (no interesting stops along the way) → use transit_max_drive_hours
+- Cruise: the route itself is worth savoring (scenic drives, small towns, frequent stops) → use cruise_max_drive_hours
 
 Skip this entirely on small tweaks, follow-up questions, or when the user has already just set their preferences in this conversation.
 </driving_defaults_summary>
@@ -313,6 +333,16 @@ CRITICAL DISTINCTION — transit stops vs final destination:
   - Transit stops (e.g. "2 nights in Innsbruck" on the way to Bad Kissingen) → include in waypoint_nights — these eat into travel time
   - Final destination stay (e.g. "4 nights in Bad Kissingen") → pass as destination_nights — these happen AFTER the driver arrives and do NOT affect whether they can get there on time
 
+IMPORTANT — DAY MODEL ALLOCATION:
+When the user has a hard deadline (an arrive_by constraint with a specific date AND time, e.g. "June 3 at 3pm"), also pass these fields to check_trip_feasibility:
+  - flexible_waypoints: one entry per flexible transit waypoint, with min_nights (minimum acceptable) and preferred_nights (from user intent). "A few days in X" → min_nights: 2, preferred_nights: 4.
+  - arrival_deadline: { datetime, local_time, buffer_minutes }
+  - departure_date: "YYYY-MM-DD"
+  - segment_drive_minutes: drive_time_minutes from each get_route result
+  - final_segment_drive_minutes: drive_time_minutes for the last segment
+
+The server runs clock-time math (e.g. "leave 8am, 5h drive → arrive 1:48pm, that's before 3pm deadline with 1h buffer") and returns recommended_allocation. When present, THIS IS AUTHORITATIVE — use recommended_allocation.recommended_nights for your add_leg calls instead of whatever you originally put in waypoint_nights. The server's day model accounts for the human daily cycle (departure time, breaks, setup), which you cannot reliably compute. This prevents wasting full days as buffer when same-day arrival is feasible.
+
 The tool returns a verdict:
   - "fits" → proceed with add_leg. Mention the totals briefly in your summary.
   - "tight" → proceed with add_leg, note there's no buffer for weather or rest.
@@ -332,7 +362,7 @@ This is a HARD gate enforced by the server. If you skip check_trip_feasibility o
 - If the user asks for a plan and the trip has no legs, you MUST call extract_trip_intent first (see <intent_extraction>), then get_route for each segment, then run the <feasibility_check>, THEN emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
 - AFTER emitting all driving-day legs, also emit add_leg calls with leg_type="rest" for each non-driving day at transit stops. If the user is spending 2 nights in Innsbruck, emit 2 rest-day legs (one per day) located at Innsbruck, numbered as total trip days. This makes rest days visible in the itinerary alongside driving days.
 - Number ALL legs (driving + rest) as sequential total trip days. Day 1, Day 2, etc. Rest days get their own day numbers.
-- The validator will reject any add_leg or update_leg with drive_time_minutes > vehicle.max_drive_hours_per_day × 60. Use get_route's split — don't try to override the cap with text reasoning.
+- The validator will reject any add_leg or update_leg with drive_time_minutes > vehicle.transit_max_drive_hours × 60 (or max_drive_hours_per_day × 60 for legacy vehicles). Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
 - For dump stations, see <dump_station_planning> below.
@@ -958,7 +988,10 @@ async function executeGetRoute(
     };
   }
 
-  const cap = context.vehicle?.max_drive_hours_per_day;
+  // Use transit cap (longest day the user will tolerate) for route splitting.
+  // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
+  const cap = context.vehicle?.transit_max_drive_hours
+    ?? context.vehicle?.max_drive_hours_per_day;
   const exceedsCap = cap != null && directions.drive_time_minutes > cap * 60;
 
   let suggestedSplit: ReturnType<typeof splitLegByDriveTime> | null = null;

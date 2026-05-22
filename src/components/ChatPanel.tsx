@@ -1459,27 +1459,7 @@ export default function ChatPanel({
                 Changes applied to trip
               </div>
             )}
-            {msg.routeSummary && (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: '8px 10px',
-                  background: 'var(--tp-surface)',
-                  borderRadius: 4,
-                  border: '1px solid var(--tp-border)',
-                  fontSize: 11,
-                  color: 'var(--tp-text-muted)',
-                  lineHeight: 1.55,
-                  whiteSpace: 'pre-line',
-                }}
-              >
-                <span style={{ fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--tp-text-muted)' }}>
-                  Verified route
-                </span>
-                <br />
-                {msg.routeSummary}
-              </div>
-            )}
+            {/* routeSummary data is still stored on the message but hidden from the UI for now */}
             {msg.partialApplyWarning && (
               <div
                 style={{

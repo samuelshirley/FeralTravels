@@ -52,6 +52,15 @@ const baseSchema = z.object({
   // see ("Girona → Berlin"). Leave both null for short single-day jumps.
   segment_index: z.number().int().min(0).nullish(),
   segment_name: z.string().min(1).max(200).nullish(),
+  // ── Constraints (for nightly replan) ──
+  /** Constraints to attach to this leg — deadlines, earliest departures, or flexible intents. */
+  constraints: z.array(z.object({
+    constraint_type: z.enum(['arrive_by', 'depart_after', 'flexible']),
+    /** ISO 8601 datetime with timezone. Required for arrive_by/depart_after, null for flexible. */
+    datetime: z.string().nullish(),
+    buffer_minutes: z.number().int().min(0).max(1440).optional().default(60),
+    note: z.string().max(500).nullish(),
+  })).max(5).optional().default([]),
 });
 
 export type AddLegInput = z.infer<typeof baseSchema>;
@@ -66,15 +75,22 @@ export function validator(ctx: PennyContext) {
     (d) => {
       // Rest days have no driving — skip the cap check.
       if (d.leg_type === 'rest') return true;
-      const cap = ctx.vehicle?.max_drive_hours_per_day;
+      // Use transit cap (longest tolerable day) for validation.
+      // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
+      const cap = ctx.vehicle?.transit_max_drive_hours
+        ?? ctx.vehicle?.max_drive_hours_per_day;
       if (cap == null) return true;
       if (d.drive_time_minutes == null) return true;
       return d.drive_time_minutes <= cap * 60;
     },
-    (d) => ({
-      message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle.max_drive_hours_per_day (${ctx.vehicle?.max_drive_hours_per_day}h × 60 = ${(ctx.vehicle?.max_drive_hours_per_day ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
-      path: ['drive_time_minutes'],
-    })
+    (d) => {
+      const cap = ctx.vehicle?.transit_max_drive_hours
+        ?? ctx.vehicle?.max_drive_hours_per_day;
+      return {
+        message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle drive cap (${cap}h × 60 = ${(cap ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
+        path: ['drive_time_minutes'],
+      };
+    }
   );
 }
 
@@ -84,9 +100,9 @@ export const tool: Anthropic.Tool = {
 
 DRIVING DAYS (leg_type: "drive" or omitted): Each driving leg represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
 
-REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Day N: Innsbruck (rest day)". Add notes about planned activities if the user mentions any.
+REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Innsbruck (rest day)". Add notes about planned activities if the user mentions any.
 
-TOTAL TRIP DAY NUMBERING: Number ALL days sequentially as total trip days — driving AND rest. If the trip is: Day 1 drive, Day 2 drive, Day 3-4 rest in Innsbruck, Day 5 drive — use "Day 1", "Day 2", "Day 3", "Day 4", "Day 5" in titles. The user sees total trip days, not just driving day count.
+TITLE FORMAT: Do NOT include "Day N:" prefixes in titles. The UI computes calendar dates automatically from the trip start date. Just use the route description: "Girona → Lyon" for driving days, "Innsbruck (rest day)" for rest days.
 
 GROUPING (segment_index / segment_name): When the user describes a destination jump that takes more than one driving day — e.g. "Girona to Berlin" stretching over 5 days — give every day in that jump the SAME segment_index (an integer, 0 for the first jump, 1 for the second, …) and the SAME segment_name (the user's words: "Girona → Berlin"). This is what lets the UI render long trips as collapsible sections.
 
@@ -99,7 +115,7 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
     properties: {
       title: {
         type: 'string',
-        description: 'Human-readable leg title. For driving days: "Day 1: Girona → Lyon". For rest days: "Day 3: Innsbruck (rest day)". Use total trip day numbering.',
+        description: 'Human-readable leg title. For driving days: "Girona → Lyon". For rest days: "Innsbruck (rest day)". Do NOT include "Day N:" — the UI adds calendar dates automatically.',
       },
       leg_type: {
         type: 'string',
@@ -149,6 +165,36 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
         type: 'string',
         description:
           'Optional human label for the jump this day belongs to, e.g. "Girona → Berlin". Must be set together with segment_index.',
+      },
+      constraints: {
+        type: 'array',
+        description:
+          'Time constraints on this leg — deadlines ("be there by June 3"), earliest departures ("ferry at 2pm"), or flexible intents ("visit Neuschwanstein sometime"). Omit or [] for unconstrained legs.',
+        items: {
+          type: 'object',
+          required: ['constraint_type'],
+          properties: {
+            constraint_type: {
+              type: 'string',
+              enum: ['arrive_by', 'depart_after', 'flexible'],
+              description: 'arrive_by = hard arrival deadline. depart_after = cannot leave before this time. flexible = soft preference.',
+            },
+            datetime: {
+              type: 'string',
+              description: 'ISO 8601 datetime with timezone, e.g. "2026-06-03T15:00:00+02:00". Required for arrive_by/depart_after.',
+            },
+            buffer_minutes: {
+              type: 'integer',
+              minimum: 0,
+              maximum: 1440,
+              description: 'Minutes of slack. Default 60.',
+            },
+            note: {
+              type: 'string',
+              description: 'User-facing reason, e.g. "ferry departs at 2pm".',
+            },
+          },
+        },
       },
     },
   },

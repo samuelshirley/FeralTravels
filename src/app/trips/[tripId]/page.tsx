@@ -12,9 +12,10 @@ export const dynamic = 'force-dynamic';
 
 interface Props {
   params: { tripId: string };
+  searchParams: { [key: string]: string | string[] | undefined };
 }
 
-export default async function TripPage({ params }: Props) {
+export default async function TripPage({ params, searchParams }: Props) {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
@@ -59,6 +60,7 @@ export default async function TripPage({ params }: Props) {
         initialChat={initialChat}
         serverOnboardingState={trip.onboarding_state}
         needsVehicleRemediation={needsVehicleRemediation}
+        replanFromOffRoute={searchParams.replan === 'true'}
       />
     </UnitsProvider>
   );

@@ -20,7 +20,7 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -549,7 +549,17 @@ async function dispatchAction(
         );
       }
 
-      const updated = await updateVehicle(userId, vehicleId, action.input.data);
+      // When Penny sets travel_style, derive cruise/transit caps + legacy fields
+      const vehiclePatch: Record<string, unknown> = { ...action.input.data };
+      if (vehiclePatch.travel_style) {
+        const { deriveFromTravelStyle } = await import('@/lib/vehicleProfile');
+        const derived = deriveFromTravelStyle(vehiclePatch.travel_style as import('@/lib/vehicleProfile').TravelStyle);
+        vehiclePatch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
+        vehiclePatch.transit_max_drive_hours = derived.transit_max_drive_hours;
+        vehiclePatch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
+      }
+
+      const updated = await updateVehicle(userId, vehicleId, vehiclePatch);
       if (!updated) throw new NotFoundError('Vehicle not found or not owned by user');
       return;
     }
@@ -610,6 +620,19 @@ async function dispatchAction(
         geometry,
       });
       ctx.newLegIdsQueue.push(newLegId);
+
+      // Write any constraints Penny attached to this leg
+      if (d.constraints && d.constraints.length > 0) {
+        for (const c of d.constraints) {
+          await addLegConstraint({
+            legId: newLegId,
+            constraintType: c.constraint_type,
+            constraintDatetime: c.datetime ?? null,
+            bufferMinutes: c.buffer_minutes ?? 60,
+            note: c.note ?? null,
+          });
+        }
+      }
       return;
     }
 

@@ -10,6 +10,25 @@ import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
 
+/** Format a stop type slug into a readable label for nav buttons. */
+function formatStopType(stopType?: string): string {
+  switch (stopType) {
+    case 'fuel': return 'Fuel';
+    case 'dump_station': return 'Dump Station';
+    case 'food': return 'Food';
+    case 'overnight': return 'Overnight';
+    case 'rest': return 'Rest';
+    case 'destination': return 'Destination';
+    case 'other': return 'Stop';
+    default: return 'Stop';
+  }
+}
+
+/** Build "Route to {Type} — {Name}" label for nav buttons. */
+function navButtonLabel(seg: { label: string; stopType?: string }): string {
+  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+}
+
 interface LegCardProps {
   tripId: string;
   leg: LegWithDetails;
@@ -19,6 +38,12 @@ interface LegCardProps {
   onTrailsChanged?: () => void;
   onChanged?: () => void;
   readonly?: boolean;
+  /**
+   * Computed date string for this leg, e.g. "Wed 28 May" (metric) or
+   * "Wed May 28" (imperial). Null when the trip has no confirmed start date
+   * — falls back to leg.label or "Day N".
+   */
+  dateLabel?: string | null;
   /**
    * True while a fuel replan is in flight for the trip. The "Open in Google
    * Maps" link composes its waypoints from the trip's stops, so during a
@@ -50,6 +75,7 @@ export default function LegCard({
   onTrailsChanged,
   onChanged,
   readonly = false,
+  dateLabel,
   isFuelSyncing = false,
   fuelSyncTotalLegs,
 }: LegCardProps) {
@@ -188,27 +214,44 @@ export default function LegCard({
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.1em',
-                color: isRestDay ? restDayColor : 'var(--tp-subtle)',
-              }}
-            >
-              {isRestDay ? 'REST' : leg.label}
-            </span>
+            {isRestDay && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  color: restDayColor,
+                }}
+              >
+                REST
+              </span>
+            )}
+            {dateLabel ? (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  color: isRestDay ? restDayColor : 'var(--tp-subtle)',
+                }}
+              >
+                {dateLabel.toUpperCase()}
+              </span>
+            ) : !isRestDay && leg.label ? (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  color: 'var(--tp-subtle)',
+                }}
+              >
+                {leg.label}
+              </span>
+            ) : null}
             <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>{leg.title}</span>
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 3, flexWrap: 'wrap' }}>
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--tp-muted)',
-              }}
-            >
-              {leg.dates}
-            </span>
             {!isRestDay && leg.distance_km ? (
               <Distance
                 km={leg.distance_km}
@@ -429,7 +472,7 @@ export default function LegCard({
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   data-testid="nav-next-stop"
-                  title={`Navigate to ${nextStop!.label}`}
+                  title={navButtonLabel(nextStop!)}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -446,7 +489,7 @@ export default function LegCard({
                   }}
                 >
                   <span>▶</span>
-                  Navigate to {nextStop!.label}
+                  {navButtonLabel(nextStop!)}
                 </a>
               ) : (
                 /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
@@ -472,7 +515,7 @@ export default function LegCard({
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       data-testid="nav-stop-link"
-                      title={`Navigate to ${seg.label}`}
+                      title={navButtonLabel(seg)}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -490,7 +533,7 @@ export default function LegCard({
                       }}
                     >
                       <span>▶</span>
-                      {seg.label}
+                      {navButtonLabel(seg)}
                     </a>
                   ))}
                 </div>

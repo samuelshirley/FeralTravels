@@ -9,15 +9,42 @@ export type OnboardingState =
   | 'ready'          // legacy only
   | 'done';
 
+// ── Nightly replan types ──────────────────────────────────────────────────
+
+export type TripStatus = 'draft' | 'active' | 'paused' | 'completed';
+
+export type ConstraintType = 'arrive_by' | 'depart_after' | 'flexible';
+
+export interface LegConstraint {
+  id: string;
+  leg_id: string;
+  constraint_type: ConstraintType;
+  /** ISO timestamp with timezone, null for `flexible` constraints. */
+  constraint_datetime: string | null;
+  buffer_minutes: number;
+  note: string | null;
+  created_at: string;
+}
+
 export interface Trip {
   id: string;
   name: string;
+  /** Free-text date (original column — may be "May 28", "late May", etc.). */
   start_date: string | null;
   end_date: string | null;
+  /** Machine-readable date (ISO YYYY-MM-DD). Null until user confirms a proper date. */
+  start_date_parsed: string | null;
+  end_date_parsed: string | null;
   status: string;
+  /** Trip lifecycle status for nightly replan gating. */
+  trip_status: TripStatus;
   onboarding_state: OnboardingState;
   /** When true, Penny defaults `get_route` to Maps avoid=highways (motorways); user can toggle in workspace. */
   prefer_avoid_highways: boolean;
+  // ── GPS position (for nightly replan) ──
+  last_known_lat: number | null;
+  last_known_lng: number | null;
+  position_updated_at: string | null;
   created_at: string;
   updated_at: string;
   user_id: string;
@@ -275,6 +302,7 @@ export interface LegWithDetails extends Leg {
   routes: RouteWithLinks[];
   stops: Stop[];
   tasks: Task[];
+  constraints: LegConstraint[];
   parsedNotes: string[];
 }
 

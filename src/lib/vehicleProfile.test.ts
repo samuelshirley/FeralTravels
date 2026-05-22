@@ -35,14 +35,13 @@ describe('vehicleProfile bounds', () => {
     const comp = vehicleProfileRequiredCompletion({
       name: 'V',
       refill_distance_km: 400,
-      max_drive_hours_per_day: 6,
-      max_drive_hours_per_week: 30,
+      travel_style: 'road_tripper',
       max_consecutive_drive_days: 3,
       rest_days_after_driving: 1,
       dump_station_tracking_enabled: false,
       dump_station_interval_days: null,
     });
-    // 5 driving fields: name, refill_distance_km, max_drive_hours_per_day,
+    // 5 driving fields: name, refill_distance_km, travel_style,
     // max_consecutive_drive_days, rest_days_after_driving (water excluded)
     expect(comp.total).toBe(5);
     expect(comp.filled).toBe(5);

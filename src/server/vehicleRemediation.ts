@@ -6,10 +6,12 @@ import {
   caravanDumpStationGateLabel,
   CARAVAN_DUMP_STATION_GATE_KEY,
   coerceVehicleProfileValue,
+  deriveFromTravelStyle,
   deriveMaxDriveHoursPerWeek,
   vehicleIsCompleteForRemediation,
   storedVehicleProfileFieldNeedsRemediationRepair,
   vehicleProfileQuestionAllowsNull,
+  type TravelStyle,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 import type { UnitsPref } from '@/lib/units';
@@ -258,14 +260,18 @@ export async function submitVehicleRemediationAnswer(
       patch.refill_distance_km = km == null ? null : Math.round(km);
     } else if (question.key === 'name') {
       patch.name = parsed as string;
-    } else if (question.key === 'max_drive_hours_per_day') {
-      patch.max_drive_hours_per_day = parsed as number | null;
+    } else if (question.key === 'travel_style') {
+      patch.travel_style = parsed as string;
+      const derived = deriveFromTravelStyle(parsed as TravelStyle);
+      patch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
+      patch.transit_max_drive_hours = derived.transit_max_drive_hours;
+      patch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
     } else if (question.key === 'max_consecutive_drive_days') {
       patch.max_consecutive_drive_days = parsed as number | null;
     } else if (question.key === 'dump_station_interval_days') {
       patch.dump_station_interval_days = parsed as number | null;
     }
-    const nextDay = patch.max_drive_hours_per_day ?? vehicle.max_drive_hours_per_day;
+    const nextDay = (patch.max_drive_hours_per_day as number | undefined) ?? vehicle.max_drive_hours_per_day;
     const nextConsec = patch.max_consecutive_drive_days ?? vehicle.max_consecutive_drive_days;
     if (
       typeof nextDay === 'number' &&

@@ -5,7 +5,6 @@ import { listTripsForUser, createTrip } from '@/server/repos/trips';
 import { getDefaultVehicleId, getVehicleForUser } from '@/server/repos/vehicles';
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { getUnitsPref } from '@/server/repos/users';
-import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import AppNavbar from '@/components/AppNavbar';
 
 import { UnitsProvider } from '@/components/UnitsContext';
@@ -45,15 +44,6 @@ export default async function TripsPage() {
       vehicleId,
     });
     redirect(`/trips/${trip.id}`);
-  }
-
-  // If user has vehicles with missing required fields, redirect them to their
-  // most recent trip where the ChatPanel remediation form will collect the data.
-  // No SSR overlay — avoids hydration mismatches on mobile.
-  const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
-  if (remediationSnapshot.needs_remediation && !remediationSnapshot.done && myTrips.length > 0) {
-    const latestTrip = [...myTrips].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))[0];
-    redirect(`/trips/${latestTrip.id}`);
   }
 
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== userId);

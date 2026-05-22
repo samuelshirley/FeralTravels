@@ -30,6 +30,8 @@ interface Props {
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
   serverOnboardingState?: OnboardingState;
   needsVehicleRemediation?: boolean;
+  /** When true, auto-opens chat with a Penny replan prompt (from off-route email deep link). */
+  replanFromOffRoute?: boolean;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -80,6 +82,7 @@ export default function TripWorkspace({
   initialChat,
   serverOnboardingState,
   needsVehicleRemediation = false,
+  replanFromOffRoute = false,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -125,6 +128,41 @@ export default function TripWorkspace({
   useEffect(() => {
     loadTrip();
   }, [loadTrip]);
+
+  // Report the user's GPS position once on mount so the nightly replan cron
+  // knows where they are. Fire-and-forget — never block the UI.
+  useEffect(() => {
+    if (readonly) return;
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        fetch(`/api/trips/${tripId}/position`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          }),
+          credentials: 'same-origin',
+        }).catch(() => {
+          // Silently ignore — position reporting is best-effort.
+        });
+      },
+      () => {
+        // User denied geolocation or it timed out — nothing to do.
+      },
+    );
+  }, [tripId, readonly]);
+
+  // Auto-open chat and switch to chat tab when arriving from the off-route
+  // email deep link (?replan=true). Runs once on mount.
+  const replanHandled = useRef(false);
+  useEffect(() => {
+    if (!replanFromOffRoute || replanHandled.current) return;
+    replanHandled.current = true;
+    // On mobile, switch to the chat tab
+    setMobileTab('chat');
+  }, [replanFromOffRoute]);
 
   useEffect(() => {
     if (

@@ -65,6 +65,9 @@ src/
     vehicleProfile.ts # Vehicle range/fuel calculations
     fuelPlanErrorSemantics.ts  # Fuel plan error handling
     google/directions.ts       # Server-side Google Directions API
+    replan/
+      engine.ts       # Deterministic replan engine (no AI tokens)
+      emails.ts       # Morning/rest-day/off-route email templates
     penny/
       context.ts      # Builds context for Penny from trip data
       geo.ts          # Geo utilities for Penny
@@ -97,6 +100,7 @@ e2e/                  # Playwright test specs
 api/auth/[...nextauth]    api/chat
 api/trips                 api/trips/[id]          api/trips/[id]/clone
 api/trips/[id]/onboarding api/trips/[id]/fuel-stops/replan
+api/trips/[id]/position
 api/trip                  api/trip/replan
 api/stops                 api/stops/[id]          api/stops/[id]/select
 api/stops/[id]/swap-primary                        api/stops/[id]/find-alternative
@@ -113,11 +117,12 @@ api/support               api/analytics/viewport-time
 api/admin/test-error      api/admin/announcements
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
+api/cron/nightly-replan
 ```
 
-### Schema (22 tables in `src/server/db/schema.ts`)
+### Schema (23 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals
+users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals
 
 ### Repos (`src/server/repos/`)
 
@@ -151,6 +156,7 @@ existing-trip, login-otp, login-google-button, vehicle-crud, vehicle-remediation
 - Server components by default; `"use client"` only when needed.
 - Env vars: copy `.env.example` to `.env`. Never commit `.env`.
 - Admin access: hardcoded allowlist in `src/server/auth/admin.ts`.
+- **Never silently swallow errors.** Every mutation must either show inline error UI or go through the global `ErrorNotifier`. No empty `catch` blocks, no `console.error`-only handling. If something fails, the user must know.
 
 ## Working with this codebase
 

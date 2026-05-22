@@ -14,22 +14,37 @@ test.describe('Vehicle profile remediation gate', () => {
   test('gates /trips with Penny questions, saves vehicle data, then shows trips', async ({
     page,
   }) => {
-    // Remediation persona has exactly one seeded trip; /trips redirects there
-    // (newest-by-id). Do not assert a literal trip PK — IDs change each seed.
-    await loginAsE2eUser(page, REMEDIATION_FIXTURE_EMAIL, { redirectTo: '/trips' });
+    // Look up the seeded trip ID — remediation now triggers on the trip page
+    // itself, not via a redirect from /trips.
+    const db = getDb();
+    const [personaUser] = await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, REMEDIATION_FIXTURE_EMAIL))
+      .limit(1);
+    expect(personaUser).toBeTruthy();
+    const [seededTrip] = await db
+      .select({ id: schema.trips.id })
+      .from(schema.trips)
+      .where(eq(schema.trips.userId, personaUser!.id))
+      .limit(1);
+    expect(seededTrip).toBeTruthy();
+
+    await loginAsE2eUser(page, REMEDIATION_FIXTURE_EMAIL, {
+      redirectTo: `/trips/${seededTrip!.id}`,
+    });
     await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 15_000 });
     await expect(page.getByText(REMEDIATION_TRIP_NAME, { exact: false })).toBeVisible({
       timeout: 15_000,
     });
 
-    // ── Q1: max drive hours per day ──
-    await expect(page.getByText('Max hours you want to drive per day?')).toBeVisible({
+    // ── Q1: travel style (select — renders as tappable buttons) ──
+    await expect(page.getByText(/What's your travel style/i)).toBeVisible({
       timeout: 15_000,
     });
-    await page.getByTestId('trip-chat-composer').fill('6');
-    await page.getByTestId('trip-chat-composer').press('Enter');
+    await page.getByRole('button', { name: 'Road tripper' }).click();
 
-    // ── Q2: max consecutive driving days (weekly hours derived as day × streak) ──
+    // ── Q2: max consecutive driving days ──
     await expect(page.getByText(/Max consecutive driving days/i)).toBeVisible({
       timeout: 10_000,
     });
@@ -47,14 +62,7 @@ test.describe('Vehicle profile remediation gate', () => {
     await page.goto('/trips');
     await expect(page.getByText('YOUR TRIPS', { exact: false })).toBeVisible({ timeout: 15_000 });
 
-    const db = getDb();
-    const [personaUser] = await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, REMEDIATION_FIXTURE_EMAIL))
-      .limit(1);
-    expect(personaUser).toBeTruthy();
-
+    // Re-use db + personaUser from setup above for DB assertions.
     const vehicleRows = await db
       .select()
       .from(schema.vehicles)
@@ -68,8 +76,11 @@ test.describe('Vehicle profile remediation gate', () => {
 
     expect(vehicleRows).toHaveLength(1);
     const v = vehicleRows[0];
-    expect(v.maxDriveHoursPerDay).toBe(6);
-    expect(v.maxDriveHoursPerWeek).toBe(18);
+    expect(v.travelStyle).toBe('road_tripper');
+    expect(v.cruiseMaxDriveHours).toBe(6);
+    expect(v.transitMaxDriveHours).toBe(10);
+    expect(v.maxDriveHoursPerDay).toBe(10); // legacy, equals transit cap
+    expect(v.maxDriveHoursPerWeek).toBe(30); // legacy, derived: transit(10) × consecutive(3)
     expect(v.maxConsecutiveDriveDays).toBe(3);
     expect(v.dumpStationTrackingEnabled).toBe(false);
     expect(v.refillDistanceKm).toBe(400);
@@ -87,7 +98,7 @@ test.describe('Vehicle profile remediation gate', () => {
 
     await expect(page.getByText('YOUR TRIPS', { exact: false })).toBeVisible({ timeout: 15_000 });
     await expect(
-      page.getByText('Max hours you want to drive per day?'),
+      page.getByText(/What's your travel style/i),
     ).not.toBeVisible({ timeout: 3_000 });
   });
 });

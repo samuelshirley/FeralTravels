@@ -108,6 +108,15 @@ export default function ErrorNotifier() {
 
   return (
     <>
+      <style>{`
+        @keyframes tp-error-spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes tp-dot-pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.15); }
+        }
+      `}</style>
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
       {modal && (
         <SillyModal
@@ -192,6 +201,8 @@ function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
 // Full-screen silly modal (5xx / network)
 // ---------------------------------------------------------------------------
 
+const RETRY_KEY = 'tp-error-retry';
+
 function SillyModal({
   modal,
   boomGifOk,
@@ -202,6 +213,26 @@ function SillyModal({
   onClose: () => void;
 }) {
   const [showDetail, setShowDetail] = useState(false);
+  const [reloading, setReloading] = useState(false);
+
+  // Detect if we just reloaded and the error came back.
+  const isRetry = (() => {
+    try {
+      const ts = sessionStorage.getItem(RETRY_KEY);
+      if (ts && Date.now() - Number(ts) < 15_000) return true;
+    } catch { /* SSR or blocked storage */ }
+    return false;
+  })();
+
+  const handleReload = () => {
+    setReloading(true);
+    try {
+      sessionStorage.setItem(RETRY_KEY, String(Date.now()));
+    } catch { /* ignore */ }
+    // Small delay so spinner is visible and server has a moment to recover.
+    setTimeout(() => window.location.reload(), 1500);
+  };
+
   return (
     <div
       role="alertdialog"
@@ -273,7 +304,7 @@ function SillyModal({
             lineHeight: 1.3,
           }}
         >
-          {modal.silly.headline}
+          {isRetry ? 'Still chasing that squirrel.' : modal.silly.headline}
         </h2>
         <p
           style={{
@@ -283,11 +314,14 @@ function SillyModal({
             lineHeight: 1.5,
           }}
         >
-          {modal.silly.body}
+          {isRetry
+            ? "Something’s still off. Try again in a few minutes — we’re on it."
+            : modal.silly.body}
         </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button
-            onClick={() => window.location.reload()}
+            onClick={handleReload}
+            disabled={reloading}
             style={{
               background: 'var(--tp-primary)',
               color: 'var(--tp-on-primary)',
@@ -296,13 +330,30 @@ function SillyModal({
               borderRadius: 6,
               fontSize: 13,
               fontWeight: 700,
-              cursor: 'pointer',
-              
+              cursor: reloading ? 'default' : 'pointer',
+              opacity: reloading ? 0.8 : 1,
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'opacity 0.2s',
             }}
           >
-            Reload
+            {reloading && (
+              <span
+                style={{
+                  width: 14,
+                  height: 14,
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTopColor: 'var(--tp-on-primary)',
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                  animation: 'tp-error-spin 0.7s linear infinite',
+                }}
+              />
+            )}
+            {reloading ? 'Reloading…' : 'Reload'}
           </button>
           <button
             onClick={onClose}

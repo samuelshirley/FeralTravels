@@ -1,11 +1,13 @@
 import {
   pgTable,
+  pgEnum,
   text,
   integer,
   serial,
   bigserial,
   bigint,
   boolean,
+  date,
   doublePrecision,
   timestamp,
   primaryKey,
@@ -120,7 +122,28 @@ export const emailOtpCodes = pgTable(
   })
 );
 
+// --- Enums ─────────────────────────────────────────────────────────────────
+
+export const tripStatusEnum = pgEnum('trip_status', [
+  'draft',
+  'active',
+  'paused',
+  'completed',
+]);
+
+export const constraintTypeEnum = pgEnum('constraint_type', [
+  'arrive_by',
+  'depart_after',
+  'flexible',
+]);
+
 // --- Trip planning (per-user) ---
+
+export const travelStyleEnum = pgEnum('travel_style', [
+  'scenic_cruiser',
+  'road_tripper',
+  'get_me_there',
+]);
 
 /** Vehicle profile: refill cadence + drive/water caps; distances stored in km. */
 export const vehicles = pgTable(
@@ -134,8 +157,26 @@ export const vehicles = pgTable(
     isDefault: boolean('is_default').default(false).notNull(),
     /** Target km between fuel stops; null ⇒ planner skips until set. */
     refillDistanceKm: integer('refill_distance_km'),
+
+    // ── Travel style (new — replaces rigid max_drive_hours_per_day) ──
+    /**
+     * How the user approaches driving days. Determines two drive-hour caps:
+     *   scenic_cruiser → cruise 4h, transit 8h
+     *   road_tripper   → cruise 6h, transit 10h
+     *   get_me_there   → cruise 8h, transit 12h
+     */
+    travelStyle: travelStyleEnum('travel_style'),
+    /** Max hours for "cruise" legs (the drive IS the experience). Derived from travel_style. */
+    cruiseMaxDriveHours: doublePrecision('cruise_max_drive_hours'),
+    /** Max hours for "transit" legs (just covering ground). Derived from travel_style. */
+    transitMaxDriveHours: doublePrecision('transit_max_drive_hours'),
+
+    // ── Legacy fields — kept populated from travel_style for backward compat ──
+    /** @deprecated Use cruiseMaxDriveHours / transitMaxDriveHours. Populated = transitMaxDriveHours. */
     maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
+    /** @deprecated Derived from maxDriveHoursPerDay × maxConsecutiveDriveDays. */
     maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
+
     maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
     /** How many rest (non-driving) days the user needs after a driving streak. */
     restDaysAfterDriving: integer('rest_days_after_driving'),
@@ -161,9 +202,15 @@ export const trips = pgTable(
     name: text('name').notNull(),
     /** DB-generated `lower(trim(name))`; unique per user via index (see baseline migration). */
     tripNameCiKey: text('trip_name_ci_key'),
+    /** Free-text dates (original columns — may contain "May 28", "late May", etc.). */
     startDate: text('start_date'),
     endDate: text('end_date'),
+    /** Machine-readable dates for cron/constraint logic. Null until user confirms a proper date. */
+    startDateParsed: date('start_date_parsed', { mode: 'string' }),
+    endDateParsed: date('end_date_parsed', { mode: 'string' }),
     status: text('status').default('planning').notNull(),
+    /** Trip lifecycle status for nightly replan gating. */
+    tripStatus: tripStatusEnum('trip_status').default('draft').notNull(),
     isTemplate: boolean('is_template').default(false).notNull(),
     /** Static onboarding pipeline before live Penny chat (`server/onboarding.ts`). */
     onboardingState: text('onboarding_state').default('not_started').notNull(),
@@ -171,6 +218,10 @@ export const trips = pgTable(
     pendingIntent: text('pending_intent'),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
+    // ── GPS position (for nightly replan) ──
+    lastKnownLat: doublePrecision('last_known_lat'),
+    lastKnownLng: doublePrecision('last_known_lng'),
+    positionUpdatedAt: timestamp('position_updated_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -178,6 +229,7 @@ export const trips = pgTable(
     userIdx: index('trips_user_idx').on(t.userId),
     templateIdx: index('trips_template_idx').on(t.isTemplate),
     userNameUnique: uniqueIndex('trips_user_name_unique_idx').on(t.userId, t.tripNameCiKey),
+    tripStatusIdx: index('trips_trip_status_idx').on(t.tripStatus),
   })
 );
 
@@ -227,6 +279,31 @@ export const legs = pgTable(
   },
   (t) => ({
     tripIdx: index('legs_trip_idx').on(t.tripId),
+  })
+);
+
+/**
+ * Constraints on legs — deadlines, earliest departures, or flexible intent.
+ * Supports multiple constraints per leg (e.g., ferry window = arrive_by + depart_after).
+ */
+export const legConstraints = pgTable(
+  'leg_constraints',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    legId: uuid('leg_id')
+      .notNull()
+      .references(() => legs.id, { onDelete: 'cascade' }),
+    constraintType: constraintTypeEnum('constraint_type').notNull(),
+    /** The actual deadline or earliest departure. Null for `flexible` constraints. */
+    constraintDatetime: timestamp('constraint_datetime', { withTimezone: true }),
+    /** Slack before/after the constraint datetime, in minutes. */
+    bufferMinutes: integer('buffer_minutes').default(60).notNull(),
+    /** User-facing context, e.g. "ferry departs at 2pm", "meet friends". */
+    note: text('note'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    legIdx: index('leg_constraints_leg_idx').on(t.legId),
   })
 );
 

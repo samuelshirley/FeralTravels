@@ -36,6 +36,22 @@ export const EXTRACT_TRIP_INTENT = 'extract_trip_intent' as const;
  * (rare but legal). The cap rejects obvious garbage; a real long stay would
  * be planned as a separate trip anyway.
  */
+/**
+ * A constraint extracted from the user's intent — e.g. "need to be in X by Y",
+ * "ferry doesn't leave until 2pm", "want to visit X sometime".
+ */
+const constraintSchema = z.object({
+  /** Which waypoint or destination this constraint applies to. */
+  place_name: z.string().min(1).max(200),
+  constraint_type: z.enum(['arrive_by', 'depart_after', 'flexible']),
+  /** ISO 8601 datetime string with timezone, e.g. "2026-06-03T15:00:00+02:00". Null for flexible. */
+  datetime: z.string().nullish(),
+  /** Minutes of buffer before/after the constraint. Default 60. */
+  buffer_minutes: z.number().int().min(0).max(1440).optional().default(60),
+  /** User-facing context, e.g. "ferry departs at 2pm", "meet friends for dinner". */
+  note: z.string().max(500).nullish(),
+});
+
 const waypointSchema = z.object({
   name: z.string().min(1).max(200),
   nights: z.number().int().min(0).max(30),
@@ -86,6 +102,16 @@ const baseSchema = z.object({
    * certainly a parse error or someone abusing the input.
    */
   time_budget_days: z.number().int().min(1).max(365).nullable(),
+
+  /**
+   * Time constraints extracted from the user's request. Examples:
+   * - "need to be in Bad Kissingen by June 3 at 3pm" → arrive_by
+   * - "ferry doesn't leave until 2pm" → depart_after
+   * - "want to see Neuschwanstein sometime" → flexible
+   *
+   * Empty array when the user gave no constraints.
+   */
+  constraints: z.array(constraintSchema).max(20).optional().default([]),
 
   /**
    * Free-text bucket for everything else the user said that doesn't
@@ -152,6 +178,42 @@ export const tool: Anthropic.Tool = {
         type: ['integer', 'null'],
         description:
           'Total trip length the user stated, in days. Parse "two weeks" → 14, "10 days" → 10, "a long weekend" → 4. Use null only when the user said nothing about duration.',
+      },
+      constraints: {
+        type: 'array',
+        description:
+          'Time constraints extracted from the user\'s request. Parse phrases like "need to be in X by Y" as arrive_by, "ferry doesn\'t leave until 2pm" as depart_after, "want to visit X sometime" as flexible. Use [] if the user gave no time constraints.',
+        items: {
+          type: 'object',
+          required: ['place_name', 'constraint_type'],
+          properties: {
+            place_name: {
+              type: 'string',
+              description: 'The waypoint or destination this constraint applies to.',
+            },
+            constraint_type: {
+              type: 'string',
+              enum: ['arrive_by', 'depart_after', 'flexible'],
+              description:
+                'arrive_by = hard deadline to reach a place. depart_after = cannot leave before a time (ferries, check-in). flexible = soft preference, no deadline.',
+            },
+            datetime: {
+              type: 'string',
+              description:
+                'ISO 8601 datetime with timezone, e.g. "2026-06-03T15:00:00+02:00". Required for arrive_by and depart_after. Null for flexible.',
+            },
+            buffer_minutes: {
+              type: 'integer',
+              minimum: 0,
+              maximum: 1440,
+              description: 'Minutes of slack to build in. Default 60.',
+            },
+            note: {
+              type: 'string',
+              description: 'User-facing context, e.g. "ferry departs at 2pm", "meet friends".',
+            },
+          },
+        },
       },
       notes: {
         type: 'string',

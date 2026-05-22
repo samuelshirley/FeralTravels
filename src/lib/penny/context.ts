@@ -49,7 +49,18 @@ export interface PennyVehicle {
   refill_distance_km: number | null;
   /** Alias of refill_distance_km — kept for prompt/system-side stability. */
   effective_range_km: number | null;
+  /**
+   * Travel style: scenic_cruiser | road_tripper | get_me_there.
+   * Determines cruise vs transit hour caps.
+   */
+  travel_style: string | null;
+  /** Max hours for cruise legs (the drive IS the experience). */
+  cruise_max_drive_hours: number | null;
+  /** Max hours for transit legs (just covering ground). */
+  transit_max_drive_hours: number | null;
+  /** @deprecated Legacy field — equals transit_max_drive_hours. */
   max_drive_hours_per_day: number | null;
+  /** @deprecated Derived legacy field. */
   max_drive_hours_per_week: number | null;
   max_consecutive_drive_days: number | null;
   /**
@@ -186,6 +197,7 @@ function vehicleRecordFromApiForCompleteness(v: VehicleApi): Record<string, unkn
   return {
     name: v.name,
     refill_distance_km: v.refill_distance_km,
+    travel_style: v.travel_style,
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,
@@ -209,6 +221,9 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     name: v.name,
     refill_distance_km: v.refill_distance_km,
     effective_range_km: range,
+    travel_style: v.travel_style ?? null,
+    cruise_max_drive_hours: v.cruise_max_drive_hours ?? null,
+    transit_max_drive_hours: v.transit_max_drive_hours ?? null,
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
     max_consecutive_drive_days: v.max_consecutive_drive_days,

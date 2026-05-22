@@ -6,6 +6,8 @@ import {
   FUEL_STOP_SPACING_KM_MAX,
   FUEL_STOP_SPACING_KM_MIN,
   MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
+  deriveFromTravelStyle,
+  type TravelStyle,
 } from '@/lib/vehicleProfile';
 
 export const UPDATE_VEHICLE = 'update_vehicle' as const;
@@ -18,14 +20,19 @@ export const UPDATE_VEHICLE = 'update_vehicle' as const;
  * max_drive_hours_per_day) without having to supply values she doesn't know.
  */
 const dataSchema = z.object({
-  /** Max hours of driving per calendar day. E.g. 6 means no leg > 6h. */
+  /** Travel style — determines cruise + transit hour caps. */
+  travel_style: z
+    .enum(['scenic_cruiser', 'road_tripper', 'get_me_there'])
+    .nullish(),
+
+  /** @deprecated Set via travel_style instead. Kept for backward compat. */
   max_drive_hours_per_day: z
     .number()
     .positive()
     .max(24, 'max_drive_hours_per_day cannot exceed 24')
     .nullish(),
 
-  /** Max total driving hours across the whole week. */
+  /** @deprecated Derived from travel_style. Kept for backward compat. */
   max_drive_hours_per_week: z
     .number()
     .positive()
@@ -86,22 +93,31 @@ export const tool: Anthropic.Tool = {
   name: UPDATE_VEHICLE,
   description: `
 Save updated vehicle driving preferences to the database. Call this whenever the user states or changes:
-- daily driving limit (max hours per day)
-- weekly driving cadence (e.g. "3 days a week", "drive 4 days then rest 3")
+- travel style (scenic cruiser, road tripper, get me there)
+- driving cadence (e.g. "3 days a week", "drive 4 days then rest 3")
 - refuel cadence or range (km between fuel stops)
 - dump station intervals
+
+TRAVEL STYLE determines two drive-hour caps:
+  scenic_cruiser → cruise 4h, transit 8h (short days, lots of stops)
+  road_tripper   → cruise 6h, transit 10h (balanced)
+  get_me_there   → cruise 8h, transit 12h (long days, just arrive)
+
+When the user describes their style, set travel_style. The server derives cruise/transit caps
+and legacy fields automatically.
 
 The API requires refill_distance_km between 200 and 1500 km for fuel planning. If the trip vehicle may still be missing that
 value (new or stub profile), include refill_distance_km in this update whenever the user gives a range or you
 infer one; otherwise PATCH may reject partial preference-only updates.
 
-Parse the user's freeform answer into metric numbers and call this tool.
+Parse the user's freeform answer and call this tool.
 Common patterns:
-  "6 hours a day, 3 days a week" → max_drive_hours_per_day: 6, max_consecutive_drive_days: 3
+  "I like to take it slow, stop a lot" → travel_style: scenic_cruiser
+  "I don't mind long days to get there" → travel_style: get_me_there
+  "balanced driving" → travel_style: road_tripper
   "I like to refuel every 400 km" → refill_distance_km: 400
   "drive for 4 days then take a break" → max_consecutive_drive_days: 4
   "3 days driving, 1 day rest" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
-  "I need 2 rest days after 3 driving days" → max_consecutive_drive_days: 3, rest_days_after_driving: 2
 
 After calling this tool and receiving success, confirm the saved values in one sentence
 and proceed with planning using the new preferences. Note: leg validation in the current
@@ -117,18 +133,24 @@ their planning request again so the updated values take effect.
         type: 'object',
         description: 'Fields to update. Only supply fields the user explicitly stated.',
         properties: {
+          travel_style: {
+            type: 'string',
+            enum: ['scenic_cruiser', 'road_tripper', 'get_me_there'],
+            description:
+              'Travel style. scenic_cruiser = short days, lots of stops; road_tripper = balanced; get_me_there = long days, just arrive. Server derives cruise/transit hour caps automatically.',
+          },
           max_drive_hours_per_day: {
             type: 'number',
             minimum: 0.5,
             maximum: 24,
-            description: 'Hours of driving per day the user is comfortable with.',
+            description: 'DEPRECATED — prefer travel_style. Only use for explicit hour overrides.',
           },
           max_drive_hours_per_week: {
             type: 'number',
             minimum: 0.5,
             maximum: 168,
             description:
-              'Total driving hours the user wants per week. Derive from "X days a week × Y hours/day" when both are stated.',
+              'DEPRECATED — derived automatically from travel_style + max_consecutive_drive_days.',
           },
           max_consecutive_drive_days: {
             type: 'integer',

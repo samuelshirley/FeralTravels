@@ -111,7 +111,7 @@ export type LegDirectionsStopInput = {
 };
 
 /** A resolved waypoint with coords and name. */
-export type ResolvedWaypoint = { lat: number; lng: number; name: string };
+export type ResolvedWaypoint = { lat: number; lng: number; name: string; stopType?: string };
 
 /** Filter & sort stops into the set that appear in directions URLs. */
 function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoint[] {
@@ -135,7 +135,7 @@ function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoi
       if (ad !== bd) return ad - bd;
       return (a.sort_order ?? 0) - (b.sort_order ?? 0);
     })
-    .map((s) => ({ lat: s.lat as number, lng: s.lng as number, name: s.name }));
+    .map((s) => ({ lat: s.lat as number, lng: s.lng as number, name: s.name, stopType: s.stop_type }));
 }
 
 /** Sorted intermediate coords for leg directions (badge counts, tests). */
@@ -178,7 +178,7 @@ export function buildLegDirectionsUrl(input: {
 }
 
 /** One navigation button — destination only, no origin (uses device GPS). */
-export type NavSegment = { label: string; url: string };
+export type NavSegment = { label: string; url: string; stopType?: string };
 
 /**
  * Build a list of "navigate from current location → stop" buttons for a leg.
@@ -212,10 +212,10 @@ export function buildSegmentedNavUrls(input: {
   const resolved = resolveDirectionsStops(stops ?? []);
 
   // Ordered destinations: intermediate stops, then final destination.
-  type Dest = { lat: number; lng: number; name: string };
+  type Dest = { lat: number; lng: number; name: string; stopType?: string };
   const destinations: Dest[] = [
     ...resolved,
-    { lat: destLat, lng: destLng, name: endName || 'Destination' },
+    { lat: destLat, lng: destLng, name: endName || 'Destination', stopType: 'destination' },
   ];
 
   const segments: NavSegment[] = [];
@@ -227,7 +227,7 @@ export function buildSegmentedNavUrls(input: {
       { navigate: true }
     );
     if (url) {
-      segments.push({ label: dest.name, url });
+      segments.push({ label: dest.name, url, stopType: dest.stopType });
     }
   }
 

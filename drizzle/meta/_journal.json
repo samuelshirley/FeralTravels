@@ -29,6 +29,20 @@
       "when": 1779305490165,
       "tag": "0003_flawless_virginia_dare",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779394400000,
+      "tag": "0006_nightly_replan",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779477120740,
+      "tag": "0005_mute_meltdown",
+      "breakpoints": true
     }
   ]
 }

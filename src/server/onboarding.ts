@@ -20,9 +20,11 @@ import {
   caravanDumpStationGateLabel,
   CARAVAN_DUMP_STATION_GATE_KEY,
   coerceVehicleProfileValue,
+  deriveFromTravelStyle,
   deriveMaxDriveHoursPerWeek,
   humanizeVehicleProfileAnswer,
   vehicleProfileQuestionAllowsNull,
+  type TravelStyle,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 
@@ -590,6 +592,16 @@ export async function submitAnswer(
       } else {
         patch[question.key] = parsed;
       }
+
+      // When travel_style is set, derive cruise/transit caps + legacy fields
+      if (question.key === 'travel_style' && typeof parsed === 'string') {
+        const derived = deriveFromTravelStyle(parsed as TravelStyle);
+        patch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
+        patch.transit_max_drive_hours = derived.transit_max_drive_hours;
+        patch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
+      }
+
+      // Derive weekly cap from daily cap + consecutive days
       const nextDay =
         (patch.max_drive_hours_per_day as number | undefined) ?? vehicle.max_drive_hours_per_day;
       const nextConsec =

@@ -9,7 +9,12 @@ export type VehicleRow = typeof vehicles.$inferSelect;
 export interface VehicleInput {
   name: string;
   refill_distance_km?: number | null;
+  travel_style?: string | null;
+  cruise_max_drive_hours?: number | null;
+  transit_max_drive_hours?: number | null;
+  /** @deprecated Populated from travel_style for backward compat. */
   max_drive_hours_per_day?: number | null;
+  /** @deprecated Derived from max_drive_hours_per_day × max_consecutive_drive_days. */
   max_drive_hours_per_week?: number | null;
   max_consecutive_drive_days?: number | null;
   rest_days_after_driving?: number | null;
@@ -25,7 +30,12 @@ function vehicleApi(r: VehicleRow) {
     name: r.name,
     is_default: r.isDefault,
     refill_distance_km: coerceOptionalInt(r.refillDistanceKm),
+    travel_style: r.travelStyle ?? null,
+    cruise_max_drive_hours: coerceOptionalFiniteNumber(r.cruiseMaxDriveHours),
+    transit_max_drive_hours: coerceOptionalFiniteNumber(r.transitMaxDriveHours),
+    /** @deprecated Use cruise/transit fields. */
     max_drive_hours_per_day: coerceOptionalFiniteNumber(r.maxDriveHoursPerDay),
+    /** @deprecated Derived legacy field. */
     max_drive_hours_per_week: coerceOptionalFiniteNumber(r.maxDriveHoursPerWeek),
     max_consecutive_drive_days: coerceOptionalInt(r.maxConsecutiveDriveDays),
     rest_days_after_driving: coerceOptionalInt(r.restDaysAfterDriving),
@@ -87,6 +97,11 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   const map: Record<string, unknown> = {};
   if (input.name !== undefined) map.name = input.name;
   if (input.refill_distance_km !== undefined) map.refillDistanceKm = input.refill_distance_km;
+  if (input.travel_style !== undefined) map.travelStyle = input.travel_style;
+  if (input.cruise_max_drive_hours !== undefined)
+    map.cruiseMaxDriveHours = input.cruise_max_drive_hours;
+  if (input.transit_max_drive_hours !== undefined)
+    map.transitMaxDriveHours = input.transit_max_drive_hours;
   if (input.max_drive_hours_per_day !== undefined)
     map.maxDriveHoursPerDay = input.max_drive_hours_per_day;
   if (input.max_drive_hours_per_week !== undefined)
