@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
-import { legDate } from '@/lib/dates';
+import { formatDate, parseISODate } from '@/lib/dates';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
@@ -51,16 +51,15 @@ export default function Itinerary({
   // Compute a date label for each leg from the trip's confirmed start date.
   // Returns a Map<legId, formattedDate> so LegCard can display real calendar
   // dates instead of "Day 1", "Day 2". Empty map when start_date_parsed is null.
+  // The calendar date for each leg is computed server-side (leg.date_iso).
+  // Here we only format it for the user's locale preference — no date math.
   const legDateLabels = useMemo(() => {
     const map = new Map<string, string>();
-    const startISO = trip.start_date_parsed;
-    if (!startISO) return map;
-    for (let i = 0; i < legs.length; i++) {
-      const label = legDate(startISO, i, units);
-      if (label) map.set(legs[i].id, label);
+    for (const leg of legs) {
+      if (leg.date_iso) map.set(leg.id, formatDate(parseISODate(leg.date_iso), units));
     }
     return map;
-  }, [trip.start_date_parsed, legs, units]);
+  }, [legs, units]);
 
   // ── Lazy rendering ─────────────────────────────────────────────────────
   // We mount the first INITIAL_VISIBLE_LEGS leg cards and reveal more in

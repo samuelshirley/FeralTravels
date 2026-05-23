@@ -8,6 +8,11 @@ import {
   type DayAllocationResult,
   DEFAULT_DAY_MODEL_CONFIG,
 } from '@/lib/dayModel';
+import {
+  constraintLocalDateISO,
+  requiredRestDaysBefore,
+  legDateISO,
+} from '@/lib/dates';
 
 /**
  * check_trip_feasibility — deterministic server-side feasibility math.
@@ -105,6 +110,14 @@ const baseSchema = z.object({
      */
     cumulative_drive_minutes: z.number().int().min(0),
     /**
+     * Cumulative DRIVE-day legs before this leg (the immovable driving days the
+     * route requires before reaching it). Optional. When provided, the server
+     * runs CALENDAR-ANCHOR math: it computes how many rest-day legs must sit
+     * before this leg so its calendar date (trip start + its rank) equals the
+     * constraint date, and reports whether cumulative_rest_days matches.
+     */
+    cumulative_drive_days: z.number().int().min(0).optional(),
+    /**
      * Cumulative rest/overnight days before this leg (count of rest legs + waypoint nights).
      */
     cumulative_rest_days: z.number().int().min(0),
@@ -172,7 +185,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: CHECK_TRIP_FEASIBILITY,
   description:
-    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each TRANSIT waypoint (EXCLUDING the final destination) as waypoint_nights. Pass the final destination\'s nights separately as destination_nights — these are NOT counted against the transit budget because they happen after arrival. The server does the math and returns a verdict. If verdict is "over_budget", adjust the plan yourself (reduce waypoint nights or drop a waypoint), then call extract_trip_intent with revised numbers and re-run this check — do NOT call add_leg until this check passes. Only ask the user if adjustments alone cannot make it fit. The dispatcher will reject add_leg actions if this check did not pass.\n\nDAY MODEL ALLOCATION: When the user has a hard deadline (arrive_by constraint with a specific time), ALSO pass flexible_waypoints, arrival_deadline, departure_date, segment_drive_minutes, and final_segment_drive_minutes. The server runs clock-time math to determine: (1) whether same-day arrival is feasible (e.g. "can I drive 5h and arrive before 3pm?"), and (2) the optimal night allocation for flexible waypoints. When recommended_allocation is present in the result, USE IT — the server\'s recommended_nights replace whatever you originally proposed in waypoint_nights. This prevents wasting days as buffer when same-day arrival is feasible.',
+    'Run the deterministic feasibility check on a multi-segment trip. Call this AFTER extract_trip_intent and AFTER you have called get_route for every segment, BEFORE any add_leg. Pass min_driving_days from each get_route result (in route order) as segment_drive_days, and the nights field from each TRANSIT waypoint (EXCLUDING the final destination) as waypoint_nights. Pass the final destination\'s nights separately as destination_nights — these are NOT counted against the transit budget because they happen after arrival. The server does the math and returns a verdict. If verdict is "over_budget", adjust the plan yourself (reduce waypoint nights or drop a waypoint), then call extract_trip_intent with revised numbers and re-run this check — do NOT call add_leg until this check passes. Only ask the user if adjustments alone cannot make it fit. The dispatcher will reject add_leg actions if this check did not pass.\n\nFIXED CALENDAR DATES (arrive/depart on a specific day): Whenever the user pins a leg to a calendar date — "be in X by the 3rd", "leave Y on the morning of the 3rd" — add a constraint_checks entry for that leg AND include cumulative_drive_days (the count of driving-day legs before it). The server returns required_rest_days_before: the EXACT number of rest-day legs that must precede that leg so its date (trip start + its rank) equals the constraint date. This is authoritative — emit exactly that many rest-day legs before the leg. Do NOT compute rest-day counts from dates in your head; you will miscount. A status:"fail" with a negative required_rest_days_before means the date is physically too early — tell the user.\n\nDAY MODEL ALLOCATION: When the user has a hard deadline (arrive_by constraint with a specific time), ALSO pass flexible_waypoints, arrival_deadline, departure_date, segment_drive_minutes, and final_segment_drive_minutes. The server runs clock-time math to determine: (1) whether same-day arrival is feasible (e.g. "can I drive 5h and arrive before 3pm?"), and (2) the optimal night allocation for flexible waypoints. When recommended_allocation is present in the result, USE IT — the server\'s recommended_nights replace whatever you originally proposed in waypoint_nights. This prevents wasting days as buffer when same-day arrival is feasible.',
   input_schema: {
     type: 'object',
     required: ['segment_drive_days', 'waypoint_nights', 'time_budget_days'],
@@ -222,7 +235,8 @@ export const tool: Anthropic.Tool = {
             datetime: { type: 'string', description: 'ISO 8601 datetime with timezone.' },
             buffer_minutes: { type: 'integer', minimum: 0, maximum: 1440, description: 'Buffer minutes. Default 60.' },
             cumulative_drive_minutes: { type: 'integer', minimum: 0, description: 'Sum of drive_time_minutes from trip start to this leg.' },
-            cumulative_rest_days: { type: 'integer', minimum: 0, description: 'Rest/overnight days before this leg.' },
+            cumulative_drive_days: { type: 'integer', minimum: 0, description: 'Number of DRIVE-day legs before this leg (immovable driving days the route requires before it). Provide this whenever the constraint has a fixed calendar date so the server can compute the exact rest-day count to land the leg on that date.' },
+            cumulative_rest_days: { type: 'integer', minimum: 0, description: 'Rest/overnight days you currently plan before this leg.' },
             departure_datetime: { type: 'string', description: 'Planned trip departure datetime (ISO 8601).' },
           },
         },
@@ -286,6 +300,14 @@ export interface ConstraintCheckResult {
   status: 'pass' | 'at_risk' | 'fail';
   /** Human-readable explanation. */
   detail: string;
+  /**
+   * For calendar-anchor checks (cumulative_drive_days provided): the number of
+   * rest-day legs that MUST sit before this leg so its calendar date equals the
+   * constraint date. Authoritative — Penny should emit exactly this many rest
+   * legs before the constrained leg. Negative means the fixed date is too early
+   * to be reachable. Null when calendar-anchor math didn't run.
+   */
+  required_rest_days_before?: number | null;
 }
 
 export interface RecommendedAllocation {
@@ -343,6 +365,62 @@ function checkConstraints(
   if (!checks || checks.length === 0) return [];
 
   return checks.map((c) => {
+    // ── Calendar-anchor mode ────────────────────────────────────────────────
+    // When Penny supplies cumulative_drive_days, the constraint is about which
+    // CALENDAR DAY the leg lands on (e.g. "leave Innsbruck on the 3rd"). Since
+    // every leg occupies one calendar day, honoring it reduces to: how many
+    // rest-day legs must precede this leg. This is the math the LLM kept getting
+    // wrong, so we compute the authoritative count here.
+    if (c.cumulative_drive_days != null) {
+      const targetISO = constraintLocalDateISO(c.datetime);
+      const startISO = constraintLocalDateISO(c.departure_datetime);
+      if (!targetISO || !startISO) {
+        return {
+          label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type,
+          status: 'fail' as const,
+          detail: 'Could not parse the constraint date or departure date for the calendar-anchor check.',
+          required_rest_days_before: null,
+        };
+      }
+      const required = requiredRestDaysBefore({
+        tripStartISO: startISO,
+        targetDateISO: targetISO,
+        driveDaysBefore: c.cumulative_drive_days,
+      });
+      if (required == null) {
+        return {
+          label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type,
+          status: 'fail' as const,
+          detail: 'Could not compute required rest days for the calendar-anchor check.',
+          required_rest_days_before: null,
+        };
+      }
+      if (required < 0) {
+        return {
+          label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type,
+          status: 'fail' as const,
+          detail: `Fixed date ${targetISO} is too early — ${c.cumulative_drive_days} driving day(s) alone overrun it by ${-required} day(s). Move the date later or reduce driving before this leg.`,
+          required_rest_days_before: required,
+        };
+      }
+      if (c.cumulative_rest_days === required) {
+        return {
+          label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type,
+          status: 'pass' as const,
+          detail: `On date — ${required} rest day(s) before this leg place it on ${targetISO}.`,
+          required_rest_days_before: required,
+        };
+      }
+      const plannedISO = legDateISO(startISO, c.cumulative_drive_days + c.cumulative_rest_days);
+      const diff = required - c.cumulative_rest_days;
+      return {
+        label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type,
+        status: 'fail' as const,
+        detail: `Date mismatch: as planned this leg lands on ${plannedISO ?? 'an earlier day'}, not ${targetISO}. It needs ${required} rest day(s) before it (you have ${c.cumulative_rest_days}) — ${diff > 0 ? `add ${diff}` : `remove ${-diff}`} rest day(s) before it.`,
+        required_rest_days_before: required,
+      };
+    }
+
     const departure = new Date(c.departure_datetime);
     if (isNaN(departure.getTime())) {
       return { label: c.label, leg_index: c.leg_index, constraint_type: c.constraint_type, status: 'fail' as const, detail: 'Invalid departure_datetime.' };

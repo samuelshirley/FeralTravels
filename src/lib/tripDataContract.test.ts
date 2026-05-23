@@ -34,6 +34,7 @@ function makeLeg(overrides: Partial<Leg> = {}): Leg {
     end_lat: 45.764,
     end_lng: 4.8357,
     dates: null,
+    date_iso: null,
     distance_km: 487.3,
     drive_time_minutes: 285,
     terrain: 'highway',

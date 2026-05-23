@@ -1,7 +1,9 @@
 import 'server-only';
-import { and, asc, eq, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
+import { tryParseToISO, legDateISO, constraintLocalDateISO } from '@/lib/dates';
+import { materializeSchedule, type ScheduleStop } from '@/lib/penny/schedule';
 import {
   trips,
   legs,
@@ -349,8 +351,13 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     tasksByLeg.set(built.leg_id, arr);
   });
 
-  const fullLegs: LegWithDetails[] = legRows.map((row) => {
+  const fullLegs: LegWithDetails[] = legRows.map((row, index) => {
     const leg = legRow(row);
+    // Server-side calendar-date assignment: every leg (driving or rest) is one
+    // calendar day, so the date is the trip start plus the leg's rank in the
+    // sort_order-ordered list. Computed here (not on the client) so the date is
+    // a single source of truth the feasibility/enforcement layers can also read.
+    const date_iso = legDateISO(trip.start_date_parsed, index);
     const parsedNotes = (() => {
       if (!leg.notes) return [];
       try {
@@ -368,6 +375,7 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     });
     return {
       ...leg,
+      date_iso,
       costs: costsByLeg.get(leg.id) || [],
       links: linksByLeg.get(leg.id) || [],
       routes: routesByLeg.get(leg.id) || [],
@@ -472,6 +480,8 @@ export async function createTrip(input: {
       name: input.name,
       startDate: input.startDate ?? null,
       endDate: input.endDate ?? null,
+      startDateParsed: tryParseToISO(input.startDate),
+      endDateParsed: tryParseToISO(input.endDate),
       vehicleId: input.vehicleId ?? null,
     })
     .returning();
@@ -560,6 +570,226 @@ export async function addLeg(input: {
 
 export async function deleteLeg(legId: string): Promise<void> {
   await db.delete(legs).where(eq(legs.id, legId));
+}
+
+/** Title for a server-generated rest-day leg at a named location. */
+function restDayTitle(name: string | null): string {
+  return name ? `${name} (rest day)` : 'Rest day';
+}
+
+/** Great-circle distance in km. Local copy to keep this module self-contained. */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Assign an existing rest leg to the drive whose destination it sits at. Rest
+ * legs carry their location in their own start/end coords; the matching drive is
+ * the one whose END coords are closest (that's the drive that arrives at this
+ * stay). Falls back to the last drive when coords are missing.
+ */
+function nearestDriveStopIndex(
+  rest: { startLat: number | null; startLng: number | null; endLat: number | null; endLng: number | null },
+  driveLegs: Array<{ endLat: number | null; endLng: number | null }>,
+): number {
+  const rlat = rest.startLat ?? rest.endLat;
+  const rlng = rest.startLng ?? rest.endLng;
+  if (rlat == null || rlng == null) return driveLegs.length - 1;
+  let best = driveLegs.length - 1;
+  let bestKm = Infinity;
+  for (let i = 0; i < driveLegs.length; i++) {
+    const d = driveLegs[i];
+    if (d.endLat == null || d.endLng == null) continue;
+    const km = haversineKm(rlat, rlng, d.endLat, d.endLng);
+    if (km < bestKm) {
+      bestKm = km;
+      best = i;
+    }
+  }
+  return best;
+}
+
+export interface ScheduleInfeasibilityOut {
+  legId: string;
+  anchorDateISO: string;
+  reason: string;
+}
+
+/**
+ * Deterministically rebuild a trip's rest-day legs and leg ordering from its
+ * DRIVING legs + fixed-date constraints. This is the server taking ownership of
+ * the schedule (see src/lib/penny/schedule.ts for the math and the motivating
+ * bug): Penny can no longer miscount rest days or leave a rest day stranded
+ * after the drive it was meant to precede.
+ *
+ * What it does, given the trip start date:
+ *   - Treats each drive leg (in its current order) as a "stop".
+ *   - Derives desired nights at each stop from the rest legs currently there.
+ *   - Reads dated arrive_by/depart_after constraints as fixed-date anchors.
+ *   - Computes the correct rest-day allocation + chronological ordering.
+ *   - Reconciles to the DB: reuses existing rest rows (preserving their data),
+ *     creates any extra rest rows needed, deletes surplus ones, and renumbers
+ *     every leg's sort_order so the list is in calendar order.
+ *
+ * Idempotent: a no-op when the trip is already correct (no writes). Safe to call
+ * after every plan edit. Returns any fixed dates that are physically impossible
+ * (the driving alone overruns them) for the caller to surface.
+ *
+ * NOTE: it trusts the current ORDER of drive legs (route order); it fixes rest
+ * placement/count and overall sort_order, not a scrambled drive sequence.
+ */
+export async function rebuildTripSchedule(
+  tripId: string,
+): Promise<ScheduleInfeasibilityOut[]> {
+  const tripRows = await db
+    .select({ startDateParsed: trips.startDateParsed })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  const startISO = tripRows[0]?.startDateParsed ?? null;
+  // No confirmed start date → no positional dates to order/anchor by.
+  if (!startISO) return [];
+
+  const legRows = await db
+    .select()
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legs.sortOrder));
+  const driveLegs = legRows.filter((l) => (l.legType ?? 'drive') !== 'rest');
+  const restLegs = legRows.filter((l) => (l.legType ?? 'drive') === 'rest');
+  if (driveLegs.length === 0) return []; // nothing to anchor a schedule on
+
+  // Dated constraints → an anchor date per drive leg.
+  const constraintRows = await db
+    .select({ lc: legConstraints })
+    .from(legConstraints)
+    .innerJoin(legs, eq(legConstraints.legId, legs.id))
+    .where(eq(legs.tripId, tripId));
+  const anchorByLegId = new Map<string, string>();
+  for (const { lc } of constraintRows) {
+    if (
+      (lc.constraintType === 'arrive_by' || lc.constraintType === 'depart_after') &&
+      lc.constraintDatetime
+    ) {
+      const iso = constraintLocalDateISO(lc.constraintDatetime.toISOString());
+      if (iso) anchorByLegId.set(lc.legId, iso);
+    }
+  }
+
+  // Assign each existing rest leg to its stop (the drive that arrives there).
+  const restsByStop = new Map<number, string[]>();
+  for (const rest of restLegs) {
+    const idx = nearestDriveStopIndex(rest, driveLegs);
+    const arr = restsByStop.get(idx) ?? [];
+    arr.push(rest.id);
+    restsByStop.set(idx, arr);
+  }
+
+  const stops: ScheduleStop[] = driveLegs.map((d, i) => ({
+    driveId: d.id,
+    endName: d.endName,
+    endLat: d.endLat,
+    endLng: d.endLng,
+    desiredNights: (restsByStop.get(i) ?? []).length,
+    anchorDateISO: anchorByLegId.get(d.id) ?? null,
+  }));
+
+  const result = materializeSchedule({ tripStartISO: startISO, stops });
+
+  // Reconcile the generated leg list to DB rows.
+  const restPool = new Map<number, string[]>();
+  for (const [k, v] of restsByStop) restPool.set(k, [...v]);
+
+  type LegUpdate = { id: string; sortOrder: number; stop?: ScheduleStop };
+  const updates: LegUpdate[] = [];
+  const inserts: Array<typeof legs.$inferInsert> = [];
+  const usedRestIds = new Set<string>();
+
+  for (const gl of result.legs) {
+    if (gl.kind === 'drive') {
+      updates.push({ id: gl.driveId as string, sortOrder: gl.rank });
+      continue;
+    }
+    const stop = stops[gl.stopIndex];
+    const pool = restPool.get(gl.stopIndex);
+    const reuseId = pool && pool.length > 0 ? pool.shift() ?? null : null;
+    if (reuseId) {
+      usedRestIds.add(reuseId);
+      updates.push({ id: reuseId, sortOrder: gl.rank, stop });
+    } else {
+      inserts.push({
+        tripId,
+        sortOrder: gl.rank,
+        legType: 'rest',
+        title: restDayTitle(stop.endName),
+        startName: stop.endName,
+        endName: stop.endName,
+        startLat: stop.endLat,
+        startLng: stop.endLng,
+        endLat: stop.endLat,
+        endLng: stop.endLng,
+        status: 'planning',
+      });
+    }
+  }
+  const toDelete = restLegs.filter((r) => !usedRestIds.has(r.id)).map((r) => r.id);
+
+  const infeasibleOut: ScheduleInfeasibilityOut[] = result.infeasible.map((inf) => ({
+    legId: driveLegs[inf.stopIndex].id,
+    anchorDateISO: inf.anchorDateISO,
+    reason: inf.reason,
+  }));
+
+  // Idempotency: skip all writes when nothing actually changes. Avoids churn on
+  // the (common) edits that don't touch dates or ordering.
+  const byId = new Map(legRows.map((l) => [l.id, l]));
+  const nothingChanged =
+    inserts.length === 0 &&
+    toDelete.length === 0 &&
+    updates.every((u) => {
+      const cur = byId.get(u.id);
+      if (!cur) return false;
+      if (cur.sortOrder !== u.sortOrder) return false;
+      if (!u.stop) return true;
+      return (
+        cur.startLat === u.stop.endLat &&
+        cur.startLng === u.stop.endLng &&
+        cur.endLat === u.stop.endLat &&
+        cur.endLng === u.stop.endLng &&
+        cur.endName === u.stop.endName
+      );
+    });
+  if (nothingChanged) return infeasibleOut;
+
+  await db.transaction(async (tx) => {
+    for (const u of updates) {
+      const set: Record<string, unknown> = { sortOrder: u.sortOrder, updatedAt: new Date() };
+      if (u.stop) {
+        // Keep the reused rest row pinned to its stay location.
+        set.legType = 'rest';
+        set.title = restDayTitle(u.stop.endName);
+        set.startName = u.stop.endName;
+        set.endName = u.stop.endName;
+        set.startLat = u.stop.endLat;
+        set.startLng = u.stop.endLng;
+        set.endLat = u.stop.endLat;
+        set.endLng = u.stop.endLng;
+      }
+      await tx.update(legs).set(set).where(eq(legs.id, u.id));
+    }
+    if (inserts.length > 0) await tx.insert(legs).values(inserts);
+    if (toDelete.length > 0) await tx.delete(legs).where(inArray(legs.id, toDelete));
+  });
+
+  return infeasibleOut;
 }
 
 /**

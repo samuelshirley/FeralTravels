@@ -862,13 +862,14 @@ export default function ChatPanel({
         const details = persistFailedActions.map((f) => `${f.action}: ${f.error}`).join('; ');
         applyError = `Changes failed to save — ${details}`;
       } else if (hadProposedChanges && appliedCount === 0) {
-        // Include validation failure details if present
+        // Validation details are technical (Zod errors aimed at the LLM) —
+        // don't dump them into the user-facing UI. Log them for debugging.
         const valFailures = Array.isArray(validationFailuresRaw) ? validationFailuresRaw : [];
-        const valDetails = valFailures.length > 0
-          ? ` (${valFailures.map((v: { action: string; error: string }) => `${v.action}: ${v.error.slice(0, 80)}`).join('; ')})`
-          : '';
+        if (valFailures.length > 0) {
+          console.warn('[Penny] validation failures:', valFailures);
+        }
         applyError =
-          `Penny proposed changes but nothing was saved${valDetails}. Re-ask her with more detail (e.g. starting point, destination).`;
+          'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
       }
 
       setDeliveryStatus('responded');
@@ -964,7 +965,33 @@ export default function ChatPanel({
         setInput('');
       }
     } catch (e: unknown) {
-      setOnboardingError(e instanceof Error ? e.message : String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      // Show the user's answer and Penny's error as chat bubbles so the
+      // conversation flow is visible, rather than just a tiny error label
+      // near the composer that's easy to miss.
+      const answerLabel = typeof value === 'string' ? value : String(value);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `optimistic-${Date.now()}`,
+          trip_id: tripId,
+          role: 'user' as const,
+          content: answerLabel,
+          kind: 'form_answer' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: `optimistic-${Date.now() + 1}`,
+          trip_id: tripId,
+          role: 'assistant' as const,
+          content: errorMsg,
+          kind: 'ai' as const,
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setInput('');
     } finally {
       setOnboardingSubmitting(false);
     }
@@ -1579,7 +1606,7 @@ export default function ChatPanel({
         {/* Typing indicator — shown when Penny has "read" the message
             but hasn't started responding yet (no text chunks received),
             or during the typing animation before each onboarding question. */}
-        {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.content))) && (
+        {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.streaming && m.content))) && (
           <div
             style={{
               alignSelf: 'flex-start',

@@ -23,6 +23,7 @@ export interface PennyContext {
     name: string;
     start_date: string | null;
     end_date: string | null;
+    start_date_parsed: string | null;
     status: string;
   };
   vehicle: PennyVehicle | null;
@@ -88,6 +89,13 @@ export interface PennyLeg {
   end_lat: number | null;
   end_lng: number | null;
   dates: string | null;
+  /**
+   * Server-computed calendar date (ISO "YYYY-MM-DD") this leg falls on, or
+   * null when the trip start date isn't set. Penny reads this to reason about
+   * fixed-date constraints — e.g. checking whether the leg departing a waypoint
+   * actually lands on the date the user demanded.
+   */
+  date_iso: string | null;
   distance_km: number | null;
   drive_time_minutes: number | null;
   terrain: string | null;
@@ -183,6 +191,7 @@ export async function buildPennyContext(
       name: trip.name,
       start_date: trip.start_date,
       end_date: trip.end_date,
+      start_date_parsed: trip.start_date_parsed,
       status: trip.status,
     },
     vehicle: vehicle ? projectVehicle(vehicle) : null,
@@ -247,6 +256,7 @@ function projectLeg(leg: LegWithDetails): PennyLeg {
     end_lat: leg.end_lat,
     end_lng: leg.end_lng,
     dates: leg.dates,
+    date_iso: leg.date_iso,
     distance_km: leg.distance_km,
     drive_time_minutes: leg.drive_time_minutes,
     terrain: leg.terrain,

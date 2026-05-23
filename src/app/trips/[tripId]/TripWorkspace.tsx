@@ -653,7 +653,7 @@ export default function TripWorkspace({
                     style={{
                       height: '100%',
                       overflowY: 'auto',
-                      padding: '20px 16px',
+                      padding: '20px 16px 120px',
                       background: 'var(--tp-bg)',
                     }}
                   >
@@ -709,7 +709,7 @@ export default function TripWorkspace({
               style={{
                 height: '100%',
                 overflowY: 'auto',
-                padding: '20px 16px',
+                padding: '20px 16px 120px',
                 background: 'var(--tp-bg)',
               }}
             >

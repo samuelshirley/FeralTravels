@@ -20,11 +20,12 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
 import { planDumpStationStopForLeg } from '@/server/dump-stations';
+import { tryParseToISO } from '@/lib/dates';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
@@ -379,6 +380,39 @@ export async function POST(req: Request) {
             }
           }
 
+          // Deterministic schedule rebuild. Now that drive legs + constraints are
+          // persisted, the server takes ownership of rest-day count + leg ordering
+          // so the calendar dates match what the user asked for — Penny can't
+          // miscount rest days or strand one after the wrong drive. Best-effort:
+          // the legs are already saved, so a rebuild failure must never break the
+          // response. Runs before the contiguity check + route summary so both
+          // see the corrected order.
+          if (appliedCount > 0) {
+            try {
+              const infeasibleDates = await rebuildTripSchedule(tripId);
+              for (const inf of infeasibleDates) {
+                logUsageEvent({
+                  userId,
+                  tripId,
+                  provider: 'penny:schedule-infeasible',
+                  requests: 0,
+                  success: false,
+                  errorMessage: `Fixed date ${inf.anchorDateISO} unreachable (leg ${inf.legId}): ${inf.reason}`,
+                }).catch(() => {});
+              }
+            } catch (e) {
+              console.error('[schedule-rebuild] failed', e);
+              logUsageEvent({
+                userId,
+                tripId,
+                provider: 'penny:schedule-rebuild-failed',
+                requests: 0,
+                success: false,
+                errorMessage: e instanceof Error ? e.message : String(e),
+              }).catch(() => {});
+            }
+          }
+
           // Post-dispatch leg contiguity check: detect if Penny left a gap
           // (e.g. deleted a leg without updating the neighbor). Log so it
           // shows up in admin errors — don't block the response.
@@ -566,9 +600,21 @@ async function dispatchAction(
 
     case 'rename_trip': {
       await assertTripNameAvailable(userId, action.input.name, tripId);
+      const tripUpdate: Record<string, unknown> = {
+        name: action.input.name,
+        updatedAt: new Date(),
+      };
+      if (action.input.start_date !== undefined) {
+        tripUpdate.startDate = action.input.start_date;
+        tripUpdate.startDateParsed = tryParseToISO(action.input.start_date);
+      }
+      if (action.input.end_date !== undefined) {
+        tripUpdate.endDate = action.input.end_date;
+        tripUpdate.endDateParsed = tryParseToISO(action.input.end_date);
+      }
       await db
         .update(trips)
-        .set({ name: action.input.name, updatedAt: new Date() })
+        .set(tripUpdate)
         .where(eq(trips.id, tripId));
       return;
     }
@@ -1272,6 +1318,11 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
     case 'update_task':
       return { action: 'update_task', task_id: action.input.task_id, data: action.input.data };
     case 'rename_trip':
-      return { action: 'rename_trip', name: action.input.name };
+      return {
+        action: 'rename_trip',
+        name: action.input.name,
+        ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
+        ...(action.input.end_date ? { end_date: action.input.end_date } : {}),
+      };
   }
 }

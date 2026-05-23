@@ -22,6 +22,7 @@ import {
 import { rowMappers } from '@/server/repos/trips';
 import { replenishFuelStopsForTrip } from '@/server/fuel';
 import { parseUUID } from '@/lib/validation';
+import { tryParseToISO } from '@/lib/dates';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -96,8 +97,14 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 
     const update: Record<string, unknown> = { updatedAt: new Date() };
     if (body.name !== undefined) update.name = body.name;
-    if (body.start_date !== undefined) update.startDate = body.start_date;
-    if (body.end_date !== undefined) update.endDate = body.end_date;
+    if (body.start_date !== undefined) {
+      update.startDate = body.start_date;
+      update.startDateParsed = tryParseToISO(body.start_date);
+    }
+    if (body.end_date !== undefined) {
+      update.endDate = body.end_date;
+      update.endDateParsed = tryParseToISO(body.end_date);
+    }
     if (body.status !== undefined) update.status = body.status;
     if (body.vehicle_id !== undefined) update.vehicleId = body.vehicle_id;
     if (body.prefer_avoid_highways !== undefined)

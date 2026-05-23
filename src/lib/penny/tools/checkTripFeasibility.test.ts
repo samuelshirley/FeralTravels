@@ -181,3 +181,97 @@ describe('computeFeasibility (day model allocation)', () => {
     expect(nights[1]).toBeGreaterThan(nights[0]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Calendar-anchor constraint checks — the "leave on the 3rd" fix
+// ---------------------------------------------------------------------------
+
+describe('computeFeasibility (calendar-anchor constraints)', () => {
+  // Girona → Lyon → Innsbruck → Bad Kissingen. Depart May 29 (2 driving days
+  // before the Bad Kissingen leg), must leave Innsbruck the morning of June 3.
+  const badKissingenConstraint = (cumulativeRestDays: number) => ({
+    label: 'Leave Innsbruck for Bad Kissingen on Jun 3',
+    leg_index: 5,
+    constraint_type: 'depart_after' as const,
+    datetime: '2026-06-03T08:00:00+02:00',
+    buffer_minutes: 60,
+    cumulative_drive_minutes: 1090,
+    cumulative_drive_days: 2,
+    cumulative_rest_days: cumulativeRestDays,
+    departure_datetime: '2026-05-29T08:00:00+02:00',
+  });
+
+  it('flags Penny\'s 1-rest-day plan and prescribes 3', () => {
+    const result = computeFeasibility(feasInput({
+      segment_drive_days: [1, 1, 1],
+      waypoint_nights: [1],
+      time_budget_days: null,
+      constraint_checks: [badKissingenConstraint(1)],
+    }));
+    const c = result.constraint_results[0];
+    expect(c.status).toBe('fail');
+    expect(c.required_rest_days_before).toBe(3);
+    expect(c.detail).toContain('add 2');
+    expect(result.feasible).toBe(false);
+  });
+
+  it('passes when 3 rest days are planned (lands on Jun 3)', () => {
+    const result = computeFeasibility(feasInput({
+      segment_drive_days: [1, 1, 1],
+      waypoint_nights: [3],
+      time_budget_days: null,
+      constraint_checks: [badKissingenConstraint(3)],
+    }));
+    const c = result.constraint_results[0];
+    expect(c.status).toBe('pass');
+    expect(c.required_rest_days_before).toBe(3);
+    expect(c.detail).toContain('2026-06-03');
+  });
+
+  it('fails with a negative count when the fixed date is too early', () => {
+    const result = computeFeasibility(feasInput({
+      segment_drive_days: [1, 1],
+      waypoint_nights: [0],
+      time_budget_days: null,
+      constraint_checks: [{
+        label: 'Arrive too soon',
+        leg_index: 1,
+        constraint_type: 'arrive_by',
+        datetime: '2026-05-30T12:00:00+02:00',
+        buffer_minutes: 60,
+        cumulative_drive_minutes: 1500,
+        cumulative_drive_days: 3, // 3 drives can't fit before May 30
+        cumulative_rest_days: 0,
+        departure_datetime: '2026-05-29T08:00:00+02:00',
+      }],
+    }));
+    const c = result.constraint_results[0];
+    expect(c.status).toBe('fail');
+    expect(c.required_rest_days_before).toBeLessThan(0);
+  });
+
+  it('leaves clock-time arrive_by behavior intact when no cumulative_drive_days', () => {
+    const result = computeFeasibility(feasInput({
+      segment_drive_days: [1],
+      waypoint_nights: [],
+      time_budget_days: null,
+      constraint_checks: [{
+        label: 'Arrive by 3pm',
+        leg_index: 0,
+        constraint_type: 'arrive_by',
+        datetime: '2026-05-29T15:00:00+02:00',
+        buffer_minutes: 60,
+        cumulative_drive_minutes: 180,
+        cumulative_rest_days: 0,
+        departure_datetime: '2026-05-29T08:00:00+02:00',
+      }],
+    }));
+    const c = result.constraint_results[0];
+    // Clock-time path (not calendar-anchor): 8am + 3h drive + breaks + setup ≈
+    // noon, leaving ~2h before the 3pm−1h-buffer deadline → 'at_risk'. The key
+    // assertion is that the anchor field stays unset, proving we took the
+    // legacy clock branch, not the new calendar branch.
+    expect(c.status).toBe('at_risk');
+    expect(c.required_rest_days_before == null).toBe(true);
+  });
+});

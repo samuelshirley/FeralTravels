@@ -93,6 +93,14 @@ export interface Leg {
   end_lat: number | null;
   end_lng: number | null;
   dates: string | null;
+  /**
+   * Server-computed calendar date for this leg, ISO "YYYY-MM-DD", or null when
+   * the trip has no confirmed start date. Derived as `trip.start_date_parsed +
+   * leg rank` (every leg, driving or rest, occupies one calendar day). This is
+   * the source of truth for leg dates — the client formats it for display and
+   * must NOT recompute the date itself. See `legDateISO` in `lib/dates.ts`.
+   */
+  date_iso: string | null;
   distance_km: number | null;
   drive_time_minutes: number | null;
   terrain: string | null;
