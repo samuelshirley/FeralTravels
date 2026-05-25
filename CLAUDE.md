@@ -57,7 +57,8 @@ src/
     (+ AppNavbar, BottomNav, MobileFooter, Spinner, StatusBadge, etc.)
   lib/
     api.ts            # Client-side API helper
-    coords.ts         # Coordinate parsing/formatting
+    coords.ts         # Coordinate parsing/formatting (sync; Google/Apple Maps URLs, lat/lng)
+    coordsResolve.ts  # Server-side Maps URL resolution (short-link redirects); used by api/coords/parse and Penny chat enrichment
     maps.ts           # Google Maps client helpers
     directions.ts     # Client directions logic
     gpx.ts            # GPX file parsing

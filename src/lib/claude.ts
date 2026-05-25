@@ -16,6 +16,10 @@ import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
+import {
+  resolveMapsLinksInMessage,
+  type ResolvedMapsLink,
+} from "@/lib/coordsResolve";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -412,8 +416,21 @@ Same principle applies when splitting one leg into two: add the new leg AND upda
 </leg_merge_and_delete_rules>
 </leg_planning_rules>
 
+<maps_link_handling>
+When the user includes Google or Apple Maps links in their message, the server resolves them before you see the turn. Look for a <resolved_maps_links> block in the user message — each entry has url, resolved, and when successful lat/lng plus optional name.
+
+When resolved is true:
+- Use those lat/lng directly for get_route, add_stop, add_leg (rest days), or update_leg — do NOT tell the user you cannot open the link.
+- Set source="user" and source_url to the original url from the block when adding stops or leg endpoints the user pointed at.
+
+When resolved is false (or the block is absent for a link-only message):
+- Ask for the place name or raw lat/lng — do not pretend you fetched the URL yourself.
+</maps_link_handling>
+
 <spot_discovery_note>
-You do NOT have access to live spot databases or Google Places at query time. For overnight stops, emit add_stop with stop_type="overnight", coords, and a plausible town/park name (source="penny" so the user knows to verify). The UI automatically attaches "🐕 Dog parks nearby" and "🌳 Parks nearby" Google Maps search chips at the leg's end coords, plus a "Copy GPS" button on each stop — users discover the actual spot themselves and paste the coords back. When the user asks "find me a spot near X", propose a town/park near their route and mention those chips in one short sentence rather than inventing URLs.
+You do NOT have access to live spot databases or Google Places search at query time. When the user drops a Maps link, use <resolved_maps_links> coords (see <maps_link_handling>) — that is the supported path.
+
+When the user asks you to find a spot without a link, emit add_stop with stop_type="overnight", coords, and a plausible town/park name (source="penny" so the user knows to verify). The UI automatically attaches "🐕 Dog parks nearby" and "🌳 Parks nearby" Google Maps search chips at the leg's end coords, plus a "Copy GPS" button on each stop. When the user asks "find me a spot near X", propose a town/park near their route and mention those chips in one short sentence rather than inventing URLs.
 </spot_discovery_note>`;
 
 // ---------------------------------------------------------------------------
@@ -506,6 +523,10 @@ export async function* replanStream(
   const context = await buildPennyContext(tripId, userId);
   if (!context) throw new Error("Trip not found");
 
+  const resolvedMapsLinks = userMessage.trim()
+    ? await resolveMapsLinksInMessage(userMessage)
+    : [];
+
   const userContent: Array<
     Anthropic.ImageBlockParam | Anthropic.TextBlockParam
   > = [];
@@ -524,7 +545,7 @@ export async function* replanStream(
   }
   userContent.push({
     type: "text",
-    text: renderContextMessage(context, userMessage),
+    text: renderContextMessage(context, userMessage, resolvedMapsLinks),
   });
 
   const messages: Anthropic.MessageParam[] = [
@@ -1109,8 +1130,16 @@ function round5(n: number): number {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function renderContextMessage(ctx: PennyContext, userMessage: string): string {
+function renderContextMessage(
+  ctx: PennyContext,
+  userMessage: string,
+  resolvedMapsLinks: ResolvedMapsLink[] = [],
+): string {
   const contextJson = JSON.stringify(ctx, null, 2);
   const request = userMessage?.trim() || "(no text — see attached image(s))";
-  return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}`;
+  const mapsBlock =
+    resolvedMapsLinks.length > 0
+      ? `\n\n<resolved_maps_links>\n${JSON.stringify(resolvedMapsLinks, null, 2)}\n</resolved_maps_links>`
+      : "";
+  return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}${mapsBlock}`;
 }
