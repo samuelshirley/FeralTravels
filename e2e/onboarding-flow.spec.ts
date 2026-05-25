@@ -6,12 +6,12 @@ import { createOnboardingTrip } from './fixtures/test-trip';
  * Exercises the pre-Penny onboarding wizard:
  *   trip_intent → units_pick → (vehicle auto-pick when only one fuel-complete
  *   vehicle) → done.
- * The fixture trip already carries a real name, so the trip_name question is
- * skipped (onboarding only asks for a name on blank / legacy "Untitled Trip"
- * rows). No LLM calls; the fixture user already has a fuel-ready default van.
+ * There is no trip-naming step anymore (Penny names the trip from its route),
+ * so the wizard must never ask for a name — this test guards that. No LLM
+ * calls; the fixture user already has a fuel-ready default van.
  */
 test.describe('Onboarding wizard', () => {
-  test('named trip skips naming, units pick, single vehicle auto-selected', async ({ page }) => {
+  test('onboarding never asks for a name, goes intent → units → single vehicle auto-selected', async ({ page }) => {
     const { tripId } = await createOnboardingTrip('Onboarding Flow');
 
     await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
@@ -25,8 +25,8 @@ test.describe('Onboarding wizard', () => {
     await composer.fill('Road trip from Girona to Berlin');
     await composer.press('Enter');
 
-    // The trip was created with a name, so naming is skipped — Penny does NOT
-    // ask "What would you like to name this trip?".
+    // The naming step has been removed entirely — Penny must NOT ask
+    // "What would you like to name this trip?".
     await expect(
       page.getByText(/What would you like to name this trip/),
     ).toHaveCount(0);

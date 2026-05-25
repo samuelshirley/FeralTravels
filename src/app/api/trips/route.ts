@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { requireUserId, errorResponse, HttpError } from '@/server/auth/guards';
-import { listTripsForUser, createTrip } from '@/server/repos/trips';
+import { requireUserId, errorResponse, HttpError, ConflictError } from '@/server/auth/guards';
+import { listTripsForUser, createTrip, generateDefaultTripName } from '@/server/repos/trips';
 import { getDefaultVehicleId, getVehicleForUser } from '@/server/repos/vehicles';
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 
@@ -17,8 +17,11 @@ export async function GET() {
   }
 }
 
+// `name` is optional: the "+ New trip" button no longer collects one — Penny
+// renames the trip to its route during planning. When omitted, the server
+// assigns a unique "New trip" placeholder (see generateDefaultTripName).
 const createSchema = z.object({
-  name: z.string().min(1).max(200),
+  name: z.string().min(1).max(200).optional(),
   start_date: z.string().nullish(),
   end_date: z.string().nullish(),
   vehicle_id: z.string().uuid().nullish(),
@@ -27,7 +30,7 @@ const createSchema = z.object({
 export async function POST(req: Request) {
   try {
     const userId = await requireUserId();
-    const body = createSchema.parse(await req.json());
+    const body = createSchema.parse(await req.json().catch(() => ({})));
     let vehicleId: string | null = body.vehicle_id ?? (await getDefaultVehicleId(userId));
 
     if (typeof body.vehicle_id === 'string') {
@@ -48,13 +51,29 @@ export async function POST(req: Request) {
       }
     }
 
-    const trip = await createTrip({
-      userId,
-      name: body.name,
-      startDate: body.start_date ?? null,
-      endDate: body.end_date ?? null,
-      vehicleId: vehicleId,
-    });
+    // Use the supplied name if there is one; otherwise generate a unique
+    // placeholder. Retry the generated-name path on a ConflictError (the rare
+    // race where two creates pick the same "New trip N" slot); surface conflicts
+    // for an explicitly-supplied name.
+    const explicitName =
+      typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
+
+    let trip;
+    for (let attempt = 0; ; attempt++) {
+      const name = explicitName ?? (await generateDefaultTripName(userId));
+      try {
+        trip = await createTrip({
+          userId,
+          name,
+          startDate: body.start_date ?? null,
+          endDate: body.end_date ?? null,
+          vehicleId: vehicleId,
+        });
+        break;
+      } catch (e) {
+        if (explicitName || !(e instanceof ConflictError) || attempt >= 4) throw e;
+      }
+    }
     return Response.json(trip);
   } catch (err) {
     return errorResponse(err);

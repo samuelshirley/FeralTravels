@@ -36,6 +36,17 @@ npm run db:studio    # drizzle-kit studio (DB browser)
 npm run ship         # deploy script (scripts/ship.sh)
 ```
 
+## Workflow (current)
+
+Pre-launch project with **no real users yet** — we build fast ("vibe coding") directly on `main`. No feature branches or PR review gate at this stage.
+
+Division of labor:
+
+- **Claude commits and pushes** finished work straight to `main` (after `tsc --noEmit` + `npm run test` pass).
+- **Sam runs `npm run ship`** to deploy.
+
+Keep commits scoped to the change at hand — don't sweep unrelated in-progress edits into the same commit unless asked.
+
 ## Architecture
 
 ```
@@ -73,7 +84,7 @@ src/
     penny/
       context.ts      # Builds context for Penny from trip data
       geo.ts          # Geo utilities for Penny
-      schedule.ts     # Deterministic rest-day/leg-order materializer (pure)
+      schedule.ts     # Deterministic rest-day/leg-order materializer + route-continuity fixes (computeStartFixes — every leg must start where the previous ended); pure. Applied by trips.repairLegContinuity
       fuelTankState.ts # Pure continuous-drive tank math (km burned since last refuel); only actual fuel stops/trip start refill — rest days & overnights are NOT implicit refuels. DB shim: server/fuel.ts
       planSummary.ts  # Deterministic DB-derived plan facts (day counts, dates, totals, ETA via dayModel, deadline check) — source of truth for plan numbers shown to the user; Penny's prose must NOT state them
       sanitize.ts     # Strips/ detects tool-call markup leaked into Penny's text (she must emit prose only, never <invoke>/<parameter> XML)

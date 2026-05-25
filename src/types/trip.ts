@@ -1,7 +1,7 @@
 export type OnboardingState =
   | 'not_started'
   | 'trip_intent'
-  | 'trip_name'
+  | 'trip_name'      // legacy only — naming step removed; rows here are advanced on read
   | 'units_pick'
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
   | 'vehicle_new'

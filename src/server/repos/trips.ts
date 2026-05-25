@@ -1,9 +1,15 @@
 import 'server-only';
-import { and, asc, eq, inArray, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
 import { tryParseToISO, legDateISO, constraintLocalDateISO } from '@/lib/dates';
-import { materializeSchedule, type ScheduleStop } from '@/lib/penny/schedule';
+import {
+  materializeSchedule,
+  computeStartFixes,
+  type ScheduleStop,
+  type ContinuityLeg,
+} from '@/lib/penny/schedule';
+import { getDirections } from '@/lib/google/directions';
 import {
   trips,
   legs,
@@ -464,6 +470,35 @@ export function assertTripDurationWithinLimit(
   }
 }
 
+/**
+ * Pick a unique placeholder name for a trip created without one. The "+ New
+ * trip" button no longer asks for a name — Penny gives the trip a durable,
+ * generic name (theme/region + optional season, e.g. "Summer '26 National Parks
+ * Trip") once she commits to a plan — so this is only what shows in the navbar
+ * until then. Names are unique per user (unique index on
+ * user_id + trip_name_ci_key), so we probe for the first free
+ * "New trip" / "New trip 2" / "New trip 3" … slot.
+ *
+ * Not race-proof on its own: two simultaneous creates can pick the same slot.
+ * The caller (POST /api/trips) retries on the resulting ConflictError, and the
+ * unique index is the ultimate backstop.
+ */
+export async function generateDefaultTripName(userId: string): Promise<string> {
+  const BASE = 'New trip';
+  const rows = await db
+    .select({ key: trips.tripNameCiKey })
+    .from(trips)
+    .where(and(eq(trips.userId, userId), like(trips.tripNameCiKey, 'new trip%')));
+  const taken = new Set(rows.map((r) => r.key));
+  if (!taken.has(BASE.toLowerCase())) return BASE;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${BASE} ${i}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  // Pathological fallback (1000 unnamed trips) — timestamp keeps it unique.
+  return `${BASE} ${Date.now()}`;
+}
+
 export async function createTrip(input: {
   userId: string;
   name: string;
@@ -708,7 +743,13 @@ export async function rebuildTripSchedule(
   const restPool = new Map<number, string[]>();
   for (const [k, v] of restsByStop) restPool.set(k, [...v]);
 
-  type LegUpdate = { id: string; sortOrder: number; stop?: ScheduleStop };
+  type LegUpdate = {
+    id: string;
+    sortOrder: number;
+    stop?: ScheduleStop;
+    segmentIndex?: number | null;
+    segmentName?: string | null;
+  };
   const updates: LegUpdate[] = [];
   const inserts: Array<typeof legs.$inferInsert> = [];
   const usedRestIds = new Set<string>();
@@ -719,11 +760,20 @@ export async function rebuildTripSchedule(
       continue;
     }
     const stop = stops[gl.stopIndex];
+    const anchorDrive = driveLegs[gl.stopIndex];
+    const segmentIndex = anchorDrive?.segmentIndex ?? null;
+    const segmentName = anchorDrive?.segmentName ?? null;
     const pool = restPool.get(gl.stopIndex);
     const reuseId = pool && pool.length > 0 ? pool.shift() ?? null : null;
     if (reuseId) {
       usedRestIds.add(reuseId);
-      updates.push({ id: reuseId, sortOrder: gl.rank, stop });
+      updates.push({
+        id: reuseId,
+        sortOrder: gl.rank,
+        stop,
+        segmentIndex,
+        segmentName,
+      });
     } else {
       inserts.push({
         tripId,
@@ -736,6 +786,8 @@ export async function rebuildTripSchedule(
         startLng: stop.endLng,
         endLat: stop.endLat,
         endLng: stop.endLng,
+        segmentIndex,
+        segmentName,
         status: 'planning',
       });
     }
@@ -764,7 +816,9 @@ export async function rebuildTripSchedule(
         cur.startLng === u.stop.endLng &&
         cur.endLat === u.stop.endLat &&
         cur.endLng === u.stop.endLng &&
-        cur.endName === u.stop.endName
+        cur.endName === u.stop.endName &&
+        cur.segmentIndex === (u.segmentIndex ?? null) &&
+        cur.segmentName === (u.segmentName ?? null)
       );
     });
   if (nothingChanged) return infeasibleOut;
@@ -773,7 +827,7 @@ export async function rebuildTripSchedule(
     for (const u of updates) {
       const set: Record<string, unknown> = { sortOrder: u.sortOrder, updatedAt: new Date() };
       if (u.stop) {
-        // Keep the reused rest row pinned to its stay location.
+        // Keep the reused rest row pinned to its stay location + stop-to-stop segment.
         set.legType = 'rest';
         set.title = restDayTitle(u.stop.endName);
         set.startName = u.stop.endName;
@@ -782,6 +836,8 @@ export async function rebuildTripSchedule(
         set.startLng = u.stop.endLng;
         set.endLat = u.stop.endLat;
         set.endLng = u.stop.endLng;
+        set.segmentIndex = u.segmentIndex ?? null;
+        set.segmentName = u.segmentName ?? null;
       }
       await tx.update(legs).set(set).where(eq(legs.id, u.id));
     }
@@ -790,6 +846,118 @@ export async function rebuildTripSchedule(
   });
 
   return infeasibleOut;
+}
+
+export interface ContinuityRepairOut {
+  legId: string;
+  /** The stale origin we replaced (for logging). */
+  fromName: string | null;
+  /** The previous leg's destination we chained to. */
+  toName: string | null;
+  /** False when the re-route failed and we cleared the leg's distance/time. */
+  rerouted: boolean;
+}
+
+/**
+ * Enforce route continuity: every leg must START where the previous leg ENDED.
+ *
+ * This is the hard invariant behind "the plan must never jump". Penny authors a
+ * new drive leg's start coordinates from the user's words ("leave Innsbruck on
+ * the 7th"), but the traveler may actually be somewhere else by then (Bad
+ * Kissingen, three rest days later). rebuildTripSchedule fixes rest-day count and
+ * ordering but deliberately does not touch a drive leg's start, so the bad origin
+ * survived and the map drew a dashed "gap" line. This closes that hole
+ * deterministically — Penny can no longer leave a leg starting in the wrong place.
+ *
+ * For each leg whose start drifted from the previous leg's end (see
+ * computeStartFixes), we:
+ *   - rewrite start_lat/lng/name to the previous leg's destination,
+ *   - rewrite an "A → B" title so it no longer shows the stale origin,
+ *   - RE-ROUTE the leg (origin = corrected start) so distance_km /
+ *     drive_time_minutes / geometry match the real drive. This matters because
+ *     plan totals (computePlanSummary) and fuel math read those DB numbers — a
+ *     corrected origin with a stale 638 km would silently poison the summary.
+ *   - If Directions fails, we still land the corrected start but NULL the
+ *     distance/time/geometry rather than keep numbers from the wrong origin, and
+ *     surface it to the caller (which logs it) — never silently swallow it.
+ *
+ * Idempotent: a no-op (no writes, no Directions calls) when the trip is already
+ * contiguous. Run after rebuildTripSchedule so it sees the settled order.
+ */
+export async function repairLegContinuity(
+  tripId: string,
+): Promise<ContinuityRepairOut[]> {
+  const legRows = await db
+    .select()
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legs.sortOrder));
+  if (legRows.length < 2) return [];
+
+  const chain: ContinuityLeg[] = legRows.map((l) => ({
+    legType: (l.legType ?? 'drive') === 'rest' ? 'rest' : 'drive',
+    startLat: l.startLat,
+    startLng: l.startLng,
+    endLat: l.endLat,
+    endLng: l.endLng,
+    endName: l.endName,
+  }));
+
+  const fixes = computeStartFixes(chain);
+  if (fixes.length === 0) return [];
+
+  const out: ContinuityRepairOut[] = [];
+  for (const fix of fixes) {
+    const leg = legRows[fix.index];
+    const set: Record<string, unknown> = {
+      startLat: fix.startLat,
+      startLng: fix.startLng,
+      startName: fix.startName,
+      updatedAt: new Date(),
+    };
+
+    // Rewrite an "A → B" title so the displayed origin matches the new start.
+    if (leg.title.includes('→') && fix.startName) {
+      const dest = leg.endName ?? leg.title.split('→').slice(1).join('→').trim();
+      set.title = `${fix.startName} → ${dest}`;
+    }
+
+    let rerouted = false;
+    if (leg.endLat != null && leg.endLng != null) {
+      const dir = await getDirections(
+        { lat: fix.startLat, lng: fix.startLng },
+        { lat: leg.endLat, lng: leg.endLng },
+      );
+      if (dir.ok && dir.polyline_points.length > 0) {
+        set.distanceKm = dir.distance_km;
+        set.driveTimeMinutes = dir.drive_time_minutes;
+        set.geometry = {
+          type: 'LineString',
+          // GeoJSON uses [lng, lat] order.
+          coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+        } satisfies GeoJSONLineString;
+        rerouted = true;
+      } else {
+        // The old numbers belong to the wrong origin — clear them rather than
+        // report a wrong distance/time in the plan summary.
+        set.distanceKm = null;
+        set.driveTimeMinutes = null;
+        set.geometry = null;
+      }
+    } else {
+      set.geometry = null;
+    }
+
+    await db.update(legs).set(set).where(eq(legs.id, leg.id));
+    out.push({
+      legId: leg.id,
+      fromName: leg.startName,
+      toName: fix.startName,
+      rerouted,
+    });
+  }
+
+  return out;
 }
 
 /**

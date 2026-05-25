@@ -66,9 +66,8 @@ export async function createBlankPlanningTrip(label: string): Promise<{
  * Trip that has not run onboarding yet (`not_started`). The first GET to
  * `/api/trips/:id/onboarding` bumps the row to `trip_intent` and shows
  * Penny's greeting — the wizard then walks through trip_intent → units_pick
- * → vehicle setup. The trip is created with a real name, so the trip_name
- * question is skipped (it only fires for blank / legacy "Untitled Trip" rows).
- * No Anthropic calls needed.
+ * → vehicle setup. There is no trip-naming step (Penny names the trip from
+ * its route during planning). No Anthropic calls needed.
  */
 export async function createOnboardingTrip(label: string): Promise<{
   tripId: string;

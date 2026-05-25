@@ -27,8 +27,9 @@ export default async function TripsPage() {
 
   // No auto-create when the user has zero trips. New users (and anyone who
   // just deleted their last trip) land on this list with the emphasized
-  // "+ New trip" button. They name the trip there, then the workspace opens
-  // and Penny's onboarding chat starts — see NewTripButton + server/onboarding.
+  // "+ New trip" button. Clicking it creates the trip (no name prompt — Penny
+  // names it after building the route) and opens the workspace, where Penny's
+  // onboarding chat starts — see NewTripButton + server/onboarding.
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== userId);
 
   return (
@@ -50,10 +51,7 @@ export default async function TripsPage() {
               <div className="page-eyebrow">YOUR TRIPS</div>
               <h1 className="page-title">Trips</h1>
             </div>
-            <NewTripButton
-              existingNames={myTrips.map((t) => t.name)}
-              emphasizeWhenNoTrips={myTrips.length === 0}
-            />
+            <NewTripButton emphasizeWhenNoTrips={myTrips.length === 0} />
           </div>
 
           <TripsList

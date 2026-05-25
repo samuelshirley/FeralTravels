@@ -14,7 +14,6 @@ import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/user
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
-import { assertTripNameAvailable } from '@/server/repos/trips';
 import {
   buildVehicleProfileQuestions,
   caravanDumpStationGateLabel,
@@ -33,36 +32,19 @@ import {
 // needs BEFORE the first real Anthropic call. Flow:
 //
 //   not_started  → trip_intent (Penny greeting + "where do you want to go?")
-//   trip_intent  → trip_name   ONLY when the trip has no name yet (see
-//                              `tripNeedsNaming`); otherwise skip straight to
-//                              units_pick / vehicle_new.
-//   trip_name    → units_pick (if units_pref NULL) | else vehicle_new
+//   trip_intent  → units_pick (if units_pref NULL) | else vehicle_new
 //   units_pick   → metric/imperial persisted → vehicle_new
 //   vehicle_new  → profile questions + caravan gate → done (handoff)
 //
-// Trips are created with a user-chosen name via the "+ New trip" button, so the
-// trip_name question is normally skipped — it only fires for blank / legacy
-// "Untitled Trip" rows that never got a real name.
+// There is no trip-naming step: the "+ New trip" button creates the trip with a
+// placeholder name and Penny renames it to its route during planning. Legacy
+// rows still parked in the removed `trip_name` state are advanced on read.
 //
 // New users never have existing vehicles, so there is no vehicle_pick step.
 // When the final question is answered, onboarding transitions to 'done' and
 // the stored pending_intent (from trip_intent) is returned so the client can
 // fire the LLM with it.
 // ---------------------------------------------------------------------------
-
-/** Legacy placeholder used by the now-removed zero-trips auto-create path. */
-const UNTITLED_TRIP_NAME = 'Untitled Trip';
-
-/**
- * A trip "needs naming" during onboarding only when it has no real name yet —
- * i.e. blank or the legacy "Untitled Trip" placeholder. Trips created through
- * the "+ New trip" button already carry a user-chosen name, so onboarding skips
- * the trip_name question for them (the name was set before the chat opened).
- */
-function tripNeedsNaming(name: string | null | undefined): boolean {
-  const n = (name ?? '').trim();
-  return n === '' || n.toLowerCase() === UNTITLED_TRIP_NAME.toLowerCase();
-}
 
 export type QuestionKind =
   | 'text'
@@ -100,13 +82,6 @@ export const TRIP_INTENT_QUESTION: Question = {
   label: "Hi, I'm Penny — your personal travel assistant.\n\nTell me where you want to go. Is there anything cool along the way you want or need to stop at? I'll go do all the legwork so all you have to do is drive and enjoy.\n\nI can also update anything on the itinerary anytime. If you need a gas stop sooner just let me know and I'll find one for you along the route.\n\nExample: \"I wanna do a roadtrip from where I live in Girona Spain to the Gorafe desert, I will need groceries along the way, and I need to fill up my water tank\"",
   placeholder: "Tell Penny about your trip…",
   multiline: true,
-};
-
-const TRIP_NAME_QUESTION: Question = {
-  key: 'trip_name',
-  kind: 'text',
-  label: 'What would you like to name this trip?',
-  placeholder: 'e.g. Spain Desert Run, Nordic Adventure',
 };
 
 /** @deprecated Kept for backwards compatibility with old onboarding states. */
@@ -160,10 +135,10 @@ function caravanGateResolved(
 }
 
 /**
- * Determine the next state after trip_name: units_pick (if not yet chosen),
+ * Determine the next state after trip_intent: units_pick (if not yet chosen),
  * or straight to vehicle_new (new users always create a vehicle).
  */
-async function resolvePostNameState(userId: string): Promise<OnboardingState> {
+async function resolvePostIntentState(userId: string): Promise<OnboardingState> {
   const unitsChosen = (await getRawUnitsPref(userId)) != null;
   return unitsChosen ? 'vehicle_new' : 'units_pick';
 }
@@ -302,16 +277,14 @@ export async function getOnboardingSnapshot(
     state = 'trip_intent';
   }
 
-  // Pre-vehicle steps: trip_intent + trip_name + units_pick (if not yet set).
-  // We count them so the progress bar reflects the full onboarding, not just
-  // the vehicle-profile portion.
+  // Pre-vehicle steps: trip_intent + units_pick (if not yet set). We count
+  // them so the progress bar reflects the full onboarding, not just the
+  // vehicle-profile portion.
   const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
   // trip_intent doesn't count in the numbered progress (it's the greeting).
-  // Steps shown in progress: [trip_name], [units_pick], then vehicle steps.
-  // trip_name only counts when the trip still needs a name.
-  const nameSteps = tripNeedsNaming(trip.name) ? 1 : 0;
+  // The only pre-vehicle numbered step is units_pick (when not yet chosen).
   const unitSteps = unitsAlreadyChosen ? 0 : 1;
-  const preVehicleSteps = nameSteps + unitSteps;
+  const preVehicleSteps = unitSteps;
 
   if (state === 'trip_intent') {
     return {
@@ -329,22 +302,14 @@ export async function getOnboardingSnapshot(
   const totalSteps = preVehicleSteps + vehicleSteps.length;
 
   if (state === 'trip_name') {
-    // Defensive: a trip that already carries a real name should never sit in
-    // trip_name — advance it so we never re-ask for a name the user has set.
-    if (!tripNeedsNaming(trip.name)) {
-      const nextState = await resolvePostNameState(userId);
-      await db
-        .update(trips)
-        .set({ onboardingState: nextState, updatedAt: new Date() })
-        .where(eq(trips.id, tripId));
-      return getOnboardingSnapshot(tripId, userId);
-    }
-    return {
-      state: 'trip_name',
-      question: TRIP_NAME_QUESTION,
-      vehicles: [],
-      progress: { current: 1, total: totalSteps },
-    };
+    // Legacy: naming is no longer part of onboarding. Advance any trip still
+    // parked in this state to the next real step.
+    const nextState = await resolvePostIntentState(userId);
+    await db
+      .update(trips)
+      .set({ onboardingState: nextState, updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    return getOnboardingSnapshot(tripId, userId);
   }
 
   if (state === 'units_pick') {
@@ -361,8 +326,8 @@ export async function getOnboardingSnapshot(
         ],
       },
       vehicles: [],
-      // units_pick is the first numbered step when trip_name is skipped.
-      progress: { current: nameSteps + 1, total: totalSteps },
+      // units_pick is the first (and only) pre-vehicle numbered step.
+      progress: { current: 1, total: totalSteps },
     };
   }
 
@@ -405,7 +370,7 @@ export async function getOnboardingSnapshot(
       return { state: 'done', question: null, vehicles: [], progress: null };
     }
     // Offset vehicle progress by the pre-vehicle steps so the counter
-    // reflects the full onboarding flow (trip_name + [units_pick] + vehicle).
+    // reflects the full onboarding flow ([units_pick] + vehicle).
     return {
       state,
       question: next.question,
@@ -476,12 +441,9 @@ export async function submitAnswer(
   if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
-    // Skip the trip_name question when the trip already carries a user-chosen
-    // name (the common path — trips are named via "+ New trip"). Only blank /
-    // legacy "Untitled Trip" rows still need to be named in chat.
-    const nextState = tripNeedsNaming(trip.name)
-      ? 'trip_name'
-      : await resolvePostNameState(userId);
+    // No naming step — go straight to units (if unset) or the vehicle flow.
+    // Penny names the trip from its route once planning begins.
+    const nextState = await resolvePostIntentState(userId);
     // Store the intent on the trip for later handoff
     await db
       .update(trips)
@@ -490,45 +452,14 @@ export async function submitAnswer(
     await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // A returning user with units + vehicle already set jumps straight to
-    // 'done' once naming is skipped — complete the handoff so the client fires
-    // the stored intent at Penny instead of stalling on a finished wizard.
+    // 'done' — complete the handoff so the client fires the stored intent at
+    // Penny instead of stalling on a finished wizard.
     if (afterSnapshot.state === 'done') {
       return completeOnboarding(tripId);
     }
     return {
       next: afterSnapshot,
       answerLabel: text,
-      didHandoff: false,
-    };
-  }
-
-  // ---- Trip name (second question) ----
-  if (state === 'trip_name' && input.questionKey === 'trip_name') {
-    const name = typeof input.value === 'string' ? input.value.trim() : '';
-    if (!name) throw new Error('Please name your trip.');
-    // Validate uniqueness and rename the trip
-    await assertTripNameAvailable(userId, name, tripId);
-    await db
-      .update(trips)
-      .set({ name, updatedAt: new Date() })
-      .where(eq(trips.id, tripId));
-    // Determine next state: units if not chosen, else vehicle flow
-    const nextState = await resolvePostNameState(userId);
-    await db
-      .update(trips)
-      .set({ onboardingState: nextState, updatedAt: new Date() })
-      .where(eq(trips.id, tripId));
-    await writeQA(tripId, TRIP_NAME_QUESTION.label, name);
-    const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
-    // Returning user with units + vehicle already set: onboarding may jump
-    // straight to 'done'. Complete the handoff so the client fires the
-    // stored trip intent at Penny.
-    if (afterSnapshot.state === 'done') {
-      return completeOnboarding(tripId);
-    }
-    return {
-      next: afterSnapshot,
-      answerLabel: name,
       didHandoff: false,
     };
   }
