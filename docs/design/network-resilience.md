@@ -146,7 +146,7 @@ NOT suitable for optimistic UI (too complex or non-deterministic):
 
 Three changes to `ChatPanel.tsx`:
 
-**a) Heartbeat timeout.** If the SSE reader receives no data for 20 seconds, surface the "Connection dropped" state instead of hanging silently. The server already sends `received`, `reading`, and `tool_started` events early in the stream — if none arrive within 20s, the connection is dead.
+**a) Heartbeat timeout.** If the SSE reader receives no data for 20 seconds, surface the "Connection dropped" state instead of hanging silently. The server already sends `received` and `reading` events early in the stream — if none arrive within 20s, the connection is dead.
 
 **b) Preserve user input on failure.** Today the textarea is cleared before the fetch fires. Change: clear on first successful SSE event (`received`), not on send. If the fetch fails before any event arrives, the user's text is still in the textarea. Additionally, keep the submitted message visible in the chat bubble even on failure — don't remove it. The user should see what they sent and be able to retry it, not have their words vanish.
 

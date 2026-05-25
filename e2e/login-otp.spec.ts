@@ -60,8 +60,9 @@ test.describe('Email OTP login', () => {
       .set({ needsVehicleProfileRemediation: false })
       .where(eq(schema.users.id, user.id));
 
-    // Ensure the user has at least one trip so /trips renders the list page
-    // instead of auto-creating an "Untitled Trip" and redirecting to it.
+    // Give the user at least one trip so the /trips list has content to assert
+    // on after login. (/trips no longer auto-creates a trip on zero trips, so
+    // this is about a stable assertion target, not avoiding a redirect.)
     const existingTrips = await db
       .select({ id: schema.trips.id })
       .from(schema.trips)

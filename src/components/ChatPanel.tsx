@@ -28,15 +28,6 @@ interface AttachedImage {
   name: string;
 }
 
-interface InFlightTool {
-  /** Per-tool-call id from the model so we can update the same pill on tool_done. */
-  toolUseId: string;
-  /** Human label, e.g. "Looking up routes". */
-  label: string;
-  /** Lifecycle: 'running' shows spinner, 'ok'/'error' fades the pill. */
-  status: 'running' | 'ok' | 'error';
-}
-
 /** Mirrors `/api/me/vehicle-remediation` snapshot — keep aligned with server route. */
 interface VehicleRemediationSnapshot {
   needs_remediation: boolean;
@@ -103,45 +94,10 @@ interface UIMessage extends Omit<ChatMessage, 'seq'> {
   // surface a warning + 'Continue planning' button on the bubble. UI-only;
   // not persisted, so historical messages from a page reload never show it.
   truncated?: boolean;
-  // Live status pills while Penny is streaming. Set on the in-progress
-  // assistant message bubble; cleared once the stream's `applied` event
-  // arrives. Persisted messages from page reload never have these.
-  inFlightTools?: InFlightTool[];
   /** True while the SSE stream is still appending paragraphs. */
   streaming?: boolean;
   /** Delivery lifecycle for user messages (sending → delivered → read → typing → responded). */
   deliveryStatus?: DeliveryStatus;
-}
-
-/**
- * Map Penny's internal tool names → the short human label we show as a
- * status pill on the assistant bubble while the tool runs. Anything we
- * forget falls back to the verbatim tool name (visibly ugly, which is
- * the point — it surfaces missing labels for follow-up tweaks).
- */
-const PENNY_TOOL_LABELS: Record<string, string> = {
-  rename_trip: 'Naming your trip',
-  extract_trip_intent: 'Reading your request',
-  get_route: 'Looking up routes',
-  check_trip_feasibility: 'Checking feasibility',
-  update_vehicle: 'Saving preferences',
-  add_leg: 'Saving plan',
-  update_leg: 'Saving plan',
-  delete_leg: 'Saving plan',
-  add_stop: 'Saving stops',
-  update_stop: 'Saving stops',
-  delete_stop: 'Saving stops',
-  plan_fuel_stops: 'Planning fuel',
-  plan_dump_station_stops: 'Finding dump stations',
-  add_route: 'Saving routes',
-  update_route: 'Saving routes',
-  delete_route: 'Saving routes',
-  add_task: 'Saving tasks',
-  update_task: 'Saving tasks',
-};
-
-function pennyToolLabel(name: string): string {
-  return PENNY_TOOL_LABELS[name] ?? name;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -543,8 +499,7 @@ export default function ChatPanel({
   // real user message right after the onboarding form finishes.
   //
   // Streams the response as Server-Sent Events so the user sees Penny's
-  // paragraphs + "Looking up routes…" / "Checking feasibility…" status
-  // pills land live instead of waiting for the entire turn to buffer.
+  // paragraphs land live instead of waiting for the entire turn to buffer.
   // The terminal `applied` event carries the same shape as the old JSON
   // response — that's where we trigger onTripUpdated and the optional
   // fuel replenish.
@@ -577,7 +532,6 @@ export default function ChatPanel({
             changes_made: null,
             created_at: new Date().toISOString(),
             streaming: true,
-            inFlightTools: [],
           },
         ];
       });
@@ -602,7 +556,6 @@ export default function ChatPanel({
         changes_made: null,
         created_at: new Date().toISOString(),
         streaming: true,
-        inFlightTools: [],
       };
       setMessages((prev) => [...prev, tempUserMsg, pendingAssistantMsg]);
     }
@@ -625,33 +578,6 @@ export default function ChatPanel({
       );
     };
 
-    /** Push or update a pill in inFlightTools. */
-    const upsertTool = (toolUseId: string, patch: Partial<InFlightTool>) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMsgId) return m;
-          const existing = m.inFlightTools ?? [];
-          const idx = existing.findIndex((t) => t.toolUseId === toolUseId);
-          if (idx === -1) {
-            return {
-              ...m,
-              inFlightTools: [
-                ...existing,
-                {
-                  toolUseId,
-                  label: patch.label ?? '',
-                  status: patch.status ?? 'running',
-                },
-              ],
-            };
-          }
-          const next = existing.slice();
-          next[idx] = { ...next[idx], ...patch };
-          return { ...m, inFlightTools: next };
-        })
-      );
-    };
-
     /** Update the delivery status on the most recent user message. */
     const setDeliveryStatus = (status: DeliveryStatus) => {
       setMessages((prev) =>
@@ -670,7 +596,6 @@ export default function ChatPanel({
                 ...m,
                 content: m.content || msg,
                 streaming: false,
-                inFlightTools: undefined,
                 applyError: m.content ? msg : null,
               }
             : m
@@ -775,19 +700,6 @@ export default function ChatPanel({
                 }
                 break;
               }
-              case 'tool_started': {
-                setDeliveryStatus('typing');
-                const name = typeof ev.name === 'string' ? ev.name : 'tool';
-                const id = typeof ev.toolUseId === 'string' ? ev.toolUseId : `${Date.now()}-${Math.random()}`;
-                upsertTool(id, { label: pennyToolLabel(name), status: 'running' });
-                break;
-              }
-              case 'tool_done': {
-                const id = typeof ev.toolUseId === 'string' ? ev.toolUseId : '';
-                if (!id) break;
-                upsertTool(id, { status: ev.ok ? 'ok' : 'error' });
-                break;
-              }
               case 'applied': {
                 appliedEvent = ev as unknown as AppliedEvent;
                 break;
@@ -890,7 +802,6 @@ export default function ChatPanel({
                 routeSummary: typeof routeSummaryRaw === 'string' ? routeSummaryRaw : null,
                 truncated,
                 streaming: false,
-                inFlightTools: undefined,
               }
             : m
         )
@@ -1400,9 +1311,11 @@ export default function ChatPanel({
         )}
 
         {messages.map((msg, msgIdx) => {
-          // Hide the empty assistant bubble while waiting for Penny's first
-          // chunk — the 3-dot typing indicator covers this state.
-          if (msg.role === 'assistant' && msg.streaming && !msg.content && !(msg.inFlightTools?.length)) {
+          // Hide the empty assistant bubble while Penny is working but hasn't
+          // emitted any text yet — the 3-dot typing indicator covers this
+          // state. Without this, a streaming-but-textless bubble would render
+          // as an empty bubble above the typing dots.
+          if (msg.role === 'assistant' && msg.streaming && !msg.content) {
             return null;
           }
           const gp = getGroupPosition(messages, msgIdx);
@@ -1591,8 +1504,11 @@ export default function ChatPanel({
               {msg.deliveryStatus === 'read' && (
                 <span style={{ color: 'var(--tp-primary)' }}>Read</span>
               )}
+              {/* No "Penny is typing…" text — the 3-dot bubble is the typing
+                  indicator (iMessage-style). Keep the receipt on "Read" so it
+                  doesn't flicker away while she types/streams. */}
               {msg.deliveryStatus === 'typing' && (
-                <span style={{ color: 'var(--tp-primary)', fontStyle: 'italic' }}>Penny is typing…</span>
+                <span style={{ color: 'var(--tp-muted)' }}>Read</span>
               )}
               {msg.deliveryStatus === 'responded' && (
                 <span style={{ color: 'var(--tp-muted)' }}>Read</span>

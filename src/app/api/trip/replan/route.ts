@@ -230,9 +230,9 @@ export async function POST(req: Request) {
     await addChatMessage(tripId, 'user', message || '(image only)');
     userTurnSaved = true;
 
-    // Stream Penny's progress so the user sees each paragraph + tool-call
-    // status pill as it lands instead of the whole turn buffering for
-    // ~10-30s. Format is plain Server-Sent Events: each event is a single
+    // Stream Penny's progress so the user sees each paragraph as it lands
+    // instead of the whole turn buffering for ~10-30s. Format is plain
+    // Server-Sent Events: each event is a single
     // `data: <json>\n\n` frame. Final dispatch (DB writes, fuel replenish
     // queue, etc.) runs after the model loop terminates and emits a
     // synthetic `applied` event with the same shape the old JSON response

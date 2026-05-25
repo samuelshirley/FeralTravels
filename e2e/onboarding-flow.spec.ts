@@ -4,12 +4,14 @@ import { createOnboardingTrip } from './fixtures/test-trip';
 
 /**
  * Exercises the pre-Penny onboarding wizard:
- *   trip_intent → trip_name → units_pick → (vehicle auto-pick when only one
- *   fuel-complete vehicle) → done.
- * No LLM calls; the fixture user already has a fuel-ready default van.
+ *   trip_intent → units_pick → (vehicle auto-pick when only one fuel-complete
+ *   vehicle) → done.
+ * The fixture trip already carries a real name, so the trip_name question is
+ * skipped (onboarding only asks for a name on blank / legacy "Untitled Trip"
+ * rows). No LLM calls; the fixture user already has a fuel-ready default van.
  */
 test.describe('Onboarding wizard', () => {
-  test('units pick, single vehicle auto-selected, then handoff question', async ({ page }) => {
+  test('named trip skips naming, units pick, single vehicle auto-selected', async ({ page }) => {
     const { tripId } = await createOnboardingTrip('Onboarding Flow');
 
     await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
@@ -23,15 +25,13 @@ test.describe('Onboarding wizard', () => {
     await composer.fill('Road trip from Girona to Berlin');
     await composer.press('Enter');
 
-    // Step 2: trip_name — "What would you like to name this trip?"
+    // The trip was created with a name, so naming is skipped — Penny does NOT
+    // ask "What would you like to name this trip?".
     await expect(
       page.getByText(/What would you like to name this trip/),
-    ).toBeVisible({ timeout: 15_000 });
+    ).toHaveCount(0);
 
-    await composer.fill('E2E Onboarding Trip');
-    await composer.press('Enter');
-
-    // Step 3: units_pick — metric or imperial
+    // Step 2: units_pick — metric or imperial
     await expect(
       page.getByText('Do you want distances in metric (kilometers) or imperial (miles)?'),
     ).toBeVisible({ timeout: 15_000 });

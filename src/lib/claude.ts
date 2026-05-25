@@ -435,8 +435,8 @@ export interface ReplanResult {
  * Stream events from the replan loop so the route handler can flush
  * Penny's progress to the UI per-iteration instead of buffering the whole
  * turn into a single JSON blob. Consumers iterate the generator, surface
- * `text` / `tool_started` / `tool_done` events as they arrive, and read
- * the final `ReplanResult` from the terminal `done` event.
+ * `text` events as they arrive, and read the final `ReplanResult` from the
+ * terminal `done` event.
  *
  * The non-streaming `replan()` below stays for callers that just want the
  * accumulated result (and as a thin guard against drift between the two
@@ -447,14 +447,6 @@ export type ReplanEvent =
   | { kind: "reading" }
   | { kind: "iteration_start"; index: number }
   | { kind: "text"; chunk: string }
-  | { kind: "tool_started"; name: string; toolUseId: string }
-  | {
-      kind: "tool_done";
-      name: string;
-      toolUseId: string;
-      ok: boolean;
-      error?: string;
-    }
   | { kind: "done"; result: ReplanResult };
 
 export async function replan(
@@ -610,19 +602,7 @@ export async function* replanStream(
 
       for (const tu of toolUses) {
         if (LOOKUP_TOOL_NAMES.has(tu.name)) {
-          yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
           const result = await executeLookupTool(tu, context);
-          yield {
-            kind: "tool_done",
-            name: tu.name,
-            toolUseId: tu.id,
-            ok: !result.is_error,
-            error: result.is_error
-              ? typeof result.content === "string"
-                ? result.content.slice(0, 200)
-                : "Unknown error"
-              : undefined,
-          };
           // Workflow tracking — must happen here in the loop because each
           // iteration creates new tool_results, and we need cumulative state.
           // We track on success only; a failed extract_trip_intent doesn't
@@ -651,14 +631,6 @@ export async function* replanStream(
         }
 
         if (!ACTION_TOOL_NAMES.has(tu.name)) {
-          yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
-          yield {
-            kind: "tool_done",
-            name: tu.name,
-            toolUseId: tu.id,
-            ok: false,
-            error: `Unknown tool: ${tu.name}.`,
-          };
           toolResults.push({
             type: "tool_result",
             tool_use_id: tu.id,
@@ -669,7 +641,6 @@ export async function* replanStream(
           continue;
         }
 
-        yield { kind: "tool_started", name: tu.name, toolUseId: tu.id };
         const validatorFactory = VALIDATORS[tu.name];
         const schema = validatorFactory(context);
         const parsed = schema.safeParse(tu.input);
@@ -684,12 +655,6 @@ export async function* replanStream(
             is_error: false,
             content: "Validated and queued. Do not re-emit this call.",
           });
-          yield {
-            kind: "tool_done",
-            name: tu.name,
-            toolUseId: tu.id,
-            ok: true,
-          };
         } else {
           hadValidationFailure = true;
           const feedback = zodErrorToFeedback(parsed.error);
@@ -699,13 +664,6 @@ export async function* replanStream(
             is_error: true,
             content: `Validation error: ${feedback}. Emit a corrected call addressing this specific issue.`,
           });
-          yield {
-            kind: "tool_done",
-            name: tu.name,
-            toolUseId: tu.id,
-            ok: false,
-            error: feedback.slice(0, 200),
-          };
         }
       }
 

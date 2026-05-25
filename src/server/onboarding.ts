@@ -33,16 +33,36 @@ import {
 // needs BEFORE the first real Anthropic call. Flow:
 //
 //   not_started  → trip_intent (Penny greeting + "where do you want to go?")
-//   trip_intent  → trip_name ("what would you like to name this trip?")
+//   trip_intent  → trip_name   ONLY when the trip has no name yet (see
+//                              `tripNeedsNaming`); otherwise skip straight to
+//                              units_pick / vehicle_new.
 //   trip_name    → units_pick (if units_pref NULL) | else vehicle_new
 //   units_pick   → metric/imperial persisted → vehicle_new
 //   vehicle_new  → profile questions + caravan gate → done (handoff)
+//
+// Trips are created with a user-chosen name via the "+ New trip" button, so the
+// trip_name question is normally skipped — it only fires for blank / legacy
+// "Untitled Trip" rows that never got a real name.
 //
 // New users never have existing vehicles, so there is no vehicle_pick step.
 // When the final question is answered, onboarding transitions to 'done' and
 // the stored pending_intent (from trip_intent) is returned so the client can
 // fire the LLM with it.
 // ---------------------------------------------------------------------------
+
+/** Legacy placeholder used by the now-removed zero-trips auto-create path. */
+const UNTITLED_TRIP_NAME = 'Untitled Trip';
+
+/**
+ * A trip "needs naming" during onboarding only when it has no real name yet —
+ * i.e. blank or the legacy "Untitled Trip" placeholder. Trips created through
+ * the "+ New trip" button already carry a user-chosen name, so onboarding skips
+ * the trip_name question for them (the name was set before the chat opened).
+ */
+function tripNeedsNaming(name: string | null | undefined): boolean {
+  const n = (name ?? '').trim();
+  return n === '' || n.toLowerCase() === UNTITLED_TRIP_NAME.toLowerCase();
+}
 
 export type QuestionKind =
   | 'text'
@@ -287,8 +307,11 @@ export async function getOnboardingSnapshot(
   // the vehicle-profile portion.
   const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
   // trip_intent doesn't count in the numbered progress (it's the greeting).
-  // Steps shown in progress: trip_name, [units_pick], then vehicle steps.
-  const preVehicleSteps = unitsAlreadyChosen ? 1 : 2; // trip_name [+ units_pick]
+  // Steps shown in progress: [trip_name], [units_pick], then vehicle steps.
+  // trip_name only counts when the trip still needs a name.
+  const nameSteps = tripNeedsNaming(trip.name) ? 1 : 0;
+  const unitSteps = unitsAlreadyChosen ? 0 : 1;
+  const preVehicleSteps = nameSteps + unitSteps;
 
   if (state === 'trip_intent') {
     return {
@@ -306,6 +329,16 @@ export async function getOnboardingSnapshot(
   const totalSteps = preVehicleSteps + vehicleSteps.length;
 
   if (state === 'trip_name') {
+    // Defensive: a trip that already carries a real name should never sit in
+    // trip_name — advance it so we never re-ask for a name the user has set.
+    if (!tripNeedsNaming(trip.name)) {
+      const nextState = await resolvePostNameState(userId);
+      await db
+        .update(trips)
+        .set({ onboardingState: nextState, updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      return getOnboardingSnapshot(tripId, userId);
+    }
     return {
       state: 'trip_name',
       question: TRIP_NAME_QUESTION,
@@ -328,7 +361,8 @@ export async function getOnboardingSnapshot(
         ],
       },
       vehicles: [],
-      progress: { current: 2, total: totalSteps },
+      // units_pick is the first numbered step when trip_name is skipped.
+      progress: { current: nameSteps + 1, total: totalSteps },
     };
   }
 
@@ -442,14 +476,27 @@ export async function submitAnswer(
   if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
+    // Skip the trip_name question when the trip already carries a user-chosen
+    // name (the common path — trips are named via "+ New trip"). Only blank /
+    // legacy "Untitled Trip" rows still need to be named in chat.
+    const nextState = tripNeedsNaming(trip.name)
+      ? 'trip_name'
+      : await resolvePostNameState(userId);
     // Store the intent on the trip for later handoff
     await db
       .update(trips)
-      .set({ pendingIntent: text, onboardingState: 'trip_name', updatedAt: new Date() })
+      .set({ pendingIntent: text, onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
+    const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+    // A returning user with units + vehicle already set jumps straight to
+    // 'done' once naming is skipped — complete the handoff so the client fires
+    // the stored intent at Penny instead of stalling on a finished wizard.
+    if (afterSnapshot.state === 'done') {
+      return completeOnboarding(tripId);
+    }
     return {
-      next: await getOnboardingSnapshot(tripId, userId),
+      next: afterSnapshot,
       answerLabel: text,
       didHandoff: false,
     };
