@@ -11,6 +11,10 @@ import {
   type LatLng,
 } from '@/lib/polyline';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
+import {
+  kmBurnedSinceLastRefuel,
+  type LegFuelHistory,
+} from '@/lib/penny/fuelTankState';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
 import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
@@ -189,8 +193,9 @@ export async function planFuelStopsForLeg(
 
   // Early exit when the *cumulative* distance since last refuel still fits
   // within range × threshold. Short legs also skip via MIN_LEG_KM_FOR_PLANNING.
-  // We assume a full tank at trip start and after every overnight stop, so each
-  // new day begins with full range unless no refuel happened.
+  // The tank is full only at trip start and after an actual fuel stop — rest
+  // days and overnights do NOT reset it (continuous-drive model), so a new day
+  // begins with whatever range survived the previous unfueled driving.
   if (belowMinLeg || cumulativeFitsComfortably) {
     await clearAutoPlannerGooglePlacesOptionStops(legId);
     await setFuelStatus(legId, 'ready');
@@ -527,18 +532,19 @@ async function resolveVehicleForTrip(
 }
 
 /**
- * Walk back through preceding legs (by sort_order) summing distance until
- * we hit a "refuel anchor": an overnight stop at the previous leg's end,
- * a user-selected fuel stop, or the trip start. Returns the kilometers of
- * range consumed since that anchor — i.e. how much of the tank is gone
- * when this leg starts.
+ * DB shim around the pure [[kmBurnedSinceLastRefuel]] tank-state math. Walks
+ * back through preceding legs (by sort_order) gathering each leg's distance and
+ * the position of its last actual fuel stop, then returns how much range is
+ * gone when this leg starts.
+ *
+ * Model ("one continuous drive"): the whole trip is one long drive and the ONLY
+ * thing that refills the tank is an actual fuel stop (or the trip start). Rest
+ * days and overnight stops are NOT implicit refuels — see fuelTankState.ts for
+ * the full rationale. This is what fixes the "fuel-stop-free leg right after a
+ * rest day" bug: the burn carried into the post-rest leg is no longer wiped to
+ * zero, so a driver who hasn't actually refueled gets planned for honestly.
  *
  * Design notes:
- *
- * - **Overnight stops are treated as implicit refuels.** A driver who
- *   stops for the night almost always tops up at a station near camp.
- *   Encoding this assumption removes the need for users to manually
- *   place a fuel stop at every overnight.
  *
  * - **Both `selected` and `option` fuel stops count; `dismissed` does
  *   not.** Auto-suggested `option` rows are the planner's own plan for
@@ -548,10 +554,17 @@ async function resolveVehicleForTrip(
  *   this leg only (we delete its prior auto stops before re-planning at
  *   the start of `planFuelStopsForLeg`), so there's no chicken-and-egg.
  *
+ * - **A fuel stop is a refuel anchor regardless of leg type.** Normally only
+ *   driving legs have fuel stops, but if a user manually adds one to a rest
+ *   day (they did top up in town), it correctly anchors the tank there.
+ *
  * - **`legs.distance_km` is the source of truth, not the polyline.** We
  *   don't want to OSRM-call every preceding leg here; that turns one
  *   replan into N route requests. The leg row's stored distance is what
  *   the user sees in the workspace and what every other math path uses.
+ *
+ * - We stop querying once we include the first leg with a fuel stop (the
+ *   refuel anchor) — legs before it don't affect the burn.
  *
  * - Returns 0 for the first leg of a trip (no preceding legs).
  */
@@ -562,9 +575,7 @@ async function computeKmBurnedSinceLastRefuel(
   const previous = await db
     .select({
       id: legs.id,
-      sortOrder: legs.sortOrder,
       distanceKm: legs.distanceKm,
-      legType: legs.legType,
     })
     .from(legs)
     .where(and(eq(legs.tripId, tripId), lt(legs.sortOrder, thisLegSortOrder)))
@@ -572,15 +583,11 @@ async function computeKmBurnedSinceLastRefuel(
 
   if (previous.length === 0) return 0;
 
-  let kmBurned = 0;
+  const history: LegFuelHistory[] = [];
   for (const prev of previous) {
-    // Rest days are implicit refuel anchors — the driver is stationary at
-    // a town and will top up the tank. Reset cumulative burn.
-    if (prev.legType === 'rest') return kmBurned;
-
-    // Pull this leg's stops once, in sortOrder, so we can find the last
-    // user-selected fuel stop (counting from leg end) for the partial-leg
-    // refuel case.
+    // Latest non-dismissed fuel stop on this leg = its most recent refuel.
+    // Both `selected` (user accepted) and `option` (planner-suggested) count;
+    // only `dismissed` is ignored.
     const stopRows = await db
       .select({
         stopType: stops.stopType,
@@ -590,9 +597,6 @@ async function computeKmBurnedSinceLastRefuel(
       .from(stops)
       .where(eq(stops.legId, prev.id));
 
-    // Latest fuel stop in the leg = most recent refuel. We count both
-    // `selected` (user accepted) and `option` (planner-suggested), so the
-    // multi-leg plan stays self-consistent. Only `dismissed` is ignored.
     const latestFuel = stopRows
       .filter(
         (s) =>
@@ -602,24 +606,17 @@ async function computeKmBurnedSinceLastRefuel(
       )
       .sort((a, b) => (b.distanceFromStartKm ?? 0) - (a.distanceFromStartKm ?? 0))[0];
 
-    if (latestFuel?.distanceFromStartKm != null) {
-      const legDist = prev.distanceKm ?? 0;
-      kmBurned += Math.max(0, legDist - latestFuel.distanceFromStartKm);
-      return kmBurned;
-    }
+    history.push({
+      distanceKm: prev.distanceKm,
+      latestFuelDistanceKm: latestFuel?.distanceFromStartKm ?? null,
+    });
 
-    // Overnight stop at end of leg = implicit refuel anchor. We do NOT
-    // add this leg's distance — the driver fueled at the camp town.
-    const hasOvernight = stopRows.some(
-      (s) => s.stopType === 'overnight' && s.status !== 'dismissed'
-    );
-    if (hasOvernight) return kmBurned;
-
-    // Otherwise: full leg distance carries forward into the tank state.
-    kmBurned += prev.distanceKm ?? 0;
+    // Refuel anchor found — legs before this one can't affect the burn, so
+    // stop querying and let the pure helper finish the arithmetic.
+    if (latestFuel?.distanceFromStartKm != null) break;
   }
 
-  return kmBurned;
+  return kmBurnedSinceLastRefuel(history);
 }
 
 // ---------------------------------------------------------------------------
