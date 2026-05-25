@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, forwardRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import Itinerary from '@/components/Itinerary';
@@ -38,6 +38,36 @@ interface Props {
 // don't end up under the nav. Equals nav height (~70px after the 2026-05
 // taller-touch-target tweak) plus iPhone home indicator safe area.
 const MOBILE_BOTTOM_NAV_HEIGHT = 70;
+
+const ITINERARY_LIST_PADDING = '20px 16px';
+const ITINERARY_LIST_PADDING_MOBILE = '16px 12px';
+
+/** Scroll container for the itinerary pane — padding lives on an inner wrapper
+ *  so the bottom inset (from Itinerary's scroll-end spacer) is always reachable. */
+const ItineraryListScroller = forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<'div'> & { padding?: string }
+>(function ItineraryListScroller(
+  { children, padding = ITINERARY_LIST_PADDING, style, ...rest },
+  ref,
+) {
+  return (
+    <div
+      ref={ref}
+      {...rest}
+      style={{
+        height: '100%',
+        minHeight: 0,
+        overflowY: 'auto',
+        background: 'var(--tp-bg)',
+        WebkitOverflowScrolling: 'touch',
+        ...style,
+      }}
+    >
+      <div style={{ padding }}>{children}</div>
+    </div>
+  );
+});
 
 function ResizeHandle({ direction = 'horizontal' }: { direction?: 'horizontal' | 'vertical' }) {
   // For a horizontal PanelGroup the handle is a vertical bar (col-resize);
@@ -564,19 +594,16 @@ export default function TripWorkspace({
           >
             {mapPane}
           </div>
-          <div
+          <ItineraryListScroller
             ref={setMobileListEl}
+            padding={ITINERARY_LIST_PADDING_MOBILE}
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               right: 0,
               bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
-              overflowY: 'auto',
-              padding: '16px 12px',
-              background: 'var(--tp-bg)',
               display: mobileTab === 'list' ? 'block' : 'none',
-              WebkitOverflowScrolling: 'touch',
             }}
           >
             {/*
@@ -592,7 +619,7 @@ export default function TripWorkspace({
             >
               {itineraryPane}
             </PullToRefresh>
-          </div>
+          </ItineraryListScroller>
           <div
             style={{
               position: 'absolute',
@@ -649,16 +676,7 @@ export default function TripWorkspace({
                 </Panel>
                 <ResizeHandle />
                 <Panel defaultSize={55} minSize={30} order={2}>
-                  <div
-                    style={{
-                      height: '100%',
-                      overflowY: 'auto',
-                      padding: '20px 16px 120px',
-                      background: 'var(--tp-bg)',
-                    }}
-                  >
-                    {itineraryPane}
-                  </div>
+                  <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
                 </Panel>
               </PanelGroup>
             </Panel>
@@ -705,16 +723,7 @@ export default function TripWorkspace({
           <ResizeHandle />
 
           <Panel defaultSize={40} minSize={20} order={2}>
-            <div
-              style={{
-                height: '100%',
-                overflowY: 'auto',
-                padding: '20px 16px 120px',
-                background: 'var(--tp-bg)',
-              }}
-            >
-              {itineraryPane}
-            </div>
+            <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
           </Panel>
 
           <ResizeHandle />

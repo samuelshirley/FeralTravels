@@ -14,6 +14,8 @@ import Distance from './Distance';
 // too aggressively on fast scrolls.
 const INITIAL_VISIBLE_LEGS = 20;
 const INCREMENTAL_BATCH_SIZE = 10;
+/** Breathing room after the last leg so the pane scrolls past the final card. */
+const ITINERARY_SCROLL_END_INSET = 48;
 // Brief artificial pause before revealing each new batch so the user
 // perceives that something happened — instant rendering reads as "broken"
 // to the modern eye even when it's correct.
@@ -504,6 +506,10 @@ export default function Itinerary({
           `}</style>
         </div>
       )}
+
+      {/* Explicit scroll tail — padding on the pane scroller alone is unreliable
+          inside flex/resizable panels, so this spacer is part of scroll content. */}
+      <div aria-hidden="true" style={{ height: ITINERARY_SCROLL_END_INSET }} />
     </div>
   );
 }
