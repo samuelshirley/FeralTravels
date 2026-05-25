@@ -76,7 +76,7 @@ src/
     units.ts          # Unit conversion
     vehicleProfile.ts # Vehicle range/fuel calculations
     fuelPlanErrorSemantics.ts  # Fuel plan error handling
-    google/directions.ts       # Server-side Google Directions API
+    google/directions.ts       # Server-side Google Directions API (supports pass-through waypoints; sums distance/time across all returned legs)
     replan/
       engine.ts       # Deterministic replan engine (no AI tokens)
       emails.ts       # Morning/rest-day/off-route email templates
@@ -165,6 +165,8 @@ existing-trip, login-otp, login-google-button, vehicle-crud, vehicle-remediation
 - **Units:** User preference (metric/imperial) stored in DB, propagated via `UnitsContext`.
 - **Schema:** Single file at `src/server/db/schema.ts`. Drizzle manages all migrations.
 - **Auth middleware:** Edge-safe cookie check in root `middleware.ts`; real auth via `auth()` in server code.
+- **Route continuity (no "magic jumps"):** Every leg must start where the previous one ended. Penny's authored start coords are NOT trusted — `trips.repairLegContinuity` (math in `schedule.computeStartFixes`) runs after `rebuildTripSchedule` in the Penny dispatch and chains + re-routes any drifted leg. Don't reintroduce code that lets a leg's origin diverge from the prior destination.
+- **Pass-through waypoints:** "drive over/through X" is a selected `stops` row (status='selected'), NOT a stop/overnight/extra leg. `trips.rerouteLeg` feeds a leg's selected stops into `getDirections` so the stored geometry/distance/time bend through them — call it after any mutation to a leg's endpoints or its selected stops (already wired into Penny dispatch + the `api/stops/*` routes). Penny should also pass them to `get_route` waypoints[] for accurate pre-commit numbers.
 
 ## Conventions
 

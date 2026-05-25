@@ -920,6 +920,11 @@ async function dispatchAction(
         source: data.source ?? 'penny',
         source_url: data.source_url ?? null,
       });
+      // A selected pass-through stop (e.g. "drive over the bridge") must bend the
+      // leg's stored route — not just the handoff URL. Re-route through it.
+      if (data.status === 'selected' && data.lat != null && data.lng != null) {
+        await rerouteLeg(leg_id);
+      }
       return;
     }
 
@@ -929,13 +934,33 @@ async function dispatchAction(
       // The repo's UpdateStopInput is structurally compatible with the
       // validated tool input — both use snake_case and accept `null` on the
       // nullable fields. Pass through.
-      await updateStop(stop_id, data as Parameters<typeof updateStop>[1]);
+      const updated = await updateStop(stop_id, data as Parameters<typeof updateStop>[1]);
+      // Re-route the leg when a change could affect the routed path: a status
+      // flip (select/deselect) or a moved/re-sorted SELECTED waypoint.
+      const routingRelevant =
+        data.status !== undefined ||
+        data.lat !== undefined ||
+        data.lng !== undefined ||
+        data.distance_from_start_km !== undefined;
+      if (
+        updated &&
+        routingRelevant &&
+        (data.status !== undefined || updated.status === 'selected')
+      ) {
+        await rerouteLeg(updated.leg_id);
+      }
       return;
     }
 
     case 'delete_stop': {
       await assertStopOwnedByUser(action.input.stop_id, userId);
+      // Capture the leg + selected-ness before deleting so we can re-route the
+      // leg if a waypoint just disappeared.
+      const doomed = await getStop(action.input.stop_id);
       await deleteStop(action.input.stop_id);
+      if (doomed && doomed.status === 'selected') {
+        await rerouteLeg(doomed.leg_id);
+      }
       return;
     }
 

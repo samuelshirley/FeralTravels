@@ -5,6 +5,7 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { deleteStop, getStop, updateStop } from '@/server/repos/stops';
+import { rerouteLeg } from '@/server/repos/trips';
 import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -45,6 +46,16 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     const data = patchSchema.parse(await request.json());
     const stop = await updateStop(id, data);
     if (!stop) return Response.json({ error: 'Not found' }, { status: 404 });
+    // Re-route the leg when a status flip or a moved/re-sorted selected waypoint
+    // could change the routed path.
+    const routingRelevant =
+      data.status !== undefined ||
+      data.lat !== undefined ||
+      data.lng !== undefined ||
+      data.distance_from_start_km !== undefined;
+    if (routingRelevant && (data.status !== undefined || stop.status === 'selected')) {
+      await rerouteLeg(stop.leg_id);
+    }
     return Response.json(stop);
   } catch (err) {
     return errorResponse(err);
@@ -57,8 +68,13 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     const id = parseUUID(params.id);
     if (!id) return Response.json({ error: 'Invalid stop id' }, { status: 400 });
     await assertStopOwnedByUser(id, userId);
-    if (!(await getStop(id))) return Response.json({ error: 'Not found' }, { status: 404 });
+    const doomed = await getStop(id);
+    if (!doomed) return Response.json({ error: 'Not found' }, { status: 404 });
     await deleteStop(id);
+    // If a pass-through waypoint was removed, re-route the leg without it.
+    if (doomed.status === 'selected') {
+      await rerouteLeg(doomed.leg_id);
+    }
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);
