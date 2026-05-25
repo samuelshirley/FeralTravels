@@ -1687,32 +1687,10 @@ export default function ChatPanel({
             but hasn't started responding yet (no text chunks received),
             or during the typing animation before each onboarding question. */}
         {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.streaming && m.content))) && (
-          <div
-            style={{
-              alignSelf: 'flex-start',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 5,
-              padding: '12px 16px',
-              borderRadius: 18,
-              background: 'var(--tp-surface)',
-              marginTop: 10,
-            }}
-          >
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                style={{
-                  display: 'block',
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: 'var(--tp-muted)',
-                  animation: `tp-dot-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-                }}
-              />
-            ))}
+          <div className="typing-indicator-bubble" aria-label="Penny is typing">
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
           </div>
         )}
         <div ref={bottomRef} />

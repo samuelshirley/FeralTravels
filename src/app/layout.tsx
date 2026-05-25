@@ -189,6 +189,42 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
             40% { opacity: 1; transform: translateY(-2px); }
           }
+
+          /* iMessage-style typing indicator (sequential bounce, no fade) */
+          @keyframes tp-typing-bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-8px); }
+          }
+          .typing-indicator-bubble {
+            align-self: flex-start;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 14px 18px 12px;
+            border-radius: 20px;
+            background: var(--tp-surface);
+            margin-top: 10px;
+          }
+          .typing-indicator-dot {
+            display: block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #86868b;
+            animation: tp-typing-bounce 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+          }
+          .typing-indicator-dot:nth-child(2) {
+            animation-delay: 0.2s;
+          }
+          .typing-indicator-dot:nth-child(3) {
+            animation-delay: 0.4s;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .typing-indicator-dot {
+              animation: none;
+            }
+          }
           @keyframes tp-cursor-blink {
             0%, 49% { opacity: 1; }
             50%, 100% { opacity: 0; }
