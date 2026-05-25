@@ -210,6 +210,24 @@ export function constraintLocalDateISO(
 }
 
 /**
+ * Extract the *local* wall-clock time ("HH:MM") from a constraint datetime.
+ *
+ * Constraint datetimes are authored as ISO 8601 with an explicit offset, e.g.
+ * "2026-06-03T15:00:00+02:00" — the local time is "the morning/afternoon the
+ * user means" ("by 3pm"), so we read the HH:MM directly from the string rather
+ * than via `new Date()`, which would convert to the runtime's timezone. Returns
+ * null when there's no time component (date-only constraints).
+ */
+export function constraintLocalTimeHHMM(
+  datetime: string | null | undefined,
+): string | null {
+  if (!datetime) return null;
+  const m = datetime.trim().match(/[T ](\d{2}):(\d{2})/);
+  if (!m) return null;
+  return `${m[1]}:${m[2]}`;
+}
+
+/**
  * Given a fixed calendar date that a specific leg must fall on, compute how
  * many rest-day legs must sit *before* that leg.
  *

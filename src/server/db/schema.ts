@@ -518,6 +518,13 @@ export const chatHistory = pgTable(
     role: text('role').notNull(),
     content: text('content').notNull(),
     changesMade: text('changes_made'),
+    /**
+     * Deterministic, DB-derived plan facts snapshotted when this assistant turn
+     * landed (day counts, depart/arrive dates, totals, deadline check). The
+     * UI renders these instead of trusting numbers in Penny's prose — see
+     * `computePlanSummary` and the PlanSummary type. Null on non-schedule turns.
+     */
+    planSummary: jsonb('plan_summary').$type<import('@/types/trip').PlanSummary | null>(),
     /** `form_question` | `form_answer` | `ai` — onboarding vs live chat. */
     kind: text('kind').default('ai').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),

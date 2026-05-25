@@ -43,6 +43,13 @@
       "when": 1779477120740,
       "tag": "0006_nightly_replan",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779723387232,
+      "tag": "0006_steep_gladiator",
+      "breakpoints": true
     }
   ]
 }

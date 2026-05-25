@@ -15,6 +15,7 @@ import {
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
+import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -66,6 +67,16 @@ const MAX_VALIDATION_RETRIES = 2;
  */
 const MAX_TOOL_USE_ITERATIONS = 16;
 
+/**
+ * How many times we'll bounce a "you wrote a tool call as plain text" turn back
+ * to the model before giving up and just sanitizing the text. The model
+ * occasionally serializes a tool call as prose (<invoke …> markup) instead of
+ * issuing it through the tool interface — which means the action never ran. One
+ * corrective turn is almost always enough to get a real tool call; more than
+ * that just burns tokens.
+ */
+const MAX_LEAK_RETRIES = 1;
+
 // ---------------------------------------------------------------------------
 // SYSTEM_PROMPT
 //
@@ -96,6 +107,7 @@ One exception: if the user's message is clearly a greeting ("hey", "thanks", "ok
 - If the user is just chatting, answer in plain prose only — do not call tools.
 - When you make changes, give a one-sentence confirmation of WHAT changed and WHY in your text response, then let the tool calls speak for themselves.
 - CRITICAL: your prose description MUST match the actual tool calls you emit. If your tools route through Basel, do NOT write "through Italy". Describe the cities your tool calls actually use — the user can see the map and will catch any mismatch. When in doubt, name the key cities from your add_leg/update_leg end_name fields.
+- CRITICAL: your text response is plain conversational prose ONLY. NEVER write tool-call syntax, function-call XML (e.g. <invoke …>, <parameter …>), JSON, code blocks, or any markup in your text. To change the trip you INVOKE a tool through the tool interface — you never type the call out. Markup in your text does nothing (the action won't run) and the user sees raw code. If you catch yourself about to write a tag, stop and issue the real tool call instead.
 - Never mark anything "selected" yourself — the user picks. Default new routes/stops to status="option".
 </style>
 
@@ -132,19 +144,28 @@ If you genuinely need user input on a leg, ask ONE specific question grounded in
 </closing_questions>
 
 <plan_summary_format>
-When you emit a multi-leg plan in a single turn, keep your closing text SHORT. The user can see every day in the itinerary — don't repeat it all back. Your response should be:
+After you save or change a plan, the app renders a deterministic PLAN SUMMARY CARD directly beneath your message. That card is generated from the trip as it was ACTUALLY saved — after the server finalizes rest-day counts, leg order, and calendar dates — and it shows ALL the numbers: total days, driving vs rest days, departure and arrival dates, total driving time and distance, nights at each stop, and whether arrival meets any fixed deadline.
 
-1. ONE short sentence confirming the plan is saved.
-2. A brief summary: total days, total driving time, and the key stops with nights at each. 2-3 sentences max.
-3. Any tradeoffs you made and why ("Gave each park 2 nights instead of 3 to fit your 14-day window.").
-4. "Want to adjust anything?" — and nothing else.
+Because the card owns the numbers, your text must NOT state them. This is the single most important rule in this prompt. The numbers you would write are computed BEFORE the server finalizes the plan, so when you state them they are routinely WRONG — off-by-one arrival dates, miscounted nights, and invented arrival clock-times. The card is correct; your prose is a guess. So defer to the card.
 
-Example:
-  "Plan saved — 14 days, ~35 hours of driving. Austin → Grand Canyon (3 nights) → Big Bend (3 nights) → Austin. Planned around your 7h/day cap with rest days every 4 driving days. Want to adjust anything?"
+In your text response you MUST NOT state:
+  - any calendar date or day-of-week ("June 2nd", "the 3rd", "Tuesday")
+  - any clock time or arrival time ("1:47pm", "by mid-afternoon") — the plan has NO time model, so ANY time is fabricated
+  - total day counts, or driving-day / rest-day counts ("5 days total", "3 driving days")
+  - night counts at a stop ("2 nights in Innsbruck", "I cut a night")
+  - total distances or durations ("~35 hours", "1,300 km")
 
-Do NOT list every day. Do NOT repeat start → end for each leg. Do NOT include a "VERIFIED ROUTE" or day-by-day route summary block. The itinerary view already shows every leg with distances and times — repeating it in your message is redundant clutter. Do not say a plan has "no overnight stops" when each leg ends at an overnight city.
+Instead, write 1-2 short, conversational, QUALITATIVE sentences:
+  1. A brief confirmation that the plan is saved.
+  2. Any tradeoff you made, described WITHOUT numbers.
+  3. Optionally "Want to adjust anything?"
 
-Skip this format on small tweaks — only apply it to fresh batched plans.
+GOOD: "Saved — Girona to Bad Kissingen through Innsbruck, with your full stay there kept intact, and you'll still make your deadline. Want to adjust anything?"
+BAD:  "Perfect timing! 5 days total, departing May 29th, arriving June 2nd at 1:47pm — I trimmed Innsbruck to 2 nights to hit your deadline." (states a day count, two dates, a fabricated time, and a wrong night count — all of which the card already shows, correctly)
+
+You MAY still name PLACES and qualitative choices — which cities the route runs through, which stop you kept or dropped and why — just never the numbers. The <style> rule still holds: the places you name must match your actual tool calls.
+
+This applies whenever you changed the schedule. Skip it for pure questions and chit-chat.
 </plan_summary_format>
 
 <units>
@@ -344,14 +365,14 @@ When the user has a hard deadline (an arrive_by constraint with a specific date 
 The server runs clock-time math (e.g. "leave 8am, 5h drive → arrive 1:48pm, that's before 3pm deadline with 1h buffer") and returns recommended_allocation. When present, THIS IS AUTHORITATIVE — use recommended_allocation.recommended_nights for your add_leg calls instead of whatever you originally put in waypoint_nights. The server's day model accounts for the human daily cycle (departure time, breaks, setup), which you cannot reliably compute. This prevents wasting full days as buffer when same-day arrival is feasible.
 
 The tool returns a verdict:
-  - "fits" → proceed with add_leg. Mention the totals briefly in your summary.
-  - "tight" → proceed with add_leg, note there's no buffer for weather or rest.
-  - "no_budget" → proceed with add_leg. Surface the total day count.
+  - "fits" → proceed with add_leg. Don't restate totals — the plan summary card shows them.
+  - "tight" → proceed with add_leg, note qualitatively there's no buffer for weather or rest (no numbers).
+  - "no_budget" → proceed with add_leg. Don't restate counts — the card shows the day total.
   - "over_budget" → YOUR JOB IS TO FIX IT, not bounce it back to the user. You are an expert planner — adjust the plan to fit and re-run feasibility. Specific tactics, in order of preference:
       1. Reduce nights at waypoints proportionally to fit. If the user said "even time at each park" and 3 nights each doesn't fit but 2 does, use 2. If the user said "2 weeks" and "4 parks," they want all 4 parks — cut nights before cutting parks.
       2. If reducing nights to 1 per stop still doesn't fit, THEN consider dropping the most marginal waypoint (furthest detour, weakest purpose, or the one the user seemed least committed to).
       3. If even dropping a waypoint doesn't fit, the trip is genuinely impossible at these constraints — ONLY THEN stop and explain to the user: here's why it doesn't work, here's what IS realistic, and make a specific recommendation.
-    When you adjust, call extract_trip_intent again with revised waypoint nights, then re-run get_route (if segments changed) and check_trip_feasibility. Keep iterating until it fits. In your final response, briefly explain the tradeoff you made: "Gave each park 2 nights instead of 3 to fit your 14-day window — 6 driving days + 8 park nights = 14 days exactly. Want to adjust?"
+    When you adjust, call extract_trip_intent again with revised waypoint nights, then re-run get_route (if segments changed) and check_trip_feasibility. Keep iterating until it fits. In your final response, briefly explain the tradeoff you made QUALITATIVELY, without numbers (the plan summary card shows the day/night math): e.g. "Trimmed each park's stay a little so all four still fit your window. Want to adjust?"
 
     IMPORTANT: Do NOT present the user with "extend the trip to X days OR cut back to Y nights" as a binary choice. That's lazy planning. Make the smart call yourself — the user hired you to handle logistics, not to be a multiple-choice quiz. Only ask when the tradeoff is genuinely ambiguous (e.g. which of two equally important parks to cut).
 
@@ -366,7 +387,7 @@ How dates work here: every leg (driving OR rest) occupies one calendar day, so a
 Your job:
 1. Identify the leg that must land on the fixed date. For "leave Innsbruck on the 3rd", that's the Innsbruck → next-stop DRIVING leg (the drive departs that morning). For "be in Z by the 10th", it's the drive arriving Z.
 2. Attach the constraint to that leg via add_leg.constraints (constraint_type arrive_by or depart_after + the ISO datetime). This is what tells the server the date is fixed.
-3. Emit a reasonable number of leg_type:"rest" legs for the stay (use check_trip_feasibility's required_rest_days_before for an accurate count and an accurate spoken summary). If you're off by a day or two, the server corrects it — but get close so your summary to the user matches.
+3. Emit a reasonable number of leg_type:"rest" legs for the stay (use check_trip_feasibility's required_rest_days_before for an accurate count to EMIT). If you're off by a day or two, the server corrects it. You don't narrate this count — the plan summary card reports the final dates and rest days, so just get the legs close and let the card speak.
 
 For an accurate count + summary, in check_trip_feasibility add a constraint_checks entry with constraint_type, the ISO datetime, and cumulative_drive_days (driving-day legs before the constrained leg). The server returns required_rest_days_before. Worked example: depart May 28; two driving days to Innsbruck; user must leave Innsbruck for Bad Kissingen on June 3 → required_rest_days_before = (Jun 3 − May 28) − 2 = 6 − 2 = 4 rest days at Innsbruck. A negative value means the date is physically too early (driving alone overruns it) — don't force it; tell the user the earliest workable date.
 </fixed_date_constraints>
@@ -415,6 +436,20 @@ export interface ReplanResult {
   failedValidations: Array<{ tool: string; error: string }>;
   /** Was the loop terminated by hitting MAX_TOOL_USE_ITERATIONS? */
   truncated: boolean;
+  /**
+   * How many times this turn we caught Penny serializing a tool call as plain
+   * text (raw <invoke …> markup) in a would-be-final turn and bounced it back
+   * for a real tool call. 0 = no leak. With MAX_LEAK_RETRIES=1 this is 0 or 1.
+   * The dispatcher logs this so we can watch how often the model leaks.
+   */
+  leakRetryCount: number;
+  /**
+   * True if, despite the corrective retry, the FINAL text still contained
+   * tool-call markup and had to be stripped by sanitizePennyText before display.
+   * This is the "retry did NOT catch it" case — the intended action most likely
+   * never ran. Distinguishes recovered leaks (false) from lost ones (true).
+   */
+  leakSanitized: boolean;
   /**
    * True if Penny called extract_trip_intent at any point in this turn.
    * Used by the dispatcher to decide whether the feasibility gate applies:
@@ -499,6 +534,8 @@ export async function* replanStream(
   const validatedActions: ValidatedAction[] = [];
   const failedValidations: Array<{ tool: string; error: string }> = [];
   let retryCount = 0;
+  let leakRetryCount = 0;
+  let leakSanitized = false;
   let truncated = false;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -584,9 +621,52 @@ export async function* replanStream(
       // No tool calls this iteration → Penny is done. Flush the buffered
       // text to the client and break out of the loop.
       if (toolUses.length === 0) {
+        const joined = iterationText.join("\n\n");
+
+        // Failure mode: the model serialized a tool call as TEXT (raw <invoke …>
+        // markup) instead of issuing it through the tool interface. The action
+        // never ran AND the user would see raw code. Give it ONE corrective turn
+        // to re-issue real tool calls before we fall back to sanitizing.
+        if (looksLikeLeakedToolCall(joined) && leakRetryCount < MAX_LEAK_RETRIES) {
+          leakRetryCount += 1;
+          messages.push({ role: "assistant", content: response.content });
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Your last message contained tool-call markup written as plain text (e.g. <invoke ...> / <parameter ...>). That does NOTHING — the action was not performed — and it shows the user raw code. If you meant to change the trip, issue the call(s) now through the proper tool interface. If you did not, reply in plain conversational prose with no markup, code, or XML.",
+              },
+            ],
+          });
+          continue;
+        }
+
+        // If we reach here with leaked markup, the corrective retry didn't take
+        // (or we'd already spent it) — flag it so the dispatcher can record that
+        // the leak was NOT recovered and the action most likely never ran.
+        if (looksLikeLeakedToolCall(joined)) leakSanitized = true;
+
+        // Backstop: strip any tool-call markup so the user never sees code, even
+        // if the corrective turn didn't take. Penny's text is prose only.
+        let emittedAny = false;
         for (const chunk of iterationText) {
-          textChunks.push(chunk);
-          yield { kind: "text", chunk };
+          const clean = sanitizePennyText(chunk);
+          if (!clean) continue;
+          emittedAny = true;
+          textChunks.push(clean);
+          yield { kind: "text", chunk: clean };
+        }
+        if (!emittedAny) {
+          // The text was nothing but markup. Don't leave a blank bubble; say
+          // something honest about whether anything actually changed.
+          const fallback =
+            validatedActions.length > 0
+              ? "Done — take a look at the updated plan."
+              : "Sorry, I couldn't apply that cleanly — could you rephrase and try again?";
+          textChunks.push(fallback);
+          yield { kind: "text", chunk: fallback };
         }
         break;
       }
@@ -767,6 +847,8 @@ export async function* replanStream(
         retryCount,
         failedValidations,
         truncated,
+        leakRetryCount,
+        leakSanitized,
         extractIntentCalled,
         feasibilityVerdict,
       },

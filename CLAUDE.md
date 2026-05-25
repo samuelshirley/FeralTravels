@@ -72,6 +72,10 @@ src/
     penny/
       context.ts      # Builds context for Penny from trip data
       geo.ts          # Geo utilities for Penny
+      schedule.ts     # Deterministic rest-day/leg-order materializer (pure)
+      fuelTankState.ts # Pure continuous-drive tank math (km burned since last refuel); only actual fuel stops/trip start refill — rest days & overnights are NOT implicit refuels. DB shim: server/fuel.ts
+      planSummary.ts  # Deterministic DB-derived plan facts (day counts, dates, totals, ETA via dayModel, deadline check) — source of truth for plan numbers shown to the user; Penny's prose must NOT state them
+      sanitize.ts     # Strips/ detects tool-call markup leaked into Penny's text (she must emit prose only, never <invoke>/<parameter> XML)
       split-route.ts  # Route splitting logic
       routingAvoidMerge.ts  # Avoid-highway merge logic
       tools/          # 18 Penny tools (see Penny Tools below)

@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage, OnboardingState } from '@/types/trip';
+import type { ChatMessage, OnboardingState, PlanSummary } from '@/types/trip';
 import { tripApi, apiFetch } from '@/lib/api';
+import { useUnits } from '@/components/UnitsContext';
+import { formatKm } from '@/lib/units';
+import { formatDate, parseISODate } from '@/lib/dates';
 import Spinner from '@/components/Spinner';
 
 interface ChatPanelProps {
@@ -77,7 +80,7 @@ interface OnboardingAnswerResult {
  */
 type DeliveryStatus = 'queued' | 'sending' | 'delivered' | 'read' | 'typing' | 'responded';
 
-interface UIMessage extends Omit<ChatMessage, 'seq'> {
+interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
   /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
   seq?: number;
   imageDataUrls?: string[];
@@ -87,8 +90,13 @@ interface UIMessage extends Omit<ChatMessage, 'seq'> {
   applyError?: string | null;
   /** When some writes succeeded AND some failed — show success + this warning */
   partialApplyWarning?: string | null;
-  /** Server-generated deterministic route summary from actual DB leg state. */
-  routeSummary?: string | null;
+  /**
+   * Deterministic, DB-derived plan facts for this turn (day counts, dates,
+   * totals, deadline check). Optional here because optimistic/streaming
+   * messages don't have it yet; persisted + history-loaded messages do. This
+   * is the source of truth the card renders — never Penny's prose.
+   */
+  plan_summary?: PlanSummary | null;
   // True when the replan response had truncated=true — i.e. Penny hit the
   // tool-use iteration cap mid-plan and only persisted partial work. We
   // surface a warning + 'Continue planning' button on the bubble. UI-only;
@@ -140,6 +148,159 @@ function bubbleRadius(role: string, pos: GroupPosition): string {
   return `${tl}px ${R}px ${R}px ${bl}px`;
 }
 
+/** minutes → "~5h 12m" / "~45m" — planning-grade, not odometer-grade. */
+function formatDuration(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.round(totalMinutes % 60);
+  if (h <= 0) return `~${m}m`;
+  return m > 0 ? `~${h}h ${m}m` : `~${h}h`;
+}
+
+function fmtPlanDate(iso: string | null, units: ReturnType<typeof useUnits>['units']): string | null {
+  if (!iso) return null;
+  return formatDate(parseISODate(iso), units);
+}
+
+/** "HH:MM" → "08:00" (metric, 24h) or "8:00 AM" (imperial, 12h). */
+function formatClock(
+  hhmm: string | null | undefined,
+  units: ReturnType<typeof useUnits>['units'],
+): string | null {
+  if (!hhmm) return null;
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  if (units === 'imperial') {
+    const period = h < 12 ? 'AM' : 'PM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  }
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Minutes of slack → "26 min" / "2h 10m" (absolute value). */
+function formatSlack(minutes: number): string {
+  const a = Math.abs(minutes);
+  if (a < 60) return `${a} min`;
+  const h = Math.floor(a / 60);
+  const m = a % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * Deterministic plan summary card. Renders the DB-derived facts that Penny is
+ * forbidden from stating in prose — day counts, dates, totals, deadline check —
+ * so the numbers the user sees are always the plan that actually saved. Penny's
+ * bubble above is the conversational wrapper; THIS is the source of truth.
+ */
+function PlanSummaryCard({
+  summary,
+  units,
+}: {
+  summary: PlanSummary;
+  units: ReturnType<typeof useUnits>['units'];
+}) {
+  const departDate = fmtPlanDate(summary.depart_date_iso, units);
+  const arriveDate = fmtPlanDate(summary.arrive_date_iso, units);
+  const deadlineDate = fmtPlanDate(summary.deadline?.date_iso ?? null, units);
+  const departTime = formatClock(summary.depart_time, units);
+  const arriveTime = formatClock(summary.arrive_time, units);
+
+  const dl = summary.deadline;
+  const dlTime = formatClock(dl?.local_time ?? null, units);
+  const clock = dl?.same_day_clock ?? null;
+  const lateSameDay = clock != null && clock.slack_minutes < 0;
+  const tightSameDay = clock != null && clock.slack_minutes >= 0 && !clock.clears_buffer;
+  const missed = dl?.status === 'after' || lateSameDay;
+
+  const dayBits = [`${summary.total_days} day${summary.total_days !== 1 ? 's' : ''}`];
+  if (summary.drive_days > 0) dayBits.push(`${summary.drive_days} driving`);
+  if (summary.rest_days > 0) dayBits.push(`${summary.rest_days} rest`);
+
+  // Deadline phrasing appended to the Arrive line. All numbers deterministic.
+  let deadlineSuffix: string | null = null;
+  if (dl && deadlineDate) {
+    const dlLabel = `${deadlineDate}${dlTime ? ` ${dlTime}` : ''}`;
+    if (dl.status === 'before' && dl.buffer_days != null) {
+      deadlineSuffix = ` — ${dl.buffer_days} day${dl.buffer_days !== 1 ? 's' : ''} before your ${dlLabel} deadline`;
+    } else if (dl.status === 'after' && dl.buffer_days != null) {
+      const late = Math.abs(dl.buffer_days);
+      deadlineSuffix = ` — ${late} day${late !== 1 ? 's' : ''} AFTER your ${dlLabel} deadline`;
+    } else if (dl.status === 'same_day') {
+      const dlClock = dlTime ?? 'deadline';
+      if (lateSameDay) {
+        deadlineSuffix = ` — past your ${dlClock} deadline`;
+      } else if (tightSameDay && clock) {
+        deadlineSuffix = ` — only ${formatSlack(clock.slack_minutes)} before your ${dlClock} deadline (tight)`;
+      } else if (clock && clock.clears_buffer) {
+        deadlineSuffix = ` — ${formatSlack(clock.slack_minutes)} before your ${dlClock} deadline`;
+      } else {
+        deadlineSuffix = ` — your deadline day`;
+      }
+    }
+  }
+
+  const labelStyle: React.CSSProperties = { color: 'var(--tp-muted)', marginRight: 6 };
+  const arriveColor = missed
+    ? 'var(--tp-danger)'
+    : tightSameDay
+      ? '#c98a00'
+      : undefined;
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: '8px 10px',
+        background: 'var(--tp-surface, rgba(127,127,127,0.06))',
+        borderRadius: 6,
+        border: '1px solid rgba(127, 127, 127, 0.22)',
+        fontSize: 11.5,
+        color: 'var(--tp-text)',
+        lineHeight: 1.6,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      <div style={{ fontWeight: 600 }}>{dayBits.join(' · ')}</div>
+      {departDate && (
+        <div>
+          <span style={labelStyle}>Depart</span>
+          {summary.depart_name ? `${summary.depart_name} · ` : ''}
+          {departDate}
+          {departTime ? ` · leave ${departTime}` : ''}
+        </div>
+      )}
+      {arriveDate && (
+        <div style={arriveColor ? { color: arriveColor } : undefined}>
+          <span style={labelStyle}>Arrive</span>
+          {summary.arrive_name ? `${summary.arrive_name} · ` : ''}
+          {arriveDate}
+          {arriveTime ? ` · ETA ~${arriveTime}` : ''}
+          {deadlineSuffix}
+        </div>
+      )}
+      {summary.total_drive_minutes > 0 && (
+        <div>
+          <span style={labelStyle}>Driving</span>
+          {formatDuration(summary.total_drive_minutes)}
+          {summary.total_distance_km > 0 ? ` · ${formatKm(summary.total_distance_km, units)}` : ''}
+        </div>
+      )}
+      {summary.nights_per_stop.length > 0 && (
+        <div>
+          <span style={labelStyle}>Nights</span>
+          {summary.nights_per_stop
+            .map((s) => `${s.name ?? 'stop'} ${s.nights}`)
+            .join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ChatPanel({
   tripId,
   initialMessages,
@@ -150,6 +311,7 @@ export default function ChatPanel({
   onActivity,
   readonly = false,
 }: ChatPanelProps) {
+  const { units } = useUnits();
   const isOnboarding = onboardingState !== 'done' && !readonly;
   const [onboardingSnapshot, setOnboardingSnapshot] = useState<OnboardingSnapshot | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
@@ -617,8 +779,8 @@ export default function ChatPanel({
       /** Validated tool actions queued this turn — may exceed `changes.changes` when saves failed or were gated. */
       validatedQueuedCount?: number;
       fuelReplenishQueued: boolean;
-      /** Server-generated deterministic route summary from actual DB leg state. */
-      routeSummary?: string | null;
+      /** Deterministic, DB-derived plan facts for this turn (source of truth for numbers). */
+      planSummary?: PlanSummary | null;
       truncated: boolean;
     };
     let appliedEvent: AppliedEvent | null = null;
@@ -740,7 +902,7 @@ export default function ChatPanel({
         validatedQueuedCount: validatedQueuedCountRaw,
         validationFailures: validationFailuresRaw,
         fuelReplenishQueued,
-        routeSummary: routeSummaryRaw,
+        planSummary: planSummaryRaw,
         truncated,
       } = appliedEvent;
       const persistFieldsPresent =
@@ -799,7 +961,7 @@ export default function ChatPanel({
                   appliedCount > 0 ? JSON.stringify(changes ?? { changes: [] }) : null,
                 applyError,
                 partialApplyWarning,
-                routeSummary: typeof routeSummaryRaw === 'string' ? routeSummaryRaw : null,
+                plan_summary: planSummaryRaw ?? null,
                 truncated,
                 streaming: false,
               }
@@ -1399,7 +1561,9 @@ export default function ChatPanel({
                 Changes applied to trip
               </div>
             )}
-            {/* routeSummary data is still stored on the message but hidden from the UI for now */}
+            {msg.plan_summary && !msg.applyError && (
+              <PlanSummaryCard summary={msg.plan_summary} units={units} />
+            )}
             {msg.partialApplyWarning && (
               <div
                 style={{

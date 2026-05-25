@@ -179,7 +179,87 @@ export interface ChatMessage {
   content: string;
   kind: ChatKind;
   changes_made: string | null;
+  /**
+   * Deterministic, DB-derived snapshot of the trip plan AS IT STOOD when this
+   * assistant turn landed. This is the source of truth for plan facts (day
+   * counts, dates, totals) shown alongside Penny's prose — Penny's text is a
+   * conversational wrapper only and must NOT state these numbers itself, which
+   * is how we avoid the autoregressive hallucinations (invented arrival times,
+   * wrong day/night counts). Null on turns that didn't change the schedule and
+   * on legacy rows written before this field existed. See `computePlanSummary`.
+   */
+  plan_summary: PlanSummary | null;
   created_at: string;
+}
+
+/**
+ * A purely factual summary of a trip plan, computed deterministically from the
+ * persisted legs (never authored by the LLM). Distances stay in km and times in
+ * minutes / ISO dates so the client can format them in the user's units at
+ * render time — same contract as `LegWithDetails.date_iso`.
+ */
+export interface PlanSummary {
+  /** Total calendar days = drive days + rest days (every leg is one day). */
+  total_days: number;
+  drive_days: number;
+  rest_days: number;
+  /** ISO "YYYY-MM-DD" of the first leg, or null when the trip has no start date. */
+  depart_date_iso: string | null;
+  depart_name: string | null;
+  /** ISO "YYYY-MM-DD" of the final driving leg (arrival), or null. */
+  arrive_date_iso: string | null;
+  arrive_name: string | null;
+  /**
+   * Assumed daily departure wall-clock time ("HH:MM", default 08:00). The plan
+   * has no per-leg stored times; this is the day-model default we surface so the
+   * arrival ETA is interpretable. Null when there are no driving legs.
+   */
+  depart_time: string | null;
+  /**
+   * Estimated wall-clock arrival time of the FINAL drive ("HH:MM"), from the
+   * day model (departure + driving + realistic breaks). An estimate, not a
+   * stored fact. Null when the final leg's drive time is unknown.
+   */
+  arrive_time: string | null;
+  total_distance_km: number;
+  total_drive_minutes: number;
+  /** Waypoints with at least one night, in route order. */
+  nights_per_stop: Array<{ name: string | null; nights: number }>;
+  /** Present only when a drive leg carries an arrive_by constraint. */
+  deadline: PlanSummaryDeadline | null;
+}
+
+/**
+ * Date-only comparison of the planned arrival against a fixed arrive_by
+ * constraint. We deliberately do NOT model clock time — the schedule only
+ * assigns calendar dates — so we report the deadline DATE and whether arrival
+ * lands before / on / after it, never an invented arrival time.
+ */
+export interface PlanSummaryDeadline {
+  /** The constraint datetime exactly as authored (ISO 8601 with offset). */
+  datetime_iso: string;
+  /** Local calendar date of the deadline ("YYYY-MM-DD"), or null if unparseable. */
+  date_iso: string | null;
+  /** Local wall-clock time of the deadline ("HH:MM"), or null if date-only. */
+  local_time: string | null;
+  /** 'before' | 'same_day' | 'after' — by calendar date only. */
+  status: 'before' | 'same_day' | 'after';
+  /** Whole days of slack (deadline date − arrival date). 0 = same day, <0 = late. */
+  buffer_days: number | null;
+  /**
+   * Time-of-day check for the SAME-DAY case: when arrival lands on the deadline
+   * date and we know both the deadline time and the final drive time, the day
+   * model estimates the arrival clock-time and the slack against the deadline.
+   * Null when not a same-day comparison or times are unavailable.
+   */
+  same_day_clock: {
+    /** Estimated arrival "HH:MM" (day model: 08:00 + drive + breaks). */
+    eta: string;
+    /** Raw minutes before the deadline (deadline − eta). Negative = late. */
+    slack_minutes: number;
+    /** True when slack clears the 1-hour buffer (slack_minutes >= 60). */
+    clears_buffer: boolean;
+  } | null;
 }
 
 export type RouteLinkType =

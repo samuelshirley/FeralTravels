@@ -2,7 +2,7 @@ import 'server-only';
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory } from '@/server/db/schema';
-import type { ChatKind, ChatMessage } from '@/types/trip';
+import type { ChatKind, ChatMessage, PlanSummary } from '@/types/trip';
 
 function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
   return {
@@ -13,6 +13,7 @@ function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
     content: r.content,
     kind: (r.kind as ChatKind) ?? 'ai',
     changes_made: r.changesMade,
+    plan_summary: r.planSummary ?? null,
     created_at: r.createdAt.toISOString(),
   };
 }
@@ -77,7 +78,14 @@ export async function addChatMessage(
   role: 'user' | 'assistant',
   content: string,
   changesMade?: string | null,
-  kind: ChatKind = 'ai'
+  kind: ChatKind = 'ai',
+  /**
+   * Deterministic, DB-derived plan facts to snapshot on this turn. Only the
+   * dispatcher sets this (assistant turns that changed the schedule); it's the
+   * source of truth for the numbers the UI shows, keeping Penny's prose facts
+   * out of the historical record. See `computePlanSummary`.
+   */
+  planSummary?: PlanSummary | null,
 ): Promise<ChatMessage> {
   const [row] = await db
     .insert(chatHistory)
@@ -87,6 +95,7 @@ export async function addChatMessage(
       content,
       changesMade: changesMade ?? null,
       kind,
+      planSummary: planSummary ?? null,
     })
     .returning();
   return chatRow(row);

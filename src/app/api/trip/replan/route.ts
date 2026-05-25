@@ -26,6 +26,8 @@ import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/serve
 import { getDirections } from '@/lib/google/directions';
 import { planDumpStationStopForLeg } from '@/server/dump-stations';
 import { tryParseToISO } from '@/lib/dates';
+import { computePlanSummary } from '@/lib/penny/planSummary';
+import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
 /** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
@@ -110,6 +112,21 @@ async function resolvePennyStopLegId(
   const ownerTripId = await assertLegOwnedByUser(proposedLegId, userId);
   assertLegOnTrip(ownerTripId, tripId);
   return proposedLegId;
+}
+
+/**
+ * Whether an applied action changes the schedule SHAPE — i.e. the day/leg
+ * structure or the trip's anchor date — such that the deterministic plan
+ * summary should be recomputed and snapshotted onto this turn. Pure stop/task
+ * tweaks don't move dates or day counts, so they don't trigger a fresh summary.
+ */
+function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
+  return (
+    action.name === 'add_leg' ||
+    action.name === 'update_leg' ||
+    action.name === 'delete_leg' ||
+    action.name === 'rename_trip' // can change start_date → shifts every leg's date
+  );
 }
 
 function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
@@ -285,6 +302,23 @@ export async function POST(req: Request) {
             }).catch((e) => console.warn('logUsageEvent (truncation) failed:', e));
           }
 
+          // Penny serialized a tool call as plain text instead of invoking it.
+          // We caught it and gave one corrective turn; record how often this
+          // happens and whether the retry recovered it (success=true) or the
+          // leak persisted and had to be sanitized (success=false — the action
+          // most likely never ran). Shows up in /admin/errors when not recovered.
+          if (final.leakRetryCount > 0) {
+            const recovered = !final.leakSanitized;
+            logUsageEvent({
+              userId,
+              tripId,
+              provider: 'penny:tool-call-leak',
+              requests: 0,
+              success: recovered,
+              errorMessage: `Penny emitted tool-call markup as text; retried=${final.leakRetryCount}; recovered=${recovered}`,
+            }).catch((e) => console.warn('logUsageEvent (tool-call-leak) failed:', e));
+          }
+
           let appliedCount = 0;
           /** Total failures incl. exhausted validation retries (legacy / ops). */
           let failedCount = 0;
@@ -432,24 +466,38 @@ export async function POST(req: Request) {
 
           const validatedQueuedCount = final.validatedActions.length;
 
-          // Build a deterministic route summary from the actual DB state
-          // after actions land. This is the ground truth — Penny's prose
-          // may say "through Italy" while the legs actually go through
-          // Switzerland. The client can display this so the user always
-          // sees what the route *actually* is, regardless of Penny's
-          // autoregressive text.
-          let routeSummary: string | null = null;
-          if (appliedCount > 0) {
+          // Deterministic, DB-derived plan summary — the source of truth for the
+          // plan FACTS the user sees (day counts, depart/arrive dates, totals,
+          // deadline check). Computed from the legs AFTER they land and the
+          // schedule rebuild runs, so it reflects what was actually saved, not
+          // Penny's autoregressive prose (which invented arrival times and
+          // miscounted nights). Only attach it on turns that changed the
+          // schedule shape — small stop/task tweaks don't re-render the summary.
+          let planSummary: PlanSummary | null = null;
+          if (appliedActions.some(actionAffectsScheduleSummary)) {
             try {
-              routeSummary = await buildRouteSummary(tripId);
+              const trip = await getTripFull(tripId);
+              if (trip) {
+                planSummary = computePlanSummary({
+                  legs: trip.legs,
+                  tripStartISO: trip.start_date_parsed,
+                });
+              }
             } catch (e) {
-              console.warn('[route-summary] failed to build', e);
+              console.warn('[plan-summary] failed to build', e);
             }
           }
 
           const assistantChangesMade =
             appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
-          await addChatMessage(tripId, 'assistant', final.response, assistantChangesMade);
+          await addChatMessage(
+            tripId,
+            'assistant',
+            final.response,
+            assistantChangesMade,
+            'ai',
+            planSummary,
+          );
 
           // Terminal event. Same shape as the old JSON response so the
           // client doesn't need two parsers. `failedCount`/`failedActions`
@@ -468,7 +516,7 @@ export async function POST(req: Request) {
             /** Count of Penny actions that validated and queued for dispatch (incl. failed persist). */
             validatedQueuedCount,
             fuelReplenishQueued,
-            routeSummary,
+            planSummary,
             retryCount: final.retryCount,
             truncated: final.truncated,
           });
@@ -1117,78 +1165,6 @@ async function findGapCreatingDeletes(
   }
 
   return blockedIds;
-}
-
-// ---------------------------------------------------------------------------
-// Post-dispatch deterministic route summary
-//
-// After actions land, read the actual leg state from the DB and produce a
-// short, factual description of the route. This is the ground truth that the
-// frontend can display underneath Penny's prose — eliminating the hallucination
-// problem where Penny says "through Italy" but the legs go through Switzerland.
-// ---------------------------------------------------------------------------
-
-async function buildRouteSummary(tripId: string): Promise<string | null> {
-  const tripLegs = await db
-    .select({
-      sortOrder: legs.sortOrder,
-      startName: legs.startName,
-      endName: legs.endName,
-      distanceKm: legs.distanceKm,
-      driveTimeMinutes: legs.driveTimeMinutes,
-      dates: legs.dates,
-      title: legs.title,
-    })
-    .from(legs)
-    .where(eq(legs.tripId, tripId))
-    .orderBy(legs.sortOrder);
-
-  if (tripLegs.length === 0) return null;
-
-  // Build a concise day-by-day summary:
-  // "Day 1: Girona → Montpellier (350 km, ~4.5 hrs) | Day 2: Montpellier → Annecy (420 km, ~5 hrs) | ..."
-  const dayParts: string[] = [];
-  let totalKm = 0;
-  let totalMinutes = 0;
-
-  for (let i = 0; i < tripLegs.length; i++) {
-    const leg = tripLegs[i];
-    const label = leg.title || `Day ${i + 1}`;
-    const from = leg.startName || '?';
-    const to = leg.endName || '?';
-
-    let details = `${from} → ${to}`;
-    const parts: string[] = [];
-    if (leg.distanceKm != null) {
-      parts.push(`${Math.round(leg.distanceKm)} km`);
-      totalKm += leg.distanceKm;
-    }
-    if (leg.driveTimeMinutes != null) {
-      const hrs = Math.floor(leg.driveTimeMinutes / 60);
-      const mins = Math.round(leg.driveTimeMinutes % 60);
-      parts.push(hrs > 0 ? `~${hrs}h${mins > 0 ? ` ${mins}m` : ''}` : `~${mins}m`);
-      totalMinutes += leg.driveTimeMinutes;
-    }
-    if (parts.length > 0) {
-      details += ` (${parts.join(', ')})`;
-    }
-
-    dayParts.push(`${label}: ${details}`);
-  }
-
-  // Totals line
-  const totalParts: string[] = [];
-  if (totalKm > 0) totalParts.push(`${Math.round(totalKm)} km`);
-  if (totalMinutes > 0) {
-    const h = Math.floor(totalMinutes / 60);
-    const m = Math.round(totalMinutes % 60);
-    totalParts.push(h > 0 ? `~${h}h${m > 0 ? ` ${m}m` : ''} driving` : `~${m}m driving`);
-  }
-  const totalLine = totalParts.length > 0
-    ? `\nTotal: ${totalParts.join(', ')} over ${tripLegs.length} day${tripLegs.length !== 1 ? 's' : ''}`
-    : '';
-
-  return dayParts.join(' | ') + totalLine;
 }
 
 // ---------------------------------------------------------------------------
