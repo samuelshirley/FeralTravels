@@ -68,6 +68,7 @@ src/
     replan/
       engine.ts       # Deterministic replan engine (no AI tokens)
       emails.ts       # Morning/rest-day/off-route email templates
+      runReplan.ts    # Shared nightly-replan runner (cron + admin trigger; force flag bypasses 2am gate)
     penny/
       context.ts      # Builds context for Penny from trip data
       geo.ts          # Geo utilities for Penny
@@ -114,10 +115,10 @@ api/pois                  api/coords/parse
 api/places/nearby-stops   api/places/nearby-parks api/places/photos
 api/me                    api/me/preferences      api/me/vehicle-remediation
 api/support               api/analytics/viewport-time
-api/admin/test-error      api/admin/announcements
+api/admin/test-error      api/admin/announcements  api/admin/run-replan
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
-api/cron/nightly-replan
+api/cron/nightly-replan   # endpoint still live (CRON_SECRET); no vercel.json schedule — triggered via admin/run-replan
 ```
 
 ### Schema (23 tables in `src/server/db/schema.ts`)

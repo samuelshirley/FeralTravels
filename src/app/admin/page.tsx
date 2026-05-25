@@ -23,6 +23,7 @@ import AppNavbar from '@/components/AppNavbar';
 
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
+import AdminRunReplanButton from './AdminRunReplanButton';
 import styles from './admin.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -333,6 +334,41 @@ export default async function AdminPage() {
             );
           })}
         </div>
+
+        {/* Operations — manual triggers for jobs that used to be automatic.
+         * The nightly replan cron was removed (Hobby plan can't fire it
+         * sub-daily, which the per-trip 2am gate needs), so it's driven from
+         * here now. */}
+        <section style={{ ...card, marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Operations</h2>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: 'var(--tp-subtle)',
+                  margin: '4px 0 0',
+                  maxWidth: 560,
+                  lineHeight: 1.5,
+                }}
+              >
+                Run the nightly replan now for active trips: recomputes drive
+                times and sends the morning / rest-day / off-route emails. The
+                automatic cron is disabled, so this is the trigger. Bypasses the
+                per-trip 2am check, so it runs immediately.
+              </p>
+            </div>
+            <AdminRunReplanButton />
+          </div>
+        </section>
 
         {/* Provider split (last 7d). Lets you see at a glance whether the
          * dashboard total is mostly Anthropic or mostly Google estimate.
