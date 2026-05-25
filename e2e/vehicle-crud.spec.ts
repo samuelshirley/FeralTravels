@@ -114,24 +114,13 @@ test.describe('Vehicle CRUD', () => {
     await expect(card.getByTestId('vehicle-card-name')).toHaveText(vehicleName);
 
     // Reload to verify the row was actually persisted in Postgres rather
-    // than just rendered optimistically. VehicleProfileSection GETs
-    // /api/vehicles after hydration.
-    //
-    // Register waitForResponse *before* reload (not Promise.all with reload —
-    // the listener can miss the fetch if navigation wins the race). Match on
-    // URL substring because the browser reports the full origin + path.
-    const vehiclesLoaded = page.waitForResponse(
-      (res) =>
-        res.request().method() === 'GET' &&
-        res.url().includes('/api/vehicles') &&
-        !res.url().includes('/api/vehicles/'),
-      { timeout: 30_000 },
-    );
-    await page.reload({ waitUntil: 'load' });
-    await vehiclesLoaded;
+    // than just rendered optimistically. Assert on rendered cards — more
+    // reliable than waitForResponse after a long Penny test leaves the
+    // server warm and reload timing noisy.
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(
       page.locator(`[data-testid="vehicle-card"][data-vehicle-name="${vehicleName}"]`),
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 30_000 });
 
     await expect(page.getByTestId('vehicle-solo-reminder')).toHaveCount(0);
     await expect(page.getByTestId('vehicle-card')).toHaveCount(2);

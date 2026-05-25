@@ -1,5 +1,5 @@
 import { eq, and, like } from 'drizzle-orm';
-import { getDb, schema } from './db';
+import { getDb, schema, withDbRetry } from './db';
 import { FIXTURE_EMAIL, playwrightName } from './constants';
 
 /**
@@ -178,12 +178,14 @@ export async function deleteVehicleNewProfileFixture(opts: {
 
 /** Count the legs currently attached to a trip (post-Penny submit assertion). */
 export async function countLegs(tripId: string): Promise<number> {
-  const db = getDb();
-  const rows = await db
-    .select({ id: schema.legs.id })
-    .from(schema.legs)
-    .where(eq(schema.legs.tripId, tripId));
-  return rows.length;
+  return withDbRetry(async () => {
+    const db = getDb();
+    const rows = await db
+      .select({ id: schema.legs.id })
+      .from(schema.legs)
+      .where(eq(schema.legs.tripId, tripId));
+    return rows.length;
+  });
 }
 
 /**

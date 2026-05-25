@@ -87,6 +87,11 @@ test.describe('Penny — submit a trip plan', () => {
       timeout: 150_000,
     });
 
+    // "Changes applied" lands before fuel replenish finishes — the typing
+    // bubble stays up while loading=true. Wait for the full turn to settle
+    // so page.reload() doesn't race in-flight API calls.
+    await expect(page.getByLabel('Penny is typing')).toBeHidden({ timeout: 60_000 });
+
     // Now assert the plan actually has legs in it. We re-read straight
     // from the DB rather than the UI because the itinerary list is
     // virtualised (lazy-renders the first 20) and counting visible
