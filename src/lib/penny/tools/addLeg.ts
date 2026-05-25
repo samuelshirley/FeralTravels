@@ -106,6 +106,8 @@ TITLE FORMAT: Do NOT include "Day N:" prefixes in titles. The UI computes calend
 
 GROUPING (segment_index / segment_name): When the user describes a destination jump that takes more than one driving day — e.g. "Girona to Berlin" stretching over 5 days — give every day in that jump the SAME segment_index (an integer, 0 for the first jump, 1 for the second, …) and the SAME segment_name (the user's words: "Girona → Berlin"). This is what lets the UI render long trips as collapsible sections.
 
+Rest days at a stop use the SAME segment_index and segment_name as the drive leg that arrives there — e.g. 3 nights in Innsbruck after a "Girona → Innsbruck" jump all carry segment 0 / "Girona → Innsbruck" so they stay under one LEG header with the driving days.
+
 Leave both fields null when the user-stated jump is itself only one day, or when you're not confident which jump a day belongs to. The UI falls back to a flat list when no segment data is set.
 
 For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Barcelona to Paris, segment 1 all days Paris→Berlin, segment 2 all days Berlin→Oslo.`,

@@ -171,3 +171,98 @@ function sumNights(nights: number[], from: number, to: number): number {
   for (let k = from; k < to; k++) s += nights[k];
   return s;
 }
+
+// ---------------------------------------------------------------------------
+// Route continuity
+//
+// materializeSchedule owns rest-day count + ordering. It does NOT own each drive
+// leg's START coordinate — that was historically authored by Penny and trusted
+// verbatim, which let her create a leg that begins somewhere other than where the
+// previous leg ended (e.g. "Innsbruck → Nürburgring" when the traveler is
+// actually sitting in Bad Kissingen). The map then drew that hole as a dashed red
+// "gap" line — the "magic jump". The fix is a hard invariant: in route order,
+// every leg starts where the previous one ended. We compute the corrections here
+// (pure) and the trips repo re-routes + persists them.
+// ---------------------------------------------------------------------------
+
+/** A leg reduced to the fields needed to check route continuity. */
+export interface ContinuityLeg {
+  legType: 'drive' | 'rest';
+  startLat: number | null;
+  startLng: number | null;
+  endLat: number | null;
+  endLng: number | null;
+  /** Destination name — becomes the next leg's start name when we chain. */
+  endName: string | null;
+}
+
+/** A correction: the drive leg at `index` must start where the prior leg ended. */
+export interface StartFix {
+  /** Index into the input legs array. */
+  index: number;
+  startLat: number;
+  startLng: number;
+  startName: string | null;
+}
+
+/**
+ * Below this many km, two points are "the same place" — don't churn a re-route
+ * over floating-point noise or a Google-snapped endpoint a few metres off.
+ */
+const DEFAULT_CONTINUITY_EPSILON_KM = 1;
+
+/**
+ * Compute the start-coordinate corrections needed to make a leg list contiguous:
+ * every leg after the first must START where the previous leg ENDED.
+ *
+ * Rules:
+ *   - The FIRST leg is never corrected — its start is the trip origin.
+ *   - Only DRIVE legs are corrected. Rest legs are already pinned to their stop's
+ *     coordinates by materializeSchedule / rebuildTripSchedule.
+ *   - A drive leg is corrected when its start is missing, or lies more than
+ *     `epsilonKm` from the previous leg's end. The previous leg may be a drive
+ *     (0-night overnight) or a rest day at the prior stop — both carry the prior
+ *     stop's coordinates as their end.
+ *   - If the previous leg has no end coordinates we can't chain, so we skip it.
+ *
+ * Pure — the caller re-routes (origin = prev end) and persists.
+ */
+export function computeStartFixes(
+  legs: ContinuityLeg[],
+  epsilonKm: number = DEFAULT_CONTINUITY_EPSILON_KM,
+): StartFix[] {
+  const fixes: StartFix[] = [];
+  for (let i = 1; i < legs.length; i++) {
+    const leg = legs[i];
+    if (leg.legType === 'rest') continue;
+    const prev = legs[i - 1];
+    if (prev.endLat == null || prev.endLng == null) continue; // can't chain
+    const startMissing = leg.startLat == null || leg.startLng == null;
+    const drifted =
+      !startMissing &&
+      haversineKm(prev.endLat, prev.endLng, leg.startLat as number, leg.startLng as number) >
+        epsilonKm;
+    if (startMissing || drifted) {
+      fixes.push({
+        index: i,
+        startLat: prev.endLat,
+        startLng: prev.endLng,
+        startName: prev.endName,
+      });
+    }
+  }
+  return fixes;
+}
+
+/** Great-circle distance in km. Local copy to keep this module I/O-free. */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}

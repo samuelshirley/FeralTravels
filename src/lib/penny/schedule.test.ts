@@ -7,7 +7,12 @@
  * leg chronologically, regardless of the desired-nights guess it starts from.
  */
 import { describe, it, expect } from 'vitest';
-import { materializeSchedule, type ScheduleStop } from './schedule';
+import {
+  materializeSchedule,
+  computeStartFixes,
+  type ScheduleStop,
+  type ContinuityLeg,
+} from './schedule';
 
 function stop(overrides: Partial<ScheduleStop> & { driveId: string }): ScheduleStop {
   return {
@@ -118,5 +123,125 @@ describe('materializeSchedule', () => {
     // nearest-first: stop1 3→0 (removed 3), stop0 3→2 (removed 1). Total 2.
     expect(r.nightsPerStop).toEqual([2, 0, 0]);
     expect(r.legs.find((l) => l.driveId === 'd2')!.dateISO).toBe('2026-06-05');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Route continuity — the invariant that prevents "magic jumps".
+// ---------------------------------------------------------------------------
+
+const GIRONA = { lat: 41.98, lng: 2.82 };
+const LYON = { lat: 45.76, lng: 4.84 };
+const INNSBRUCK = { lat: 47.27, lng: 11.39 };
+const BAD_KISSINGEN = { lat: 50.2, lng: 10.08 };
+const NURBURGRING = { lat: 50.33, lng: 6.95 };
+
+function driveLeg(
+  start: { lat: number; lng: number } | null,
+  end: { lat: number; lng: number } | null,
+  endName: string | null,
+): ContinuityLeg {
+  return {
+    legType: 'drive',
+    startLat: start?.lat ?? null,
+    startLng: start?.lng ?? null,
+    endLat: end?.lat ?? null,
+    endLng: end?.lng ?? null,
+    endName,
+  };
+}
+
+function restLeg(at: { lat: number; lng: number }, name: string | null): ContinuityLeg {
+  return {
+    legType: 'rest',
+    startLat: at.lat,
+    startLng: at.lng,
+    endLat: at.lat,
+    endLng: at.lng,
+    endName: name,
+  };
+}
+
+describe('computeStartFixes', () => {
+  it('returns no fixes for an already-contiguous chain', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(LYON, INNSBRUCK, 'Innsbruck'),
+    ];
+    expect(computeStartFixes(legs)).toEqual([]);
+  });
+
+  it('chains a drive across intervening rest days to the prior stop (the Nürburgring jump)', () => {
+    // The reported bug: traveler is in Bad Kissingen (3 rest days), but the next
+    // drive was authored starting from Innsbruck → Nürburgring.
+    const legs: ContinuityLeg[] = [
+      driveLeg(INNSBRUCK, BAD_KISSINGEN, 'Bad Kissingen'),
+      restLeg(BAD_KISSINGEN, 'Bad Kissingen'),
+      restLeg(BAD_KISSINGEN, 'Bad Kissingen'),
+      restLeg(BAD_KISSINGEN, 'Bad Kissingen'),
+      driveLeg(INNSBRUCK, NURBURGRING, 'Nürburgring'), // <- wrong origin
+    ];
+    const fixes = computeStartFixes(legs);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].index).toBe(4);
+    expect(fixes[0].startLat).toBeCloseTo(BAD_KISSINGEN.lat);
+    expect(fixes[0].startLng).toBeCloseTo(BAD_KISSINGEN.lng);
+    expect(fixes[0].startName).toBe('Bad Kissingen');
+  });
+
+  it('fixes a drive leg with a missing start', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(null, INNSBRUCK, 'Innsbruck'),
+    ];
+    const fixes = computeStartFixes(legs);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].index).toBe(1);
+    expect(fixes[0].startName).toBe('Lyon');
+  });
+
+  it('never corrects the first leg (its start is the trip origin)', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(null, LYON, 'Lyon'), // first leg, start unknown — left alone
+      driveLeg(LYON, INNSBRUCK, 'Innsbruck'),
+    ];
+    expect(computeStartFixes(legs)).toEqual([]);
+  });
+
+  it('does not correct rest legs (already pinned to their stop)', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      restLeg(INNSBRUCK, 'Innsbruck'),
+    ];
+    expect(computeStartFixes(legs)).toEqual([]);
+  });
+
+  it('skips a leg when the previous leg has no end coordinates', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, null, null), // unknown destination — can't chain off it
+      driveLeg(INNSBRUCK, NURBURGRING, 'Nürburgring'),
+    ];
+    expect(computeStartFixes(legs)).toEqual([]);
+  });
+
+  it('ignores sub-epsilon drift (Google-snapped endpoints a few metres off)', () => {
+    const nudged = { lat: LYON.lat + 0.002, lng: LYON.lng + 0.002 }; // ~0.3 km
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(nudged, INNSBRUCK, 'Innsbruck'),
+    ];
+    expect(computeStartFixes(legs)).toEqual([]);
+  });
+
+  it('corrects multiple drifted legs in one pass', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(GIRONA, INNSBRUCK, 'Innsbruck'), // should start at Lyon
+      driveLeg(GIRONA, NURBURGRING, 'Nürburgring'), // should start at Innsbruck
+    ];
+    const fixes = computeStartFixes(legs);
+    expect(fixes.map((f) => f.index)).toEqual([1, 2]);
+    expect(fixes[0].startName).toBe('Lyon');
+    expect(fixes[1].startName).toBe('Innsbruck');
   });
 });

@@ -101,6 +101,9 @@ export interface PennyLeg {
   terrain: string | null;
   status: string;
   notes: string[];
+  /** Stop-to-stop jump tag for itinerary LEG grouping (see add_leg). */
+  segment_index: number | null;
+  segment_name: string | null;
   routes: Array<{
     id: string;
     label: string;
@@ -262,6 +265,8 @@ function projectLeg(leg: LegWithDetails): PennyLeg {
     terrain: leg.terrain,
     status: leg.status,
     notes: leg.parsedNotes,
+    segment_index: leg.segment_index,
+    segment_name: leg.segment_name,
     routes: leg.routes.map((r) => ({
       id: r.id,
       label: r.label,

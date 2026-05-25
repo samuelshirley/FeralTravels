@@ -25,6 +25,22 @@ const baseSchema = z.object({
   destination_name: z.string().nullish(),
   /** Things to route around — only add when the user explicitly asks. */
   avoid: z.array(z.enum(['tolls', 'highways', 'ferries'])).nullish(),
+  /**
+   * Ordered pass-through points the drive must cross WITHOUT stopping overnight
+   * (e.g. "drive over the Millau bridge on the way"). The returned distance /
+   * drive time / polyline include the detour. Use this instead of turning a
+   * drive-through into its own stop or extra day.
+   */
+  waypoints: z
+    .array(
+      z.object({
+        lat: latSchema,
+        lng: lngSchema,
+        name: z.string().nullish(),
+      }),
+    )
+    .max(25)
+    .nullish(),
 });
 
 export type GetRouteInput = z.infer<typeof baseSchema>;
@@ -52,6 +68,20 @@ export const tool: Anthropic.Tool = {
         items: { type: 'string', enum: ['tolls', 'highways', 'ferries'] },
         description:
           'Avoid flags — only add when the user explicitly asks (e.g. "avoid tolls", "no highways").',
+      },
+      waypoints: {
+        type: 'array',
+        description:
+          'Ordered pass-through points the drive crosses WITHOUT an overnight stop (e.g. "drive over the Millau bridge on the way to Innsbruck"). The returned distance/drive_time/polyline include the detour. Use this for any bridge/pass/viewpoint/landmark the user wants to traverse — do NOT make it a separate stop or extra driving day. List them in along-route order.',
+        items: {
+          type: 'object',
+          required: ['lat', 'lng'],
+          properties: {
+            lat: { type: 'number', minimum: -90, maximum: 90 },
+            lng: { type: 'number', minimum: -180, maximum: 180 },
+            name: { type: 'string', description: 'Optional human-readable name for logging.' },
+          },
+        },
       },
     },
   },

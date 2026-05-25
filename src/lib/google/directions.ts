@@ -39,6 +39,14 @@ export interface DirectionsOptions {
   avoid?: Array<'tolls' | 'highways' | 'ferries'>;
   /** Departure time (epoch seconds). Defaults to now for traffic-aware ETAs. */
   departureTime?: number;
+  /**
+   * Ordered pass-through points the route must visit between origin and
+   * destination (e.g. "drive over the Millau Viaduct on the way"). These bend
+   * the polyline AND the distance/time — the whole point of making a waypoint
+   * first-class instead of just decorating the handoff URL. Keep them in
+   * along-route order (we do NOT pass optimize:true; the caller owns ordering).
+   */
+  waypoints?: LatLng[];
 }
 
 export interface DirectionsResult {
@@ -92,7 +100,10 @@ function cacheKey(origin: LatLng, destination: LatLng, opts: DirectionsOptions):
   const d = `${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}`;
   const mode = opts.mode ?? 'driving';
   const avoid = canonicalDirectionsAvoid(opts.avoid ?? []).join(',');
-  return `${o}|${d}|${mode}|${avoid}`;
+  const wp = (opts.waypoints ?? [])
+    .map((w) => `${w.lat.toFixed(5)},${w.lng.toFixed(5)}`)
+    .join('>');
+  return `${o}|${d}|${mode}|${avoid}|${wp}`;
 }
 
 function cacheGet(key: string): DirectionsResult | null {
@@ -205,6 +216,13 @@ export async function getDirections(
       params.set('avoid', canon.join('|'));
     }
   }
+  if (options.waypoints && options.waypoints.length > 0) {
+    // Pipe-separated lat,lng list. No "optimize:true" — caller orders them.
+    params.set(
+      'waypoints',
+      options.waypoints.map((w) => `${w.lat},${w.lng}`).join('|'),
+    );
+  }
   if (options.departureTime != null) {
     params.set('departure_time', String(options.departureTime));
   }
@@ -256,8 +274,13 @@ export async function getDirections(
   }
 
   const route = body.routes?.[0];
-  const leg = route?.legs?.[0];
-  if (!route || !leg) {
+  // With waypoints Google splits the trip into one `legs[]` entry PER segment
+  // (origin→wp1, wp1→wp2, …, wpN→destination). Sum across all of them — reading
+  // only legs[0] would report just the first hop's distance/time, which is the
+  // bug that made waypoints impossible to model. The overview polyline already
+  // spans the whole route, so it stays as-is.
+  const routeLegs: Array<Record<string, any>> = route?.legs ?? [];
+  if (!route || routeLegs.length === 0) {
     return {
       ok: false,
       kind: 'no_results',
@@ -265,14 +288,17 @@ export async function getDirections(
     };
   }
 
+  const distanceMeters = routeLegs.reduce((s, l) => s + (l.distance?.value ?? 0), 0);
+  const durationSeconds = routeLegs.reduce((s, l) => s + (l.duration?.value ?? 0), 0);
+
   const result: DirectionsResult = {
-    distance_km: Math.round((leg.distance?.value ?? 0) / 100) / 10, // metres → km, 1 decimal
-    drive_time_minutes: Math.round((leg.duration?.value ?? 0) / 60),
+    distance_km: Math.round(distanceMeters / 100) / 10, // metres → km, 1 decimal
+    drive_time_minutes: Math.round(durationSeconds / 60),
     polyline_points: route.overview_polyline?.points
       ? decodePolyline(route.overview_polyline.points)
       : [],
-    start_address: leg.start_address ?? '',
-    end_address: leg.end_address ?? '',
+    start_address: routeLegs[0].start_address ?? '',
+    end_address: routeLegs[routeLegs.length - 1].end_address ?? '',
     warnings: Array.isArray(route.warnings) ? route.warnings.filter((w: unknown) => typeof w === 'string') : [],
     cached: false,
   };

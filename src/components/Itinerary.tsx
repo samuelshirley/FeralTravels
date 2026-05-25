@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
 import { formatDate, parseISODate } from '@/lib/dates';
+import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
@@ -169,19 +170,22 @@ export default function Itinerary({
   };
   const groups: LegGroup[] = [];
   if (shouldGroup) {
+    const preceding: typeof visibleLegs = [];
     for (const leg of visibleLegs) {
+      const effective = effectiveLegSegment(leg, preceding);
+      preceding.push(leg);
       const last = groups[groups.length - 1];
       if (
         last &&
-        last.segmentIndex === leg.segment_index &&
-        leg.segment_index != null
+        last.segmentIndex === effective.segment_index &&
+        effective.segment_index != null
       ) {
         last.legs.push(leg);
       } else {
         groups.push({
-          key: `${leg.segment_index ?? `loose-${leg.id}`}`,
-          segmentIndex: leg.segment_index,
-          segmentName: leg.segment_name,
+          key: `${effective.segment_index ?? `loose-${leg.id}`}`,
+          segmentIndex: effective.segment_index,
+          segmentName: effective.segment_name,
           legs: [leg],
         });
       }

@@ -345,6 +345,10 @@ Do NOT call it for small tweaks: "move leg 3 a day later", "add a fuel stop near
 When the tool returns, the parsed intent becomes the authoritative source of truth for the feasibility check below. Do not re-derive the time budget or stop list from the user's prose after this point — use the parsed fields.
 </intent_extraction>
 
+<trip_naming>
+Don't name trips. The app auto-names a new trip from its season/dates (e.g. "June '26 Trip", "Summer '26 Trip") as soon as you set a start_date — so call rename_trip to set start_date (and end_date) when you know them, and leave name out. Only pass name if the user explicitly asks for a specific trip name.
+</trip_naming>
+
 <feasibility_check>
 After extract_trip_intent and after you have called get_route for every segment between waypoints, you MUST call check_trip_feasibility BEFORE any add_leg.
 
@@ -1045,10 +1049,16 @@ async function executeGetRoute(
   }
 
   const input = parsed.data as getRouteTool.GetRouteInput;
+  const waypoints = (input.waypoints ?? [])
+    .filter((w) => w.lat != null && w.lng != null)
+    .map((w) => ({ lat: w.lat, lng: w.lng }));
   const directions = await getDirections(
     { lat: input.origin_lat, lng: input.origin_lng },
     { lat: input.destination_lat, lng: input.destination_lng },
-    { avoid: input.avoid ?? undefined },
+    {
+      avoid: input.avoid ?? undefined,
+      waypoints: waypoints.length > 0 ? waypoints : undefined,
+    },
   );
 
   if (!directions.ok) {

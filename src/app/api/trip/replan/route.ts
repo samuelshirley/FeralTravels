@@ -18,9 +18,9 @@ import {
 } from '@/server/auth/guards';
 import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
-import { addStop, deleteStop, updateStop } from '@/server/repos/stops';
+import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -447,8 +447,46 @@ export async function POST(req: Request) {
             }
           }
 
-          // Post-dispatch leg contiguity check: detect if Penny left a gap
-          // (e.g. deleted a leg without updating the neighbor). Log so it
+          // Deterministic continuity repair. After the schedule is settled, force
+          // every leg to start where the previous one ended — chaining the route
+          // so Penny can never leave a "magic jump" (a leg whose origin is the
+          // wrong place). Re-routes any corrected leg so the plan totals stay
+          // honest. Runs before the contiguity check (now a safety net) and the
+          // plan-summary computation so both see the repaired legs. Best-effort:
+          // the legs are already saved, so a repair failure must never break the
+          // response.
+          if (appliedCount > 0) {
+            try {
+              const repaired = await repairLegContinuity(tripId);
+              for (const r of repaired) {
+                logUsageEvent({
+                  userId,
+                  tripId,
+                  provider: r.rerouted
+                    ? 'penny:continuity-repaired'
+                    : 'penny:continuity-repaired-noroute',
+                  requests: 0,
+                  success: r.rerouted,
+                  errorMessage:
+                    `Leg ${r.legId} start chained "${r.fromName ?? '?'}" → "${r.toName ?? '?'}"` +
+                    (r.rerouted ? '' : ' (re-route failed — distance/time/geometry cleared)'),
+                }).catch(() => {});
+              }
+            } catch (e) {
+              console.error('[continuity-repair] failed', e);
+              logUsageEvent({
+                userId,
+                tripId,
+                provider: 'penny:continuity-repair-failed',
+                requests: 0,
+                success: false,
+                errorMessage: e instanceof Error ? e.message : String(e),
+              }).catch(() => {});
+            }
+          }
+
+          // Post-dispatch leg contiguity check: a safety net that detects any gap
+          // the repair above could not close (e.g. missing coords). Log so it
           // shows up in admin errors — don't block the response.
           if (appliedCount > 0) {
             checkLegContiguity(tripId, userId).catch((e) =>
@@ -647,11 +685,15 @@ async function dispatchAction(
     }
 
     case 'rename_trip': {
-      await assertTripNameAvailable(userId, action.input.name, tripId);
       const tripUpdate: Record<string, unknown> = {
-        name: action.input.name,
         updatedAt: new Date(),
       };
+      // `name` is optional: present only when (re)naming. Omitting it on a
+      // date-only update preserves the existing name instead of clobbering it.
+      if (action.input.name !== undefined) {
+        await assertTripNameAvailable(userId, action.input.name, tripId);
+        tripUpdate.name = action.input.name;
+      }
       if (action.input.start_date !== undefined) {
         tripUpdate.startDate = action.input.start_date;
         tripUpdate.startDateParsed = tryParseToISO(action.input.start_date);
@@ -664,6 +706,9 @@ async function dispatchAction(
         .update(trips)
         .set(tripUpdate)
         .where(eq(trips.id, tripId));
+      // Auto-name the trip from its season/dates once a start date exists —
+      // a no-op unless the trip still carries the "New trip" placeholder.
+      await autoNameTripFromSeason(tripId, userId);
       return;
     }
 
@@ -1296,7 +1341,7 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
     case 'rename_trip':
       return {
         action: 'rename_trip',
-        name: action.input.name,
+        ...(action.input.name !== undefined ? { name: action.input.name } : {}),
         ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
         ...(action.input.end_date ? { end_date: action.input.end_date } : {}),
       };

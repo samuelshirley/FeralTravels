@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'dr
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
 import { tryParseToISO, legDateISO, constraintLocalDateISO } from '@/lib/dates';
+import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import {
   materializeSchedule,
   computeStartFixes,
@@ -471,32 +472,68 @@ export function assertTripDurationWithinLimit(
 }
 
 /**
- * Pick a unique placeholder name for a trip created without one. The "+ New
- * trip" button no longer asks for a name — Penny gives the trip a durable,
- * generic name (theme/region + optional season, e.g. "Summer '26 National Parks
- * Trip") once she commits to a plan — so this is only what shows in the navbar
- * until then. Names are unique per user (unique index on
- * user_id + trip_name_ci_key), so we probe for the first free
- * "New trip" / "New trip 2" / "New trip 3" … slot.
+ * Probe for the first free "<base>" / "<base> 2" / "<base> 3" … slot for this
+ * user. Trip names are unique per user (unique index on user_id +
+ * trip_name_ci_key), so auto-assigned names (the "New trip" placeholder and the
+ * seasonal names) need a numeric suffix when they'd collide.
  *
  * Not race-proof on its own: two simultaneous creates can pick the same slot.
- * The caller (POST /api/trips) retries on the resulting ConflictError, and the
- * unique index is the ultimate backstop.
+ * The unique index is the ultimate backstop; callers that need it retry.
  */
-export async function generateDefaultTripName(userId: string): Promise<string> {
-  const BASE = 'New trip';
+export async function findAvailableTripName(userId: string, base: string): Promise<string> {
+  const baseKey = base.trim().toLowerCase();
   const rows = await db
     .select({ key: trips.tripNameCiKey })
     .from(trips)
-    .where(and(eq(trips.userId, userId), like(trips.tripNameCiKey, 'new trip%')));
+    .where(and(eq(trips.userId, userId), like(trips.tripNameCiKey, `${baseKey}%`)));
   const taken = new Set(rows.map((r) => r.key));
-  if (!taken.has(BASE.toLowerCase())) return BASE;
+  if (!taken.has(baseKey)) return base;
   for (let i = 2; i < 1000; i++) {
-    const candidate = `${BASE} ${i}`;
+    const candidate = `${base} ${i}`;
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
-  // Pathological fallback (1000 unnamed trips) — timestamp keeps it unique.
-  return `${BASE} ${Date.now()}`;
+  // Pathological fallback — timestamp keeps it unique.
+  return `${base} ${Date.now()}`;
+}
+
+/**
+ * Unique "New trip" placeholder for a trip created without a name. The "+ New
+ * trip" button no longer asks for one — the app auto-names the trip from its
+ * season/dates once a start date is known (see {@link autoNameTripFromSeason}) —
+ * so this is only what shows in the navbar until then.
+ */
+export async function generateDefaultTripName(userId: string): Promise<string> {
+  return findAvailableTripName(userId, 'New trip');
+}
+
+/**
+ * Auto-name a trip from its season/dates once a start date is known — but only
+ * while it still carries an auto-assigned placeholder ("New trip"). A real name
+ * (set by the user, or by Penny on explicit request) is never overwritten.
+ * No-op when there's no start date yet. Deterministic, no LLM — see
+ * {@link seasonalTripName}. Callers run this after the trip's dates are saved.
+ */
+export async function autoNameTripFromSeason(tripId: string, userId: string): Promise<void> {
+  const [row] = await db
+    .select({
+      name: trips.name,
+      startISO: trips.startDateParsed,
+      endISO: trips.endDateParsed,
+    })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  if (!row || !row.startISO) return; // no date → keep the placeholder
+  if (!isPlaceholderTripName(row.name)) return; // real name → leave it alone
+
+  const base = seasonalTripName(row.startISO, row.endISO);
+  if (!base) return; // unparseable date → keep the placeholder
+
+  const name = await findAvailableTripName(userId, base);
+  await db
+    .update(trips)
+    .set({ name, updatedAt: new Date() })
+    .where(eq(trips.id, tripId));
 }
 
 export async function createTrip(input: {
@@ -848,6 +885,84 @@ export async function rebuildTripSchedule(
   return infeasibleOut;
 }
 
+/**
+ * A leg's selected pass-through stops as routing waypoints, in along-route order.
+ *
+ * These are the stops the user/Penny marked status='selected' (e.g. "drive over
+ * the Millau bridge" → an `other` stop, selected). They are the SAME set that
+ * goes into the leg's "Open in Google Maps" handoff URL — feeding them into
+ * Directions here is what makes the in-app polyline / distance / drive time agree
+ * with that handoff instead of routing straight and ignoring the detour.
+ *
+ * Ordered by distance_from_start_km (the field exists precisely so a waypoint
+ * sorts along the leg), falling back to sort_order. Stops without coordinates are
+ * dropped — they can't be routed through.
+ */
+async function selectedWaypointsForLeg(
+  legId: string,
+): Promise<Array<{ lat: number; lng: number }>> {
+  const rows = await db
+    .select({
+      lat: stops.lat,
+      lng: stops.lng,
+    })
+    .from(stops)
+    .where(and(eq(stops.legId, legId), eq(stops.status, 'selected')))
+    .orderBy(asc(stops.distanceFromStartKm), asc(stops.sortOrder));
+  return rows
+    .filter((r) => r.lat != null && r.lng != null)
+    .map((r) => ({ lat: r.lat as number, lng: r.lng as number }));
+}
+
+/**
+ * Re-route a single drive leg through its selected pass-through stops and persist
+ * the resulting distance / drive time / geometry. Call this after any change to a
+ * leg's endpoints OR its selected stops, so the stored route always reflects the
+ * detours the user asked for.
+ *
+ * No-op (returns false) for rest legs or legs missing endpoint coordinates. On a
+ * Directions failure it leaves the existing values untouched (a stop edit
+ * shouldn't blow away a good route over a transient API hiccup) and returns
+ * false. Returns true when it updated the leg.
+ */
+export async function rerouteLeg(legId: string): Promise<boolean> {
+  const rows = await db.select().from(legs).where(eq(legs.id, legId)).limit(1);
+  const leg = rows[0];
+  if (!leg) return false;
+  if ((leg.legType ?? 'drive') === 'rest') return false;
+  if (
+    leg.startLat == null ||
+    leg.startLng == null ||
+    leg.endLat == null ||
+    leg.endLng == null
+  ) {
+    return false;
+  }
+
+  const waypoints = await selectedWaypointsForLeg(legId);
+  const dir = await getDirections(
+    { lat: leg.startLat, lng: leg.startLng },
+    { lat: leg.endLat, lng: leg.endLng },
+    waypoints.length > 0 ? { waypoints } : {},
+  );
+  if (!dir.ok || dir.polyline_points.length === 0) return false;
+
+  await db
+    .update(legs)
+    .set({
+      distanceKm: dir.distance_km,
+      driveTimeMinutes: dir.drive_time_minutes,
+      geometry: {
+        type: 'LineString',
+        // GeoJSON uses [lng, lat] order.
+        coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+      } satisfies GeoJSONLineString,
+      updatedAt: new Date(),
+    })
+    .where(eq(legs.id, legId));
+  return true;
+}
+
 export interface ContinuityRepairOut {
   legId: string;
   /** The stale origin we replaced (for logging). */
@@ -924,9 +1039,12 @@ export async function repairLegContinuity(
 
     let rerouted = false;
     if (leg.endLat != null && leg.endLng != null) {
+      // Preserve any drive-through waypoints when re-routing from the new origin.
+      const waypoints = await selectedWaypointsForLeg(leg.id);
       const dir = await getDirections(
         { lat: fix.startLat, lng: fix.startLng },
         { lat: leg.endLat, lng: leg.endLng },
+        waypoints.length > 0 ? { waypoints } : {},
       );
       if (dir.ok && dir.polyline_points.length > 0) {
         set.distanceKm = dir.distance_km;
