@@ -344,6 +344,8 @@ export default function ChatPanel({
   /** Queue of messages sent while Penny is thinking — drained one-at-a-time. */
   const messageQueueRef = useRef<Array<{ text: string; images: AttachedImage[]; msgId: string }>>([]);
   const [dragOver, setDragOver] = useState(false);
+  /** Nested dragenter/dragleave depth — avoids flicker over child elements. */
+  const dragDepthRef = useRef(0);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1291,13 +1293,60 @@ export default function ChatPanel({
     }
   };
 
+  const resetDragOver = useCallback(() => {
+    dragDepthRef.current = 0;
+    setDragOver(false);
+  }, []);
+
   useEffect(() => {
-    if (showRemediation || isOnboarding) setImages([]);
-  }, [showRemediation, isOnboarding]);
+    if (showRemediation || isOnboarding) {
+      setImages([]);
+      resetDragOver();
+    }
+  }, [showRemediation, isOnboarding, resetDragOver]);
+
+  useEffect(() => {
+    const isOutsideViewport = (e: DragEvent) =>
+      e.clientX <= 0 ||
+      e.clientY <= 0 ||
+      e.clientX >= window.innerWidth ||
+      e.clientY >= window.innerHeight;
+
+    const onDocumentDragLeave = (e: DragEvent) => {
+      if (isOutsideViewport(e)) resetDragOver();
+    };
+
+    document.addEventListener('drop', resetDragOver);
+    window.addEventListener('dragend', resetDragOver);
+    document.addEventListener('dragleave', onDocumentDragLeave);
+    window.addEventListener('blur', resetDragOver);
+
+    return () => {
+      document.removeEventListener('drop', resetDragOver);
+      window.removeEventListener('dragend', resetDragOver);
+      document.removeEventListener('dragleave', onDocumentDragLeave);
+      window.removeEventListener('blur', resetDragOver);
+    };
+  }, [resetDragOver]);
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (showRemediation || isOnboarding) return;
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    dragDepthRef.current += 1;
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setDragOver(false);
+    }
+  };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    setDragOver(false);
+    resetDragOver();
     if (showRemediation || isOnboarding) return;
     if (e.dataTransfer?.files?.length) {
       addImageFiles(e.dataTransfer.files);
@@ -1322,13 +1371,9 @@ export default function ChatPanel({
 
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        if (!showRemediation && !isOnboarding && e.dataTransfer?.types?.includes('Files')) setDragOver(true);
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragOver(false);
-      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       style={{
         display: 'flex',
