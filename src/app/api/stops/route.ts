@@ -6,7 +6,6 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { addStop, getStopsForLeg } from '@/server/repos/stops';
-import { rerouteLeg } from '@/server/repos/trips';
 import { getLegTripId } from '@/server/repos/tasks';
 import { parseUUID } from '@/lib/validation';
 
@@ -78,11 +77,6 @@ export async function POST(request: Request) {
       source_url: body.source_url ?? null,
       sort_order: body.sort_order ?? null,
     });
-    // A selected pass-through stop bends the leg's stored route, not just the
-    // handoff URL.
-    if (body.status === 'selected' && body.lat != null && body.lng != null) {
-      await rerouteLeg(body.leg_id);
-    }
     return Response.json(stop);
   } catch (err) {
     return errorResponse(err);
