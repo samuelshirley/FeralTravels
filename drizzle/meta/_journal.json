@@ -50,6 +50,13 @@
       "when": 1779723387232,
       "tag": "0006_steep_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780091415010,
+      "tag": "0007_chemical_sunfire",
+      "breakpoints": true
     }
   ]
 }

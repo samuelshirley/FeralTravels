@@ -244,4 +244,27 @@ describe('computeStartFixes', () => {
     expect(fixes[0].startName).toBe('Lyon');
     expect(fixes[1].startName).toBe('Innsbruck');
   });
+
+  it('with a progress anchor, leaves the anchor leg and everything before it untouched', () => {
+    // Driver has reported progress: leg index 2 is the current leg (its start is
+    // their real position). Earlier legs are "behind you", and the anchor leg's
+    // start must not be chained back to the prior leg — only legs AFTER it are fixed.
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(GIRONA, INNSBRUCK, 'Innsbruck'), // drifts, but before the anchor → left alone
+      driveLeg(GIRONA, NURBURGRING, 'Nürburgring'), // anchor (index 2) → never corrected
+      driveLeg(GIRONA, BAD_KISSINGEN, 'Bad Kissingen'), // after anchor → corrected
+    ];
+    const fixes = computeStartFixes(legs, undefined, 2);
+    expect(fixes.map((f) => f.index)).toEqual([3]);
+    expect(fixes[0].startName).toBe('Nürburgring');
+  });
+
+  it('anchorIndex 0 matches the default (corrects from leg 1)', () => {
+    const legs: ContinuityLeg[] = [
+      driveLeg(GIRONA, LYON, 'Lyon'),
+      driveLeg(GIRONA, INNSBRUCK, 'Innsbruck'),
+    ];
+    expect(computeStartFixes(legs, undefined, 0)).toHaveLength(1);
+  });
 });

@@ -1,8 +1,8 @@
 import 'server-only';
-import { and, asc, eq, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
-import { tryParseToISO, legDateISO, constraintLocalDateISO } from '@/lib/dates';
+import { tryParseToISO, legDateISO, constraintLocalDateISO, todayISO } from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import {
   materializeSchedule,
@@ -64,6 +64,11 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     last_known_lat: r.lastKnownLat ?? null,
     last_known_lng: r.lastKnownLng ?? null,
     position_updated_at: r.positionUpdatedAt ? r.positionUpdatedAt.toISOString() : null,
+    current_leg_id: r.currentLegId ?? null,
+    current_lat: r.currentLat ?? null,
+    current_lng: r.currentLng ?? null,
+    progress_anchor_date: r.progressAnchorDate ?? null,
+    progress_updated_at: r.progressUpdatedAt ? r.progressUpdatedAt.toISOString() : null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
@@ -358,13 +363,29 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     tasksByLeg.set(built.leg_id, arr);
   });
 
+  // Re-anchor the calendar from the driver's reported progress. When a current
+  // leg is set, that leg falls on `progress_anchor_date` (or today if unset), so
+  // the *effective* trip start is that date shifted back by the current leg's
+  // rank. This pushes already-passed days into the past and re-dates the
+  // remaining legs from "now", which is what makes the itinerary reflect reality
+  // after the driver reports falling short of a leg. With no progress set we use
+  // the trip's real start date exactly as before.
+  let effectiveStartISO = trip.start_date_parsed;
+  if (trip.current_leg_id) {
+    const currentRank = legRows.findIndex((l) => l.id === trip.current_leg_id);
+    if (currentRank >= 0) {
+      const anchor = trip.progress_anchor_date ?? todayISO();
+      effectiveStartISO = legDateISO(anchor, -currentRank);
+    }
+  }
+
   const fullLegs: LegWithDetails[] = legRows.map((row, index) => {
     const leg = legRow(row);
     // Server-side calendar-date assignment: every leg (driving or rest) is one
-    // calendar day, so the date is the trip start plus the leg's rank in the
-    // sort_order-ordered list. Computed here (not on the client) so the date is
-    // a single source of truth the feasibility/enforcement layers can also read.
-    const date_iso = legDateISO(trip.start_date_parsed, index);
+    // calendar day, so the date is the effective trip start plus the leg's rank
+    // in the sort_order-ordered list. Computed here (not on the client) so the
+    // date is a single source of truth the feasibility/enforcement layers read.
+    const date_iso = legDateISO(effectiveStartISO, index);
     const parsedNotes = (() => {
       if (!leg.notes) return [];
       try {
@@ -598,10 +619,36 @@ export async function addLeg(input: {
    */
   segmentIndex?: number | null;
   segmentName?: string | null;
+  /**
+   * Insert this leg immediately AFTER an existing leg (by id), shifting the
+   * rest of the trip down to make room. This is how a new mid-route destination
+   * lands in the right place instead of being appended to the end (which made
+   * the route hop back and forth once continuity repair chained it in order).
+   * Takes precedence over `sortOrder`. Ignored if the id isn't on this trip.
+   */
+  afterLegId?: string | null;
   /** GeoJSON LineString for the driving route — persisted at planning time. */
   geometry?: GeoJSONLineString | null;
 }): Promise<string> {
   let sortOrder = input.sortOrder;
+  // Positional insert: place the new leg right after `afterLegId` and bump every
+  // later leg up by one so sort_order stays the route order. Done before the
+  // max+1 fallback so an explicit placement always wins.
+  if (input.afterLegId) {
+    const afterRows = await db
+      .select({ sortOrder: legs.sortOrder })
+      .from(legs)
+      .where(and(eq(legs.id, input.afterLegId), eq(legs.tripId, input.tripId)))
+      .limit(1);
+    if (afterRows[0]) {
+      const base = afterRows[0].sortOrder;
+      await db
+        .update(legs)
+        .set({ sortOrder: sql`${legs.sortOrder} + 1`, updatedAt: new Date() })
+        .where(and(eq(legs.tripId, input.tripId), gt(legs.sortOrder, base)));
+      sortOrder = base + 1;
+    }
+  }
   if (sortOrder == null) {
     const existing = await db
       .select({ sortOrder: legs.sortOrder })
@@ -1009,6 +1056,19 @@ export async function repairLegContinuity(
     .orderBy(asc(legs.sortOrder));
   if (legRows.length < 2) return [];
 
+  // When the driver has reported progress, the current leg is the chain's
+  // origin — its start is their real position. We must not "repair" it back to
+  // the previous (completed) leg's end, and we leave the behind-you legs alone.
+  const tripProgressRows = await db
+    .select({ currentLegId: trips.currentLegId })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  const currentLegId = tripProgressRows[0]?.currentLegId ?? null;
+  const anchorIndex = currentLegId
+    ? Math.max(0, legRows.findIndex((l) => l.id === currentLegId))
+    : 0;
+
   const chain: ContinuityLeg[] = legRows.map((l) => ({
     legType: (l.legType ?? 'drive') === 'rest' ? 'rest' : 'drive',
     startLat: l.startLat,
@@ -1018,7 +1078,7 @@ export async function repairLegContinuity(
     endName: l.endName,
   }));
 
-  const fixes = computeStartFixes(chain);
+  const fixes = computeStartFixes(chain, undefined, anchorIndex);
   if (fixes.length === 0) return [];
 
   const out: ContinuityRepairOut[] = [];
@@ -1331,6 +1391,118 @@ export async function updateTripPosition(
       updatedAt: new Date(),
     })
     .where(eq(trips.id, tripId));
+}
+
+/**
+ * Pick the leg the driver should drive NEXT given a position, when the caller
+ * didn't name one. Strategy: find the leg whose start/end is closest to the
+ * position, then return the first drive leg at or after it. Falls back to the
+ * first drive leg. Returns null when the trip has no drive legs.
+ */
+function resolveNextDriveLeg(
+  position: { lat: number; lng: number },
+  legRows: Array<typeof legs.$inferSelect>,
+): string | null {
+  const driveIdx = legRows
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => (l.legType ?? 'drive') !== 'rest');
+  if (driveIdx.length === 0) return null;
+
+  let nearest = 0;
+  let bestKm = Infinity;
+  for (let i = 0; i < legRows.length; i++) {
+    const l = legRows[i];
+    for (const pt of [
+      { lat: l.startLat, lng: l.startLng },
+      { lat: l.endLat, lng: l.endLng },
+    ]) {
+      if (pt.lat == null || pt.lng == null) continue;
+      const km = haversineKm(position.lat, position.lng, pt.lat, pt.lng);
+      if (km < bestKm) {
+        bestKm = km;
+        nearest = i;
+      }
+    }
+  }
+  // The first drive leg at or after the nearest leg is the one still ahead.
+  const next = driveIdx.find(({ i }) => i >= nearest) ?? driveIdx[driveIdx.length - 1];
+  return next.l.id;
+}
+
+/**
+ * Record the driver's real-world progress: set the current-leg anchor + position,
+ * re-point the upcoming leg to start where they actually are, and re-anchor the
+ * calendar so the remaining legs run from now. This is the deterministic core
+ * behind the `report_position` Penny tool — the lever for "I'm in Zürich, didn't
+ * reach Innsbruck, continuing tomorrow".
+ *
+ * The caller (dispatcher) runs rebuildTripSchedule + repairLegContinuity
+ * afterwards; repairLegContinuity reads `currentLegId` and pins the current leg's
+ * start (the real position) instead of chaining it back to the prior leg.
+ */
+export async function applyTripProgress(input: {
+  tripId: string;
+  lat: number;
+  lng: number;
+  placeName?: string | null;
+  /** Leg the driver will drive next; resolved from position when omitted. */
+  nextLegId?: string | null;
+  /** ISO date the next leg should fall on (e.g. "tomorrow"); defaults to today. */
+  resumeDateISO?: string | null;
+}): Promise<{ currentLegId: string | null; reroutedLeg: boolean }> {
+  const legRows = await db
+    .select()
+    .from(legs)
+    .where(eq(legs.tripId, input.tripId))
+    .orderBy(asc(legs.sortOrder));
+
+  let nextLegId: string | null = null;
+  if (input.nextLegId && legRows.some((l) => l.id === input.nextLegId)) {
+    nextLegId = input.nextLegId;
+  } else {
+    nextLegId = resolveNextDriveLeg({ lat: input.lat, lng: input.lng }, legRows);
+  }
+
+  let reroutedLeg = false;
+  if (nextLegId) {
+    const leg = legRows.find((l) => l.id === nextLegId)!;
+    if ((leg.legType ?? 'drive') !== 'rest') {
+      // Re-point the upcoming drive to start from the real position, then
+      // re-route so distance/time/geometry reflect the actual remaining drive.
+      const set: Record<string, unknown> = {
+        startLat: input.lat,
+        startLng: input.lng,
+        updatedAt: new Date(),
+      };
+      if (input.placeName) {
+        set.startName = input.placeName;
+        const dest = leg.endName ?? (leg.title.includes('→')
+          ? leg.title.split('→').slice(1).join('→').trim()
+          : null);
+        if (dest) set.title = `${input.placeName} → ${dest}`;
+      }
+      await db.update(legs).set(set).where(eq(legs.id, nextLegId));
+      reroutedLeg = await rerouteLeg(nextLegId);
+    }
+  }
+
+  await db
+    .update(trips)
+    .set({
+      currentLegId: nextLegId,
+      currentLat: input.lat,
+      currentLng: input.lng,
+      // Keep the GPS mirror in sync so the nightly replan agrees with chat.
+      lastKnownLat: input.lat,
+      lastKnownLng: input.lng,
+      positionUpdatedAt: new Date(),
+      progressAnchorDate: input.resumeDateISO ?? todayISO(),
+      progressUpdatedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(trips.id, input.tripId));
+
+  return { currentLegId: nextLegId, reroutedLeg };
 }
 
 // ── Trip status ─────────────────────────────────────────────────────────────

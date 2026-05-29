@@ -90,7 +90,7 @@ src/
       sanitize.ts     # Strips/ detects tool-call markup leaked into Penny's text (she must emit prose only, never <invoke>/<parameter> XML)
       split-route.ts  # Route splitting logic
       routingAvoidMerge.ts  # Avoid-highway merge logic
-      tools/          # 18 Penny tools (see Penny Tools below)
+      tools/          # 20 Penny tools (see Penny Tools below)
   server/
     db/
       schema.ts       # All tables (see Schema below)
@@ -141,13 +141,18 @@ api/cron/nightly-replan   # endpoint still live (CRON_SECRET); no vercel.json sc
 
 users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals
 
+`trips` carries a driver-progress anchor (`current_leg_id`, `current_lat/lng`, `progress_anchor_date`, `progress_updated_at`) set by the `reportPosition` tool; `getTripFull` re-anchors every leg's `date_iso` from it, and the itinerary collapses legs before `current_leg_id` as "behind you".
+
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, remediationFlags, announcements
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
-addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, renameTrip, checkTripFeasibility, planFuelStops, planDumpStationStops, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
+addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, renameTrip, reportPosition, submitIdea, checkTripFeasibility, planFuelStops, planDumpStationStops, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
+
+- **reportPosition** records the driver's real-world progress: sets the trip's `current_leg_id` + position anchor, re-points the upcoming leg to start where they are, and re-anchors the calendar from now. This is the lever behind "I'm in X, didn't reach Y".
+- **submitIdea** logs an unsupported-but-reasonable feature request to `usage_events` (provider `penny:user-idea`) so the team can read it — keeps Penny from faking capabilities the app lacks (e.g. fuel prices).
 
 ### Scripts (`scripts/`)
 

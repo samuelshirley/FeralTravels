@@ -45,6 +45,14 @@ export interface Trip {
   last_known_lat: number | null;
   last_known_lng: number | null;
   position_updated_at: string | null;
+  // ── Driver-reported progress (see the `report_position` Penny tool) ──
+  /** Leg the driver is on / about to drive next; earlier legs are "behind you". */
+  current_leg_id: string | null;
+  current_lat: number | null;
+  current_lng: number | null;
+  /** ISO date the current leg falls on — re-anchors remaining leg dates. */
+  progress_anchor_date: string | null;
+  progress_updated_at: string | null;
   created_at: string;
   updated_at: string;
   user_id: string;

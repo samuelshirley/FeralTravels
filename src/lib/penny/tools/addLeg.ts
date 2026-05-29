@@ -46,6 +46,12 @@ const baseSchema = z.object({
   color: z.string().nullish(),
   notes: z.array(z.string()).nullish(),
   sort_order: z.number().int().nullish(),
+  /**
+   * Insert this leg right AFTER an existing leg (its id from context.legs[]).
+   * Use this for a mid-route stop so it lands in the right place instead of at
+   * the end. Prefer this over guessing a raw sort_order.
+   */
+  after_leg_id: z.string().uuid().nullish(),
   // Two-level grouping. Each leg row is a *driving day*; segment_* tags
   // which user-stated jump it belongs to. Set both together — segment_index
   // gives stable ordering within the trip, segment_name is the label users
@@ -157,6 +163,12 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
       color: { type: 'string' },
       notes: { type: 'array', items: { type: 'string' } },
       sort_order: { type: 'integer' },
+      after_leg_id: {
+        type: 'string',
+        format: 'uuid',
+        description:
+          'Insert this leg right after the leg with this id (from context.legs[]). Use for a mid-route stop so it lands in the correct position instead of at the end. Preferred over sort_order.',
+      },
       segment_index: {
         type: 'integer',
         minimum: 0,

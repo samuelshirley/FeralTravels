@@ -21,6 +21,8 @@ import * as extractTripIntent from './extractTripIntent';
 import * as checkTripFeasibility from './checkTripFeasibility';
 import * as updateVehicle from './updateVehicle';
 import * as renameTrip from './renameTrip';
+import * as reportPosition from './reportPosition';
+import * as submitIdea from './submitIdea';
 
 export {
   addLeg,
@@ -41,6 +43,8 @@ export {
   checkTripFeasibility,
   updateVehicle,
   renameTrip,
+  reportPosition,
+  submitIdea,
 };
 
 /**
@@ -57,6 +61,8 @@ export const TOOLS: Anthropic.Tool[] = [
   checkTripFeasibility.tool,
   updateVehicle.tool,
   renameTrip.tool,
+  reportPosition.tool,
+  submitIdea.tool,
   addLeg.tool,
   updateLeg.tool,
   deleteLeg.tool,
@@ -80,6 +86,8 @@ export const TOOLS: Anthropic.Tool[] = [
 export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
   updateVehicle.UPDATE_VEHICLE,
   renameTrip.RENAME_TRIP,
+  reportPosition.REPORT_POSITION,
+  submitIdea.SUBMIT_IDEA,
   addLeg.ADD_LEG,
   updateLeg.UPDATE_LEG,
   deleteLeg.DELETE_LEG,
@@ -115,6 +123,8 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
 export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unknown>> = {
   [updateVehicle.UPDATE_VEHICLE]: updateVehicle.validator,
   [renameTrip.RENAME_TRIP]: renameTrip.validator,
+  [reportPosition.REPORT_POSITION]: reportPosition.validator,
+  [submitIdea.SUBMIT_IDEA]: submitIdea.validator,
   [addLeg.ADD_LEG]: addLeg.validator,
   [updateLeg.UPDATE_LEG]: updateLeg.validator,
   [deleteLeg.DELETE_LEG]: deleteLeg.validator,
@@ -136,6 +146,8 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
 export type ValidatedAction =
   | { name: typeof updateVehicle.UPDATE_VEHICLE; input: updateVehicle.UpdateVehicleInput }
   | { name: typeof renameTrip.RENAME_TRIP; input: renameTrip.RenameTripInput }
+  | { name: typeof reportPosition.REPORT_POSITION; input: reportPosition.ReportPositionInput }
+  | { name: typeof submitIdea.SUBMIT_IDEA; input: submitIdea.SubmitIdeaInput }
   | { name: typeof addLeg.ADD_LEG; input: addLeg.AddLegInput }
   | { name: typeof updateLeg.UPDATE_LEG; input: updateLeg.UpdateLegInput }
   | { name: typeof deleteLeg.DELETE_LEG; input: deleteLeg.DeleteLegInput }

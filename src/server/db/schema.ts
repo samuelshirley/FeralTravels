@@ -222,6 +222,17 @@ export const trips = pgTable(
     lastKnownLat: doublePrecision('last_known_lat'),
     lastKnownLng: doublePrecision('last_known_lng'),
     positionUpdatedAt: timestamp('position_updated_at'),
+    // ── Driver-reported trip progress (see the `report_position` Penny tool) ──
+    // `currentLegId` is the leg the driver is on / about to drive next; legs
+    // before it in sort order are "behind you" (completed). `progressAnchorDate`
+    // is the ISO date that leg should fall on, which re-anchors every remaining
+    // leg's calendar date (getTripFull). Stored as a plain uuid (no FK) so a
+    // deleted leg just leaves a stale pointer the next report overwrites.
+    currentLegId: uuid('current_leg_id'),
+    currentLat: doublePrecision('current_lat'),
+    currentLng: doublePrecision('current_lng'),
+    progressAnchorDate: date('progress_anchor_date', { mode: 'string' }),
+    progressUpdatedAt: timestamp('progress_updated_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

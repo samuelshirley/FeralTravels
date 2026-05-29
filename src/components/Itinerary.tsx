@@ -47,9 +47,20 @@ export default function Itinerary({
   readonly = false,
   isFuelSyncing = false,
 }: ItineraryProps) {
-  const legs = trip.legs;
+  const allLegs = trip.legs;
+  // Driver-reported progress splits the itinerary into "behind you" (completed)
+  // and the legs from here forward. When set, we anchor the list at the current
+  // leg and tuck the past days behind a collapsible header so opening the trip
+  // shows where the driver is NOW at the top. With no progress reported, the
+  // whole trip renders as before.
+  const currentRank = trip.current_leg_id
+    ? allLegs.findIndex((l) => l.id === trip.current_leg_id)
+    : -1;
+  const pastLegs = currentRank > 0 ? allLegs.slice(0, currentRank) : [];
+  const legs = currentRank > 0 ? allLegs.slice(currentRank) : allLegs;
   const { units } = useUnits();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showPast, setShowPast] = useState(false);
 
   // Compute a date label for each leg from the trip's confirmed start date.
   // Returns a Map<legId, formattedDate> so LegCard can display real calendar
@@ -58,11 +69,11 @@ export default function Itinerary({
   // Here we only format it for the user's locale preference — no date math.
   const legDateLabels = useMemo(() => {
     const map = new Map<string, string>();
-    for (const leg of legs) {
+    for (const leg of allLegs) {
       if (leg.date_iso) map.set(leg.id, formatDate(parseISODate(leg.date_iso), units));
     }
     return map;
-  }, [legs, units]);
+  }, [allLegs, units]);
 
   // ── Lazy rendering ─────────────────────────────────────────────────────
   // We mount the first INITIAL_VISIBLE_LEGS leg cards and reveal more in
@@ -192,9 +203,9 @@ export default function Itinerary({
     }
   }
 
-  const totalDist = legs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
-  const drivingDays = legs.filter((l) => (l.leg_type ?? 'drive') !== 'rest').length;
-  const restDays = legs.filter((l) => (l.leg_type ?? 'drive') === 'rest').length;
+  const totalDist = allLegs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
+  const drivingDays = allLegs.filter((l) => (l.leg_type ?? 'drive') !== 'rest').length;
+  const restDays = allLegs.filter((l) => (l.leg_type ?? 'drive') === 'rest').length;
 
   return (
     <div>
@@ -239,11 +250,11 @@ export default function Itinerary({
             // Show total days, with driving/rest breakdown when rest days exist.
             ...(restDays > 0
               ? [
-                  { label: 'TOTAL DAYS', value: `${legs.length}` as React.ReactNode },
+                  { label: 'TOTAL DAYS', value: `${allLegs.length}` as React.ReactNode },
                   { label: 'DRIVING', value: `${drivingDays}` as React.ReactNode },
                   { label: 'REST', value: `${restDays}` as React.ReactNode },
                 ]
-              : [{ label: 'DAYS', value: `${legs.length}` as React.ReactNode }]),
+              : [{ label: 'DAYS', value: `${allLegs.length}` as React.ReactNode }]),
             { label: 'STATUS', value: trip.status as React.ReactNode },
           ] as Array<{ label: string; value: React.ReactNode }>).map((s, i) => (
             <div key={i}>
@@ -300,6 +311,60 @@ export default function Itinerary({
           Collapse All
         </button>
       </div>
+
+      {/* "Behind you" — completed days, collapsed by default so the trip opens
+          at where the driver actually is. Only shown once progress is reported. */}
+      {pastLegs.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <button
+            onClick={() => setShowPast((v) => !v)}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              background: 'var(--tp-surface-muted)',
+              border: '1px dashed var(--tp-border)',
+              color: 'var(--tp-muted)',
+              padding: '8px 12px',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {showPast ? '▾' : '▸'} Behind you — {pastLegs.length} day
+            {pastLegs.length === 1 ? '' : 's'} completed
+          </button>
+          {showPast && (
+            <div
+              style={{
+                border: '1px solid var(--tp-border)',
+                borderRadius: 10,
+                overflow: 'hidden',
+                background: 'var(--tp-surface)',
+                marginTop: 8,
+                opacity: 0.75,
+              }}
+            >
+              {pastLegs.map((leg) => (
+                <LegCard
+                  key={leg.id}
+                  tripId={tripId}
+                  leg={leg}
+                  expanded={expanded.has(leg.id)}
+                  onToggle={() => toggle(leg.id)}
+                  onNavigate={() => onLegSelect(leg.id)}
+                  onTrailsChanged={onTrailsChanged}
+                  onChanged={onChanged}
+                  readonly={readonly}
+                  dateLabel={legDateLabels.get(leg.id)}
+                  isFuelSyncing={isFuelSyncing}
+                  fuelSyncTotalLegs={allLegs.length}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Leg cards — flat or grouped by segment */}
       {shouldGroup ? (

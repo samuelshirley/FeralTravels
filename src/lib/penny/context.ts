@@ -8,6 +8,7 @@ import {
   type VehicleApi,
 } from '@/server/repos/vehicles';
 import { getUnitsPref } from '@/server/repos/users';
+import { todayISO } from '@/lib/dates';
 import type { UnitsPref } from '@/lib/units';
 import type { ChatMessage, LegWithDetails, TripWithLegs } from '@/types/trip';
 
@@ -25,7 +26,16 @@ export interface PennyContext {
     end_date: string | null;
     start_date_parsed: string | null;
     status: string;
+    /**
+     * Driver-reported progress. `current_leg_id` is the leg they're on / about
+     * to drive next (set via report_position); legs before it are behind them.
+     * Null when the driver hasn't reported progress yet.
+     */
+    current_leg_id: string | null;
+    current_place: string | null;
   };
+  /** Today's calendar date, ISO "YYYY-MM-DD" — use it to reason about progress. */
+  today: string;
   vehicle: PennyVehicle | null;
   legs: PennyLeg[];
   recentChat: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -188,6 +198,10 @@ export async function buildPennyContext(
     vehicle == null ||
     !vehicleIsCompleteForRemediation(vehicleRecordFromApiForCompleteness(vehicle));
 
+  const currentLeg = trip.current_leg_id
+    ? trip.legs.find((l) => l.id === trip.current_leg_id) ?? null
+    : null;
+
   return {
     trip: {
       id: trip.id,
@@ -196,7 +210,10 @@ export async function buildPennyContext(
       end_date: trip.end_date,
       start_date_parsed: trip.start_date_parsed,
       status: trip.status,
+      current_leg_id: trip.current_leg_id,
+      current_place: currentLeg?.start_name ?? null,
     },
+    today: todayISO(),
     vehicle: vehicle ? projectVehicle(vehicle) : null,
     legs: trip.legs.map(projectLeg),
     recentChat: chatPage.messages.map(projectChat),

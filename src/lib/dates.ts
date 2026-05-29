@@ -65,6 +65,11 @@ function toISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Today's calendar date as ISO "YYYY-MM-DD" in the runtime's local timezone. */
+export function todayISO(): string {
+  return toISO(new Date());
+}
+
 /**
  * Parse an ISO "YYYY-MM-DD" string into a local-midnight Date without
  * timezone shift. `new Date("2026-05-28")` parses as UTC midnight which

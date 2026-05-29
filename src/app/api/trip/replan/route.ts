@@ -20,7 +20,7 @@ import { addChatMessage } from '@/server/repos/chat';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -125,7 +125,8 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
     action.name === 'add_leg' ||
     action.name === 'update_leg' ||
     action.name === 'delete_leg' ||
-    action.name === 'rename_trip' // can change start_date → shifts every leg's date
+    action.name === 'rename_trip' || // can change start_date → shifts every leg's date
+    action.name === 'report_position' // re-anchors the calendar from current progress
   );
 }
 
@@ -134,7 +135,8 @@ function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean 
     action.name === 'add_leg' ||
     action.name === 'delete_leg' ||
     action.name === 'update_leg' ||
-    action.name === 'plan_fuel_stops'
+    action.name === 'plan_fuel_stops' ||
+    action.name === 'report_position' // re-routes the upcoming leg → distances change
   ) {
     return true;
   }
@@ -175,6 +177,30 @@ const inputSchema = z.object({
     .optional()
     .default([]),
 });
+
+/**
+ * Wall-clock budget for the Penny model loop. Sits below the function's
+ * `maxDuration` (300s) so we surface an honest "timed out" error to the user
+ * BEFORE the platform hard-kills the request — which otherwise dropped the SSE
+ * stream with no error event, leaving the user with a bare "something went
+ * wrong". Leaves headroom for the post-loop dispatch + flush.
+ */
+const MODEL_LOOP_BUDGET_MS = 280_000;
+
+/**
+ * Turn any thrown error into a concise, user-facing chat line. We surface the
+ * real message (first line, truncated) instead of a blanket generic string —
+ * the repo convention is to never silently swallow errors, and the user
+ * explicitly needs to see what failed. Falls back to a generic line only when
+ * there's genuinely no message.
+ */
+function userFacingError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const first = raw.split('\n')[0]?.slice(0, 200).trim() ?? '';
+  return first
+    ? `Penny hit an error: ${first}`
+    : 'Something went wrong while updating your trip. Please try again.';
+}
 
 export async function POST(req: Request) {
   // Hoisted so the catch can attribute the failure to the right user/trip in
@@ -277,17 +303,36 @@ export async function POST(req: Request) {
           send({ kind: 'received' });
           send({ kind: 'reading' });
 
-          let final: ReplanResult | null = null;
-          for await (const ev of replanStream(message, tripId, images, userId)) {
-            // The model loop yields a terminal `done` event with the full
-            // ReplanResult — we don't forward that to the client. Instead
-            // we synthesize the post-dispatch `applied` event below.
-            if (ev.kind === 'done') {
-              final = ev.result;
-              continue;
+          // Consume the model loop, returning the terminal ReplanResult. Raced
+          // against a wall-clock budget so a pathologically long turn surfaces a
+          // real "timed out" error instead of being silently killed by the
+          // platform mid-stream. The closure returns its result (rather than
+          // writing an outer `let`) so it stays correctly typed through the race.
+          const consume = async (): Promise<ReplanResult | null> => {
+            let result: ReplanResult | null = null;
+            for await (const ev of replanStream(message, tripId, images, userId)) {
+              if (ev.kind === 'done') {
+                result = ev.result;
+                continue;
+              }
+              send(ev satisfies ReplanEvent);
             }
-            send(ev satisfies ReplanEvent);
-          }
+            return result;
+          };
+          const final = await Promise.race([
+            consume(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      'Penny timed out before finishing — the request was too complex to complete in time. Try breaking it into smaller steps.',
+                    ),
+                  ),
+                MODEL_LOOP_BUDGET_MS,
+              ),
+            ),
+          ]);
 
           if (!final) throw new Error('replanStream finished without a result');
 
@@ -392,8 +437,13 @@ export async function POST(req: Request) {
             }
             try {
               await dispatchAction(action, tripId, userId, dispatchCtx);
-              appliedActions.push(action);
-              appliedCount += 1;
+              // submit_idea is a side-effect log, not a trip mutation — don't
+              // count it as an applied change so it doesn't trigger the "Changes
+              // applied to trip" banner or a schedule/fuel recompute.
+              if (action.name !== 'submit_idea') {
+                appliedActions.push(action);
+                appliedCount += 1;
+              }
             } catch (e) {
               failedCount += 1;
               const msg = e instanceof Error ? e.message : String(e);
@@ -561,13 +611,14 @@ export async function POST(req: Request) {
         } catch (err) {
           console.error('replan stream failed', err);
           // Best-effort: surface a chat bubble so the user knows the turn
-          // failed. The outer try/catch above (for input parse errors etc.)
-          // does the same — this branch covers errors that surface AFTER
-          // the user message was already saved.
+          // failed — with the REAL error, not a generic line (so it survives a
+          // reload and the user can act on it). The outer try/catch above (for
+          // input parse errors etc.) does the same — this branch covers errors
+          // that surface AFTER the user message was already saved.
           await addChatMessage(
             tripId,
             'assistant',
-            'Something went wrong while updating your trip. Please try again.',
+            userFacingError(err),
             null
           ).catch(() => {});
           await logUsageEvent({
@@ -607,7 +658,7 @@ export async function POST(req: Request) {
       await addChatMessage(
         tripIdForLog,
         'assistant',
-        'Something went wrong while updating your trip. Please try again.',
+        userFacingError(err),
         null
       ).catch(() => {});
     }
@@ -712,6 +763,35 @@ async function dispatchAction(
       return;
     }
 
+    case 'submit_idea': {
+      // Durable, readable sink for user feature ideas — logged to usage_events
+      // (the app's notable-event log) so the team can read them later. NOT a
+      // trip mutation; this makes Penny's "I've passed it to the team" truthful.
+      await logUsageEvent({
+        userId,
+        tripId,
+        provider: 'penny:user-idea',
+        requests: 0,
+        success: true,
+        errorMessage:
+          (action.input.area ? `[${action.input.area}] ` : '') + action.input.idea,
+      });
+      return;
+    }
+
+    case 'report_position': {
+      const d = action.input;
+      await applyTripProgress({
+        tripId,
+        lat: d.lat,
+        lng: d.lng,
+        placeName: d.place_name ?? null,
+        nextLegId: d.next_leg_id ?? null,
+        resumeDateISO: d.resume_date ?? null,
+      });
+      return;
+    }
+
     case 'add_leg': {
       const d = action.input;
 
@@ -754,6 +834,7 @@ async function dispatchAction(
         color: d.color ?? null,
         notes: Array.isArray(d.notes) ? JSON.stringify(d.notes) : null,
         sortOrder: d.sort_order ?? null,
+        afterLegId: d.after_leg_id ?? null,
         segmentIndex: d.segment_index ?? null,
         segmentName: d.segment_name ?? null,
         geometry,
@@ -1345,5 +1426,15 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
         ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
         ...(action.input.end_date ? { end_date: action.input.end_date } : {}),
       };
+    case 'report_position':
+      return {
+        action: 'report_position',
+        lat: action.input.lat,
+        lng: action.input.lng,
+        ...(action.input.place_name ? { place_name: action.input.place_name } : {}),
+        ...(action.input.next_leg_id ? { next_leg_id: action.input.next_leg_id } : {}),
+      };
+    case 'submit_idea':
+      return { action: 'submit_idea', idea: action.input.idea };
   }
 }

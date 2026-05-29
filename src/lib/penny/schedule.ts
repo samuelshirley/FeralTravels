@@ -213,10 +213,13 @@ const DEFAULT_CONTINUITY_EPSILON_KM = 1;
 
 /**
  * Compute the start-coordinate corrections needed to make a leg list contiguous:
- * every leg after the first must START where the previous leg ENDED.
+ * every leg after the anchor must START where the previous leg ENDED.
  *
  * Rules:
- *   - The FIRST leg is never corrected — its start is the trip origin.
+ *   - The ANCHOR leg is never corrected — its start is the chain's origin. This
+ *     is normally leg 0 (the trip origin), but when the driver has reported
+ *     progress it's the current leg, whose start is the driver's real position;
+ *     legs before it are "behind you" and left untouched.
  *   - Only DRIVE legs are corrected. Rest legs are already pinned to their stop's
  *     coordinates by materializeSchedule / rebuildTripSchedule.
  *   - A drive leg is corrected when its start is missing, or lies more than
@@ -230,9 +233,11 @@ const DEFAULT_CONTINUITY_EPSILON_KM = 1;
 export function computeStartFixes(
   legs: ContinuityLeg[],
   epsilonKm: number = DEFAULT_CONTINUITY_EPSILON_KM,
+  anchorIndex: number = 0,
 ): StartFix[] {
   const fixes: StartFix[] = [];
-  for (let i = 1; i < legs.length; i++) {
+  const from = Math.max(1, anchorIndex + 1);
+  for (let i = from; i < legs.length; i++) {
     const leg = legs[i];
     if (leg.legType === 'rest') continue;
     const prev = legs[i - 1];
