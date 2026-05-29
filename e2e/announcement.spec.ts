@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { loginAsFixtureUser } from './fixtures/auth';
 import { getDb, schema } from './fixtures/db';
 import { FIXTURE_EMAIL } from './fixtures/constants';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 
 /**
  * Announcement popup E2E — verifies the one-time announcement flow:
@@ -17,6 +17,13 @@ test.describe('Announcement popup', () => {
   const ANNOUNCEMENT_BODY = 'This is a test announcement for E2E.';
   const ANNOUNCEMENT_BUTTON = 'Wow nice job Sam';
   let announcementId: string | null = null;
+  // Other active announcements we temporarily deactivate so this test is
+  // hermetic. The app's "active announcement" query returns the newest
+  // undismissed one — if a REAL announcement is live in the (shared dev/prod)
+  // DB, dismissing our seeded one would just surface the real one and the
+  // "modal does not reappear" assertion would flap. We park them and restore
+  // them in afterAll.
+  let parkedActiveIds: string[] = [];
 
   test.beforeAll(async () => {
     const db = getDb();
@@ -25,6 +32,20 @@ test.describe('Announcement popup', () => {
     await db
       .delete(schema.announcements)
       .where(eq(schema.announcements.title, ANNOUNCEMENT_TITLE));
+
+    // Park any other active announcements so they can't satisfy the
+    // active-announcement query during this test.
+    const others = await db
+      .select({ id: schema.announcements.id })
+      .from(schema.announcements)
+      .where(eq(schema.announcements.active, true));
+    parkedActiveIds = others.map((r) => r.id);
+    if (parkedActiveIds.length > 0) {
+      await db
+        .update(schema.announcements)
+        .set({ active: false })
+        .where(inArray(schema.announcements.id, parkedActiveIds));
+    }
 
     // Seed a fresh active announcement
     const [row] = await db
@@ -49,6 +70,13 @@ test.describe('Announcement popup', () => {
       await db
         .delete(schema.announcements)
         .where(eq(schema.announcements.id, announcementId));
+    }
+    // Restore the real announcements we parked.
+    if (parkedActiveIds.length > 0) {
+      await db
+        .update(schema.announcements)
+        .set({ active: true })
+        .where(inArray(schema.announcements.id, parkedActiveIds));
     }
   });
 
