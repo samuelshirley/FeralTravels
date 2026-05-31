@@ -8,6 +8,7 @@ import {
   daysBetweenISO,
   constraintLocalDateISO,
   requiredRestDaysBefore,
+  behindCutoffRank,
 } from './dates';
 
 describe('legDateISO', () => {
@@ -80,5 +81,51 @@ describe('requiredRestDaysBefore', () => {
     expect(
       requiredRestDaysBefore({ tripStartISO: null, targetDateISO: '2026-06-03', driveDaysBefore: 2 }),
     ).toBeNull();
+  });
+});
+
+describe('behindCutoffRank', () => {
+  const today = '2026-05-31';
+
+  it('collapses calendar days strictly before today, keeps today visible', () => {
+    // Leg 0 = yesterday (drive), leg 1 = today (rest), leg 2+ = future.
+    const legDateISOs = ['2026-05-30', '2026-05-31', '2026-06-03', '2026-06-04'];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(1);
+  });
+
+  it('collapses nothing when the first leg is today', () => {
+    const legDateISOs = ['2026-05-31', '2026-06-01'];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(0);
+  });
+
+  it('collapses nothing when the whole trip is in the future', () => {
+    const legDateISOs = ['2026-06-01', '2026-06-02'];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(0);
+  });
+
+  it('keeps the last leg visible when the whole trip is in the past', () => {
+    const legDateISOs = ['2026-05-20', '2026-05-21', '2026-05-22'];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(2);
+  });
+
+  it('does not collapse undated legs', () => {
+    const legDateISOs = [null, null, null];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(0);
+  });
+
+  it('treats an undated leading leg as still-ahead', () => {
+    // Undated leg 0 cannot be proven past, so "ahead" begins at leg 0.
+    const legDateISOs = [null, '2026-05-31', '2026-06-01'];
+    expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(0);
+  });
+
+  it('lets an explicit position report win over the calendar', () => {
+    const legDateISOs = ['2026-05-30', '2026-05-31', '2026-06-03'];
+    expect(behindCutoffRank({ reportedRank: 2, legDateISOs, todayISO: today })).toBe(2);
+  });
+
+  it('clamps an out-of-range reported rank', () => {
+    const legDateISOs = ['2026-05-30', '2026-05-31'];
+    expect(behindCutoffRank({ reportedRank: 99, legDateISOs, todayISO: today })).toBe(2);
   });
 });

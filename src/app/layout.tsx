@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Onest } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import ErrorNotifier from '@/components/ErrorNotifier';
 import ViewportTimeReporter from '@/components/ViewportTimeReporter';
 
@@ -271,6 +272,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <ViewportTimeReporter />
         <ErrorNotifier />
+        <Analytics />
         <script
           dangerouslySetInnerHTML={{
             __html: `

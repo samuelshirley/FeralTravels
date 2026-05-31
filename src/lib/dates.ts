@@ -71,6 +71,59 @@ export function todayISO(): string {
 }
 
 /**
+ * Decide how many leading legs are "behind" the driver — the cutoff index used
+ * to tuck completed/past days into the collapsible "behind you" section so the
+ * itinerary opens at today rather than at a day that has already passed.
+ *
+ * Returns the rank of the first still-ahead leg: 0 means nothing is behind,
+ * `legDateISOs.length` means the whole trip is behind.
+ *
+ * Precedence:
+ *   1. An explicit driver position report (`reportedRank >= 0`) always wins.
+ *      `reportPosition` re-anchors the calendar so the reported leg IS today,
+ *      and a deliberate "I'm here" beats any date heuristic.
+ *   2. Otherwise fall back to the calendar: every leg whose `date_iso` is
+ *      strictly before `todayISO` is behind you. Today's leg and undated legs
+ *      stay visible (we never collapse an undated leg — we can't prove it's
+ *      past). ISO "YYYY-MM-DD" strings compare correctly lexicographically.
+ *
+ * Guard: if every dated leg is in the past (trip fully elapsed), we keep the
+ * last leg visible so the main list is never empty.
+ */
+export function behindCutoffRank(args: {
+  reportedRank: number;
+  legDateISOs: Array<string | null>;
+  todayISO: string;
+}): number {
+  const { reportedRank, legDateISOs, todayISO } = args;
+
+  // Explicit report wins. Clamp to a sane range.
+  if (reportedRank >= 0) {
+    return Math.min(Math.max(reportedRank, 0), legDateISOs.length);
+  }
+
+  // Walk from the front, collapsing only legs we can PROVE are past — dated and
+  // strictly before today. Stop at the first leg that is undated (can't prove
+  // it's behind) or today-or-later. This never hides a leg the driver might
+  // still have ahead of them.
+  let cutoff = 0;
+  while (
+    cutoff < legDateISOs.length &&
+    legDateISOs[cutoff] != null &&
+    (legDateISOs[cutoff] as string) < todayISO
+  ) {
+    cutoff++;
+  }
+
+  // If every leg is provably past (trip fully elapsed), keep the last leg
+  // visible so the main list is never empty.
+  if (cutoff === legDateISOs.length && cutoff > 0) {
+    return cutoff - 1;
+  }
+  return cutoff;
+}
+
+/**
  * Parse an ISO "YYYY-MM-DD" string into a local-midnight Date without
  * timezone shift. `new Date("2026-05-28")` parses as UTC midnight which
  * can roll back a day in negative-offset timezones — avoid that.

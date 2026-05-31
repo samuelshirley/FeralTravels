@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
-import { formatDate, parseISODate } from '@/lib/dates';
+import { formatDate, parseISODate, behindCutoffRank, todayISO } from '@/lib/dates';
 import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
@@ -48,14 +48,24 @@ export default function Itinerary({
   isFuelSyncing = false,
 }: ItineraryProps) {
   const allLegs = trip.legs;
-  // Driver-reported progress splits the itinerary into "behind you" (completed)
-  // and the legs from here forward. When set, we anchor the list at the current
-  // leg and tuck the past days behind a collapsible header so opening the trip
-  // shows where the driver is NOW at the top. With no progress reported, the
-  // whole trip renders as before.
-  const currentRank = trip.current_leg_id
+  // Driver progress splits the itinerary into "behind you" (completed) and the
+  // legs from here forward. We anchor the list at the current leg and tuck past
+  // days behind a collapsible header so opening the trip shows where the driver
+  // is NOW at the top.
+  //
+  // Two signals feed the cutoff (see behindCutoffRank):
+  //   1. An explicit reportPosition (trip.current_leg_id) — strongest, wins.
+  //   2. Otherwise the calendar — legs dated strictly before today are past.
+  // The date fallback means a trip opened mid-journey collapses elapsed days
+  // automatically, without requiring the driver to report position first.
+  const reportedRank = trip.current_leg_id
     ? allLegs.findIndex((l) => l.id === trip.current_leg_id)
     : -1;
+  const currentRank = behindCutoffRank({
+    reportedRank,
+    legDateISOs: allLegs.map((l) => l.date_iso),
+    todayISO: todayISO(),
+  });
   const pastLegs = currentRank > 0 ? allLegs.slice(0, currentRank) : [];
   const legs = currentRank > 0 ? allLegs.slice(currentRank) : allLegs;
   const { units } = useUnits();
