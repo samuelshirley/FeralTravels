@@ -11,9 +11,11 @@ import {
   getRoute as getRouteTool,
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
+  planOvernightStop as planOvernightStopTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
+import { planOvernightStop as runOvernightEngine } from "@/lib/penny/overnight";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
 import {
@@ -966,9 +968,98 @@ async function executeLookupTool(
   if (toolUse.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY) {
     return executeCheckTripFeasibility(toolUse, context);
   }
+  if (toolUse.name === planOvernightStopTool.PLAN_OVERNIGHT_STOP) {
+    return executePlanOvernightStop(toolUse, context);
+  }
   return {
     is_error: true,
     content: `Unhandled lookup tool: ${toolUse.name}.`,
+  };
+}
+
+/**
+ * plan_overnight_stop — fetch the day's route, run the deterministic
+ * OSM-backed overnight engine, and hand Penny a ranked shortlist. No DB write;
+ * Penny presents it. The honest guidance (prefer has_adjacent_lot; admit when
+ * nothing has a lot) keeps her from repeating the "dog park with no parking
+ * lot" suggestion. Engine: src/lib/penny/overnight/.
+ */
+async function executePlanOvernightStop(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext,
+): Promise<LookupResult> {
+  const schema = planOvernightStopTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on plan_overnight_stop: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const input = parsed.data as planOvernightStopTool.PlanOvernightStopInput;
+  const directions = await getDirections(
+    { lat: input.origin_lat, lng: input.origin_lng },
+    { lat: input.destination_lat, lng: input.destination_lng },
+    { avoid: input.avoid ?? undefined },
+  );
+
+  if (!directions.ok) {
+    return {
+      is_error: true,
+      content: `plan_overnight_stop failed: ${directions.kind} — ${directions.message}. Tell the user this lookup is temporarily unavailable; do not invent overnight spots.`,
+    };
+  }
+
+  // Default the anchor to the day's end (the destination). Fuel range is a
+  // separate axis handled by plan_fuel_stops — we deliberately don't conflate
+  // it into the overnight anchor.
+  const targetKm = input.target_km ?? directions.distance_km;
+
+  let result: Awaited<ReturnType<typeof runOvernightEngine>>;
+  try {
+    result = await runOvernightEngine({
+      polyline: directions.polyline_points,
+      targetKm,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    return {
+      is_error: true,
+      content: `plan_overnight_stop could not search this route: ${message}. Tell the user the lookup failed; do not invent spots.`,
+    };
+  }
+
+  const candidates = result.ranked.slice(0, 6).map((r) => ({
+    name: r.candidate.name,
+    category: r.candidate.category,
+    lat: round5(r.candidate.lat),
+    lng: round5(r.candidate.lng),
+    has_adjacent_lot: r.hasAdjacentLot,
+    motorhome_friendly: r.candidate.motorhomeFriendly,
+    surface: r.candidate.surface,
+    detour_km: Math.round(r.detourKm * 10) / 10,
+    maps_url: `https://www.google.com/maps?q=${round5(r.candidate.lat)},${round5(r.candidate.lng)}`,
+  }));
+
+  const anyLot = candidates.some((c) => c.has_adjacent_lot);
+
+  return {
+    is_error: false,
+    content: JSON.stringify({
+      ok: true,
+      anchor: {
+        lat: round5(result.window.anchor[0]),
+        lng: round5(result.window.anchor[1]),
+      },
+      anchor_km: Math.round(result.window.anchorKm),
+      route_km: Math.round(result.window.routeKm),
+      candidate_count: result.ranked.length,
+      candidates,
+      guidance: anyLot
+        ? "Prefer candidates with has_adjacent_lot=true — those have a real place to park. Present the top 1–3 with their maps_url so the user can check the satellite view. Do not invent spots outside this list."
+        : "No candidate here has a parking lot mapped in OpenStreetMap. Be honest: you only found green space without a confirmed lot. Suggest the user open a maps_url to eyeball it before relying on it, and do not claim any of these is a known-good overnight spot.",
+    }),
   };
 }
 

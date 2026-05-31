@@ -90,7 +90,8 @@ src/
       sanitize.ts     # Strips/ detects tool-call markup leaked into Penny's text (she must emit prose only, never <invoke>/<parameter> XML)
       split-route.ts  # Route splitting logic
       routingAvoidMerge.ts  # Avoid-highway merge logic
-      tools/          # 20 Penny tools (see Penny Tools below)
+      tools/          # 21 Penny tools (see Penny Tools below)
+      overnight/      # Deterministic OSM-backed overnight-stop engine: anchor (distance-along-route window) + overpass (OSM client) + rank (adjacent-lot discriminator). Powers plan_overnight_stop tool.
   server/
     db/
       schema.ts       # All tables (see Schema below)
@@ -149,7 +150,9 @@ trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, rem
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
-addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, renameTrip, reportPosition, submitIdea, checkTripFeasibility, planFuelStops, planDumpStationStops, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
+addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateRoute, deleteRoute, getRoute, addTask, updateTask, updateVehicle, renameTrip, reportPosition, submitIdea, checkTripFeasibility, planFuelStops, planDumpStationStops, planOvernightStop, extractTripIntent — registered in `index.ts`, shared helpers in `shared.ts`
+
+- **planOvernightStop** (lookup tool) finds real overnight parking candidates near a day's end: fetches the route, walks the polyline to the target km, queries OSM (`src/lib/penny/overnight/`), and returns a deterministic ranked shortlist (keyed on adjacent-parking-lot — the calibration discriminator). No DB write; Penny presents the list and is told to prefer `has_adjacent_lot` and never invent spots. See `docs/overnight-stop-feature-scope.md`.
 
 - **reportPosition** records the driver's real-world progress: sets the trip's `current_leg_id` + position anchor, re-points the upcoming leg to start where they are, and re-anchors the calendar from now. This is the lever behind "I'm in X, didn't reach Y".
 - **submitIdea** logs an unsupported-but-reasonable feature request to `usage_events` (provider `penny:user-idea`) so the team can read it — keeps Penny from faking capabilities the app lacks (e.g. fuel prices).
