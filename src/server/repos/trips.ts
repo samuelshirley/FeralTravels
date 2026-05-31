@@ -55,7 +55,7 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     name: r.name,
     start_date: r.startDate,
     end_date: r.endDate,
-    start_date_parsed: r.startDateParsed ?? null,
+    start_date_parsed: r.startDateParsed, // non-null invariant
     end_date_parsed: r.endDateParsed ?? null,
     status: r.status,
     trip_status: (r.tripStatus as TripStatus) ?? 'draft',
@@ -544,7 +544,7 @@ export async function autoNameTripFromSeason(tripId: string, userId: string): Pr
     .from(trips)
     .where(eq(trips.id, tripId))
     .limit(1);
-  if (!row || !row.startISO) return; // no date → keep the placeholder
+  if (!row) return; // trip not found
   if (!isPlaceholderTripName(row.name)) return; // real name → leave it alone
 
   const base = seasonalTripName(row.startISO, row.endISO);
@@ -573,7 +573,11 @@ export async function createTrip(input: {
       name: input.name,
       startDate: input.startDate ?? null,
       endDate: input.endDate ?? null,
-      startDateParsed: tryParseToISO(input.startDate),
+      // start_date_parsed is a hard non-null invariant. We seed today as a
+      // placeholder when the caller gives no parseable date; the forced
+      // onboarding `trip_date` question overwrites it with the user's real date
+      // before planning begins.
+      startDateParsed: tryParseToISO(input.startDate) ?? todayISO(),
       endDateParsed: tryParseToISO(input.endDate),
       vehicleId: input.vehicleId ?? null,
     })
@@ -773,9 +777,10 @@ export async function rebuildTripSchedule(
     .from(trips)
     .where(eq(trips.id, tripId))
     .limit(1);
-  const startISO = tripRows[0]?.startDateParsed ?? null;
-  // No confirmed start date → no positional dates to order/anchor by.
-  if (!startISO) return [];
+  const tripRow = tripRows[0];
+  if (!tripRow) return []; // trip not found
+  // start_date_parsed is a hard non-null invariant — always a real calendar day.
+  const startISO = tripRow.startDateParsed;
 
   const legRows = await db
     .select()
@@ -1183,6 +1188,11 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
         name: newName,
         startDate: s.startDate,
         endDate: s.endDate,
+        // Carry the source's machine date forward so the clone honors the
+        // non-null start_date_parsed invariant (the old clone path left it null
+        // and relied on a later reparse). Fall back to today defensively.
+        startDateParsed: s.startDateParsed ?? todayISO(),
+        endDateParsed: s.endDateParsed ?? null,
         status: 'planning',
         isTemplate: false,
         preferAvoidHighways: s.preferAvoidHighways,
@@ -1650,19 +1660,3 @@ export async function getConstraintsForTrip(
   return map;
 }
 
-// ── Parsed date updates ─────────────────────────────────────────────────────
-
-export async function updateTripParsedDates(
-  tripId: string,
-  startDateParsed: string | null,
-  endDateParsed: string | null,
-) {
-  await db
-    .update(trips)
-    .set({
-      startDateParsed,
-      endDateParsed,
-      updatedAt: new Date(),
-    })
-    .where(eq(trips.id, tripId));
-}

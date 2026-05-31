@@ -158,7 +158,9 @@ async function seedPrimaryPlannerPersona(db: ReturnType<typeof getDb>) {
       vehicleId: vehicleRow.id,
       name: FIXTURE_TRIP_NAME,
       startDate: '2026-06-01',
+      startDateParsed: '2026-06-01',
       endDate: '2026-06-02',
+      endDateParsed: '2026-06-02',
       status: 'planning',
       onboardingState: 'done',
     })
@@ -253,7 +255,9 @@ async function seedRemediationPersona(db: ReturnType<typeof getDb>) {
       vehicleId: vehicleRow.id,
       name: REMEDIATION_TRIP_NAME,
       startDate: '2026-06-01',
+      startDateParsed: '2026-06-01',
       endDate: '2026-06-02',
+      endDateParsed: '2026-06-02',
       status: 'planning',
       onboardingState: 'done',
     })

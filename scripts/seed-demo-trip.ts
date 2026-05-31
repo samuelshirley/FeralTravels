@@ -55,7 +55,10 @@ async function main() {
         userId: demoUser.id,
         name: DEMO_TRIP.name,
         startDate: DEMO_TRIP.start_date,
+        // start_date_parsed is non-null; the demo's start_date is already ISO.
+        startDateParsed: DEMO_TRIP.start_date,
         endDate: DEMO_TRIP.end_date,
+        endDateParsed: DEMO_TRIP.end_date,
         status: DEMO_TRIP.status,
         isTemplate: true,
       })

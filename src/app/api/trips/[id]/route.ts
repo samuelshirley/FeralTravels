@@ -98,8 +98,17 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     const update: Record<string, unknown> = { updatedAt: new Date() };
     if (body.name !== undefined) update.name = body.name;
     if (body.start_date !== undefined) {
+      // start_date_parsed is a hard non-null invariant — never let an edit clear
+      // it. Require the new value to parse to a real calendar day.
+      const parsed = tryParseToISO(body.start_date);
+      if (!parsed) {
+        return Response.json(
+          { error: 'start_date must be a real date (e.g. "June 3 2026" or "2026-06-03").' },
+          { status: 400 },
+        );
+      }
       update.startDate = body.start_date;
-      update.startDateParsed = tryParseToISO(body.start_date);
+      update.startDateParsed = parsed;
     }
     if (body.end_date !== undefined) {
       update.endDate = body.end_date;

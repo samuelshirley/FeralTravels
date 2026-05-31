@@ -82,17 +82,17 @@ export function todayISO(): string {
  *   1. An explicit driver position report (`reportedRank >= 0`) always wins.
  *      `reportPosition` re-anchors the calendar so the reported leg IS today,
  *      and a deliberate "I'm here" beats any date heuristic.
- *   2. Otherwise fall back to the calendar: every leg whose `date_iso` is
- *      strictly before `todayISO` is behind you. Today's leg and undated legs
- *      stay visible (we never collapse an undated leg — we can't prove it's
- *      past). ISO "YYYY-MM-DD" strings compare correctly lexicographically.
+ *   2. Otherwise fall back to the calendar: every leg dated strictly before
+ *      `todayISO` is behind you; "ahead" begins at the first leg dated
+ *      today-or-later. Leg dates are a hard invariant (see Leg.date_iso), so
+ *      every leg has one. ISO "YYYY-MM-DD" strings compare lexicographically.
  *
- * Guard: if every dated leg is in the past (trip fully elapsed), we keep the
- * last leg visible so the main list is never empty.
+ * Guard: if every leg is in the past (trip fully elapsed), we keep the last leg
+ * visible so the main list is never empty.
  */
 export function behindCutoffRank(args: {
   reportedRank: number;
-  legDateISOs: Array<string | null>;
+  legDateISOs: string[];
   todayISO: string;
 }): number {
   const { reportedRank, legDateISOs, todayISO } = args;
@@ -102,21 +102,14 @@ export function behindCutoffRank(args: {
     return Math.min(Math.max(reportedRank, 0), legDateISOs.length);
   }
 
-  // Walk from the front, collapsing only legs we can PROVE are past — dated and
-  // strictly before today. Stop at the first leg that is undated (can't prove
-  // it's behind) or today-or-later. This never hides a leg the driver might
-  // still have ahead of them.
+  // Collapse every leg dated strictly before today.
   let cutoff = 0;
-  while (
-    cutoff < legDateISOs.length &&
-    legDateISOs[cutoff] != null &&
-    (legDateISOs[cutoff] as string) < todayISO
-  ) {
+  while (cutoff < legDateISOs.length && legDateISOs[cutoff] < todayISO) {
     cutoff++;
   }
 
-  // If every leg is provably past (trip fully elapsed), keep the last leg
-  // visible so the main list is never empty.
+  // If every leg is in the past (trip fully elapsed), keep the last leg visible
+  // so the main list is never empty.
   if (cutoff === legDateISOs.length && cutoff > 0) {
     return cutoff - 1;
   }
@@ -168,30 +161,6 @@ export function formatDate(date: Date, units: UnitsPref): string {
   return `${weekday} ${day} ${month}`;
 }
 
-/**
- * Compute the formatted date string for a leg given:
- *   - tripStartISO: the trip's `start_date_parsed` ("YYYY-MM-DD"), or null
- *   - legIndex: 0-based position in the sorted legs array
- *   - units: user's display preference
- *
- * Returns null when startDateParsed is not set (trip hasn't confirmed dates).
- *
- * NOTE: This is a *presentation* helper — formatting an already-decided date.
- * The decision of WHICH calendar date a leg falls on is domain logic and now
- * lives server-side ({@link legDateISO}, called from the trips repo + Penny
- * context). Prefer formatting a server-provided `date_iso` over recomputing
- * the date on the client.
- */
-export function legDate(
-  tripStartISO: string | null | undefined,
-  legIndex: number,
-  units: UnitsPref,
-): string | null {
-  const iso = legDateISO(tripStartISO, legIndex);
-  if (!iso) return null;
-  return formatDate(parseISODate(iso), units);
-}
-
 // ---------------------------------------------------------------------------
 // Domain logic: calendar-date assignment + constraint scheduling.
 //
@@ -208,19 +177,16 @@ export function legDate(
 // ---------------------------------------------------------------------------
 
 /**
- * The ISO "YYYY-MM-DD" calendar date a leg falls on, given the trip start
- * date and the leg's 0-based rank in the sorted leg list. This is the
- * server-side source of truth for leg dates; the client formats the result.
+ * The ISO "YYYY-MM-DD" calendar date a leg falls on, given the trip start date
+ * and the leg's 0-based rank in the sorted leg list. This is the server-side
+ * source of truth for leg dates; the client formats the result.
  *
- * Returns null when the trip start date isn't set yet.
+ * `tripStartISO` is non-null by contract — the trip start date is a hard
+ * invariant (see Trip.start_date_parsed) and every other caller passes a date
+ * already validated upstream.
  */
-export function legDateISO(
-  tripStartISO: string | null | undefined,
-  legIndex: number,
-): string | null {
-  if (!tripStartISO) return null;
+export function legDateISO(tripStartISO: string, legIndex: number): string {
   const start = parseISODate(tripStartISO);
-  if (isNaN(start.getTime())) return null;
   return toISO(addDays(start, legIndex));
 }
 

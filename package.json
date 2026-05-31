@@ -31,6 +31,7 @@
     "@auth/drizzle-adapter": "^1.11.2",
     "@googlemaps/js-api-loader": "^2.0.2",
     "@tmcw/togeojson": "^7.1.2",
+    "@vercel/analytics": "^2.0.1",
     "@xmldom/xmldom": "^0.9.10",
     "drizzle-orm": "^0.36.4",
     "next": "^14.2.0",

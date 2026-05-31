@@ -4,8 +4,8 @@ import { createOnboardingTrip } from './fixtures/test-trip';
 
 /**
  * Exercises the pre-Penny onboarding wizard:
- *   trip_intent → units_pick → (vehicle auto-pick when only one fuel-complete
- *   vehicle) → done.
+ *   trip_intent → trip_date → units_pick → (vehicle auto-pick when only one
+ *   fuel-complete vehicle) → done.
  * There is no trip-naming step anymore (Penny names the trip from its route),
  * so the wizard must never ask for a name — this test guards that. No LLM
  * calls; the fixture user already has a fuel-ready default van.
@@ -31,7 +31,15 @@ test.describe('Onboarding wizard', () => {
       page.getByText(/What would you like to name this trip/),
     ).toHaveCount(0);
 
-    // Step 2: units_pick — metric or imperial
+    // Step 2: trip_date — forced start-date entry (must parse to a real day).
+    await expect(
+      page.getByText(/When are you setting off/),
+    ).toBeVisible({ timeout: 15_000 });
+
+    await composer.fill('June 3 2026');
+    await composer.press('Enter');
+
+    // Step 3: units_pick — metric or imperial
     await expect(
       page.getByText('Do you want distances in metric (kilometers) or imperial (miles)?'),
     ).toBeVisible({ timeout: 15_000 });

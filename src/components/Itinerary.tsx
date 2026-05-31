@@ -74,13 +74,14 @@ export default function Itinerary({
 
   // Compute a date label for each leg from the trip's confirmed start date.
   // Returns a Map<legId, formattedDate> so LegCard can display real calendar
-  // dates instead of "Day 1", "Day 2". Empty map when start_date_parsed is null.
+  // dates. Every leg has one — the start date is a hard invariant.
   // The calendar date for each leg is computed server-side (leg.date_iso).
   // Here we only format it for the user's locale preference — no date math.
   const legDateLabels = useMemo(() => {
     const map = new Map<string, string>();
+    // Every leg has a date_iso — the trip start date is a hard invariant.
     for (const leg of allLegs) {
-      if (leg.date_iso) map.set(leg.id, formatDate(parseISODate(leg.date_iso), units));
+      map.set(leg.id, formatDate(parseISODate(leg.date_iso), units));
     }
     return map;
   }, [allLegs, units]);

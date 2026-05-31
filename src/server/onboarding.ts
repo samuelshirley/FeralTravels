@@ -11,6 +11,7 @@ import {
   type VehicleApi,
 } from '@/server/repos/vehicles';
 import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
+import { tryParseToISO } from '@/lib/dates';
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
@@ -86,6 +87,19 @@ export const TRIP_INTENT_QUESTION: Question = {
 
 /** @deprecated Kept for backwards compatibility with old onboarding states. */
 export const HANDOFF_QUESTION = TRIP_INTENT_QUESTION;
+
+// Forced start-date question. Every trip must pin to a real calendar day —
+// leg dates, the nightly replan, deadlines and the "behind you" collapse all
+// depend on it (see Trip.start_date_parsed). The answer is free text but must
+// parse to an ISO date via tryParseToISO, otherwise we re-ask.
+export const TRIP_DATE_QUESTION: Question = {
+  key: 'trip_date',
+  kind: 'text',
+  label:
+    "When are you setting off? Give me a start date I can pin to the calendar.",
+  placeholder: 'e.g. June 3 2026 or 2026-06-03',
+  help: 'Type a specific day — "June 3 2026" or "2026-06-03". I need a real date, not "sometime in summer".',
+};
 
 const UNITS_PREF_KEY = 'units_pref';
 
@@ -282,9 +296,10 @@ export async function getOnboardingSnapshot(
   // vehicle-profile portion.
   const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
   // trip_intent doesn't count in the numbered progress (it's the greeting).
-  // The only pre-vehicle numbered step is units_pick (when not yet chosen).
+  // Pre-vehicle numbered steps: trip_date (always) + units_pick (when not yet
+  // chosen).
   const unitSteps = unitsAlreadyChosen ? 0 : 1;
-  const preVehicleSteps = unitSteps;
+  const preVehicleSteps = 1 + unitSteps;
 
   if (state === 'trip_intent') {
     return {
@@ -300,6 +315,16 @@ export async function getOnboardingSnapshot(
   // we might not know yet, but the count is the same either way.
   const vehicleSteps = buildOnboardingSteps(unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric');
   const totalSteps = preVehicleSteps + vehicleSteps.length;
+
+  if (state === 'trip_date') {
+    return {
+      state: 'trip_date',
+      question: TRIP_DATE_QUESTION,
+      vehicles: [],
+      // First numbered step (the greeting is unnumbered).
+      progress: { current: 1, total: totalSteps },
+    };
+  }
 
   if (state === 'trip_name') {
     // Legacy: naming is no longer part of onboarding. Advance any trip still
@@ -326,8 +351,8 @@ export async function getOnboardingSnapshot(
         ],
       },
       vehicles: [],
-      // units_pick is the first (and only) pre-vehicle numbered step.
-      progress: { current: 1, total: totalSteps },
+      // units_pick follows trip_date in the numbered pre-vehicle steps.
+      progress: { current: preVehicleSteps, total: totalSteps },
     };
   }
 
@@ -441,15 +466,43 @@ export async function submitAnswer(
   if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
-    // No naming step — go straight to units (if unset) or the vehicle flow.
-    // Penny names the trip from its route once planning begins.
-    const nextState = await resolvePostIntentState(userId);
-    // Store the intent on the trip for later handoff
+    // Always ask for a start date next — it's a hard invariant. Penny names the
+    // trip from its route once planning begins (no naming step here).
     await db
       .update(trips)
-      .set({ pendingIntent: text, onboardingState: nextState, updatedAt: new Date() })
+      .set({ pendingIntent: text, onboardingState: 'trip_date', updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
+    return {
+      next: await getOnboardingSnapshot(tripId, userId),
+      answerLabel: text,
+      didHandoff: false,
+    };
+  }
+
+  // ---- Start date (forced; must parse to a real calendar day) ----
+  if (state === 'trip_date' && input.questionKey === 'trip_date') {
+    const text = typeof input.value === 'string' ? input.value.trim() : '';
+    if (!text) throw new Error('Please enter a start date.');
+    const parsed = tryParseToISO(text);
+    if (!parsed) {
+      throw new Error(
+        "I couldn't read that as a date. Try a specific day like \"June 3 2026\" or \"2026-06-03\".",
+      );
+    }
+    const nextState = await resolvePostIntentState(userId);
+    await db
+      .update(trips)
+      .set({
+        // Keep the user's original phrasing in the free-text column, store the
+        // machine date in start_date_parsed (the invariant the app relies on).
+        startDate: text,
+        startDateParsed: parsed,
+        onboardingState: nextState,
+        updatedAt: new Date(),
+      })
+      .where(eq(trips.id, tripId));
+    await writeQA(tripId, TRIP_DATE_QUESTION.label, parsed);
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // A returning user with units + vehicle already set jumps straight to
     // 'done' — complete the handoff so the client fires the stored intent at
@@ -459,7 +512,7 @@ export async function submitAnswer(
     }
     return {
       next: afterSnapshot,
-      answerLabel: text,
+      answerLabel: parsed,
       didHandoff: false,
     };
   }

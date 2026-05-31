@@ -746,8 +746,12 @@ async function dispatchAction(
         tripUpdate.name = action.input.name;
       }
       if (action.input.start_date !== undefined) {
+        // Only update the machine date when the new value parses — never clear
+        // start_date_parsed (hard non-null invariant). Keep the free-text update
+        // regardless so the user's phrasing is preserved.
         tripUpdate.startDate = action.input.start_date;
-        tripUpdate.startDateParsed = tryParseToISO(action.input.start_date);
+        const parsedStart = tryParseToISO(action.input.start_date);
+        if (parsedStart) tripUpdate.startDateParsed = parsedStart;
       }
       if (action.input.end_date !== undefined) {
         tripUpdate.endDate = action.input.end_date;

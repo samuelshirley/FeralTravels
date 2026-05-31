@@ -24,7 +24,7 @@ export interface PennyContext {
     name: string;
     start_date: string | null;
     end_date: string | null;
-    start_date_parsed: string | null;
+    start_date_parsed: string;
     status: string;
     /**
      * Driver-reported progress. `current_leg_id` is the leg they're on / about

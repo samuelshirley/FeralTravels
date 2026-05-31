@@ -1,6 +1,7 @@
 export type OnboardingState =
   | 'not_started'
   | 'trip_intent'
+  | 'trip_date'      // forced start-date entry — must parse to a real calendar day
   | 'trip_name'      // legacy only — naming step removed; rows here are advanced on read
   | 'units_pick'
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
@@ -32,8 +33,12 @@ export interface Trip {
   /** Free-text date (original column — may be "May 28", "late May", etc.). */
   start_date: string | null;
   end_date: string | null;
-  /** Machine-readable date (ISO YYYY-MM-DD). Null until user confirms a proper date. */
-  start_date_parsed: string | null;
+  /**
+   * Machine-readable start date (ISO YYYY-MM-DD). Guaranteed non-null: every
+   * trip is forced through the onboarding `trip_date` question, and `createTrip`
+   * seeds a today placeholder so the column is never null even mid-onboarding.
+   */
+  start_date_parsed: string;
   end_date_parsed: string | null;
   status: string;
   /** Trip lifecycle status for nightly replan gating. */
@@ -102,13 +107,14 @@ export interface Leg {
   end_lng: number | null;
   dates: string | null;
   /**
-   * Server-computed calendar date for this leg, ISO "YYYY-MM-DD", or null when
-   * the trip has no confirmed start date. Derived as `trip.start_date_parsed +
+   * Server-computed calendar date for this leg, ISO "YYYY-MM-DD". Non-null:
+   * the trip's start date is a hard invariant (see Trip.start_date_parsed), so
+   * every leg resolves to a calendar day. Derived as `trip.start_date_parsed +
    * leg rank` (every leg, driving or rest, occupies one calendar day). This is
    * the source of truth for leg dates — the client formats it for display and
    * must NOT recompute the date itself. See `legDateISO` in `lib/dates.ts`.
    */
-  date_iso: string | null;
+  date_iso: string;
   distance_km: number | null;
   drive_time_minutes: number | null;
   terrain: string | null;

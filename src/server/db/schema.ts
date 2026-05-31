@@ -16,6 +16,7 @@ import {
   jsonb,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
 
 // ── Shared JSONB types ──────────────────────────────────────────────────────
@@ -205,8 +206,16 @@ export const trips = pgTable(
     /** Free-text dates (original columns — may contain "May 28", "late May", etc.). */
     startDate: text('start_date'),
     endDate: text('end_date'),
-    /** Machine-readable dates for cron/constraint logic. Null until user confirms a proper date. */
-    startDateParsed: date('start_date_parsed', { mode: 'string' }),
+    /**
+     * Machine-readable start date for cron/constraint/leg-date logic. Hard
+     * non-null invariant: createTrip seeds a today placeholder and the forced
+     * onboarding `trip_date` question sets the real value. Defaults to
+     * CURRENT_DATE at the DB level as a final backstop against direct inserts.
+     */
+    startDateParsed: date('start_date_parsed', { mode: 'string' })
+      .notNull()
+      .default(sql`CURRENT_DATE`),
+    /** Machine-readable end date (still optional — many trips are open-ended). */
     endDateParsed: date('end_date_parsed', { mode: 'string' }),
     status: text('status').default('planning').notNull(),
     /** Trip lifecycle status for nightly replan gating. */
