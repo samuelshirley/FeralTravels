@@ -1554,6 +1554,10 @@ export default function ChatPanel({
               color: 'var(--tp-text)',
               lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
+              // pre-wrap wraps at whitespace but can't break an unbroken token
+              // (e.g. a long pasted URL with no spaces) — overflowWrap lets the
+              // bubble break inside such tokens so they stay within maxWidth.
+              overflowWrap: 'anywhere',
             }}
           >
             {msg.imageDataUrls && msg.imageDataUrls.length > 0 && (
