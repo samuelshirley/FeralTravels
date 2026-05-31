@@ -47,6 +47,7 @@ interface VehicleRemediationSnapshot {
     min?: number;
     max?: number;
     multiline?: boolean;
+    defaultValue?: string;
   } | null;
   progress: { current: number; total: number } | null;
   garage_empty?: boolean;
@@ -337,6 +338,18 @@ export default function ChatPanel({
   const remGarageEmptyWarned = useRef(false);
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
+  // When an onboarding question arrives with a prefilled answer (e.g. a start
+  // date we extracted from the trip description), drop it into the composer once
+  // so the user confirms with a single keystroke. Keyed on question identity so
+  // we don't clobber edits or re-fill after they clear it.
+  const prefilledQuestionKey = useRef<string | null>(null);
+  useEffect(() => {
+    const q = onboardingQuestion;
+    if (q?.defaultValue && prefilledQuestionKey.current !== q.key) {
+      prefilledQuestionKey.current = q.key;
+      setInput(q.defaultValue);
+    }
+  }, [onboardingQuestion]);
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [loading, setLoading] = useState(false);
   /** True while Penny's intro typing animation plays (first visit only). */

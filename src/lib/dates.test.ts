@@ -9,7 +9,88 @@ import {
   constraintLocalDateISO,
   requiredRestDaysBefore,
   behindCutoffRank,
+  tryParseToISO,
+  extractDateFromText,
 } from './dates';
+
+describe('extractDateFromText', () => {
+  const now = new Date(2026, 4, 31); // Sun May 31 2026
+
+  it('pulls a date out of a trip description', () => {
+    expect(
+      extractDateFromText(
+        'i want to visit every national park, started November 1st, from austin texas',
+        now,
+      ),
+    ).toBe('2026-11-01');
+  });
+
+  it('handles ISO, day-month, and explicit-year forms in prose', () => {
+    expect(extractDateFromText('leaving on 2026-06-03 heading north', now)).toBe('2026-06-03');
+    expect(extractDateFromText('we set off 3 June 2026 from home', now)).toBe('2026-06-03');
+    expect(extractDateFromText('depart June 3 2026, arrive whenever', now)).toBe('2026-06-03');
+  });
+
+  it('does not mistake stray numbers for dates', () => {
+    expect(
+      extractDateFromText('clockwise loop of the US, spend 2 days there every time', now),
+    ).toBeNull();
+    expect(extractDateFromText('just a road trip, no dates yet', now)).toBeNull();
+  });
+
+  it('returns null on empty input', () => {
+    expect(extractDateFromText('', now)).toBeNull();
+    expect(extractDateFromText(null, now)).toBeNull();
+  });
+});
+
+describe('tryParseToISO', () => {
+  // Sunday, May 31 2026 — fixed anchor for year-inference + relative phrases.
+  const now = new Date(2026, 4, 31);
+
+  it('passes ISO straight through', () => {
+    expect(tryParseToISO('2026-06-03', now)).toBe('2026-06-03');
+  });
+
+  it('parses dates that carry a year', () => {
+    expect(tryParseToISO('June 3 2026', now)).toBe('2026-06-03');
+    expect(tryParseToISO('June 3, 2026', now)).toBe('2026-06-03');
+    expect(tryParseToISO('3 June 2026', now)).toBe('2026-06-03');
+    expect(tryParseToISO('06/03/2026', now)).toBe('2026-06-03');
+  });
+
+  it('strips ordinal suffixes', () => {
+    expect(tryParseToISO('June 3rd 2026', now)).toBe('2026-06-03');
+    expect(tryParseToISO('November 1st', now)).toBe('2026-11-01');
+  });
+
+  it('infers the year for a month/day with none (this year if still ahead)', () => {
+    expect(tryParseToISO('November 1', now)).toBe('2026-11-01');
+    expect(tryParseToISO('Nov 1', now)).toBe('2026-11-01');
+    expect(tryParseToISO('1 November', now)).toBe('2026-11-01');
+  });
+
+  it('rolls a past month/day forward to next year', () => {
+    // Jan 5 already passed in 2026 (now = May 31) → next is 2027.
+    expect(tryParseToISO('January 5', now)).toBe('2027-01-05');
+  });
+
+  it('handles relative phrases', () => {
+    expect(tryParseToISO('today', now)).toBe('2026-05-31');
+    expect(tryParseToISO('tomorrow', now)).toBe('2026-06-01');
+    // now is a Sunday → next Saturday is Jun 6; "saturday" alone is the same.
+    expect(tryParseToISO('next Saturday', now)).toBe('2026-06-06');
+    expect(tryParseToISO('saturday', now)).toBe('2026-06-06');
+  });
+
+  it('returns null for non-specific or garbage input', () => {
+    expect(tryParseToISO('sometime in summer', now)).toBeNull();
+    expect(tryParseToISO('may', now)).toBeNull();
+    expect(tryParseToISO('', now)).toBeNull();
+    expect(tryParseToISO(null, now)).toBeNull();
+    expect(tryParseToISO('asdf', now)).toBeNull();
+  });
+});
 
 describe('legDateISO', () => {
   it('assigns one calendar day per leg index', () => {

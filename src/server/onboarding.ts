@@ -11,7 +11,7 @@ import {
   type VehicleApi,
 } from '@/server/repos/vehicles';
 import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
-import { tryParseToISO } from '@/lib/dates';
+import { tryParseToISO, extractDateFromText, formatDate, parseISODate } from '@/lib/dates';
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
@@ -71,6 +71,8 @@ export interface Question {
   max?: number;
   /** UI hint: render a multiline textarea instead of an input. */
   multiline?: boolean;
+  /** Prefilled answer (e.g. a start date extracted from the trip description). */
+  defaultValue?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,9 +98,8 @@ export const TRIP_DATE_QUESTION: Question = {
   key: 'trip_date',
   kind: 'text',
   label:
-    "When are you setting off? Give me a start date I can pin to the calendar.",
-  placeholder: 'e.g. June 3 2026 or 2026-06-03',
-  help: 'Type a specific day — "June 3 2026" or "2026-06-03". I need a real date, not "sometime in summer".',
+    "When are you setting off? A start date I can pin to the calendar — \"November 1st\", \"next Saturday\", or \"2026-06-03\" all work.",
+  placeholder: 'e.g. November 1st, next Saturday, or 2026-06-03',
 };
 
 const UNITS_PREF_KEY = 'units_pref';
@@ -317,9 +318,22 @@ export async function getOnboardingSnapshot(
   const totalSteps = preVehicleSteps + vehicleSteps.length;
 
   if (state === 'trip_date') {
+    // If the user already mentioned a date in their trip description, prefill it
+    // so confirming is one keystroke instead of retyping. They can still edit.
+    const extracted = extractDateFromText(trip.pendingIntent ?? '');
+    const question: Question = extracted
+      ? {
+          ...TRIP_DATE_QUESTION,
+          label: `Looks like you're setting off ${formatDate(
+            parseISODate(extracted),
+            unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric',
+          )} — send to confirm, or type a different date.`,
+          defaultValue: extracted,
+        }
+      : TRIP_DATE_QUESTION;
     return {
       state: 'trip_date',
-      question: TRIP_DATE_QUESTION,
+      question,
       vehicles: [],
       // First numbered step (the greeting is unnumbered).
       progress: { current: 1, total: totalSteps },
@@ -487,7 +501,7 @@ export async function submitAnswer(
     const parsed = tryParseToISO(text);
     if (!parsed) {
       throw new Error(
-        "I couldn't read that as a date. Try a specific day like \"June 3 2026\" or \"2026-06-03\".",
+        "Hmm, I couldn't pin that to a specific day. Try something like \"November 1st\", \"next Saturday\", or \"2026-06-03\".",
       );
     }
     const nextState = await resolvePostIntentState(userId);

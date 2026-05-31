@@ -14,46 +14,188 @@
 
 import type { UnitsPref } from './units';
 
+const WEEKDAYS = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+];
+
+/**
+ * Run a non-ISO string through Date.parse and return a local "YYYY-MM-DD".
+ *
+ * Date.parse treats date-only non-ISO strings ("November 1 2026", "05/28/2026")
+ * as LOCAL midnight, so we read the local calendar parts (not UTC) to avoid a
+ * timezone day-shift. Rejects years outside a sane window so junk like "1" that
+ * Date.parse coerces into year 2001 doesn't slip through.
+ */
+function parseViaDateParse(s: string): string | null {
+  const ms = Date.parse(s);
+  if (isNaN(ms)) return null;
+  const d = new Date(ms);
+  const year = d.getFullYear();
+  if (year < 2000 || year > 2100) return null;
+  return toISO(d);
+}
+
+/**
+ * Interpret a relative weekday phrase ("saturday", "next friday", "this mon")
+ * as the next upcoming occurrence strictly after `today`. Returns null when the
+ * phrase isn't a weekday.
+ */
+function parseRelativeWeekday(lower: string, today: Date): string | null {
+  const cleaned = lower.replace(/^(next|this|on|coming)\s+/, '').trim();
+  const idx = WEEKDAYS.findIndex(
+    (w) => w === cleaned || w.slice(0, 3) === cleaned,
+  );
+  if (idx === -1) return null;
+  let delta = (idx - today.getDay() + 7) % 7;
+  if (delta === 0) delta = 7; // "saturday" said on a Saturday means next week
+  return toISO(addDays(today, delta));
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 0, january: 0,
+  feb: 1, february: 1,
+  mar: 2, march: 2,
+  apr: 3, april: 3,
+  may: 4,
+  jun: 5, june: 5,
+  jul: 6, july: 6,
+  aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9,
+  nov: 10, november: 10,
+  dec: 11, december: 11,
+};
+
+/**
+ * Parse an explicit "month day" / "day month" with NO year ("November 1",
+ * "1 Nov") and resolve the year forward: this year if the day is still ahead of
+ * `today`, otherwise next year. Strict on purpose — requires a real month name
+ * and a 1–31 day — so Date.parse's leniency (which happily pulls a bare year out
+ * of junk and defaults the rest to Jan 1) can't sneak a date through.
+ */
+function parseMonthDayNoYear(s: string, today: Date): string | null {
+  const lower = s.toLowerCase().replace(/,/g, '');
+  let monthName: string | undefined;
+  let day: number | undefined;
+
+  let m = lower.match(/^([a-z]+)\.?\s+(\d{1,2})$/); // "november 1"
+  if (m) {
+    monthName = m[1];
+    day = +m[2];
+  } else {
+    m = lower.match(/^(\d{1,2})\s+([a-z]+)\.?$/); // "1 november"
+    if (m) {
+      day = +m[1];
+      monthName = m[2];
+    }
+  }
+  if (monthName === undefined || day === undefined) return null;
+
+  const month = MONTHS[monthName];
+  if (month === undefined || day < 1 || day > 31) return null;
+
+  let d = new Date(today.getFullYear(), month, day);
+  if (d.getMonth() !== month) return null; // rejects impossible days (e.g. Feb 30)
+  if (d.getTime() < today.getTime()) d = new Date(today.getFullYear() + 1, month, day);
+  return toISO(d);
+}
+
 /**
  * Try to extract an ISO "YYYY-MM-DD" string from a free-text date.
  *
- * Handles the formats we actually encounter:
- *   - ISO:       "2026-05-28"
- *   - US text:   "May 28, 2026"  /  "May 28 2026"
- *   - EU text:   "28 May 2026"
- *   - Slash:     "05/28/2026"  /  "5/28/2026"
- *   - Compact:   "Jun 12-13" → takes the first date (day 12)
+ * Handles the formats people actually type:
+ *   - ISO:        "2026-05-28"
+ *   - US text:    "May 28, 2026"  /  "May 28 2026"
+ *   - EU text:    "28 May 2026"
+ *   - Slash:      "05/28/2026"  /  "5/28/2026"
+ *   - Ordinals:   "November 1st", "June 3rd 2026"
+ *   - No year:    "November 1", "1 Nov" → next future occurrence of that day
+ *   - Relative:   "today", "tomorrow", "next Saturday", "friday"
  *
- * Returns null when the string can't be parsed into a valid date.
- * This is intentionally lenient — a null return just means leg dates
- * stay as "Day 1" / "Day 2" until a parseable date is provided.
+ * `now` is injectable for testing; it anchors the year-inference and relative
+ * phrases. Year inference is forward-looking: a month/day with no year resolves
+ * to the next occurrence from today (trip start dates are always upcoming), so
+ * "January 5" said in May means next January, not the one that just passed.
+ *
+ * Returns null only when the string genuinely doesn't point to a specific day
+ * ("sometime in summer", "may" with no day, garbage).
  */
-export function tryParseToISO(input: string | null | undefined): string | null {
+export function tryParseToISO(
+  input: string | null | undefined,
+  now: Date = new Date(),
+): string | null {
   if (!input) return null;
-  const trimmed = input.trim();
-  if (!trimmed) return null;
+  // Strip ordinal suffixes ("1st", "2nd", "23rd") — they break Date.parse.
+  const s = input.trim().replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, '$1');
+  if (!s) return null;
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   // Already ISO? Validate and return.
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const isoMatch = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (isoMatch) {
     const d = new Date(+isoMatch[1], +isoMatch[2] - 1, +isoMatch[3]);
-    if (!isNaN(d.getTime())) {
-      return toISO(d);
-    }
+    if (!isNaN(d.getTime())) return toISO(d);
   }
 
-  // Fallback: let Date.parse have a go. It handles "May 28, 2026" etc.
-  const ms = Date.parse(trimmed);
-  if (!isNaN(ms)) {
-    // Date.parse returns UTC — build a local date from the UTC parts to
-    // avoid timezone-shift day rollback.
-    const utc = new Date(ms);
-    const d = new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
-    if (!isNaN(d.getTime()) && d.getFullYear() >= 2000 && d.getFullYear() <= 2100) {
-      return toISO(d);
-    }
+  // Relative phrases.
+  const lower = s.toLowerCase();
+  if (lower === 'today') return toISO(today);
+  if (lower === 'tomorrow') return toISO(addDays(today, 1));
+  const weekday = parseRelativeWeekday(lower, today);
+  if (weekday) return weekday;
+
+  // A full date that already carries an explicit year ("May 28 2026",
+  // "05/28/2026"). Only trust Date.parse when a 4-digit year is present — it's
+  // too eager to invent missing parts otherwise.
+  if (/\d{4}/.test(s)) {
+    const withExplicitYear = parseViaDateParse(s);
+    if (withExplicitYear) return withExplicitYear;
   }
 
+  // Month + day with no year ("November 1", "1 Nov") → next future occurrence.
+  return parseMonthDayNoYear(s, today);
+}
+
+const MONTH_NAME_RE =
+  'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+
+// Date-like substrings to look for inside free prose, most-specific first. Each
+// is run through tryParseToISO, so a match still has to parse to a real day.
+const DATE_PHRASE_PATTERNS: RegExp[] = [
+  /\b\d{4}-\d{2}-\d{2}\b/, // ISO
+  new RegExp(`\\b(?:${MONTH_NAME_RE})\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?\\b`, 'i'), // "November 1st 2026"
+  new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTH_NAME_RE})\\.?(?:,?\\s+\\d{4})?\\b`, 'i'), // "1 November 2026"
+  /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/, // "11/01/2026"
+];
+
+/**
+ * Pull the first parseable date out of free-text prose (e.g. a trip description
+ * like "...started November 1st, from Austin..."). Returns the ISO date or null.
+ *
+ * Intentionally anchored on explicit date shapes (month names, ISO, slashes) so
+ * stray numbers like "spend 2 days" don't register as dates. Because it takes
+ * the FIRST date it finds — which may not be the one the user means — callers
+ * should treat the result as a suggestion to confirm, not a silent commit.
+ */
+export function extractDateFromText(
+  text: string | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  if (!text) return null;
+  for (const re of DATE_PHRASE_PATTERNS) {
+    const match = text.match(re);
+    if (match) {
+      const iso = tryParseToISO(match[0], now);
+      if (iso) return iso;
+    }
+  }
   return null;
 }
 
