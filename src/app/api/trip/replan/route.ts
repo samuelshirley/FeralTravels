@@ -135,7 +135,6 @@ function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean 
     action.name === 'add_leg' ||
     action.name === 'delete_leg' ||
     action.name === 'update_leg' ||
-    action.name === 'plan_fuel_stops' ||
     action.name === 'report_position' // re-routes the upcoming leg → distances change
   ) {
     return true;
@@ -544,9 +543,13 @@ export async function POST(req: Request) {
             );
           }
 
-          const fuelReplenishQueued = appliedActions.some(
-            actionShouldTriggerTripFuelReplenish
-          );
+          // An inline plan_fuel_stops lookup (Penny explicitly planning a leg)
+          // also needs the trip-wide forward replen so later legs' cumulative
+          // tank math stays consistent — and so the client refetches the stops
+          // it just wrote. `final.fuelPlanRan` carries that from the stream.
+          const fuelReplenishQueued =
+            appliedActions.some(actionShouldTriggerTripFuelReplenish) ||
+            final.fuelPlanRan;
 
           const changesEnvelope = {
             changes: appliedActions.map(actionToLegacyChange),
@@ -1024,15 +1027,6 @@ async function dispatchAction(
       return;
     }
 
-    case 'plan_fuel_stops': {
-      await resolvePennyLegIdOnTrip(action.input.leg_id, tripId, userId, ctx, {
-        dequeueNewLegFallback: true,
-      });
-      // Trip-wide replen runs after the batch when `fuelReplenishQueued` is
-      // set — keeps cumulative range across legs consistent.
-      return;
-    }
-
     case 'plan_dump_station_stops': {
       const resolvedLegId = await resolvePennyLegIdOnTrip(
         action.input.leg_id,
@@ -1411,8 +1405,6 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
       return { action: 'update_stop', stop_id: action.input.stop_id, data: action.input.data };
     case 'delete_stop':
       return { action: 'delete_stop', stop_id: action.input.stop_id };
-    case 'plan_fuel_stops':
-      return { action: 'plan_fuel_stops', leg_id: action.input.leg_id };
     case 'plan_dump_station_stops':
       return { action: 'plan_dump_station_stops', leg_id: action.input.leg_id, country_code: action.input.country_code ?? null };
     case 'add_task':

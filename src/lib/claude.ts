@@ -12,10 +12,12 @@ import {
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
   planOvernightStop as planOvernightStopTool,
+  planFuelStops as planFuelStopsTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { planOvernightStop as runOvernightEngine } from "@/lib/penny/overnight";
+import { planFuelStopsForLeg } from "@/server/fuel";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
 import {
@@ -309,6 +311,7 @@ You have a hard cap on tool-use iterations per turn. Burning iterations one segm
 
 <fuel_planning_rules>
 - NO PRICES. plan_fuel_stops places WHERE to refuel along a leg; it does not know fuel prices. Never say you found "cheap gas", "the best deal", or "current pricing" — that data does not exist. If the user wants prices, see <app_capabilities_and_limits> (log it with submit_idea, don't fake it).
+- REPORT THE REAL OUTCOME. plan_fuel_stops runs immediately and returns a result. NEVER say fuel stops are "planned"/"added"/"done" before its tool_result comes back. After it returns, describe exactly what it reported: how many stops were added, OR that none were needed, OR that no station could be found (tell the user to carry extra fuel / plan manually), OR that it failed and why. Do NOT claim a stop was placed when the result says otherwise — an empty plan that looks done is the worst-case failure.
 - After get_route, if you add legs whose distance_km exceeds effective_range_km (or consecutive legs will exceed it before a real refuel), call plan_fuel_stops for each of those legs on the **same** turn. Do **not** ask "want me to plan fuel?" — run the tool unless the user clearly opted out of auto fuel.
 - Prefer plan_fuel_stops over batches of guessed fuel add_stop rows when you need concrete stations; use fuel add_stop only when the user names a specific station or plan_fuel_stops is not appropriate.
 - Never plan a leg that relies on more than effective_range_km between fuel stops without plan_fuel_stops and/or explicit fuel stops.
@@ -515,6 +518,14 @@ export interface ReplanResult {
    */
   extractIntentCalled: boolean;
   /**
+   * True if a `plan_fuel_stops` lookup actually planned a leg this turn (any
+   * real outcome — stops created, none-needed, no_stations_found, or failed —
+   * but NOT the "leg isn't saved yet" / validation-error cases). The route ORs
+   * this into `fuelReplenishQueued` so the client runs the trip-wide forward
+   * replen (keeping later legs' cumulative tank math consistent) and refetches.
+   */
+  fuelPlanRan: boolean;
+  /**
    * The verdict from the LATEST check_trip_feasibility call this turn,
    * or null if the tool was never called. The dispatcher uses this to
    * gate add_leg actions — null or 'over_budget' means reject.
@@ -618,6 +629,7 @@ export async function* replanStream(
   // passed (or returned 'no_budget') before add_legs can land.
   let extractIntentCalled = false;
   let feasibilityVerdict: ReplanResult["feasibilityVerdict"] = null;
+  let fuelPlanRan = false;
 
   let anthropicAccountingPersisted = false;
   let attemptedFinalAnthropicAccounting = false;
@@ -742,7 +754,7 @@ export async function* replanStream(
 
       for (const tu of toolUses) {
         if (LOOKUP_TOOL_NAMES.has(tu.name)) {
-          const result = await executeLookupTool(tu, context);
+          const result = await executeLookupTool(tu, context, userId);
           // Workflow tracking — must happen here in the loop because each
           // iteration creates new tool_results, and we need cumulative state.
           // We track on success only; a failed extract_trip_intent doesn't
@@ -752,6 +764,11 @@ export async function* replanStream(
             tu.name === extractTripIntentTool.EXTRACT_TRIP_INTENT
           ) {
             extractIntentCalled = true;
+          }
+          // A plan_fuel_stops lookup that actually touched a leg → the client
+          // must run the trip-wide forward replen + refetch (see route.ts).
+          if (result.fuelPlanned) {
+            fuelPlanRan = true;
           }
           if (
             !result.is_error &&
@@ -911,6 +928,7 @@ export async function* replanStream(
         leakSanitized,
         extractIntentCalled,
         feasibilityVerdict,
+        fuelPlanRan,
       },
     };
   } finally {
@@ -953,11 +971,17 @@ interface LookupResult {
    * Other lookup tools leave this undefined.
    */
   feasibilityVerdict?: ReplanResult["feasibilityVerdict"];
+  /**
+   * Set only by executePlanFuelStops — true when it actually planned a leg
+   * (touched the DB), so the loop can flag `fuelPlanRan` for the route.
+   */
+  fuelPlanned?: boolean;
 }
 
 async function executeLookupTool(
   toolUse: Anthropic.ToolUseBlock,
   context: PennyContext,
+  userId: string,
 ): Promise<LookupResult> {
   if (toolUse.name === getRouteTool.GET_ROUTE) {
     return executeGetRoute(toolUse, context);
@@ -971,10 +995,98 @@ async function executeLookupTool(
   if (toolUse.name === planOvernightStopTool.PLAN_OVERNIGHT_STOP) {
     return executePlanOvernightStop(toolUse, context);
   }
+  if (toolUse.name === planFuelStopsTool.PLAN_FUEL_STOPS) {
+    return executePlanFuelStops(toolUse, context, userId);
+  }
   return {
     is_error: true,
     content: `Unhandled lookup tool: ${toolUse.name}.`,
   };
+}
+
+/**
+ * plan_fuel_stops — run the auto fuel planner for one leg INLINE and hand Penny
+ * the real outcome, so she reports what actually happened instead of claiming
+ * completion before any planning ran (the trust-on-the-road bug: "Fuel stops
+ * are now planned" + zero stops + no error).
+ *
+ * Why a lookup, not an action: action tools are validated/queued during the
+ * stream and only dispatched AFTER Penny's prose is generated — so an action
+ * can never inform her text. Running it here, in the loop, feeds the result
+ * back as a tool_result and gives her a turn to describe it honestly.
+ *
+ * `context.legs` is the trip snapshot at stream start AND the authorization
+ * boundary (it's this user's trip). A leg created via add_leg earlier in the
+ * SAME turn isn't persisted yet and won't be in the snapshot — we return an
+ * honest "not saved yet, it'll auto-plan" message rather than failing or
+ * pretending. Genuinely-existing legs (the reported incident) plan inline.
+ */
+async function executePlanFuelStops(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext,
+  userId: string,
+): Promise<LookupResult> {
+  const schema = planFuelStopsTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on plan_fuel_stops: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const { leg_id } = parsed.data as planFuelStopsTool.PlanFuelStopsInput;
+  const leg = context.legs.find((l) => l.id === leg_id);
+  if (!leg) {
+    return {
+      is_error: false,
+      content:
+        "That leg isn't saved yet (newly added legs are written only when the plan is applied), so its fuel can't be planned right now. " +
+        "It will be auto-planned once the plan is saved, and any stops will appear in the stops list. " +
+        "Tell the user this honestly — do NOT claim fuel stops were planned for it.",
+    };
+  }
+
+  const dayLabel = leg.end_name
+    ? `the ${leg.start_name ?? "start"} → ${leg.end_name} leg`
+    : "this leg";
+
+  const result = await planFuelStopsForLeg(leg_id, userId);
+
+  switch (result.status) {
+    case "ready":
+      if ((result.stopsCreated ?? 0) > 0) {
+        const n = result.stopsCreated ?? 0;
+        return {
+          is_error: false,
+          fuelPlanned: true,
+          content: `Planned ${n} fuel stop${n === 1 ? "" : "s"} along ${dayLabel}, now in the stops list as options. Tell the user how many were added.`,
+        };
+      }
+      return {
+        is_error: false,
+        fuelPlanned: true,
+        content: `No fuel stop is needed on ${dayLabel} — it's within range since the last refuel (or too short to need one). Tell the user plainly that no stop was added, and why; do NOT imply stops were placed.`,
+      };
+    case "no_stations_found":
+      return {
+        is_error: false,
+        fuelPlanned: true,
+        content: `Could NOT find any fuel station along ${dayLabel}: ${result.reason ?? "no stations within the search radius"}. Tell the user honestly that no fuel stop could be planned here and they should carry extra fuel or plan one manually. Do NOT claim a stop was planned.`,
+      };
+    case "failed":
+      return {
+        is_error: true,
+        fuelPlanned: true,
+        content: `Fuel planning failed for ${dayLabel}: ${result.reason ?? "unknown error"}. Tell the user it failed and why; do NOT claim success.`,
+      };
+    case "skipped":
+    default:
+      return {
+        is_error: false,
+        content: `Couldn't plan fuel for ${dayLabel}: ${result.reason ?? "missing leg coordinates"}. Tell the user honestly; do NOT claim a stop was planned.`,
+      };
+  }
 }
 
 /**

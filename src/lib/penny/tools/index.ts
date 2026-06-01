@@ -100,7 +100,6 @@ export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
   addStop.ADD_STOP,
   updateStop.UPDATE_STOP,
   deleteStop.DELETE_STOP,
-  planFuelStops.PLAN_FUEL_STOPS,
   planDumpStationStops.PLAN_DUMP_STATION_STOPS,
   addTask.ADD_TASK,
   updateTask.UPDATE_TASK,
@@ -116,6 +115,11 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
   extractTripIntent.EXTRACT_TRIP_INTENT,
   checkTripFeasibility.CHECK_TRIP_FEASIBILITY,
   planOvernightStop.PLAN_OVERNIGHT_STOP,
+  // plan_fuel_stops runs INLINE in the tool-use loop (it writes to the DB, but
+  // executes synchronously and feeds its real outcome back as a tool_result) so
+  // Penny can report what actually happened — created N / none / not-found /
+  // failed — instead of pre-claiming completion. See executePlanFuelStops.
+  planFuelStops.PLAN_FUEL_STOPS,
 ]);
 
 /**
@@ -162,7 +166,8 @@ export type ValidatedAction =
   | { name: typeof addStop.ADD_STOP; input: addStop.AddStopInput }
   | { name: typeof updateStop.UPDATE_STOP; input: updateStop.UpdateStopInput }
   | { name: typeof deleteStop.DELETE_STOP; input: deleteStop.DeleteStopInput }
-  | { name: typeof planFuelStops.PLAN_FUEL_STOPS; input: planFuelStops.PlanFuelStopsInput }
+  // plan_fuel_stops is a LOOKUP tool (runs inline, not dispatched as an action)
+  // — deliberately absent from this union. See LOOKUP_TOOL_NAMES.
   | { name: typeof planDumpStationStops.PLAN_DUMP_STATION_STOPS; input: planDumpStationStops.PlanDumpStationStopsInput }
   | { name: typeof addTask.ADD_TASK; input: addTask.AddTaskInput }
   | { name: typeof updateTask.UPDATE_TASK; input: updateTask.UpdateTaskInput };

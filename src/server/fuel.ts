@@ -18,6 +18,11 @@ import {
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { logGooglePlacesUsage } from '@/server/repos/usage';
 import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
+import {
+  findTopGasStations,
+  PLACES_RADIUS_ESCALATION_KM,
+  type GasStationRanked,
+} from '@/server/fuelPlaces';
 
 /**
  * Auto fuel-stop planner.
@@ -53,10 +58,6 @@ import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 // leave a safety margin on top of the 20% tank reserve built into
 // effective_range_km. 0.85 → at range=600km, we plan a stop ~every 510km.
 const SAMPLE_FRACTION = 0.85;
-// Google Places Nearby Search radius, meters. Big enough to find a station
-// in a rural stretch, small enough to stay on-route (a 10km detour feels
-// acceptable on a long drive).
-const SEARCH_RADIUS_KM = 10;
 // Hard cap on how many fuel stops we'll propose per leg. Prevents a
 // 5000km leg from spawning 10+ "option" rows that clutter the UI.
 const MAX_STOPS_PER_LEG = 8;
@@ -74,18 +75,27 @@ export const AUTO_STRETCH_BREAK_NOTE_PREFIX = 'Auto-suggested stretch break';
 
 export interface FuelPlanResult {
   legId: string;
-  status: 'ready' | 'failed' | 'skipped';
+  status: 'ready' | 'failed' | 'skipped' | 'no_stations_found';
   reason?: string;
   stopsCreated?: number;
 }
 
-/** Quick status mutation; clears `fuel_plan_error` whenever status is not failed. */
+/**
+ * Quick status mutation. Persists `fuel_plan_error` (the user-visible reason)
+ * for the two states that carry one — `failed` and `no_stations_found` — and
+ * clears it otherwise. `no_stations_found` is NOT a failure: planning ran
+ * correctly but the route is genuinely too remote for an on-route station, and
+ * the user needs to know rather than be shown an empty list that looks safe.
+ */
 async function setFuelStatus(
   legId: string,
-  status: 'none' | 'pending' | 'computing' | 'ready' | 'failed',
+  status: 'none' | 'pending' | 'computing' | 'ready' | 'failed' | 'no_stations_found',
   fuelPlanError: string | null = null
 ) {
-  const errCol = status === 'failed' ? (fuelPlanError ?? 'Fuel planning failed.') : null;
+  const carriesReason = status === 'failed' || status === 'no_stations_found';
+  const errCol = carriesReason
+    ? (fuelPlanError ?? (status === 'failed' ? 'Fuel planning failed.' : 'No fuel stations found near the planned refuel point.'))
+    : null;
   await db
     .update(legs)
     .set({ fuelStatus: status, fuelPlanError: errCol, updatedAt: new Date() })
@@ -231,9 +241,16 @@ export async function planFuelStopsForLeg(
   let placesError: string | null = null;
 
   const pending: PendingFuel[] = [];
+  // Did at least one sample exhaust the full radius ladder without finding a
+  // station? If so and we end up with zero stops, that's the
+  // `no_stations_found` signal — a genuinely remote leg, not a bug. We track
+  // the farthest sample that came up empty so the warning names a real point.
+  let exhaustedSampleKm: number | null = null;
   for (const sample of fuelSamples) {
     const result = await findTopGasStations(sample.point, fuel, placesKey);
-    placesEssentialsCalls += 1;
+    // findTopGasStations may make one Places call per radius it tries, so it
+    // reports its own tally rather than us assuming exactly one.
+    placesEssentialsCalls += result.callsMade;
     if (!result.ok) {
       const reason = `${result.message} Visit /api/debug/fuel while signed in for a full diagnosis.`;
       await setFuelStatus(legId, 'failed', reason);
@@ -258,6 +275,8 @@ export async function planFuelStopsForLeg(
         station: result.data.primary,
         alternates: result.data.alternates,
       });
+    } else if (result.exhausted) {
+      exhaustedSampleKm = Math.max(exhaustedSampleKm ?? 0, sample.distance_km);
     }
   }
 
@@ -268,6 +287,21 @@ export async function planFuelStopsForLeg(
     proCalls: 0,
     success: true,
   });
+
+  // No stops AND at least one sample point had no station within 500 km. This
+  // is the conservative-bias case: rather than mark the leg 'ready' with an
+  // empty plan that LOOKS safe, surface a warning the user must act on (e.g.
+  // carry extra fuel, or plan a stop manually). See [[feedback_fuel_safety_bias]].
+  if (pending.length === 0 && exhaustedSampleKm != null) {
+    const maxRadiusKm = PLACES_RADIUS_ESCALATION_KM[PLACES_RADIUS_ESCALATION_KM.length - 1];
+    const reason =
+      `Couldn't find any fuel stations within ${maxRadiusKm} km of the planned refuel point ` +
+      `(~${Math.round(exhaustedSampleKm)} km into this leg). This leg is too remote for an ` +
+      `auto-planned stop — carry extra fuel or plan a stop manually.`;
+    await clearAutoPlannerGooglePlacesOptionStops(legId);
+    await setFuelStatus(legId, 'no_stations_found', reason);
+    return { legId, status: 'no_stations_found', reason, stopsCreated: 0 };
+  }
 
   pending.sort((a, b) => a.distance_km - b.distance_km);
 
@@ -619,171 +653,3 @@ async function computeKmBurnedSinceLastRefuel(
   return kmBurnedSinceLastRefuel(history);
 }
 
-// ---------------------------------------------------------------------------
-// Google Places Nearby Search — v1 (Place Search (New)).
-//
-// We pick v1 over legacy because legacy Nearby Search has been tagged for
-// retirement and the new endpoint's `includedTypes` filter is far tighter
-// ("gas_station" only) than legacy's `type=gas_station` which leaks car
-// dealers and mechanics.
-// https://developers.google.com/maps/documentation/places/web-service/nearby-search
-
-interface GasStation {
-  name: string;
-  lat: number;
-  lng: number;
-  place_id: string | null;
-}
-
-/** Up to 3 ranked candidates for one knot: the primary + up to 2 alternates. */
-interface GasStationRanked extends GasStation {
-  /** Haversine km from the knot center — proxy for off-route detour. */
-  distance_km: number;
-}
-
-interface GasStationCandidates {
-  primary: GasStationRanked;
-  alternates: GasStationRanked[]; // 0..2 entries
-}
-
-/** Maximum total candidates returned per knot (1 primary + 2 alternates). */
-const FUEL_CANDIDATES_PER_KNOT = 3;
-
-const PLACES_RETRYABLE_HTTP = new Set([429, 502, 503]);
-const PLACES_MAX_ATTEMPTS = 3;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Unwrap a Places HTTP error to a string for logs and the leg error column. */
-function placesErrorReason(httpStatus: number, body: string): string {
-  if (httpStatus === 403) {
-    if (body.includes('PERMISSION_DENIED') || body.includes('blocked')) {
-      return (
-        'Places API (New) returned 403 PERMISSION_DENIED — enable it (and billing) in Google Cloud Console. ' +
-        'If this key is restricted to HTTP referrers, set GOOGLE_MAPS_SERVER_API_KEY to a separate key without referrer restrictions for server-side Places calls.'
-      );
-    }
-    return (
-      'Places API returned 403 — key restrictions are blocking the server. ' +
-      'Use GOOGLE_MAPS_SERVER_API_KEY without HTTP referrer restrictions for Places REST calls from Vercel.'
-    );
-  }
-  if (httpStatus === 400) {
-    return `Places API returned 400 — "Places API (New)" may not be enabled for this project in Google Cloud Console.`;
-  }
-  return `Places API returned HTTP ${httpStatus}: ${body.slice(0, 120)}`;
-}
-
-type FindGasOutcome =
-  | { ok: true; data: GasStationCandidates | null }
-  | { ok: false; message: string };
-
-async function findTopGasStations(
-  center: LatLng,
-  // Vehicle-level fuel type was dropped in 0007; signature kept as `null`
-  // so the future fuel-type bias work has an obvious place to plug back in.
-  fuelType: null,
-  apiKey: string
-): Promise<FindGasOutcome> {
-  const payload = () =>
-    JSON.stringify({
-      includedTypes: ['gas_station'],
-      maxResultCount: 8,
-      locationRestriction: {
-        circle: {
-          center: { latitude: center.lat, longitude: center.lng },
-          radius: SEARCH_RADIUS_KM * 1000,
-        },
-      },
-    });
-
-  let lastHttpMessage = 'Places nearby search failed.';
-
-  for (let attempt = 0; attempt < PLACES_MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
-          'X-Goog-FieldMask':
-            'places.displayName,places.location,places.id,places.primaryType',
-        },
-        body: payload(),
-      });
-
-      const bodyText = await res.text().catch(() => '');
-
-      if (!res.ok) {
-        lastHttpMessage = placesErrorReason(res.status, bodyText);
-        if (PLACES_RETRYABLE_HTTP.has(res.status) && attempt < PLACES_MAX_ATTEMPTS - 1) {
-          await sleep(350 * (attempt + 1));
-          continue;
-        }
-        console.error(`[fuel] Places API error: HTTP ${res.status} — ${lastHttpMessage}`);
-        return { ok: false, message: lastHttpMessage };
-      }
-
-      const data = JSON.parse(bodyText) as {
-        places?: Array<{
-          id?: string;
-          displayName?: { text?: string };
-          location?: { latitude: number; longitude: number };
-          primaryType?: string;
-        }>;
-      };
-      const places = data.places ?? [];
-      if (places.length === 0) return { ok: true, data: null };
-
-      void fuelType;
-      const ranked = places
-        .map((p) => {
-          const loc = p.location;
-          if (!loc) return null;
-          return {
-            name: p.displayName?.text?.trim() || 'Gas station',
-            lat: loc.latitude,
-            lng: loc.longitude,
-            place_id: p.id ?? null,
-            distance_km: haversineKm(center, { lat: loc.latitude, lng: loc.longitude }),
-          };
-        })
-        .filter((x): x is NonNullable<typeof x> => !!x)
-        .sort((a, b) => a.distance_km - b.distance_km);
-
-      const dedupedRanked: typeof ranked = [];
-      for (const cand of ranked) {
-        const dup = dedupedRanked.some(
-          (kept) =>
-            (cand.place_id != null && kept.place_id === cand.place_id) ||
-            (kept.name.toLowerCase() === cand.name.toLowerCase() &&
-              haversineKm(
-                { lat: kept.lat, lng: kept.lng },
-                { lat: cand.lat, lng: cand.lng }
-              ) < 0.03)
-        );
-        if (!dup) dedupedRanked.push(cand);
-        if (dedupedRanked.length >= FUEL_CANDIDATES_PER_KNOT) break;
-      }
-
-      const [primary, ...alternates] = dedupedRanked;
-      if (!primary) return { ok: true, data: null };
-      return { ok: true, data: { primary, alternates } };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < PLACES_MAX_ATTEMPTS - 1) {
-        await sleep(350 * (attempt + 1));
-        continue;
-      }
-      console.warn('[fuel] Places nearby search threw after retries:', err);
-      return {
-        ok: false,
-        message: `Places request failed after retries (${msg}). Check network and API key configuration.`,
-      };
-    }
-  }
-
-  return { ok: false, message: lastHttpMessage };
-}

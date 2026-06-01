@@ -286,7 +286,7 @@ export const legs = pgTable(
     status: text('status').default('planning').notNull(),
     color: text('color'),
     notes: text('notes'),
-    /** Auto fuel planner: none | pending | computing | ready | failed — see `server/fuel.ts`. */
+    /** Auto fuel planner: none | pending | computing | ready | failed | no_stations_found — see `server/fuel.ts`. */
     fuelStatus: text('fuel_status').default('none').notNull(),
     fuelPlanError: text('fuel_plan_error'),
     /**

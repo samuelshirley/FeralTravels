@@ -75,7 +75,12 @@ export type FuelStatus =
   | 'pending'
   | 'computing'
   | 'ready'
-  | 'failed';
+  | 'failed'
+  // Planning ran fine but the route is too remote for an on-route station
+  // within the widest search radius. NOT a failure — a real warning the user
+  // must act on (carry extra fuel / plan a stop manually). `fuel_plan_error`
+  // carries the human-readable reason. See server/fuel.ts.
+  | 'no_stations_found';
 
 /** GeoJSON LineString for driving route geometry. */
 export interface GeoJSONLineString {

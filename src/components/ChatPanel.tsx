@@ -986,15 +986,18 @@ export default function ChatPanel({
 
       if (appliedCount > 0) {
         onTripUpdated();
-        if (fuelReplenishQueued) {
-          onActivity?.('fuel-planning');
-          try {
-            await tripApi(tripId).replenishFuelStops();
-          } catch (e) {
-            console.warn('replenishFuelStops failed', e);
-          }
-          onTripUpdated();
+      }
+      // Runs even when appliedCount === 0: an inline plan_fuel_stops lookup
+      // applies no dispatched actions but still writes stops + sets
+      // fuelReplenishQueued, so we must replan forward legs and refetch.
+      if (fuelReplenishQueued) {
+        onActivity?.('fuel-planning');
+        try {
+          await tripApi(tripId).replenishFuelStops();
+        } catch (e) {
+          console.warn('replenishFuelStops failed', e);
         }
+        onTripUpdated();
       }
       onActivity?.(applyError ? 'error' : 'response');
     } catch (err) {

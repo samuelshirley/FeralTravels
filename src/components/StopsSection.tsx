@@ -208,6 +208,31 @@ export default function StopsSection({
           </div>
         )}
 
+        {/* No stations found within the widest search radius — a real warning,
+            not a failure. Penny couldn't auto-plan a stop because the route is
+            genuinely too remote; the user must carry extra fuel or plan a stop
+            manually. Shown in readonly too — it's a safety signal. */}
+        {fuelStatus === 'no_stations_found' && (
+          <div
+            style={{
+              marginBottom: 8,
+              padding: '8px 10px',
+              background: 'rgba(214,158,46,0.1)',
+              border: '1px solid rgba(214,158,46,0.4)',
+              borderRadius: 5,
+              fontSize: 11,
+              color: 'var(--tp-text)',
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: 'var(--tp-warning, #b7791f)' }}>
+              No fuel stations found along this leg.
+            </strong>{' '}
+            {fuelPlanError ??
+              'This stretch is too remote for an auto-planned fuel stop — carry extra fuel or plan a stop manually.'}
+          </div>
+        )}
+
         {/* Waypoint stops (non-overnight) */}
         {waypointStops.map((stop) => (
           <div key={stop.id}>
@@ -249,11 +274,14 @@ export default function StopsSection({
           </div>
         ))}
 
-        {waypointStops.length === 0 && !fuelPlanning && fuelStatus !== 'failed' && (
-          <div style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
-            {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
-          </div>
-        )}
+        {waypointStops.length === 0 &&
+          !fuelPlanning &&
+          fuelStatus !== 'failed' &&
+          fuelStatus !== 'no_stations_found' && (
+            <div style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
+              {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
+            </div>
+          )}
 
         {/* Overnight */}
         {overnightStops.length > 0 && (
