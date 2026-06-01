@@ -290,6 +290,14 @@ export const legs = pgTable(
     fuelStatus: text('fuel_status').default('none').notNull(),
     fuelPlanError: text('fuel_plan_error'),
     /**
+     * Set by repairLegContinuity when it chained this leg's start to the prior
+     * leg's end but the re-route then failed, so distance/time/geometry were
+     * cleared. A human-readable reason the leg renders without a route — kept so
+     * the failure is never silent (see `resolveContinuityRoute` in
+     * `lib/penny/schedule.ts`). Null when the leg routes cleanly.
+     */
+    continuityWarning: text('continuity_warning'),
+    /**
      * Driving route geometry stored as GeoJSON LineString (from Directions/OSRM).
      * Persisted at planning time so the UI never calls external APIs during viewing.
      */

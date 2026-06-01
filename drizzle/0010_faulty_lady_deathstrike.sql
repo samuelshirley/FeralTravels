@@ -1,0 +1,1 @@
+ALTER TABLE "legs" ADD COLUMN "continuity_warning" text;

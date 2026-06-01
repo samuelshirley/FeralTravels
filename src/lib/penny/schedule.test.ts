@@ -10,9 +10,11 @@ import { describe, it, expect } from 'vitest';
 import {
   materializeSchedule,
   computeStartFixes,
+  resolveContinuityRoute,
   type ScheduleStop,
   type ContinuityLeg,
 } from './schedule';
+import type { GeoJSONLineString } from '@/types/trip';
 
 function stop(overrides: Partial<ScheduleStop> & { driveId: string }): ScheduleStop {
   return {
@@ -266,5 +268,58 @@ describe('computeStartFixes', () => {
       driveLeg(GIRONA, INNSBRUCK, 'Innsbruck'),
     ];
     expect(computeStartFixes(legs, undefined, 0)).toHaveLength(1);
+  });
+});
+
+describe('resolveContinuityRoute', () => {
+  const geometry: GeoJSONLineString = {
+    type: 'LineString',
+    coordinates: [
+      [10.08, 50.2],
+      [6.95, 50.33],
+    ],
+  };
+
+  it('on a successful re-route: adopts the route and clears any warning', () => {
+    const r = resolveContinuityRoute(
+      { ok: true, distanceKm: 312, driveTimeMinutes: 240, geometry },
+      'Bad Kissingen',
+      'Nürburgring',
+    );
+    expect(r.rerouted).toBe(true);
+    expect(r.distanceKm).toBe(312);
+    expect(r.driveTimeMinutes).toBe(240);
+    expect(r.geometry).toEqual(geometry);
+    expect(r.continuityWarning).toBeNull();
+  });
+
+  it('on the noroute branch: clears distance/time/geometry AND sets a warning', () => {
+    const r = resolveContinuityRoute({ ok: false }, 'Glacier National Park', 'Old Faithful, Yellowstone');
+    expect(r.rerouted).toBe(false);
+    expect(r.distanceKm).toBeNull();
+    expect(r.driveTimeMinutes).toBeNull();
+    expect(r.geometry).toBeNull();
+    expect(r.continuityWarning).not.toBeNull();
+    // Warning names both endpoints in plain language so the card explains itself.
+    expect(r.continuityWarning).toContain('Glacier National Park');
+    expect(r.continuityWarning).toContain('Old Faithful, Yellowstone');
+  });
+
+  it('treats a partial/invalid success (ok but missing fields) as noroute', () => {
+    // A "success" with no distance is not usable — must not poison the summary.
+    const r = resolveContinuityRoute(
+      { ok: true, driveTimeMinutes: 240, geometry },
+      'A',
+      'B',
+    );
+    expect(r.rerouted).toBe(false);
+    expect(r.distanceKm).toBeNull();
+    expect(r.continuityWarning).not.toBeNull();
+  });
+
+  it('falls back to generic endpoint names when they are null', () => {
+    const r = resolveContinuityRoute({ ok: false }, null, null);
+    expect(r.continuityWarning).toContain('the previous stop');
+    expect(r.continuityWarning).toContain('this stop');
   });
 });

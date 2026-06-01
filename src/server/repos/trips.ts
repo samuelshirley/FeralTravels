@@ -7,8 +7,10 @@ import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import {
   materializeSchedule,
   computeStartFixes,
+  resolveContinuityRoute,
   type ScheduleStop,
   type ContinuityLeg,
+  type ContinuityRouteOutcome,
 } from '@/lib/penny/schedule';
 import { getDirections } from '@/lib/google/directions';
 import {
@@ -115,6 +117,7 @@ function legRow(r: typeof legs.$inferSelect) {
     notes: r.notes,
     fuel_status: (r.fuelStatus as Leg['fuel_status']) ?? 'none',
     fuel_plan_error: r.fuelPlanError ?? null,
+    continuity_warning: r.continuityWarning ?? null,
     geometry: r.geometry ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
@@ -1045,11 +1048,19 @@ export interface ContinuityRepairOut {
  *     plan totals (computePlanSummary) and fuel math read those DB numbers — a
  *     corrected origin with a stale 638 km would silently poison the summary.
  *   - If Directions fails, we still land the corrected start but NULL the
- *     distance/time/geometry rather than keep numbers from the wrong origin, and
- *     surface it to the caller (which logs it) — never silently swallow it.
+ *     distance/time/geometry rather than keep numbers from the wrong origin, AND
+ *     write a human-readable `continuity_warning` on the leg (via
+ *     resolveContinuityRoute) so the route-less card explains itself. The caller
+ *     also logs it — the failure is surfaced in two places, never swallowed.
  *
- * Idempotent: a no-op (no writes, no Directions calls) when the trip is already
- * contiguous. Run after rebuildTripSchedule so it sees the settled order.
+ * Self-healing: a leg that previously failed its re-route keeps its warning and
+ * is already contiguous, so computeStartFixes won't re-flag it. We therefore
+ * also re-attempt routing for any leg that still carries a continuity_warning
+ * (from its existing, already-correct origin); if the route comes back this run
+ * the warning clears. So this is NOT a strict no-op on an already-contiguous
+ * trip when a warned leg exists — it makes one Directions call per warned leg.
+ * Otherwise idempotent. Run after rebuildTripSchedule so it sees the settled
+ * order.
  */
 export async function repairLegContinuity(
   tripId: string,
@@ -1084,59 +1095,99 @@ export async function repairLegContinuity(
   }));
 
   const fixes = computeStartFixes(chain, undefined, anchorIndex);
-  if (fixes.length === 0) return [];
+  const fixedIndices = new Set(fixes.map((f) => f.index));
+
+  // Self-heal: a leg whose start was already chained on a previous run but whose
+  // re-route then failed carries a continuity_warning and null geometry. It is
+  // now contiguous, so computeStartFixes won't flag it again — yet the failure
+  // may have been transient (a Directions blip). Re-attempt routing for those
+  // legs from their existing (already-correct) origin so a recovered route can
+  // clear the warning instead of leaving the leg permanently route-less.
+  interface RepairTarget {
+    index: number;
+    /** Re-route origin. */
+    originLat: number;
+    originLng: number;
+    originName: string | null;
+    /** True for drift fixes: also persist the corrected start coords/name/title. */
+    applyStart: boolean;
+  }
+  const targets: RepairTarget[] = fixes.map((f) => ({
+    index: f.index,
+    originLat: f.startLat,
+    originLng: f.startLng,
+    originName: f.startName,
+    applyStart: true,
+  }));
+  for (let i = anchorIndex + 1; i < legRows.length; i++) {
+    if (fixedIndices.has(i)) continue;
+    const l = legRows[i];
+    if (l.continuityWarning == null) continue;
+    if (l.startLat == null || l.startLng == null || l.endLat == null || l.endLng == null) continue;
+    targets.push({
+      index: i,
+      originLat: l.startLat,
+      originLng: l.startLng,
+      originName: l.startName,
+      applyStart: false,
+    });
+  }
+  if (targets.length === 0) return [];
 
   const out: ContinuityRepairOut[] = [];
-  for (const fix of fixes) {
-    const leg = legRows[fix.index];
-    const set: Record<string, unknown> = {
-      startLat: fix.startLat,
-      startLng: fix.startLng,
-      startName: fix.startName,
-      updatedAt: new Date(),
-    };
+  for (const target of targets) {
+    const leg = legRows[target.index];
+    const set: Record<string, unknown> = { updatedAt: new Date() };
 
-    // Rewrite an "A → B" title so the displayed origin matches the new start.
-    if (leg.title.includes('→') && fix.startName) {
-      const dest = leg.endName ?? leg.title.split('→').slice(1).join('→').trim();
-      set.title = `${fix.startName} → ${dest}`;
+    if (target.applyStart) {
+      set.startLat = target.originLat;
+      set.startLng = target.originLng;
+      set.startName = target.originName;
+      // Rewrite an "A → B" title so the displayed origin matches the new start.
+      if (leg.title.includes('→') && target.originName) {
+        const dest = leg.endName ?? leg.title.split('→').slice(1).join('→').trim();
+        set.title = `${target.originName} → ${dest}`;
+      }
     }
 
-    let rerouted = false;
+    let outcome: ContinuityRouteOutcome = { ok: false };
     if (leg.endLat != null && leg.endLng != null) {
       // Preserve any drive-through waypoints when re-routing from the new origin.
       const waypoints = await selectedWaypointsForLeg(leg.id);
       const dir = await getDirections(
-        { lat: fix.startLat, lng: fix.startLng },
+        { lat: target.originLat, lng: target.originLng },
         { lat: leg.endLat, lng: leg.endLng },
         waypoints.length > 0 ? { waypoints } : {},
       );
       if (dir.ok && dir.polyline_points.length > 0) {
-        set.distanceKm = dir.distance_km;
-        set.driveTimeMinutes = dir.drive_time_minutes;
-        set.geometry = {
-          type: 'LineString',
-          // GeoJSON uses [lng, lat] order.
-          coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
-        } satisfies GeoJSONLineString;
-        rerouted = true;
-      } else {
-        // The old numbers belong to the wrong origin — clear them rather than
-        // report a wrong distance/time in the plan summary.
-        set.distanceKm = null;
-        set.driveTimeMinutes = null;
-        set.geometry = null;
+        outcome = {
+          ok: true,
+          distanceKm: dir.distance_km,
+          driveTimeMinutes: dir.drive_time_minutes,
+          geometry: {
+            type: 'LineString',
+            // GeoJSON uses [lng, lat] order.
+            coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+          } satisfies GeoJSONLineString,
+        };
       }
-    } else {
-      set.geometry = null;
     }
+
+    // Decide what to persist (pure). On success we adopt the fresh route and
+    // clear any warning; on failure we clear the stale distance/time/geometry
+    // and record a plain-language warning so the broken leg is never silent.
+    const persist = resolveContinuityRoute(outcome, target.originName, leg.endName);
+    set.distanceKm = persist.distanceKm;
+    set.driveTimeMinutes = persist.driveTimeMinutes;
+    set.geometry = persist.geometry;
+    set.continuityWarning = persist.continuityWarning;
 
     await db.update(legs).set(set).where(eq(legs.id, leg.id));
     out.push({
       legId: leg.id,
       fromName: leg.startName,
-      toName: fix.startName,
-      rerouted,
+      toName: target.originName,
+      rerouted: persist.rerouted,
     });
   }
 

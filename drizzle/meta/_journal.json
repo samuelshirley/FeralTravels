@@ -71,6 +71,13 @@
       "when": 1780313630902,
       "tag": "0009_brave_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780313945784,
+      "tag": "0010_faulty_lady_deathstrike",
+      "breakpoints": true
     }
   ]
 }

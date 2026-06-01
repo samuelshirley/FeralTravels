@@ -110,6 +110,13 @@ export interface PennyLeg {
   drive_time_minutes: number | null;
   terrain: string | null;
   status: string;
+  /**
+   * Set when continuity repair couldn't re-route this leg (distance/time/geometry
+   * were cleared). When present, the leg has no usable route — Penny should tell
+   * the user and offer to fix the coordinates rather than reason over a phantom
+   * distance. Null when the leg routes cleanly.
+   */
+  continuity_warning: string | null;
   notes: string[];
   /** Stop-to-stop jump tag for itinerary LEG grouping (see add_leg). */
   segment_index: number | null;
@@ -281,6 +288,7 @@ function projectLeg(leg: LegWithDetails): PennyLeg {
     drive_time_minutes: leg.drive_time_minutes,
     terrain: leg.terrain,
     status: leg.status,
+    continuity_warning: leg.continuity_warning ?? null,
     notes: leg.parsedNotes,
     segment_index: leg.segment_index,
     segment_name: leg.segment_name,

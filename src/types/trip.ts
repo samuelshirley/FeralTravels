@@ -130,6 +130,12 @@ export interface Leg {
   fuel_status: FuelStatus;
   /** Populated when fuel_status is failed; human-readable diagnosis. */
   fuel_plan_error: string | null;
+  /**
+   * Set when continuity repair chained this leg's start but couldn't re-route
+   * it, so distance/time/geometry were cleared. Human-readable reason the leg
+   * has no route — null when the leg routes cleanly. See `resolveContinuityRoute`.
+   */
+  continuity_warning: string | null;
   /** Driving route geometry — GeoJSON LineString persisted at planning time. */
   geometry: GeoJSONLineString | null;
   created_at: string;

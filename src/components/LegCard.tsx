@@ -275,6 +275,28 @@ export default function LegCard({
               </span>
             )}
           </div>
+          {leg.continuity_warning && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 6,
+                marginTop: 6,
+                padding: '6px 8px',
+                borderRadius: 6,
+                background: 'rgba(217, 119, 6, 0.12)',
+                border: '1px solid rgba(217, 119, 6, 0.35)',
+                fontSize: 12,
+                lineHeight: 1.4,
+                color: 'var(--tp-text)',
+              }}
+            >
+              <span aria-hidden style={{ color: '#d97706', flexShrink: 0 }}>
+                ⚠
+              </span>
+              <span>{leg.continuity_warning}</span>
+            </div>
+          )}
         </div>
         <StatusBadge status={leg.status} />
         <span

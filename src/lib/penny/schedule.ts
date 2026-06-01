@@ -22,6 +22,7 @@
  * (rebuildTripSchedule); keeping the math here makes it unit-testable.
  */
 import { legDateISO, daysBetweenISO } from '@/lib/dates';
+import type { GeoJSONLineString } from '@/types/trip';
 
 /**
  * One stop = a driving leg + the stay at its destination. In route order, so
@@ -257,6 +258,86 @@ export function computeStartFixes(
     }
   }
   return fixes;
+}
+
+// ---------------------------------------------------------------------------
+// Continuity re-route outcome
+//
+// After computeStartFixes chains a leg's start to the previous leg's end, the
+// repo (repairLegContinuity) re-routes from the new origin. This pure function
+// decides what to persist for that leg given the routing outcome — extracted
+// here so the noroute branch is unit-testable without a DB or Directions call.
+//
+// Why we surface instead of silently clearing: a failed re-route used to just
+// null the leg's distance/time/geometry, leaving a card with no route and no
+// explanation — a silent failure the app's core value forbids. We now record a
+// plain-language reason so the user (and Penny, via context.legs) knows the leg
+// needs attention.
+// ---------------------------------------------------------------------------
+
+/** The result of the Directions re-route attempt for a continuity-corrected leg. */
+export interface ContinuityRouteOutcome {
+  /** True when Directions returned a usable route. */
+  ok: boolean;
+  distanceKm?: number;
+  driveTimeMinutes?: number;
+  geometry?: GeoJSONLineString;
+}
+
+/** What repairLegContinuity should write to the leg after a re-route attempt. */
+export interface ContinuityPersist {
+  /** Null on failure (the old numbers belonged to the wrong origin). */
+  distanceKm: number | null;
+  driveTimeMinutes: number | null;
+  geometry: GeoJSONLineString | null;
+  /** Human-readable reason on failure; null on success (clears any stale warning). */
+  continuityWarning: string | null;
+  /** True when the route was recomputed; false when it failed and was cleared. */
+  rerouted: boolean;
+}
+
+/**
+ * Decide what to persist for a continuity-corrected leg after the re-route.
+ *
+ *   - Success: adopt the fresh distance/time/geometry and clear any prior
+ *     continuity warning.
+ *   - Failure: clear distance/time/geometry (they described the wrong origin)
+ *     and set a plain-language warning naming the two endpoints.
+ *
+ * `fromName` is where the leg now starts (the prior leg's destination we chained
+ * to); `toName` is the leg's own destination.
+ */
+export function resolveContinuityRoute(
+  outcome: ContinuityRouteOutcome,
+  fromName: string | null,
+  toName: string | null,
+): ContinuityPersist {
+  if (
+    outcome.ok &&
+    outcome.distanceKm != null &&
+    outcome.driveTimeMinutes != null &&
+    outcome.geometry != null
+  ) {
+    return {
+      distanceKm: outcome.distanceKm,
+      driveTimeMinutes: outcome.driveTimeMinutes,
+      geometry: outcome.geometry,
+      continuityWarning: null,
+      rerouted: true,
+    };
+  }
+  const from = fromName ?? 'the previous stop';
+  const to = toName ?? 'this stop';
+  return {
+    distanceKm: null,
+    driveTimeMinutes: null,
+    geometry: null,
+    continuityWarning:
+      `Couldn't automatically map a driving route from ${from} to ${to}. ` +
+      `These points may not be connected by road, or a coordinate may be off — ` +
+      `drive distance and time are hidden until it's fixed.`,
+    rerouted: false,
+  };
 }
 
 /** Great-circle distance in km. Local copy to keep this module I/O-free. */
