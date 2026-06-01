@@ -1682,7 +1682,7 @@ export default function ChatPanel({
                   Penny didn&apos;t finish your plan
                 </div>
                 <div style={{ color: 'var(--tp-muted)' }}>
-                  She ran out of room mid-plan and saved partial work. Click below to keep going from where she stopped.
+                  She hit her planning step limit mid-plan and saved partial work. Click below to keep going from where she stopped.
                 </div>
                 <button
                   onClick={() =>

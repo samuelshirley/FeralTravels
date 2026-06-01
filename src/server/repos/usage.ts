@@ -41,16 +41,19 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
       `[usage] Anthropic cost estimate is $0 despite ${tokenVolume} tokens — add pricing for model "${input.model}" in anthropicCostEstimate.ts`
     );
   }
-  // Roll cache tokens into the stored inputTokens column so the dashboard
-  // reflects total token volume (regular + cache write + cache read). The
-  // costMicrocents field already reflects the correctly-discounted USD.
+  // Store regular input, cache-write, and cache-read token counts in separate
+  // columns so cache hit rate is recoverable per row. inputTokens is the pure
+  // regular-input count (NOT cache tokens summed in). The costMicrocents field
+  // already reflects the correctly-discounted USD across all three.
   await db.insert(usageEvents).values({
     userId: input.userId,
     tripId: input.tripId ?? null,
     provider: 'anthropic',
     model: input.model,
-    inputTokens: input.inputTokens + cacheCreate + cacheRead,
+    inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
+    cacheCreationInputTokens: cacheCreate,
+    cacheReadInputTokens: cacheRead,
     requests: 1,
     costMicrocents: dollarsToMicrocents(usd),
     success: input.success ?? true,

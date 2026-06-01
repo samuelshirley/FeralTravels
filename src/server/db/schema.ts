@@ -570,6 +570,10 @@ export const usageEvents = pgTable(
     model: text('model'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
+    /** Prompt-cache write tokens (billed 1.25× base input). Null on non-Anthropic + historical rows. */
+    cacheCreationInputTokens: integer('cache_creation_input_tokens'),
+    /** Prompt-cache read tokens (billed 0.10× base input). Null on non-Anthropic + historical rows. */
+    cacheReadInputTokens: integer('cache_read_input_tokens'),
     requests: integer('requests').default(1).notNull(),
     /** Stored in microcents (1¢ = 1_000_000). */
     costMicrocents: bigint('cost_microcents', { mode: 'number' }),

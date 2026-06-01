@@ -77,27 +77,51 @@ export type AddLegInput = z.infer<typeof baseSchema>;
  * static schema bounds (24h max) still apply.
  */
 export function validator(ctx: PennyContext) {
-  return baseSchema.refine(
-    (d) => {
-      // Rest days have no driving — skip the cap check.
-      if (d.leg_type === 'rest') return true;
-      // Use transit cap (longest tolerable day) for validation.
-      // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
-      const cap = ctx.vehicle?.transit_max_drive_hours
-        ?? ctx.vehicle?.max_drive_hours_per_day;
-      if (cap == null) return true;
-      if (d.drive_time_minutes == null) return true;
-      return d.drive_time_minutes <= cap * 60;
-    },
-    (d) => {
-      const cap = ctx.vehicle?.transit_max_drive_hours
-        ?? ctx.vehicle?.max_drive_hours_per_day;
-      return {
-        message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle drive cap (${cap}h × 60 = ${(cap ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
-        path: ['drive_time_minutes'],
-      };
-    }
-  );
+  return baseSchema
+    .refine(
+      // A rest leg sits AT a location, so it must still carry both names and
+      // both coordinate pairs (use the same coords for start and end). Without
+      // them the leg is unusable downstream: repairLegContinuity can't anchor
+      // it, planFuelStopsForLeg short-circuits to fuel_status 'none', and the
+      // itinerary renders a location-less card — silent data corruption.
+      (d) => {
+        if (d.leg_type !== 'rest') return true;
+        return (
+          d.start_name != null &&
+          d.end_name != null &&
+          d.start_lat != null &&
+          d.start_lng != null &&
+          d.end_lat != null &&
+          d.end_lng != null
+        );
+      },
+      {
+        message:
+          'rest legs require start_name, end_name, and start/end coordinates (use the same coords for start and end — the rest day is AT a location).',
+        path: ['start_name'],
+      }
+    )
+    .refine(
+      (d) => {
+        // Rest days have no driving — skip the cap check.
+        if (d.leg_type === 'rest') return true;
+        // Use transit cap (longest tolerable day) for validation.
+        // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
+        const cap = ctx.vehicle?.transit_max_drive_hours
+          ?? ctx.vehicle?.max_drive_hours_per_day;
+        if (cap == null) return true;
+        if (d.drive_time_minutes == null) return true;
+        return d.drive_time_minutes <= cap * 60;
+      },
+      (d) => {
+        const cap = ctx.vehicle?.transit_max_drive_hours
+          ?? ctx.vehicle?.max_drive_hours_per_day;
+        return {
+          message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle drive cap (${cap}h × 60 = ${(cap ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
+          path: ['drive_time_minutes'],
+        };
+      }
+    );
 }
 
 export const tool: Anthropic.Tool = {

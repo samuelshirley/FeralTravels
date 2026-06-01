@@ -158,40 +158,48 @@ async function main() {
       .limit(100);
     events.reverse();
 
-    // NOTE: usage_events.input_tokens currently *includes* cache_creation +
-    // cache_read tokens summed in (src/server/repos/usage.ts:47-58). We can't
-    // split them apart from the data. The dollar cost is still accurate.
+    // input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
+    // are stored in separate columns (src/server/repos/usage.ts), so cache hit
+    // rate is recoverable per row: cache_read / (input + cache_create + cache_read).
     console.log('USAGE_EVENTS — last %d (oldest-first):\n', events.length);
     if (events.length === 0) {
       console.log('  (none)');
     } else {
       console.log(
-        '  time                 provider                        in_total  out    cost          ok  err'
+        '  time                 provider                          input  cache_cr  cache_rd  out    cost          ok  err'
       );
-      console.log('  ' + '-'.repeat(105));
+      console.log('  ' + '-'.repeat(120));
       for (const e of events) {
         const time = fmtTime(e.createdAt);
         const provider = (e.provider || '').padEnd(32);
-        const inT = String(e.inputTokens ?? '').padStart(8);
+        const inT = String(e.inputTokens ?? '').padStart(7);
+        const ccT = String(e.cacheCreationInputTokens ?? '').padStart(8);
+        const crT = String(e.cacheReadInputTokens ?? '').padStart(8);
         const outT = String(e.outputTokens ?? '').padStart(5);
         const cost = microcentsToUSD(e.costMicrocents).padStart(12);
         const ok = e.success ? 'Y' : 'N';
         const err = e.errorMessage ? trunc(e.errorMessage, 30) : '';
-        console.log(`  ${time}  ${provider}${inT}  ${outT}  ${cost}  ${ok}   ${err}`);
+        console.log(`  ${time}  ${provider}${inT}  ${ccT}  ${crT}  ${outT}  ${cost}  ${ok}   ${err}`);
       }
 
-      // Totals (input includes cache tokens summed in — see note above)
-      let inT = 0, outT = 0, mc = 0;
+      // Totals + cache hit rate across the window.
+      let inT = 0, ccT = 0, crT = 0, outT = 0, mc = 0;
       for (const e of events) {
         inT += e.inputTokens ?? 0;
+        ccT += e.cacheCreationInputTokens ?? 0;
+        crT += e.cacheReadInputTokens ?? 0;
         outT += e.outputTokens ?? 0;
         mc += e.costMicrocents ?? 0;
       }
-      console.log('  ' + '-'.repeat(105));
+      const totalInputSide = inT + ccT + crT;
+      const hitRate = totalInputSide > 0 ? (crT / totalInputSide) * 100 : 0;
+      console.log('  ' + '-'.repeat(120));
       console.log(
-        `  TOTALS (window)                                       ${String(inT).padStart(8)}  ${String(outT).padStart(5)}  ${microcentsToUSD(mc).padStart(12)}`
+        `  TOTALS (window)                                       ${String(inT).padStart(7)}  ${String(ccT).padStart(8)}  ${String(crT).padStart(8)}  ${String(outT).padStart(5)}  ${microcentsToUSD(mc).padStart(12)}`
       );
-      console.log('  (input column includes cache tokens — cache hit rate not currently recoverable from schema)');
+      console.log(
+        `  cache hit rate: ${hitRate.toFixed(1)}%  (cache_read / (input + cache_create + cache_read), input-side tokens only)`
+      );
     }
 
     // 4. Per-provider breakdown across ALL events on this trip (not just the
