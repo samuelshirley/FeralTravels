@@ -1,0 +1,133 @@
+# Deploy — preview-gated, CI-orchestrated promote to production.
+#
+# Flow on every push to main:
+#   1. unit gate   — npm ci + unit tests (fast fail before we wait on Vercel).
+#   2. wait        — Vercel builds a PREVIEW deployment for this commit (prod
+#                    branch is set to a non-existent name, so main never
+#                    auto-aliases to prod). We poll the Vercel API by commit
+#                    SHA until that deployment is READY.
+#   3. e2e         — seed the shared fixture, then run Playwright against the
+#                    preview URL (E2E_BASE_URL). The auth test-backdoor is live
+#                    here because VERCEL_ENV=preview on that deployment.
+#   4. promote     — on green, `vercel promote` aliases the prod domain to the
+#                    EXACT deployment we just tested. No rebuild: VERCEL_ENV
+#                    flips to production at runtime and the backdoor goes
+#                    dormant on its own (see src/server/auth/test-backdoor.ts).
+#   5. backfill    — rewrite legacy Google Maps URLs once, after prod swings.
+#
+# On red, the job exits non-zero and prod stays on the previous deployment.
+# Emergency rollback = Vercel dashboard → prior deployment → Promote to
+# Production. There is deliberately NO skip-CI escape hatch.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# One push at a time. A newer push cancels an in-flight run so an older commit
+# can never promote over a newer one, and two runs never collide on the shared
+# seed database mid-suite.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm run test
+
+  deploy:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Wait for Vercel preview deployment
+        id: preview
+        run: |
+          set -euo pipefail
+          api="https://api.vercel.com/v6/deployments"
+          query="projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&meta-githubCommitSha=${GITHUB_SHA}&limit=1"
+          deadline=$((SECONDS + 300))   # 5 minutes
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            resp="$(curl -sS -H "Authorization: Bearer $VERCEL_TOKEN" "$api?$query")"
+            state="$(echo "$resp" | jq -r '.deployments[0].state // .deployments[0].readyState // empty')"
+            id="$(echo "$resp" | jq -r '.deployments[0].uid // empty')"
+            host="$(echo "$resp" | jq -r '.deployments[0].url // empty')"
+            echo "state=${state:-<none>} id=${id:-<none>} host=${host:-<none>}"
+            case "$state" in
+              READY)
+                echo "id=$id" >> "$GITHUB_OUTPUT"
+                echo "url=https://$host" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              ERROR|CANCELED|DELETED)
+                echo "::error::Preview deployment ended in state: $state"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Timed out after 5min waiting for a READY preview for $GITHUB_SHA"
+          exit 1
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed E2E fixture
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
+          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
+        run: npm run e2e:seed
+
+      - name: Run Playwright against preview
+        env:
+          E2E_BASE_URL: ${{ steps.preview.outputs.url }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
+          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
+        run: npm run e2e
+
+      - name: Promote tested deployment to production
+        run: vercel promote "${{ steps.preview.outputs.id }}" --token="$VERCEL_TOKEN" --yes
+
+      - name: Backfill legacy Google Maps URLs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run backfill-maps-nav
+
+      - name: Clean up E2E rows
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
+          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
+        run: npm run e2e:cleanup
