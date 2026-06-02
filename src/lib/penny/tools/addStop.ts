@@ -2,7 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
-import { haversineKm } from '@/lib/penny/geo';
+import { distanceToSegmentKm } from '@/lib/penny/geo';
 import {
   fuelTypeSchema,
   latSchema,
@@ -54,40 +54,6 @@ export type AddStopInput = z.infer<typeof baseSchema>;
  * from the Würzburg→Berlin corridor).
  */
 const MAX_STOP_CORRIDOR_DEVIATION_KM = 200;
-
-/**
- * Shortest haversine distance from a point to the line segment start↔end.
- * Projects onto the great-circle segment then clamps to endpoints.
- */
-function distanceToSegmentKm(
-  stopLat: number,
-  stopLng: number,
-  startLat: number,
-  startLng: number,
-  endLat: number,
-  endLng: number
-): number {
-  const toStart = haversineKm(stopLat, stopLng, startLat, startLng);
-  const toEnd = haversineKm(stopLat, stopLng, endLat, endLng);
-  const segLen = haversineKm(startLat, startLng, endLat, endLng);
-
-  // Degenerate case: start ≈ end → just return distance to that point.
-  if (segLen < 1) return toStart;
-
-  // Use the projected-fraction approach for a flat approximation.
-  // t = dot(stop-start, end-start) / |end-start|^2, clamped to [0,1].
-  // Good enough for corridor sanity checks — not navigation-grade.
-  const dLat = endLat - startLat;
-  const dLng = endLng - startLng;
-  const t = Math.max(
-    0,
-    Math.min(1, ((stopLat - startLat) * dLat + (stopLng - startLng) * dLng) / (dLat * dLat + dLng * dLng))
-  );
-  const projLat = startLat + t * dLat;
-  const projLng = startLng + t * dLng;
-
-  return haversineKm(stopLat, stopLng, projLat, projLng);
-}
 
 /**
  * Cross-leg validator:

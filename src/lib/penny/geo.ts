@@ -27,3 +27,42 @@ export function haversineKm(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return EARTH_RADIUS_KM * c;
 }
+
+/**
+ * Shortest haversine distance (km) from a point to the line segment start↔end.
+ * Projects the point onto the great-circle segment using a flat lat/lng
+ * approximation, clamps the projection to the endpoints, then measures.
+ *
+ * Good enough for corridor sanity checks ("is this stop near the leg's
+ * driving line?") — NOT navigation-grade. Used by the add_stop corridor
+ * validator and the same-turn new-leg fallback resolver.
+ */
+export function distanceToSegmentKm(
+  pointLat: number,
+  pointLng: number,
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number
+): number {
+  const segLen = haversineKm(startLat, startLng, endLat, endLng);
+
+  // Degenerate case: start ≈ end → just return distance to that point.
+  if (segLen < 1) return haversineKm(pointLat, pointLng, startLat, startLng);
+
+  // t = clamp01( dot(point-start, end-start) / |end-start|^2 ).
+  const dLat = endLat - startLat;
+  const dLng = endLng - startLng;
+  const t = Math.max(
+    0,
+    Math.min(
+      1,
+      ((pointLat - startLat) * dLat + (pointLng - startLng) * dLng) /
+        (dLat * dLat + dLng * dLng)
+    )
+  );
+  const projLat = startLat + t * dLat;
+  const projLng = startLng + t * dLng;
+
+  return haversineKm(pointLat, pointLng, projLat, projLng);
+}

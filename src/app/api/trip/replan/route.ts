@@ -27,11 +27,21 @@ import { getDirections } from '@/lib/google/directions';
 import { planDumpStationStopForLeg } from '@/server/dump-stations';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
+import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
-/** One POST /api/trip/replan: queue `add_leg` ids so `plan_fuel_stops` can recover from guessed leg_id. */
-type ReplanDispatchCtx = { newLegIdsQueue: string[] };
+/**
+ * Per-request dispatch state for one POST /api/trip/replan.
+ *
+ * - `newLegIdsQueue`: consuming FIFO of `add_leg` ids, dequeued by the
+ *   single-leg recovery fallback (`plan_fuel_stops`, `update_leg`,
+ *   `plan_dump_station_stops`) when Penny guesses a leg_id before its row exists.
+ * - `newLegs`: append-only record of every leg created this turn, WITH coords,
+ *   used by the non-consuming `add_stop`/`add_route` fallback so a stop lands on
+ *   the right same-turn leg (several stops may share one leg).
+ */
+type ReplanDispatchCtx = { newLegIdsQueue: string[]; newLegs: NewLegRecord[] };
 
 function assertLegOnTrip(legTripId: string, tripId: string): void {
   if (legTripId !== tripId) throw new ForbiddenError('Leg is not part of this trip');
@@ -94,24 +104,45 @@ async function resolvePennyLegIdOnTrip(
 }
 
 /**
- * Resolve a Penny-proposed leg id for add_stop.
+ * Resolve the leg an `add_stop` / `add_route` action belongs to.
  *
- * With UUIDs there's no sort_order confusion — the proposed id is either a
- * valid leg UUID on this trip or it isn't. No silent fallback to the latest
- * leg — that caused stops to land on completely unrelated legs.
+ * Happy path: the proposed id is a real leg on this trip — return it.
  *
- * If the proposed id is not a valid leg on this trip, we throw so the action
- * fails visibly and Penny can retry with correct data.
+ * Fallback: the proposed id doesn't resolve because the item targets a leg
+ * Penny CREATED earlier in this same turn. New legs are written only at
+ * dispatch time, so Penny never saw their real UUID during the model loop and
+ * invented one. We map that invented id onto a real new leg — geometry-first
+ * (nearest new-leg corridor to the item's coordinate), else the first leg
+ * created this turn. NON-consuming: several stops can share one new leg.
+ *
+ * Before this existed, `add_stop`/`add_route` on a same-turn leg threw
+ * "Leg not found" and the action was silently dropped while the leg itself
+ * saved — so Penny would promise a waypoint that never landed on the map. The
+ * sibling actions (`update_leg`, `plan_dump_station_stops`) already had a
+ * same-turn fallback; these two were the stragglers.
  */
-async function resolvePennyStopLegId(
+async function resolveLegForStopOrRoute(
   proposedLegId: string,
+  point: { lat?: number | null; lng?: number | null } | null,
   tripId: string,
   userId: string,
-  _ctx: ReplanDispatchCtx
+  ctx: ReplanDispatchCtx
 ): Promise<string> {
-  const ownerTripId = await assertLegOwnedByUser(proposedLegId, userId);
-  assertLegOnTrip(ownerTripId, tripId);
-  return proposedLegId;
+  try {
+    const ownerTripId = await assertLegOwnedByUser(proposedLegId, userId);
+    assertLegOnTrip(ownerTripId, tripId);
+    return proposedLegId;
+  } catch (e) {
+    const wrongTrip =
+      e instanceof ForbiddenError && e.message === 'Leg is not part of this trip';
+    if (!(e instanceof NotFoundError) && !wrongTrip) throw e;
+
+    const fallbackLegId = pickNearestNewLeg(point, ctx.newLegs);
+    if (fallbackLegId != null) return fallbackLegId;
+
+    // No leg was created this turn — the id is genuinely bogus. Surface it.
+    throw e;
+  }
 }
 
 /**
@@ -396,7 +427,7 @@ export async function POST(req: Request) {
             final.validatedActions
           );
 
-          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [] };
+          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
           for (const action of final.validatedActions) {
             if (feasibilityGateBlocks && action.name === 'add_leg') {
               failedCount += 1;
@@ -847,6 +878,13 @@ async function dispatchAction(
         geometry,
       });
       ctx.newLegIdsQueue.push(newLegId);
+      ctx.newLegs.push({
+        id: newLegId,
+        startLat: d.start_lat ?? null,
+        startLng: d.start_lng ?? null,
+        endLat: d.end_lat ?? null,
+        endLng: d.end_lng ?? null,
+      });
 
       // Write any constraints Penny attached to this leg
       if (d.constraints && d.constraints.length > 0) {
@@ -954,7 +992,13 @@ async function dispatchAction(
 
     case 'add_route': {
       const { data } = action.input;
-      const leg_id = await resolvePennyLegIdOnTrip(action.input.leg_id, tripId, userId, ctx);
+      const leg_id = await resolveLegForStopOrRoute(
+        action.input.leg_id,
+        { lat: data.end_lat, lng: data.end_lng },
+        tripId,
+        userId,
+        ctx
+      );
       await addRoute({
         leg_id,
         label: data.label,
@@ -993,7 +1037,13 @@ async function dispatchAction(
 
     case 'add_stop': {
       const { leg_id: proposedLegId, data } = action.input;
-      const leg_id = await resolvePennyStopLegId(proposedLegId, tripId, userId, ctx);
+      const leg_id = await resolveLegForStopOrRoute(
+        proposedLegId,
+        { lat: data.lat, lng: data.lng },
+        tripId,
+        userId,
+        ctx
+      );
       await addStop({
         leg_id,
         stop_type: data.stop_type,
