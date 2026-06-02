@@ -1,23 +1,22 @@
 # Deploy — preview-gated, CI-orchestrated promote to production.
 #
-# Flow on every push to main:
-#   1. unit gate   — npm ci + unit tests (fast fail before we wait on Vercel).
-#   2. wait        — Vercel builds a PREVIEW deployment for this commit (prod
-#                    branch is set to a non-existent name, so main never
-#                    auto-aliases to prod). We poll the Vercel API by commit
-#                    SHA until that deployment is READY.
-#   3. e2e         — seed the shared fixture, then run Playwright against the
-#                    preview URL (E2E_BASE_URL). The auth test-backdoor is live
-#                    here because VERCEL_ENV=preview on that deployment.
-#   4. promote     — on green, `vercel promote` aliases the prod domain to the
-#                    EXACT deployment we just tested. No rebuild: VERCEL_ENV
-#                    flips to production at runtime and the backdoor goes
-#                    dormant on its own (see src/server/auth/test-backdoor.ts).
-#   5. backfill    — rewrite legacy Google Maps URLs once, after prod swings.
+# Three jobs run on every push to main, each gating the next:
+#   1. unit     — npm ci + unit tests (fast fail before we spend time on Vercel).
+#   2. e2e      — wait for Vercel's PREVIEW deployment of this commit, then seed
+#                 the fixture and run Playwright against the preview URL. This is
+#                 its OWN job so it shows up as a distinct check and so a failure
+#                 here visibly blocks promotion. Exposes the tested deployment id.
+#   3. promote  — `needs: e2e`, so it ONLY runs when e2e is green. Aliases the
+#                 prod domain to the EXACT deployment e2e just tested (no rebuild),
+#                 then backfills legacy Google Maps URLs.
 #
-# On red, the job exits non-zero and prod stays on the previous deployment.
-# Emergency rollback = Vercel dashboard → prior deployment → Promote to
-# Production. There is deliberately NO skip-CI escape hatch.
+# If e2e fails (or never reaches the tests), promote never runs and prod stays on
+# the previous deployment. Emergency rollback = Vercel dashboard → prior
+# deployment → Promote to Production. There is deliberately NO skip-CI escape hatch.
+#
+# NOTE: this gate is only the SOLE path to prod once Vercel's own Git auto-promote
+# for `main` is turned off (Vercel → Project → Settings → Git → Production Branch
+# set to a non-existent name). Until then, Vercel also auto-promotes on push.
 
 name: Deploy
 
@@ -46,7 +45,7 @@ jobs:
       - name: Unit tests
         run: npm run test
 
-  deploy:
+  e2e:
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,6 +53,10 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    # Expose the deployment we tested so the promote job can alias the EXACT
+    # same build to production (no rebuild between test and promote).
+    outputs:
+      deployment_id: ${{ steps.preview.outputs.id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,6 +64,21 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+
+      # Fail fast with a clear message if a required secret is missing, instead
+      # of burning 5 minutes on the Vercel wait below and timing out silently.
+      - name: Check required secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          missing=""
+          for v in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID DATABASE_URL; do
+            if [ -z "${!v:-}" ]; then missing="$missing $v"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required GitHub Actions secret(s):$missing — set them in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
@@ -109,20 +127,11 @@ jobs:
           E2E_BASE_URL: ${{ steps.preview.outputs.url }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
           E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
         run: npm run e2e
-
-      - name: Promote tested deployment to production
-        run: vercel promote "${{ steps.preview.outputs.id }}" --token="$VERCEL_TOKEN" --yes
-
-      - name: Backfill legacy Google Maps URLs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npm run backfill-maps-nav
 
       - name: Clean up E2E rows
         if: always()
@@ -131,3 +140,30 @@ jobs:
           AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
           E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
         run: npm run e2e:cleanup
+
+  promote:
+    needs: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Promote tested deployment to production
+        run: vercel promote "${{ needs.e2e.outputs.deployment_id }}" --token="$VERCEL_TOKEN" --yes
+
+      - name: Backfill legacy Google Maps URLs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run backfill-maps-nav
