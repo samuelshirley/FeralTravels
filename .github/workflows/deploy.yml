@@ -33,6 +33,7 @@ concurrency:
 
 jobs:
   unit:
+    name: Unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -46,6 +47,7 @@ jobs:
         run: npm run test
 
   e2e:
+    name: E2E tests
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -113,6 +115,11 @@ jobs:
           exit 1
 
       - name: Install Playwright browsers
+        # `npm run e2e` runs with PLAYWRIGHT_BROWSERS_PATH=0 (browsers live under
+        # node_modules), so install to the SAME path — otherwise the run can't
+        # find the binary ("Executable doesn't exist at .../.local-browsers").
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
         run: npx playwright install --with-deps chromium
 
       - name: Seed E2E fixture
@@ -142,6 +149,7 @@ jobs:
         run: npm run e2e:cleanup
 
   promote:
+    name: Promote to production
     needs: e2e
     runs-on: ubuntu-latest
     timeout-minutes: 10
