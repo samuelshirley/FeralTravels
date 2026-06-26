@@ -25,7 +25,7 @@ function fmtRel(d: Date | string): string {
 function rowToProfileRecord(row: AdminVehicleListRow): Record<string, unknown> {
   return {
     name: row.name,
-    refill_distance_km: row.refillDistanceKm,
+    comfortable_range_km: row.comfortableRangeKm,
     max_drive_hours_per_day: row.maxDriveHoursPerDay,
     max_drive_hours_per_week: row.maxDriveHoursPerWeek,
     max_consecutive_drive_days: row.maxConsecutiveDriveDays,
@@ -177,7 +177,7 @@ export default async function AdminVehiclesPage() {
                           href={`/admin/vehicles/${row.vehicleId}`}
                           style={{ color: 'inherit', textDecoration: 'none' }}
                         >
-                          {refillSummary(row.refillDistanceKm, row.userUnitsPref)}
+                          {refillSummary(row.comfortableRangeKm, row.userUnitsPref)}
                         </Link>
                       </td>
                       <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
@@ -251,7 +251,7 @@ export default async function AdminVehiclesPage() {
                         lineHeight: 1.4,
                       }}
                     >
-                      {refillSummary(row.refillDistanceKm, row.userUnitsPref)} · {driveSummary(row)}
+                      {refillSummary(row.comfortableRangeKm, row.userUnitsPref)} · {driveSummary(row)}
                     </div>
                     <div
                       style={{

@@ -36,7 +36,7 @@ test.describe('Email OTP login', () => {
     const completeVehicle = {
       name: 'E2E Hilux',
       isDefault: true,
-      refillDistanceKm: 500,
+      comfortableRangeKm: 500,
       maxDriveHoursPerDay: 8,
       maxDriveHoursPerWeek: 40,
       maxConsecutiveDriveDays: 5,

@@ -78,6 +78,13 @@
       "when": 1780313945784,
       "tag": "0010_faulty_lady_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782472610665,
+      "tag": "0011_add_hard_max_rename_comfortable",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@
 
 ## Vision
 
+**One line (Sam, 2026-06-26):** Right now this is *simply a trip-planning app that finds cheap fuel along the way.* That's all it does. Nothing else ships until that works perfectly in production. Anything beyond "plan the route → find cheap fuel on it" is post-MVP — flag it before building.
+
 Personal automated travel agent for overlanders. The user tells Penny where they want to go and what they need along the way (fuel, water, groceries, rest stops) — Penny does all the legwork: builds the route, finds stops, plans fuel, and keeps the itinerary updated as things change. The user just drives and enjoys. Think of it as a copilot that actually knows how to read a map and plan logistics for a self-sufficient road trip.
 
 ## MVP scope — current focus (hold the line)
@@ -160,6 +162,8 @@ api/debug/fuel
 users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals
 
 `trips` carries a driver-progress anchor (`current_leg_id`, `current_lat/lng`, `progress_anchor_date`, `progress_updated_at`) set by the `reportPosition` tool; `getTripFull` re-anchors every leg's `date_iso` from it, and the itinerary collapses legs before `current_leg_id` as "behind you". An explicit report is a **floor**, not a freeze — `behindCutoffRank` (`src/lib/dates.ts`) takes the max of the report and the calendar, so a stale report no longer pins the view (the days-old "frozen itinerary" bug).
+
+**Vehicle range → Finn handoff (migration 0011):** `vehicles.refill_distance_km` was renamed to **`comfortable_range_km`** (the everyday target Finn aims for) and a new **`hard_max_range_km`** column added (the absolute ceiling Finn must never route a dry stretch past). Captured in onboarding (comfortable required; hard-max optional, **defaults to comfortable** — the one safe fallback). Invariant `comfortable_range_km ≤ hard_max_range_km` is enforced at every write path centrally in `repos/vehicles.ts` (`assertRangeOrder`). Both are projected to Penny/Finn via `projectVehicle` (`hard_max_range_km ?? comfortable_range_km`). Bounds remain `FUEL_STOP_SPACING_KM_MIN/MAX` (200–1500). Penny prose must still not author the safety number — onboarding/Settings/the `update_vehicle` tool convert + validate; the server re-checks. See `docs/design/penny-comfortable-range.md`.
 
 **Dormant DB remnants (MVP teardown, 2026-06-26):** the `trips.trip_status` column/enum (`draft/active/paused/completed`) and the vehicle `dump_station_*` columns + the `dump_station` stop type still exist but are now **unwired** — the lifecycle transitions, nightly replan, and dump-station/overnight finders were removed. Leave dormant or drop in a later migration; don't re-wire without revisiting MVP scope. Note: `trip.status` (`planning/research/confirmed/anchored`) is a *different*, still-live field — the workflow badge shown in the UI.
 

@@ -231,7 +231,8 @@ Parse their freeform answer:
   "I like to take it slow, lots of stops" → travel_style: scenic_cruiser
   "I don't mind long days to get there" → travel_style: get_me_there
   "balanced, maybe 6 hours cruising" → travel_style: road_tripper
-  "refuel every 400 km" → refill_distance_km: 400
+  "refuel every 400 km" → comfortable_range_km: 400
+  "I'd stretch to 600 in a pinch" / "never push past 600" → hard_max_range_km: 600
   "drive 5 days then rest" → max_consecutive_drive_days: 5
   "drive 3 days then 1 rest day" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
 
@@ -252,14 +253,17 @@ Each turn you receive a <context>…</context> block in the user message with th
                 (set when they report progress); legs before it are behind them.
                 current_place is where they currently are. Both null until the
                 driver reports their position.
-  vehicle    — { name, refill_distance_km, effective_range_km,
+  vehicle    — { name, comfortable_range_km, hard_max_range_km, effective_range_km,
                   travel_style, cruise_max_drive_hours, transit_max_drive_hours,
                   max_drive_hours_per_day, max_drive_hours_per_week,
                   max_consecutive_drive_days, rest_days_after_driving,
                   dump_station_tracking_enabled, dump_station_interval_days }
-                effective_range_km mirrors refill_distance_km — the user's
+                effective_range_km mirrors comfortable_range_km — the user's
                 stated preferred distance between fuel stops. Treat it as the
                 furthest distance you may plan between fuel stops.
+                hard_max_range_km is the driver's absolute ceiling — never plan a
+                stretch beyond it under any circumstances (defaults to
+                comfortable_range_km when they gave no separate max).
 
                 travel_style is one of: scenic_cruiser, road_tripper, get_me_there.
                 It determines TWO drive-hour caps:

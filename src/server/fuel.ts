@@ -146,7 +146,7 @@ export async function planFuelStopsForLeg(
     await setFuelStatus(legId, 'failed', reason);
     return { legId, status: 'failed', reason };
   }
-  const range = computeEffectiveRangeKm(vehicle.refill_distance_km);
+  const range = computeEffectiveRangeKm(vehicle.comfortable_range_km);
   if (!range) {
     const reason =
       'Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.';
@@ -544,7 +544,7 @@ async function resolveVehicleForTrip(
   tripId: string | null,
   userId: string
 ): Promise<{
-  refill_distance_km: number | null;
+  comfortable_range_km: number | null;
   max_drive_hours_per_day: number | null;
 } | null> {
   if (tripId != null) {

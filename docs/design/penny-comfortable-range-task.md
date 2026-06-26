@@ -19,13 +19,13 @@ The gold number is the user's **comfortable range** — how far *they* are happy
 
 > Sam's Hilux: technical range ~650 km on an 80 L tank; the gauge reads zero at ~60 L used but there's still ~20 L / ~100 km of reserve. Sam's *comfortable* number is **500 km** — he'll stretch to 550 even with the needle on empty, because he knows the truck. That lived-in "500" is what we want, reserve already baked in by the human who knows their rig.
 
-**Critical consequence — do not double-count the reserve.** Because the user's number already includes their mental reserve, Finn must use it **as-is**. Today `computeEffectiveRangeKm(refill_distance_km)` appears to shave a further ~20% off. If the gold number is "comfortable," that second haircut makes every plan too conservative (a 500 km comfortable range becomes a 400 km planning range and Finn nags for fuel too early). **Decision for this task:** the stored number is the comfortable/usable range; Finn subtracts only `kmBurnedSinceLastRefuel`, no extra reserve. Reconcile/retire the double-reserve in `computeEffectiveRangeKm`.
+**Verified — no double-reserve to fix (an earlier draft wrongly suspected one).** `computeEffectiveRangeKm` is already the **identity function**: migration 0007 collapsed the old fuel-economy / 20%-buffer math into a single user-stated number, used **as-is**. Better still, migration 0011 already split it into two columns — `comfortable_range_km` (everyday target **C**) and `hard_max_range_km` (absolute ceiling **H**, `≥ C`, defaults to `C`). So the gold-number *data model Finn needs already exists*; this task is the conversation, validation, fuel type, and live updates **around** it — not new range math.
 
 ## Grounding in what already exists
 
 This is **not** a greenfield field. `src/lib/vehicleProfile.ts` already has:
 
-- `refill_distance_km` — *"How far between fuel stops?"* with help text *"how far you like to drive on a tank before refueling… regardless of your tank's actual capacity."* **That is already the gold number.** This task refines its *framing, validation conversation, and live updates* — it does not invent a new column.
+- `comfortable_range_km` (+ optional `hard_max_range_km`) — already captured in onboarding (migration 0011: comfortable required, hard-max optional and defaulting to comfortable). **The gold number and its ceiling already exist.** This task refines the *framing, validation conversation, and live updates* — it does not invent columns. *(Note: some `vehicleProfile.ts` question keys still read the old `refill_distance_km` label; reconcile to the renamed column as part of this task.)*
 - Bounds: `FUEL_STOP_SPACING_KM_MIN = 200`, `FUEL_STOP_SPACING_KM_MAX = 1500`. Keep as the validation guardrails.
 - Unit handling: imperial users enter miles; stored as km. Keep.
 
@@ -61,7 +61,7 @@ Finding stations, pricing, ranking, gap alarms — all Finn (`finn-fuel-agent.md
 
 ## Action items
 
-1. [ ] Confirm the gold number = comfortable range used **as-is** (retire the double-reserve in `computeEffectiveRangeKm`).
+1. [x] ~~Retire the double-reserve~~ — **verified: `computeEffectiveRangeKm` is already identity; nothing to fix.** Gold number is `comfortable_range_km` used as-is; `hard_max_range_km` ceiling already exists.
 2. [ ] Sharpen Penny's onboarding script + validation around `refill_distance_km`.
 3. [ ] Re-add `fuel_type` to the vehicle profile + onboarding capture.
 4. [ ] Add the live "comfortable range" display + edit affordance; wire forward-only re-plan on change.

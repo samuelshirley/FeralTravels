@@ -255,9 +255,9 @@ export async function submitVehicleRemediationAnswer(
 
     const parsed = coerceVehicleProfileValue(question, value);
     const patch = {} as Partial<VehicleInput>;
-    if (question.key === 'refill_distance_km' && unitsPref === 'imperial') {
+    if (question.key === 'comfortable_range_km' && unitsPref === 'imperial') {
       const km = parsed == null ? null : miToKm(parsed as number);
-      patch.refill_distance_km = km == null ? null : Math.round(km);
+      patch.comfortable_range_km = km == null ? null : Math.round(km);
     } else if (question.key === 'name') {
       patch.name = parsed as string;
     } else if (question.key === 'travel_style') {

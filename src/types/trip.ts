@@ -6,6 +6,7 @@ export type OnboardingState =
   | 'units_pick'
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
   | 'vehicle_new'
+  | 'range_help'     // "I don't know my range" → estimate-and-confirm interstitial
   | 'preferences'    // legacy only
   | 'ready'          // legacy only
   | 'done';

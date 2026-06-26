@@ -70,7 +70,7 @@ export const REFILL_DISTANCE_KM_MAX = FUEL_STOP_SPACING_KM_MAX;
  * within product bounds. Shared by onboarding gating and API validation.
  */
 export function vehicleMeetsFuelPlanningMinimum(vehicle: Record<string, unknown>): boolean {
-  const r = vehicle.refill_distance_km;
+  const r = vehicle.comfortable_range_km;
   return (
     typeof r === 'number' &&
     Number.isInteger(r) &&
@@ -142,7 +142,7 @@ export function vehicleIsCompleteForRemediation(vehicle: Record<string, unknown>
  * present but failing the same rules as {@link vehicleIsCompleteForRemediation} for that slice.
  *
  * Important: remediation used to treat any non-null cell as “filled”, so corrupt values such as
- * `refill_distance_km: 0` or zeros on driving limits stranded users with `needs_remediation` set
+ * `comfortable_range_km: 0` or zeros on driving limits stranded users with `needs_remediation` set
  * but no snapshot question (`VehicleRemediationOverlay` never appeared).
  */
 export function storedVehicleProfileFieldNeedsRemediationRepair(
@@ -155,8 +155,12 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
   switch (q.key) {
     case 'name':
       return typeof raw !== 'string' || raw.trim().length === 0;
-    case 'refill_distance_km':
-      return !vehicleMeetsFuelPlanningMinimum({ refill_distance_km: raw });
+    case 'comfortable_range_km':
+      return !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: raw });
+    case 'hard_max_range_km':
+      // Optional + safe-defaulted, so a null is handled by the caller (never
+      // asked in remediation). When present it must sit within the same bounds.
+      return !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: raw });
     case 'travel_style':
       return typeof raw !== 'string' || !['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(raw);
     case 'max_consecutive_drive_days':
@@ -175,7 +179,8 @@ export function storedVehicleProfileFieldNeedsRemediationRepair(
 }
 export const VEHICLE_PROFILE_KEYS = [
   'name',
-  'refill_distance_km',
+  'comfortable_range_km',
+  'hard_max_range_km',
   'travel_style',
   'max_consecutive_drive_days',
   'rest_days_after_driving',
@@ -225,16 +230,32 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: 'e.g. Duncan',
     },
     {
-      key: 'refill_distance_km',
+      key: 'comfortable_range_km',
       kind: 'integer',
       group: 'driving',
-      label: `How far between fuel stops, in ${distLabel}?`,
+      label: `What's your comfortable driving range on a tank, in ${distLabel}?`,
       placeholder: distPlaceholder,
       help:
-        'Tell me roughly how far you like to drive on a tank before refueling. ' +
-        "I'll plan a fuel stop every ~that distance, regardless of your tank's actual capacity.",
+        'How far you’re happy to drive before you’d want to refuel — not the absolute ' +
+        'max your vehicle can do, the distance where you’d naturally start looking for fuel. ' +
+        'Whatever cushion you keep in your head is already baked in. ' +
+        '(Not sure? I can help you work it out.)',
       min: distMin,
       max: distMax,
+    },
+    {
+      key: 'hard_max_range_km',
+      kind: 'integer',
+      group: 'driving',
+      label: `And the furthest you'd ever let me push it in a pinch, in ${distLabel}?`,
+      placeholder: distPlaceholder,
+      help:
+        'The hard line I should never route you past, for any reason. Leave this blank and ' +
+        'I’ll simply never send you beyond your comfortable range. Must be the same as or ' +
+        'further than your comfortable range.',
+      min: distMin,
+      max: distMax,
+      optional: true,
     },
     {
       key: 'travel_style',
@@ -295,7 +316,7 @@ const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {
 
 /**
  * Validate and parse one answer in the same units the user sees (miles for
- * imperial refill_distance_km; all other fields are unit-agnostic).
+ * imperial comfortable_range_km; all other fields are unit-agnostic).
  */
 export function coerceVehicleProfileValue(
   q: VehicleProfileQuestion,
@@ -352,7 +373,7 @@ export function humanizeVehicleProfileAnswer(
     const opt = q.options.find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  if (q.key === 'refill_distance_km') {
+  if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
     return `${value}${units === 'imperial' ? ' mi' : ' km'}`;
   }
   return `${value}${STATIC_UNIT_SUFFIX[q.key] ?? ''}`;
@@ -369,7 +390,7 @@ export function formatVehicleProfileFieldDisplay(
     const opt = q.options.find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  if (q.key === 'refill_distance_km') {
+  if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
     return `${value} ${units === 'imperial' ? 'mi' : 'km'}`;
   }
   return `${value}${STATIC_UNIT_SUFFIX[q.key] ?? ''}`;
@@ -393,6 +414,9 @@ export function vehicleProfileRequiredCompletion(vehicle: Record<string, unknown
   const questions = buildVehicleProfileQuestions('metric');
   const wt = vehicle.dump_station_tracking_enabled;
   const applicable = questions.filter((q) => {
+    // Hard-max safely defaults to comfortable, so it's never "required" for a
+    // complete profile — exclude it from the completion count.
+    if (q.key === 'hard_max_range_km') return false;
     if (q.group === 'dump_station') return wt === true;
     return true;
   });
@@ -424,7 +448,9 @@ export function vehicleProfileGroupTitle(group: VehicleProfileFieldGroup): strin
 
 export interface VehicleProfileDraftInput {
   name: string;
-  refill_distance_km: number | null;
+  comfortable_range_km: number | null;
+  /** Hard ceiling (km). Null ⇒ defaults to comfortable_range_km on save. */
+  hard_max_range_km: number | null;
   travel_style: TravelStyle | null;
   max_consecutive_drive_days: number | null;
   rest_days_after_driving: number | null;
@@ -465,12 +491,13 @@ export function validateVehicleProfileDraftForSave(
       let raw: unknown;
       if (q.key === 'name') {
         raw = draft.name;
-      } else if (q.key === 'refill_distance_km') {
-        if (draft.refill_distance_km == null) raw = null;
+      } else if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
+        const v = draft[q.key];
+        if (v == null) raw = null;
         else if (units === 'imperial') {
-          const mi = kmToMi(draft.refill_distance_km);
+          const mi = kmToMi(v);
           raw = mi == null ? null : Math.round(mi);
-        } else raw = draft.refill_distance_km;
+        } else raw = v;
       } else {
         const v = draft[q.key as keyof VehicleProfileDraftInput];
         if (v === null || v === undefined) raw = null;
@@ -485,15 +512,31 @@ export function validateVehicleProfileDraftForSave(
         continue;
       }
 
-      if (q.key === 'refill_distance_km' && units === 'imperial') {
+      if ((q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') && units === 'imperial') {
         const km = parsed == null ? null : miToKm(parsed as number);
-        payload.refill_distance_km = km == null ? null : Math.round(km);
+        payload[q.key] = km == null ? null : Math.round(km);
       } else {
         payload[q.key] = parsed;
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Invalid value.';
       return { ok: false, error: msg };
+    }
+  }
+
+  // Hard-max range: the one safe default in this flow. When the driver gives no
+  // separate ceiling, it equals the comfortable range (conservative — Finn just
+  // never stretches). When given, it must never sit below comfortable.
+  const comfortableKm = payload.comfortable_range_km;
+  if (typeof comfortableKm === 'number') {
+    const hardMaxKm = payload.hard_max_range_km;
+    if (hardMaxKm == null) {
+      payload.hard_max_range_km = comfortableKm;
+    } else if (typeof hardMaxKm === 'number' && hardMaxKm < comfortableKm) {
+      return {
+        ok: false,
+        error: 'Hard-max range must be the same as or further than your comfortable range.',
+      };
     }
   }
 

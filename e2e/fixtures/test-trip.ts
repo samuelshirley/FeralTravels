@@ -32,7 +32,7 @@ export async function createBlankPlanningTrip(label: string): Promise<{
     );
   }
 
-  // Prefer the fixture vehicle so Penny has a real refill_distance_km
+  // Prefer the fixture vehicle so Penny has a real comfortable_range_km
   // value and the auto fuel planner does interesting work mid-test.
   const vehicleRow = (
     await db
@@ -137,7 +137,7 @@ export async function createVehicleNewProfileTrip(label: string): Promise<{
       userId: userRow.id,
       name: `${name} vehicle`,
       isDefault: false,
-      refillDistanceKm: null,
+      comfortableRangeKm: null,
       maxDriveHoursPerDay: null,
       maxDriveHoursPerWeek: null,
       maxConsecutiveDriveDays: null,

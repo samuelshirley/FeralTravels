@@ -20,3 +20,11 @@ export const PENNY_MODEL = 'claude-sonnet-4-6';
  * PENNY_MODEL if you'd rather track a single model ID.
  */
 export const DATE_PARSE_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * Small, cheap model for the onboarding "I don't know my range" helper: turns
+ * what the driver knows (make/model/year, or tank size + economy) into a
+ * conservative COMFORTABLE-range estimate they then confirm. Same class of
+ * trivial extraction/estimation task as the date parser.
+ */
+export const RANGE_ESTIMATE_MODEL = 'claude-haiku-4-5-20251001';

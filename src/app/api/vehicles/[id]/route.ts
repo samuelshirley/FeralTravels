@@ -21,7 +21,13 @@ export const dynamic = 'force-dynamic';
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  refill_distance_km: z
+  comfortable_range_km: z
+    .number()
+    .int()
+    .min(FUEL_STOP_SPACING_KM_MIN)
+    .max(FUEL_STOP_SPACING_KM_MAX)
+    .nullish(),
+  hard_max_range_km: z
     .number()
     .int()
     .min(FUEL_STOP_SPACING_KM_MIN)
@@ -88,7 +94,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     const merged = {
       ...before,
       ...(patch.name !== undefined && { name: patch.name }),
-      ...(patch.refill_distance_km !== undefined && { refill_distance_km: patch.refill_distance_km }),
+      ...(patch.comfortable_range_km !== undefined && { comfortable_range_km: patch.comfortable_range_km }),
+      ...(patch.hard_max_range_km !== undefined && { hard_max_range_km: patch.hard_max_range_km }),
       ...(patch.travel_style !== undefined && { travel_style: patch.travel_style }),
       ...(patch.max_drive_hours_per_day !== undefined && {
         max_drive_hours_per_day: patch.max_drive_hours_per_day,
@@ -110,7 +117,21 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     if (!vehicleMeetsFuelPlanningMinimum(merged)) {
       throw new HttpError(
         400,
-        `Refill distance is required: set “refuel every X km” between ${FUEL_STOP_SPACING_KM_MIN} and ${FUEL_STOP_SPACING_KM_MAX} km.`
+        `Comfortable range is required: set it between ${FUEL_STOP_SPACING_KM_MIN} and ${FUEL_STOP_SPACING_KM_MAX} km.`
+      );
+    }
+
+    // Hard ceiling must never sit below the comfortable range.
+    const mergedComfortable = merged.comfortable_range_km;
+    const mergedHardMax = merged.hard_max_range_km;
+    if (
+      typeof mergedComfortable === 'number' &&
+      typeof mergedHardMax === 'number' &&
+      mergedHardMax < mergedComfortable
+    ) {
+      throw new HttpError(
+        400,
+        'Hard-max range must be the same as or further than the comfortable range.'
       );
     }
 

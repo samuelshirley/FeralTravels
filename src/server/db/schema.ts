@@ -156,8 +156,20 @@ export const vehicles = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     isDefault: boolean('is_default').default(false).notNull(),
-    /** Target km between fuel stops; null ⇒ planner skips until set. */
-    refillDistanceKm: integer('refill_distance_km'),
+    /**
+     * Comfortable driving range between fills (km) — how far the driver is
+     * *happy* to go before refuelling. The everyday planning target Finn aims
+     * for. Null ⇒ planner skips until set (not-yet-onboarded only).
+     */
+    comfortableRangeKm: integer('comfortable_range_km'),
+    /**
+     * Hard-max driving range between fills (km) — the absolute ceiling Finn must
+     * NEVER route a dry stretch past, for any price. Always ≥ comfortableRangeKm.
+     * When the driver gives no separate max, it defaults to comfortableRangeKm
+     * (the conservative direction — Finn simply never stretches). Null ⇒
+     * not-yet-onboarded only.
+     */
+    hardMaxRangeKm: integer('hard_max_range_km'),
 
     // ── Travel style (new — replaces rigid max_drive_hours_per_day) ──
     /**

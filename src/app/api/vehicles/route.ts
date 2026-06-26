@@ -16,11 +16,17 @@ export const dynamic = 'force-dynamic';
 const createSchema = z
   .object({
     name: z.string().min(1).max(100),
-    refill_distance_km: z
+    comfortable_range_km: z
       .number()
       .int()
       .min(FUEL_STOP_SPACING_KM_MIN)
       .max(FUEL_STOP_SPACING_KM_MAX),
+    hard_max_range_km: z
+      .number()
+      .int()
+      .min(FUEL_STOP_SPACING_KM_MIN)
+      .max(FUEL_STOP_SPACING_KM_MAX)
+      .nullish(),
     travel_style: z.enum(['scenic_cruiser', 'road_tripper', 'get_me_there']),
     // Legacy fields — accepted for backward compat but ignored when travel_style is set
     max_drive_hours_per_day: z.number().positive().max(24).optional(),
@@ -46,6 +52,16 @@ const createSchema = z
         });
       }
     }
+    if (
+      data.hard_max_range_km != null &&
+      data.hard_max_range_km < data.comfortable_range_km
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['hard_max_range_km'],
+        message: 'hard_max_range_km must be ≥ comfortable_range_km.',
+      });
+    }
   });
 
 export async function GET() {
@@ -68,7 +84,7 @@ export async function POST(req: Request) {
 
     const mergedRecord: Record<string, unknown> = {
       name: body.name,
-      refill_distance_km: body.refill_distance_km,
+      comfortable_range_km: body.comfortable_range_km,
       travel_style: body.travel_style,
       max_drive_hours_per_day: derived.max_drive_hours_per_day,
       max_drive_hours_per_week: derived.max_drive_hours_per_day * body.max_consecutive_drive_days,
@@ -83,7 +99,9 @@ export async function POST(req: Request) {
 
     const vehicle = await addVehicle(userId, {
       name: body.name,
-      refill_distance_km: body.refill_distance_km,
+      comfortable_range_km: body.comfortable_range_km,
+      // Safe default: no separate ceiling → equals comfortable (never stretch).
+      hard_max_range_km: body.hard_max_range_km ?? body.comfortable_range_km,
       travel_style: body.travel_style,
       cruise_max_drive_hours: derived.cruise_max_drive_hours,
       transit_max_drive_hours: derived.transit_max_drive_hours,

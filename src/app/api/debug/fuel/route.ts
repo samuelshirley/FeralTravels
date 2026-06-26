@@ -28,7 +28,7 @@ export async function GET() {
     const key = googleMapsApiKeyForServer();
 
     // 2. Vehicle / effective range — post-0007 the planner uses the user's
-    // stated `refill_distance_km` directly. The old fuel_economy × tank × 0.8
+    // stated `comfortable_range_km` directly. The old fuel_economy × tank × 0.8
     // computation lived here; both the column reads and the multi-arg helper
     // signature were dropped in the same migration.
     let range: number | null = null;
@@ -37,9 +37,9 @@ export async function GET() {
       if (!v) {
         results['vehicle'] = 'No default vehicle found for this user';
       } else {
-        range = computeEffectiveRangeKm(v.refill_distance_km);
+        range = computeEffectiveRangeKm(v.comfortable_range_km);
         results['vehicle'] = {
-          refill_distance_km: v.refill_distance_km,
+          comfortable_range_km: v.comfortable_range_km,
           effective_range_km: range,
         };
       }

@@ -83,7 +83,7 @@ test.describe('Vehicle profile remediation gate', () => {
     expect(v.maxDriveHoursPerWeek).toBe(30); // legacy, derived: transit(10) × consecutive(3)
     expect(v.maxConsecutiveDriveDays).toBe(3);
     expect(v.dumpStationTrackingEnabled).toBe(false);
-    expect(v.refillDistanceKm).toBe(400);
+    expect(v.comfortableRangeKm).toBe(400);
 
     const userRows = await db
       .select({ remediation: schema.users.needsVehicleProfileRemediation })

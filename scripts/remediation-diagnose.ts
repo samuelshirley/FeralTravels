@@ -23,7 +23,7 @@ import { vehicleIsCompleteForRemediation } from '@/lib/vehicleProfile';
 function vehicleRowToRemediationRecord(row: typeof vehicles.$inferSelect): Record<string, unknown> {
   return {
     name: row.name,
-    refill_distance_km: row.refillDistanceKm,
+    comfortable_range_km: row.comfortableRangeKm,
     max_drive_hours_per_day: row.maxDriveHoursPerDay,
     max_drive_hours_per_week: row.maxDriveHoursPerWeek,
     max_consecutive_drive_days: row.maxConsecutiveDriveDays,

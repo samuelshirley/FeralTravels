@@ -42,7 +42,7 @@ describe('vehicle completeness after coercion helpers', () => {
   it('vehicleIsCompleteForRemediation rejects stringly-typed numbers (wrong shape)', () => {
     const row = {
       name: 'Van',
-      refill_distance_km: '400',
+      comfortable_range_km: '400',
       max_drive_hours_per_day: 6,
       max_drive_hours_per_week: 30,
       max_consecutive_drive_days: 3,
@@ -55,7 +55,7 @@ describe('vehicle completeness after coercion helpers', () => {
   it('coercion makes Postgres-string numerics completeness-checkable like real JS numbers', () => {
     const row = {
       name: 'Van',
-      refill_distance_km: coerceOptionalInt('450'),
+      comfortable_range_km: coerceOptionalInt('450'),
       max_drive_hours_per_day: coerceOptionalFiniteNumber('6'),
       max_drive_hours_per_week: coerceOptionalFiniteNumber('30'),
       max_consecutive_drive_days: coerceOptionalInt('3'),

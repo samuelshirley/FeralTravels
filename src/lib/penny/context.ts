@@ -52,13 +52,19 @@ export interface PennyContext {
 /**
  * Trimmed vehicle shape Penny plans against: user-stated refuel cadence +
  * drive limits + optional dump station cadence. `effective_range_km` aliases
- * `refill_distance_km` for prompts and the fuel planner.
+ * `comfortable_range_km` for prompts and the fuel planner.
  */
 export interface PennyVehicle {
   id: string;
   name: string;
-  refill_distance_km: number | null;
-  /** Alias of refill_distance_km — kept for prompt/system-side stability. */
+  comfortable_range_km: number | null;
+  /**
+   * Hard ceiling between fills (km) handed to Finn — never route a dry stretch
+   * past this, for any price. Defaults to comfortable_range_km when the driver
+   * gave no separate max.
+   */
+  hard_max_range_km: number | null;
+  /** Alias of comfortable_range_km — kept for prompt/system-side stability. */
   effective_range_km: number | null;
   /**
    * Travel style: scenic_cruiser | road_tripper | get_me_there.
@@ -159,17 +165,17 @@ export interface PennyLeg {
  * Effective driving range between fuel stops, in kilometers.
  *
  * Migration 0007 collapsed the old fuel-economy / tank / real-world / 20% buffer
- * computation into a single user-stated `refill_distance_km` ("I like to refuel
+ * computation into a single user-stated `comfortable_range_km` ("I like to refuel
  * every ~X km"). This helper exists so callers don't reach into the vehicle row
  * directly — if we ever add range-shaping logic (terrain modifiers, towing
  * derate, etc.) it goes here in one place. Today it's the identity function on
  * a non-positive guard.
  */
 export function computeEffectiveRangeKm(
-  refillDistanceKm: number | null
+  comfortableRangeKm: number | null
 ): number | null {
-  if (refillDistanceKm == null || refillDistanceKm <= 0) return null;
-  return Math.round(refillDistanceKm);
+  if (comfortableRangeKm == null || comfortableRangeKm <= 0) return null;
+  return Math.round(comfortableRangeKm);
 }
 
 /**
@@ -232,7 +238,7 @@ export async function buildPennyContext(
 function vehicleRecordFromApiForCompleteness(v: VehicleApi): Record<string, unknown> {
   return {
     name: v.name,
-    refill_distance_km: v.refill_distance_km,
+    comfortable_range_km: v.comfortable_range_km,
     travel_style: v.travel_style,
     max_drive_hours_per_day: v.max_drive_hours_per_day,
     max_drive_hours_per_week: v.max_drive_hours_per_week,
@@ -251,11 +257,14 @@ async function resolveVehicle(trip: TripWithLegs, userId: string): Promise<Vehic
 }
 
 function projectVehicle(v: VehicleApi): PennyVehicle {
-  const range = computeEffectiveRangeKm(v.refill_distance_km);
+  const range = computeEffectiveRangeKm(v.comfortable_range_km);
   return {
     id: v.id,
     name: v.name,
-    refill_distance_km: v.refill_distance_km,
+    comfortable_range_km: v.comfortable_range_km,
+    // Hard ceiling handed to Finn — never route a dry stretch past this. Falls
+    // back to comfortable when unset (conservative; Finn simply never stretches).
+    hard_max_range_km: v.hard_max_range_km ?? v.comfortable_range_km,
     effective_range_km: range,
     travel_style: v.travel_style ?? null,
     cruise_max_drive_hours: v.cruise_max_drive_hours ?? null,

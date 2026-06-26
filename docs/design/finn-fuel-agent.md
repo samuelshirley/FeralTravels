@@ -59,20 +59,25 @@ Walk the route polyline by **distance** to find the refuel window. Google's ETA 
 
 ### 2. Reachability filter (hard guardrail)
 
-Entering-tank state comes from `fuelTankState.ts` (continuous-drive model: only the trip-start full tank and *actual selected fuel stops* refill; rest days/overnights do **not**). A candidate station at along-route distance `d` is **reachable** iff the predicted tank on arrival stays above a hard floor:
+Entering-tank state comes from `fuelTankState.ts` (continuous-drive model: only the trip-start full tank and *actual selected fuel stops* refill; rest days/overnights do **not**). Finn works with the **two numbers Penny already captures** (verified in code — migrations 0007/0011):
+
+- `comfortable_range_km` (**C**) — the everyday target distance between fills. Finn *aims* to refuel by here.
+- `hard_max_range_km` (**H**) — the absolute dry-stretch ceiling. Finn **never** routes past it. (`H ≥ C` enforced in `repos/vehicles.ts`; defaults to `C` when the user gives no separate ceiling.)
+
+Both already reach Finn via `projectVehicle`. For a candidate at along-route distance `d` from the current fuel position (`B = kmBurnedSinceLastRefuel`):
 
 ```
-predictedRangeLeft = effectiveRange − kmBurnedSinceLastRefuel − d
-reachable          = predictedRangeLeft ≥ hardFloor      // hardFloor ≈ 15% of range
+safe       = (B + d) ≤ H        // hard constraint — never cross the absolute ceiling
+inComfort  = (B + d) ≤ C        // soft preference — ideally stop by here
 ```
 
-`effectiveRange` here **is the comfortable-range gold number** Penny captured (`refill_distance_km`) — used **as-is**. The user's number already includes their mental reserve (see the Hilux example in `penny-comfortable-range-task.md`), so Finn must **not** apply a second reserve haircut. Today `computeEffectiveRangeKm` appears to shave ~20% more; reconcile that, or a 500 km comfortable range silently becomes a 400 km planning range and Finn nags too early. The hard floor below is the only safety margin Finn adds on top. **Nothing past the floor is ever recommended.** This preserves the conservative bias (and the `no_stations_found` honest-warning path for genuinely remote legs).
+**Nothing past `H` is ever recommended** — that's the conservative bias, plus the `no_stations_found` honest-warning path for genuinely remote legs. *(Correction from an earlier draft: there is no double-reserve to fix — `computeEffectiveRangeKm` is already the identity function and the comfortable number is used as-is. Safety lives in the `C → H` gap, not a hidden 20% haircut.)*
 
 ### 3. Comfort band (soft preference) — replaces the "450–500 / 1% margin" idea
 
 > **Pushback, carried from the design chat:** a hard 450–505 km window with a 1% reserve is both brittle (if no station sits in that thin band you're stranded) and unnecessary (if you always fill to full, stopping at 60% vs 90% costs the *same* fuel — the only real cost of stopping early is *more stops*, i.e. time). Replace it with a soft band, not a hard window.
 
-Prefer stops in the **upper part of usable range** — default band ~**60–90%** of range consumed since last refuel — so the driver isn't refilling half-full and isn't cutting it fine. The band is a *scoring preference*, not a filter: if it's empty, Finn widens toward the hard floor rather than failing. **"Fill once a day"** is a further soft nudge (most rigs at ~500 km/day need one fill) — but always subordinate to the hard guardrail, never the reverse.
+Prefer stops in the **upper part of the comfortable range** — default band ~**60–100% of `C`** consumed since last refuel — so the driver isn't refilling half-full and isn't cutting it fine. The band is a *scoring preference*, not a filter: if it's empty, Finn extends into the **`C → H` stretch zone** (Sam's "comfortable to 500, fine to 550 even on empty") before ever failing — but **never past `H`**. **"Fill once a day"** is a further soft nudge (most rigs at ~500 km/day need one fill), always subordinate to the `H` guardrail.
 
 ### 4. Scoring (the "two-part decision," made explicit)
 
@@ -112,7 +117,7 @@ Penny slices these into the per-day view and narrates the `whyTag`. **Google Map
 
 Finn is "really, really in-depth" precisely *here* — a set of small, pure, independently-testable math units. Each takes structured input and returns structured facts; none calls an LLM.
 
-1. **Range / reachability** — `reachable = comfortableRange − kmBurnedSinceLastRefuel − distanceAlongRoute ≥ hardFloor`. `comfortableRange` is Penny's gold number, used as-is (no second reserve).
+1. **Range / reachability** — `safe = (B + d) ≤ H`; `inComfort = (B + d) ≤ C`, where `C = comfortable_range_km`, `H = hard_max_range_km`, `B = kmBurnedSinceLastRefuel`. Both numbers already exist and are used as-is (`computeEffectiveRangeKm` is identity).
 2. **Burn / tank state** — *exists* (`fuelTankState.ts`): continuous-drive model, only the trip-start full tank and actual fuel stops refill.
 3. **Gap math (safety)** — largest fuel-free stretch ahead vs reachable distance → the "fill now / carry N liters" alarm. Deterministic, never the LLM (see next section).
 4. **Detour math** — perpendicular distance to the polyline (cheap, ranks everything) → real Directions detour distance+time for finalists only. Classifies on-motorway-services (≈0) vs off-ramp vs in-town.
