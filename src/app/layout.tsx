@@ -226,32 +226,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               animation: none;
             }
           }
-          /* ---- Penny planning loader (long-turn "thinking, with a video") ---- */
-          .penny-planning-loader {
-            align-self: flex-start;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-width: 260px;
-            margin-top: 10px;
-          }
+          /* ---- Penny planning video (persistent "Penny sent a video" message) ---- */
           .penny-planning-copy {
-            font-size: 13px;
-            line-height: 1.4;
-            color: var(--tp-muted);
-            padding: 0 2px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--tp-text);
+            background: var(--tp-surface);
+            padding: 8px 14px;
+            border-radius: 18px;
+            align-self: flex-start;
+          }
+          /* iMessage-style video bubble: corners clip the clip, no card frame. */
+          .penny-planning-media-bubble {
+            align-self: flex-start;
+            width: 200px;
+            max-width: 70%;
+            border-radius: 18px;
+            overflow: hidden;
+            line-height: 0;
+            background: var(--tp-surface);
           }
           .penny-planning-media {
-            max-width: 220px;
-            max-height: 220px;
-            width: auto;
-            height: auto;
-            border-radius: 14px;
-            background: var(--tp-surface);
             display: block;
-          }
-          .penny-planning-loader .typing-indicator-bubble {
-            margin-top: 0;
+            width: 100%;
+            height: auto;
           }
           @keyframes tp-cursor-blink {
             0%, 49% { opacity: 1; }

@@ -23,3 +23,19 @@ The long wait is the **post-onboarding replan turn** (Penny building the whole t
 - `npm run test` + `tsc --noEmit` pass.
 
 > Awaiting asset from Sam. Stub with the poster + copy until the clip lands so the rest can ship.
+
+## Update (2026-06-26) — trigger narrowed + iMessage styling
+
+Sam feedback after the real clip landed: the loader fired on *every* slow turn, the card styling didn't match the chat, and the clip looked sped up.
+
+- **Trigger is now the post-onboarding full-trip build only.** The general ">2.5s on any replan" heuristic over-fired on edits to an already-planned trip. The video is now gated on a new `buildingFullPlan` flag (ChatPanel) set right before the handoff `sendChatMessage(intent, [])` and cleared when that turn settles — the one wait we can *predict* will be ~30s. The 2.5s `longPlanning` delay still applies on top, so the dots show first and the video "arrives." Every other turn keeps the plain dots regardless of duration. To light up the video on future known-heavy operations, flip the same flag around them.
+- **iMessage styling.** Copy is now an assistant text bubble; the video sits in a rounded `penny-planning-media-bubble` (overflow-hidden, no surrounding white card) sized like a sent video; dots tick below.
+- **"Sped up" was not the component.** The asset is a correct 12.8s / 30fps constant-rate clip and `playbackRate` is pinned to 1 — a 3s-gif look is a cached older stub. Asset URLs now carry `?v=ASSET_VERSION` to force browsers past the stale cache; bump the version when the asset changes.
+
+## Update 2 (2026-06-26) — clip is now a persistent message, not a transient loader
+
+Sam: the video vanished the moment Penny's reply streamed in; it should stay like a sent iMessage video you can scroll back to and watch loop.
+
+- The clip is no longer a transient typing-indicator replacement. ChatPanel inserts a **persistent** assistant message (UI-only `planningMedia` flag on `UIMessage`) at the post-onboarding handoff via `sendChatMessage(intent, [], undefined, /* insertPlanningMedia */ true)`, positioned between the user's prompt and Penny's streaming bubble: transcript reads [their trip] → [Penny's video] → [plan]. It stays put and keeps looping; the user can scroll back to it.
+- `PennyPlanningLoader` → `PennyPlanningVideo`: renders only the looping video bubble (caption + group are rendered by the transcript). `buildingFullPlan` / `longPlanning` / the 2.5s graduation are all gone — insertion only ever happens at the full build, so the "only on the long turn" rule is satisfied structurally. Every other turn keeps the plain dots.
+- **Scope note (session-only):** `planningMedia` is UI-only and NOT written to chat history, so the clip is gone on page reload (it's there for the build session, which is when you'd watch it). Persisting it across reloads would mean a new persisted message kind in `schema.ts`/`repos/chat.ts`/the chat API — flagged as a deliberate post-MVP decision, not built.

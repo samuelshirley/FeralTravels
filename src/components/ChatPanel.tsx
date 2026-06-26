@@ -7,7 +7,10 @@ import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
 import { formatDate, parseISODate } from '@/lib/dates';
 import Spinner from '@/components/Spinner';
-import PennyPlanningLoader from '@/components/PennyPlanningLoader';
+import PennyPlanningVideo from '@/components/PennyPlanningVideo';
+
+/** Caption Penny "sends" alongside the dog-fetch clip on the first full build. */
+const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fuel…';
 
 interface ChatPanelProps {
   tripId: string;
@@ -101,6 +104,14 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
   streaming?: boolean;
   /** Delivery lifecycle for user messages (sending → delivered → read → typing → responded). */
   deliveryStatus?: DeliveryStatus;
+  /**
+   * UI-only marker for the dog-fetch clip Penny "sends" at the start of the
+   * post-onboarding full-trip build. Rendered as a persistent looping video
+   * bubble (PennyPlanningVideo) with `content` as the caption. Not persisted to
+   * chat history, so it doesn't survive a page reload — it lives for the session
+   * so the user can scroll back to it while Penny builds the plan.
+   */
+  planningMedia?: boolean;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -343,7 +354,6 @@ export default function ChatPanel({
    * friendly planning loader (video + copy) instead of the bare dots. Quick
    * edits resolve before the threshold and keep the lightweight dots.
    */
-  const [longPlanning, setLongPlanning] = useState(false);
   /** True while Penny's intro typing animation plays (first visit only). */
   const [introTyping, setIntroTyping] = useState(false);
   /** Queue of messages sent while Penny is thinking — drained one-at-a-time. */
@@ -383,12 +393,9 @@ export default function ChatPanel({
     scrollToBottom();
   }, [messages.length, loading, scrollToBottom]);
 
-  // Promote the bare typing dots to the friendly planning loader once a replan
-  // turn has been waiting past a short threshold. Penny streaming any text
-  // (her bubble is now visible) or the turn finishing resets it — so quick
-  // edits never see the loader, and a long full-trip build does. We recompute
-  // the "still waiting" condition here rather than reading a memo so the timer
-  // restarts cleanly whenever loading / streaming state changes.
+  // While a turn is in flight but Penny hasn't streamed any text yet, show the
+  // bare typing dots. (The dog-fetch clip for the first full build is now a
+  // persistent transcript message, not a transient indicator.)
   const pennyStreamingText = messages.some(
     (m) =>
       m.id?.startsWith('optimistic-') &&
@@ -397,14 +404,6 @@ export default function ChatPanel({
       !!m.content,
   );
   const replanWaiting = loading && !pennyStreamingText;
-  useEffect(() => {
-    if (!replanWaiting) {
-      setLongPlanning(false);
-      return;
-    }
-    const timer = setTimeout(() => setLongPlanning(true), 2500);
-    return () => clearTimeout(timer);
-  }, [replanWaiting]);
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -620,6 +619,13 @@ export default function ChatPanel({
     attachedImages: AttachedImage[] = [],
     /** When draining the queue, pass the existing optimistic message id to reuse it. */
     existingUserMsgId?: string,
+    /**
+     * Only true for the post-onboarding full-trip build: inserts the persistent
+     * dog-fetch video bubble into the transcript so it stays (and keeps looping)
+     * while Penny plans, rather than the old transient loader that vanished the
+     * moment her response streamed in.
+     */
+    insertPlanningMedia = false,
   ): Promise<void> => {
     if (!trimmed && attachedImages.length === 0) return;
 
@@ -669,7 +675,26 @@ export default function ChatPanel({
         created_at: new Date().toISOString(),
         streaming: true,
       };
-      setMessages((prev) => [...prev, tempUserMsg, pendingAssistantMsg]);
+      // The dog-fetch clip sits between the user's prompt and Penny's streaming
+      // bubble, so the transcript reads: [their trip] → [Penny's video] → [plan].
+      const planningMediaMsg: UIMessage | null = insertPlanningMedia
+        ? {
+            id: `penny-video-${Date.now() + 2}`,
+            trip_id: tripId,
+            role: 'assistant',
+            content: PLANNING_VIDEO_COPY,
+            kind: 'ai',
+            changes_made: null,
+            created_at: new Date().toISOString(),
+            planningMedia: true,
+          }
+        : null;
+      setMessages((prev) => [
+        ...prev,
+        tempUserMsg,
+        ...(planningMediaMsg ? [planningMediaMsg] : []),
+        pendingAssistantMsg,
+      ]);
     }
     setLoading(true);
     onActivity?.('thinking');
@@ -986,7 +1011,10 @@ export default function ChatPanel({
         }
         // Fire the stored trip intent at Penny (not the last answer — that was a vehicle question)
         const intent = result.tripIntent ?? (typeof value === 'string' ? value : String(value));
-        await sendChatMessage(intent, []);
+        // This handoff turn is the full-trip build — the one wait we know will
+        // be long. Pass insertPlanningMedia so Penny "sends" the dog-fetch clip
+        // as a persistent transcript message (only here, never on later edits).
+        await sendChatMessage(intent, [], undefined, true);
         onTripUpdated();
         // Re-focus the textarea so the keyboard stays open on mobile during
         // the transition from onboarding to normal chat.
@@ -1399,6 +1427,28 @@ export default function ChatPanel({
           const gp = getGroupPosition(messages, msgIdx);
           // Tight 2px gap inside a group, 10px between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
+          // The dog-fetch clip Penny "sends" on the first full build: a caption
+          // bubble + a persistent looping video bubble. Rendered like a real
+          // iMessage video message so it stays in the transcript (scrollable).
+          if (msg.planningMedia) {
+            return (
+              <div
+                key={msg.id}
+                style={{
+                  maxWidth: '80%',
+                  alignSelf: 'flex-start',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: 6,
+                  marginTop,
+                }}
+              >
+                {msg.content && <div className="penny-planning-copy">{msg.content}</div>}
+                <PennyPlanningVideo />
+              </div>
+            );
+          }
           const isQueued = msg.deliveryStatus === 'queued';
           return (
           <div
@@ -1603,22 +1653,17 @@ export default function ChatPanel({
           );
         })}
 
-        {/* Typing indicator — shown when Penny has "read" the message
-            but hasn't started responding yet (no text chunks received),
-            or during the typing animation before each onboarding question.
-            A long-running replan turn graduates to the friendly planning
-            loader (video + copy); quick edits and onboarding typing keep the
-            lightweight dots. */}
-        {replanWaiting && longPlanning ? (
-          <PennyPlanningLoader />
-        ) : (
-          (introTyping || replanWaiting) && (
-            <div className="typing-indicator-bubble" aria-label="Penny is typing">
-              <span className="typing-indicator-dot" />
-              <span className="typing-indicator-dot" />
-              <span className="typing-indicator-dot" />
-            </div>
-          )
+        {/* Typing indicator — shown when Penny has "read" the message but
+            hasn't started responding yet (no text chunks received), or during
+            the typing animation before each onboarding question. The dog-fetch
+            clip for the first full build is a persistent message above, not part
+            of this transient indicator. */}
+        {(introTyping || replanWaiting) && (
+          <div className="typing-indicator-bubble" aria-label="Penny is typing">
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
+          </div>
         )}
         <div ref={bottomRef} />
       </div>
