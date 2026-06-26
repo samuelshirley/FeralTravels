@@ -8,6 +8,7 @@ import {
   vehicleMeetsFuelPlanningMinimum,
   vehicleProfileRequiredCompletion,
   validateVehicleProfileDraftForSave,
+  validateComfortableKm,
   type VehicleProfileDraftInput,
 } from '@/lib/vehicleProfile';
 
@@ -100,5 +101,22 @@ describe('hard-max range invariants', () => {
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/further/i);
+  });
+});
+
+describe('validateComfortableKm (range-help estimate guard)', () => {
+  it('accepts whole numbers inside the band', () => {
+    expect(validateComfortableKm(200)).toBe(200);
+    expect(validateComfortableKm(500)).toBe(500);
+    expect(validateComfortableKm(1500)).toBe(1500);
+  });
+
+  it('rejects out-of-band, non-integer, and non-number values', () => {
+    expect(validateComfortableKm(199)).toBeNull();
+    expect(validateComfortableKm(1501)).toBeNull();
+    expect(validateComfortableKm(450.5)).toBeNull();
+    expect(validateComfortableKm('500')).toBeNull();
+    expect(validateComfortableKm(null)).toBeNull();
+    expect(validateComfortableKm(NaN)).toBeNull();
   });
 });

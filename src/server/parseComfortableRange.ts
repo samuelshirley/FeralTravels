@@ -1,7 +1,11 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
 import { RANGE_ESTIMATE_MODEL } from '@/lib/models';
-import { FUEL_STOP_SPACING_KM_MIN, FUEL_STOP_SPACING_KM_MAX } from '@/lib/vehicleProfile';
+import {
+  FUEL_STOP_SPACING_KM_MIN,
+  FUEL_STOP_SPACING_KM_MAX,
+  validateComfortableKm,
+} from '@/lib/vehicleProfile';
 import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
 
 /**
@@ -71,19 +75,6 @@ export interface ComfortableRangeEstimate {
   km: number | null;
   /** Short human basis for the estimate (for the confirm prompt). */
   basis: string;
-}
-
-/**
- * Validate a model-returned comfortable range: a whole number inside the product
- * km band. Pure — exported for unit testing. Anything else (non-number, float,
- * out of band, null) collapses to null so a hallucinated value can't slip in.
- */
-export function validateComfortableKm(raw: unknown): number | null {
-  if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) {
-    return null;
-  }
-  if (raw < FUEL_STOP_SPACING_KM_MIN || raw > FUEL_STOP_SPACING_KM_MAX) return null;
-  return raw;
 }
 
 interface EstimateOpts {

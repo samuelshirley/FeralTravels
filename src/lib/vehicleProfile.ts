@@ -79,6 +79,20 @@ export function vehicleMeetsFuelPlanningMinimum(vehicle: Record<string, unknown>
   );
 }
 
+/**
+ * Validate an estimated comfortable range (km): a whole number inside the
+ * product band. Pure — shared by the onboarding range-help estimator
+ * (`parseComfortableRange.ts`) so a hallucinated/out-of-band value can't be
+ * proposed. Returns the number or null.
+ */
+export function validateComfortableKm(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) {
+    return null;
+  }
+  if (raw < FUEL_STOP_SPACING_KM_MIN || raw > FUEL_STOP_SPACING_KM_MAX) return null;
+  return raw;
+}
+
 /** Tier A = fuel-plannable refill only; Tier B = also requires driving-limit block (stretch planning). */
 export type VehicleCompletenessTier = 'fuel_plannable' | 'strict_driving';
 

@@ -143,9 +143,14 @@ Penny owns nothing past the handoff: no stations, no prices, no ranking.
 
 ---
 
+## Implementation notes (as built)
+
+- The "I don't know" helper (§4) was built as a **single forced-tool estimator** (`parseComfortableRange.ts`) that handles both tank×economy *and* make/model from one free-text answer, and always routes the result back to the comfortable step **prefilled for confirmation** — never persisted unguarded. This is simpler than the original "deterministic tank+economy first, then LLM" split and equally safe because of the confirm step. Trigger: a non-numeric answer on the comfortable step (e.g. "it's a 2018 Hilux") — no extra UI needed.
+- **Follow-up cleanup (Sam, 2026-06-26):** there should be *one* number, not a computed "effective range" alongside it. `computeEffectiveRangeKm` is now an identity function and `PennyVehicle.effective_range_km` just mirrors `comfortable_range_km`. Collapse these to `comfortable_range_km` everywhere (fuel planner, prompt, `planFuelStops`) and delete the redundant helper/field — tracked as a separate cleanup commit (moderate blast radius).
+
 ## 8. Out of scope (explicitly)
 
-- **Fuel type** (diesel/petrol/LPG/AdBlue) for station matching — the old brief wanted to re-add it. It's a Finn input, not part of "the number," and you scoped this chat to the range numbers. Tracked separately; not in this doc's slice.
+- **Fuel type** (diesel/petrol/LPG/AdBlue) — **declined for MVP (Sam, 2026-06-26):** nearly every station sells petrol/diesel, so asking adds onboarding friction without real planning value; LPG/EV are a later concern. The old brief wanted it re-added; we are deliberately not.
 - Live mid-trip editing of the numbers, GPS reconciliation, tank-state override — real, but post the core capture. Worth their own doc.
 - Anything Finn: pricing, stop-finding, gap alarms, region price feeds.
 

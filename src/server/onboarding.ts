@@ -507,6 +507,17 @@ export async function getOnboardingSnapshot(
     return getOnboardingSnapshot(tripId, userId);
   }
 
+  if (state === 'range_help') {
+    // Interstitial: the driver couldn't give a range number and we're gathering
+    // what they know so the estimator can propose one. Survives reload.
+    return {
+      state: 'range_help',
+      question: RANGE_HELP_QUESTION,
+      vehicles: [],
+      progress: null,
+    };
+  }
+
   if (state === 'vehicle_new') {
     // If the trip has no vehicle yet but the account owns exactly one row,
     // attach it so we complete that profile instead of creating a duplicate via
@@ -609,6 +620,14 @@ export async function submitAnswer(
   const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (!trip || trip.userId !== userId) throw new Error('Trip not found');
   const state = trip.onboardingState as OnboardingState;
+
+  // ---- Range help follow-up ("I don't know my range" → estimate + confirm) ----
+  if (state === 'range_help') {
+    const text = typeof input.value === 'string' ? input.value.trim() : '';
+    if (!text) throw new Error('Tell me a bit about your vehicle or tank so I can help.');
+    const unitsPref = await getUnitsPref(userId);
+    return runRangeHelp(tripId, userId, text, unitsPref, true);
+  }
 
   // ---- Trip intent (first question) ----
   if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
@@ -799,6 +818,17 @@ export async function submitAnswer(
     let vehicle: VehicleApi | null = trip.vehicleId
       ? await getVehicleForUser(userId, trip.vehicleId)
       : null;
+
+    // "I don't know" on the comfortable-range step → branch to the range helper
+    // instead of erroring on non-numeric input. (Name is captured first, so a
+    // vehicle row already exists by the time we reach this question.)
+    if (
+      input.questionKey === 'comfortable_range_km' &&
+      vehicle &&
+      isNonNumericRangeAnswer(input.value)
+    ) {
+      return runRangeHelp(tripId, userId, input.value.trim(), unitsPref, false);
+    }
 
     const vehicleRecord = (vehicle ?? {
       dump_station_tracking_enabled: undefined,
