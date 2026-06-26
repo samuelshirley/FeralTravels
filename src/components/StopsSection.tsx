@@ -47,7 +47,7 @@ const sectionTitleStyle: CSSProperties = {
   marginBottom: 6,
 };
 
-const TYPE_ORDER: StopType[] = ['fuel', 'food', 'overnight', 'rest', 'other'];
+const TYPE_ORDER: StopType[] = ['fuel', 'other'];
 
 // Photos are now read directly from stop.photos (persisted in DB at planning time).
 
@@ -104,24 +104,15 @@ export default function StopsSection({
     return map;
   }, [activeStops]);
 
-  // --- Sort stops for display ---
+  // --- Sort stops for display: by distance from start, then type ---
   const sortedStops = useMemo(() => {
     return [...activeStops].sort((a, b) => {
-      const typeA = TYPE_ORDER.indexOf(a.stop_type);
-      const typeB = TYPE_ORDER.indexOf(b.stop_type);
-      // Overnight always last
-      if (a.stop_type === 'overnight' && b.stop_type !== 'overnight') return 1;
-      if (b.stop_type === 'overnight' && a.stop_type !== 'overnight') return -1;
-      // Then by distance from start
       const distA = a.distance_from_start_km ?? Infinity;
       const distB = b.distance_from_start_km ?? Infinity;
       if (distA !== distB) return distA - distB;
-      return typeA - typeB;
+      return TYPE_ORDER.indexOf(a.stop_type) - TYPE_ORDER.indexOf(b.stop_type);
     });
   }, [activeStops]);
-
-  const overnightStops = sortedStops.filter((s) => s.stop_type === 'overnight');
-  const waypointStops = sortedStops.filter((s) => s.stop_type !== 'overnight');
 
   return (
     <>
@@ -226,8 +217,8 @@ export default function StopsSection({
           </div>
         )}
 
-        {/* Waypoint stops (non-overnight) */}
-        {waypointStops.map((stop) => (
+        {/* Stops (fuel + user-added) */}
+        {sortedStops.map((stop) => (
           <div key={stop.id}>
             <StopCard
               stopType={stop.stop_type}
@@ -247,7 +238,7 @@ export default function StopsSection({
           </div>
         ))}
 
-        {waypointStops.length === 0 &&
+        {sortedStops.length === 0 &&
           !fuelPlanning &&
           fuelStatus !== 'failed' &&
           fuelStatus !== 'no_stations_found' && (
@@ -255,31 +246,6 @@ export default function StopsSection({
               {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
             </div>
           )}
-
-        {/* Overnight */}
-        {overnightStops.length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <div style={sectionTitleStyle}>OVERNIGHT</div>
-            {overnightStops.map((stop) => (
-              <StopCard
-                key={stop.id}
-                stopType="overnight"
-                variant="overnight"
-                name={stop.name}
-                distanceFromStartKm={stop.distance_from_start_km}
-                photos={photosMap.get(stop.id.toString()) ?? []}
-                photosLoading={false}
-                googleMapsUri={
-                  stop.lat != null && stop.lng != null
-                    ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                    : null
-                }
-                lat={stop.lat}
-                lng={stop.lng}
-              />
-            ))}
-          </div>
-        )}
 
         {/* Dismissed stops (collapsed) */}
         {dismissedStops.length > 0 && (
@@ -326,7 +292,7 @@ export default function StopsSection({
               lineHeight: 1.5,
             }}
           >
-            Ask Penny for fuel, groceries, or other stops along the route
+            Ask Penny for fuel, or to add a place you want to visit
           </div>
         )}
       </div>

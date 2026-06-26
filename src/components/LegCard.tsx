@@ -15,9 +15,6 @@ import Distance from './Distance';
 function formatStopType(stopType?: string): string {
   switch (stopType) {
     case 'fuel': return 'Fuel';
-    case 'food': return 'Food';
-    case 'overnight': return 'Overnight';
-    case 'rest': return 'Rest';
     case 'destination': return 'Destination';
     case 'other': return 'Stop';
     default: return 'Stop';

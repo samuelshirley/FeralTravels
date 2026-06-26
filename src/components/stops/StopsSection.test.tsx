@@ -66,11 +66,11 @@ const mockFuelStop: Stop = {
   updated_at: '2024-01-01',
 };
 
-const mockOvernightStop: Stop = {
+const mockUserStop: Stop = {
   id: '00000000-0000-0000-0000-000000000002',
   leg_id: '00000000-0000-0000-0000-000000000010',
   sort_order: 2,
-  stop_type: 'overnight',
+  stop_type: 'other',
   status: 'selected',
   name: 'Camping Ciudad de León',
   lat: 42.60,
@@ -111,26 +111,11 @@ describe('StopsSection (refactored)', () => {
         legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
-        initialStops={[mockFuelStop, mockOvernightStop]}
+        initialStops={[mockFuelStop, mockUserStop]}
       />
     );
     expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
     expect(screen.getByText('Camping Ciudad de León')).toBeInTheDocument();
-  });
-
-  it('separates overnight stops into their own section', () => {
-    render(
-      <StopsSection
-        tripId="00000000-0000-0000-0000-000000000001"
-        legId="00000000-0000-0000-0000-000000000010"
-        legEndName="León"
-        legEndCoords={{ lat: 42.6, lng: -5.57 }}
-        initialStops={[mockFuelStop, mockOvernightStop]}
-      />
-    );
-    // "OVERNIGHT" appears as both section title and StopCard type label
-    const overnightElements = screen.getAllByText('OVERNIGHT');
-    expect(overnightElements.length).toBeGreaterThanOrEqual(2);
   });
 
   it('shows fuel planning spinner', () => {
@@ -183,7 +168,7 @@ describe('StopsSection (refactored)', () => {
         initialStops={[mockFuelStop]}
       />
     );
-    expect(screen.getByText('Ask Penny for fuel, groceries, or other stops along the route')).toBeInTheDocument();
+    expect(screen.getByText('Ask Penny for fuel, or to add a place you want to visit')).toBeInTheDocument();
   });
 
   it('hides Penny prompt when readonly', () => {
@@ -197,7 +182,7 @@ describe('StopsSection (refactored)', () => {
         readonly
       />
     );
-    expect(screen.queryByText('Ask Penny for fuel, groceries, or other stops along the route')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ask Penny for fuel, or to add a place you want to visit')).not.toBeInTheDocument();
   });
 
   it('renders paste GPS section when not readonly', () => {
@@ -214,10 +199,10 @@ describe('StopsSection (refactored)', () => {
   });
 
   it('renders StopCard with correct type labels', () => {
-    const foodStop: Stop = {
+    const userStop: Stop = {
       ...mockFuelStop,
       id: '00000000-0000-0000-0000-000000000004',
-      stop_type: 'food',
+      stop_type: 'other',
       name: 'Fuente Carrionas',
       distance_from_start_km: 145,
     };
@@ -227,11 +212,11 @@ describe('StopsSection (refactored)', () => {
         legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
-        initialStops={[mockFuelStop, foodStop]}
+        initialStops={[mockFuelStop, userStop]}
       />
     );
     expect(screen.getByText('FUEL')).toBeInTheDocument();
-    expect(screen.getByText('GROCERIES')).toBeInTheDocument();
+    expect(screen.getByText('STOP')).toBeInTheDocument();
   });
 
   it('stop cards link to Google Maps', () => {

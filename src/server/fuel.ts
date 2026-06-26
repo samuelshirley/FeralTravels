@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, lt, like, or } from 'drizzle-orm';
+import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops } from '@/server/db/schema';
 import { getDirections } from '@/lib/directions';
@@ -37,16 +37,8 @@ import {
  *   4. Pick the best candidate (nearest to the sample point that matches
  *      the vehicle's fuel type keyword when possible).
  *   5. Replace any previous auto-generated fuel stops on the leg (source
- *      = 'google_places', status='option'), plus matching auto **rest**
- *      stretch breaks (same source/status, notes prefix
- *      AUTO_STRETCH_BREAK_NOTE_PREFIX). User-picked / user-authored stops
- *      are never touched.
- *
- *   Stretch knots: when vehicle.max_drive_hours_per_day is set, sample the
- *   polyline at ~80 % of that cap in estimated driving time (uniform-speed
- *   proxy from OSRM), merge with fuel samples, dedupe clusters, Places
- *   dog_park/park lookup at stretch-only knots; fuel+stretch clusters get
- *   fuel only so the station doubles as the break where possible.
+ *      = 'google_places', status='option'). User-picked / user-authored
+ *      stops are never touched.
  *
  * Fails loudly (sets fuel_status='failed', fuel_plan_error text, returns
  * details) when the Places key is missing, the vehicle has no range data, the
@@ -71,8 +63,6 @@ const MIN_LEG_KM_FOR_PLANNING = 100;
 // the *cumulative* distance instead of the leg's distance, which is what
 // fixes the "three 500 km legs say no fuel needed" bug.
 const SKIP_PLANNING_THRESHOLD = 0.7;
-/** Matches auto-inserted rest rows — used when clearing planner output. */
-export const AUTO_STRETCH_BREAK_NOTE_PREFIX = 'Auto-suggested stretch break';
 
 export interface FuelPlanResult {
   legId: string;
@@ -489,7 +479,7 @@ function extractPlaceIdFromUrl(url: string | null): string | null {
  * against a rest stop that happens to share coords.
  */
 function matchesExistingSelected(
-  candidateType: 'fuel' | 'rest',
+  candidateType: 'fuel',
   candidatePlaceId: string | null,
   candidateLat: number,
   candidateLng: number,
@@ -529,10 +519,7 @@ function autoPlannerGooglePlacesOptionSql(legId: string) {
     eq(stops.legId, legId),
     eq(stops.source, 'google_places'),
     eq(stops.status, 'option'),
-    or(
-      eq(stops.stopType, 'fuel'),
-      and(eq(stops.stopType, 'rest'), like(stops.notes, `${AUTO_STRETCH_BREAK_NOTE_PREFIX}%`))
-    )
+    eq(stops.stopType, 'fuel')
   );
 }
 

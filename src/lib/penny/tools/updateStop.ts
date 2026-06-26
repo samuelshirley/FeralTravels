@@ -51,7 +51,7 @@ export const tool: Anthropic.Tool = {
       data: {
         type: 'object',
         properties: {
-          stop_type: { type: 'string', enum: ['fuel', 'food', 'overnight', 'rest', 'other'] },
+          stop_type: { type: 'string', enum: ['fuel', 'other'] },
           name: { type: 'string' },
           lat: { type: 'number', minimum: -90, maximum: 90 },
           lng: { type: 'number', minimum: -180, maximum: 180 },

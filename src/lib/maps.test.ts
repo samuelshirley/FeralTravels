@@ -101,8 +101,8 @@ describe('legDirectionsWaypoints', () => {
 
   it('includes non-fuel stops only when status is selected', () => {
     const stops: LegDirectionsStopInput[] = [
-      makeStop({ ...NANCY, name: 'Rest Nancy', stop_type: 'rest', status: 'selected' }),
-      makeStop({ ...METZ, name: 'Rest Metz', stop_type: 'rest', status: 'option' }),
+      makeStop({ ...NANCY, name: 'Stop Nancy', stop_type: 'other', status: 'selected' }),
+      makeStop({ ...METZ, name: 'Stop Metz', stop_type: 'other', status: 'option' }),
     ];
     const wps = legDirectionsWaypoints(stops);
     expect(wps).toHaveLength(1);

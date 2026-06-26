@@ -355,7 +355,16 @@ export interface RouteWithLinks extends Route {
   links: RouteLink[];
 }
 
-export type StopType = 'fuel' | 'food' | 'overnight' | 'rest' | 'other';
+/**
+ * MVP stop types — exactly two:
+ *  - 'fuel'  : gas stops found automatically by Finn along the route.
+ *  - 'other' : a stop the user explicitly adds (Google Maps link, address, or
+ *              place name). Selected 'other' stops force the route through them
+ *              (they become &waypoints= in the leg's Google Maps URL).
+ * Amenity types (food/parks) and auto overnight-stop finding were removed in
+ * the MVP teardown — Penny does not proactively find anything but fuel.
+ */
+export type StopType = 'fuel' | 'other';
 export type StopStatus = 'option' | 'selected' | 'dismissed';
 export type StopSource =
   | 'penny'

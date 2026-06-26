@@ -14,7 +14,7 @@ export interface UseStopActionsOptions {
 
 /**
  * Encapsulates all stop mutation logic (select, dismiss, delete, swap,
- * add-from-paste, add-from-nearby-place, set-overnight) in a single hook.
+ * add-from-paste) in a single hook.
  *
  * Separated from UI rendering to support the micro-frontend architecture:
  * any component that works with stops can use this hook without coupling
@@ -127,7 +127,9 @@ export function useStopActions({
         return;
       }
       await api.addStop(legId, {
-        stop_type: 'overnight' as StopType,
+        // A pasted GPS / Maps link is a place the user explicitly wants to
+        // visit — the "user-added" stop type.
+        stop_type: 'other' as StopType,
         name: coords.name || `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`,
         lat: coords.lat,
         lng: coords.lng,
@@ -150,67 +152,6 @@ export function useStopActions({
     }
   }, [api, legId, pasteValue, reload]);
 
-  const addNearbyPlace = useCallback(
-    async (place: {
-      name: string;
-      lat: number;
-      lng: number;
-      googleMapsUri: string | null;
-      stopType?: StopType;
-    }) => {
-      await api.addStop(legId, {
-        stop_type: place.stopType ?? 'rest',
-        name: place.name,
-        lat: place.lat,
-        lng: place.lng,
-        status: 'selected',
-        source: 'google_places',
-        source_url: place.googleMapsUri ?? null,
-      });
-      await reload();
-    },
-    [api, legId, reload]
-  );
-
-  /**
-   * Set a nearby place as the leg's overnight stop. Dismisses any existing
-   * google_places-sourced overnights first, then inserts the new one.
-   */
-  const setOvernight = useCallback(
-    async (place: {
-      name: string;
-      lat: number;
-      lng: number;
-      googleMapsUri: string | null;
-    }) => {
-      // Dismiss existing auto-suggested overnights
-      const existingOvernights = stops.filter(
-        (s) =>
-          s.stop_type === 'overnight' &&
-          s.status !== 'dismissed' &&
-          s.source === 'google_places'
-      );
-      for (const existing of existingOvernights) {
-        await api
-          .updateStop(existing.id, { status: 'dismissed' }, { skipGlobalErrorReport: true })
-          .catch(() => {
-            /* stale id — fine */
-          });
-      }
-      await api.addStop(legId, {
-        stop_type: 'overnight',
-        name: place.name,
-        lat: place.lat,
-        lng: place.lng,
-        status: 'selected',
-        source: 'google_places',
-        source_url: place.googleMapsUri ?? null,
-      });
-      await reload();
-    },
-    [api, legId, stops, reload]
-  );
-
   // Derived data
   const activeStops = stops.filter((s) => s.status !== 'dismissed');
   const dismissedStops = stops.filter((s) => s.status === 'dismissed');
@@ -225,8 +166,6 @@ export function useStopActions({
     dismiss,
     remove,
     swapAlternate,
-    addNearbyPlace,
-    setOvernight,
     // Paste GPS
     pasteValue,
     setPasteValue,

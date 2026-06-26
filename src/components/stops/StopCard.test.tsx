@@ -47,17 +47,9 @@ describe('StopCard', () => {
     expect(link).toHaveAttribute('target', '_blank');
   });
 
-  it('renders different stop types correctly', () => {
-    const { unmount } = render(<StopCard {...baseProps} stopType="food" />);
-    expect(screen.getByText('GROCERIES')).toBeInTheDocument();
-    unmount();
-
-    const { unmount: u3 } = render(<StopCard {...baseProps} stopType="rest" />);
-    expect(screen.getByText('PARK')).toBeInTheDocument();
-    u3();
-
-    render(<StopCard {...baseProps} stopType="overnight" />);
-    expect(screen.getByText('OVERNIGHT')).toBeInTheDocument();
+  it('renders the user-added (other) stop type', () => {
+    render(<StopCard {...baseProps} stopType="other" />);
+    expect(screen.getByText('STOP')).toBeInTheDocument();
   });
 
   it('handles missing photos gracefully', () => {
@@ -84,14 +76,6 @@ describe('StopCard', () => {
     const link = screen.getByRole('link');
     expect(link.getAttribute('href')).toContain('42.3441');
     expect(link.getAttribute('href')).toContain('-3.6969');
-  });
-
-  it('renders overnight variant with distinct styling', () => {
-    const { container } = render(
-      <StopCard {...baseProps} stopType="overnight" variant="overnight" />
-    );
-    const card = container.firstChild as HTMLElement;
-    expect(card.className).toContain('overnight');
   });
 
   it('shows loading placeholders while photos are loading', () => {

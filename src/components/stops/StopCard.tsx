@@ -18,8 +18,6 @@ export interface StopCardProps {
   /** Fallback coordinates when no googleMapsUri is available. */
   lat?: number | null;
   lng?: number | null;
-  /** Visual variant — 'overnight' gets accent-violet styling. */
-  variant?: 'default' | 'overnight';
   /** Show shimmer placeholders instead of photos. */
   photosLoading?: boolean;
   /** When true, dims the card and shows a spinner overlay. */
@@ -40,26 +38,8 @@ const STOP_DISPLAY: Record<
     iconBg: 'rgba(184,149,106,0.15)',
     icon: '⛽',
   },
-  food: {
-    label: 'GROCERIES',
-    color: 'var(--tp-accent-warm)',
-    iconBg: 'rgba(201,123,99,0.15)',
-    icon: '🛒',
-  },
-  overnight: {
-    label: 'OVERNIGHT',
-    color: '#8B7AB8',
-    iconBg: 'rgba(107,91,154,0.15)',
-    icon: '🌙',
-  },
-  rest: {
-    label: 'PARK',
-    color: 'var(--tp-success)',
-    iconBg: 'rgba(74,139,122,0.15)',
-    icon: '🌳',
-  },
   other: {
-    label: 'OTHER',
+    label: 'STOP',
     color: 'var(--tp-muted)',
     iconBg: 'rgba(92,92,92,0.1)',
     icon: '📍',
@@ -84,7 +64,6 @@ export default function StopCard({
   googleMapsUri,
   lat,
   lng,
-  variant = 'default',
   photosLoading = false,
   loading = false,
 }: StopCardProps) {
@@ -94,13 +73,11 @@ export default function StopCard({
     googleMapsUri ??
     (lat != null && lng != null ? buildFallbackMapsUrl(lat, lng) : null);
 
-  const isOvernight = variant === 'overnight';
-
   const cardStyle: React.CSSProperties = {
     display: 'block',
     padding: '10px 12px',
-    background: isOvernight ? 'rgba(107,91,154,0.07)' : 'var(--tp-surface)',
-    border: `1px solid ${isOvernight ? 'rgba(107,91,154,0.2)' : 'var(--tp-border)'}`,
+    background: 'var(--tp-surface)',
+    border: '1px solid var(--tp-border)',
     borderRadius: 8,
     marginBottom: 6,
     cursor: href ? 'pointer' : 'default',
@@ -251,7 +228,7 @@ export default function StopCard({
         target="_blank"
         rel="noopener noreferrer"
         style={wrappedCardStyle}
-        className={isOvernight ? 'stop-card overnight' : 'stop-card'}
+        className="stop-card"
       >
         {loadingOverlay}
         {content}
@@ -262,7 +239,7 @@ export default function StopCard({
   return (
     <div
       style={wrappedCardStyle}
-      className={isOvernight ? 'stop-card overnight' : 'stop-card'}
+      className="stop-card"
     >
       {loadingOverlay}
       {content}

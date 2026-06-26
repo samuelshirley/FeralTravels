@@ -35,10 +35,6 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
     description: 'Fetching place photos from API — photos should come from stop.photos in DB',
   },
   {
-    pattern: /fetch\s*\(\s*[`'"]\/api\/places\/nearby-parks/,
-    description: 'Fetching nearby parks from API — should be pre-computed at planning time',
-  },
-  {
     pattern: /fetch\s*\(\s*[`'"]\/api\/directions/,
     description: 'Fetching directions from API — should use stored polyline geometry',
   },

@@ -108,7 +108,7 @@ export function validator(ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: ADD_STOP,
   description:
-    'Add a stop along a leg — fuel, food, overnight, rest, or other. Default status is "option" unless the user explicitly picks it. For fuel stops, fuel_type is required. Use stop_type="other" for landmarks/bridges/passes/viewpoints/detours the route should traverse — when status="selected" these become &waypoints= in the leg\'s Google Maps URL, forcing the navigation to actually route through them. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
+    'Add a stop along a leg. Two stop types: "fuel" (gas stop) and "other" (any place the user explicitly wants to visit or route through — a Google Maps link, address, place name, landmark, bridge, pass, viewpoint, or detour). Default status is "option" unless the user explicitly picks it. For fuel stops, fuel_type is required. Use stop_type="other" with status="selected" to force the route through a place — these become &waypoints= in the leg\'s Google Maps URL. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
   input_schema: {
     type: 'object',
     required: ['leg_id', 'data'],
@@ -120,7 +120,7 @@ export const tool: Anthropic.Tool = {
         properties: {
           stop_type: {
             type: 'string',
-            enum: ['fuel', 'food', 'overnight', 'rest', 'other'],
+            enum: ['fuel', 'other'],
           },
           name: { type: 'string' },
           lat: { type: 'number', minimum: -90, maximum: 90 },
