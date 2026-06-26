@@ -22,6 +22,13 @@ Personal automated travel agent for overlanders. The user tells Penny where they
 
 **Fuel pricing + stop-finding is a SEPARATE task/agent.** "The right price" is **not** in this slice. This app only exposes the interface a dedicated fuel-stop + pricing agent plugs into; that agent is built in its own task (it needs region-specific price-data research — EU has open price feeds, the US does not).
 
+**Finn fuel-stop contract (interface only for MVP — algorithm is Finn's own task, do NOT build now):** the app captures two range numbers per vehicle and hands both to Finn; how Finn *uses* them is out of this slice.
+
+- `comfortable_range_km` — the everyday target Finn aims for. Finn's stop logic must be "don't run dry before the next reachable station," **not** "stop every comfortable_range_km." The greedy "only stop when you can't reach the next station, and pick the best station in range" approach is what prevents the redundant fill-up-then-fill-up-again-100km-later annoyance. Distance-interval stopping is the wrong model.
+- `hard_max_range_km` — the absolute ceiling on a dry stretch. Finn must never route the driver into a fuel gap longer than this. This is the number that catches the "passed the last station before a 250km void and ran out" failure: the trigger is "next fuel is X km away and X exceeds safe remaining range → top up **here** even though you're not low," not distance driven.
+- **Forced-stop reason is mandatory.** When geography forces a top-up the driver wouldn't otherwise make (e.g. stations at 100/200km then a 250km void → must top up at 200), Finn must NOT try to engineer the stop away — it's physics. Finn MUST attach a one-line reason ("next fuel is 250km away"). A forced stop *with* a reason feels smart; without one it feels broken. This reason string is the cheapest fix for the confusion and is a first-class requirement, not a nicety.
+- **MVP stance:** store both numbers, Finn treats `hard_max` as a never-exceed ceiling, ship. The long-gap edge (e.g. far-north Norway, Australian outback — real: routine 200–400km gaps) is a documented known limitation leaning on driver intelligence ("trust but verify"); don't pull the routing algorithm into the MVP to chase it.
+
 **Assumption:** full tank at trip start unless the user says otherwise; Penny states this at the end of onboarding.
 
 **Process:** ship → market → real feedback → iterate agile. Resist re-expanding scope from inside Sam's head.
