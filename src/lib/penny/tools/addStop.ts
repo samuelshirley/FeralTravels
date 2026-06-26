@@ -4,38 +4,39 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import { distanceToSegmentKm } from '@/lib/penny/geo';
 import {
-  fuelTypeSchema,
   latSchema,
   lngSchema,
   stopSourceSchema,
   stopStatusSchema,
-  stopTypeSchema,
   urlSchema,
 } from './shared';
 
 export const ADD_STOP = 'add_stop' as const;
 
-const dataSchema = z
-  .object({
-    stop_type: stopTypeSchema,
-    name: z.string().min(1, 'name is required'),
-    lat: latSchema.nullish(),
-    lng: lngSchema.nullish(),
-    distance_from_start_km: z.number().nonnegative().nullish(),
-    notes: z.string().nullish(),
-    status: stopStatusSchema.nullish(),
-    fuel_type: fuelTypeSchema.nullish(),
-    fuel_amount_l: z.number().positive().nullish(),
-    source: stopSourceSchema.nullish(),
-    source_url: urlSchema.nullish(),
-  })
-  .refine(
-    (d) => d.stop_type !== 'fuel' || d.fuel_type != null,
-    {
-      message: 'fuel_type is required when stop_type is "fuel".',
-      path: ['fuel_type'],
-    }
-  );
+/**
+ * Penny only ever AUTHORS one kind of stop: 'other' — a place the user
+ * explicitly named or linked. Fuel stops are NOT created here; they come
+ * exclusively from Finn (the `plan_fuel_stops` tool) or the server-side
+ * lazy day-open loader, both of which attach a real, located station with
+ * coordinates. Allowing `add_stop` to mint a 'fuel' row let Penny persist a
+ * coordinate-less placeholder ("Fuel stop — Aurdal (departure)", 0 km) that
+ * points at no actual station — an empty stop that does nothing. The fix is
+ * structural: Penny cannot type 'fuel' here at all, so that state is
+ * unreachable. See <fuel_planning_rules> in src/lib/claude.ts.
+ */
+const addStopTypeSchema = z.literal('other');
+
+const dataSchema = z.object({
+  stop_type: addStopTypeSchema,
+  name: z.string().min(1, 'name is required'),
+  lat: latSchema.nullish(),
+  lng: lngSchema.nullish(),
+  distance_from_start_km: z.number().nonnegative().nullish(),
+  notes: z.string().nullish(),
+  status: stopStatusSchema.nullish(),
+  source: stopSourceSchema.nullish(),
+  source_url: urlSchema.nullish(),
+});
 
 const baseSchema = z.object({
   leg_id: z.string().uuid(),
@@ -108,7 +109,7 @@ export function validator(ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: ADD_STOP,
   description:
-    'Add a stop along a leg. Two stop types: "fuel" (gas stop) and "other" (any place the user explicitly wants to visit or route through — a Google Maps link, address, place name, landmark, bridge, pass, viewpoint, or detour). Default status is "option" unless the user explicitly picks it. For fuel stops, fuel_type is required. Use stop_type="other" with status="selected" to force the route through a place — these become &waypoints= in the leg\'s Google Maps URL. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
+    'Add a user-named place to a leg. stop_type is ALWAYS "other": a place the user explicitly wants to visit or route through — a Google Maps link, address, place name, landmark, bridge, pass, viewpoint, or detour. This is the ONLY kind of stop you create. Do NOT use this for fuel — fuel stops are found by Finn via plan_fuel_stops, never authored by hand (a hand-made fuel stop has no real station behind it). Default status is "option" unless the user explicitly picks it. Use status="selected" to force the route through a place — these become &waypoints= in the leg\'s Google Maps URL. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
   input_schema: {
     type: 'object',
     required: ['leg_id', 'data'],
@@ -120,7 +121,8 @@ export const tool: Anthropic.Tool = {
         properties: {
           stop_type: {
             type: 'string',
-            enum: ['fuel', 'other'],
+            enum: ['other'],
+            description: 'Always "other". Fuel stops come from plan_fuel_stops, not this tool.',
           },
           name: { type: 'string' },
           lat: { type: 'number', minimum: -90, maximum: 90 },
@@ -132,16 +134,10 @@ export const tool: Anthropic.Tool = {
           },
           notes: { type: 'string' },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
-          fuel_type: {
-            type: 'string',
-            enum: ['diesel', 'petrol', 'premium', 'lpg'],
-            description: 'Required when stop_type is "fuel".',
-          },
-          fuel_amount_l: { type: 'number', minimum: 0 },
           source: {
             type: 'string',
             enum: ['penny', 'user', 'google_places', 'osm', 'manual'],
-            description: 'Default to "penny" when you invent a placeholder so the UI knows to mark it for verification.',
+            description: 'Use "user" for a place the user named/linked; "penny" only for a verify-me placeholder.',
           },
           source_url: { type: 'string', format: 'uri' },
         },

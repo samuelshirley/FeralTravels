@@ -8,14 +8,22 @@ import {
   lngSchema,
   stopSourceSchema,
   stopStatusSchema,
-  stopTypeSchema,
   urlSchema,
 } from './shared';
 
 export const UPDATE_STOP = 'update_stop' as const;
 
+/**
+ * Penny may update an existing fuel stop's status/coords/name (e.g. the user
+ * selects one of Finn's options), but she may NOT *convert* a stop into a fuel
+ * stop — minting fuel rows is Finn's job alone (see addStop.ts). So the only
+ * settable stop_type here is 'other'; to touch a fuel stop she omits stop_type
+ * and updates other fields.
+ */
+const settableStopTypeSchema = z.literal('other');
+
 const dataSchema = z.object({
-  stop_type: stopTypeSchema.nullish(),
+  stop_type: settableStopTypeSchema.nullish(),
   name: z.string().min(1).nullish(),
   lat: latSchema.nullish(),
   lng: lngSchema.nullish(),
@@ -42,7 +50,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: UPDATE_STOP,
   description:
-    'Update a stop by id — common uses: change status to "selected" when the user picks an overnight option, fix coords, or attach a real station name.',
+    'Update a stop by id — common uses: change status to "selected"/"dismissed" when the user picks among options, or fix a stop\'s coords/name.',
   input_schema: {
     type: 'object',
     required: ['stop_id', 'data'],
@@ -51,7 +59,11 @@ export const tool: Anthropic.Tool = {
       data: {
         type: 'object',
         properties: {
-          stop_type: { type: 'string', enum: ['fuel', 'other'] },
+          stop_type: {
+            type: 'string',
+            enum: ['other'],
+            description: 'Only "other" is settable. Omit to update a fuel stop without changing its type.',
+          },
           name: { type: 'string' },
           lat: { type: 'number', minimum: -90, maximum: 90 },
           lng: { type: 'number', minimum: -180, maximum: 180 },

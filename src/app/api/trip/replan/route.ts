@@ -1062,8 +1062,10 @@ async function dispatchAction(
         lng: data.lng ?? null,
         distance_from_start_km: data.distance_from_start_km ?? null,
         notes: data.notes ?? null,
-        fuel_type: data.fuel_type ?? null,
-        fuel_amount_l: data.fuel_amount_l ?? null,
+        // Penny only authors 'other' stops — fuel rows (with fuel_type/amount)
+        // come from Finn's server-side planner, never this path.
+        fuel_type: null,
+        fuel_amount_l: null,
         source: data.source ?? 'penny',
         source_url: data.source_url ?? null,
       });
