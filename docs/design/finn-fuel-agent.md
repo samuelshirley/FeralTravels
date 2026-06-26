@@ -155,6 +155,32 @@ Unchanged from the brief — reproduced here as the binding contract:
 
 ---
 
+## List view, cache tiers, and price refresh
+
+**List view.** Days render relevant-first: today (e.g. June 26) at the top, future drive days below. Each day shows its skeleton immediately; fuel stops fill in per the load rules below.
+
+**Two-tier cache — the key realization.** A fuel stop is two facts with very different lifetimes, so cache them separately:
+
+1. **Station + placement** (which OSM station, where on the route, detour) — depends only on route geometry + the comfortable-range number. Invalidated *only* by `fuel_plan_hash` (route/waypoint/vehicle change). Lives for weeks. Expensive (Overpass + detour).
+2. **Price** at that station — time-sensitive but *cheap* to refresh. Stored on the fuel-stop row as `price` + `price_as_of`.
+
+So Finn never re-runs the expensive corridor search just because prices aged. → **A separate, lightweight price-refresh path** (`POST /api/legs/[id]/fuel-stops/refresh-prices`) that walks the *existing* stops and re-queries only their prices. Pennies, not a full replan.
+
+**Why a multi-day-old plan is still a good plan.** Price **dispersion is structural, not volatile** — the expensive station *sits* high and farms inattentive drivers; it isn't jittering against the cheap one. So the *relative ordering* of stations — what actually decides where Finn sends you — is stable over days. That's the licence to be cheap: we don't need minute-fresh data to pick the right station.
+
+**Caveat (hold the line):** absolute prices *do* move, regionally a lot — German stations re-price several times a day on a known intraday cycle (Tankerkönig is real-time for this reason); Australia runs weekly cycles. Trust a few-days-old plan for *which station*; never *display* a stale absolute number as current. Always show `price_as_of`; refresh eagerly-but-cheaply.
+
+**Freshness policy.**
+- **Station placement:** valid until `fuel_plan_hash` changes.
+- **Displayed price:** soft TTL ~24h; if a viewed/approaching day's prices are older, fire the cheap refresh.
+- **Ranking:** tolerates ~3 days (structural dispersion); re-rank only if a refreshed price moved enough to change order.
+
+**Getting today pre-loaded — and a scope flag.** You want today's drive day already populated on app open. Two ways:
+- **Recommended, no new infra:** auto-load today's fuel stops on app/page open — the brief already allows this ("today's day may auto-plan on load; one cheap lookup"). Brief spinner on first open, then cached. Achieves the UX with zero cron.
+- **Optional pre-warm (cron):** a midnight job refreshing *today's* (and maybe tomorrow's) drive-day prices so it's instant on open.
+
+> **⚠️ Scope flag (per CLAUDE.md MVP discipline):** the MVP teardown explicitly **cut cron jobs / nightly replan**. A midnight pre-warm reintroduces a (narrow) cron. It is *not* required — auto-load-on-open gives ~the same experience. Recommend shipping cron-free for MVP and adding the pre-warm later only if open-latency actually bothers users. Flagged so it's a conscious choice, not scope creep.
+
 ## Resolving the brief's five open questions
 
 1. **First region + feed →** Germany / **Tankerkönig** (free, real-time, official; the DE/EU test trip lives here). EU adapters follow on the same interface.
