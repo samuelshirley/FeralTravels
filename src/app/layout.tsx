@@ -226,6 +226,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               animation: none;
             }
           }
+          /* ---- Penny planning loader (long-turn "thinking, with a video") ---- */
+          .penny-planning-loader {
+            align-self: flex-start;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 260px;
+            margin-top: 10px;
+          }
+          .penny-planning-copy {
+            font-size: 13px;
+            line-height: 1.4;
+            color: var(--tp-muted);
+            padding: 0 2px;
+          }
+          .penny-planning-media {
+            max-width: 220px;
+            max-height: 220px;
+            width: auto;
+            height: auto;
+            border-radius: 14px;
+            background: var(--tp-surface);
+            display: block;
+          }
+          .penny-planning-loader .typing-indicator-bubble {
+            margin-top: 0;
+          }
           @keyframes tp-cursor-blink {
             0%, 49% { opacity: 1; }
             50%, 100% { opacity: 0; }

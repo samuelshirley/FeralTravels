@@ -89,6 +89,7 @@ src/
     vehicle-setup/    # Vehicle onboarding
   components/
     ChatPanel.tsx     # Penny chat UI
+    PennyPlanningLoader.tsx  # Long planning-turn loader (copy + dog-fetch video + dots); replaces bare typing dots after a ~2.5s wait, degrades to poster/copy (asset: public/penny-planning.mp4 + .jpg)
     TripMap.tsx       # Google Maps view
     Itinerary.tsx     # Leg/stop/route display
     TasksSection.tsx  # Trip tasks

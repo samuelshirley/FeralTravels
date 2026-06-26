@@ -7,6 +7,7 @@ import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
 import { formatDate, parseISODate } from '@/lib/dates';
 import Spinner from '@/components/Spinner';
+import PennyPlanningLoader from '@/components/PennyPlanningLoader';
 
 interface ChatPanelProps {
   tripId: string;
@@ -354,6 +355,12 @@ export default function ChatPanel({
   }, [onboardingQuestion]);
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [loading, setLoading] = useState(false);
+  /**
+   * True once a replan turn has been waiting long enough to justify the
+   * friendly planning loader (video + copy) instead of the bare dots. Quick
+   * edits resolve before the threshold and keep the lightweight dots.
+   */
+  const [longPlanning, setLongPlanning] = useState(false);
   /** True while Penny's intro typing animation plays (first visit only). */
   const [introTyping, setIntroTyping] = useState(false);
   /** Queue of messages sent while Penny is thinking — drained one-at-a-time. */
@@ -392,6 +399,29 @@ export default function ChatPanel({
     }
     scrollToBottom();
   }, [messages.length, loading, scrollToBottom]);
+
+  // Promote the bare typing dots to the friendly planning loader once a replan
+  // turn has been waiting past a short threshold. Penny streaming any text
+  // (her bubble is now visible) or the turn finishing resets it — so quick
+  // edits never see the loader, and a long full-trip build does. We recompute
+  // the "still waiting" condition here rather than reading a memo so the timer
+  // restarts cleanly whenever loading / streaming state changes.
+  const pennyStreamingText = messages.some(
+    (m) =>
+      m.id?.startsWith('optimistic-') &&
+      m.role === 'assistant' &&
+      m.streaming &&
+      !!m.content,
+  );
+  const replanWaiting = loading && !pennyStreamingText;
+  useEffect(() => {
+    if (!replanWaiting) {
+      setLongPlanning(false);
+      return;
+    }
+    const timer = setTimeout(() => setLongPlanning(true), 2500);
+    return () => clearTimeout(timer);
+  }, [replanWaiting]);
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -1784,13 +1814,20 @@ export default function ChatPanel({
 
         {/* Typing indicator — shown when Penny has "read" the message
             but hasn't started responding yet (no text chunks received),
-            or during the typing animation before each onboarding question. */}
-        {(introTyping || (loading && !messages.some((m) => m.id?.startsWith('optimistic-') && m.role === 'assistant' && m.streaming && m.content))) && (
-          <div className="typing-indicator-bubble" aria-label="Penny is typing">
-            <span className="typing-indicator-dot" />
-            <span className="typing-indicator-dot" />
-            <span className="typing-indicator-dot" />
-          </div>
+            or during the typing animation before each onboarding question.
+            A long-running replan turn graduates to the friendly planning
+            loader (video + copy); quick edits and onboarding typing keep the
+            lightweight dots. */}
+        {replanWaiting && longPlanning ? (
+          <PennyPlanningLoader />
+        ) : (
+          (introTyping || replanWaiting) && (
+            <div className="typing-indicator-bubble" aria-label="Penny is typing">
+              <span className="typing-indicator-dot" />
+              <span className="typing-indicator-dot" />
+              <span className="typing-indicator-dot" />
+            </div>
+          )
         )}
         <div ref={bottomRef} />
       </div>
