@@ -10,7 +10,6 @@ interface Props {
   name: string;
   startDate: string | null;
   endDate: string | null;
-  status: string;
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
@@ -35,7 +34,6 @@ export default function TripCard({
   name,
   startDate,
   endDate,
-  status,
   isTemplate = false,
   editMode = false,
   showClone = false,
@@ -107,16 +105,6 @@ export default function TripCard({
             }}
           >
             {[startDate, endDate].filter(Boolean).join(' → ') || 'No dates set'}
-          </div>
-          <div
-            style={{
-              fontSize: 11,
-              color: 'var(--tp-subtle)',
-              marginTop: 8,
-              
-            }}
-          >
-            status: {status}
           </div>
 
           {showClone && !editMode && (

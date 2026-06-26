@@ -129,7 +129,6 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             name={trip.name}
             startDate={trip.start_date}
             endDate={trip.end_date}
-            status={trip.status}
             editMode={editMode}
             onDeleted={handleTripDeleted}
           />
@@ -149,7 +148,6 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
                 name={trip.name}
                 startDate={trip.start_date}
                 endDate={trip.end_date}
-                status={trip.status}
                 isTemplate
                 editMode={editMode && canDeleteTemplates}
                 showClone

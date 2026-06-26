@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
+import { apiFetch } from '@/lib/api';
 import { formatDate, parseISODate, behindCutoffRank, todayISO } from '@/lib/dates';
 import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
@@ -100,6 +101,71 @@ export default function Itinerary({
   const [revealing, setRevealing] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Inline trip-name edit ──────────────────────────────────────────────
+  // The app auto-names the trip; this lets the user override that name in
+  // place. Clicking the pencil swaps the title for a text input; saving
+  // PATCHes the name and refreshes via onChanged.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(trip.name);
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep the draft in sync when the persisted name changes (e.g. Penny renamed
+  // it) while we're not actively editing.
+  useEffect(() => {
+    if (!editingName) setNameDraft(trip.name);
+  }, [trip.name, editingName]);
+
+  const startEditingName = () => {
+    setNameDraft(trip.name);
+    setNameError(null);
+    setEditingName(true);
+  };
+
+  const cancelEditingName = () => {
+    setEditingName(false);
+    setNameError(null);
+    setNameDraft(trip.name);
+  };
+
+  const saveName = async () => {
+    const next = nameDraft.trim();
+    if (!next) {
+      setNameError('Name cannot be empty');
+      return;
+    }
+    if (next === trip.name) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    setNameError(null);
+    try {
+      await apiFetch(`/api/trips/${tripId}`, {
+        method: 'PATCH',
+        body: { name: next },
+        skipGlobalErrorReport: true,
+      });
+      setEditingName(false);
+      onChanged?.();
+    } catch (err) {
+      setNameError(
+        err instanceof Error && err.message ? err.message : 'Could not save name',
+      );
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  // Focus + select the input when entering edit mode.
+  useEffect(() => {
+    if (editingName) {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    }
+  }, [editingName]);
 
   // Keep visibleCount in sync as legs are added/removed underneath us. If
   // the trip grew, we don't auto-reveal — let the IO trigger that. If the
@@ -240,7 +306,131 @@ export default function Itinerary({
             </span>
           )}
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, lineHeight: 1.2, color: 'var(--tp-text)' }}>{trip.name}</h1>
+        {editingName ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                ref={nameInputRef}
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void saveName();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEditingName();
+                  }
+                }}
+                maxLength={200}
+                disabled={savingName}
+                data-testid="trip-name-input"
+                aria-label="Trip name"
+                style={{
+                  fontSize: 24,
+                  fontWeight: 700,
+                  lineHeight: 1.2,
+                  color: 'var(--tp-text)',
+                  background: 'var(--tp-surface)',
+                  border: '1px solid var(--tp-border)',
+                  borderRadius: 6,
+                  padding: '2px 8px',
+                  maxWidth: '100%',
+                  width: 'min(420px, 100%)',
+                  fontFamily: 'inherit',
+                }}
+              />
+              <button
+                onClick={() => void saveName()}
+                disabled={savingName}
+                data-testid="trip-name-save"
+                aria-label="Save name"
+                style={{
+                  background: 'var(--tp-primary)',
+                  border: 'none',
+                  color: '#fff',
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: savingName ? 'wait' : 'pointer',
+                }}
+              >
+                {savingName ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                onClick={cancelEditingName}
+                disabled={savingName}
+                aria-label="Cancel"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--tp-border)',
+                  color: 'var(--tp-muted)',
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            {nameError && (
+              <div style={{ fontSize: 12, color: 'var(--tp-danger, #c0392b)', marginTop: 6 }}>
+                {nameError}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h1
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                margin: 0,
+                lineHeight: 1.2,
+                color: 'var(--tp-text)',
+              }}
+            >
+              {trip.name}
+            </h1>
+            {!readonly && (
+              <button
+                onClick={startEditingName}
+                data-testid="trip-name-edit"
+                aria-label="Rename trip"
+                title="Rename trip"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--tp-subtle)',
+                  cursor: 'pointer',
+                  padding: 4,
+                  borderRadius: 4,
+                  lineHeight: 0,
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
         {(trip.start_date || trip.end_date) && (
           <div style={{ fontSize: 13, color: 'var(--tp-muted)', marginTop: 6 }}>
             {[trip.start_date, trip.end_date].filter(Boolean).join(' → ')}
@@ -268,7 +458,6 @@ export default function Itinerary({
                   { label: 'REST', value: `${restDays}` as React.ReactNode },
                 ]
               : [{ label: 'DAYS', value: `${allLegs.length}` as React.ReactNode }]),
-            { label: 'STATUS', value: trip.status as React.ReactNode },
           ] as Array<{ label: string; value: React.ReactNode }>).map((s, i) => (
             <div key={i}>
               <div
