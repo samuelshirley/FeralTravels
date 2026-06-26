@@ -1,0 +1,1 @@
+ALTER TABLE "legs" ADD COLUMN "fuel_stops_updated_at" timestamp;

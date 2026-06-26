@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
+import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import { buildLegDirectionsUrl, buildSegmentedNavUrls, legDirectionsWaypoints } from '@/lib/maps';
 import { useNextStop } from '@/lib/useNextStop';
 import StatusBadge from './StatusBadge';
@@ -14,7 +15,6 @@ import Distance from './Distance';
 function formatStopType(stopType?: string): string {
   switch (stopType) {
     case 'fuel': return 'Fuel';
-    case 'dump_station': return 'Dump Station';
     case 'food': return 'Food';
     case 'overnight': return 'Overnight';
     case 'rest': return 'Rest';
@@ -118,6 +118,71 @@ export default function LegCard({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Lazy fuel sourcing on day-open ──────────────────────────────────────
+  // Fuel stops are sourced when the user OPENS a day (no eager trip-wide
+  // planning — that was the Google Places cost sink). When this card expands,
+  // we POST to the leg's lazy fuel endpoint, which is cache-aware: a leg
+  // sourced within FUEL_CACHE_TTL_MS is a server-side cache hit (zero Places
+  // calls); a never-sourced or stale leg runs the real search. We mirror that
+  // freshness check here so we don't even round-trip on a fresh cache.
+  const [fuelLoading, setFuelLoading] = useState(false);
+  const fuelFetchSigRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (readonly || isRestDay || !expanded) return;
+    const updatedAt = leg.fuel_stops_updated_at;
+    const fresh = updatedAt
+      ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS
+      : false;
+    const terminalSuccess =
+      leg.fuel_status === 'ready' || leg.fuel_status === 'no_stations_found';
+    // Source lazily when never sourced ('none'), or a terminal-success cache
+    // that has gone stale. We deliberately DON'T auto-retry 'failed' on open
+    // (its cause is surfaced inline and a retry would re-hit Places on every
+    // expand) nor 'computing'/'pending' (a search is already in flight).
+    const needsFetch = leg.fuel_status === 'none' || (terminalSuccess && !fresh);
+    if (!needsFetch) return;
+
+    // Guard against duplicate fires: the effect re-runs on every trip reload.
+    // The signature folds in the fuel state, so once a fetch lands new data the
+    // guard naturally allows a future genuinely-new state through.
+    const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? 'none'}`;
+    if (fuelFetchSigRef.current === sig) return;
+    fuelFetchSigRef.current = sig;
+
+    let cancelled = false;
+    setFuelLoading(true);
+    api
+      .planFuelStops(leg.id)
+      .then(() => {
+        // Reload the trip so the freshly-sourced stops + new fuel_status render.
+        // Safe to call even if this card unmounted — it's a parent reload.
+        onChanged?.();
+      })
+      .catch((e) => {
+        // apiFetch already surfaced this via the global ErrorNotifier (no silent
+        // swallow). Clear the guard so the next open can retry.
+        fuelFetchSigRef.current = null;
+        console.warn('lazy fuel fetch failed', e);
+      })
+      .finally(() => {
+        if (!cancelled) setFuelLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    expanded,
+    isRestDay,
+    readonly,
+    leg.id,
+    leg.fuel_status,
+    leg.fuel_stops_updated_at,
+    api,
+    onChanged,
+  ]);
 
   const loadTrails = async () => {
     try {
@@ -595,6 +660,7 @@ export default function LegCard({
             initialStops={leg.stops}
             fuelStatus={leg.fuel_status}
             fuelPlanError={leg.fuel_plan_error}
+            fuelLoading={fuelLoading}
             onChanged={onChanged}
             readonly={readonly}
           />

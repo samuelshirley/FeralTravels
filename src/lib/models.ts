@@ -28,3 +28,12 @@ export const DATE_PARSE_MODEL = 'claude-haiku-4-5-20251001';
  * trivial extraction/estimation task as the date parser.
  */
 export const RANGE_ESTIMATE_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * Small, cheap model for the onboarding "first-message intent scan": reads the
+ * driver's opening trip description and transcribes any onboarding variables it
+ * already contains (start date, comfortable/hard-max range) so those questions
+ * can be skipped or prefilled. Pure extraction — the same trivial class as the
+ * date parser, and the LLM only converts; the server re-validates every field.
+ */
+export const ONBOARDING_SCAN_MODEL = 'claude-haiku-4-5-20251001';

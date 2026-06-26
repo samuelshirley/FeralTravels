@@ -1,5 +1,5 @@
 import 'server-only';
-import { vehicleIsCompleteForRemediation } from '@/lib/vehicleProfile';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
 import {
@@ -66,29 +66,6 @@ export interface PennyVehicle {
   hard_max_range_km: number | null;
   /** Alias of comfortable_range_km — kept for prompt/system-side stability. */
   effective_range_km: number | null;
-  /**
-   * Travel style: scenic_cruiser | road_tripper | get_me_there.
-   * Determines cruise vs transit hour caps.
-   */
-  travel_style: string | null;
-  /** Max hours for cruise legs (the drive IS the experience). */
-  cruise_max_drive_hours: number | null;
-  /** Max hours for transit legs (just covering ground). */
-  transit_max_drive_hours: number | null;
-  /** @deprecated Legacy field — equals transit_max_drive_hours. */
-  max_drive_hours_per_day: number | null;
-  /** @deprecated Derived legacy field. */
-  max_drive_hours_per_week: number | null;
-  max_consecutive_drive_days: number | null;
-  /**
-   * How many non-driving (rest) days the user needs after a streak of
-   * consecutive driving days. E.g. "I can drive 3 days then need 1 rest day"
-   * → max_consecutive_drive_days=3, rest_days_after_driving=1.
-   */
-  rest_days_after_driving: number | null;
-  /** Null = onboarding/remediation hasn't asked caravan gate yet. */
-  dump_station_tracking_enabled: boolean | null;
-  dump_station_interval_days: number | null;
 }
 
 export interface PennyLeg {
@@ -207,9 +184,11 @@ export async function buildPennyContext(
     kinds: ['ai'],
   });
 
+  // Penny's only hard requirement for fuel planning is a comfortable range in
+  // the product band. (The old multi-field remediation gate is gone.)
   const vehicle_profile_blocked =
     vehicle == null ||
-    !vehicleIsCompleteForRemediation(vehicleRecordFromApiForCompleteness(vehicle));
+    !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: vehicle.comfortable_range_km });
 
   const currentLeg = trip.current_leg_id
     ? trip.legs.find((l) => l.id === trip.current_leg_id) ?? null
@@ -235,19 +214,6 @@ export async function buildPennyContext(
   };
 }
 
-function vehicleRecordFromApiForCompleteness(v: VehicleApi): Record<string, unknown> {
-  return {
-    name: v.name,
-    comfortable_range_km: v.comfortable_range_km,
-    travel_style: v.travel_style,
-    max_drive_hours_per_day: v.max_drive_hours_per_day,
-    max_drive_hours_per_week: v.max_drive_hours_per_week,
-    max_consecutive_drive_days: v.max_consecutive_drive_days,
-    dump_station_interval_days: v.dump_station_interval_days,
-    dump_station_tracking_enabled: v.dump_station_tracking_enabled,
-  };
-}
-
 async function resolveVehicle(trip: TripWithLegs, userId: string): Promise<VehicleApi | null> {
   if (trip.vehicle_id != null) {
     const v = await getVehicleForUser(userId, trip.vehicle_id).catch(() => null);
@@ -266,15 +232,6 @@ function projectVehicle(v: VehicleApi): PennyVehicle {
     // back to comfortable when unset (conservative; Finn simply never stretches).
     hard_max_range_km: v.hard_max_range_km ?? v.comfortable_range_km,
     effective_range_km: range,
-    travel_style: v.travel_style ?? null,
-    cruise_max_drive_hours: v.cruise_max_drive_hours ?? null,
-    transit_max_drive_hours: v.transit_max_drive_hours ?? null,
-    max_drive_hours_per_day: v.max_drive_hours_per_day,
-    max_drive_hours_per_week: v.max_drive_hours_per_week,
-    max_consecutive_drive_days: v.max_consecutive_drive_days,
-    rest_days_after_driving: v.rest_days_after_driving ?? null,
-    dump_station_tracking_enabled: v.dump_station_tracking_enabled ?? null,
-    dump_station_interval_days: v.dump_station_interval_days ?? null,
   };
 }
 

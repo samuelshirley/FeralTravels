@@ -23,6 +23,11 @@ import {
   type ResolvedMapsLink,
 } from "@/lib/coordsResolve";
 import { PENNY_MODEL } from "@/lib/models";
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from "@/lib/vehicleProfile";
+import { appendContinuationNudge } from "@/lib/penny/autoContinue";
+// Re-exported for unit tests (see claude.test.ts), which pin the
+// no-double-user-turn invariant of the auto-continue plumbing.
+export { appendContinuationNudge };
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -70,11 +75,35 @@ const MAX_VALIDATION_RETRIES = 2;
  * pushes her to batch get_route calls in parallel, which collapses that to
  * ~2-3 iterations in the common case — so this is mostly a safety net.
  *
- * Cost ceiling: 16 iterations × max_tokens=4096 ≈ ~65K output tokens per
- * request. The per-user $5/day spend cap (REPLAN_USD_CAP_PER_DAY) and
- * 40-req/hour cap (REPLAN_REQUESTS_PER_HOUR) bound the blast radius.
+ * When this cap is hit mid-plan we now AUTO-CONTINUE (see MAX_AUTO_CONTINUES)
+ * instead of stopping, so this is a per-pass budget, not the hard ceiling on a
+ * single turn's work. Kept modest so each pass stays cheap and the wall-clock
+ * budget (MODEL_LOOP_BUDGET_MS in route.ts) and $5/day cap stay meaningful.
+ *
+ * Cost ceiling: 24 iterations × max_tokens=4096 ≈ ~98K output tokens per pass.
+ * The per-user $5/day spend cap (REPLAN_USD_CAP_PER_DAY) and per-hour request
+ * cap (REPLAN_REQUESTS_PER_HOUR) bound the blast radius across passes.
  */
-const MAX_TOOL_USE_ITERATIONS = 16;
+const MAX_TOOL_USE_ITERATIONS = 24;
+
+/**
+ * How many times we'll AUTO-CONTINUE a turn that hit MAX_TOOL_USE_ITERATIONS
+ * before giving up and surfacing the manual "Continue planning" button.
+ *
+ * When the tool-use loop exhausts its per-pass iteration budget while Penny
+ * still has tool work pending (truncation), we inject a short continuation
+ * nudge and run the loop again — all within the SAME replan request and the
+ * SAME SSE stream. The user sees one continuous "Penny's planning" wait
+ * (doc 05) instead of a manual click between passes, and because it's one
+ * request these continuations do NOT count separately against the per-hour
+ * request cap (no quota-exemption plumbing needed — see route.ts Part B).
+ *
+ * Capped so a pathological loop can't chain forever. The wall-clock budget
+ * (MODEL_LOOP_BUDGET_MS) is the hard backstop above this. Only when auto-
+ * continue is ALSO exhausted do we report `truncated: true` and fall back to
+ * the manual button.
+ */
+const MAX_AUTO_CONTINUES = 3;
 
 /**
  * How many times we'll bounce a "you wrote a tool call as plain text" turn back
@@ -217,32 +246,25 @@ Example for a metric user:
 </units>
 
 <vehicle_preference_updates>
-When the user states or changes a driving preference in chat — whether you asked for it or they volunteered it — call update_vehicle immediately.
+When the user states or changes a fuel-range preference in chat — whether you asked for it or they volunteered it — call update_vehicle immediately.
 
-The user's travel_style determines two drive-hour caps:
-  scenic_cruiser → cruise 4h, transit 8h
-  road_tripper   → cruise 6h, transit 10h
-  get_me_there   → cruise 8h, transit 12h
-
-"Cruise" legs are when the drive IS the experience (stops, scenery, exploring).
-"Transit" legs are just covering ground to reach a destination.
+The MVP profile tracks two range numbers:
+  comfortable_range_km — how far they're happy to drive before refuelling
+  hard_max_range_km — the absolute ceiling they'd never be routed past
 
 Parse their freeform answer:
-  "I like to take it slow, lots of stops" → travel_style: scenic_cruiser
-  "I don't mind long days to get there" → travel_style: get_me_there
-  "balanced, maybe 6 hours cruising" → travel_style: road_tripper
   "refuel every 400 km" → comfortable_range_km: 400
   "I'd stretch to 600 in a pinch" / "never push past 600" → hard_max_range_km: 600
-  "drive 5 days then rest" → max_consecutive_drive_days: 5
-  "drive 3 days then 1 rest day" → max_consecutive_drive_days: 3, rest_days_after_driving: 1
 
 Only supply fields the user actually stated — leave the rest out of the call so existing values aren't overwritten.
 
-After update_vehicle succeeds, confirm in one sentence ("Saved: road tripper style, 3 consecutive days.") and proceed with planning. Do NOT ask the user to restate preferences in a different format. Do NOT say you don't recognize the input.
+After update_vehicle succeeds, confirm in one sentence ("Saved: comfortable range 400 km.") and proceed with planning. Do NOT ask the user to restate preferences in a different format. Do NOT say you don't recognize the input.
 
-Important: leg validation in the SAME turn still uses the vehicle values from before the update. If you've just updated the travel style and need to add legs that depend on it, tell the user the preferences are saved and ask them to send the planning request again — it will pick up the new caps.
+Important: leg validation in the SAME turn still uses the vehicle values from before the update. If you've just updated the range and need to add legs that depend on it, tell the user the preferences are saved and ask them to send the planning request again — it will pick up the new values.
 
-The "I don't recognize" line from the units section is ONLY for imperial units (miles, gallons, °F, etc.). Never apply it to driving-time or cadence preferences stated in hours, days, or weeks.
+Driving days are capped at ~8 hours of driving each — that's a fixed default, not something the user configures. Don't ask about travel style or driving cadence; just split long segments into ~8h days.
+
+The "I don't recognize" line from the units section is ONLY for imperial units (miles, gallons, °F, etc.). Never apply it to range preferences stated in km or miles.
 </vehicle_preference_updates>
 
 <context_facts>
@@ -253,11 +275,7 @@ Each turn you receive a <context>…</context> block in the user message with th
                 (set when they report progress); legs before it are behind them.
                 current_place is where they currently are. Both null until the
                 driver reports their position.
-  vehicle    — { name, comfortable_range_km, hard_max_range_km, effective_range_km,
-                  travel_style, cruise_max_drive_hours, transit_max_drive_hours,
-                  max_drive_hours_per_day, max_drive_hours_per_week,
-                  max_consecutive_drive_days, rest_days_after_driving,
-                  dump_station_tracking_enabled, dump_station_interval_days }
+  vehicle    — { name, comfortable_range_km, hard_max_range_km, effective_range_km }
                 effective_range_km mirrors comfortable_range_km — the user's
                 stated preferred distance between fuel stops. Treat it as the
                 furthest distance you may plan between fuel stops.
@@ -265,12 +283,9 @@ Each turn you receive a <context>…</context> block in the user message with th
                 stretch beyond it under any circumstances (defaults to
                 comfortable_range_km when they gave no separate max).
 
-                travel_style is one of: scenic_cruiser, road_tripper, get_me_there.
-                It determines TWO drive-hour caps:
-                  cruise_max_drive_hours — for legs where the drive is the experience
-                  transit_max_drive_hours — for legs that are just covering ground
-                Use the correct cap when planning each leg based on its purpose.
-                max_drive_hours_per_day is the legacy field (= transit cap) for backward compat.
+                Each driving day is capped at ~8 hours of driving — a fixed
+                default, not something the vehicle configures. Split long
+                segments into ~8h driving days accordingly.
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
                 drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[],
                 sort_order }
@@ -283,14 +298,14 @@ Each turn you receive a <context>…</context> block in the user message with th
                 start/end coordinates, then use its id. After one turn changes
                 legs, reload uses fresh ids from subsequent context.
   recentChat — last ~12 chat turns for short-term memory. Do NOT re-summarize them; just use them for continuity.
-  vehicle_profile_blocked — boolean. When true, the driver's garage row is missing mandatory fields (fuel cadence caps, driving-hour caps, and/or caravan dump station gate). Automated fuel-distance checks and trustworthy routing runs are NOT reliable until fixed.
+  vehicle_profile_blocked — boolean. When true, the driver's garage row is missing its comfortable fuel range. Automated fuel-distance checks and trustworthy routing runs are NOT reliable until that's set.
 </context_facts>
 
 <vehicle_profile_gate>
-When \`vehicle_profile_blocked\` is **true** in the context JSON, the driver's saved vehicle row is incomplete for trustworthy automated fuel-distance work and strict leg validation.
-- In your FIRST conversational reply unless they clearly continue a clarification thread, steer them briefly to finish the profile at \`/vehicle-setup\` or Settings → Vehicle profile.
-- If their message states concrete refill/driving/dump-station prefs, still call \`update_vehicle\` immediately per <vehicle_preference_updates>; that may unblock the profile on subsequent turns once saved.
-- Do **not** claim fuel stops along long legs are "handled" until the profile gates clear — \`plan_fuel_stops\` and validators need real caps + refill cadence first.
+When \`vehicle_profile_blocked\` is **true** in the context JSON, the driver's saved vehicle row is missing its comfortable fuel range (the only field fuel planning needs).
+- In your FIRST conversational reply unless they clearly continue a clarification thread, steer them briefly to set their range at \`/vehicle-setup\` or Settings → Vehicle profile.
+- If their message states a concrete refuel range, still call \`update_vehicle\` immediately per <vehicle_preference_updates>; that may unblock the profile on subsequent turns once saved.
+- Do **not** claim fuel stops along long legs are "handled" until the range is set — \`plan_fuel_stops\` and validators need the comfortable range first.
 </vehicle_profile_gate>
 
 <routing_engine_limits>
@@ -317,9 +332,9 @@ You have a hard cap on tool-use iterations per turn. Burning iterations one segm
 <fuel_planning_rules>
 - NO PRICES. plan_fuel_stops places WHERE to refuel along a leg; it does not know fuel prices. Never say you found "cheap gas", "the best deal", or "current pricing" — that data does not exist. If the user wants prices, see <app_capabilities_and_limits> (log it with submit_idea, don't fake it).
 - REPORT THE REAL OUTCOME. plan_fuel_stops runs immediately and returns a result. NEVER say fuel stops are "planned"/"added"/"done" before its tool_result comes back. After it returns, describe exactly what it reported: how many stops were added, OR that none were needed, OR that no station could be found (tell the user to carry extra fuel / plan manually), OR that it failed and why. Do NOT claim a stop was placed when the result says otherwise — an empty plan that looks done is the worst-case failure.
-- After get_route, if you add legs whose distance_km exceeds effective_range_km (or consecutive legs will exceed it before a real refuel), call plan_fuel_stops for each of those legs on the **same** turn. Do **not** ask "want me to plan fuel?" — run the tool unless the user clearly opted out of auto fuel.
-- Prefer plan_fuel_stops over batches of guessed fuel add_stop rows when you need concrete stations; use fuel add_stop only when the user names a specific station or plan_fuel_stops is not appropriate.
-- Never plan a leg that relies on more than effective_range_km between fuel stops without plan_fuel_stops and/or explicit fuel stops.
+- LAZY FUEL — do NOT auto-call plan_fuel_stops while building or editing a plan. Fuel stops are sourced automatically when the driver OPENS a day in the itinerary; your job during planning is the route (legs), not pre-placing stations. Adding a long leg does NOT require you to plan its fuel — the app finds stations along that day when it's opened. Do not say a leg's fuel is "handled/planned" off the back of building it.
+- Call plan_fuel_stops ONLY when the user EXPLICITLY asks you to find or check fuel for a specific leg right now (e.g. "find me fuel for the day 3 drive"). When you do, prefer it over batches of guessed fuel add_stop rows; report its real outcome per the rule above.
+- You never need to pre-place fuel to make a long leg "valid" — the day-open loader covers it. Use explicit fuel add_stop only when the user names a specific station.
 - For every fuel add_stop, populate distance_from_start_km (best-effort, measured along the driving route). Add fuel_type matching the vehicle when known.
 - Prefer fuel stations you can name with confidence (brand + town). If you don't know real stations, use plan_fuel_stops instead of fabricating coordinates.
 - Don't plan fuel at the same km as the leg destination — that's what overnight stops cover.
@@ -342,17 +357,11 @@ This is the most common mistake to avoid. Read carefully:
 </route_planning_rules>
 
 <driving_defaults_summary>
-When building a NEW trip plan, use the driving preferences from the vehicle context as-is — do NOT ask the user to confirm them as a separate step. They already set these preferences; re-asking wastes a round trip.
+When building a NEW trip plan, split the route into driving days of up to ~8 hours each (the fixed default). Do NOT ask the user about travel style, driving cadence, or rest days — those aren't collected. The only vehicle preferences you need are the comfortable fuel range and the hard-max ceiling.
 
-If travel_style is null (and max_drive_hours_per_day is also null), mention that travel style hasn't been set and ask the user to pick one. If max_consecutive_drive_days is null, mention what's missing. You can't plan without these.
+You CAN plan as long as the comfortable range is set. If it's missing (vehicle_profile_blocked is true), point the user to set it (see <vehicle_profile_gate>) before relying on fuel planning.
 
-Otherwise, use them and mention them in passing (e.g. "Planning as a road tripper — ~6h cruise days, up to 10h when you need to cover ground, with rest days every 3 days.").
-
-For each leg, decide if it's a cruise or transit leg:
-- Transit: the leg exists just to get between places (no interesting stops along the way) → use transit_max_drive_hours
-- Cruise: the route itself is worth savoring (scenic drives, small towns, frequent stops) → use cruise_max_drive_hours
-
-Skip this entirely on small tweaks, follow-up questions, or when the user has already just set their preferences in this conversation.
+Get the per-day split from get_route — it returns a suggested split capped at the 8h day. Don't try to override the cap with text reasoning.
 </driving_defaults_summary>
 
 <intent_extraction>
@@ -431,7 +440,7 @@ For an accurate count + summary, in check_trip_feasibility add a constraint_chec
 - If the user asks for a plan and the trip has no legs, you MUST call extract_trip_intent first (see <intent_extraction>), then get_route for each segment, then run the <feasibility_check>, THEN emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
 - AFTER emitting all driving-day legs, also emit add_leg calls with leg_type="rest" for each non-driving day at transit stops. If the user is spending 2 nights in Innsbruck, emit 2 rest-day legs (one per day) located at Innsbruck, numbered as total trip days. This makes rest days visible in the itinerary alongside driving days.
 - Number ALL legs (driving + rest) as sequential total trip days. Day 1, Day 2, etc. Rest days get their own day numbers.
-- The validator will reject any add_leg or update_leg with drive_time_minutes > vehicle.transit_max_drive_hours × 60 (or max_drive_hours_per_day × 60 for legacy vehicles). Use get_route's split — don't try to override the cap with text reasoning.
+- The validator will reject any add_leg or update_leg whose drive_time_minutes exceeds the per-day cap (~8h × 60 = 480 min by default; a legacy vehicle may carry its own stored cap). Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
 
@@ -508,9 +517,11 @@ export interface ReplanResult {
   /**
    * True if a `plan_fuel_stops` lookup actually planned a leg this turn (any
    * real outcome — stops created, none-needed, no_stations_found, or failed —
-   * but NOT the "leg isn't saved yet" / validation-error cases). The route ORs
-   * this into `fuelReplenishQueued` so the client runs the trip-wide forward
-   * replen (keeping later legs' cumulative tank math consistent) and refetches.
+   * but NOT the "leg isn't saved yet" / validation-error cases). Penny only
+   * runs the planner on an EXPLICIT user ask now (fuel is otherwise sourced
+   * lazily on day-open). The route surfaces this as `fuelStopsChanged` so the
+   * client simply reloads the trip to render the freshly-written stops — there
+   * is no trip-wide fuel replan anymore.
    */
   fuelPlanRan: boolean;
   /**
@@ -596,6 +607,8 @@ export async function* replanStream(
   let leakRetryCount = 0;
   let leakSanitized = false;
   let truncated = false;
+  // How many times we've auto-continued a truncated pass this turn.
+  let autoContinues = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheCreationTokens = 0;
@@ -628,8 +641,30 @@ export async function* replanStream(
     totalCacheReadTokens;
 
   try {
-    for (let iteration = 0; iteration < MAX_TOOL_USE_ITERATIONS; iteration++) {
-      yield { kind: "iteration_start", index: iteration };
+    // Tool-use loop with server-side auto-continue. `iteration` counts model
+    // calls within the current pass; when it exhausts MAX_TOOL_USE_ITERATIONS
+    // with tool work still pending, we either auto-continue (reset the counter,
+    // nudge Penny, keep the same stream) or — once MAX_AUTO_CONTINUES is spent —
+    // report truncation and let the manual "Continue planning" button take over.
+    // We increment up-front so every path (including the leak-retry `continue`)
+    // counts its model call and the budget can't be bypassed.
+    let iteration = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (iteration >= MAX_TOOL_USE_ITERATIONS) {
+        if (autoContinues < MAX_AUTO_CONTINUES) {
+          autoContinues += 1;
+          appendContinuationNudge(messages);
+          iteration = 0;
+          truncated = false;
+          continue;
+        }
+        truncated = true;
+        break;
+      }
+      const currentIteration = iteration;
+      iteration += 1;
+      yield { kind: "iteration_start", index: currentIteration };
       let response: Anthropic.Message;
       try {
         response = await client.messages.create({
@@ -873,10 +908,6 @@ export async function* replanStream(
       if (response.stop_reason === "end_turn" && !hadValidationFailure) {
         // Nothing more for Claude to do; exit before the extra round-trip.
         break;
-      }
-
-      if (iteration === MAX_TOOL_USE_ITERATIONS - 1) {
-        truncated = true;
       }
     }
 
@@ -1207,14 +1238,13 @@ async function executeGetRoute(
     };
   }
 
-  // Use transit cap (longest day the user will tolerate) for route splitting.
-  // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
-  const cap = context.vehicle?.transit_max_drive_hours
-    ?? context.vehicle?.max_drive_hours_per_day;
-  const exceedsCap = cap != null && directions.drive_time_minutes > cap * 60;
+  // Flat cap on the longest driving day used for route splitting (MVP — no
+  // travel style; every driver gets the same ~8h day).
+  const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
+  const exceedsCap = directions.drive_time_minutes > cap * 60;
 
   let suggestedSplit: ReturnType<typeof splitLegByDriveTime> | null = null;
-  if (exceedsCap && cap != null) {
+  if (exceedsCap) {
     suggestedSplit = splitLegByDriveTime({
       polyline_points: directions.polyline_points,
       total_distance_km: directions.distance_km,
@@ -1223,16 +1253,14 @@ async function executeGetRoute(
     });
   }
 
-  // Minimum number of driving days this segment requires given the
-  // vehicle's per-day cap. Used by Penny's feasibility check: she sums
-  // min_driving_days across every get_route call, adds the user's
-  // mandatory overnight nights, and compares to time_budget_days.
-  // When no cap is set we fall back to "at least 1 day" — a single-day
-  // trip without a cap is always feasible by definition.
-  const minDrivingDays =
-    cap != null
-      ? Math.max(1, Math.ceil(directions.drive_time_minutes / (cap * 60)))
-      : 1;
+  // Minimum number of driving days this segment requires given the per-day
+  // cap. Used by Penny's feasibility check: she sums min_driving_days across
+  // every get_route call, adds the user's mandatory overnight nights, and
+  // compares to time_budget_days.
+  const minDrivingDays = Math.max(
+    1,
+    Math.ceil(directions.drive_time_minutes / (cap * 60)),
+  );
 
   // Emit a compact JSON payload for Claude to consume. Drop the raw
   // polyline (hundreds of points = thousands of tokens); send only what

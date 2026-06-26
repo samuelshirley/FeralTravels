@@ -20,7 +20,7 @@ import {
   assertTripDurationWithinLimit,
 } from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
-import { replenishFuelStopsForTrip } from '@/server/fuel';
+import { invalidateTripFuelCache } from '@/server/fuel';
 import { parseUUID } from '@/lib/validation';
 import { tryParseToISO } from '@/lib/dates';
 
@@ -122,7 +122,11 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     await db.update(trips).set(update).where(eq(trips.id, tripId));
 
     if (body.vehicle_id !== undefined) {
-      await replenishFuelStopsForTrip(tripId, userId);
+      // Vehicle (and therefore range) changed → existing per-leg fuel plans are
+      // stale. Invalidate every leg's lazy cache so each day re-sources on next
+      // open, instead of eagerly re-planning the whole trip (the old Places
+      // cost sink). userId already authorized via assertTripOwnedByUser above.
+      await invalidateTripFuelCache(tripId);
     }
 
     const [row] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);

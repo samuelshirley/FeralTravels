@@ -128,7 +128,6 @@ async function seedPrimaryPlannerPersona(db: ReturnType<typeof getDb>) {
     .update(schema.users)
     .set({
       unitsPref: null,
-      needsVehicleProfileRemediation: false,
     })
     .where(eq(schema.users.id, userRow.id));
 
@@ -139,14 +138,6 @@ async function seedPrimaryPlannerPersona(db: ReturnType<typeof getDb>) {
       name: FIXTURE_VEHICLE_NAME,
       isDefault: true,
       comfortableRangeKm: 400,
-      travelStyle: 'road_tripper',
-      cruiseMaxDriveHours: 6,
-      transitMaxDriveHours: 10,
-      maxDriveHoursPerDay: 10,
-      maxDriveHoursPerWeek: 50,
-      maxConsecutiveDriveDays: 5,
-      dumpStationIntervalDays: 3,
-      dumpStationTrackingEnabled: true,
     })
     .returning();
   console.log(`[seed-e2e] Created fixture vehicle ${vehicleRow.id}`);
@@ -228,10 +219,11 @@ async function seedRemediationPersona(db: ReturnType<typeof getDb>) {
     .update(schema.users)
     .set({
       unitsPref: null,
-      needsVehicleProfileRemediation: true,
     })
     .where(eq(schema.users.id, userRow.id));
 
+  // NOTE: the vehicle-remediation persona is vestigial — the remediation
+  // subsystem was removed in the MVP teardown. Kept as a normal fixture vehicle.
   const [vehicleRow] = await db
     .insert(schema.vehicles)
     .values({
@@ -239,11 +231,6 @@ async function seedRemediationPersona(db: ReturnType<typeof getDb>) {
       name: REMEDIATION_VEHICLE_NAME,
       isDefault: true,
       comfortableRangeKm: 400,
-      maxDriveHoursPerDay: null,
-      maxDriveHoursPerWeek: null,
-      maxConsecutiveDriveDays: null,
-      dumpStationIntervalDays: null,
-      dumpStationTrackingEnabled: null,
     })
     .returning();
   console.log(`[seed-e2e] Created remediation vehicle ${vehicleRow.id} (incomplete profile)`);

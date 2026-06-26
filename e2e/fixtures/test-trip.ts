@@ -138,11 +138,6 @@ export async function createVehicleNewProfileTrip(label: string): Promise<{
       name: `${name} vehicle`,
       isDefault: false,
       comfortableRangeKm: null,
-      maxDriveHoursPerDay: null,
-      maxDriveHoursPerWeek: null,
-      maxConsecutiveDriveDays: null,
-      dumpStationIntervalDays: null,
-      dumpStationTrackingEnabled: null,
     })
     .returning({ id: schema.vehicles.id });
 

@@ -26,11 +26,6 @@ function rowToProfileRecord(row: AdminVehicleListRow): Record<string, unknown> {
   return {
     name: row.name,
     comfortable_range_km: row.comfortableRangeKm,
-    max_drive_hours_per_day: row.maxDriveHoursPerDay,
-    max_drive_hours_per_week: row.maxDriveHoursPerWeek,
-    max_consecutive_drive_days: row.maxConsecutiveDriveDays,
-    dump_station_interval_days: row.dumpStationIntervalDays,
-    dump_station_tracking_enabled: row.dumpStationTrackingEnabled,
   };
 }
 
@@ -44,12 +39,9 @@ function refillSummary(km: number | null, unitsPref: string | null): string {
   return `~${km} km`;
 }
 
-function driveSummary(row: AdminVehicleListRow): string {
-  const parts: string[] = [];
-  if (row.maxDriveHoursPerDay != null) parts.push(`${row.maxDriveHoursPerDay}h/d`);
-  if (row.maxDriveHoursPerWeek != null) parts.push(`${row.maxDriveHoursPerWeek}h/wk`);
-  if (row.maxConsecutiveDriveDays != null) parts.push(`${row.maxConsecutiveDriveDays}d max`);
-  return parts.length ? parts.join(' · ') : '—';
+// Driving cadence is no longer collected (MVP). Kept as a placeholder column.
+function driveSummary(_row: AdminVehicleListRow): string {
+  return '—';
 }
 
 const card: React.CSSProperties = {

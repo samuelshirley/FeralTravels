@@ -20,6 +20,13 @@ interface StopsSectionProps {
   initialStops: Stop[];
   fuelStatus?: FuelStatus;
   fuelPlanError?: string | null;
+  /**
+   * True while the day-open lazy fuel search is in flight client-side. The
+   * server flips fuel_status to 'computing', but the client won't see that
+   * until the trip reloads — this drives the "Planning fuel stops…" spinner
+   * immediately on open. See LegCard's lazy-fuel effect.
+   */
+  fuelLoading?: boolean;
   onChanged?: () => void;
   readonly?: boolean;
 }
@@ -40,7 +47,7 @@ const sectionTitleStyle: CSSProperties = {
   marginBottom: 6,
 };
 
-const TYPE_ORDER: StopType[] = ['fuel', 'dump_station', 'food', 'overnight', 'rest', 'other'];
+const TYPE_ORDER: StopType[] = ['fuel', 'food', 'overnight', 'rest', 'other'];
 
 // Photos are now read directly from stop.photos (persisted in DB at planning time).
 
@@ -53,6 +60,7 @@ export default function StopsSection({
   initialStops,
   fuelStatus = 'none',
   fuelPlanError = null,
+  fuelLoading = false,
   onChanged,
   readonly = false,
 }: StopsSectionProps) {
@@ -75,26 +83,11 @@ export default function StopsSection({
     syncInitialStops(initialStops);
   }, [initialStops, syncInitialStops]);
 
-  // --- "Find other station" state for dump station stops ---
-  const [findingAlt, setFindingAlt] = useState<string | null>(null);
-
-  const handleFindAlternative = useCallback(async (stopId: string) => {
-    setFindingAlt(stopId);
-    try {
-      await apiFetch(`/api/stops/${stopId}/find-alternative`, {
-        method: 'POST',
-        body: {},
-      });
-      onChanged?.();
-    } catch (err) {
-      console.error('[StopsSection] find-alternative failed:', err);
-    } finally {
-      setFindingAlt(null);
-    }
-  }, [onChanged]);
-
   // --- Fuel planning UI state ---
-  const fuelPlanning = fuelStatus === 'computing' || fuelStatus === 'pending';
+  // `fuelLoading` reflects the client-initiated day-open search before the
+  // trip reload surfaces the server's 'computing' status.
+  const fuelPlanning =
+    fuelLoading || fuelStatus === 'computing' || fuelStatus === 'pending';
   const pathname = usePathname();
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
   const setupReturnTarget = pathname?.startsWith('/') ? pathname : `/trips/${tripId}`;
@@ -249,28 +242,8 @@ export default function StopsSection({
               }
               lat={stop.lat}
               lng={stop.lng}
-              loading={findingAlt === stop.id.toString()}
+              loading={false}
             />
-            {!readonly && stop.stop_type === 'dump_station' && (
-              <div style={{ textAlign: 'right', marginTop: -2, marginBottom: 6 }}>
-                <button
-                  onClick={() => handleFindAlternative(stop.id.toString())}
-                  disabled={findingAlt != null}
-                  style={{
-                    fontSize: 11,
-                    color: findingAlt === stop.id.toString() ? 'var(--tp-muted)' : 'var(--tp-primary)',
-                    background: 'none',
-                    border: 'none',
-                    cursor: findingAlt != null ? 'default' : 'pointer',
-                    padding: '2px 4px',
-                    fontWeight: 500,
-                    opacity: findingAlt != null && findingAlt !== stop.id.toString() ? 0.5 : 1,
-                  }}
-                >
-                  {findingAlt === stop.id.toString() ? 'Searching…' : 'Find other station'}
-                </button>
-              </div>
-            )}
           </div>
         ))}
 

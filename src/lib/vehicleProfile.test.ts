@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   FUEL_STOP_SPACING_KM_MAX,
   FUEL_STOP_SPACING_KM_MIN,
-  MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
   buildVehicleProfileQuestions,
   coerceVehicleProfileValue,
   vehicleMeetsFuelPlanningMinimum,
@@ -17,11 +16,6 @@ function baseDraft(over: Partial<VehicleProfileDraftInput> = {}): VehicleProfile
     name: 'V',
     comfortable_range_km: 400,
     hard_max_range_km: null,
-    travel_style: 'road_tripper',
-    max_consecutive_drive_days: 3,
-    rest_days_after_driving: 1,
-    dump_station_interval_days: null,
-    dump_station_tracking_enabled: false,
     ...over,
   };
 }
@@ -35,10 +29,9 @@ describe('vehicleProfile bounds', () => {
     expect(coerceVehicleProfileValue(q!, 400)).toBe(400);
   });
 
-  it('caps consecutive drive days at MAX_CONSECUTIVE_DRIVE_DAYS_CAP', () => {
-    const q = buildVehicleProfileQuestions('metric').find((x) => x.key === 'max_consecutive_drive_days');
-    expect(q?.max).toBe(MAX_CONSECUTIVE_DRIVE_DAYS_CAP);
-    expect(() => coerceVehicleProfileValue(q!, MAX_CONSECUTIVE_DRIVE_DAYS_CAP + 1)).toThrow(/≤/);
+  it('onboarding only asks name, comfortable range, and hard-max range', () => {
+    const keys = buildVehicleProfileQuestions('metric').map((q) => q.key);
+    expect(keys).toEqual(['name', 'comfortable_range_km', 'hard_max_range_km']);
   });
 
   it('vehicleMeetsFuelPlanningMinimum enforces km window', () => {
@@ -48,20 +41,15 @@ describe('vehicleProfile bounds', () => {
     expect(vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: 1501 })).toBe(false);
   });
 
-  it('vehicleProfileRequiredCompletion excludes water when tracking off', () => {
+  it('vehicleProfileRequiredCompletion counts name + comfortable range (hard-max excluded)', () => {
     const comp = vehicleProfileRequiredCompletion({
       name: 'V',
       comfortable_range_km: 400,
-      travel_style: 'road_tripper',
-      max_consecutive_drive_days: 3,
-      rest_days_after_driving: 1,
-      dump_station_tracking_enabled: false,
-      dump_station_interval_days: null,
     });
-    // 5 driving fields: name, comfortable_range_km, travel_style,
-    // max_consecutive_drive_days, rest_days_after_driving (water excluded)
-    expect(comp.total).toBe(5);
-    expect(comp.filled).toBe(5);
+    // MVP required fields: name + comfortable_range_km. hard_max_range_km is
+    // optional (safe-defaults to comfortable) so it's excluded from the count.
+    expect(comp.total).toBe(2);
+    expect(comp.filled).toBe(2);
   });
 
   it('hard_max_range_km is bounded by the same km window as comfortable', () => {

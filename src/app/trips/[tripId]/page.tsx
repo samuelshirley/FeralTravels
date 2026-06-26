@@ -4,7 +4,6 @@ import { isAdmin } from '@/server/auth/guards';
 import { getChatPage } from '@/server/repos/chat';
 import { getTripFull } from '@/server/repos/trips';
 import { getUnitsPref } from '@/server/repos/users';
-import { getVehicleRemediationSnapshot } from '@/server/vehicleRemediation';
 import { UnitsProvider } from '@/components/UnitsContext';
 import TripWorkspace from './TripWorkspace';
 
@@ -31,14 +30,6 @@ export default async function TripPage({ params, searchParams }: Props) {
   const userId = session.user.id as string;
   const unitsPref = await getUnitsPref(userId);
 
-  // Check if the user's vehicles have missing required fields — pass the flag
-  // to TripWorkspace which shows remediation questions in the chat composer.
-  let needsVehicleRemediation = false;
-  if (isOwner) {
-    const remediationSnapshot = await getVehicleRemediationSnapshot(userId);
-    needsVehicleRemediation = remediationSnapshot.needs_remediation && !remediationSnapshot.done;
-  }
-
   const admin = await isAdmin(session.user.email);
   const initialChat = await getChatPage({ tripId });
 
@@ -59,7 +50,6 @@ export default async function TripPage({ params, searchParams }: Props) {
         isAdmin={admin}
         initialChat={initialChat}
         serverOnboardingState={trip.onboarding_state}
-        needsVehicleRemediation={needsVehicleRemediation}
         replanFromOffRoute={searchParams.replan === 'true'}
       />
     </UnitsProvider>

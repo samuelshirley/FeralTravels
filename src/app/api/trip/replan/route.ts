@@ -24,6 +24,7 @@ import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstrai
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
+import { invalidateLegFuelCache } from '@/server/fuel';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
 import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
@@ -160,25 +161,16 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
   );
 }
 
-function actionShouldTriggerTripFuelReplenish(action: ValidatedAction): boolean {
-  if (
-    action.name === 'add_leg' ||
-    action.name === 'delete_leg' ||
-    action.name === 'update_leg' ||
-    action.name === 'report_position' // re-routes the upcoming leg → distances change
-  ) {
-    return true;
-  }
-  if (action.name === 'add_stop' && action.input.data.stop_type === 'fuel') {
-    return true;
-  }
-  return false;
-}
-
 // Per-user spend cap and request cap on Anthropic replans.
 // Update via env at any time.
+//
+// The hourly request cap is set generously for pre-launch (120) so test users
+// aren't tripped by the 429 during heavy iteration; the $5/day spend cap is the
+// real cost backstop. Admins (Sam) are already exempt from both (see admin.ts).
+// Note: server-side auto-continue (claude.ts) chains long plans WITHIN a single
+// replan request, so a continued plan does NOT consume extra hourly requests.
 const REPLAN_USD_CAP_PER_DAY = parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5');
-const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '40', 10);
+const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '120', 10);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -538,6 +530,13 @@ export async function POST(req: Request) {
             try {
               const repaired = await repairLegContinuity(tripId);
               for (const r of repaired) {
+                // A repaired leg had its start chained (and usually re-routed),
+                // so its cached fuel plan is stale. Invalidate that leg's fuel
+                // cache so it re-sources lazily on next open — affected legs
+                // only, never a trip-wide re-fan-out.
+                await invalidateLegFuelCache(r.legId).catch((e) =>
+                  console.warn('[continuity-repair] fuel cache invalidation failed', e)
+                );
                 logUsageEvent({
                   userId,
                   tripId,
@@ -573,13 +572,15 @@ export async function POST(req: Request) {
             );
           }
 
-          // An inline plan_fuel_stops lookup (Penny explicitly planning a leg)
-          // also needs the trip-wide forward replen so later legs' cumulative
-          // tank math stays consistent — and so the client refetches the stops
-          // it just wrote. `final.fuelPlanRan` carries that from the stream.
-          const fuelReplenishQueued =
-            appliedActions.some(actionShouldTriggerTripFuelReplenish) ||
-            final.fuelPlanRan;
+          // Lazy fuel: we no longer fan out a trip-wide fuel replan on leg
+          // edits — that eager fan-out was the Google Places cost sink. Each
+          // day now sources its own fuel lazily on open, and leg edits below
+          // invalidate only the affected leg's cache. The single thing the
+          // client still must react to is an inline plan_fuel_stops lookup
+          // (Penny ran the planner on an EXPLICIT ask and wrote stops to a
+          // leg): reload the trip so those stops render. `final.fuelPlanRan`
+          // carries that from the stream.
+          const fuelStopsChanged = final.fuelPlanRan;
 
           const changesEnvelope = {
             changes: appliedActions.map(actionToLegacyChange),
@@ -636,7 +637,7 @@ export async function POST(req: Request) {
             validationFailures,
             /** Count of Penny actions that validated and queued for dispatch (incl. failed persist). */
             validatedQueuedCount,
-            fuelReplenishQueued,
+            fuelStopsChanged,
             planSummary,
             retryCount: final.retryCount,
             truncated: final.truncated,
@@ -753,15 +754,10 @@ async function dispatchAction(
         );
       }
 
-      // When Penny sets travel_style, derive cruise/transit caps + legacy fields
+      // MVP: the update_vehicle tool only carries the fuel-range fields
+      // (comfortable_range_km / hard_max_range_km). Travel-style derivation was
+      // removed with the onboarding teardown.
       const vehiclePatch: Record<string, unknown> = { ...action.input.data };
-      if (vehiclePatch.travel_style) {
-        const { deriveFromTravelStyle } = await import('@/lib/vehicleProfile');
-        const derived = deriveFromTravelStyle(vehiclePatch.travel_style as import('@/lib/vehicleProfile').TravelStyle);
-        vehiclePatch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
-        vehiclePatch.transit_max_drive_hours = derived.transit_max_drive_hours;
-        vehiclePatch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
-      }
 
       const updated = await updateVehicle(userId, vehicleId, vehiclePatch);
       if (!updated) throw new NotFoundError('Vehicle not found or not owned by user');
@@ -818,7 +814,7 @@ async function dispatchAction(
 
     case 'report_position': {
       const d = action.input;
-      await applyTripProgress({
+      const progress = await applyTripProgress({
         tripId,
         lat: d.lat,
         lng: d.lng,
@@ -826,6 +822,13 @@ async function dispatchAction(
         nextLegId: d.next_leg_id ?? null,
         resumeDateISO: d.resume_date ?? null,
       });
+      // Reporting position re-points + re-routes the upcoming drive leg, so its
+      // cached fuel plan (computed for the old start) is now stale. Invalidate
+      // THAT leg only — it re-sources lazily when the driver opens it. We never
+      // re-fan-out the whole trip (the old eager behaviour / cost sink).
+      if (progress.reroutedLeg && progress.currentLegId) {
+        await invalidateLegFuelCache(progress.currentLegId);
+      }
       return;
     }
 
@@ -985,6 +988,13 @@ async function dispatchAction(
             }))
           );
         }
+      }
+
+      // Coords moved → the leg's cached fuel plan was computed for the old
+      // route. Invalidate THIS leg's fuel cache so it re-sources lazily on the
+      // next day-open (affected leg only — no trip-wide re-fan-out).
+      if (coordsChanged) {
+        await invalidateLegFuelCache(leg_id);
       }
       return;
     }

@@ -55,11 +55,6 @@ test.describe('Email OTP login', () => {
         .values({ userId: user.id, ...completeVehicle });
     }
 
-    await db
-      .update(schema.users)
-      .set({ needsVehicleProfileRemediation: false })
-      .where(eq(schema.users.id, user.id));
-
     // Give the user at least one trip so the /trips list has content to assert
     // on after login. (/trips no longer auto-creates a trip on zero trips, so
     // this is about a stable assertion target, not avoiding a redirect.)

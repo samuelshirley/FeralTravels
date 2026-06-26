@@ -44,6 +44,7 @@ function makeLeg(overrides: Partial<Leg> = {}): Leg {
     notes: null,
     fuel_status: 'none',
     fuel_plan_error: null,
+    fuel_stops_updated_at: null,
     continuity_warning: null,
     geometry: {
       type: 'LineString',

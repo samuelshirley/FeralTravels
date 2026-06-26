@@ -214,10 +214,10 @@ describe('StopsSection (refactored)', () => {
   });
 
   it('renders StopCard with correct type labels', () => {
-    const waterStop: Stop = {
+    const foodStop: Stop = {
       ...mockFuelStop,
       id: '00000000-0000-0000-0000-000000000004',
-      stop_type: 'dump_station',
+      stop_type: 'food',
       name: 'Fuente Carrionas',
       distance_from_start_km: 145,
     };
@@ -227,11 +227,11 @@ describe('StopsSection (refactored)', () => {
         legId="00000000-0000-0000-0000-000000000010"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
-        initialStops={[mockFuelStop, waterStop]}
+        initialStops={[mockFuelStop, foodStop]}
       />
     );
     expect(screen.getByText('FUEL')).toBeInTheDocument();
-    expect(screen.getByText('DUMP STATION')).toBeInTheDocument();
+    expect(screen.getByText('GROCERIES')).toBeInTheDocument();
   });
 
   it('stop cards link to Google Maps', () => {

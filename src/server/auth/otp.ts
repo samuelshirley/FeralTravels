@@ -5,7 +5,6 @@ import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { renderOtpEmail } from './otp-email';
 import { syncAdminFlagOnSignIn } from './admin';
-import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import { cookies } from 'next/headers';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -238,7 +237,6 @@ export async function signInWithOtp(email: string, code: string): Promise<string
 
   // Re-sync admin flag on every sign-in (mirrors the signIn event handler).
   await syncAdminFlagOnSignIn(normalized).catch(() => {});
-  await recalculateUserRemediationFlag(userId).catch(() => {});
 
   // 3. Create a database session.
   const sessionToken = crypto.randomUUID();

@@ -9,16 +9,14 @@ import {
 import {
   FUEL_STOP_SPACING_KM_MAX,
   FUEL_STOP_SPACING_KM_MIN,
-  MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
-  deriveFromTravelStyle,
   vehicleMeetsFuelPlanningMinimum,
-  type TravelStyle,
 } from '@/lib/vehicleProfile';
 import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// MVP vehicle profile: name + comfortable range (+ optional hard-max ceiling).
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   comfortable_range_km: z
@@ -33,20 +31,6 @@ const patchSchema = z.object({
     .min(FUEL_STOP_SPACING_KM_MIN)
     .max(FUEL_STOP_SPACING_KM_MAX)
     .nullish(),
-  travel_style: z.enum(['scenic_cruiser', 'road_tripper', 'get_me_there']).nullish(),
-  cruise_max_drive_hours: z.number().positive().max(24).nullish(),
-  transit_max_drive_hours: z.number().positive().max(24).nullish(),
-  max_drive_hours_per_day: z.number().positive().max(24).nullish(),
-  max_drive_hours_per_week: z.number().positive().max(168).nullish(),
-  max_consecutive_drive_days: z
-    .number()
-    .int()
-    .positive()
-    .max(MAX_CONSECUTIVE_DRIVE_DAYS_CAP)
-    .nullish(),
-  rest_days_after_driving: z.number().int().positive().max(7).nullish(),
-  dump_station_interval_days: z.number().int().positive().max(60).nullish(),
-  dump_station_tracking_enabled: z.boolean().nullish(),
   is_default: z.boolean().optional(),
 });
 
@@ -82,36 +66,13 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     const before = await getVehicleForUser(userId, id);
     if (!before) return Response.json({ error: 'Not found' }, { status: 404 });
 
-    // When travel_style is set, derive the hour caps + legacy fields
     const patch = { ...body };
-    if (patch.travel_style) {
-      const derived = deriveFromTravelStyle(patch.travel_style as TravelStyle);
-      patch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
-      patch.transit_max_drive_hours = derived.transit_max_drive_hours;
-      patch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
-    }
 
     const merged = {
       ...before,
       ...(patch.name !== undefined && { name: patch.name }),
       ...(patch.comfortable_range_km !== undefined && { comfortable_range_km: patch.comfortable_range_km }),
       ...(patch.hard_max_range_km !== undefined && { hard_max_range_km: patch.hard_max_range_km }),
-      ...(patch.travel_style !== undefined && { travel_style: patch.travel_style }),
-      ...(patch.max_drive_hours_per_day !== undefined && {
-        max_drive_hours_per_day: patch.max_drive_hours_per_day,
-      }),
-      ...(patch.max_drive_hours_per_week !== undefined && {
-        max_drive_hours_per_week: patch.max_drive_hours_per_week,
-      }),
-      ...(patch.max_consecutive_drive_days !== undefined && {
-        max_consecutive_drive_days: patch.max_consecutive_drive_days,
-      }),
-      ...(patch.dump_station_interval_days !== undefined && {
-        dump_station_interval_days: patch.dump_station_interval_days,
-      }),
-      ...(patch.dump_station_tracking_enabled !== undefined && {
-        dump_station_tracking_enabled: patch.dump_station_tracking_enabled,
-      }),
     } as Record<string, unknown>;
 
     if (!vehicleMeetsFuelPlanningMinimum(merged)) {

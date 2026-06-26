@@ -79,11 +79,6 @@ export async function getAdminVehiclesOverview(limit = ADMIN_VEHICLES_LIST_LIMIT
       name: vehicles.name,
       isDefault: vehicles.isDefault,
       comfortableRangeKm: vehicles.comfortableRangeKm,
-      maxDriveHoursPerDay: vehicles.maxDriveHoursPerDay,
-      maxDriveHoursPerWeek: vehicles.maxDriveHoursPerWeek,
-      maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
-      dumpStationIntervalDays: vehicles.dumpStationIntervalDays,
-      dumpStationTrackingEnabled: vehicles.dumpStationTrackingEnabled,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })
@@ -106,11 +101,6 @@ export async function getAdminVehicleById(vehicleId: string) {
       name: vehicles.name,
       isDefault: vehicles.isDefault,
       comfortableRangeKm: vehicles.comfortableRangeKm,
-      maxDriveHoursPerDay: vehicles.maxDriveHoursPerDay,
-      maxDriveHoursPerWeek: vehicles.maxDriveHoursPerWeek,
-      maxConsecutiveDriveDays: vehicles.maxConsecutiveDriveDays,
-      dumpStationIntervalDays: vehicles.dumpStationIntervalDays,
-      dumpStationTrackingEnabled: vehicles.dumpStationTrackingEnabled,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })

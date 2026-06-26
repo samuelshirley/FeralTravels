@@ -11,6 +11,7 @@ import {
   type LatLng,
 } from '@/lib/polyline';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
+import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
   kmBurnedSinceLastRefuel,
   type LegFuelHistory,
@@ -96,10 +97,23 @@ async function setFuelStatus(
   const errCol = carriesReason
     ? (fuelPlanError ?? (status === 'failed' ? 'Fuel planning failed.' : 'No fuel stations found near the planned refuel point.'))
     : null;
-  await db
-    .update(legs)
-    .set({ fuelStatus: status, fuelPlanError: errCol, updatedAt: new Date() })
-    .where(eq(legs.id, legId));
+  const set: Record<string, unknown> = {
+    fuelStatus: status,
+    fuelPlanError: errCol,
+    updatedAt: new Date(),
+  };
+  // Cache bookkeeping for the lazy day-open loader:
+  //  - a completed real search (`ready` / `no_stations_found`) stamps the cache
+  //    so reopening the day within FUEL_CACHE_TTL_MS is a zero-Places cache hit.
+  //  - `none` is the invalidation state — clear the stamp so the next open
+  //    re-searches. `failed` is left unstamped on purpose (no fresh cache → the
+  //    leg keeps retrying on the next open / edit, matching the UI's copy).
+  if (status === 'ready' || status === 'no_stations_found') {
+    set.fuelStopsUpdatedAt = new Date();
+  } else if (status === 'none') {
+    set.fuelStopsUpdatedAt = null;
+  }
+  await db.update(legs).set(set).where(eq(legs.id, legId));
 }
 
 /**
@@ -382,6 +396,83 @@ export async function planFuelStopsForLeg(
 }
 
 /**
+ * Lazy, cache-aware entry point for the day-open fuel loader.
+ *
+ * This is what the itinerary calls when the user expands a day — fuel is sourced
+ * lazily (not eagerly across the whole trip during planning), so most legs never
+ * cost a Google Places call. Freshness gate:
+ *
+ *  - Terminal-success cache (`ready` / `no_stations_found`) inside
+ *    `FUEL_CACHE_TTL_MS` → return the cached result, **zero Places calls**.
+ *  - Stale, empty (`none`), or `force` → run the full `planFuelStopsForLeg`
+ *    search and (re)stamp the cache.
+ *
+ * NOTE on the "stale → cheap re-check" the design doc describes: the cheap
+ * price/availability refresh is Finn's separate pricing task (not built yet —
+ * the US has no open price feed). Until Finn lands, a stale cache falls through
+ * to a full re-search here; the TTL gate keeps that infrequent. The `mode`
+ * field in the result marks which path ran so a future cheap-refresh has an
+ * obvious seam to plug into.
+ */
+export async function planFuelStopsForLegLazy(
+  legId: string,
+  userId: string,
+  opts: { force?: boolean } = {}
+): Promise<FuelPlanResult & { cacheHit: boolean }> {
+  if (!opts.force) {
+    const rows = await db
+      .select({ fuelStatus: legs.fuelStatus, fuelStopsUpdatedAt: legs.fuelStopsUpdatedAt })
+      .from(legs)
+      .where(eq(legs.id, legId))
+      .limit(1);
+    const row = rows[0];
+    const terminalSuccess =
+      row?.fuelStatus === 'ready' || row?.fuelStatus === 'no_stations_found';
+    if (
+      terminalSuccess &&
+      row?.fuelStopsUpdatedAt &&
+      Date.now() - row.fuelStopsUpdatedAt.getTime() < FUEL_CACHE_TTL_MS
+    ) {
+      // Fresh cache — render what's already on the leg, no Places spend.
+      return {
+        legId,
+        status: row.fuelStatus as FuelPlanResult['status'],
+        cacheHit: true,
+      };
+    }
+  }
+  const result = await planFuelStopsForLeg(legId, userId);
+  return { ...result, cacheHit: false };
+}
+
+/**
+ * Invalidate a single leg's lazy fuel cache: drop the planner's auto option
+ * stops and reset `fuel_status` to `none` (which clears
+ * `fuel_stops_updated_at`). The next day-open re-sources fuel for THIS leg
+ * only — we never re-fan-out the whole trip. Used when a leg edit /
+ * report_position changes the route geometry, so a stale plan for the old
+ * coordinates is never rendered.
+ */
+export async function invalidateLegFuelCache(legId: string): Promise<void> {
+  await clearAutoPlannerGooglePlacesOptionStops(legId);
+  await setFuelStatus(legId, 'none');
+}
+
+/**
+ * Invalidate every leg's lazy fuel cache on a trip. Used when a trip-wide input
+ * that fuel planning depends on changes (e.g. the assigned vehicle / its range):
+ * we reset each leg so it re-sources lazily on next day-open, rather than
+ * eagerly re-planning the whole trip up front (the Google Places cost sink the
+ * lazy redesign removed).
+ */
+export async function invalidateTripFuelCache(tripId: string): Promise<void> {
+  const legRows = await db.select({ id: legs.id }).from(legs).where(eq(legs.tripId, tripId));
+  for (const row of legRows) {
+    await invalidateLegFuelCache(row.id);
+  }
+}
+
+/**
  * Pull a place_id out of a google.com/maps `q=place_id:XYZ` URL we wrote
  * ourselves. Returns null if the URL is missing or doesn't match the shape.
  */
@@ -545,7 +636,6 @@ async function resolveVehicleForTrip(
   userId: string
 ): Promise<{
   comfortable_range_km: number | null;
-  max_drive_hours_per_day: number | null;
 } | null> {
   if (tripId != null) {
     // Look up the trip's vehicle_id without re-querying trips directly

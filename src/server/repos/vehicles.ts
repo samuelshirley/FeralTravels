@@ -1,6 +1,6 @@
 import 'server-only';
 import { and, asc, eq, ne, count } from 'drizzle-orm';
-import { coerceOptionalFiniteNumber, coerceOptionalInt } from '@/lib/vehicleNumericCoercion';
+import { coerceOptionalInt } from '@/lib/vehicleNumericCoercion';
 import { db } from '@/server/db/client';
 import { vehicles } from '@/server/db/schema';
 
@@ -10,17 +10,6 @@ export interface VehicleInput {
   name: string;
   comfortable_range_km?: number | null;
   hard_max_range_km?: number | null;
-  travel_style?: string | null;
-  cruise_max_drive_hours?: number | null;
-  transit_max_drive_hours?: number | null;
-  /** @deprecated Populated from travel_style for backward compat. */
-  max_drive_hours_per_day?: number | null;
-  /** @deprecated Derived from max_drive_hours_per_day × max_consecutive_drive_days. */
-  max_drive_hours_per_week?: number | null;
-  max_consecutive_drive_days?: number | null;
-  rest_days_after_driving?: number | null;
-  dump_station_interval_days?: number | null;
-  dump_station_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
@@ -32,17 +21,6 @@ function vehicleApi(r: VehicleRow) {
     is_default: r.isDefault,
     comfortable_range_km: coerceOptionalInt(r.comfortableRangeKm),
     hard_max_range_km: coerceOptionalInt(r.hardMaxRangeKm),
-    travel_style: r.travelStyle ?? null,
-    cruise_max_drive_hours: coerceOptionalFiniteNumber(r.cruiseMaxDriveHours),
-    transit_max_drive_hours: coerceOptionalFiniteNumber(r.transitMaxDriveHours),
-    /** @deprecated Use cruise/transit fields. */
-    max_drive_hours_per_day: coerceOptionalFiniteNumber(r.maxDriveHoursPerDay),
-    /** @deprecated Derived legacy field. */
-    max_drive_hours_per_week: coerceOptionalFiniteNumber(r.maxDriveHoursPerWeek),
-    max_consecutive_drive_days: coerceOptionalInt(r.maxConsecutiveDriveDays),
-    rest_days_after_driving: coerceOptionalInt(r.restDaysAfterDriving),
-    dump_station_interval_days: coerceOptionalInt(r.dumpStationIntervalDays),
-    dump_station_tracking_enabled: r.dumpStationTrackingEnabled,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -100,23 +78,6 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   if (input.name !== undefined) map.name = input.name;
   if (input.comfortable_range_km !== undefined) map.comfortableRangeKm = input.comfortable_range_km;
   if (input.hard_max_range_km !== undefined) map.hardMaxRangeKm = input.hard_max_range_km;
-  if (input.travel_style !== undefined) map.travelStyle = input.travel_style;
-  if (input.cruise_max_drive_hours !== undefined)
-    map.cruiseMaxDriveHours = input.cruise_max_drive_hours;
-  if (input.transit_max_drive_hours !== undefined)
-    map.transitMaxDriveHours = input.transit_max_drive_hours;
-  if (input.max_drive_hours_per_day !== undefined)
-    map.maxDriveHoursPerDay = input.max_drive_hours_per_day;
-  if (input.max_drive_hours_per_week !== undefined)
-    map.maxDriveHoursPerWeek = input.max_drive_hours_per_week;
-  if (input.max_consecutive_drive_days !== undefined)
-    map.maxConsecutiveDriveDays = input.max_consecutive_drive_days;
-  if (input.rest_days_after_driving !== undefined)
-    map.restDaysAfterDriving = input.rest_days_after_driving;
-  if (input.dump_station_interval_days !== undefined)
-    map.dumpStationIntervalDays = input.dump_station_interval_days;
-  if (input.dump_station_tracking_enabled !== undefined)
-    map.dumpStationTrackingEnabled = input.dump_station_tracking_enabled;
   return map;
 }
 
@@ -163,8 +124,6 @@ export async function addVehicle(userId: string, input: VehicleInput): Promise<V
       .returning();
     return vehicleApi(row);
   });
-  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
-  await recalculateUserRemediationFlag(userId);
   return result;
 }
 
@@ -204,8 +163,6 @@ export async function updateVehicle(
       .limit(1);
     return row ? vehicleApi(row) : null;
   });
-  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
-  await recalculateUserRemediationFlag(userId);
   return updated;
 }
 
@@ -233,8 +190,6 @@ export async function deleteVehicle(
     };
   }
   await db.delete(vehicles).where(eq(vehicles.id, vehicleId));
-  const { recalculateUserRemediationFlag } = await import('@/server/repos/remediationFlags');
-  await recalculateUserRemediationFlag(userId);
   return { ok: true };
 }
 

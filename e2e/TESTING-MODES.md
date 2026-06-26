@@ -31,8 +31,6 @@ Helpers insert **targeted state** before navigation:
 
 **Examples:** [`penny-plan-trip.spec.ts`](penny-plan-trip.spec.ts), [`onboarding-flow.spec.ts`](onboarding-flow.spec.ts), [`vehicle-crud.spec.ts`](vehicle-crud.spec.ts)
 
-**Remediation:** Seeded remediation persona — [`loginAsE2eUser`](fixtures/auth.ts) with `REMEDIATION_FIXTURE_EMAIL`; see [`vehicle-remediation.spec.ts`](vehicle-remediation.spec.ts).
-
 ---
 
 ## 3. Real login / identity flows (optional env)

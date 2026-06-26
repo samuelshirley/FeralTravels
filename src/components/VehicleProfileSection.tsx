@@ -7,20 +7,12 @@ import { kmToMi, miToKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
-  caravanDumpStationGateLabel,
-  TRAVEL_STYLE_OPTIONS,
   validateVehicleProfileDraftForSave,
   vehicleProfileGroupTitle,
-  type TravelStyle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
 
-const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {
-  travel_style: 'vehicle-travel-style-select',
-  max_consecutive_drive_days: 'vehicle-max-consecutive-input',
-  rest_days_after_driving: 'vehicle-rest-days-input',
-  dump_station_interval_days: 'vehicle-dump-station-input',
-};
+const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {};
 
 /**
  * Vehicle profile row shape — refill cadence + drive/water limits (`vehicles` table).
@@ -33,18 +25,6 @@ export interface Vehicle {
   is_default: boolean;
   comfortable_range_km: number | null;
   hard_max_range_km: number | null;
-  travel_style: TravelStyle | null;
-  cruise_max_drive_hours: number | null;
-  transit_max_drive_hours: number | null;
-  /** @deprecated Legacy field — equals transit cap. */
-  max_drive_hours_per_day: number | null;
-  /** @deprecated Derived legacy field. */
-  max_drive_hours_per_week: number | null;
-  max_consecutive_drive_days: number | null;
-  rest_days_after_driving: number | null;
-  dump_station_interval_days: number | null;
-  /** Caravan gate: null means not chosen in Settings yet. */
-  dump_station_tracking_enabled: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,11 +36,6 @@ function emptyDraft(): Draft {
     name: '',
     comfortable_range_km: null,
     hard_max_range_km: null,
-    travel_style: null,
-    max_consecutive_drive_days: null,
-    rest_days_after_driving: null,
-    dump_station_interval_days: null,
-    dump_station_tracking_enabled: null,
   };
 }
 
@@ -93,11 +68,6 @@ export default function VehicleProfileSection() {
           name: draft.name ?? '',
           comfortable_range_km: draft.comfortable_range_km ?? null,
           hard_max_range_km: draft.hard_max_range_km ?? null,
-          travel_style: draft.travel_style ?? null,
-          max_consecutive_drive_days: draft.max_consecutive_drive_days ?? null,
-          rest_days_after_driving: draft.rest_days_after_driving ?? null,
-          dump_station_interval_days: draft.dump_station_interval_days ?? null,
-          dump_station_tracking_enabled: draft.dump_station_tracking_enabled ?? null,
           is_default: draft.is_default,
         },
         units
@@ -258,14 +228,16 @@ function VehicleCard({
   onSetDefault: () => void;
 }) {
   const { units } = useUnits();
-  const refillLabel = (() => {
-    if (vehicle.comfortable_range_km == null) return null;
+  const fmtRange = (km: number | null): string | null => {
+    if (km == null) return null;
     if (units === 'imperial') {
-      const mi = kmToMi(vehicle.comfortable_range_km);
+      const mi = kmToMi(km);
       return mi == null ? null : `~${Math.round(mi)} mi`;
     }
-    return `~${vehicle.comfortable_range_km} km`;
-  })();
+    return `~${km} km`;
+  };
+  const refillLabel = fmtRange(vehicle.comfortable_range_km);
+  const hardMaxLabel = fmtRange(vehicle.hard_max_range_km);
 
   return (
     <div
@@ -329,23 +301,8 @@ function VehicleCard({
         }}
       >
         {refillLabel && <Stat label="Refill every" value={refillLabel} />}
-        {vehicle.travel_style != null && (
-          <Stat
-            label="Style"
-            value={TRAVEL_STYLE_OPTIONS.find((o) => o.value === vehicle.travel_style)?.label ?? vehicle.travel_style}
-          />
-        )}
-        {vehicle.cruise_max_drive_hours != null && (
-          <Stat label="Cruise" value={`${vehicle.cruise_max_drive_hours}h`} />
-        )}
-        {vehicle.transit_max_drive_hours != null && (
-          <Stat label="Transit" value={`${vehicle.transit_max_drive_hours}h`} />
-        )}
-        {vehicle.max_consecutive_drive_days != null && (
-          <Stat label="Consec. days" value={`${vehicle.max_consecutive_drive_days}`} />
-        )}
-        {vehicle.dump_station_interval_days != null && (
-          <Stat label="Dump station" value={`every ${vehicle.dump_station_interval_days}d`} />
+        {vehicle.hard_max_range_km != null && hardMaxLabel && (
+          <Stat label="Max stretch" value={hardMaxLabel} />
         )}
       </div>
     </div>
@@ -392,14 +349,11 @@ function VehicleForm({
   onSave: (d: Draft) => void;
   onCancel: () => void;
 }) {
-  const [d, setD] = useState<Draft>(() => ({
-    ...initial,
-    dump_station_tracking_enabled: initial.dump_station_tracking_enabled ?? null,
-  }));
+  const [d, setD] = useState<Draft>(() => ({ ...initial }));
   const { units } = useUnits();
   const isImperial = units === 'imperial';
   const questions = buildVehicleProfileQuestions(units);
-  const groups = (['identity', 'driving', 'dump_station'] as const).map((g) => ({
+  const groups = (['identity', 'driving'] as const).map((g) => ({
     group: g,
     items: questions.filter((q) => q.group === g),
   }));
@@ -469,45 +423,7 @@ function VehicleForm({
     >
       {groups.map(({ group, items }) => (
         <FieldGroup key={group} title={vehicleProfileGroupTitle(group)}>
-          {group === 'dump_station' && (
-            <Field label={caravanDumpStationGateLabel()} required wide>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <input
-                    type="radio"
-                    name="dump-station-tracking"
-                    data-testid="vehicle-dump-station-yes"
-                    checked={d.dump_station_tracking_enabled === true}
-                    onChange={() =>
-                      setD((p) => ({
-                        ...p,
-                        dump_station_tracking_enabled: true,
-                      }))
-                    }
-                  />
-                  Yes, track dump station visits
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <input
-                    type="radio"
-                    name="dump-station-tracking"
-                    data-testid="vehicle-dump-station-no"
-                    checked={d.dump_station_tracking_enabled === false}
-                    onChange={() =>
-                      setD((p) => ({
-                        ...p,
-                        dump_station_tracking_enabled: false,
-                        dump_station_interval_days: null,
-                      }))
-                    }
-                  />
-                  No
-                </label>
-              </div>
-            </Field>
-          )}
-          {(!(group === 'dump_station') || d.dump_station_tracking_enabled === true) &&
-            items.map((q) => {
+          {items.map((q) => {
             if (q.key === 'name') {
               return (
                 <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>

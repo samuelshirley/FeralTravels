@@ -6,7 +6,6 @@ import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
-import { recalculateUserRemediationFlag } from '@/server/repos/remediationFlags';
 import {
   isAuthTestBackdoorConfigured,
 } from './test-backdoor';
@@ -122,9 +121,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // tampered with manually, and ensures admin status is reflected even on
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
-      if (user?.id) {
-        await recalculateUserRemediationFlag(user.id).catch(() => {});
-      }
 
       // Trusted-OAuth email verification: Google (and any OIDC provider) ships
       // an `email_verified` claim on the ID token. When that claim is true we

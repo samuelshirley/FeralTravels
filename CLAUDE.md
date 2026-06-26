@@ -16,7 +16,7 @@ Personal automated travel agent for overlanders. The user tells Penny where they
 
 **Value thesis:** the app earns its keep *on the trip*, not just in pre-planning. The plan is a moving, day-by-day thing the user adapts as reality changes ("we stopped early", "we're actually going here instead"). Build for adaptability, not a static itinerary.
 
-**In for MVP:** accounts/auth · vehicle setup (needed for range math) · the day-by-day plan · the **progress anchor** ("which day am I on / I'm here now" — keep this, it powers the adaptive view) · **Penny chat as the way to edit the plan** · lazy gas-stop planning (skeleton built eagerly; the per-day fuel-stop search is **lazy-loaded when the user opens that day** — no explicit button — and results are cached with a timestamp, so a stale cache triggers a cheap price re-check rather than a full re-search).
+**In for MVP:** accounts/auth · vehicle setup (needed for range math) · the day-by-day plan · the **progress anchor** ("which day am I on / I'm here now" — keep this, it powers the adaptive view) · **Penny chat as the way to edit the plan** · lazy gas-stop planning (skeleton built eagerly; the per-day fuel-stop search is **lazy-loaded when the user opens that day** — no explicit button — and results are cached with a timestamp, so a stale cache triggers a cheap price re-check rather than a full re-search). **BUILT 2026-06-26 (migration 0013)** — see the "Lazy fuel sourcing" note under Schema below for what shipped (the cheap stale re-check awaits Finn's pricing task).
 
 **Cut now (half-built / out of scope):** nightly replan · proactive emails · cron jobs · overnight-stop finder · the `draft/active/completed` trip **lifecycle** (keep the progress anchor, which is a different thing). Removing these should also kill a chunk of current bug surface.
 
@@ -98,7 +98,7 @@ src/
     (+ AppNavbar, BottomNav, MobileFooter, Spinner, StatusBadge, etc.)
   lib/
     api.ts            # Client-side API helper
-    models.ts         # Central registry of hardcoded Anthropic model IDs (PENNY_MODEL, DATE_PARSE_MODEL)
+    models.ts         # Central registry of hardcoded Anthropic model IDs (PENNY_MODEL, DATE_PARSE_MODEL, RANGE_ESTIMATE_MODEL, ONBOARDING_SCAN_MODEL)
     coords.ts         # Coordinate parsing/formatting (sync; Google/Apple Maps URLs, lat/lng)
     coordsResolve.ts  # Server-side Maps URL resolution (short-link redirects); used by api/coords/parse and Penny chat enrichment
     maps.ts           # Google Maps client helpers
@@ -106,6 +106,7 @@ src/
     gpx.ts            # GPX file parsing
     units.ts          # Unit conversion
     vehicleProfile.ts # Vehicle range/fuel calculations
+    fuelCache.ts      # Lazy fuel-cache TTL (FUEL_CACHE_TTL_MS = 48h) + isFuelCacheFresh; shared by server/fuel.ts and LegCard day-open loader
     fuelPlanErrorSemantics.ts  # Fuel plan error handling
     google/directions.ts       # Server-side Google Directions API
     penny/
@@ -115,11 +116,13 @@ src/
       fuelTankState.ts # Pure continuous-drive tank math (km burned since last refuel); only actual fuel stops/trip start refill — rest days & overnights are NOT implicit refuels. DB shim: server/fuel.ts
       planSummary.ts  # Deterministic DB-derived plan facts (day counts, dates, totals, ETA via dayModel, deadline check) — source of truth for plan numbers shown to the user; Penny's prose must NOT state them
       sanitize.ts     # Strips/ detects tool-call markup leaked into Penny's text (she must emit prose only, never <invoke>/<parameter> XML)
+      autoContinue.ts # Pure helper for server-side auto-continue: appends a continuation nudge to the message list without breaking user/assistant alternation when a planning turn truncates (used by claude.ts loop)
       split-route.ts  # Route splitting logic
       routingAvoidMerge.ts  # Avoid-highway merge logic
       tools/          # 19 Penny tools (see Penny Tools below)
   server/
-    onboarding.ts     # Deterministic form-in-chat (runs BEFORE any LLM call); trip_date step resolves the start date via parseStartDate
+    onboarding.ts     # Deterministic form-in-chat (runs BEFORE any LLM call); trip_date step resolves the start date via parseStartDate. trip_intent submit runs onboardingIntentScan first (skips/prefills questions message 1 already answered)
+    onboardingIntentScan.ts # First-message intent scan: ONE forced-tool Haiku call (ONBOARDING_SCAN_MODEL) reads the opening trip description and transcribes onboarding vars it contains (start_date_phrase → resolveStartDate; comfortable/hard-max range → validateScannedRange). LLM only transcribes; server re-validates each field. EXACT start date auto-skips trip_date with a confirm note; inferred range is stashed in trips.onboarding_scan and PREFILLED on the vehicle step (confirm-don't-assume — safety number). All-null result ⇒ ask normally. Extensible: add a nullable field + validated mapping
     parseStartDate.ts # resolveStartDate → {iso, assumed}: deterministic tryParseToISO first (exact), else LLM (forced record_parsed_date tool, DATE_PARSE_MODEL) pins a day OR picks a representative day within a vague timeframe (assumed); iso=null ONLY when no temporal signal at all. Onboarding turns null into ONE clarifying "what time of year?" question, then a "start today" fallback — start_date_parsed is NEVER null
     db/
       schema.ts       # All tables (see Schema below)
@@ -149,7 +152,7 @@ api/trips/[id]/onboarding api/trips/[id]/fuel-stops/replan
 api/trips/[id]/position
 api/trip                  api/trip/replan
 api/stops                 api/stops/[id]          api/stops/[id]/select
-api/stops/[id]/swap-primary                        api/stops/[id]/find-alternative
+api/stops/[id]/swap-primary
 api/routes                api/routes/[id]         api/routes/[id]/select
 api/routes/[id]/links
 api/legs/[id]/fuel-stops
@@ -158,7 +161,7 @@ api/directions            api/gpx                 api/gpx/[id]
 api/tasks                 api/tasks/[id]
 api/pois                  api/coords/parse
 api/places/nearby-stops   api/places/nearby-parks api/places/photos
-api/me                    api/me/preferences      api/me/vehicle-remediation
+api/me                    api/me/preferences
 api/support               api/analytics/viewport-time
 api/admin/test-error      api/admin/announcements
 api/announcements/active  api/announcements/dismiss
@@ -171,13 +174,27 @@ users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, l
 
 `trips` carries a driver-progress anchor (`current_leg_id`, `current_lat/lng`, `progress_anchor_date`, `progress_updated_at`) set by the `reportPosition` tool; `getTripFull` re-anchors every leg's `date_iso` from it, and the itinerary collapses legs before `current_leg_id` as "behind you". An explicit report is a **floor**, not a freeze — `behindCutoffRank` (`src/lib/dates.ts`) takes the max of the report and the calendar, so a stale report no longer pins the view (the days-old "frozen itinerary" bug).
 
+`trips.onboarding_scan` (jsonb, migration 0012) is a transient stash mirroring `pending_intent`: the first-message intent scan (`onboardingIntentScan.ts`) writes validated, prefill-confirm onboarding values here (currently the fuel-range safety numbers) until the question that owns each comes up on the vehicle step; cleared at handoff. The start date isn't stashed — an exact one is applied immediately and its question skipped. See `OnboardingScan` in `types/trip.ts`.
+
 **Vehicle range → Finn handoff (migration 0011):** `vehicles.refill_distance_km` was renamed to **`comfortable_range_km`** (the everyday target Finn aims for) and a new **`hard_max_range_km`** column added (the absolute ceiling Finn must never route a dry stretch past). Captured in onboarding (comfortable required; hard-max optional, **defaults to comfortable** — the one safe fallback). Invariant `comfortable_range_km ≤ hard_max_range_km` is enforced at every write path centrally in `repos/vehicles.ts` (`assertRangeOrder`). Both are projected to Penny/Finn via `projectVehicle` (`hard_max_range_km ?? comfortable_range_km`). Bounds remain `FUEL_STOP_SPACING_KM_MIN/MAX` (200–1500). Penny prose must still not author the safety number — onboarding/Settings/the `update_vehicle` tool convert + validate; the server re-checks. **"I don't know my range" path:** a non-numeric answer on the comfortable step routes to the `range_help` onboarding state → `src/server/parseComfortableRange.ts` (forced-tool estimator, `RANGE_ESTIMATE_MODEL`) proposes a conservative number from the driver's vehicle/tank info → prefilled back on the comfortable step for confirm/edit (never persisted unguarded; falls back to "type a number" if it can't estimate). Pure guard `validateComfortableKm` lives in `vehicleProfile.ts`. **Decided out:** `fuel_type` (not worth onboarding friction). **Follow-up:** collapse the redundant `effective_range_km`/`computeEffectiveRangeKm` alias into `comfortable_range_km`. See `docs/design/penny-comfortable-range.md`.
 
-**Dormant DB remnants (MVP teardown, 2026-06-26):** the `trips.trip_status` column/enum (`draft/active/paused/completed`) and the vehicle `dump_station_*` columns + the `dump_station` stop type still exist but are now **unwired** — the lifecycle transitions, nightly replan, and dump-station/overnight finders were removed. Leave dormant or drop in a later migration; don't re-wire without revisiting MVP scope. Note: `trip.status` (`planning/research/confirmed/anchored`) is a *different*, still-live field — the workflow badge shown in the UI.
+**Lazy fuel sourcing — BUILT (migration 0013, 2026-06-26):** fuel stops are now sourced **lazily on day-open**, not eagerly across the whole trip during planning (the old eager fan-out was the Google Places cost sink). New column `legs.fuel_stops_updated_at` is the cache timestamp; `FUEL_CACHE_TTL_MS` (48h, `src/lib/fuelCache.ts`) is the staleness window shared by server + client. Flow: the initial plan creates legs/routes only (no fuel calls — Penny's prompt no longer auto-calls `plan_fuel_stops`; she keeps it for **explicit** "find fuel for day N" asks). When the user expands a day, `LegCard`'s effect POSTs `/api/legs/[id]/fuel-stops`, which routes through `planFuelStopsForLegLazy` (`server/fuel.ts`): a terminal-success leg (`ready`/`no_stations_found`) sourced within the TTL is a **cache hit with zero Places calls**; never-sourced or stale legs run the real `planFuelStopsForLeg` search (algorithm untouched) and (re)stamp the cache. `setFuelStatus` stamps the timestamp on terminal-success and clears it on `none`. **Invalidation is affected-leg-only, never a trip-wide re-fan-out:** `invalidateLegFuelCache` (a leg's coords change via `update_leg`, `report_position` re-routing the upcoming leg, or continuity-repair) and `invalidateTripFuelCache` (vehicle/range change on `PATCH /api/trips/[id]`) reset `fuel_status='none'` + drop auto option stops so the affected day re-sources on next open. The "stale → **cheap** price re-check" the design calls for is Finn's separate pricing task (not built — no US price feed); until then a stale cache falls through to a full re-search, kept infrequent by the TTL gate. The trip-wide `replenishFuelStopsForTrip` + `POST /api/trips/[id]/fuel-stops/replan` + `api.replenishFuelStops` survive but are **no longer auto-triggered** (manual/admin re-plan only). See `docs/mvp-cleanup/06-lazy-fuel-sourcing.md`.
+
+**Dormant DB remnants (MVP teardown, 2026-06-26):** the `trips.trip_status` column/enum (`draft/active/paused/completed`) still exists but is **unwired** (lifecycle transitions removed). Leave dormant or drop in a later migration; don't re-wire without revisiting MVP scope. Note: `trip.status` (`planning/research/confirmed/anchored`) is a *different*, still-live field — the workflow badge shown in the UI.
+
+**Dump station — fully removed (migration 0015, 2026-06-26):** the vehicle `dump_station_interval_days` / `dump_station_tracking_enabled` columns were **dropped** and the `dump_station` **stop type** + its finder were deleted: `server/dump-stations.ts`, `server/places/nearby-dump-stations.ts`, `POST /api/stops/[id]/find-alternative`, the "Find other station" button in `StopsSection`, the `dump_station` `StopCard`/`LegCard` rendering, and `dump_station` from every `stop_type` enum (`shared.ts`, `addStop`, `updateStop`, `api/stops`, `api/stops/[id]`, `StopType`). `stops.stop_type` is a plain text column so no enum migration was needed.
+
+**Onboarding teardown (MVP, 2026-06-26):** onboarding now collects only the vehicle **name + comfortable range (+ optional hard-max ceiling)**.
+
+**Travel style — fully deleted (migration 0014, 2026-06-26):** there is no travel-style concept anywhere anymore — Penny has no notion of it. The columns `vehicles.travel_style` (+ the `travel_style` pg enum), `cruise_max_drive_hours`, `transit_max_drive_hours`, `max_drive_hours_per_day`, `max_drive_hours_per_week` were **dropped** (migration `0014_drop_travel_style_and_remediation.sql`), along with all code: `TravelStyle`/`TRAVEL_STYLE_OPTIONS`/`deriveFromTravelStyle`/`deriveMaxDriveHoursPerWeek` helpers, the per-leg cap projection, and the Settings/admin display. Every driving day is now capped at a flat **`DEFAULT_MAX_DRIVE_HOURS_PER_DAY = 8`** (`vehicleProfile.ts`) — the leg validators (`addLeg`/`updateLeg`) and `get_route` splitting use the constant directly, no per-vehicle cap. The `update_vehicle` Penny tool carries only `comfortable_range_km`/`hard_max_range_km`. The driving-cadence columns `max_consecutive_drive_days` / `rest_days_after_driving` were also **dropped** (migration `0015_drop_vehicle_cadence_dump_columns.sql`, alongside the dump-station columns). The MVP `vehicles` row is now just name + comfortable/hard-max range.
+
+**Remaining stop-type teardown — SPEC ONLY (not started):** reducing the stop types further (remove `food` groceries + `rest` parks + the parks/MoreStops amenity finders; decide on `overnight`/`other`) is written up as a standalone task in `docs/mvp-cleanup/07-stops-teardown.md`. Note the `rest` **stop type** is distinct from the `leg_type: 'rest'` rest-**day** (which stays).
+
+**Vehicle remediation — fully removed (migration 0014, 2026-06-26):** the multi-step remediation overlay/wizard was deleted. Onboarding always collects the comfortable range, so the only completeness signal needed is a live check in `buildPennyContext` (`vehicle_profile_blocked = !vehicleMeetsFuelPlanningMinimum(...)`) that lets Penny nudge "set your range" in chat. Gone: the `users.needs_vehicle_profile_remediation` column, `server/vehicleRemediation.ts`, `repos/remediationFlags.ts`, `vehicleRemediationGateLog.ts`, `GET/POST /api/me/vehicle-remediation`, the `VehicleRemediationOverlay` UI in `ChatPanel`, the `remediation-diagnose`/`remediation-backfill` scripts, and the `vehicle-remediation` e2e spec. `vehicleIsCompleteForRemediation`/`storedVehicleProfileFieldNeedsRemediationRepair`/`vehicleMeetsCompletenessTier` were deleted from `vehicleProfile.ts`. See `docs/mvp-cleanup/01-onboarding-teardown.md`.
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, remediationFlags, announcements
+trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, announcements
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
@@ -188,11 +205,11 @@ addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateR
 
 ### Scripts (`scripts/`)
 
-ship.sh, run-migrations.ts, seed-demo-trip.ts, seed-e2e-fixture.ts, cleanup-e2e.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, remediation-diagnose.ts, remediation-backfill-flags.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
+ship.sh, run-migrations.ts, seed-demo-trip.ts, seed-e2e-fixture.ts, cleanup-e2e.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
 
 ### E2E Tests (`e2e/`)
 
-existing-trip, login-otp, login-google-button, vehicle-crud, vehicle-remediation, onboarding-flow, onboarding-validation, penny-plan-trip, announcement
+existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, lazy-fuel-sourcing, announcement
 
 ## Lockdown invariants (load-bearing — do not loosen)
 

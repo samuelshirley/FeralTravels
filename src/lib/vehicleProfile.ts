@@ -9,58 +9,17 @@
 import type { UnitsPref } from '@/lib/units';
 import { kmToMi, miToKm } from '@/lib/units';
 
-// ── Travel style ────────────────────────────────────────────────────────────
-
-export type TravelStyle = 'scenic_cruiser' | 'road_tripper' | 'get_me_there';
-
-export const TRAVEL_STYLE_OPTIONS: Array<{
-  value: TravelStyle;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: 'scenic_cruiser',
-    label: 'Scenic cruiser',
-    description: 'Short driving days (~4h), lots of stops — the drive IS the trip.',
-  },
-  {
-    value: 'road_tripper',
-    label: 'Road tripper',
-    description: 'Moderate days (~6h) with a good balance of driving and exploring.',
-  },
-  {
-    value: 'get_me_there',
-    label: 'Get me there',
-    description: 'Long driving days (~8h cruise, up to 12h transit) — you just want to arrive.',
-  },
-];
-
-/**
- * Derive cruise + transit hour caps from a travel style. Also populates
- * the legacy `max_drive_hours_per_day` (= transit cap) for backward compat.
- */
-export function deriveFromTravelStyle(style: TravelStyle): {
-  cruise_max_drive_hours: number;
-  transit_max_drive_hours: number;
-  /** @deprecated Legacy field, equals transit cap. */
-  max_drive_hours_per_day: number;
-} {
-  switch (style) {
-    case 'scenic_cruiser':
-      return { cruise_max_drive_hours: 4, transit_max_drive_hours: 8, max_drive_hours_per_day: 8 };
-    case 'road_tripper':
-      return { cruise_max_drive_hours: 6, transit_max_drive_hours: 10, max_drive_hours_per_day: 10 };
-    case 'get_me_there':
-      return { cruise_max_drive_hours: 8, transit_max_drive_hours: 12, max_drive_hours_per_day: 12 };
-  }
-}
-
 /** Stored km between planned fuel stops — enforced on all vehicle saves. */
 export const FUEL_STOP_SPACING_KM_MIN = 200;
 export const FUEL_STOP_SPACING_KM_MAX = 1500;
 
-/** Max consecutive driving days before a rest day (stored integer). */
-export const MAX_CONSECUTIVE_DRIVE_DAYS_CAP = 7;
+/**
+ * Default cap on a single driving day's drive time (hours). MVP no longer asks
+ * for a travel style, so the day-by-day planner and leg validators fall back to
+ * this whenever a vehicle has no stored per-day cap (the common case now). See
+ * the `addLeg`/`updateLeg` validators and `get_route` splitting in `claude.ts`.
+ */
+export const DEFAULT_MAX_DRIVE_HOURS_PER_DAY = 8;
 
 /** @deprecated Use {@link FUEL_STOP_SPACING_KM_MAX} */
 export const REFILL_DISTANCE_KM_MAX = FUEL_STOP_SPACING_KM_MAX;
@@ -93,119 +52,17 @@ export function validateComfortableKm(raw: unknown): number | null {
   return raw;
 }
 
-/** Tier A = fuel-plannable refill only; Tier B = also requires driving-limit block (stretch planning). */
-export type VehicleCompletenessTier = 'fuel_plannable' | 'strict_driving';
-
-export function vehicleMeetsCompletenessTier(
-  vehicle: Record<string, unknown>,
-  tier: VehicleCompletenessTier
-): boolean {
-  if (!vehicleMeetsFuelPlanningMinimum(vehicle)) return false;
-  if (tier === 'fuel_plannable') return true;
-
-  // New path: travel_style drives everything
-  const ts = vehicle.travel_style;
-  const hasStyle = typeof ts === 'string' && ['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(ts);
-
-  // Legacy path: accept old fields too (pre-migration vehicles)
-  const d = vehicle.max_drive_hours_per_day;
-  const w = vehicle.max_drive_hours_per_week;
-  const hasLegacy = typeof d === 'number' && d > 0 && typeof w === 'number' && w > 0;
-
-  const c = vehicle.max_consecutive_drive_days;
-  const hasConsec = typeof c === 'number' && Number.isInteger(c) && c > 0;
-
-  return (hasStyle || hasLegacy) && hasConsec;
-}
-
-/** Plan / docs name — same as {@link vehicleMeetsCompletenessTier}. */
-export const isVehicleCompleteForTier = vehicleMeetsCompletenessTier;
-
-/** Dump station interval integers when tracking is enabled (matches question max default). */
-export function dumpStationCadenceIntegerValid(n: unknown, max = 60): boolean {
-  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= max;
-}
-
-/**
- * Weekly drive budget derived from daily limit × longest consecutive-drive streak
- * (no separate "hours per week" prompt). Capped at 168.
- */
-export function deriveMaxDriveHoursPerWeek(
-  hoursPerDay: number,
-  consecutiveDriveDays: number
-): number {
-  const raw = hoursPerDay * consecutiveDriveDays;
-  const capped = Math.min(168, raw);
-  return Math.round(capped * 10) / 10;
-}
-
-/**
- * Full profile completeness for remediation nag + PATCH validation — strict driving,
- * caravan gate persisted, dump station cadence iff dump_station_tracking_enabled is true.
- */
-export function vehicleIsCompleteForRemediation(vehicle: Record<string, unknown>): boolean {
-  if (!vehicleMeetsCompletenessTier(vehicle, 'strict_driving')) return false;
-  const wt = vehicle.dump_station_tracking_enabled;
-  if (wt !== true && wt !== false) return false;
-  if (wt === false) return true;
-  return dumpStationCadenceIntegerValid(vehicle.dump_station_interval_days);
-}
-
-/**
- * True when onboarding/remediation must (re-)ask about this field: empty in DB **or**
- * present but failing the same rules as {@link vehicleIsCompleteForRemediation} for that slice.
- *
- * Important: remediation used to treat any non-null cell as “filled”, so corrupt values such as
- * `comfortable_range_km: 0` or zeros on driving limits stranded users with `needs_remediation` set
- * but no snapshot question (`VehicleRemediationOverlay` never appeared).
- */
-export function storedVehicleProfileFieldNeedsRemediationRepair(
-  q: VehicleProfileQuestion,
-  raw: unknown
-): boolean {
-  const missing = raw === null || raw === undefined || raw === '';
-  if (missing) return true;
-
-  switch (q.key) {
-    case 'name':
-      return typeof raw !== 'string' || raw.trim().length === 0;
-    case 'comfortable_range_km':
-      return !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: raw });
-    case 'hard_max_range_km':
-      // Optional + safe-defaulted, so a null is handled by the caller (never
-      // asked in remediation). When present it must sit within the same bounds.
-      return !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: raw });
-    case 'travel_style':
-      return typeof raw !== 'string' || !['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(raw);
-    case 'max_consecutive_drive_days':
-    case 'rest_days_after_driving': {
-      if (q.optional && (raw === null || raw === undefined)) return false;
-      if (typeof raw !== 'number' || !Number.isFinite(raw)) return true;
-      if (!Number.isInteger(raw)) return true;
-      if (raw <= 0) return true;
-      if (q.min !== undefined && raw < q.min) return true;
-      if (q.max !== undefined && raw > q.max) return true;
-      return false;
-    }
-    case 'dump_station_interval_days':
-      return !dumpStationCadenceIntegerValid(raw);
-  }
-}
 export const VEHICLE_PROFILE_KEYS = [
   'name',
   'comfortable_range_km',
   'hard_max_range_km',
-  'travel_style',
-  'max_consecutive_drive_days',
-  'rest_days_after_driving',
-  'dump_station_interval_days',
 ] as const;
 
 export type VehicleProfileFieldKey = (typeof VEHICLE_PROFILE_KEYS)[number];
 
 export type VehicleProfileQuestionKind = 'text' | 'number' | 'integer' | 'select';
 
-export type VehicleProfileFieldGroup = 'identity' | 'driving' | 'dump_station';
+export type VehicleProfileFieldGroup = 'identity' | 'driving';
 
 export interface VehicleProfileQuestion {
   key: VehicleProfileFieldKey;
@@ -261,72 +118,22 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       key: 'hard_max_range_km',
       kind: 'integer',
       group: 'driving',
-      label: `And the furthest you'd ever let me push it in a pinch, in ${distLabel}?`,
+      label: `What's your hard max fuel range, in ${distLabel}? This is the absolute furthest I'll ever route you on one tank for my fuel calculations.`,
       placeholder: distPlaceholder,
       help:
-        'The hard line I should never route you past, for any reason. Leave this blank and ' +
-        'I’ll simply never send you beyond your comfortable range. Must be the same as or ' +
-        'further than your comfortable range.',
+        'The hard line I should never route you past on a single tank, for any reason — I use it ' +
+        'as the ceiling for fuel planning. Leave this blank and I’ll simply never send you beyond ' +
+        'your comfortable range. Must be the same as or further than your comfortable range.',
       min: distMin,
       max: distMax,
       optional: true,
-    },
-    {
-      key: 'travel_style',
-      kind: 'select',
-      group: 'driving',
-      label: "What's your travel style?",
-      help:
-        'This sets how long your driving days are. Scenic cruisers stop often and keep drives short; ' +
-        '"get me there" travelers are happy to grind a long transit day to maximize time at destinations.',
-      options: TRAVEL_STYLE_OPTIONS,
-    },
-    {
-      key: 'max_consecutive_drive_days',
-      kind: 'integer',
-      group: 'driving',
-      label: 'Max consecutive driving days before a rest day?',
-      placeholder: '3',
-      min: 1,
-      max: MAX_CONSECUTIVE_DRIVE_DAYS_CAP,
-    },
-    {
-      key: 'rest_days_after_driving',
-      kind: 'integer',
-      group: 'driving',
-      label: 'How many rest (non-driving) days do you need after a driving streak?',
-      placeholder: '1',
-      help: 'After your max consecutive driving days, how many days do you want to rest before driving again?',
-      min: 1,
-      max: 7,
-      optional: true,
-    },
-    {
-      key: 'dump_station_interval_days',
-      kind: 'integer',
-      group: 'dump_station',
-      label: 'How many days between dump station visits?',
-      placeholder: '4',
-      min: 1,
-      max: 30,
     },
   ];
 }
 
 export const VEHICLE_PROFILE_QUESTION_COUNT = VEHICLE_PROFILE_KEYS.length;
 
-/** Caravan / RV gate — inserted in onboarding before dump station questions. */
-export const CARAVAN_DUMP_STATION_GATE_KEY = 'caravan_dump_station_tracking';
-
-export function caravanDumpStationGateLabel(): string {
-  return 'Is this a caravan, camper, or motorhome where you want to track dump station visits?';
-}
-
-const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {
-  dump_station_interval_days: ' days',
-  max_consecutive_drive_days: ' days',
-  rest_days_after_driving: ' rest days',
-};
+const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {};
 
 /**
  * Validate and parse one answer in the same units the user sees (miles for
@@ -418,42 +225,30 @@ export function vehicleProfileFieldHasValue(
   return raw !== null && raw !== undefined && raw !== '';
 }
 
-/**
- * Profile completion counts — dump station rows apply only when `dump_station_tracking_enabled === true`.
- */
+/** Profile completion counts. Hard-max is optional (safe-defaults to comfortable). */
 export function vehicleProfileRequiredCompletion(vehicle: Record<string, unknown>): {
   filled: number;
   total: number;
 } {
   const questions = buildVehicleProfileQuestions('metric');
-  const wt = vehicle.dump_station_tracking_enabled;
-  const applicable = questions.filter((q) => {
-    // Hard-max safely defaults to comfortable, so it's never "required" for a
-    // complete profile — exclude it from the completion count.
-    if (q.key === 'hard_max_range_km') return false;
-    if (q.group === 'dump_station') return wt === true;
-    return true;
-  });
+  const applicable = questions.filter((q) => q.key !== 'hard_max_range_km');
   const filled = applicable.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
   return { filled, total: applicable.length };
 }
 
 /**
- * Whether a profile answer may be omitted (null). Used by onboarding/remediation POST guards.
+ * Whether a profile answer may be omitted (null). Used by onboarding POST guards.
  */
 export function vehicleProfileQuestionAllowsNull(
   q: VehicleProfileQuestion,
-  vehicle: Record<string, unknown>
+  _vehicle: Record<string, unknown>
 ): boolean {
-  if (q.optional === true) return true;
-  if (q.group === 'dump_station' && vehicle.dump_station_tracking_enabled !== true) return true;
-  return false;
+  return q.optional === true;
 }
 
 const GROUP_TITLES: Record<VehicleProfileFieldGroup, string> = {
   identity: 'Identity',
   driving: 'Driving limits',
-  dump_station: 'Dump station',
 };
 
 export function vehicleProfileGroupTitle(group: VehicleProfileFieldGroup): string {
@@ -465,18 +260,13 @@ export interface VehicleProfileDraftInput {
   comfortable_range_km: number | null;
   /** Hard ceiling (km). Null ⇒ defaults to comfortable_range_km on save. */
   hard_max_range_km: number | null;
-  travel_style: TravelStyle | null;
-  max_consecutive_drive_days: number | null;
-  rest_days_after_driving: number | null;
-  dump_station_interval_days: number | null;
-  /** Required for Settings saves; caravan gate persisted on vehicles. */
-  dump_station_tracking_enabled?: boolean | null;
   is_default?: boolean;
 }
 
 /**
  * Validate draft using the same rules as onboarding; returns API-ready body
- * (snake_case vehicle fields + optional `is_default`).
+ * (snake_case vehicle fields + optional `is_default`). MVP profile is just the
+ * vehicle name + comfortable range (+ optional hard-max ceiling).
  */
 export function validateVehicleProfileDraftForSave(
   draft: VehicleProfileDraftInput,
@@ -484,49 +274,30 @@ export function validateVehicleProfileDraftForSave(
 ): { ok: true; payload: Record<string, unknown> } | { ok: false; error: string } {
   const questions = buildVehicleProfileQuestions(units);
   const payload: Record<string, unknown> = {};
-  const wt = draft.dump_station_tracking_enabled;
-
-  if (wt !== true && wt !== false) {
-    return { ok: false, error: 'Choose whether to track dump station visits.' };
-  }
-
-  payload.dump_station_tracking_enabled = wt;
-  if (wt === false) {
-    payload.dump_station_interval_days = null;
-  }
 
   for (const q of questions) {
     try {
-      if (q.group === 'dump_station' && wt === false) continue;
-
-      const qCoerce =
-        q.group === 'dump_station' && wt === true ? ({ ...q, optional: false } as VehicleProfileQuestion) : q;
-
       let raw: unknown;
       if (q.key === 'name') {
         raw = draft.name;
-      } else if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
+      } else {
+        // comfortable_range_km | hard_max_range_km — unit-aware coercion.
         const v = draft[q.key];
         if (v == null) raw = null;
         else if (units === 'imperial') {
           const mi = kmToMi(v);
           raw = mi == null ? null : Math.round(mi);
         } else raw = v;
-      } else {
-        const v = draft[q.key as keyof VehicleProfileDraftInput];
-        if (v === null || v === undefined) raw = null;
-        else if (typeof v === 'string' && v === '') raw = null;
-        else raw = v as number | string | null;
       }
 
-      const parsed = coerceVehicleProfileValue(qCoerce, raw);
+      const parsed = coerceVehicleProfileValue(q, raw);
 
       if (q.key === 'name') {
         payload.name = parsed;
         continue;
       }
 
-      if ((q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') && units === 'imperial') {
+      if (units === 'imperial') {
         const km = parsed == null ? null : miToKm(parsed as number);
         payload[q.key] = km == null ? null : Math.round(km);
       } else {
@@ -551,23 +322,6 @@ export function validateVehicleProfileDraftForSave(
         ok: false,
         error: 'Hard-max range must be the same as or further than your comfortable range.',
       };
-    }
-  }
-
-  // Derive hour caps + legacy fields from travel_style
-  const ts = payload.travel_style;
-  if (typeof ts === 'string' && ['scenic_cruiser', 'road_tripper', 'get_me_there'].includes(ts)) {
-    const derived = deriveFromTravelStyle(ts as TravelStyle);
-    payload.cruise_max_drive_hours = derived.cruise_max_drive_hours;
-    payload.transit_max_drive_hours = derived.transit_max_drive_hours;
-    payload.max_drive_hours_per_day = derived.max_drive_hours_per_day;
-
-    const consec = payload.max_consecutive_drive_days;
-    if (typeof consec === 'number' && Number.isInteger(consec) && consec > 0) {
-      payload.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(
-        derived.max_drive_hours_per_day,
-        consec
-      );
     }
   }
 

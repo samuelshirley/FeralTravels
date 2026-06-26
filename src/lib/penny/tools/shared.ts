@@ -33,7 +33,7 @@ export const stopStatusSchema = z.enum(['option', 'selected', 'dismissed']);
 export const taskStatusSchema = z.enum(['open', 'answered', 'dismissed']);
 export const taskPrioritySchema = z.enum(['low', 'normal', 'high']);
 
-export const stopTypeSchema = z.enum(['fuel', 'dump_station', 'food', 'overnight', 'rest', 'other']);
+export const stopTypeSchema = z.enum(['fuel', 'food', 'overnight', 'rest', 'other']);
 export const fuelTypeSchema = z.enum(['diesel', 'petrol', 'premium', 'lpg']);
 export const stopSourceSchema = z.enum(['penny', 'user', 'google_places', 'osm', 'manual']);
 export const surfaceSchema = z.enum(['paved', 'gravel', 'mix']);

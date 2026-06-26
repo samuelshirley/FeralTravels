@@ -13,8 +13,6 @@
     "seed": "tsx scripts/seed-demo-trip.ts",
     "migrate-sqlite": "tsx scripts/migrate-sqlite-to-neon.ts",
     "backfill-maps-nav": "tsx scripts/backfill-google-maps-nav.ts",
-    "remediation-diagnose": "tsx scripts/remediation-diagnose.ts",
-    "remediation-backfill": "tsx scripts/remediation-backfill-flags.ts",
     "smoke-api": "tsx scripts/smoke-api.ts",
     "e2e": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test",
     "e2e:smoke": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test e2e/existing-trip.spec.ts e2e/login-google-button.spec.ts e2e/login-otp.spec.ts e2e/vehicle-crud.spec.ts",

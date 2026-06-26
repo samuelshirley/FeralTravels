@@ -14,19 +14,15 @@ import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/user
 import { extractDateFromText, formatDate, parseISODate, todayISO } from '@/lib/dates';
 import { resolveStartDate } from '@/server/parseStartDate';
 import { estimateComfortableRange } from '@/server/parseComfortableRange';
+import { scanFirstMessage } from '@/server/onboardingIntentScan';
 import { miToKm, kmToMi } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
-import type { OnboardingState } from '@/types/trip';
+import type { OnboardingState, OnboardingScan } from '@/types/trip';
 import {
   buildVehicleProfileQuestions,
-  caravanDumpStationGateLabel,
-  CARAVAN_DUMP_STATION_GATE_KEY,
   coerceVehicleProfileValue,
-  deriveFromTravelStyle,
-  deriveMaxDriveHoursPerWeek,
   humanizeVehicleProfileAnswer,
   vehicleProfileQuestionAllowsNull,
-  type TravelStyle,
   type VehicleProfileQuestion,
 } from '@/lib/vehicleProfile';
 
@@ -155,37 +151,13 @@ export interface OnboardingSnapshot {
   progress: { current: number; total: number } | null;
 }
 
-type OnboardingStep = { t: 'profile'; q: VehicleProfileQuestion } | { t: 'gate' };
-
-function buildOnboardingSteps(units: UnitsPref): OnboardingStep[] {
-  const qs = buildVehicleProfileQuestions(units);
-  const wi = qs.findIndex((q) => q.group === 'dump_station');
-  if (wi < 0) return qs.map((q) => ({ t: 'profile' as const, q }));
-  return [
-    ...qs.slice(0, wi).map((q) => ({ t: 'profile' as const, q })),
-    { t: 'gate' },
-    ...qs.slice(wi).map((q) => ({ t: 'profile' as const, q })),
-  ];
+function buildOnboardingSteps(units: UnitsPref): VehicleProfileQuestion[] {
+  return buildVehicleProfileQuestions(units);
 }
 
 function vehicleHasProfileValue(vehicle: VehicleApi, key: string): boolean {
   const raw = (vehicle as unknown as Record<string, unknown>)[key];
   return raw !== null && raw !== undefined && raw !== '';
-}
-
-function dumpStationGroupHasAnyValue(vehicle: VehicleApi, questions: VehicleProfileQuestion[]): boolean {
-  return questions.filter((q) => q.group === 'dump_station').some((q) => vehicleHasProfileValue(vehicle, q.key));
-}
-
-/** Caravan gate resolved via DB (`dump_station_tracking_enabled`) or legacy onboarding chat / populated dump station rows. */
-function caravanGateResolved(
-  vehicle: VehicleApi,
-  askedLabels: Set<string>,
-  questions: VehicleProfileQuestion[]
-): boolean {
-  const wt = vehicle.dump_station_tracking_enabled;
-  if (wt === true || wt === false) return true;
-  return askedLabels.has(caravanDumpStationGateLabel()) || dumpStationGroupHasAnyValue(vehicle, questions);
 }
 
 /**
@@ -198,8 +170,9 @@ async function resolvePostIntentState(userId: string): Promise<OnboardingState> 
 }
 
 /**
- * When we're in `vehicle_new`, walk onboarding steps (profile fields + caravan
- * gate before water). See `loadAskedLabels` for optional-field / skip behavior.
+ * When we're in `vehicle_new`, walk the vehicle-profile questions (name +
+ * comfortable range + optional hard-max) in order. See `loadAskedLabels` for
+ * optional-field / skip behavior.
  */
 function nextVehicleOnboardingQuestion(
   vehicle: VehicleApi | null,
@@ -207,68 +180,25 @@ function nextVehicleOnboardingQuestion(
   unitsPref: UnitsPref
 ): { question: Question; progress: { current: number; total: number } } | null {
   const questions = buildVehicleProfileQuestions(unitsPref);
-  const steps = buildOnboardingSteps(unitsPref);
-  const gateLabel = caravanDumpStationGateLabel();
-
-  // When the user said "No" to caravan tracking, exclude the gate step and
-  // all dump_station profile steps from the total count so progress shows
-  // e.g. "4 of 5" instead of "4 of 7".
-  const dumpStationDisabled = vehicle?.dump_station_tracking_enabled === false;
-  const visibleSteps = dumpStationDisabled
-    ? steps.filter((s) => s.t !== 'gate' && !(s.t === 'profile' && s.q.group === 'dump_station'))
-    : steps;
-  const total = visibleSteps.length;
+  const total = questions.length;
 
   if (!vehicle) {
-    const first = steps[0];
-    if (first.t !== 'profile') throw new Error('Expected profile as first onboarding step');
     return {
-      question: first.q as Question,
+      question: questions[0] as Question,
       progress: { current: 1, total },
     };
   }
 
-  // Track position within the visible steps for progress display.
-  let visibleIdx = 0;
-  for (let s = 0; s < steps.length; s++) {
-    const step = steps[s];
-
-    if (step.t === 'gate') {
-      if (dumpStationDisabled) continue; // gate already answered "no" — skip
-      const gateResolved = caravanGateResolved(vehicle, askedLabels, questions);
-      if (!gateResolved) {
-        return {
-          question: {
-            key: CARAVAN_DUMP_STATION_GATE_KEY,
-            kind: 'select',
-            label: gateLabel,
-            help: 'If not, we will skip dump station timing questions.',
-            options: [
-              { value: 'yes', label: 'Yes, track dump station visits' },
-              { value: 'no', label: 'No' },
-            ],
-          },
-          progress: { current: visibleIdx + 1, total },
-        };
-      }
-      visibleIdx++;
-      continue;
-    }
-
-    const q = step.q;
-
-    // Skip dump_station questions entirely when tracking is disabled.
-    if (dumpStationDisabled && q.group === 'dump_station') continue;
-
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
     const hasVal = vehicleHasProfileValue(vehicle, q.key);
     const resolved = q.optional ? hasVal || askedLabels.has(q.label) : hasVal;
     if (!resolved) {
       return {
         question: q as Question,
-        progress: { current: visibleIdx + 1, total },
+        progress: { current: i + 1, total },
       };
     }
-    visibleIdx++;
   }
 
   return null;
@@ -296,10 +226,15 @@ async function completeOnboarding(
 ): Promise<SubmitAnswerResult> {
   const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   const pendingIntent = trip?.pendingIntent ?? '';
-  // Clear pendingIntent now that we're handing off
+  // Clear pendingIntent + scan stash now that we're handing off
   await db
     .update(trips)
-    .set({ onboardingState: 'done', pendingIntent: null, updatedAt: new Date() })
+    .set({
+      onboardingState: 'done',
+      pendingIntent: null,
+      onboardingScan: null,
+      updatedAt: new Date(),
+    })
     .where(eq(trips.id, tripId));
   return {
     next: { state: 'done', question: null, vehicles: [], progress: null },
@@ -382,6 +317,58 @@ async function runRangeHelp(
     `refuelling, in ${unit}.`;
   await addChatMessage(tripId, 'assistant', note, null, 'ai');
   return { next: snap, answerLabel: text, didHandoff: false, note };
+}
+
+/**
+ * If the upcoming vehicle question is a fuel-range field and the first-message
+ * scan stashed an (already validated) value for it, prefill that value for the
+ * driver to confirm with one tap. Confirm-don't-assume: the range is a safety
+ * number, so it's surfaced for confirmation, never silently committed. Skips
+ * prefill once the vehicle already holds the value. Returns the question
+ * unchanged when there's nothing to prefill.
+ */
+function prefillRangeFromScan(
+  question: Question,
+  vehicle: VehicleApi | null,
+  scan: OnboardingScan | null,
+  unitsPref: UnitsPref,
+): Question {
+  if (!scan) return question;
+  const isImperial = unitsPref === 'imperial';
+  const unit = isImperial ? 'mi' : 'km';
+  const toShown = (km: number) => (isImperial ? Math.round(kmToMi(km)!) : km);
+
+  if (
+    question.key === 'comfortable_range_km' &&
+    scan.comfortable_range_km != null &&
+    !(vehicle && vehicleHasProfileValue(vehicle, 'comfortable_range_km'))
+  ) {
+    const shown = toShown(scan.comfortable_range_km);
+    return {
+      ...question,
+      defaultValue: String(shown),
+      label:
+        `From your description it sounds like about ${shown} ${unit} on a tank — ` +
+        `send to confirm, or type your own number.`,
+    };
+  }
+
+  if (
+    question.key === 'hard_max_range_km' &&
+    scan.hard_max_range_km != null &&
+    !(vehicle && vehicleHasProfileValue(vehicle, 'hard_max_range_km'))
+  ) {
+    const shown = toShown(scan.hard_max_range_km);
+    return {
+      ...question,
+      defaultValue: String(shown),
+      label:
+        `And it sounds like about ${shown} ${unit} is your absolute max in a pinch — ` +
+        `send to confirm, or type your own.`,
+    };
+  }
+
+  return question;
 }
 
 // ---------------------------------------------------------------------------
@@ -540,18 +527,29 @@ export async function getOnboardingSnapshot(
     const unitsPref = await getUnitsPref(userId);
     const next = nextVehicleOnboardingQuestion(currentVehicle, askedLabels, unitsPref);
     if (!next) {
-      // All vehicle questions answered — complete onboarding
+      // All vehicle questions answered — complete onboarding (and clear any
+      // leftover scan stash; range was either consumed or never asked).
       await db
         .update(trips)
-        .set({ onboardingState: 'done', updatedAt: new Date() })
+        .set({ onboardingState: 'done', onboardingScan: null, updatedAt: new Date() })
         .where(eq(trips.id, tripId));
       return { state: 'done', question: null, vehicles: [], progress: null };
     }
+    // Prefill the fuel-range questions from the first-message scan stash so the
+    // driver confirms an inferred range with one tap instead of retyping. The
+    // value is already validated/in-band; we only convert to display units. This
+    // is confirm-don't-assume — the safety number is never silently committed.
+    const question = prefillRangeFromScan(
+      next.question,
+      currentVehicle,
+      trip.onboardingScan as OnboardingScan | null,
+      unitsPref,
+    );
     // Offset vehicle progress by the pre-vehicle steps so the counter
     // reflects the full onboarding flow ([units_pick] + vehicle).
     return {
       state,
-      question: next.question,
+      question,
       vehicles: [],
       progress: {
         current: preVehicleSteps + next.progress.current,
@@ -633,17 +631,66 @@ export async function submitAnswer(
   if (state === 'trip_intent' && input.questionKey === 'trip_intent') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please describe your trip.');
-    // Always ask for a start date next — it's a hard invariant. Penny names the
-    // trip from its route once planning begins (no naming step here).
-    await db
-      .update(trips)
-      .set({ pendingIntent: text, onboardingState: 'trip_date', updatedAt: new Date() })
-      .where(eq(trips.id, tripId));
+
+    // First-message intent scan: read the opening description for onboarding
+    // variables the driver already gave (start date, fuel range) so we can skip
+    // or prefill those questions. The LLM only transcribes; every field is
+    // re-validated below. Never throws — an all-null result just means we fall
+    // through to asking everything as before.
+    const scan = await scanFirstMessage(text, { userId, tripId });
+
+    // Record the opening Q/A bubble.
     await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
+
+    // Stash validated prefill-confirm fields (fuel range is a safety number — the
+    // driver confirms it on the vehicle step, so it waits in onboardingScan
+    // rather than being committed here). See OnboardingScan.
+    const scanStash: OnboardingScan = {};
+    if (scan.comfortableRangeKm != null) scanStash.comfortable_range_km = scan.comfortableRangeKm;
+    if (scan.hardMaxRangeKm != null) scanStash.hard_max_range_km = scan.hardMaxRangeKm;
+
+    const patch: Record<string, unknown> = {
+      pendingIntent: text,
+      onboardingScan: Object.keys(scanStash).length > 0 ? scanStash : null,
+      updatedAt: new Date(),
+    };
+
+    // An EXACT start date in the opening message ("leaving tomorrow", "next
+    // Saturday") is applied now and its question SKIPPED — the headline fix. A
+    // VAGUE/assumed date ("this summer") is NOT auto-committed: it falls through
+    // to the trip_date step so the driver confirms (confirm-don't-assume on a
+    // low-confidence date, mirroring the typed-date path).
+    let note: string | undefined;
+    const exactIso =
+      scan.startDate && !scan.startDate.assumed ? scan.startDate.iso : null;
+    if (exactIso) {
+      patch.startDate = scan.startDatePhrase ?? text;
+      patch.startDateParsed = exactIso;
+      patch.onboardingState = await resolvePostIntentState(userId);
+      const unitsForFmt =
+        (await getRawUnitsPref(userId)) != null ? await getUnitsPref(userId) : 'metric';
+      note = `Got it — setting off ${formatDate(parseISODate(exactIso), unitsForFmt)}.`;
+    } else {
+      // Always ask for a start date next — it's a hard invariant. Penny names the
+      // trip from its route once planning begins (no naming step here).
+      patch.onboardingState = 'trip_date';
+    }
+
+    await db.update(trips).set(patch).where(eq(trips.id, tripId));
+    if (note) await addChatMessage(tripId, 'assistant', note, null, 'ai');
+
+    // A returning user (units + vehicle already set) who gave an exact date may
+    // now be fully onboarded — complete the handoff so the client fires the
+    // stored intent at Penny instead of stalling on a finished wizard.
+    const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
+    if (afterSnapshot.state === 'done') {
+      return { ...(await completeOnboarding(tripId)), note };
+    }
     return {
-      next: await getOnboardingSnapshot(tripId, userId),
+      next: afterSnapshot,
       answerLabel: text,
       didHandoff: false,
+      note,
     };
   }
 
@@ -780,37 +827,6 @@ export async function submitAnswer(
   if (state === 'vehicle_new') {
     const unitsPref = await getUnitsPref(userId);
     const questions = buildVehicleProfileQuestions(unitsPref);
-    const gateLabel = caravanDumpStationGateLabel();
-
-    if (input.questionKey === CARAVAN_DUMP_STATION_GATE_KEY) {
-      const raw = typeof input.value === 'string' ? input.value : '';
-      if (raw !== 'yes' && raw !== 'no') throw new Error('Pick yes or no.');
-      if (!trip.vehicleId) throw new Error('Vehicle not ready for caravan gate.');
-      await updateVehicle(userId, trip.vehicleId, {
-        dump_station_tracking_enabled: raw === 'yes',
-        ...(raw === 'no' ? { dump_station_interval_days: null } : {}),
-      });
-      if (raw === 'no') {
-        const dsIdx = questions.findIndex((q) => q.group === 'dump_station');
-        if (dsIdx >= 0) {
-          for (const wq of questions.slice(dsIdx)) {
-            await addChatMessage(tripId, 'assistant', wq.label, null, 'form_question');
-            await addChatMessage(tripId, 'user', 'Not applicable', null, 'form_answer');
-          }
-        }
-      }
-      await writeQA(tripId, gateLabel, raw === 'yes' ? 'Yes' : 'No');
-      // Check if that was the last question
-      const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
-      if (afterSnapshot.state === 'done') {
-        return completeOnboarding(tripId);
-      }
-      return {
-        next: afterSnapshot,
-        answerLabel: raw === 'yes' ? 'Yes' : 'No',
-        didHandoff: false,
-      };
-    }
 
     const question = questions.find((q) => q.key === input.questionKey);
     if (!question) throw new Error(`Unknown question ${input.questionKey}`);
@@ -830,9 +846,7 @@ export async function submitAnswer(
       return runRangeHelp(tripId, userId, input.value.trim(), unitsPref, false);
     }
 
-    const vehicleRecord = (vehicle ?? {
-      dump_station_tracking_enabled: undefined,
-    }) as unknown as Record<string, unknown>;
+    const vehicleRecord = (vehicle ?? {}) as unknown as Record<string, unknown>;
     if (
       !vehicleProfileQuestionAllowsNull(question, vehicleRecord) &&
       (input.value === null || input.value === undefined || input.value === '')
@@ -883,36 +897,37 @@ export async function submitAnswer(
             hardMaxNote = `No worries — I'll never route you past your comfortable range of ${shown} ${unit}.`;
           }
         } else if (typeof comfortable === 'number' && hardMaxKm < comfortable) {
-          throw new Error(
-            "That's shorter than your comfortable range — the max should be the same distance or further.",
-          );
+          // Validation failure, NOT a server error: a thrown Error here escapes
+          // submitAnswer() and surfaces as a 500. Instead re-prompt inline —
+          // keep the step active, surface the reason as a note, and re-show the
+          // hard-max question (mirrors runRangeHelp's confirm/edit pattern).
+          const unit = unitsPref === 'imperial' ? 'mi' : 'km';
+          const shownComfortable =
+            unitsPref === 'imperial' ? Math.round(kmToMi(comfortable)!) : comfortable;
+          const msg =
+            `That's shorter than your comfortable range of ${shownComfortable} ${unit} — ` +
+            `the max should be the same distance or further. Try a larger number, or leave ` +
+            `it blank to use your comfortable range.`;
+          await addChatMessage(tripId, 'assistant', msg, null, 'ai');
+          // The hard-max question was already written to chat (it's optional, so
+          // the snapshot would otherwise treat it as "asked" and skip ahead);
+          // re-show it explicitly so the driver can correct their answer.
+          const repromptQuestion = buildVehicleProfileQuestions(unitsPref).find(
+            (q) => q.key === 'hard_max_range_km',
+          ) as Question;
+          const snap = await getOnboardingSnapshot(tripId, userId);
+          return {
+            next: { ...snap, state: 'vehicle_new', question: repromptQuestion },
+            answerLabel: humanizeVehicleProfileAnswer(question, parsed, unitsPref),
+            didHandoff: false,
+            note: msg,
+          };
         }
         patch.hard_max_range_km = hardMaxKm;
       } else {
         patch[question.key] = parsed;
       }
 
-      // When travel_style is set, derive cruise/transit caps + legacy fields
-      if (question.key === 'travel_style' && typeof parsed === 'string') {
-        const derived = deriveFromTravelStyle(parsed as TravelStyle);
-        patch.cruise_max_drive_hours = derived.cruise_max_drive_hours;
-        patch.transit_max_drive_hours = derived.transit_max_drive_hours;
-        patch.max_drive_hours_per_day = derived.max_drive_hours_per_day;
-      }
-
-      // Derive weekly cap from daily cap + consecutive days
-      const nextDay =
-        (patch.max_drive_hours_per_day as number | undefined) ?? vehicle.max_drive_hours_per_day;
-      const nextConsec =
-        (patch.max_consecutive_drive_days as number | undefined) ?? vehicle.max_consecutive_drive_days;
-      if (
-        typeof nextDay === 'number' &&
-        nextDay > 0 &&
-        typeof nextConsec === 'number' &&
-        nextConsec > 0
-      ) {
-        patch.max_drive_hours_per_week = deriveMaxDriveHoursPerWeek(nextDay, nextConsec);
-      }
       await updateVehicle(userId, vehicle.id, patch);
     }
 

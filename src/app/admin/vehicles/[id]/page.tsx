@@ -55,14 +55,6 @@ function rawValueForField(key: string, row: AdminVehicleRow): unknown {
       return row.name;
     case 'comfortable_range_km':
       return row.comfortableRangeKm;
-    case 'max_drive_hours_per_day':
-      return row.maxDriveHoursPerDay;
-    case 'max_drive_hours_per_week':
-      return row.maxDriveHoursPerWeek;
-    case 'max_consecutive_drive_days':
-      return row.maxConsecutiveDriveDays;
-    case 'dump_station_interval_days':
-      return row.dumpStationIntervalDays;
     default:
       return null;
   }

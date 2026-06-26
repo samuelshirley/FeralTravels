@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { vehicleIsCompleteForRemediation } from '@/lib/vehicleProfile';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { coerceOptionalFiniteNumber, coerceOptionalInt } from '@/lib/vehicleNumericCoercion';
 
 describe('coerceOptionalFiniteNumber', () => {
@@ -38,30 +38,20 @@ describe('coerceOptionalInt', () => {
   });
 });
 
-describe('vehicle completeness after coercion helpers', () => {
-  it('vehicleIsCompleteForRemediation rejects stringly-typed numbers (wrong shape)', () => {
+describe('vehicle fuel-planning minimum after coercion helpers', () => {
+  it('rejects a stringly-typed comfortable range (wrong shape)', () => {
     const row = {
       name: 'Van',
       comfortable_range_km: '400',
-      max_drive_hours_per_day: 6,
-      max_drive_hours_per_week: 30,
-      max_consecutive_drive_days: 3,
-      dump_station_tracking_enabled: false,
-      dump_station_interval_days: null,
     } as unknown as Record<string, unknown>;
-    expect(vehicleIsCompleteForRemediation(row)).toBe(false);
+    expect(vehicleMeetsFuelPlanningMinimum(row)).toBe(false);
   });
 
-  it('coercion makes Postgres-string numerics completeness-checkable like real JS numbers', () => {
+  it('coercion makes a Postgres-string numeric fuel-plannable like a real JS number', () => {
     const row = {
       name: 'Van',
       comfortable_range_km: coerceOptionalInt('450'),
-      max_drive_hours_per_day: coerceOptionalFiniteNumber('6'),
-      max_drive_hours_per_week: coerceOptionalFiniteNumber('30'),
-      max_consecutive_drive_days: coerceOptionalInt('3'),
-      dump_station_tracking_enabled: false,
-      dump_station_interval_days: null,
     };
-    expect(vehicleIsCompleteForRemediation(row)).toBe(true);
+    expect(vehicleMeetsFuelPlanningMinimum(row)).toBe(true);
   });
 });

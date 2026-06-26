@@ -11,18 +11,21 @@ test.describe('Onboarding composer validation', () => {
     try {
       await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
 
-      await expect(page.getByText(/How far between fuel stops/i)).toBeVisible({ timeout: 25_000 });
+      await expect(page.getByText(/comfortable driving range/i)).toBeVisible({ timeout: 25_000 });
 
       const composer = page.getByTestId('trip-chat-composer');
       await composer.fill('50');
       await composer.press('Enter');
 
-      await expect(page.getByText(/Must be at least 200/i)).toBeVisible({ timeout: 10_000 });
+      // Out-of-band value is rejected with the 200 km minimum.
+      await expect(page.getByText(/200/)).toBeVisible({ timeout: 10_000 });
 
       await composer.fill('400');
       await composer.press('Enter');
 
-      await expect(page.getByText(/What's your travel style/i)).toBeVisible({
+      // The only remaining vehicle question is the optional hard-max ceiling —
+      // travel style / consecutive days / dump station were removed (MVP).
+      await expect(page.getByText(/furthest you'd ever let me push it/i)).toBeVisible({
         timeout: 20_000,
       });
     } finally {

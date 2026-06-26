@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   HEADING,
   distanceKmSchema,
@@ -72,11 +73,12 @@ const baseSchema = z.object({
 export type AddLegInput = z.infer<typeof baseSchema>;
 
 /**
- * Cross-field validator factory — needs vehicle context for the per-day cap.
- * If the vehicle isn't set or the cap isn't configured, we fall through —
- * static schema bounds (24h max) still apply.
+ * Cross-field validator factory. The per-day driving cap is a flat MVP default
+ * (no travel style), so this no longer reads vehicle context — but the factory
+ * signature stays uniform with the other tools' validators.
  */
-export function validator(ctx: PennyContext) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function validator(_ctx: PennyContext) {
   return baseSchema
     .refine(
       // A rest leg sits AT a location, so it must still carry both names and
@@ -105,17 +107,13 @@ export function validator(ctx: PennyContext) {
       (d) => {
         // Rest days have no driving — skip the cap check.
         if (d.leg_type === 'rest') return true;
-        // Use transit cap (longest tolerable day) for validation.
-        // Falls back to legacy max_drive_hours_per_day for pre-migration vehicles.
-        const cap = ctx.vehicle?.transit_max_drive_hours
-          ?? ctx.vehicle?.max_drive_hours_per_day;
-        if (cap == null) return true;
+        // Flat per-day driving cap (MVP — no travel style).
+        const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
         if (d.drive_time_minutes == null) return true;
         return d.drive_time_minutes <= cap * 60;
       },
       (d) => {
-        const cap = ctx.vehicle?.transit_max_drive_hours
-          ?? ctx.vehicle?.max_drive_hours_per_day;
+        const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
         return {
           message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle drive cap (${cap}h × 60 = ${(cap ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
           path: ['drive_time_minutes'],

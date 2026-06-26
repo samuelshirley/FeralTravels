@@ -3,7 +3,11 @@
  * network call itself isn't unit-tested (non-deterministic + needs a key); the
  * guard that keeps a hallucinated or malformed model response out of the DB is.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// `server-only` throws under the jsdom test env; stub it (hoisted above imports).
+vi.mock('server-only', () => ({}));
+
 import { validateISODateString } from './parseStartDate';
 
 describe('validateISODateString', () => {

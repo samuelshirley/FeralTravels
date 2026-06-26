@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, OnboardingState, PlanSummary } from '@/types/trip';
-import { tripApi, apiFetch } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
 import { formatDate, parseISODate } from '@/lib/dates';
@@ -18,8 +18,6 @@ interface ChatPanelProps {
    * `/api/trips/:id/onboarding` until handoff, then Penny streams as usual.
    */
   onboardingState?: OnboardingState;
-  /** When true, show vehicle remediation questions before normal chat. */
-  needsVehicleRemediation?: boolean;
   onTripUpdated: () => void;
   onActivity?: (event: 'thinking' | 'response' | 'error' | 'fuel-planning') => void;
   readonly?: boolean;
@@ -32,32 +30,25 @@ interface AttachedImage {
   name: string;
 }
 
-/** Mirrors `/api/me/vehicle-remediation` snapshot — keep aligned with server route. */
-interface VehicleRemediationSnapshot {
-  needs_remediation: boolean;
-  done: boolean;
-  active_vehicle: { id: string; name: string } | null;
-  question: {
-    key: string;
-    kind: 'text' | 'number' | 'integer' | 'select' | 'handoff';
-    label: string;
-    placeholder?: string;
-    help?: string;
-    options?: Array<{ value: string; label: string }>;
-    optional?: boolean;
-    min?: number;
-    max?: number;
-    multiline?: boolean;
-    defaultValue?: string;
-  } | null;
-  progress: { current: number; total: number } | null;
-  garage_empty?: boolean;
+/** Shape of an onboarding form question (GET `/api/trips/:id/onboarding`). */
+interface OnboardingFormQuestion {
+  key: string;
+  kind: 'text' | 'number' | 'integer' | 'select' | 'handoff';
+  label: string;
+  placeholder?: string;
+  help?: string;
+  options?: Array<{ value: string; label: string }>;
+  optional?: boolean;
+  min?: number;
+  max?: number;
+  multiline?: boolean;
+  defaultValue?: string;
 }
 
 /** GET `/api/trips/:id/onboarding` — shape matches server snapshot. */
 interface OnboardingSnapshot {
   state: OnboardingState;
-  question: VehicleRemediationSnapshot['question'];
+  question: OnboardingFormQuestion | null;
   vehicles: Array<{ id: string; name: string; is_default: boolean }>;
   progress: { current: number; total: number } | null;
 }
@@ -310,7 +301,6 @@ export default function ChatPanel({
   initialMessages,
   initialHasMore = false,
   onboardingState = 'done',
-  needsVehicleRemediation = false,
   onTripUpdated,
   onActivity,
   readonly = false,
@@ -331,14 +321,7 @@ export default function ChatPanel({
     onboardingUiActive &&
     onboardingQuestion &&
     onboardingQuestion.kind === 'select';
-  const [remediationDone, setRemediationDone] = useState(false);
-  const showRemediation = needsVehicleRemediation && !remediationDone && !isOnboarding && !readonly;
-  const attachImagesAllowed = !showRemediation && !isOnboarding;
-  const [remSnapshot, setRemSnapshot] = useState<VehicleRemediationSnapshot | null>(null);
-  const [remLoading, setRemLoading] = useState(false);
-  const [remSubmitting, setRemSubmitting] = useState(false);
-  const [remError, setRemError] = useState<string | null>(null);
-  const remGarageEmptyWarned = useRef(false);
+  const attachImagesAllowed = !isOnboarding;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   // When an onboarding question arrives with a prefilled answer (e.g. a start
@@ -512,7 +495,6 @@ export default function ChatPanel({
   // so the mobile keyboard stays open for continuous back-and-forth chat.
   // We track "was submitting" → "no longer submitting" transitions.
   const wasOnboardingSubmitting = useRef(false);
-  const wasRemSubmitting = useRef(false);
 
   useEffect(() => {
     if (onboardingSubmitting) {
@@ -524,19 +506,6 @@ export default function ChatPanel({
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }, [onboardingSubmitting]);
-
-  useEffect(() => {
-    if (remSubmitting) {
-      wasRemSubmitting.current = true;
-    } else if (wasRemSubmitting.current) {
-      wasRemSubmitting.current = false;
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    }
-  }, [remSubmitting]);
-
-  useEffect(() => {
-    remGarageEmptyWarned.current = false;
-  }, [tripId]);
 
   useEffect(() => {
     if (!isOnboarding) {
@@ -562,72 +531,6 @@ export default function ChatPanel({
       cancelled = true;
     };
   }, [isOnboarding, tripId]);
-
-  useEffect(() => {
-    if (!showRemediation) return;
-    let cancelled = false;
-    setRemLoading(true);
-    void (async () => {
-      try {
-        const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation');
-        if (cancelled) return;
-        setRemSnapshot(data);
-        setRemError(null);
-        if (data.done || !data.needs_remediation) {
-          setRemediationDone(true);
-        }
-      } catch (e: unknown) {
-        if (!cancelled) {
-          setRemError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        if (!cancelled) setRemLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [showRemediation]);
-
-  useEffect(() => {
-    if (!showRemediation || remLoading) return;
-    if (remSnapshot?.garage_empty) {
-      if (remGarageEmptyWarned.current) return;
-      remGarageEmptyWarned.current = true;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `optimistic-${Date.now()}`,
-          trip_id: tripId,
-          role: 'assistant' as const,
-          content:
-            'You need a vehicle on your account before we can plan fuel stops. Add one in Settings, then come back here.',
-          kind: 'ai' as const,
-          changes_made: null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      return;
-    }
-    const q = remSnapshot?.question;
-    if (!q) return;
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.kind === 'form_question' && last.content === q.label) return prev;
-      return [
-        ...prev,
-        {
-          id: `optimistic-${Date.now()}`,
-          trip_id: tripId,
-          role: 'assistant' as const,
-          content: q.label,
-          kind: 'form_question' as const,
-          changes_made: null,
-          created_at: new Date().toISOString(),
-        },
-      ];
-    });
-  }, [showRemediation, remLoading, remSnapshot, tripId]);
 
   useEffect(() => {
     if (!isOnboarding || onboardingLoading || !onboardingSnapshot || onboardingSnapshot.state === 'done') {
@@ -825,7 +728,13 @@ export default function ChatPanel({
       validationFailures?: Array<{ action: string; error: string }>;
       /** Validated tool actions queued this turn — may exceed `changes.changes` when saves failed or were gated. */
       validatedQueuedCount?: number;
-      fuelReplenishQueued: boolean;
+      /**
+       * True when an inline plan_fuel_stops lookup wrote stops to a leg this
+       * turn (Penny ran the planner on an explicit ask). The client just
+       * reloads the trip so those stops render — there is no trip-wide fuel
+       * replan anymore (fuel is sourced lazily per day on open).
+       */
+      fuelStopsChanged: boolean;
       /** Deterministic, DB-derived plan facts for this turn (source of truth for numbers). */
       planSummary?: PlanSummary | null;
       truncated: boolean;
@@ -948,7 +857,7 @@ export default function ChatPanel({
         persistFailedActions: persistFailedActionsRaw,
         validatedQueuedCount: validatedQueuedCountRaw,
         validationFailures: validationFailuresRaw,
-        fuelReplenishQueued,
+        fuelStopsChanged,
         planSummary: planSummaryRaw,
         truncated,
       } = appliedEvent;
@@ -1019,16 +928,11 @@ export default function ChatPanel({
       if (appliedCount > 0) {
         onTripUpdated();
       }
-      // Runs even when appliedCount === 0: an inline plan_fuel_stops lookup
-      // applies no dispatched actions but still writes stops + sets
-      // fuelReplenishQueued, so we must replan forward legs and refetch.
-      if (fuelReplenishQueued) {
-        onActivity?.('fuel-planning');
-        try {
-          await tripApi(tripId).replenishFuelStops();
-        } catch (e) {
-          console.warn('replenishFuelStops failed', e);
-        }
+      // An inline plan_fuel_stops lookup (Penny ran the planner on an explicit
+      // ask) writes stops to a leg but dispatches no action, so appliedCount can
+      // be 0. Just reload the trip so those stops render — there is no trip-wide
+      // fuel replan anymore; every other day sources its fuel lazily on open.
+      else if (fuelStopsChanged) {
         onTripUpdated();
       }
       onActivity?.(applyError ? 'error' : 'response');
@@ -1224,12 +1128,6 @@ export default function ChatPanel({
       await submitOnboardingTextAnswer(trimmed);
       return;
     }
-    if (showRemediation) {
-      if (remLoading || remSubmitting) return;
-      if (!trimmed && attachedImages.length === 0) return;
-      await submitRemediationTextAnswer(trimmed);
-      return;
-    }
     if (!trimmed && attachedImages.length === 0) return;
     setInput('');
     setImages([]);
@@ -1258,106 +1156,6 @@ export default function ChatPanel({
     await sendChatMessage(trimmed, attachedImages);
   };
 
-  async function applyRemediationSnapshot(data: VehicleRemediationSnapshot, answeredLabel: string) {
-    setRemSnapshot(data);
-    setRemError(null);
-    setInput('');
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `optimistic-${Date.now()}`,
-        trip_id: tripId,
-        role: 'user' as const,
-        content: answeredLabel,
-        kind: 'form_answer' as const,
-        changes_made: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-    if (data.done || !data.needs_remediation) {
-      setRemediationDone(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `optimistic-${Date.now()}`,
-          trip_id: tripId,
-          role: 'assistant' as const,
-          content: "Vehicle profile updated! You're all set to plan your trip.",
-          kind: 'ai' as const,
-          changes_made: null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-    }
-  }
-
-  async function submitRemediationTextAnswer(trimmed: string) {
-    const q = remSnapshot?.question;
-    if (!q || remSubmitting || q.kind === 'select') return;
-
-    let value: string | number | null = trimmed;
-    if (trimmed === '' && q.optional) {
-      value = null;
-    } else if (trimmed === '' && !q.optional) {
-      setRemError('This one is required.');
-      return;
-    }
-
-    if (q.kind === 'number' || q.kind === 'integer') {
-      const n = Number(trimmed);
-      if (!Number.isFinite(n)) {
-        setRemError('Please enter a number.');
-        return;
-      }
-      if (q.kind === 'integer' && !Number.isInteger(n)) {
-        setRemError('Please enter a whole number.');
-        return;
-      }
-      if (q.min !== undefined && n < q.min) {
-        setRemError(`Must be at least ${q.min}.`);
-        return;
-      }
-      if (q.max !== undefined && n > q.max) {
-        setRemError(`Must be at most ${q.max}.`);
-        return;
-      }
-      value = n;
-    }
-
-    let userLabel = trimmed === '' ? 'Skipped' : trimmed;
-    if (value !== null && typeof value === 'number') userLabel = String(value);
-
-    setRemSubmitting(true);
-    try {
-      const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation', {
-        method: 'POST',
-        body: { questionKey: q.key, value },
-      });
-      await applyRemediationSnapshot(data, userLabel);
-    } catch (e: unknown) {
-      setRemError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRemSubmitting(false);
-    }
-  }
-
-  async function submitRemediationSelect(value: string, userLabel: string) {
-    const q = remSnapshot?.question;
-    if (!q || q.kind !== 'select' || remSubmitting) return;
-    setRemSubmitting(true);
-    try {
-      const data = await apiFetch<VehicleRemediationSnapshot>('/api/me/vehicle-remediation', {
-        method: 'POST',
-        body: { questionKey: q.key, value },
-      });
-      await applyRemediationSnapshot(data, userLabel);
-    } catch (e: unknown) {
-      setRemError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRemSubmitting(false);
-    }
-  }
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -1379,11 +1177,11 @@ export default function ChatPanel({
   }, []);
 
   useEffect(() => {
-    if (showRemediation || isOnboarding) {
+    if (isOnboarding) {
       setImages([]);
       resetDragOver();
     }
-  }, [showRemediation, isOnboarding, resetDragOver]);
+  }, [isOnboarding, resetDragOver]);
 
   useEffect(() => {
     const isOutsideViewport = (e: DragEvent) =>
@@ -1410,7 +1208,7 @@ export default function ChatPanel({
   }, [resetDragOver]);
 
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-    if (showRemediation || isOnboarding) return;
+    if (isOnboarding) return;
     if (!e.dataTransfer?.types?.includes('Files')) return;
     dragDepthRef.current += 1;
     setDragOver(true);
@@ -1427,27 +1225,20 @@ export default function ChatPanel({
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     resetDragOver();
-    if (showRemediation || isOnboarding) return;
+    if (isOnboarding) return;
     if (e.dataTransfer?.files?.length) {
       addImageFiles(e.dataTransfer.files);
     }
   };
 
-  const remediationComposerBusy = showRemediation && (remLoading || remSubmitting);
   const onboardingComposerBusy = onboardingUiActive && (onboardingLoading || onboardingSubmitting);
 
   // For the disabled prop we only include the *loading* states (initial fetch)
   // — not the *submitting* states. Disabling the textarea during submit blurs
   // it, which closes the mobile keyboard and breaks the back-and-forth chat
   // feel. Double-submit is already guarded by early-returns in sendMessage /
-  // submitOnboardingTextAnswer / submitRemediationTextAnswer.
-  const remediationComposerDisabled = showRemediation && remLoading;
+  // submitOnboardingTextAnswer.
   const onboardingComposerDisabled = onboardingUiActive && (onboardingLoading || introTyping);
-  const remediationSelectStep =
-    showRemediation &&
-    remSnapshot?.question?.kind === 'select' &&
-    !remSnapshot?.garage_empty;
-  const remediationQuestion = remSnapshot?.question ?? null;
 
   return (
     <div
@@ -1833,7 +1624,7 @@ export default function ChatPanel({
       </div>
 
       {/* Attachment thumbnails */}
-      {images.length > 0 && !showRemediation && (
+      {images.length > 0 && !isOnboarding && (
         <div
           style={{
             display: 'flex',
@@ -1985,68 +1776,6 @@ export default function ChatPanel({
                     </div>
                   </div>
                 )}
-              {remediationSelectStep && remSnapshot.question?.options && (
-            <div
-              style={{
-                padding: '10px 16px 0',
-                flexShrink: 0,
-                borderTop: '1px solid var(--tp-border)',
-                background: 'var(--tp-surface-muted)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--tp-muted)',
-                  marginBottom: 6,
-                  letterSpacing: '0.03em',
-                }}
-              >
-                Tap an option
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {remSnapshot.question.options.map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    disabled={remediationComposerBusy}
-                    onClick={() => void submitRemediationSelect(o.value, o.label)}
-                    style={{
-                      padding: '8px 14px',
-                      background: 'var(--tp-surface)',
-                      border: '1px solid var(--tp-border)',
-                      borderRadius: 999,
-                      color: 'var(--tp-text)',
-                      fontSize: 13,
-                      cursor: remediationComposerBusy ? 'default' : 'pointer',
-                      opacity: remediationComposerBusy ? 0.5 : 1,
-                    }}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {showRemediation && remSnapshot?.active_vehicle && !remSnapshot.garage_empty && (
-            <div
-              style={{
-                padding: '8px 16px 0',
-                flexShrink: 0,
-                fontSize: 11,
-                fontWeight: 600,
-                color: 'var(--tp-primary)',
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                background: 'var(--tp-surface-muted)',
-              }}
-            >
-              Vehicle: {remSnapshot.active_vehicle.name}
-              {remSnapshot.progress
-                ? ` · ${remSnapshot.progress.current} of ${remSnapshot.progress.total}`
-                : ''}
-            </div>
-          )}
           <div
         style={{
           padding: '12px 16px',
@@ -2073,9 +1802,6 @@ export default function ChatPanel({
             e.target.value = '';
           }}
         />
-        {remError && (
-          <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{remError}</div>
-        )}
         {onboardingError && (
           <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{onboardingError}</div>
         )}
@@ -2133,10 +1859,10 @@ export default function ChatPanel({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            readOnly={Boolean(remediationSelectStep || onboardingSelectStep)}
+            readOnly={Boolean(onboardingSelectStep)}
             enterKeyHint="send"
             onFocus={() => {
-              if (showRemediation || onboardingUiActive) return;
+              if (onboardingUiActive) return;
               // Scroll the messages container to bottom when the textarea
               // gets focus — keeps the latest messages visible above the
               // keyboard. We use scrollToBottom (scrollTop-based) instead of
@@ -2148,13 +1874,9 @@ export default function ChatPanel({
                 ? 'Tap an option above…'
                 : onboardingUiActive && onboardingQuestion
                   ? onboardingQuestion.placeholder ?? 'Type your answer…'
-                  : remediationSelectStep
-                    ? 'Tap an option above…'
-                    : showRemediation && remSnapshot?.question
-                      ? remSnapshot.question.placeholder ?? 'Type your answer…'
-                      : 'Ask Penny…'
+                  : 'Ask Penny…'
             }
-            disabled={remediationComposerDisabled || onboardingComposerDisabled}
+            disabled={onboardingComposerDisabled}
             rows={1}
             style={{
               flex: 1,
@@ -2183,16 +1905,10 @@ export default function ChatPanel({
             onClick={sendMessage}
             disabled={
               Boolean(
-                remediationComposerBusy ||
-                  onboardingComposerBusy ||
-                  (!showRemediation &&
-                    !onboardingUiActive &&
+                onboardingComposerBusy ||
+                  (!onboardingUiActive &&
                     !input.trim() &&
                     images.length === 0) ||
-                  (showRemediation &&
-                    remediationQuestion &&
-                    !input.trim() &&
-                    remediationQuestion.optional !== true) ||
                   (onboardingUiActive &&
                     onboardingQuestion &&
                     !onboardingSelectStep &&
@@ -2207,49 +1923,34 @@ export default function ChatPanel({
               flexShrink: 0,
               padding: 0,
               background:
-                ((!showRemediation &&
-                  !onboardingUiActive &&
+                ((!onboardingUiActive &&
                   (input.trim() || images.length > 0)) ||
-                  (showRemediation &&
-                    remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true)) ||
                   (onboardingUiActive &&
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !remediationComposerBusy &&
                 !onboardingComposerBusy
                   ? 'var(--tp-primary)'
                   : 'var(--tp-border)',
               border: 'none',
               borderRadius: '50%',
               color:
-                ((!showRemediation &&
-                  !onboardingUiActive &&
+                ((!onboardingUiActive &&
                   (input.trim() || images.length > 0)) ||
-                  (showRemediation &&
-                    remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true)) ||
                   (onboardingUiActive &&
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !remediationComposerBusy &&
                 !onboardingComposerBusy
                   ? 'var(--tp-on-primary)'
                   : 'var(--tp-subtle)',
               cursor:
-                ((!showRemediation &&
-                  !onboardingUiActive &&
+                ((!onboardingUiActive &&
                   (input.trim() || images.length > 0)) ||
-                  (showRemediation &&
-                    remSnapshot?.question &&
-                    (input.trim() || remSnapshot.question.optional === true)) ||
                   (onboardingUiActive &&
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !remediationComposerBusy &&
                 !onboardingComposerBusy
                   ? 'pointer'
                   : 'default',
@@ -2265,21 +1966,6 @@ export default function ChatPanel({
             </svg>
           </button>
         </div>
-        {/* Hint text — only shown during remediation. Onboarding no longer
-            shows helper text under the composer. */}
-        {showRemediation && (
-          <div
-            style={{
-              marginTop: 6,
-              fontSize: 10,
-              color: 'var(--tp-subtle)',
-              letterSpacing: '0.04em',
-              textAlign: 'center',
-            }}
-          >
-            Vehicle setup
-          </div>
-        )}
       </div>
             </>
           )}

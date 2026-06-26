@@ -58,10 +58,6 @@ export const users = pgTable('users', {
   isAdmin: boolean('is_admin').default(false).notNull(),
   /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
-  /** True ⇒ workspace prompts until vehicle profile fields are complete. */
-  needsVehicleProfileRemediation: boolean('needs_vehicle_profile_remediation')
-    .default(false)
-    .notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -140,12 +136,6 @@ export const constraintTypeEnum = pgEnum('constraint_type', [
 
 // --- Trip planning (per-user) ---
 
-export const travelStyleEnum = pgEnum('travel_style', [
-  'scenic_cruiser',
-  'road_tripper',
-  'get_me_there',
-]);
-
 /** Vehicle profile: refill cadence + drive/water caps; distances stored in km. */
 export const vehicles = pgTable(
   'vehicles',
@@ -171,31 +161,11 @@ export const vehicles = pgTable(
      */
     hardMaxRangeKm: integer('hard_max_range_km'),
 
-    // ── Travel style (new — replaces rigid max_drive_hours_per_day) ──
-    /**
-     * How the user approaches driving days. Determines two drive-hour caps:
-     *   scenic_cruiser → cruise 4h, transit 8h
-     *   road_tripper   → cruise 6h, transit 10h
-     *   get_me_there   → cruise 8h, transit 12h
-     */
-    travelStyle: travelStyleEnum('travel_style'),
-    /** Max hours for "cruise" legs (the drive IS the experience). Derived from travel_style. */
-    cruiseMaxDriveHours: doublePrecision('cruise_max_drive_hours'),
-    /** Max hours for "transit" legs (just covering ground). Derived from travel_style. */
-    transitMaxDriveHours: doublePrecision('transit_max_drive_hours'),
-
-    // ── Legacy fields — kept populated from travel_style for backward compat ──
-    /** @deprecated Use cruiseMaxDriveHours / transitMaxDriveHours. Populated = transitMaxDriveHours. */
-    maxDriveHoursPerDay: doublePrecision('max_drive_hours_per_day'),
-    /** @deprecated Derived from maxDriveHoursPerDay × maxConsecutiveDriveDays. */
-    maxDriveHoursPerWeek: doublePrecision('max_drive_hours_per_week'),
-
-    maxConsecutiveDriveDays: integer('max_consecutive_drive_days'),
-    /** How many rest (non-driving) days the user needs after a driving streak. */
-    restDaysAfterDriving: integer('rest_days_after_driving'),
-    dumpStationIntervalDays: integer('dump_station_interval_days'),
-    /** Null = not answered; false = no dump station tracking; true = interval required. */
-    dumpStationTrackingEnabled: boolean('dump_station_tracking_enabled'),
+    // MVP vehicle profile is just name + comfortable/hard-max range. Travel
+    // style, driving-cadence (max_consecutive_drive_days / rest_days_after_driving)
+    // and dump-station tracking were all removed in the onboarding teardown; the
+    // planner caps each driving day at DEFAULT_MAX_DRIVE_HOURS_PER_DAY
+    // (vehicleProfile.ts).
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -237,6 +207,13 @@ export const trips = pgTable(
     onboardingState: text('onboarding_state').default('not_started').notNull(),
     /** Stores the user's trip description during onboarding, before the LLM is called. Cleared after handoff. */
     pendingIntent: text('pending_intent'),
+    /**
+     * Validated onboarding values transcribed from the opening message by the
+     * first-message intent scan that can't be applied immediately (fuel-range
+     * safety numbers awaiting confirmation on the vehicle step). Prefilled there,
+     * then cleared at handoff. Mirror of `pending_intent`. See `OnboardingScan`.
+     */
+    onboardingScan: jsonb('onboarding_scan').$type<import('@/types/trip').OnboardingScan | null>(),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
     // ── GPS position (for nightly replan) ──
@@ -301,6 +278,15 @@ export const legs = pgTable(
     /** Auto fuel planner: none | pending | computing | ready | failed | no_stations_found — see `server/fuel.ts`. */
     fuelStatus: text('fuel_status').default('none').notNull(),
     fuelPlanError: text('fuel_plan_error'),
+    /**
+     * Lazy fuel cache timestamp. Set when a real fuel search completes for this
+     * leg (`ready` / `no_stations_found`); null when never sourced or
+     * invalidated. The day-open lazy loader (`planFuelStopsForLegLazy`) renders
+     * straight from cache when this is within `FUEL_CACHE_TTL_MS`, and only
+     * re-searches once it goes stale. Cleared by `invalidateLegFuelCache` when a
+     * leg edit / report_position changes the route. See `server/fuel.ts`.
+     */
+    fuelStopsUpdatedAt: timestamp('fuel_stops_updated_at'),
     /**
      * Set by repairLegContinuity when it chained this leg's start to the prior
      * leg's end but the re-route then failed, so distance/time/geometry were

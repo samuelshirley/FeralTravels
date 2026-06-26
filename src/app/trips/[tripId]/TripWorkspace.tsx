@@ -29,7 +29,6 @@ interface Props {
   isAdmin?: boolean;
   initialChat?: { messages: ChatMessage[]; hasMore: boolean };
   serverOnboardingState?: OnboardingState;
-  needsVehicleRemediation?: boolean;
   /** When true, auto-opens chat with a Penny replan prompt (from off-route email deep link). */
   replanFromOffRoute?: boolean;
 }
@@ -111,7 +110,6 @@ export default function TripWorkspace({
   isAdmin = false,
   initialChat,
   serverOnboardingState,
-  needsVehicleRemediation = false,
   replanFromOffRoute = false,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
@@ -129,8 +127,6 @@ export default function TripWorkspace({
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('list');
   const [thinking, setThinking] = useState(false);
-  const [fuelPlanning, setFuelPlanning] = useState(false);
-  const [replanBusy, setReplanBusy] = useState(false);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
@@ -237,114 +233,16 @@ export default function TripWorkspace({
 
 
   // ---------------------------------------------------------------------------
-  // Auto-replan with FORWARD-ONLY scoping.
+  // Lazy fuel sourcing (2026-06 architectural fix).
   //
-  // We compute a per-leg fingerprint (start/end coords, distance, user-owned
-  // stops). When something changes, we identify the lowest sort_order whose
-  // fingerprint differs from the last committed baseline and ask the server
-  // to replan from that leg forward — past legs are skipped because the
-  // cumulative tank-state math only flows forward.
-  //
-  // We DELIBERATELY exclude any stop whose `source` is 'google_places' (auto
-  // fuel/stretch rows the planner wrote itself) from the fingerprint.
-  // Otherwise replan's own output would diff against the prior baseline and
-  // schedule another replan — that was the recursive loop that hammered the
-  // Google Places API every few seconds.
-  //
-  // We also no longer track vehicle_id: users don't swap vehicles mid-trip,
-  // and treating it as a replan trigger added another way for the loop to
-  // re-arm. Real geometry/stop changes are what matter.
-  //
-  // The committed baseline only advances after a replan completes (or after
-  // we observe a no-op state). That means edits made WHILE a replan is in
-  // flight are not lost — they accumulate in the baseline diff and trigger a
-  // follow-up replan once `replanBusy` clears.
+  // There is no eager, trip-wide fuel replan anymore — that debounced fingerprint
+  // diff was the Google Places cost sink (every leg edit re-planned the whole
+  // trip). Each day now sources its OWN fuel lazily when the user opens it (see
+  // LegCard's day-open effect → POST /api/legs/:id/fuel-stops), and leg
+  // edits / report_position invalidate only the affected leg's cache server-side.
+  // The transient per-leg 'computing' status is still reflected by the poll
+  // effect above and the tripFuelBusy spinner below.
   // ---------------------------------------------------------------------------
-  type LegFingerprint = { sortOrder: number; sig: string };
-
-  const legFingerprints = useMemo<LegFingerprint[]>(() => {
-    if (!trip) return [];
-    return trip.legs.map((l) => ({
-      sortOrder: l.sort_order,
-      sig: JSON.stringify({
-        i: l.id,
-        sl: l.start_lat,
-        sn: l.start_lng,
-        el: l.end_lat,
-        en: l.end_lng,
-        d: l.distance_km,
-        s: (l.stops ?? [])
-          // Exclude auto fuel/stretch rows the planner wrote itself —
-          // including them would make every successful replan re-trigger.
-          .filter((s) => s.source !== 'google_places')
-          // Exclude options the user hasn't acted on either way; only
-          // committed stops (selected/dismissed) and overnights move the
-          // route enough to warrant a re-plan.
-          .filter((s) => s.status !== 'option' || s.stop_type === 'overnight')
-          .map((s) => ({
-            t: s.stop_type,
-            st: s.status,
-            d: s.distance_from_start_km,
-          })),
-      }),
-    }));
-  }, [trip]);
-
-  const handleReplanFuelRef = useRef<(start?: number) => Promise<void>>(async () => {});
-  const committedLegsRef = useRef<LegFingerprint[] | null>(null);
-
-  useEffect(() => {
-    if (readonly) return;
-    if (!trip) return;
-    // Pause while a replan is mid-flight; we'll re-evaluate on the next render
-    // after replanBusy clears (committed baseline still pointing at pre-replan
-    // state, so any edits during the flight are preserved as a diff).
-    if (replanBusy) return;
-
-    // First observation: establish committed baseline silently.
-    if (committedLegsRef.current === null) {
-      committedLegsRef.current = legFingerprints;
-      return;
-    }
-
-    // Diff per-leg fingerprints against committed baseline; find the
-    // lowest sort_order that differs. Also catches deletions (a baseline
-    // entry whose sort_order no longer exists in the current snapshot).
-    const prev = committedLegsRef.current;
-    const curMap = new Map(legFingerprints.map((p) => [p.sortOrder, p.sig]));
-    const prevMap = new Map(prev.map((p) => [p.sortOrder, p.sig]));
-    let minChanged: number | null = null;
-    for (const cur of legFingerprints) {
-      if (prevMap.get(cur.sortOrder) !== cur.sig) {
-        if (minChanged === null || cur.sortOrder < minChanged) {
-          minChanged = cur.sortOrder;
-        }
-      }
-    }
-    for (const before of prev) {
-      if (!curMap.has(before.sortOrder)) {
-        if (minChanged === null || before.sortOrder < minChanged) {
-          minChanged = before.sortOrder;
-        }
-      }
-    }
-    if (minChanged === null) {
-      // No change — advance baseline to current snapshot so we don't keep
-      // diffing against the pre-replan state forever.
-      committedLegsRef.current = legFingerprints;
-      return;
-    }
-    const startFromSortOrder: number = minChanged;
-
-    // Debounce: a burst of edits (drag waypoint, rename leg, swap stop)
-    // collapses to one replan. We do NOT update the committed baseline here —
-    // we wait until the replan completes successfully. Edits arriving inside
-    // the window cancel this timeout and reschedule.
-    const t = setTimeout(() => {
-      void handleReplanFuelRef.current(startFromSortOrder);
-    }, 3000);
-    return () => clearTimeout(t);
-  }, [legFingerprints, readonly, trip, replanBusy]);
 
   const effectiveOnboardingState: OnboardingState =
     trip?.onboarding_state ?? serverOnboardingState ?? 'not_started';
@@ -429,9 +327,7 @@ export default function TripWorkspace({
     evt: 'thinking' | 'response' | 'error' | 'fuel-planning'
   ) => {
     setThinking(evt === 'thinking');
-    if (evt === 'fuel-planning') setFuelPlanning(true);
     if (evt === 'response' || evt === 'error') {
-      setFuelPlanning(false);
       // Chat is permanently visible on tablet & desktop — only mobile needs an
       // unread badge, and only when the user is on a non-chat tab.
       const isOnChat =
@@ -441,10 +337,12 @@ export default function TripWorkspace({
   };
 
   // Hoisted above the pane definitions because itineraryPane needs to know
-  // the fuel-syncing state to render its Maps-link affordance.
-  const tripFuelBusy =
-    fuelPlanning ||
-    trip.legs.some((l) => l.fuel_status === 'computing' || l.fuel_status === 'pending');
+  // the fuel-syncing state to render its Maps-link affordance. Fuel is now
+  // sourced lazily per day, so the only "busy" signal is a leg whose own
+  // day-open search is mid-flight (transient 'computing'/'pending' status).
+  const tripFuelBusy = trip.legs.some(
+    (l) => l.fuel_status === 'computing' || l.fuel_status === 'pending',
+  );
 
   const mapPane = (
     <TripMap
@@ -468,11 +366,11 @@ export default function TripWorkspace({
       onTrailsChanged={() => setTrailsVersion((v) => v + 1)}
       onChanged={loadTrip}
       readonly={readonly}
-      // While auto-replan is in flight, leg-level Maps links show a syncing
-      // affordance so users don't click a stale URL. `tripFuelBusy` covers
-      // any leg whose fuel_status is computing/pending; `replanBusy` covers
-      // the workspace-level POST /fuel-stops/replan call.
-      isFuelSyncing={tripFuelBusy || replanBusy}
+      // While a leg's day-open fuel search is in flight, its Maps link shows a
+      // syncing affordance so users don't click a URL missing the just-found
+      // stops. `tripFuelBusy` covers any leg whose fuel_status is
+      // computing/pending.
+      isFuelSyncing={tripFuelBusy}
     />
   );
 
@@ -485,46 +383,19 @@ export default function TripWorkspace({
       // for trip-setup questions in ChatPanel. Defaulting to 'done' on readonly /
       // demo trips is safe because ChatPanel also guards on `!readonly`.
       onboardingState={trip.onboarding_state}
-      needsVehicleRemediation={needsVehicleRemediation}
       onTripUpdated={loadTrip}
       onActivity={handleChatActivity}
       readonly={readonly}
     />
   );
 
-  async function handleReplanFuel(startFromSortOrder?: number) {
-    if (replanBusy || tripFuelBusy) return;
-    // Snapshot the fingerprints we're about to commit. After the replan
-    // succeeds we promote this snapshot to the committed baseline so the
-    // diff doesn't re-fire forever (the replan itself only mutates
-    // google_places stops, which the fingerprint excludes — without this
-    // promotion the effect kept re-detecting the same minChanged and
-    // rescheduled a new replan every 3s in an infinite loop).
-    const snapshot = legFingerprints;
-    setReplanBusy(true);
-    try {
-      await api.replenishFuelStops(
-        startFromSortOrder !== undefined ? { startFromSortOrder } : undefined,
-      );
-      await loadTrip();
-      committedLegsRef.current = snapshot;
-    } catch (e) {
-      console.warn('replan fuel failed', e);
-    } finally {
-      setReplanBusy(false);
-    }
-  }
-  // Bind the latest closure so the auto-replan effect (declared above the
-  // early returns) always invokes the current implementation.
-  handleReplanFuelRef.current = handleReplanFuel;
-
-  // Replan is now automatic (debounced useEffect below). The chip just shows
-  // a quiet "Fuel…" indicator while a replan is in flight so the user knows
-  // why a moment of latency is happening. On mobile we hide the label and
-  // keep only the spinner to save header width.
+  // The chip shows a quiet "Fuel…" indicator while a leg's day-open fuel
+  // search is in flight so the user knows why a moment of latency is
+  // happening. On mobile we hide the label and keep only the spinner to save
+  // header width.
   const vehicleChip = !readonly ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {(tripFuelBusy || replanBusy) && (
+      {tripFuelBusy && (
         <span
           title="Refreshing fuel stops along your route"
           style={{

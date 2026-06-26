@@ -46,12 +46,6 @@ const STOP_DISPLAY: Record<
     iconBg: 'rgba(201,123,99,0.15)',
     icon: '🛒',
   },
-  dump_station: {
-    label: 'DUMP STATION',
-    color: 'var(--tp-primary)',
-    iconBg: 'rgba(78,122,176,0.15)',
-    icon: '🚿',
-  },
   overnight: {
     label: 'OVERNIGHT',
     color: '#8B7AB8',

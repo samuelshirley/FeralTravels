@@ -12,7 +12,7 @@ import { parseUUID } from '@/lib/validation';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const stopTypeEnum = z.enum(['fuel', 'dump_station', 'food', 'overnight', 'rest', 'other']);
+const stopTypeEnum = z.enum(['fuel', 'food', 'overnight', 'rest', 'other']);
 const stopStatusEnum = z.enum(['option', 'selected', 'dismissed']);
 const fuelTypeEnum = z.enum(['diesel', 'petrol', 'premium', 'lpg']);
 const stopSourceEnum = z.enum([
