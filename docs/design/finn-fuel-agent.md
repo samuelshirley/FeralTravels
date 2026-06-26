@@ -1,7 +1,7 @@
 # ADR: Finn — the fuel-stop + pricing engine
 
 **Status:** Proposed
-**Date:** 2026-06-26
+**Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display)
 **Deciders:** Sam
 **Replaces (delete + rebuild):** the Google-Places fuel logic in `src/server/fuel.ts` / `fuelPlaces.ts` is **torn out** and rebuilt under a single new module, `src/lib/finn/`. This is a clean teardown, not an incremental migration — the old sampler accreted weird states partly because fuel logic was spread across Penny + server. Good *pure* logic (`fuelTankState.ts`) is **relocated into Finn, not deleted**.
 **Source material:** `docs/fuel-stop-agent-brief.md` + the 2026-06-26 design conversation. Read the brief first; this doc resolves its five open questions and adds the engineering detail (selection algorithm, scoring, schema, phasing).
@@ -42,7 +42,7 @@ Previously Penny was doing both, so fuel state leaked across the chat boundary a
 Build Finn as a **deterministic service** behind the existing endpoint + Penny tool, with three layers:
 
 1. **Stations — OSM (Overpass).** Query `amenity=fuel` and `highway=services` within a tight buffer of the route polyline. Storable (ODbL + attribution), so it can live in the `stops` cache. **Replaces** the Google Places station lookup.
-2. **Prices — regional open-feed adapters behind one interface.** Tankerkönig (DE) first; then Austria (E-Control), France (`prix-carburants`), Spain, Italy. US has no feed → price provider returns "unavailable," and Finn ranks on detour/position only.
+2. **Prices — regional providers behind one interface.** Per-station open feeds first: Tankerkönig (DE), then France (`prix-carburants`), Spain, Italy (Austria is rate-limited). Where no open feed covers a region, a **live Google `fuelOptions` provider** (non-stored — see below) supplies a price when Google has one; this is what gives the US (and no-feed EU stations) a price instead of nothing. Only when *no* provider covers a country at all does Finn report `unavailable_in_country`.
 3. **Routing — Google, live only.** Directions for the polyline + map render. Never persisted.
 
 Selection is a **reachability filter + scoring function** — arithmetic, not LLM judgement — wrapped by an **agentic supervisor** that engages only when the deterministic core returns something empty, thin, or suspicious (see "When the core fails" below). Finn the dog is the brand: the deterministic core is his reflexes, the supervisor is the part that feels like him thinking.
@@ -56,6 +56,26 @@ Selection is a **reachability filter + scoring function** — arithmetic, not LL
 ### 1. Anchor on distance, not ETA
 
 Walk the route polyline by **distance** to find the refuel window. Google's ETA assumes the speed limit; a loaded overlander runs ~20–25% slower, so ETA-anchored planning drifts. Distance is speed-independent. (`split-route.ts` already walks polylines.) Use estimated *time* only for display and as a soft tiebreaker, with the speed correction applied.
+
+### 1b. Eligibility filter — drop truck-only / private stations (BUILT)
+
+Before any reachability or scoring math, drop stations a normal passenger / overland
+vehicle can't or shouldn't use. A bare `amenity=fuel` corridor query returns unmanned
+HGV diesel stations (e.g. "St1 Truck") in industrial lots — card-only, diesel-only, no
+normal pumps. Routing a normal vehicle there is the "CarPlay sent me to a truckstop"
+failure. **This is only possible on OSM** — Google Places has no truck type, which is one
+more reason stations come from OSM, not Google.
+
+Built as `src/lib/finn/stationFilter.ts` (pure, 13 unit tests). `classifyStation(tags)`
+rejects on *positive evidence only* (safety bias — never drop on missing tags, since
+excluding a usable station can strand a driver):
+
+- **`access`** ∈ {private, no, permit, military, delivery, customers, employees} → `private_access`.
+- **Name/brand** matches a word-boundary truck marker (`truck(s|stop|park)`, `lkw`, `camion`) → `truck_only`. Anchored so it catches "St1 Truck" but not the town "Truckee".
+- **Fuel composition:** HGV diesel with no petrol, or diesel-with-petrol-explicitly-`no`, or `hgv=designated` with no petrol → `truck_only`. Stations that merely omit petrol tags are kept.
+
+`filterUsableStations(stations)` partitions kept vs rejected (keeping the reason for the
+debug endpoint). Runs on the OSM corridor result before everything below.
 
 ### 2. Reachability filter (hard guardrail)
 
@@ -93,7 +113,8 @@ score =  w_price     · priceNorm           // cheaper is better; 0 when price u
 - **`w_price` vs `w_detour` is the one user-facing knob** — "save money" vs "save time." Default balanced. This is what decides motorway-vs-supermarket.
 - **Do not hardcode "motorway preferred."** Motorway service areas are systematically the *most expensive* fuel (often +10–30¢/L). Zero detour is a *real benefit* captured by `detourPenalty ≈ 0`, but a supermarket station 5 min off the ramp that's €12/tank cheaper should be allowed to win. The scoring function decides; the user's knob tilts it.
 - **Detour is computed cheaply first, precisely only for finalists.** Use perpendicular distance from the polyline (free, from OSM coords) to rank, then do a real Directions detour call **only for the top N** candidates. Avoids one routing call per station.
-- **Price unknown (US, or a station the feed doesn't cover):** drop the price term (`w_price·0`) and rank on detour + band. Label the result "no price data for this region."
+- **Prefer a station we have a price for.** Among the reachable+eligible candidates, **priced stations rank above non-priced ones**, and the **cheapest priced** one wins (adjusted for detour via the worth-the-detour math, so a 30 km detour for 2¢ doesn't win). Worked example (Sam): 5 stations in the window, 3 priced / 2 not → pick the cheapest of the 3 priced. Implement as a strong "has-price" preference (priced set is chosen from first), not just the `w_price` magnitude term.
+- **Non-priced is a last resort, never a disqualifier.** Finn falls to a non-priced station **only when no priced candidate is safely reachable** — so a driver is never stranded for lack of price data. In a country with no pricing source at all, every candidate is non-priced and selection cleanly degenerates to distance/detour, which is correct.
 
 ### 5. Output contract
 
@@ -102,7 +123,10 @@ FuelStopCandidate {
   placeId (OSM node/way id), name, lat, lng,
   distanceAlongRouteKm,
   detourMinutes | null,
-  price | null, fuelType, priceAsOf | null,
+  // Tri-state, NEVER a silent null (see "Price availability model" below):
+  price: { state: 'priced', amount, currency, fuelType, asOf }
+       | { state: 'unknown' }                            // country covered, this station has none
+       | { state: 'unavailable_in_country', country },   // no pricing source for this country
   whyTag: 'cheapest_in_range' | 'on_route' | 'near_your_stop' | 'only_option',
   googleMapsUrl,            // single-destination link (see below)
   alternatives: [...]
@@ -110,6 +134,25 @@ FuelStopCandidate {
 ```
 
 Penny slices these into the per-day view and narrates the `whyTag`. **Google Maps link is single-destination per stop** — multi-stop URLs aren't reliable. (A whole-day directions URL with `waypoints=` up to 9 stops exists via `maps/dir/?api=1&...` if we want it later; not needed for v1's "navigate to this station" CTA.)
+
+### Price availability model — never a silent null
+
+`price` resolves to exactly one of three states; the UI shows a distinct, calm message
+for each so a missing price never reads like a bug:
+
+| State | When | Display |
+|-------|------|---------|
+| `priced` | a provider returned a price for this station + fuel type | the price + `as of {time}` |
+| `unknown` | the country **is** covered (open feed or Google), but this station has no price | "price unknown" (per-stop) |
+| `unavailable_in_country` | **no** provider covers this country at all | "price unavailable in {country}" (country-level) |
+
+Rules:
+
+- **Decide `unavailable_in_country` statically**, from a per-country capability map (`hasOpenFeed?` / `googleFuelOptionsLikelyCovered?`), *before* spending lookups. Don't probe every station to conclude a country has nothing. Per-stop `unknown` only happens *inside* covered countries.
+- **Resolution order per station:** regional open feed → live Google `fuelOptions` → `unknown` (covered country) / `unavailable_in_country` (uncovered). Try every source we have before giving up.
+- **Each stop needs its country attributed** (a trip crosses borders). Prefer OSM `addr:country`; else derive from coordinates. Cheap, but a real required field.
+- **Reality check (the Nordics):** Norway/Sweden/Finland/Denmark have no per-station open feed and thin Google coverage, so the Sweden→Nordkapp test trip will largely show `unavailable_in_country` / `unknown`. That's correct, not a defect — the per-station data genuinely doesn't exist there. The price feature is really a DE/FR/ES/IT + Google-covered-US feature first.
+- **Live Google `fuelOptions` is non-stored**, consistent with the legal backbone: fetched per view (a single Text Search (New) call with `fuelOptions` in the field mask returns the match + price together), displayed with `as of`, never persisted to the `stops` cache.
 
 ---
 
@@ -189,7 +232,7 @@ So Finn never re-runs the expensive corridor search just because prices aged. �
 ## Resolving the brief's five open questions
 
 1. **First region + feed →** Germany / **Tankerkönig** (free, real-time, official; the DE/EU test trip lives here). EU adapters follow on the same interface.
-2. **US strategy →** **Ship station-only, no price** (OSM stations, labelled "no price data in this region yet"). Do **not** block the US. Revisit a paid feed (OPIS / commercial) as a later, separate decision once EU pricing is proven.
+2. **US strategy →** OSM stations + **live Google `fuelOptions` as the price provider** (non-stored) where Google has coverage; `unavailable_in_country`/`unknown` otherwise. This *updates* the earlier "station-only, no price" call — `fuelOptions` gives the US a price without breaking the cache contract (price is live, never persisted). Revisit a paid feed (OPIS / commercial) only if `fuelOptions` US coverage proves too thin.
 3. **Freshness-hash inputs →** as listed above. Invalidating leg edits: start/end change, waypoint add/remove/reorder, route re-fetch, vehicle range/reserve change. Vehicle *name* change does **not** invalidate.
 4. **Starting fuel override →** capture **per-trip**, not per-vehicle (it varies by trip) and not onboarding-only. Add `trips.start_fuel_fraction` (default `1.0`). Onboarding states the full-tank assumption; the override edits this field.
 5. **`planFuelStops` tool vs the lazy-button endpoint →** **converge on one core, keep two thin entrypoints.** Both the Penny tool and `POST /api/legs/[id]/fuel-stops` call the same deterministic `planFuelStopsForLeg` service. The tool is Penny's trigger/discussion path; the button is the UI's. No duplicated logic.
@@ -201,6 +244,7 @@ So Finn never re-runs the expensive corridor search just because prices aged. �
 | Source | Used for | Stored? | License/ToS |
 |--------|----------|---------|-------------|
 | Google Directions / Maps JS | live route polyline, map render, finalist detour calc | **Never** | ToS forbids persisting/deriving |
+| Google Places `fuelOptions` | **live** price fallback where no open feed covers the region | **Never** (per-view fetch, shown with `as of`) | ToS forbids persisting; live enrichment is allowed |
 | OSM Overpass (`amenity=fuel`, `highway=services`) | station identity, coords, brand, tags | **Yes** (the cache) | ODbL — storable with attribution |
 | Regional open price feeds | per-station prices | **Yes** | Open gov data (per-feed terms) |
 
@@ -228,7 +272,7 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 | Legal | **Blocker** — can't persist → breaks the cache contract |
 | Coverage | Global but opaque; prices "last known," possibly stale |
 
-**Rejected.** The caching/UX contract requires storing fuel stops; storing Google data violates ToS. Good for *live, throwaway* enrichment only.
+**Rejected as the *stations* source.** The caching/UX contract requires storing fuel stops; storing Google data violates ToS. **But adopted for *prices* in live, non-stored mode** — `fuelOptions` is the price fallback where no open feed covers the region (see Decision layer 2 + "Price availability model").
 
 ### Option B — OSM stations + regional open price feeds (chosen)
 | Dimension | Assessment |
@@ -271,6 +315,7 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 1. Create `src/lib/finn/` as the home for all fuel logic; move the keepers in.
 2. `src/lib/osm/` Overpass client: corridor query around the polyline (`amenity=fuel`, `highway=services`), bounded buffer, buffer-widening fallback.
 3. Reachability filter + comfort-band scoring (price term off). Perpendicular-distance prefilter; finalist detour via live Directions (never stored).
+   - **3b. Station eligibility filter — DONE** (`src/lib/finn/stationFilter.ts`, 13 tests): drop truck-only / private stations from the OSM corridor before placement.
 4. Schema: add `legs.fuel_plan_hash`, `legs.fuel_planned_at`, `trips.start_fuel_fraction`; reconcile the double-reserve in `computeEffectiveRangeKm`. (`schema.ts` → `db:generate` → `db:migrate`; update CLAUDE.md schema/table notes.)
 5. Background-job execution for the slow Overpass/Directions work + cache freshness check + invalidation on leg/vehicle edits.
 
@@ -297,8 +342,9 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 
 ## Action items
 
-1. [ ] Confirm the phasing and the Q1–Q5 resolutions above.
-2. [ ] Phase 0: scaffold `src/lib/osm/` + corridor query; migrate `fuel.ts` station source.
-3. [ ] Schema migration: `fuel_plan_hash`, `fuel_planned_at`, `start_fuel_fraction`.
-4. [ ] Phase 1: Tankerkönig provider + price overlay + scoring with `w_price`.
-5. [ ] Verify no remaining reads of Google `place_id`/`googleMapsUri` assume Google identity after the OSM swap.
+1. [x] `src/lib/osm/` Overpass corridor client (`buildFuelCorridorQuery`/`parseOverpassFuel`/`fetchFuelCorridor`) — built, tested.
+2. [x] `src/lib/finn/` math core: range (`range.ts`), route projection (`route.ts`), tank state (re-export), **station eligibility filter (`stationFilter.ts`)**.
+3. [ ] **Phase 0 cutover (active):** pure greedy multi-stop planner in `src/lib/finn/`; rewire `planFuelStopsForLeg` to OSM+Finn behind the existing seam; **delete `fuelPlaces.ts` + the Google station path** so there is exactly one planner.
+4. [ ] Verify no remaining reads of Google `place_id`/`googleMapsUri` assume Google identity after the OSM swap (UI "open in Maps" link rebuilt from lat/lng).
+5. [ ] Schema migration: `fuel_plan_hash`, `fuel_planned_at`, `start_fuel_fraction`.
+6. [ ] Phase 1: Tankerkönig provider + live Google `fuelOptions` fallback + price overlay + has-price preference in scoring.

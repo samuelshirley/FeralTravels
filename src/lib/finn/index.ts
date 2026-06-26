@@ -10,6 +10,8 @@
 
 export * from './range';
 export * from './route';
+export * from './stationFilter';
+export * from './plan';
 
 // Tank-state math — relocated by reference until the teardown moves the file in.
 export {

@@ -1,12 +1,17 @@
 /**
- * GET /api/debug/fuel — checks every dependency the fuel planner needs.
+ * GET /api/debug/fuel — checks every dependency Finn (the fuel planner) needs.
  * Hit this in the browser after logging in to see exactly what's failing.
+ *
+ * Finn's data sources: OSRM (route geometry, free) + OSM Overpass (stations,
+ * free, ODbL). No Google Places key is involved in fuel planning anymore.
  */
 import { requireUserId } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
 import { getDirections } from '@/lib/directions';
-import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
+import { decodePolyline } from '@/lib/polyline';
+import { fetchFuelCorridor } from '@/lib/osm/overpass';
+import { filterUsableStations } from '@/lib/finn';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,21 +21,7 @@ export async function GET() {
     const userId = await requireUserId();
     const results: Record<string, unknown> = {};
 
-    const pub = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    const serverOnly = process.env.GOOGLE_MAPS_SERVER_API_KEY;
-    results['env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY'] = pub
-      ? `set (${pub.slice(0, 8)}…)`
-      : 'not set — browser Maps JS needs this';
-    results['env.GOOGLE_MAPS_SERVER_API_KEY'] = serverOnly
-      ? `set (${serverOnly.slice(0, 8)}…) — used for Places REST from the server`
-      : 'not set — server falls back to NEXT_PUBLIC key (referrer-only keys break Places REST with 403)';
-
-    const key = googleMapsApiKeyForServer();
-
-    // 2. Vehicle / effective range — post-0007 the planner uses the user's
-    // stated `comfortable_range_km` directly. The old fuel_economy × tank × 0.8
-    // computation lived here; both the column reads and the multi-arg helper
-    // signature were dropped in the same migration.
+    // 1. Vehicle / range — Finn uses the stated comfortable + hard-max ranges.
     let range: number | null = null;
     try {
       const v = await getDefaultVehicleForUser(userId);
@@ -40,6 +31,7 @@ export async function GET() {
         range = computeEffectiveRangeKm(v.comfortable_range_km);
         results['vehicle'] = {
           comfortable_range_km: v.comfortable_range_km,
+          hard_max_range_km: v.hard_max_range_km,
           effective_range_km: range,
         };
       }
@@ -47,9 +39,11 @@ export async function GET() {
       results['vehicle'] = `Error: ${e instanceof Error ? e.message : String(e)}`;
     }
 
-    // 3. OSRM reachability — Barcelona → Girona (~100 km)
+    // 2. OSRM reachability + geometry — Barcelona → Girona (~100 km).
+    let geometry: string | undefined;
     try {
       const dir = await getDirections(41.3851, 2.1734, 41.9794, 2.8214);
+      geometry = dir?.geometry;
       results['osrm'] = dir
         ? { ok: true, distance_km: dir.distance_km, has_geometry: !!dir.geometry }
         : { ok: false, reason: 'getDirections returned null' };
@@ -57,69 +51,40 @@ export async function GET() {
       results['osrm'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
 
-    // 4. Google Places API (New) — gas stations near Barcelona
-    if (!key) {
-      results['places_api'] =
-        'Skipped — set at least one of GOOGLE_MAPS_SERVER_API_KEY or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY';
+    // 3. OSM Overpass — stations in the corridor + how many survive the filter.
+    if (!geometry) {
+      results['osm_overpass'] = 'Skipped — no route geometry from OSRM above';
     } else {
       try {
-        const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': 'places.displayName,places.location,places.id',
-          },
-          body: JSON.stringify({
-            includedTypes: ['gas_station'],
-            maxResultCount: 2,
-            locationRestriction: {
-              circle: {
-                center: { latitude: 41.3851, longitude: 2.1734 },
-                radius: 5000,
-              },
-            },
-          }),
-        });
-
-        const body = await res.text();
-        if (!res.ok) {
-          results['places_api'] = {
-            ok: false,
-            http_status: res.status,
-            body: body.slice(0, 400),
-            hint:
-              res.status === 403
-                ? '403 from Places REST — use GOOGLE_MAPS_SERVER_API_KEY (no HTTP referrer restriction) or relax key restrictions. Browser-only keys return 403 for server fetch().'
-                : res.status === 400
-                  ? 'BAD REQUEST — "Places API (New)" is probably not enabled. In Google Cloud Console → APIs & Services → Enable APIs, search for "Places API (New)" and enable it.'
-                  : 'Check Google Cloud Console for key/quota issues.',
-          };
-        } else {
-          const data = JSON.parse(body);
-          results['places_api'] = {
-            ok: true,
-            stations_found: data.places?.length ?? 0,
-            sample: data.places?.[0]?.displayName?.text ?? null,
-          };
-        }
+        const polyline = decodePolyline(geometry);
+        const corridor = await fetchFuelCorridor(polyline, { bufferMeters: 2000 });
+        const { kept, rejected } = filterUsableStations(corridor);
+        results['osm_overpass'] = {
+          ok: true,
+          stations_found: corridor.length,
+          usable_after_filter: kept.length,
+          rejected: rejected.length,
+          rejected_sample: rejected.slice(0, 3).map((r) => ({
+            name: r.station.name ?? r.station.brand ?? r.station.osmId,
+            reason: r.eligibility.reason,
+            detail: r.eligibility.detail,
+          })),
+        };
       } catch (e) {
-        results['places_api'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        results['osm_overpass'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
     }
 
     // Summary
-    const placesOk = (results['places_api'] as any)?.ok === true;
-    const osrmOk = (results['osrm'] as any)?.ok === true;
-    results['summary'] = !key
-      ? '❌ Missing GOOGLE_MAPS_SERVER_API_KEY / NEXT_PUBLIC_GOOGLE_MAPS_API_KEY — server cannot call Places'
-      : !osrmOk
-        ? '❌ OSRM unreachable — route geometry fetch will fail'
-        : !placesOk
-          ? `❌ Places API failing — ${(results['places_api'] as any)?.hint ?? 'see places_api above'}`
-          : !range
-            ? '❌ No vehicle / effective range — set "Refill every X km" on your default vehicle in Settings'
-            : '✅ All checks passed — if stops are still missing, trigger a replan';
+    const osrmOk = (results['osrm'] as { ok?: boolean })?.ok === true;
+    const osmOk = (results['osm_overpass'] as { ok?: boolean })?.ok === true;
+    results['summary'] = !osrmOk
+      ? '❌ OSRM unreachable — route geometry fetch will fail'
+      : !osmOk
+        ? '❌ OSM Overpass failing — station lookup will fail (usually transient; retry)'
+        : !range
+          ? '❌ No vehicle / range — set your range on the default vehicle in Settings'
+          : '✅ All checks passed — if stops are still missing, trigger a replan';
 
     return Response.json(results, { status: 200 });
   } catch (err) {

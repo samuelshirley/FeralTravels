@@ -7,7 +7,6 @@ import {
   decodePolyline,
   haversineKm,
   polylineLengthKm,
-  samplePolylineEveryKm,
   type LatLng,
 } from '@/lib/polyline';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
@@ -17,52 +16,56 @@ import {
   type LegFuelHistory,
 } from '@/lib/penny/fuelTankState';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
-import { logGooglePlacesUsage } from '@/server/repos/usage';
-import { googleMapsApiKeyForServer } from '@/server/google-maps-server-key';
 import {
-  findTopGasStations,
-  PLACES_RADIUS_ESCALATION_KM,
-  type GasStationRanked,
-} from '@/server/fuelPlaces';
+  fetchFuelCorridor,
+  type OsmFuelStation,
+} from '@/lib/osm/overpass';
+import {
+  filterUsableStations,
+  planLegFuelStops,
+  projectPointOntoRoute,
+  cumulativeDistancesKm,
+  type PlacementCandidate,
+} from '@/lib/finn';
 
 /**
- * Auto fuel-stop planner.
+ * Auto fuel-stop planner — **Finn** (OSM + deterministic placement).
  *
- * Flow for a leg that has start + end coords and a vehicle on file:
- *   1. Fetch OSRM polyline for start→end.
- *   2. Sample it every (range × SAMPLE_FRACTION) km — this is how far we
- *      comfortably want to push between fill-ups, given the 20% reserve.
- *   3. For each sample, call Google Places Nearby Search (radius =
- *      SEARCH_RADIUS_KM) filtered to gas_station.
- *   4. Pick the best candidate (nearest to the sample point that matches
- *      the vehicle's fuel type keyword when possible).
- *   5. Replace any previous auto-generated fuel stops on the leg (source
- *      = 'google_places', status='option'). User-picked / user-authored
- *      stops are never touched.
+ * Flow for a leg with start + end coords and a vehicle on file:
+ *   1. Fetch the OSRM polyline for start→end (route geometry, never stored).
+ *   2. Query OSM Overpass for fuel stations in a tight corridor around it.
+ *   3. Drop truck-only / private stations (`stationFilter.ts`).
+ *   4. Project each remaining station onto the route (along-km + detour proxy).
+ *   5. Run the greedy multi-stop placer (`finn/plan.ts`): never route past the
+ *      hard-max ceiling, prefer comfortable range, prefer priced+cheapest
+ *      stations (pricing layer lands later — candidates are price-unknown today).
+ *   6. Replace previous auto fuel stops (source='osm', status='option').
+ *      User-picked / user-authored stops are never touched.
  *
- * Fails loudly (sets fuel_status='failed', fuel_plan_error text, returns
- * details) when the Places key is missing, the vehicle has no range data, the
- * route couldn't be decoded, or Places returns an error. Prefer
- * GOOGLE_MAPS_SERVER_API_KEY for server REST calls (see google-maps-server-key).
- * The UI reads fuel_status / fuel_plan_error for spinners and accurate copy.
+ * Data-source split (legal backbone): OSM station data is ODbL — storable in the
+ * `stops` cache with attribution. Google place data is NOT persisted anywhere in
+ * this path anymore. Routing geometry comes from OSRM (free, no key).
+ *
+ * Fails loudly (`fuel_status='failed'` + `fuel_plan_error`) when the vehicle has
+ * no range data, the route can't be decoded, or Overpass errors. A genuinely
+ * remote leg with no reachable station is `no_stations_found` (not a failure).
  */
 
-// Walk between refuels is a fraction of effective_range_km so we always
-// leave a safety margin on top of the 20% tank reserve built into
-// effective_range_km. 0.85 → at range=600km, we plan a stop ~every 510km.
-const SAMPLE_FRACTION = 0.85;
-// Hard cap on how many fuel stops we'll propose per leg. Prevents a
-// 5000km leg from spawning 10+ "option" rows that clutter the UI.
+// Hard cap on how many fuel stops we'll propose per leg — keeps a very long leg
+// from spawning a cluttered list of option rows.
 const MAX_STOPS_PER_LEG = 8;
-// Minimum leg length to bother planning at all. Under this, the vehicle's
-// original tank + reserve almost certainly covers the drive.
+// Minimum leg length to bother planning at all. Under this, the tank almost
+// certainly covers the drive.
 const MIN_LEG_KM_FOR_PLANNING = 100;
-// Carry-over allowance: if the cumulative km since last refuel + this
-// leg's distance is under range × this, we skip planning entirely.
-// Same semantics as the original 0.7 isolation threshold but applied to
-// the *cumulative* distance instead of the leg's distance, which is what
-// fixes the "three 500 km legs say no fuel needed" bug.
+// Carry-over allowance: if cumulative km since the last refuel + this leg's
+// distance is under range × this, skip planning (and the Overpass call) entirely.
 const SKIP_PLANNING_THRESHOLD = 0.7;
+// Max straight-line distance a station may sit off the route to still count as
+// "on the way." The Overpass corridor buffer is ~2 km, but it widens on long
+// legs; this caps the detour we'll ever propose.
+const MAX_DETOUR_KM = 15;
+// Overpass corridor half-width around the route polyline.
+const CORRIDOR_BUFFER_METERS = 2000;
 
 export interface FuelPlanResult {
   legId: string;
@@ -75,8 +78,7 @@ export interface FuelPlanResult {
  * Quick status mutation. Persists `fuel_plan_error` (the user-visible reason)
  * for the two states that carry one — `failed` and `no_stations_found` — and
  * clears it otherwise. `no_stations_found` is NOT a failure: planning ran
- * correctly but the route is genuinely too remote for an on-route station, and
- * the user needs to know rather than be shown an empty list that looks safe.
+ * correctly but the route is genuinely too remote for an on-route station.
  */
 async function setFuelStatus(
   legId: string,
@@ -94,10 +96,10 @@ async function setFuelStatus(
   };
   // Cache bookkeeping for the lazy day-open loader:
   //  - a completed real search (`ready` / `no_stations_found`) stamps the cache
-  //    so reopening the day within FUEL_CACHE_TTL_MS is a zero-Places cache hit.
+  //    so reopening the day within FUEL_CACHE_TTL_MS is a zero-network cache hit.
   //  - `none` is the invalidation state — clear the stamp so the next open
   //    re-searches. `failed` is left unstamped on purpose (no fresh cache → the
-  //    leg keeps retrying on the next open / edit, matching the UI's copy).
+  //    leg keeps retrying on the next open / edit).
   if (status === 'ready' || status === 'no_stations_found') {
     set.fuelStopsUpdatedAt = new Date();
   } else if (status === 'none') {
@@ -106,9 +108,14 @@ async function setFuelStatus(
   await db.update(legs).set(set).where(eq(legs.id, legId));
 }
 
+/** Single-destination Google Maps link built from coords (no Google place data). */
+function mapsCoordUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
 /**
- * Main entry point — idempotent, safe to call repeatedly. Caller should
- * already have authorized `userId` against the leg's trip.
+ * Main entry point — idempotent, safe to call repeatedly. Caller should already
+ * have authorized `userId` against the leg's trip.
  */
 export async function planFuelStopsForLeg(
   legId: string,
@@ -116,9 +123,7 @@ export async function planFuelStopsForLeg(
 ): Promise<FuelPlanResult> {
   // 1. Load leg + its trip so we know which vehicle to use.
   const rows = await db
-    .select({
-      leg: legs,
-    })
+    .select({ leg: legs })
     .from(legs)
     .where(eq(legs.id, legId))
     .limit(1);
@@ -132,18 +137,15 @@ export async function planFuelStopsForLeg(
     leg.endLat == null ||
     leg.endLng == null
   ) {
-    // Flag as 'none' not 'failed' — this leg just doesn't have enough
-    // info yet. The UI shouldn't nag the user; Penny's start/end write
-    // will trigger planning on the next PATCH anyway.
+    // Not enough info yet — Penny's start/end write will trigger planning on the
+    // next PATCH. Flag 'none' (not 'failed') so the UI doesn't nag.
     await setFuelStatus(legId, 'none');
     return { legId, status: 'skipped', reason: 'Missing leg coordinates' };
   }
 
   await setFuelStatus(legId, 'computing');
 
-  // 2. Resolve the vehicle for this trip. Falls back to the user's
-  //    default so Penny's draft trips without an explicit vehicle still
-  //    get fuel plans.
+  // 2. Resolve the vehicle for this trip (falls back to the user's default).
   const vehicle = await resolveVehicleForTrip(leg.tripId, userId);
   if (!vehicle) {
     const reason = 'No vehicle on file for user';
@@ -157,17 +159,13 @@ export async function planFuelStopsForLeg(
     await setFuelStatus(legId, 'failed', reason);
     return { legId, status: 'failed', reason };
   }
+  // Hard ceiling — never route a dry stretch past this. Defaults to the
+  // comfortable range when the user gave no separate ceiling (the invariant
+  // hard_max ≥ comfortable is enforced at every write path).
+  const hardMax = Math.max(range, vehicle.hard_max_range_km ?? range);
 
-  const placesKey = googleMapsApiKeyForServer();
-  if (!placesKey) {
-    const reason =
-      'Missing Google Maps API key for server Places calls. Set GOOGLE_MAPS_SERVER_API_KEY (no HTTP referrer restriction) and/or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in the server environment.';
-    await setFuelStatus(legId, 'failed', reason);
-    return { legId, status: 'failed', reason };
-  }
-
-  // 3. OSRM call. We ask for the full polyline (vs just distance) so we
-  //    can sample along it.
+  // 3. OSRM route geometry (free, no key). We need the full polyline to project
+  //    stations onto it.
   const directions = await getDirections(
     leg.startLat,
     leg.startLng,
@@ -188,221 +186,131 @@ export async function planFuelStopsForLeg(
     return { legId, status: 'failed', reason };
   }
 
-  // Cross-leg fuel state: walk backwards through preceding legs in the
-  // same trip to figure out how much range has already been consumed
-  // since the last refuel. Without this, three sequential 500 km legs
-  // each pass the "fits within range" check individually and the planner
-  // proposes zero stops — even though the tank empties twice across them.
+  // Cross-leg fuel state: how much range is already gone when this leg starts.
+  // Without this, three sequential 500 km legs each pass the "fits within range"
+  // check individually and zero stops get proposed even though the tank empties.
   const kmAlreadyBurned = await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder);
-  const availableRangeAtStart = Math.max(0, range - kmAlreadyBurned);
-
-  const tripLegMeta = await db
-    .select({ sortOrder: legs.sortOrder, distanceKm: legs.distanceKm })
-    .from(legs)
-    .where(eq(legs.tripId, leg.tripId));
 
   const belowMinLeg = totalKm < MIN_LEG_KM_FOR_PLANNING;
   const cumulativeFitsComfortably =
     kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD;
 
-  // Early exit when the *cumulative* distance since last refuel still fits
-  // within range × threshold. Short legs also skip via MIN_LEG_KM_FOR_PLANNING.
-  // The tank is full only at trip start and after an actual fuel stop — rest
-  // days and overnights do NOT reset it (continuous-drive model), so a new day
-  // begins with whatever range survived the previous unfueled driving.
+  // Early exit (and skip the Overpass call) when no stop can be needed.
   if (belowMinLeg || cumulativeFitsComfortably) {
-    await clearAutoPlannerGooglePlacesOptionStops(legId);
+    await clearAutoPlannerOptionStops(legId);
     await setFuelStatus(legId, 'ready');
     return { legId, status: 'ready', stopsCreated: 0 };
   }
 
-  const stepKm = range * SAMPLE_FRACTION;
-  // First sample is offset by whatever range we have left when entering
-  // this leg, capped to the normal step so a fresh-tank leg behaves like
-  // before. Subsequent samples space at `stepKm` because the tank is full
-  // again after each fuel stop.
-  const firstStepKm = Math.min(stepKm, availableRangeAtStart * SAMPLE_FRACTION);
-  const fuelSamples = samplePolylineEveryKm(polyline, stepKm, firstStepKm).slice(
-    0,
-    MAX_STOPS_PER_LEG
-  );
-
-  // Fuel type was removed from the vehicle profile in 0007 — Places filters
-  // by `gas_station` includedTypes anyway, and the prior keyword-match by
-  // diesel/petrol was a no-op (most stations carry both). The local var
-  // stays so future fuel-type bias work has an obvious place to land.
-  const fuel: null = null;
-  type PendingFuel = {
-    kind: 'fuel';
-    distance_km: number;
-    station: GasStationRanked;
-    alternates: GasStationRanked[];
-  };
-
-  // Tally Places API calls so we can log usage in one batched insert at the
-  // end of leg planning. Only fuel station lookups now (stretch breaks removed).
-  let placesEssentialsCalls = 0;
-  let placesError: string | null = null;
-
-  const pending: PendingFuel[] = [];
-  // Did at least one sample exhaust the full radius ladder without finding a
-  // station? If so and we end up with zero stops, that's the
-  // `no_stations_found` signal — a genuinely remote leg, not a bug. We track
-  // the farthest sample that came up empty so the warning names a real point.
-  let exhaustedSampleKm: number | null = null;
-  for (const sample of fuelSamples) {
-    const result = await findTopGasStations(sample.point, fuel, placesKey);
-    // findTopGasStations may make one Places call per radius it tries, so it
-    // reports its own tally rather than us assuming exactly one.
-    placesEssentialsCalls += result.callsMade;
-    if (!result.ok) {
-      const reason = `${result.message} Visit /api/debug/fuel while signed in for a full diagnosis.`;
-      await setFuelStatus(legId, 'failed', reason);
-      console.error(
-        `[fuel] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${result.message}`
-      );
-      placesError = reason;
-      await logPlacesUsageSafe({
-        userId,
-        tripId: leg.tripId,
-        essentialsCalls: placesEssentialsCalls,
-        proCalls: 0,
-        success: false,
-        errorMessage: placesError,
-      });
-      return { legId, status: 'failed', reason };
-    }
-    if (result.data) {
-      pending.push({
-        kind: 'fuel',
-        distance_km: sample.distance_km,
-        station: result.data.primary,
-        alternates: result.data.alternates,
-      });
-    } else if (result.exhausted) {
-      exhaustedSampleKm = Math.max(exhaustedSampleKm ?? 0, sample.distance_km);
-    }
+  // 4. OSM corridor → eligibility filter → route projection → candidates.
+  let corridor: OsmFuelStation[];
+  try {
+    corridor = await fetchFuelCorridor(polyline, { bufferMeters: CORRIDOR_BUFFER_METERS });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const reason = `Couldn't reach the OSM station service (${msg}). This is usually transient — try again shortly.`;
+    await setFuelStatus(legId, 'failed', reason);
+    console.error(`[finn] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${msg}`);
+    return { legId, status: 'failed', reason };
   }
 
-  await logPlacesUsageSafe({
-    userId,
-    tripId: leg.tripId,
-    essentialsCalls: placesEssentialsCalls,
-    proCalls: 0,
-    success: true,
+  const { kept } = filterUsableStations(corridor);
+  const cumulative = cumulativeDistancesKm(polyline);
+  const byId = new Map<string, OsmFuelStation>();
+  const candidates: PlacementCandidate[] = [];
+  for (const st of kept) {
+    const proj = projectPointOntoRoute({ lat: st.lat, lng: st.lng }, polyline, cumulative);
+    if (proj.perpKm > MAX_DETOUR_KM) continue;
+    byId.set(st.osmId, st);
+    candidates.push({
+      id: st.osmId,
+      alongKm: proj.alongKm,
+      detourKm: proj.perpKm,
+      // Pricing layer not built yet → every candidate is price-unknown.
+      pricePerLitre: null,
+    });
+  }
+
+  // 5. Deterministic greedy placement.
+  const plan = planLegFuelStops({
+    legLengthKm: totalKm,
+    comfortableRangeKm: range,
+    hardMaxRangeKm: hardMax,
+    kmBurnedAtStart: kmAlreadyBurned,
+    candidates,
   });
 
-  // No stops AND at least one sample point had no station within 500 km. This
-  // is the conservative-bias case: rather than mark the leg 'ready' with an
-  // empty plan that LOOKS safe, surface a warning the user must act on (e.g.
-  // carry extra fuel, or plan a stop manually). See [[feedback_fuel_safety_bias]].
-  if (pending.length === 0 && exhaustedSampleKm != null) {
-    const maxRadiusKm = PLACES_RADIUS_ESCALATION_KM[PLACES_RADIUS_ESCALATION_KM.length - 1];
+  if (plan.gap) {
+    // A stop is needed but nothing reachable sits before the ceiling — honest
+    // warning, not an empty "ready" plan that looks safe. [[feedback_fuel_safety_bias]]
     const reason =
-      `Couldn't find any fuel stations within ${maxRadiusKm} km of the planned refuel point ` +
-      `(~${Math.round(exhaustedSampleKm)} km into this leg). This leg is too remote for an ` +
-      `auto-planned stop — carry extra fuel or plan a stop manually.`;
-    await clearAutoPlannerGooglePlacesOptionStops(legId);
+      plan.gapDetail ??
+      'This leg is too remote for an auto-planned stop — carry extra fuel or plan a stop manually.';
+    await clearAutoPlannerOptionStops(legId);
     await setFuelStatus(legId, 'no_stations_found', reason);
     return { legId, status: 'no_stations_found', reason, stopsCreated: 0 };
   }
 
-  pending.sort((a, b) => a.distance_km - b.distance_km);
+  const chosen = plan.stops.slice(0, MAX_STOPS_PER_LEG);
 
-  // 5. Replace previous auto fuel stops. Transactional delete+insert so the
-  //    UI never sees a half-applied plan.
-  //
-  //    Dedupe: a google_places stop the user previously promoted to 'selected'
-  //    is NOT deleted (autoPlannerGooglePlacesOptionSql only matches
-  //    status='option'). We skip inserting duplicates by comparing place_id
-  //    first, falling back to a tight haversine threshold.
+  // 6. Replace previous auto fuel stops. Transactional delete+insert so the UI
+  //    never sees a half-applied plan. A station the user promoted to 'selected'
+  //    is preserved (the clear only matches status='option') and de-duped against.
   await db.transaction(async (tx) => {
     const existingSelected = await tx
-      .select({
-        sourceUrl: stops.sourceUrl,
-        lat: stops.lat,
-        lng: stops.lng,
-        stopType: stops.stopType,
-      })
+      .select({ lat: stops.lat, lng: stops.lng, stopType: stops.stopType })
       .from(stops)
       .where(
         and(
           eq(stops.legId, legId),
-          eq(stops.source, 'google_places'),
+          eq(stops.source, 'osm'),
           eq(stops.status, 'selected')
         )
       );
 
-    await tx.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
+    await tx.delete(stops).where(autoPlannerOptionSql(legId));
 
-    for (let i = 0; i < pending.length; i++) {
-      const row = pending[i];
-      if (
-        matchesExistingSelected(
-          'fuel',
-          row.station.place_id,
-          row.station.lat,
-          row.station.lng,
-          existingSelected
-        )
-      ) {
-        continue;
-      }
+    let sortOrder = 1000;
+    for (const placed of chosen) {
+      const station = byId.get(placed.candidate.id);
+      if (!station) continue;
+      if (matchesExistingSelected(station.lat, station.lng, existingSelected)) continue;
+
+      const distanceKm = Math.round(placed.candidate.alongKm);
+      const name = station.name ?? station.brand ?? 'Fuel station';
       await tx.insert(stops).values({
         legId,
-        sortOrder: 1000 + i,
+        sortOrder: sortOrder++,
         stopType: 'fuel',
         status: 'option',
-        name: row.station.name,
-        lat: row.station.lat,
-        lng: row.station.lng,
-        distanceFromStartKm: Math.round(row.distance_km),
-        fuelType: fuel ?? null,
-        source: 'google_places',
-        sourceUrl: row.station.place_id
-          ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
-          : null,
-        placeId: row.station.place_id ?? null,
-        googleMapsUri: row.station.place_id
-          ? `https://www.google.com/maps/place/?q=place_id:${row.station.place_id}`
-          : null,
-        notes: `Auto-suggested refuel ≈${Math.round(row.distance_km)} km into the leg.`,
-        alternatives:
-          row.alternates.length > 0
-            ? row.alternates.map((a) => ({
-                name: a.name,
-                lat: a.lat,
-                lng: a.lng,
-                place_id: a.place_id,
-                distance_km: a.distance_km,
-              }))
-            : null,
+        name,
+        lat: station.lat,
+        lng: station.lng,
+        distanceFromStartKm: distanceKm,
+        fuelType: null,
+        source: 'osm',
+        sourceUrl: mapsCoordUrl(station.lat, station.lng),
+        placeId: null,
+        googleMapsUri: mapsCoordUrl(station.lat, station.lng),
+        notes: placed.reason
+          ? `Top up here — ${placed.reason}.`
+          : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
+        alternatives: null,
       });
     }
   });
 
   await setFuelStatus(legId, 'ready');
-  return { legId, status: 'ready', stopsCreated: pending.length };
+  return { legId, status: 'ready', stopsCreated: chosen.length };
 }
 
 /**
  * Lazy, cache-aware entry point for the day-open fuel loader.
  *
- * This is what the itinerary calls when the user expands a day — fuel is sourced
- * lazily (not eagerly across the whole trip during planning), so most legs never
- * cost a Google Places call. Freshness gate:
- *
  *  - Terminal-success cache (`ready` / `no_stations_found`) inside
- *    `FUEL_CACHE_TTL_MS` → return the cached result, **zero Places calls**.
+ *    `FUEL_CACHE_TTL_MS` → return the cached result, **zero network**.
  *  - Stale, empty (`none`), or `force` → run the full `planFuelStopsForLeg`
  *    search and (re)stamp the cache.
- *
- * NOTE on the "stale → cheap re-check" the design doc describes: the cheap
- * price/availability refresh is Finn's separate pricing task (not built yet —
- * the US has no open price feed). Until Finn lands, a stale cache falls through
- * to a full re-search here; the TTL gate keeps that infrequent. The `mode`
- * field in the result marks which path ran so a future cheap-refresh has an
- * obvious seam to plug into.
  */
 export async function planFuelStopsForLegLazy(
   legId: string,
@@ -423,7 +331,6 @@ export async function planFuelStopsForLegLazy(
       row?.fuelStopsUpdatedAt &&
       Date.now() - row.fuelStopsUpdatedAt.getTime() < FUEL_CACHE_TTL_MS
     ) {
-      // Fresh cache — render what's already on the leg, no Places spend.
       return {
         legId,
         status: row.fuelStatus as FuelPlanResult['status'],
@@ -437,23 +344,17 @@ export async function planFuelStopsForLegLazy(
 
 /**
  * Invalidate a single leg's lazy fuel cache: drop the planner's auto option
- * stops and reset `fuel_status` to `none` (which clears
- * `fuel_stops_updated_at`). The next day-open re-sources fuel for THIS leg
- * only — we never re-fan-out the whole trip. Used when a leg edit /
- * report_position changes the route geometry, so a stale plan for the old
- * coordinates is never rendered.
+ * stops and reset `fuel_status` to `none`. The next day-open re-sources fuel for
+ * THIS leg only — never a trip-wide re-fan-out.
  */
 export async function invalidateLegFuelCache(legId: string): Promise<void> {
-  await clearAutoPlannerGooglePlacesOptionStops(legId);
+  await clearAutoPlannerOptionStops(legId);
   await setFuelStatus(legId, 'none');
 }
 
 /**
  * Invalidate every leg's lazy fuel cache on a trip. Used when a trip-wide input
- * that fuel planning depends on changes (e.g. the assigned vehicle / its range):
- * we reset each leg so it re-sources lazily on next day-open, rather than
- * eagerly re-planning the whole trip up front (the Google Places cost sink the
- * lazy redesign removed).
+ * fuel planning depends on changes (e.g. the assigned vehicle / its range).
  */
 export async function invalidateTripFuelCache(tripId: string): Promise<void> {
   const legRows = await db.select({ id: legs.id }).from(legs).where(eq(legs.tripId, tripId));
@@ -463,46 +364,17 @@ export async function invalidateTripFuelCache(tripId: string): Promise<void> {
 }
 
 /**
- * Pull a place_id out of a google.com/maps `q=place_id:XYZ` URL we wrote
- * ourselves. Returns null if the URL is missing or doesn't match the shape.
- */
-function extractPlaceIdFromUrl(url: string | null): string | null {
-  if (!url) return null;
-  const m = url.match(/q=place_id:([^&]+)/);
-  return m ? m[1] : null;
-}
-
-/**
- * True if a candidate matches an existing stop on the same leg by place_id
- * (preferred) or by tight haversine fallback when place_id isn't available.
- * Only same stopType rows are considered — a fuel station shouldn't dedupe
- * against a rest stop that happens to share coords.
+ * True if a candidate station matches an existing user-promoted ('selected')
+ * fuel stop on the same leg by a tight haversine threshold (~80 m). OSM stations
+ * carry no Google place_id, so coordinates are the dedupe key.
  */
 function matchesExistingSelected(
-  candidateType: 'fuel',
-  candidatePlaceId: string | null,
   candidateLat: number,
   candidateLng: number,
-  existing: Array<{
-    sourceUrl: string | null;
-    lat: number | null;
-    lng: number | null;
-    stopType: string;
-  }>
+  existing: Array<{ lat: number | null; lng: number | null; stopType: string }>
 ): boolean {
   for (const e of existing) {
-    if (e.stopType !== candidateType) continue;
-    const existingPlaceId = extractPlaceIdFromUrl(e.sourceUrl);
-    if (
-      candidatePlaceId &&
-      existingPlaceId &&
-      candidatePlaceId === existingPlaceId
-    ) {
-      return true;
-    }
-    // Coordinate fallback: ~80 m. Tight enough that two genuinely different
-    // stations don't collide, loose enough to absorb minor place-data
-    // shifts between Places revisions.
+    if (e.stopType !== 'fuel') continue;
     if (e.lat != null && e.lng != null) {
       const km = haversineKm(
         { lat: candidateLat, lng: candidateLng },
@@ -514,83 +386,32 @@ function matchesExistingSelected(
   return false;
 }
 
-function autoPlannerGooglePlacesOptionSql(legId: string) {
+function autoPlannerOptionSql(legId: string) {
   return and(
     eq(stops.legId, legId),
-    eq(stops.source, 'google_places'),
+    eq(stops.source, 'osm'),
     eq(stops.status, 'option'),
     eq(stops.stopType, 'fuel')
   );
 }
 
-async function clearAutoPlannerGooglePlacesOptionStops(legId: string): Promise<void> {
-  await db.delete(stops).where(autoPlannerGooglePlacesOptionSql(legId));
-}
-
-/**
- * Best-effort usage logging for a leg's Google Places spend. We split the
- * tally into two rows because the field-mask tier (and therefore the per-call
- * SKU price) differs between fuel-station lookups and stretch-break lookups.
- *
- * Failures are swallowed — usage logging shouldn't take down a fuel replan.
- */
-async function logPlacesUsageSafe(input: {
-  userId: string;
-  tripId: string | null;
-  essentialsCalls: number;
-  proCalls: number;
-  success: boolean;
-  errorMessage?: string | null;
-}): Promise<void> {
-  try {
-    if (input.essentialsCalls > 0) {
-      await logGooglePlacesUsage({
-        userId: input.userId,
-        tripId: input.tripId,
-        endpoint: 'nearby-search-essentials',
-        requests: input.essentialsCalls,
-        success: input.success,
-        errorMessage: input.errorMessage ?? null,
-      });
-    }
-    if (input.proCalls > 0) {
-      await logGooglePlacesUsage({
-        userId: input.userId,
-        tripId: input.tripId,
-        endpoint: 'nearby-search-pro',
-        requests: input.proCalls,
-        success: input.success,
-        errorMessage: input.errorMessage ?? null,
-      });
-    }
-  } catch (err) {
-    console.warn('logPlacesUsageSafe failed (continuing):', err);
-  }
+async function clearAutoPlannerOptionStops(legId: string): Promise<void> {
+  await db.delete(stops).where(autoPlannerOptionSql(legId));
 }
 
 export interface ReplenishFuelStopsOptions {
   /**
-   * Skip every leg whose `sort_order` is strictly less than this value.
-   *
-   * Use case: forward-only replan. When the user edits leg N, only legs with
-   * sort_order >= N can have their fuel state affected (cumulative tank math
-   * flows forward — previous legs' planning depends only on legs ahead of
-   * them, never behind). Skipping the unchanged front of the trip is the
-   * single biggest cost win for long itineraries.
-   *
-   * `planFuelStopsForLeg` still walks back through preceding legs internally
-   * to compute `kmBurnedSinceLastRefuel`, so skipping their *replanning* is
-   * safe even though their stops continue to influence the tank-state math.
-   *
-   * Omit (or pass undefined) to replan every leg.
+   * Skip every leg whose `sort_order` is strictly less than this value
+   * (forward-only replan; cumulative tank math flows forward). Omit to replan
+   * every leg.
    */
   startFromSortOrder?: number;
 }
 
 /**
  * Re-run auto fuel planning for legs on a trip in sort order (needed for
- * cumulative tank state across legs). Failures on one leg are logged; the
- * rest still run. Pass `startFromSortOrder` to skip legs ahead of an edit.
+ * cumulative tank state across legs). Failures on one leg are logged; the rest
+ * still run. Manual/admin re-plan only — not auto-triggered.
  */
 export async function replenishFuelStopsForTrip(
   tripId: string,
@@ -623,6 +444,7 @@ async function resolveVehicleForTrip(
   userId: string
 ): Promise<{
   comfortable_range_km: number | null;
+  hard_max_range_km: number | null;
 } | null> {
   if (tripId != null) {
     // Look up the trip's vehicle_id without re-querying trips directly
@@ -645,49 +467,20 @@ async function resolveVehicleForTrip(
 /**
  * DB shim around the pure [[kmBurnedSinceLastRefuel]] tank-state math. Walks
  * back through preceding legs (by sort_order) gathering each leg's distance and
- * the position of its last actual fuel stop, then returns how much range is
- * gone when this leg starts.
+ * the position of its last actual fuel stop, then returns how much range is gone
+ * when this leg starts.
  *
- * Model ("one continuous drive"): the whole trip is one long drive and the ONLY
- * thing that refills the tank is an actual fuel stop (or the trip start). Rest
- * days and overnight stops are NOT implicit refuels — see fuelTankState.ts for
- * the full rationale. This is what fixes the "fuel-stop-free leg right after a
- * rest day" bug: the burn carried into the post-rest leg is no longer wiped to
- * zero, so a driver who hasn't actually refueled gets planned for honestly.
- *
- * Design notes:
- *
- * - **Both `selected` and `option` fuel stops count; `dismissed` does
- *   not.** Auto-suggested `option` rows are the planner's own plan for
- *   prior legs and we want a self-consistent multi-leg plan. If we
- *   ignored them, leg 2 would always assume leg 1's tank was untouched
- *   and propose fuel-ASAP at km 0 — wrong. The planner is idempotent for
- *   this leg only (we delete its prior auto stops before re-planning at
- *   the start of `planFuelStopsForLeg`), so there's no chicken-and-egg.
- *
- * - **A fuel stop is a refuel anchor regardless of leg type.** Normally only
- *   driving legs have fuel stops, but if a user manually adds one to a rest
- *   day (they did top up in town), it correctly anchors the tank there.
- *
- * - **`legs.distance_km` is the source of truth, not the polyline.** We
- *   don't want to OSRM-call every preceding leg here; that turns one
- *   replan into N route requests. The leg row's stored distance is what
- *   the user sees in the workspace and what every other math path uses.
- *
- * - We stop querying once we include the first leg with a fuel stop (the
- *   refuel anchor) — legs before it don't affect the burn.
- *
- * - Returns 0 for the first leg of a trip (no preceding legs).
+ * Model: the whole trip is one continuous drive; only an actual fuel stop (or
+ * the trip start) refills the tank — rest days/overnights do NOT. Both
+ * `selected` and `option` fuel stops count as refuels; `dismissed` does not.
+ * Returns 0 for the first leg.
  */
 async function computeKmBurnedSinceLastRefuel(
   tripId: string,
   thisLegSortOrder: number
 ): Promise<number> {
   const previous = await db
-    .select({
-      id: legs.id,
-      distanceKm: legs.distanceKm,
-    })
+    .select({ id: legs.id, distanceKm: legs.distanceKm })
     .from(legs)
     .where(and(eq(legs.tripId, tripId), lt(legs.sortOrder, thisLegSortOrder)))
     .orderBy(desc(legs.sortOrder));
@@ -696,9 +489,6 @@ async function computeKmBurnedSinceLastRefuel(
 
   const history: LegFuelHistory[] = [];
   for (const prev of previous) {
-    // Latest non-dismissed fuel stop on this leg = its most recent refuel.
-    // Both `selected` (user accepted) and `option` (planner-suggested) count;
-    // only `dismissed` is ignored.
     const stopRows = await db
       .select({
         stopType: stops.stopType,
@@ -722,11 +512,8 @@ async function computeKmBurnedSinceLastRefuel(
       latestFuelDistanceKm: latestFuel?.distanceFromStartKm ?? null,
     });
 
-    // Refuel anchor found — legs before this one can't affect the burn, so
-    // stop querying and let the pure helper finish the arithmetic.
     if (latestFuel?.distanceFromStartKm != null) break;
   }
 
   return kmBurnedSinceLastRefuel(history);
 }
-
