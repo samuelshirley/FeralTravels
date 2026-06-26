@@ -24,7 +24,6 @@ import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstrai
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
-import { planDumpStationStopForLeg } from '@/server/dump-stations';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
 import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
@@ -1077,22 +1076,6 @@ async function dispatchAction(
       return;
     }
 
-    case 'plan_dump_station_stops': {
-      const resolvedLegId = await resolvePennyLegIdOnTrip(
-        action.input.leg_id,
-        tripId,
-        userId,
-        ctx,
-        { dequeueNewLegFallback: true },
-      );
-      await planDumpStationStopForLeg(
-        resolvedLegId,
-        userId,
-        action.input.country_code ?? null,
-      );
-      return;
-    }
-
     case 'add_task': {
       const { leg_id, data } = action.input;
       const resolvedLegId = leg_id ?? null;
@@ -1455,8 +1438,6 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
       return { action: 'update_stop', stop_id: action.input.stop_id, data: action.input.data };
     case 'delete_stop':
       return { action: 'delete_stop', stop_id: action.input.stop_id };
-    case 'plan_dump_station_stops':
-      return { action: 'plan_dump_station_stops', leg_id: action.input.leg_id, country_code: action.input.country_code ?? null };
     case 'add_task':
       return {
         action: 'add_task',

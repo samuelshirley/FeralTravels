@@ -11,12 +11,10 @@ import {
   getRoute as getRouteTool,
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
-  planOvernightStop as planOvernightStopTool,
   planFuelStops as planFuelStopsTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
-import { planOvernightStop as runOvernightEngine } from "@/lib/penny/overnight";
 import { planFuelStopsForLeg } from "@/server/fuel";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
@@ -24,10 +22,13 @@ import {
   resolveMapsLinksInMessage,
   type ResolvedMapsLink,
 } from "@/lib/coordsResolve";
+import { PENNY_MODEL } from "@/lib/models";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const MODEL = "claude-sonnet-4-20250514";
+// Single source of truth for model IDs lives in @/lib/models — update there when
+// a model is sunset.
+const MODEL = PENNY_MODEL;
 
 // ---------------------------------------------------------------------------
 // Prompt caching
@@ -320,22 +321,6 @@ You have a hard cap on tool-use iterations per turn. Burning iterations one segm
 - Don't plan fuel at the same km as the leg destination — that's what overnight stops cover.
 </fuel_planning_rules>
 
-<dump_station_planning>
-When the vehicle context has dump_station_tracking_enabled: true, Penny auto-plans dump station stops — the user never has to ask.
-
-On initial trip plan (after all add_leg calls are emitted):
-1. Check dump_station_interval_days from the vehicle context. Count driving days from the plan.
-2. For every leg that falls on or after the dump_station_interval_days cadence (e.g. every 3rd driving day), call plan_dump_station_stops with that leg's id and the country_code for the region (derive from the leg's end location — "ES" for Spain, "FR" for France, etc.).
-3. Before planning the first leg, ask conversationally in ONE short sentence whether the user's tank is currently full. If they say no (or it's unclear), also call plan_dump_station_stops on the first leg so they can dump near the start. If they confirm it's full, start the cadence from day 1.
-4. Emit all plan_dump_station_stops calls in the SAME turn as the add_leg calls — don't wait for a follow-up.
-
-On tweaks / later in the conversation:
-- If the user asks for a dump station ("where can I dump?", "find a dump station"), call plan_dump_station_stops for the relevant leg.
-- The "Find other station" button on dump station stop cards handles cycling through alternatives client-side — you don't need to manage that.
-
-Do NOT offer dump station planning if dump_station_tracking_enabled is false or absent. Do NOT ask "want me to find dump stations?" — just do it when enabled, like fuel planning.
-</dump_station_planning>
-
 <route_vs_stop_decision>
 This is the most common mistake to avoid. Read carefully:
 
@@ -445,7 +430,6 @@ For an accurate count + summary, in check_trip_feasibility add a constraint_chec
 - The validator will reject any add_leg or update_leg with drive_time_minutes > vehicle.transit_max_drive_hours × 60 (or max_drive_hours_per_day × 60 for legacy vehicles). Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
-- For dump stations, see <dump_station_planning> below.
 
 <leg_merge_and_delete_rules>
 When merging two consecutive legs into one (e.g. the user says "I'm OK with a longer first day"), you MUST emit BOTH operations in the SAME turn:
@@ -992,9 +976,6 @@ async function executeLookupTool(
   if (toolUse.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY) {
     return executeCheckTripFeasibility(toolUse, context);
   }
-  if (toolUse.name === planOvernightStopTool.PLAN_OVERNIGHT_STOP) {
-    return executePlanOvernightStop(toolUse, context);
-  }
   if (toolUse.name === planFuelStopsTool.PLAN_FUEL_STOPS) {
     return executePlanFuelStops(toolUse, context, userId);
   }
@@ -1087,92 +1068,6 @@ async function executePlanFuelStops(
         content: `Couldn't plan fuel for ${dayLabel}: ${result.reason ?? "missing leg coordinates"}. Tell the user honestly; do NOT claim a stop was planned.`,
       };
   }
-}
-
-/**
- * plan_overnight_stop — fetch the day's route, run the deterministic
- * OSM-backed overnight engine, and hand Penny a ranked shortlist. No DB write;
- * Penny presents it. The honest guidance (prefer has_adjacent_lot; admit when
- * nothing has a lot) keeps her from repeating the "dog park with no parking
- * lot" suggestion. Engine: src/lib/penny/overnight/.
- */
-async function executePlanOvernightStop(
-  toolUse: Anthropic.ToolUseBlock,
-  context: PennyContext,
-): Promise<LookupResult> {
-  const schema = planOvernightStopTool.validator(context);
-  const parsed = schema.safeParse(toolUse.input);
-  if (!parsed.success) {
-    return {
-      is_error: true,
-      content: `Validation error on plan_overnight_stop: ${zodErrorToFeedback(parsed.error)}.`,
-    };
-  }
-
-  const input = parsed.data as planOvernightStopTool.PlanOvernightStopInput;
-  const directions = await getDirections(
-    { lat: input.origin_lat, lng: input.origin_lng },
-    { lat: input.destination_lat, lng: input.destination_lng },
-    { avoid: input.avoid ?? undefined },
-  );
-
-  if (!directions.ok) {
-    return {
-      is_error: true,
-      content: `plan_overnight_stop failed: ${directions.kind} — ${directions.message}. Tell the user this lookup is temporarily unavailable; do not invent overnight spots.`,
-    };
-  }
-
-  // Default the anchor to the day's end (the destination). Fuel range is a
-  // separate axis handled by plan_fuel_stops — we deliberately don't conflate
-  // it into the overnight anchor.
-  const targetKm = input.target_km ?? directions.distance_km;
-
-  let result: Awaited<ReturnType<typeof runOvernightEngine>>;
-  try {
-    result = await runOvernightEngine({
-      polyline: directions.polyline_points,
-      targetKm,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    return {
-      is_error: true,
-      content: `plan_overnight_stop could not search this route: ${message}. Tell the user the lookup failed; do not invent spots.`,
-    };
-  }
-
-  const candidates = result.ranked.slice(0, 6).map((r) => ({
-    name: r.candidate.name,
-    category: r.candidate.category,
-    lat: round5(r.candidate.lat),
-    lng: round5(r.candidate.lng),
-    has_adjacent_lot: r.hasAdjacentLot,
-    motorhome_friendly: r.candidate.motorhomeFriendly,
-    surface: r.candidate.surface,
-    detour_km: Math.round(r.detourKm * 10) / 10,
-    maps_url: `https://www.google.com/maps?q=${round5(r.candidate.lat)},${round5(r.candidate.lng)}`,
-  }));
-
-  const anyLot = candidates.some((c) => c.has_adjacent_lot);
-
-  return {
-    is_error: false,
-    content: JSON.stringify({
-      ok: true,
-      anchor: {
-        lat: round5(result.window.anchor[0]),
-        lng: round5(result.window.anchor[1]),
-      },
-      anchor_km: Math.round(result.window.anchorKm),
-      route_km: Math.round(result.window.routeKm),
-      candidate_count: result.ranked.length,
-      candidates,
-      guidance: anyLot
-        ? "Prefer candidates with has_adjacent_lot=true — those have a real place to park. Present the top 1–3 with their maps_url so the user can check the satellite view. Do not invent spots outside this list."
-        : "No candidate here has a parking lot mapped in OpenStreetMap. Be honest: you only found green space without a confirmed lot. Suggest the user open a maps_url to eyeball it before relying on it, and do not claim any of these is a known-good overnight spot.",
-    }),
-  };
 }
 
 /**

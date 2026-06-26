@@ -106,6 +106,97 @@ function parseMonthDayNoYear(s: string, today: Date): string | null {
   return toISO(d);
 }
 
+const NUMBER_WORDS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+/** Add `months` calendar months, clamping the day to the target month's length. */
+function addMonths(date: Date, months: number): Date {
+  const y = date.getFullYear();
+  const m = date.getMonth() + months;
+  const targetY = y + Math.floor(m / 12);
+  const targetM = ((m % 12) + 12) % 12;
+  const lastDay = new Date(targetY, targetM + 1, 0).getDate();
+  return new Date(targetY, targetM, Math.min(date.getDate(), lastDay));
+}
+
+/**
+ * Relative offset phrases: "in 2 weeks", "in 3 days", "in a month", "next week",
+ * "next month". Anchored to `today`. Returns null when the phrase isn't one of
+ * these shapes.
+ */
+function parseRelativeOffset(lower: string, today: Date): string | null {
+  if (lower === 'next week') return toISO(addDays(today, 7));
+  if (lower === 'next month') return toISO(addMonths(today, 1));
+  const m = lower.match(
+    /^in\s+(\d{1,3}|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(day|days|week|weeks|month|months)$/,
+  );
+  if (!m) return null;
+  const n = /^\d+$/.test(m[1]) ? parseInt(m[1], 10) : NUMBER_WORDS[m[1]];
+  if (n === undefined || n < 1 || n > 365) return null;
+  const unit = m[2];
+  if (unit.startsWith('day')) return toISO(addDays(today, n));
+  if (unit.startsWith('week')) return toISO(addDays(today, n * 7));
+  return toISO(addMonths(today, n));
+}
+
+/**
+ * Parse a purely numeric date with separators: "27-6-26", "27/6/2026",
+ * "27.06.2026". Two- or four-digit year (2-digit expands to 20xx).
+ *
+ * Disambiguation: slash defaults to US month-first ("06/03/26" = Jun 3) to match
+ * Date.parse's behavior for the slash form; dash and dot default to day-first
+ * (the app's display convention — see formatDate). Either way, if one component
+ * can only be a day (>12), we use that to fix the order. Genuinely ambiguous
+ * cases ("3/6/26") follow the separator default; the LLM fallback handles the
+ * rest. Same separator must be used in both positions.
+ */
+function parseNumericDMY(s: string, _today: Date): string | null {
+  const m = s.match(/^(\d{1,2})([-/.])(\d{1,2})\2(\d{2}|\d{4})$/);
+  if (!m) return null;
+  const a = +m[1];
+  const sep = m[2];
+  const b = +m[3];
+  let year = +m[4];
+  if (m[4].length === 2) year += 2000;
+  if (year < 2000 || year > 2100) return null;
+
+  let day: number;
+  let month: number;
+  if (a > 12 && b <= 12) {
+    day = a;
+    month = b; // first can't be a month
+  } else if (b > 12 && a <= 12) {
+    month = a;
+    day = b; // second can't be a month
+  } else if (sep === '/') {
+    month = a; // slash → US month-first
+    day = b;
+  } else {
+    day = a; // dash/dot → European day-first
+    month = b;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day);
+  if (d.getMonth() !== month - 1 || d.getDate() !== day) return null; // e.g. 31-02
+  return toISO(d);
+}
+
+const MONTH_NAME_RE =
+  'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+
+// Date-shaped substrings to look for embedded in a longer string (e.g.
+// "tomorrow 27-6-26", "leaving 27/6/26"). Anchored on real date shapes so stray
+// numbers don't register. Each match is re-run through tryParseToISO.
+const EMBEDDED_DATE_PATTERNS: RegExp[] = [
+  /\b\d{4}-\d{1,2}-\d{1,2}\b/, // ISO
+  /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/, // numeric d-m-y / d/m/y / d.m.y
+  new RegExp(`\\b(?:${MONTH_NAME_RE})\\.?\\s+\\d{1,2}(?:,?\\s+\\d{4})?\\b`, 'i'), // "November 1 2026"
+  new RegExp(`\\b\\d{1,2}\\s+(?:${MONTH_NAME_RE})\\.?(?:,?\\s+\\d{4})?\\b`, 'i'), // "1 November 2026"
+];
+
 /**
  * Try to extract an ISO "YYYY-MM-DD" string from a free-text date.
  *
@@ -114,9 +205,12 @@ function parseMonthDayNoYear(s: string, today: Date): string | null {
  *   - US text:    "May 28, 2026"  /  "May 28 2026"
  *   - EU text:    "28 May 2026"
  *   - Slash:      "05/28/2026"  /  "5/28/2026"
+ *   - Numeric:    "27-6-26", "27/6/2026", "27.06.2026" (day-first for dash/dot)
  *   - Ordinals:   "November 1st", "June 3rd 2026"
  *   - No year:    "November 1", "1 Nov" → next future occurrence of that day
- *   - Relative:   "today", "tomorrow", "next Saturday", "friday"
+ *   - Relative:   "today", "tonight", "tomorrow", "next Saturday", "friday",
+ *                 "next week", "in 2 weeks", "in 3 days"
+ *   - Combined:   "tomorrow 27-6-26" (embedded date wins), "tomorrow morning"
  *
  * `now` is injectable for testing; it anchors the year-inference and relative
  * phrases. Year inference is forward-looking: a month/day with no year resolves
@@ -124,7 +218,8 @@ function parseMonthDayNoYear(s: string, today: Date): string | null {
  * "January 5" said in May means next January, not the one that just passed.
  *
  * Returns null only when the string genuinely doesn't point to a specific day
- * ("sometime in summer", "may" with no day, garbage).
+ * ("sometime in summer", "may" with no day, garbage). The onboarding handler
+ * falls back to an LLM parse on null before re-asking the user.
  */
 export function tryParseToISO(
   input: string | null | undefined,
@@ -144,12 +239,14 @@ export function tryParseToISO(
     if (!isNaN(d.getTime())) return toISO(d);
   }
 
-  // Relative phrases.
+  // Relative phrases (whole-string).
   const lower = s.toLowerCase();
-  if (lower === 'today') return toISO(today);
+  if (lower === 'today' || lower === 'tonight') return toISO(today);
   if (lower === 'tomorrow') return toISO(addDays(today, 1));
   const weekday = parseRelativeWeekday(lower, today);
   if (weekday) return weekday;
+  const offset = parseRelativeOffset(lower, today);
+  if (offset) return offset;
 
   // A full date that already carries an explicit year ("May 28 2026",
   // "05/28/2026"). Only trust Date.parse when a 4-digit year is present — it's
@@ -159,12 +256,33 @@ export function tryParseToISO(
     if (withExplicitYear) return withExplicitYear;
   }
 
-  // Month + day with no year ("November 1", "1 Nov") → next future occurrence.
-  return parseMonthDayNoYear(s, today);
-}
+  // Purely numeric date with separators ("27-6-26", "27/6/26").
+  const numeric = parseNumericDMY(s, today);
+  if (numeric) return numeric;
 
-const MONTH_NAME_RE =
-  'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+  // Month + day with no year ("November 1", "1 Nov") → next future occurrence.
+  const monthDay = parseMonthDayNoYear(s, today);
+  if (monthDay) return monthDay;
+
+  // Embedded date inside a longer string ("tomorrow 27-6-26", "leaving 27/6").
+  // Recurse only on a PROPER substring (strictly shorter) so a whole-string but
+  // invalid date (e.g. "31-2-26") can't match itself and loop forever — that
+  // case already returned null from the parsers above and must stay null.
+  for (const re of EMBEDDED_DATE_PATTERNS) {
+    const match = s.match(re);
+    if (match && match[0] !== s) {
+      const iso = tryParseToISO(match[0], now);
+      if (iso) return iso;
+    }
+  }
+
+  // Last resort: a leading relative keyword trailed by other words
+  // ("tomorrow morning", "today if it's sunny").
+  if (/^(today|tonight)\b/.test(lower)) return toISO(today);
+  if (/^tomorrow\b/.test(lower)) return toISO(addDays(today, 1));
+
+  return null;
+}
 
 // Date-like substrings to look for inside free prose, most-specific first. Each
 // is run through tryParseToISO, so a match still has to parse to a real day.
@@ -220,14 +338,22 @@ export function todayISO(): string {
  * Returns the rank of the first still-ahead leg: 0 means nothing is behind,
  * `legDateISOs.length` means the whole trip is behind.
  *
- * Precedence:
- *   1. An explicit driver position report (`reportedRank >= 0`) always wins.
- *      `reportPosition` re-anchors the calendar so the reported leg IS today,
- *      and a deliberate "I'm here" beats any date heuristic.
- *   2. Otherwise fall back to the calendar: every leg dated strictly before
- *      `todayISO` is behind you; "ahead" begins at the first leg dated
- *      today-or-later. Leg dates are a hard invariant (see Leg.date_iso), so
- *      every leg has one. ISO "YYYY-MM-DD" strings compare lexicographically.
+ * Two signals, combined as a MAX (the later of the two wins):
+ *   1. Calendar: every leg dated strictly before `todayISO` is behind you;
+ *      "ahead" begins at the first leg dated today-or-later. Leg dates are a
+ *      hard invariant (see Leg.date_iso) and are re-anchored from the driver's
+ *      reported progress (getTripFull), so this already reflects any report.
+ *      ISO "YYYY-MM-DD" strings compare lexicographically.
+ *   2. Explicit report (`reportedRank >= 0`): a deliberate "I'm here" sets a
+ *      FLOOR — we never collapse a leg the driver said they'd reached. It does
+ *      NOT freeze the view: a FRESH report agrees with the calendar (its leg is
+ *      re-anchored to the report date = today), while a STALE report (made days
+ *      ago) lets the calendar advance past it as real days pass. This is the fix
+ *      for "reported on day N, still pinned to day N when viewed on day N+8".
+ *
+ * Taking the max lets the cutoff move FORWARD of the last report as time passes,
+ * but never pulls it BACK behind a leg the driver explicitly reached (guards
+ * against GPS/clock noise collapsing a day they said they're on).
  *
  * Guard: if every leg is in the past (trip fully elapsed), we keep the last leg
  * visible so the main list is never empty.
@@ -238,22 +364,25 @@ export function behindCutoffRank(args: {
   todayISO: string;
 }): number {
   const { reportedRank, legDateISOs, todayISO } = args;
+  const n = legDateISOs.length;
 
-  // Explicit report wins. Clamp to a sane range.
-  if (reportedRank >= 0) {
-    return Math.min(Math.max(reportedRank, 0), legDateISOs.length);
+  // Calendar cutoff: collapse every leg dated strictly before today.
+  let calendarCutoff = 0;
+  while (calendarCutoff < n && legDateISOs[calendarCutoff] < todayISO) {
+    calendarCutoff++;
   }
 
-  // Collapse every leg dated strictly before today.
-  let cutoff = 0;
-  while (cutoff < legDateISOs.length && legDateISOs[cutoff] < todayISO) {
-    cutoff++;
-  }
+  // An explicit report is a floor, not a freeze: it keeps the view from
+  // collapsing a leg ahead of where the driver said they are, but the calendar
+  // can still advance past a stale report.
+  const reportedCutoff = reportedRank >= 0 ? Math.min(reportedRank, n) : 0;
+
+  const cutoff = Math.max(reportedCutoff, calendarCutoff);
 
   // If every leg is in the past (trip fully elapsed), keep the last leg visible
   // so the main list is never empty.
-  if (cutoff === legDateISOs.length && cutoff > 0) {
-    return cutoff - 1;
+  if (cutoff === n && n > 0) {
+    return n - 1;
   }
   return cutoff;
 }

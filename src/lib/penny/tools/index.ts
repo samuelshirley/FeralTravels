@@ -13,8 +13,6 @@ import * as addStop from './addStop';
 import * as updateStop from './updateStop';
 import * as deleteStop from './deleteStop';
 import * as planFuelStops from './planFuelStops';
-import * as planDumpStationStops from './planDumpStationStops';
-import * as planOvernightStop from './planOvernightStop';
 import * as addTask from './addTask';
 import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
@@ -36,8 +34,6 @@ export {
   updateStop,
   deleteStop,
   planFuelStops,
-  planDumpStationStops,
-  planOvernightStop,
   addTask,
   updateTask,
   getRoute,
@@ -60,7 +56,6 @@ export const TOOLS: Anthropic.Tool[] = [
   // "call me before X" wording lands prominently.
   extractTripIntent.tool,
   getRoute.tool,
-  planOvernightStop.tool,
   checkTripFeasibility.tool,
   updateVehicle.tool,
   renameTrip.tool,
@@ -76,7 +71,6 @@ export const TOOLS: Anthropic.Tool[] = [
   updateStop.tool,
   deleteStop.tool,
   planFuelStops.tool,
-  planDumpStationStops.tool,
   addTask.tool,
   updateTask.tool,
 ];
@@ -100,7 +94,6 @@ export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
   addStop.ADD_STOP,
   updateStop.UPDATE_STOP,
   deleteStop.DELETE_STOP,
-  planDumpStationStops.PLAN_DUMP_STATION_STOPS,
   addTask.ADD_TASK,
   updateTask.UPDATE_TASK,
 ]);
@@ -114,7 +107,6 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
   getRoute.GET_ROUTE,
   extractTripIntent.EXTRACT_TRIP_INTENT,
   checkTripFeasibility.CHECK_TRIP_FEASIBILITY,
-  planOvernightStop.PLAN_OVERNIGHT_STOP,
   // plan_fuel_stops runs INLINE in the tool-use loop (it writes to the DB, but
   // executes synchronously and feeds its real outcome back as a tool_result) so
   // Penny can report what actually happened — created N / none / not-found /
@@ -143,13 +135,11 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [updateStop.UPDATE_STOP]: updateStop.validator,
   [deleteStop.DELETE_STOP]: deleteStop.validator,
   [planFuelStops.PLAN_FUEL_STOPS]: planFuelStops.validator,
-  [planDumpStationStops.PLAN_DUMP_STATION_STOPS]: planDumpStationStops.validator,
   [addTask.ADD_TASK]: addTask.validator,
   [updateTask.UPDATE_TASK]: updateTask.validator,
   [getRoute.GET_ROUTE]: getRoute.validator,
   [extractTripIntent.EXTRACT_TRIP_INTENT]: extractTripIntent.validator,
   [checkTripFeasibility.CHECK_TRIP_FEASIBILITY]: checkTripFeasibility.validator,
-  [planOvernightStop.PLAN_OVERNIGHT_STOP]: planOvernightStop.validator,
 };
 
 export type ValidatedAction =
@@ -168,6 +158,5 @@ export type ValidatedAction =
   | { name: typeof deleteStop.DELETE_STOP; input: deleteStop.DeleteStopInput }
   // plan_fuel_stops is a LOOKUP tool (runs inline, not dispatched as an action)
   // — deliberately absent from this union. See LOOKUP_TOOL_NAMES.
-  | { name: typeof planDumpStationStops.PLAN_DUMP_STATION_STOPS; input: planDumpStationStops.PlanDumpStationStopsInput }
   | { name: typeof addTask.ADD_TASK; input: addTask.AddTaskInput }
   | { name: typeof updateTask.UPDATE_TASK; input: updateTask.UpdateTaskInput };

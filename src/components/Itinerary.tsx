@@ -53,11 +53,13 @@ export default function Itinerary({
   // days behind a collapsible header so opening the trip shows where the driver
   // is NOW at the top.
   //
-  // Two signals feed the cutoff (see behindCutoffRank):
-  //   1. An explicit reportPosition (trip.current_leg_id) — strongest, wins.
-  //   2. Otherwise the calendar — legs dated strictly before today are past.
-  // The date fallback means a trip opened mid-journey collapses elapsed days
-  // automatically, without requiring the driver to report position first.
+  // Two signals feed the cutoff (see behindCutoffRank), combined as a max:
+  //   1. The calendar — legs dated strictly before today are past.
+  //   2. An explicit reportPosition (trip.current_leg_id) — a floor, so we never
+  //      collapse a leg the driver said they'd reached. It does NOT freeze the
+  //      view: the calendar advances past a stale report as real days pass.
+  // So a trip opened mid-journey collapses elapsed days automatically, even if
+  // the last position report is days old.
   const reportedRank = trip.current_leg_id
     ? allLegs.findIndex((l) => l.id === trip.current_leg_id)
     : -1;

@@ -67,6 +67,8 @@ interface OnboardingAnswerResult {
   didHandoff: boolean;
   /** The stored trip intent to send to Penny when onboarding is done. */
   tripIntent?: string;
+  /** Deterministic Penny acknowledgment (e.g. confirming/placeholdering the start date). */
+  note?: string;
 }
 
 /**
@@ -1032,6 +1034,22 @@ export default function ChatPanel({
       if (result.didHandoff) {
         setOnboardingSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
         setInput('');
+        // Surface any deterministic acknowledgment (e.g. the start-date confirm/
+        // placeholder) as a Penny bubble before her real planning response.
+        if (result.note) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `optimistic-${Date.now()}`,
+              trip_id: tripId,
+              role: 'assistant' as const,
+              content: result.note as string,
+              kind: 'ai' as const,
+              changes_made: null,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
         // Fire the stored trip intent at Penny (not the last answer — that was a vehicle question)
         const intent = result.tripIntent ?? (typeof value === 'string' ? value : String(value));
         await sendChatMessage(intent, []);
@@ -1040,18 +1058,34 @@ export default function ChatPanel({
         // the transition from onboarding to normal chat.
         setTimeout(() => textareaRef.current?.focus(), 100);
       } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `optimistic-${Date.now()}`,
-            trip_id: tripId,
-            role: 'user' as const,
-            content: result.answerLabel,
-            kind: 'form_answer' as const,
-            changes_made: null,
-            created_at: new Date().toISOString(),
-          },
-        ]);
+        const ts = Date.now();
+        setMessages((prev) => {
+          const additions: UIMessage[] = [
+            {
+              id: `optimistic-${ts}`,
+              trip_id: tripId,
+              role: 'user' as const,
+              content: result.answerLabel,
+              kind: 'form_answer' as const,
+              changes_made: null,
+              created_at: new Date().toISOString(),
+            },
+          ];
+          // Append the deterministic Penny acknowledgment (e.g. start-date
+          // confirm/placeholder) right after the user's answer.
+          if (result.note) {
+            additions.push({
+              id: `optimistic-${ts + 1}`,
+              trip_id: tripId,
+              role: 'assistant' as const,
+              content: result.note,
+              kind: 'ai' as const,
+              changes_made: null,
+              created_at: new Date().toISOString(),
+            });
+          }
+          return [...prev, ...additions];
+        });
         setOnboardingSnapshot(result.next);
         setInput('');
       }

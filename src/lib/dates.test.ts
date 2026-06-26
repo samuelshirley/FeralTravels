@@ -90,6 +90,42 @@ describe('tryParseToISO', () => {
     expect(tryParseToISO(null, now)).toBeNull();
     expect(tryParseToISO('asdf', now)).toBeNull();
   });
+
+  it('parses numeric dates with separators (day-first for dash/dot)', () => {
+    expect(tryParseToISO('27-6-26', now)).toBe('2026-06-27');
+    expect(tryParseToISO('27/6/2026', now)).toBe('2026-06-27');
+    expect(tryParseToISO('27.06.2026', now)).toBe('2026-06-27');
+    // Slash defaults US month-first when ambiguous (preserves Date.parse behavior).
+    expect(tryParseToISO('06/03/26', now)).toBe('2026-06-03');
+    // Slash where the first value can't be a month → falls back to day-first.
+    expect(tryParseToISO('27/6/26', now)).toBe('2026-06-27');
+    // Dash where the second value can't be a month → month-first.
+    expect(tryParseToISO('6-27-26', now)).toBe('2026-06-27');
+  });
+
+  it('rejects impossible numeric dates', () => {
+    expect(tryParseToISO('31-2-26', now)).toBeNull(); // Feb 31
+    expect(tryParseToISO('45-13-26', now)).toBeNull();
+  });
+
+  it('handles relative offset phrases', () => {
+    expect(tryParseToISO('next week', now)).toBe('2026-06-07');
+    expect(tryParseToISO('in 3 days', now)).toBe('2026-06-03');
+    expect(tryParseToISO('in 2 weeks', now)).toBe('2026-06-14');
+    expect(tryParseToISO('in a month', now)).toBe('2026-06-30');
+    expect(tryParseToISO('tonight', now)).toBe('2026-05-31');
+  });
+
+  it('pulls an embedded date out of a relative-word combo (the reported bug)', () => {
+    // "Tomorrow 27-6-26" used to 500 — the embedded numeric date now resolves.
+    expect(tryParseToISO('Tomorrow 27-6-26', new Date(2026, 5, 26))).toBe('2026-06-27');
+    expect(tryParseToISO('leaving 27/6/26', now)).toBe('2026-06-27');
+  });
+
+  it('falls back to a leading relative word when no explicit date is present', () => {
+    expect(tryParseToISO('tomorrow morning', now)).toBe('2026-06-01');
+    expect(tryParseToISO('today if the weather holds', now)).toBe('2026-05-31');
+  });
 });
 
 describe('legDateISO', () => {
@@ -184,13 +220,46 @@ describe('behindCutoffRank', () => {
     expect(behindCutoffRank({ reportedRank: -1, legDateISOs, todayISO: today })).toBe(2);
   });
 
-  it('lets an explicit position report win over the calendar', () => {
+  it('lets an explicit report hold a leg ahead of the calendar (floor)', () => {
+    // Driver reported being at a future-dated leg (jumped ahead). The report
+    // floor keeps that leg at the top even though the calendar alone would
+    // collapse fewer days.
     const legDateISOs = ['2026-05-30', '2026-05-31', '2026-06-03'];
     expect(behindCutoffRank({ reportedRank: 2, legDateISOs, todayISO: today })).toBe(2);
   });
 
-  it('clamps an out-of-range reported rank', () => {
+  it('clamps an out-of-range reported rank and keeps the last leg visible', () => {
     const legDateISOs = ['2026-05-30', '2026-05-31'];
-    expect(behindCutoffRank({ reportedRank: 99, legDateISOs, todayISO: today })).toBe(2);
+    // Clamped to length, then the never-empty guard keeps the last leg visible.
+    expect(behindCutoffRank({ reportedRank: 99, legDateISOs, todayISO: today })).toBe(1);
+  });
+
+  it('advances past a STALE report as real days pass (the frozen-itinerary bug)', () => {
+    // Reproduces the photographed bug: the driver reported position on an early
+    // leg (day 8 = 2026-06-10) and never reported again. Eight days later the
+    // old "report always wins" code kept the itinerary pinned to 2026-06-10; the
+    // fix lets the calendar advance past the stale report.
+    const legDateISOs = Array.from({ length: 20 }, (_, i) => {
+      const d = new Date(2026, 5, 3 + i); // 2026-06-03 .. 2026-06-22
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}-${m}-${day}`;
+    });
+    const reportedRank = 7; // 2026-06-10
+
+    // Stale: viewed on 2026-06-18, eight days after the report → calendar wins.
+    expect(
+      behindCutoffRank({ reportedRank, legDateISOs, todayISO: '2026-06-18' }),
+    ).toBe(15); // first leg dated >= 2026-06-18
+
+    // Fresh: viewed on the report date → report and calendar agree.
+    expect(
+      behindCutoffRank({ reportedRank, legDateISOs, todayISO: '2026-06-10' }),
+    ).toBe(7);
+
+    // Fresh report and the (re-anchored) calendar coincide — no double-collapse.
+    expect(
+      behindCutoffRank({ reportedRank: 3, legDateISOs, todayISO: '2026-06-06' }),
+    ).toBe(3);
   });
 });

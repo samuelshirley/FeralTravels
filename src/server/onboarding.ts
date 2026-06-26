@@ -11,7 +11,8 @@ import {
   type VehicleApi,
 } from '@/server/repos/vehicles';
 import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
-import { tryParseToISO, extractDateFromText, formatDate, parseISODate } from '@/lib/dates';
+import { extractDateFromText, formatDate, parseISODate, todayISO } from '@/lib/dates';
+import { resolveStartDate } from '@/server/parseStartDate';
 import { miToKm } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState } from '@/types/trip';
@@ -82,7 +83,7 @@ export interface Question {
 export const TRIP_INTENT_QUESTION: Question = {
   key: 'trip_intent',
   kind: 'handoff',
-  label: "Hi, I'm Penny. Tell me where you want to go — the more details the better. You can drop in Google links of places you want to go or camp spots you've already found, and I'll generate your routes and find gas stations for you based on your fuel range and water/dump range.\n\nAfter you give me a summary, I'll ask some clarifying questions to make sure I'm planning as best I can.",
+  label: "Hi, I'm Penny. Let's plan a trip together! Tell me where you want to go — the more details the better. Feel free to drop in names of locations, Google Maps links, or addresses, and I'll put together a daily drive plan with gas stops based on your range and try to find the cheapest fuel along the way.\n\nAfter you give me a summary, I'll ask some clarifying questions to make sure I'm planning as best I can.",
   placeholder: "Tell Penny about your trip…",
   multiline: true,
 };
@@ -100,6 +101,19 @@ export const TRIP_DATE_QUESTION: Question = {
   label:
     "When are you setting off? A start date I can pin to the calendar — \"November 1st\", \"next Saturday\", or \"2026-06-03\" all work.",
   placeholder: 'e.g. November 1st, next Saturday, or 2026-06-03',
+};
+
+// Shown once when the user gives NO usable date at all ("no idea yet"). We can't
+// store null (it breaks every downstream date calc + the itinerary view), so we
+// nudge for a rough timeframe and pick a date from it. If they still give
+// nothing, the handler falls back to starting today. Same `key` as
+// TRIP_DATE_QUESTION so the answer routes back through the trip_date branch.
+export const TRIP_DATE_CLARIFY_QUESTION: Question = {
+  key: 'trip_date',
+  kind: 'text',
+  label:
+    "No worries if it's not locked in — roughly what time of year are you thinking? Even \"next summer\" or \"around Christmas\" works, and I'll pencil in a date you can refine later.",
+  placeholder: 'e.g. next summer, around Christmas, early autumn',
 };
 
 const UNITS_PREF_KEY = 'units_pref';
@@ -318,6 +332,20 @@ export async function getOnboardingSnapshot(
   const totalSteps = preVehicleSteps + vehicleSteps.length;
 
   if (state === 'trip_date') {
+    // If we've already nudged for a rough timeframe (the user first answered
+    // "no idea"), keep showing that clarifying question on reload rather than
+    // the original prompt.
+    const clarifyAsked = (await loadAskedLabels(tripId)).has(
+      TRIP_DATE_CLARIFY_QUESTION.label,
+    );
+    if (clarifyAsked) {
+      return {
+        state: 'trip_date',
+        question: TRIP_DATE_CLARIFY_QUESTION,
+        vehicles: [],
+        progress: { current: 1, total: totalSteps },
+      };
+    }
     // If the user already mentioned a date in their trip description, prefill it
     // so confirming is one keystroke instead of retyping. They can still edit.
     const extracted = extractDateFromText(trip.pendingIntent ?? '');
@@ -465,6 +493,12 @@ export interface SubmitAnswerResult {
   didHandoff: boolean;
   /** The stored trip intent to send to Penny when onboarding is done. */
   tripIntent?: string;
+  /**
+   * Deterministic one-line acknowledgment for the client to render as a Penny
+   * bubble (e.g. the trip_date step confirming the date, or telling the user a
+   * placeholder was used). Composed by the form, NOT the LLM.
+   */
+  note?: string;
 }
 
 export async function submitAnswer(
@@ -498,12 +532,47 @@ export async function submitAnswer(
   if (state === 'trip_date' && input.questionKey === 'trip_date') {
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Please enter a start date.');
-    const parsed = tryParseToISO(text);
-    if (!parsed) {
-      throw new Error(
-        "Hmm, I couldn't pin that to a specific day. Try something like \"November 1st\", \"next Saturday\", or \"2026-06-03\".",
+    // Deterministic parse first; the LLM converts the rest to a real day —
+    // pinning a specific day, or picking a representative day inside a vague
+    // timeframe ("this summer", assumed). iso is null ONLY when there's no
+    // temporal signal at all ("no idea yet").
+    const clarifyAsked = (await loadAskedLabels(tripId)).has(
+      TRIP_DATE_CLARIFY_QUESTION.label,
+    );
+    // Record the answer under whichever question the user was actually shown.
+    const askedLabel = clarifyAsked
+      ? TRIP_DATE_CLARIFY_QUESTION.label
+      : TRIP_DATE_QUESTION.label;
+    const { iso, assumed } = await resolveStartDate(text, { userId, tripId });
+
+    // No usable date AND we haven't nudged yet → ask ONE clarifying question and
+    // stay on the step. We never persist null; if they still give nothing next
+    // time, the branch below falls back to starting today.
+    if (iso === null && !clarifyAsked) {
+      await writeQA(tripId, askedLabel, text);
+      await addChatMessage(
+        tripId,
+        'assistant',
+        TRIP_DATE_CLARIFY_QUESTION.label,
+        null,
+        'form_question',
       );
+      return {
+        next: {
+          state: 'trip_date',
+          question: TRIP_DATE_CLARIFY_QUESTION,
+          vehicles: [],
+          progress: null,
+        },
+        answerLabel: text,
+        didHandoff: false,
+      };
     }
+
+    // From here we always have a date: the resolved one, or — when the user
+    // still gave no signal after the nudge — today as a last resort. NEVER null.
+    const noSignal = iso === null;
+    const finalIso = iso ?? todayISO();
     const nextState = await resolvePostIntentState(userId);
     await db
       .update(trips)
@@ -511,23 +580,48 @@ export async function submitAnswer(
         // Keep the user's original phrasing in the free-text column, store the
         // machine date in start_date_parsed (the invariant the app relies on).
         startDate: text,
-        startDateParsed: parsed,
+        startDateParsed: finalIso,
         onboardingState: nextState,
         updatedAt: new Date(),
       })
       .where(eq(trips.id, tripId));
-    await writeQA(tripId, TRIP_DATE_QUESTION.label, parsed);
+    // The form answer bubble shows what the user actually typed; the
+    // acknowledgment below carries the resolved date. When we'd already shown
+    // the clarify question, its row was persisted when we asked it — so just
+    // record the answer rather than writing the question again (avoids a dupe).
+    if (clarifyAsked) {
+      await addChatMessage(tripId, 'user', text, null, 'form_answer');
+    } else {
+      await writeQA(tripId, askedLabel, text);
+    }
+
+    // Deterministic acknowledgment — this is the JS form talking, not Penny's
+    // LLM. Three cases: confirmed exact date, assumed-from-timeframe, or the
+    // "still no idea → start today" fallback.
+    const unitsForFmt =
+      (await getRawUnitsPref(userId)) != null
+        ? await getUnitsPref(userId)
+        : 'metric';
+    const formatted = formatDate(parseISODate(finalIso), unitsForFmt);
+    const note = noSignal
+      ? `No worries — I'll start you off today. Just tell me your real start date whenever you've got it and I'll shift the whole plan.`
+      : assumed
+        ? `No problem — I'll pencil in ${formatted} for now. Just tell me your real start date whenever you've got it and I'll shift the plan.`
+        : `Great — ${formatted} it is.`;
+    await addChatMessage(tripId, 'assistant', note, null, 'ai');
+
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // A returning user with units + vehicle already set jumps straight to
     // 'done' — complete the handoff so the client fires the stored intent at
     // Penny instead of stalling on a finished wizard.
     if (afterSnapshot.state === 'done') {
-      return completeOnboarding(tripId);
+      return { ...(await completeOnboarding(tripId)), note };
     }
     return {
       next: afterSnapshot,
-      answerLabel: parsed,
+      answerLabel: text,
       didHandoff: false,
+      note,
     };
   }
 
