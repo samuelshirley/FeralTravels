@@ -158,7 +158,7 @@ describe('StopsSection (refactored)', () => {
     expect(screen.getByText('1 DISMISSED')).toBeInTheDocument();
   });
 
-  it('shows Penny prompt when not readonly', () => {
+  it('shows a remove button for each active stop when not readonly', () => {
     render(
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
@@ -168,10 +168,10 @@ describe('StopsSection (refactored)', () => {
         initialStops={[mockFuelStop]}
       />
     );
-    expect(screen.getByText('Ask Penny for fuel, or to add a place you want to visit')).toBeInTheDocument();
+    expect(screen.getByLabelText(/remove repsol burgos norte/i)).toBeInTheDocument();
   });
 
-  it('hides Penny prompt when readonly', () => {
+  it('hides remove buttons when readonly', () => {
     render(
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
@@ -182,7 +182,7 @@ describe('StopsSection (refactored)', () => {
         readonly
       />
     );
-    expect(screen.queryByText('Ask Penny for fuel, or to add a place you want to visit')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/remove repsol burgos norte/i)).not.toBeInTheDocument();
   });
 
   it('renders paste GPS section when not readonly', () => {

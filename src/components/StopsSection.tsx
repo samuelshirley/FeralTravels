@@ -72,6 +72,7 @@ export default function StopsSection({
     activeStops,
     dismissedStops,
     syncInitialStops,
+    remove,
     pasteValue,
     setPasteValue,
     pasteBusy,
@@ -219,22 +220,55 @@ export default function StopsSection({
 
         {/* Stops (fuel + user-added) */}
         {sortedStops.map((stop) => (
-          <div key={stop.id}>
-            <StopCard
-              stopType={stop.stop_type}
-              name={stop.name}
-              distanceFromStartKm={stop.distance_from_start_km}
-              photos={photosMap.get(stop.id.toString()) ?? []}
-              photosLoading={false}
-              googleMapsUri={
-                stop.lat != null && stop.lng != null
-                  ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                  : null
-              }
-              lat={stop.lat}
-              lng={stop.lng}
-              loading={false}
-            />
+          <div
+            key={stop.id}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <StopCard
+                stopType={stop.stop_type}
+                name={stop.name}
+                distanceFromStartKm={stop.distance_from_start_km}
+                photos={photosMap.get(stop.id.toString()) ?? []}
+                photosLoading={false}
+                googleMapsUri={
+                  stop.lat != null && stop.lng != null
+                    ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
+                    : null
+                }
+                lat={stop.lat}
+                lng={stop.lng}
+                loading={false}
+              />
+            </div>
+            {!readonly && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  remove(stop.id);
+                }}
+                aria-label={`Remove ${stop.name}`}
+                title="Remove this stop"
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  marginBottom: 6,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 16,
+                  lineHeight: 1,
+                  background: 'transparent',
+                  border: '1px solid var(--tp-border)',
+                  borderRadius: 6,
+                  color: 'var(--tp-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
 
@@ -281,20 +315,6 @@ export default function StopsSection({
           </details>
         )}
 
-        {/* Penny prompt for additional stops */}
-        {!readonly && (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 11,
-              color: 'var(--tp-muted)',
-              textAlign: 'center',
-              lineHeight: 1.5,
-            }}
-          >
-            Ask Penny for fuel, or to add a place you want to visit
-          </div>
-        )}
       </div>
 
       {/* Paste GPS (kept for power users) */}
