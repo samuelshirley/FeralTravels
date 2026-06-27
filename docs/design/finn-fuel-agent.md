@@ -347,4 +347,5 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 3. [ ] **Phase 0 cutover (active):** pure greedy multi-stop planner in `src/lib/finn/`; rewire `planFuelStopsForLeg` to OSM+Finn behind the existing seam; **delete `fuelPlaces.ts` + the Google station path** so there is exactly one planner.
 4. [ ] Verify no remaining reads of Google `place_id`/`googleMapsUri` assume Google identity after the OSM swap (UI "open in Maps" link rebuilt from lat/lng).
 5. [ ] Schema migration: `fuel_plan_hash`, `fuel_planned_at`, `start_fuel_fraction`.
-6. [ ] Phase 1: Tankerkönig provider + live Google `fuelOptions` fallback + price overlay + has-price preference in scoring.
+6. [x] Phase 1: `src/lib/fuelPricing/` (tri-state coverage + coordinator), Tankerkönig (DE) + Google `fuelOptions` providers, wired into `planFuelStopsForLeg` (bulk pricing → cheapest-priced preference; finalist tri-state persisted on `stops`, migration 0016), `StopCard` display, `vehicles.fuel_type` (default diesel). Tests in `lib/fuelPricing/*`.
+7. [ ] Phase 2: FR/ES/IT feed adapters (same interface; add to `FEED_COUNTRIES`); fuel-type onboarding question + Settings select; cheap price-refresh path; `fuel_plan_hash`/`start_fuel_fraction`.

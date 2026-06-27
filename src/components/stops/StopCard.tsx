@@ -1,6 +1,24 @@
 'use client';
 
-import type { StopType } from '@/types/trip';
+import type { StopType, StopPriceState } from '@/types/trip';
+
+const CURRENCY_SYMBOL: Record<string, string> = { EUR: '€', USD: '$', GBP: '£' };
+
+function formatPrice(amount: number, currency: string): string {
+  const symbol = CURRENCY_SYMBOL[currency] ?? `${currency} `;
+  return `${symbol}${amount.toFixed(2)}/L`;
+}
+
+function relativeAsOf(iso: string): string | null {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
 
 /** A single photo reference for display in a StopCard. */
 export interface StopPhoto {
@@ -22,6 +40,39 @@ export interface StopCardProps {
   photosLoading?: boolean;
   /** When true, dims the card and shows a spinner overlay. */
   loading?: boolean;
+  /** Finn fuel price (tri-state). Null/omitted → no price line shown. */
+  priceState?: StopPriceState | null;
+  pricePerLitre?: number | null;
+  priceCurrency?: string | null;
+  priceCountry?: string | null;
+  priceAsOf?: string | null;
+}
+
+/** Render the tri-state price line, or null when there's nothing to show. */
+function priceLine(props: {
+  priceState?: StopPriceState | null;
+  pricePerLitre?: number | null;
+  priceCurrency?: string | null;
+  priceCountry?: string | null;
+  priceAsOf?: string | null;
+}): { text: string; muted: boolean } | null {
+  switch (props.priceState) {
+    case 'priced': {
+      if (props.pricePerLitre == null) return null;
+      const main = formatPrice(props.pricePerLitre, props.priceCurrency ?? 'EUR');
+      const ago = props.priceAsOf ? relativeAsOf(props.priceAsOf) : null;
+      return { text: ago ? `${main} · ${ago}` : main, muted: false };
+    }
+    case 'unknown':
+      return { text: 'Price unknown', muted: true };
+    case 'unavailable_in_country':
+      return {
+        text: `Price unavailable in ${props.priceCountry ?? 'this area'}`,
+        muted: true,
+      };
+    default:
+      return null;
+  }
 }
 
 /**
@@ -66,8 +117,14 @@ export default function StopCard({
   lng,
   photosLoading = false,
   loading = false,
+  priceState,
+  pricePerLitre,
+  priceCurrency,
+  priceCountry,
+  priceAsOf,
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
+  const price = priceLine({ priceState, pricePerLitre, priceCurrency, priceCountry, priceAsOf });
 
   const href =
     googleMapsUri ??
@@ -132,6 +189,18 @@ export default function StopCard({
               style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 1 }}
             >
               {Math.round(distanceFromStartKm)} km from start
+            </div>
+          )}
+          {price && (
+            <div
+              style={{
+                fontSize: 11,
+                marginTop: 1,
+                color: price.muted ? 'var(--tp-subtle)' : 'var(--tp-gold)',
+                fontWeight: price.muted ? 400 : 600,
+              }}
+            >
+              {price.text}
             </div>
           )}
         </div>

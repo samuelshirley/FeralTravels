@@ -10,7 +10,13 @@ export interface VehicleInput {
   name: string;
   comfortable_range_km?: number | null;
   hard_max_range_km?: number | null;
+  fuel_type?: 'diesel' | 'petrol' | null;
   is_default?: boolean;
+}
+
+/** Normalize a stored fuel_type to the two grades Finn prices; null stays null. */
+function coerceFuelType(v: string | null): 'diesel' | 'petrol' | null {
+  return v === 'diesel' || v === 'petrol' ? v : null;
 }
 
 function vehicleApi(r: VehicleRow) {
@@ -21,6 +27,7 @@ function vehicleApi(r: VehicleRow) {
     is_default: r.isDefault,
     comfortable_range_km: coerceOptionalInt(r.comfortableRangeKm),
     hard_max_range_km: coerceOptionalInt(r.hardMaxRangeKm),
+    fuel_type: coerceFuelType(r.fuelType),
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -78,6 +85,7 @@ function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   if (input.name !== undefined) map.name = input.name;
   if (input.comfortable_range_km !== undefined) map.comfortableRangeKm = input.comfortable_range_km;
   if (input.hard_max_range_km !== undefined) map.hardMaxRangeKm = input.hard_max_range_km;
+  if (input.fuel_type !== undefined) map.fuelType = input.fuel_type;
   return map;
 }
 

@@ -374,6 +374,9 @@ export type StopSource =
   | 'manual';
 export type FuelType = 'diesel' | 'petrol' | 'premium' | 'lpg';
 
+/** Tri-state fuel price outcome for a stop — never a silent null. */
+export type StopPriceState = 'priced' | 'unknown' | 'unavailable_in_country';
+
 export interface StopAlternative {
   name: string;
   lat: number;
@@ -413,6 +416,20 @@ export interface Stop {
   google_maps_uri: string | null;
   /** Photos from Places API — persisted at planning time to avoid API calls during viewing. */
   photos: StopPhoto[] | null;
+  /**
+   * Finn fuel price (tri-state; never silently null once pricing has run):
+   *  'priced' → price_per_litre + price_currency + price_as_of are set
+   *  'unknown' → country covered, this station has no price
+   *  'unavailable_in_country' → no price source for price_country
+   * Null only when pricing hasn't run / isn't configured. See finn-fuel-agent.md.
+   */
+  price_state: StopPriceState | null;
+  price_per_litre: number | null;
+  price_currency: string | null;
+  price_fuel_type: string | null;
+  price_country: string | null;
+  price_source: string | null;
+  price_as_of: string | null;
   created_at: string;
   updated_at: string;
 }

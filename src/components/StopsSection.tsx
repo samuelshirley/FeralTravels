@@ -238,6 +238,11 @@ export default function StopsSection({
                 }
                 lat={stop.lat}
                 lng={stop.lng}
+                priceState={stop.price_state}
+                pricePerLitre={stop.price_per_litre}
+                priceCurrency={stop.price_currency}
+                priceCountry={stop.price_country}
+                priceAsOf={stop.price_as_of}
                 loading={false}
               />
             </div>

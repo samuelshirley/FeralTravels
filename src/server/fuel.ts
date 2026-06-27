@@ -27,6 +27,14 @@ import {
   cumulativeDistancesKm,
   type PlacementCandidate,
 } from '@/lib/finn';
+import {
+  resolveStationPrices,
+  NO_PRICE_COUNTRIES,
+  type FuelType,
+  type PriceResult,
+  type PriceableStation,
+} from '@/lib/fuelPricing';
+import { buildBulkPriceProviders, buildPriceProviders } from '@/server/fuelPricingProviders';
 
 /**
  * Auto fuel-stop planner — **Finn** (OSM + deterministic placement).
@@ -113,6 +121,41 @@ function mapsCoordUrl(lat: number, lng: number): string {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }
 
+/** Map a tri-state PriceResult to the stop row's price columns. */
+function priceColumns(pr: PriceResult | undefined) {
+  if (pr?.state === 'priced') {
+    return {
+      priceState: 'priced',
+      pricePerLitre: pr.price.amount,
+      priceCurrency: pr.price.currency,
+      priceFuelType: pr.price.fuelType,
+      priceCountry: null,
+      priceSource: pr.price.source,
+      priceAsOf: new Date(pr.price.asOf),
+    };
+  }
+  if (pr?.state === 'unavailable_in_country') {
+    return {
+      priceState: 'unavailable_in_country',
+      pricePerLitre: null,
+      priceCurrency: null,
+      priceFuelType: null,
+      priceCountry: pr.country,
+      priceSource: null,
+      priceAsOf: null,
+    };
+  }
+  return {
+    priceState: pr?.state === 'unknown' ? 'unknown' : null,
+    pricePerLitre: null,
+    priceCurrency: null,
+    priceFuelType: null,
+    priceCountry: null,
+    priceSource: null,
+    priceAsOf: null,
+  };
+}
+
 /**
  * Main entry point — idempotent, safe to call repeatedly. Caller should already
  * have authorized `userId` against the leg's trip.
@@ -163,6 +206,9 @@ export async function planFuelStopsForLeg(
   // comfortable range when the user gave no separate ceiling (the invariant
   // hard_max ≥ comfortable is enforced at every write path).
   const hardMax = Math.max(range, vehicle.hard_max_range_km ?? range);
+  // Fuel type drives which per-fuel price we fetch. Defaults to diesel (the
+  // overlander norm) until the driver sets it; see vehicles.fuel_type.
+  const fuelType: FuelType = vehicle.fuel_type === 'petrol' ? 'petrol' : 'diesel';
 
   // 3. OSRM route geometry (free, no key). We need the full polyline to project
   //    stations onto it.
@@ -226,9 +272,33 @@ export async function planFuelStopsForLeg(
       id: st.osmId,
       alongKm: proj.alongKm,
       detourKm: proj.perpKm,
-      // Pricing layer not built yet → every candidate is price-unknown.
-      pricePerLitre: null,
+      pricePerLitre: null, // filled below by the bulk pricing pass when available
     });
+  }
+
+  // 4b. Price candidates for selection — BULK providers only (feeds are cheap
+  //     enough to price every candidate; per-station Google is reserved for
+  //     finalist display). Feeds `pricePerLitre` into the planner so it can
+  //     prefer the cheapest in-range station. No providers configured / no key
+  //     → no prices → selection falls back to distance (graceful).
+  const bulkProviders = buildBulkPriceProviders();
+  if (bulkProviders.length > 0 && candidates.length > 0) {
+    const priceable: PriceableStation[] = candidates.map((c) => {
+      const st = byId.get(c.id)!;
+      return {
+        id: c.id,
+        lat: st.lat,
+        lng: st.lng,
+        name: st.name,
+        brand: st.brand,
+        country: st.tags['addr:country'] ?? null,
+      };
+    });
+    const selectionPrices = await resolveStationPrices(priceable, fuelType, bulkProviders);
+    for (const c of candidates) {
+      const pr = selectionPrices.get(c.id);
+      if (pr?.state === 'priced') c.pricePerLitre = pr.price.amount;
+    }
   }
 
   // 5. Deterministic greedy placement.
@@ -252,6 +322,39 @@ export async function planFuelStopsForLeg(
   }
 
   const chosen = plan.stops.slice(0, MAX_STOPS_PER_LEG);
+
+  // 5b. Authoritative tri-state price for each chosen finalist (display +
+  //     persistence). Runs ALL providers — bulk re-checks the few finalists,
+  //     per-station Google fills gaps — EXCEPT a known no-price country (the
+  //     Nordics) resolves to `unavailable_in_country` upfront, never burning a
+  //     Google call there. No providers configured → empty map → price columns
+  //     stay null (no price UI).
+  const allProviders = buildPriceProviders();
+  const finalPrices = new Map<string, PriceResult>();
+  if (allProviders.length > 0 && chosen.length > 0) {
+    const finalists: PriceableStation[] = [];
+    for (const placed of chosen) {
+      const st = byId.get(placed.candidate.id);
+      if (!st) continue;
+      const country = st.tags['addr:country'] ?? null;
+      if (country && NO_PRICE_COUNTRIES.has(country)) {
+        finalPrices.set(placed.candidate.id, { state: 'unavailable_in_country', country });
+        continue;
+      }
+      finalists.push({
+        id: placed.candidate.id,
+        lat: st.lat,
+        lng: st.lng,
+        name: st.name,
+        brand: st.brand,
+        country,
+      });
+    }
+    if (finalists.length > 0) {
+      const resolved = await resolveStationPrices(finalists, fuelType, allProviders);
+      for (const [id, pr] of resolved) finalPrices.set(id, pr);
+    }
+  }
 
   // 6. Replace previous auto fuel stops. Transactional delete+insert so the UI
   //    never sees a half-applied plan. A station the user promoted to 'selected'
@@ -296,6 +399,7 @@ export async function planFuelStopsForLeg(
           ? `Top up here — ${placed.reason}.`
           : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
         alternatives: null,
+        ...priceColumns(finalPrices.get(placed.candidate.id)),
       });
     }
   });
@@ -445,6 +549,7 @@ async function resolveVehicleForTrip(
 ): Promise<{
   comfortable_range_km: number | null;
   hard_max_range_km: number | null;
+  fuel_type: 'diesel' | 'petrol' | null;
 } | null> {
   if (tripId != null) {
     // Look up the trip's vehicle_id without re-querying trips directly

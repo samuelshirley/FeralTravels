@@ -31,6 +31,7 @@ const patchSchema = z.object({
     .min(FUEL_STOP_SPACING_KM_MIN)
     .max(FUEL_STOP_SPACING_KM_MAX)
     .nullish(),
+  fuel_type: z.enum(['diesel', 'petrol']).nullish(),
   is_default: z.boolean().optional(),
 });
 

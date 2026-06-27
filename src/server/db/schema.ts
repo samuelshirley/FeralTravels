@@ -161,6 +161,13 @@ export const vehicles = pgTable(
      */
     hardMaxRangeKm: integer('hard_max_range_km'),
 
+    /**
+     * Vehicle fuel — 'diesel' | 'petrol'. Drives which per-fuel price Finn
+     * fetches from regional feeds / Google fuelOptions. Defaults to 'diesel'
+     * (overlander norm) when null; editable in Settings.
+     */
+    fuelType: text('fuel_type'),
+
     // MVP vehicle profile is just name + comfortable/hard-max range. Travel
     // style, driving-cadence (max_consecutive_drive_days / rest_days_after_driving)
     // and dump-station tracking were all removed in the onboarding teardown; the
@@ -486,6 +493,21 @@ export const stops = pgTable(
     googleMapsUri: text('google_maps_uri'),
     /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
     photos: jsonb('photos').$type<StopPhoto[]>(),
+    /**
+     * Finn fuel price (tri-state, never silently null). `price_state` is the
+     * source of truth for display:
+     *   'priced'                 → price_per_litre + currency + as_of are set
+     *   'unknown'                → country covered, this station has no price
+     *   'unavailable_in_country' → no price source for price_country
+     * See docs/design/finn-fuel-agent.md → "Price availability model".
+     */
+    priceState: text('price_state'),
+    pricePerLitre: doublePrecision('price_per_litre'),
+    priceCurrency: text('price_currency'),
+    priceFuelType: text('price_fuel_type'),
+    priceCountry: text('price_country'),
+    priceSource: text('price_source'),
+    priceAsOf: timestamp('price_as_of'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

@@ -32,6 +32,9 @@ const dataSchema = z.object({
     .min(FUEL_STOP_SPACING_KM_MIN)
     .max(FUEL_STOP_SPACING_KM_MAX)
     .nullish(),
+
+  /** Fuel the vehicle burns — drives which price Finn fetches. diesel | petrol. */
+  fuel_type: z.enum(['diesel', 'petrol']).nullish(),
 });
 
 const baseSchema = z.object({
@@ -106,6 +109,12 @@ their planning request again so the updated values take effect.
             maximum: FUEL_STOP_SPACING_KM_MAX,
             description:
               'Hard ceiling (km) the user will never be routed past, for any reason. Must be ≥ comfortable_range_km. Set when the user says how far they would stretch in a pinch.',
+          },
+          fuel_type: {
+            type: 'string',
+            enum: ['diesel', 'petrol'],
+            description:
+              "The fuel the vehicle burns. Needed to show the correct fuel price. Set when the user says e.g. \"it's a diesel\" / \"runs on petrol\". Defaults to diesel if never set.",
           },
         },
       },
