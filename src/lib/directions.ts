@@ -1,4 +1,14 @@
-// OSRM-based directions (free, no API key needed)
+// OSRM-based directions (free, no API key needed).
+//
+// Defaults to the public demo server, which is fair-use only and not for a
+// production app backend. Set OSRM_ENDPOINT to a self-hosted / paid OSRM base
+// URL (e.g. https://osrm.yourhost.com) before driving real traffic. See
+// docs/design/finn-fuel-agent.md → "harder / to watch".
+export const DEFAULT_OSRM_ENDPOINT = 'https://router.project-osrm.org';
+
+function osrmBase(): string {
+  return (process.env.OSRM_ENDPOINT?.trim() || DEFAULT_OSRM_ENDPOINT).replace(/\/+$/, '');
+}
 
 interface OSRMRoute {
   distance: number; // meters
@@ -19,7 +29,7 @@ export async function getDirections(
   endLng: number
 ): Promise<DirectionsResult | null> {
   try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=polyline`;
+    const url = `${osrmBase()}/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=polyline`;
     const res = await fetch(url);
     const data = await res.json();
 

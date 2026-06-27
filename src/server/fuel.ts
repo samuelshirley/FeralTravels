@@ -251,7 +251,13 @@ export async function planFuelStopsForLeg(
   // 4. OSM corridor → eligibility filter → route projection → candidates.
   let corridor: OsmFuelStation[];
   try {
-    corridor = await fetchFuelCorridor(polyline, { bufferMeters: CORRIDOR_BUFFER_METERS });
+    corridor = await fetchFuelCorridor(
+      polyline,
+      { bufferMeters: CORRIDOR_BUFFER_METERS },
+      // Point at a self-hosted / paid Overpass before scale; falls back to the
+      // public instance when unset (fair-use only — see finn-fuel-agent.md).
+      { endpoint: process.env.OVERPASS_ENDPOINT?.trim() || undefined }
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const reason = `Couldn't reach the OSM station service (${msg}). This is usually transient — try again shortly.`;
