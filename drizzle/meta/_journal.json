@@ -134,6 +134,13 @@
       "when": 1782817934664,
       "tag": "0018_stiff_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1782821804203,
+      "tag": "0019_certain_vulcan",
+      "breakpoints": true
     }
   ]
 }

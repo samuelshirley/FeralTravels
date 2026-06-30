@@ -729,5 +729,14 @@ export const pennyTurns = pgTable(
     keyIdx: uniqueIndex('penny_turns_idempotency_key_idx').on(t.idempotencyKey),
     tripIdx: index('penny_turns_trip_idx').on(t.tripId),
     tripStatusIdx: index('penny_turns_trip_status_idx').on(t.tripId, t.status),
+    // At most ONE `running` turn per trip — the DB-enforced execution slot.
+    // Promoting a queued turn to `running` while another is running raises a
+    // unique violation, which the repo catches to keep the loser queued. This
+    // closes the check-then-insert TOCTOU (two distinct concurrent sends can no
+    // longer both start a replan on one trip). Partial: queued/done/error rows
+    // are unconstrained, so a backlog of `queued` turns is still allowed.
+    oneRunningPerTripIdx: uniqueIndex('penny_turns_one_running_per_trip_idx')
+      .on(t.tripId)
+      .where(sql`${t.status} = 'running'`),
   })
 );

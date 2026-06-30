@@ -1,6 +1,10 @@
 # Penny turn resilience — the "Something went wrong. Please try again." bug
 
-> Status: **#1 (diagnostics) built. #2–#4 designed, awaiting sign-off before the schema migration.**
+> Status: **BUILT 2026-06-30 — #1 (diagnostics) + #2–#4 fully wired.** Route lifecycle
+> (`runTurnWork`/`drainQueuedTurns` in `api/trip/replan`), reconcile endpoint
+> (`GET /api/trips/[id]/turns`), and client heal/poll (`ChatPanel.tsx`,
+> `lib/penny/applyOutcome.ts`) all landed. Queued turns drain in-request rather than
+> via `unstable_after` (unavailable in Next 14.2.35). See CLAUDE.md for the wired summary.
 > Owner context: raised by Sam 2026-06-30 from a mobile screenshot during a long
 > Trondheim→Tromsø replan. The error showed, then "resolved itself" on reopen.
 

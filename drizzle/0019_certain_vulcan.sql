@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "penny_turns_one_running_per_trip_idx" ON "penny_turns" USING btree ("trip_id") WHERE "penny_turns"."status" = 'running';

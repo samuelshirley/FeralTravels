@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { pennyTurns, type PennyTurnStatus } from '@/server/db/schema';
 
@@ -38,9 +38,6 @@ function toTurn(r: typeof pennyTurns.$inferSelect): PennyTurn {
   };
 }
 
-/** Statuses that mean a turn is occupying the trip's single execution slot. */
-const ACTIVE_STATUSES: PennyTurnStatus[] = ['running', 'queued'];
-
 /** Look up a turn by its client idempotency key (null if unknown). */
 export async function getTurnByKey(idempotencyKey: string): Promise<PennyTurn | null> {
   const [row] = await db
@@ -51,15 +48,33 @@ export async function getTurnByKey(idempotencyKey: string): Promise<PennyTurn | 
   return row ? toTurn(row) : null;
 }
 
-/** The oldest still-active (`running` then `queued`) turn for a trip, if any. */
-export async function getActiveTurnForTrip(tripId: string): Promise<PennyTurn | null> {
-  const [row] = await db
-    .select()
-    .from(pennyTurns)
-    .where(and(eq(pennyTurns.tripId, tripId), inArray(pennyTurns.status, ACTIVE_STATUSES)))
-    .orderBy(asc(pennyTurns.createdAt))
-    .limit(1);
-  return row ? toTurn(row) : null;
+/** Postgres unique-violation SQLSTATE — raised when a 2nd turn races for the
+ * trip's single running slot (partial unique index). */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { code?: string }).code === '23505';
+}
+
+/**
+ * Claim the trip's single execution slot by promoting a specific `queued` turn
+ * to `running`. The partial unique index `penny_turns_one_running_per_trip_idx`
+ * makes this ATOMIC and race-proof: if another turn already holds the slot, the
+ * UPDATE raises a unique violation, which we swallow and return null (the turn
+ * stays queued, to be drained later). The status guard also returns null if the
+ * turn isn't `queued` (already claimed/done). This is what closes the
+ * check-then-insert TOCTOU — two distinct concurrent sends can't both start.
+ */
+export async function promoteTurnToRunning(id: string): Promise<PennyTurn | null> {
+  try {
+    const claimed = await db
+      .update(pennyTurns)
+      .set({ status: 'running', updatedAt: new Date() })
+      .where(and(eq(pennyTurns.id, id), eq(pennyTurns.status, 'queued')))
+      .returning();
+    return claimed[0] ? toTurn(claimed[0]) : null;
+  } catch (e) {
+    if (isUniqueViolation(e)) return null;
+    throw e;
+  }
 }
 
 /** Most recent turn for a trip (used by the client to reconcile on reopen). */
@@ -74,10 +89,13 @@ export async function getLatestTurnForTrip(tripId: string): Promise<PennyTurn | 
 }
 
 /**
- * Create a turn, deduped on `idempotency_key`. If the key already exists (a retry
- * of the very same send), the existing row is returned untouched — never a second
- * concurrent replan. Caller decides `status`: `running` when it will execute now,
- * `queued` when another turn is already active on the trip.
+ * Create a turn (always `queued`), deduped on `idempotency_key`. If the key
+ * already exists (a retry of the very same send), the existing row is returned
+ * untouched — never a second replan for the same send. The caller then tries to
+ * `promoteTurnToRunning` to claim the trip's single execution slot; if that
+ * fails the turn stays queued and is drained later. Inserting as `queued`
+ * (never `running`) keeps the create off the single-running partial index, so
+ * only the explicit promotion competes for the slot.
  */
 export async function createTurn(input: {
   tripId: string;
@@ -85,7 +103,6 @@ export async function createTurn(input: {
   idempotencyKey: string;
   userMessage: string;
   images?: PennyTurnImage[] | null;
-  status: Extract<PennyTurnStatus, 'running' | 'queued'>;
 }): Promise<{ turn: PennyTurn; created: boolean }> {
   const existing = await getTurnByKey(input.idempotencyKey);
   if (existing) return { turn: existing, created: false };
@@ -98,7 +115,7 @@ export async function createTurn(input: {
       idempotencyKey: input.idempotencyKey,
       userMessage: input.userMessage,
       images: input.images ?? null,
-      status: input.status,
+      status: 'queued',
     })
     // Unique index on idempotency_key: if a racing request inserted first, do
     // nothing and we re-read below — guarantees exactly one row per key.
@@ -136,10 +153,10 @@ export async function markTurnError(id: string, errorMessage: string): Promise<v
 }
 
 /**
- * Atomically claim the oldest `queued` turn for a trip, flipping it to `running`.
- * Returns the claimed turn, or null if none is queued. The status guard in the
- * WHERE makes the claim safe under concurrent drains: only one writer wins the
- * flip, the loser sees no row returned.
+ * Claim the oldest `queued` turn for a trip, flipping it to `running`. Returns
+ * the claimed turn, or null if none is queued (or another writer won the slot).
+ * Promotion goes through `promoteTurnToRunning`, so the single-running partial
+ * index keeps concurrent drains from ever putting two turns running at once.
  */
 export async function claimNextQueuedTurn(tripId: string): Promise<PennyTurn | null> {
   const [candidate] = await db
@@ -149,12 +166,5 @@ export async function claimNextQueuedTurn(tripId: string): Promise<PennyTurn | n
     .orderBy(asc(pennyTurns.createdAt))
     .limit(1);
   if (!candidate) return null;
-
-  const claimed = await db
-    .update(pennyTurns)
-    .set({ status: 'running', updatedAt: new Date() })
-    .where(and(eq(pennyTurns.id, candidate.id), eq(pennyTurns.status, 'queued')))
-    .returning();
-
-  return claimed[0] ? toTurn(claimed[0]) : null;
+  return promoteTurnToRunning(candidate.id);
 }

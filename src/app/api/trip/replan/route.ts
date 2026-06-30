@@ -17,6 +17,15 @@ import {
   NotFoundError,
 } from '@/server/auth/guards';
 import { addChatMessage } from '@/server/repos/chat';
+import {
+  createTurn,
+  getTurnByKey,
+  promoteTurnToRunning,
+  claimNextQueuedTurn,
+  markTurnDone,
+  markTurnError,
+  type PennyTurnImage,
+} from '@/server/repos/pennyTurns';
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
@@ -197,6 +206,14 @@ const inputSchema = z.object({
     .array(z.object({ dataUrl: z.string(), mediaType: z.string() }))
     .optional()
     .default([]),
+  /**
+   * Client-generated stable id for THIS send (one per user action). It is the
+   * idempotency anchor for the durable `penny_turns` record: a retry or
+   * double-send carrying the same key returns the existing turn instead of
+   * spawning a second concurrent replan. Optional so older clients still work
+   * (the server mints one), but then idempotency degrades to best-effort.
+   */
+  idempotencyKey: z.string().min(8).max(100).optional(),
 });
 
 /**
@@ -291,16 +308,54 @@ export async function POST(req: Request) {
       }
     }
 
+    // Durable turn record — the idempotency + concurrency + re-attach anchor.
+    // See docs/design/penny-turn-resilience.md.
+    const idempotencyKey = body.idempotencyKey ?? crypto.randomUUID();
+    const turnImages: PennyTurnImage[] = images;
+
+    // Idempotent replay: this exact send was already accepted. Don't run it
+    // again — hand back the existing record so the client can apply its result
+    // (done/error) or keep polling until it lands (running/queued). This is the
+    // guard against a "Please try again" double-send spawning a second replan.
+    const existingTurn = await getTurnByKey(idempotencyKey);
+    if (existingTurn) {
+      return Response.json({ turn: existingTurn });
+    }
+
+    // Create the turn as `queued` (deduped on idempotency key). An identical
+    // concurrent send that lost the insert race comes back as a replay.
+    const { turn: queuedTurn, created } = await createTurn({
+      tripId,
+      userId,
+      idempotencyKey,
+      userMessage: message || '(image only)',
+      images: turnImages,
+    });
+    if (!created) {
+      return Response.json({ turn: queuedTurn });
+    }
+
+    // Persist the user's bubble now so it shows in chat order immediately,
+    // whether we run this turn now or queue it.
     await addChatMessage(tripId, 'user', message || '(image only)');
     userTurnSaved = true;
 
-    // Stream Penny's progress so the user sees each paragraph as it lands
-    // instead of the whole turn buffering for ~10-30s. Format is plain
-    // Server-Sent Events: each event is a single
-    // `data: <json>\n\n` frame. Final dispatch (DB writes, fuel replenish
-    // queue, etc.) runs after the model loop terminates and emits a
-    // synthetic `applied` event with the same shape the old JSON response
-    // used. See ChatPanel.sendChatMessage for the consumer.
+    // Claim the trip's single execution slot. The partial unique index
+    // (`penny_turns_one_running_per_trip_idx`) makes this ATOMIC: if another
+    // turn is already running, promotion returns null and this turn stays
+    // queued — the running request drains it when it finishes. Two distinct
+    // concurrent sends can never both start a replan on one trip.
+    const turn = await promoteTurnToRunning(queuedTurn.id);
+    if (!turn) {
+      return Response.json({ turn: queuedTurn });
+    }
+
+    // Running: stream Penny's progress so the user sees each paragraph as it
+    // lands instead of the whole turn buffering for ~10-30s. Format is plain
+    // Server-Sent Events: each event is a single `data: <json>\n\n` frame. The
+    // terminal `applied` event carries the same shape the client already
+    // parses. After this turn completes we drain any turns that queued behind
+    // it — still inside this alive request — before closing the stream.
     const encoder = new TextEncoder();
     let clientDisconnected = false;
     const stream = new ReadableStream<Uint8Array>({
@@ -318,44 +373,127 @@ export async function POST(req: Request) {
           }
         };
         try {
-          // Message lifecycle events for the chat UX. `received` fires
-          // right after the user message is persisted (≈ "delivered"),
-          // and `reading` fires before we call Claude (≈ "read / typing").
-          send({ kind: 'received' });
-          send({ kind: 'reading' });
+          // Execute THIS turn (streams to the live client), then drain any
+          // turns that queued behind it while it ran — all inside this
+          // still-alive request, so a queued turn completes even after the
+          // original client closes (the function isn't cancelled on disconnect:
+          // there's no vercel.json supportsCancellation flag).
+          await runTurnWork(
+            { turnId: turn.id, tripId, userId, message, images: turnImages },
+            send,
+          );
+          await drainQueuedTurns(tripId);
+        } catch (orchestrationErr) {
+          // Per-turn errors are handled inside runTurnWork / drainQueuedTurns
+          // (persisted bubble + markTurnError + an SSE `error` event). This
+          // guards only an unexpected orchestration throw so the stream still
+          // closes cleanly.
+          console.error('replan stream orchestration failed', orchestrationErr);
+        } finally {
+          try {
+            controller.close();
+          } catch {
+            // Already closed or client disconnected — safe to ignore
+          }
+        }
+      },
+    });
 
-          // Consume the model loop, returning the terminal ReplanResult. Raced
-          // against a wall-clock budget so a pathologically long turn surfaces a
-          // real "timed out" error instead of being silently killed by the
-          // platform mid-stream. The closure returns its result (rather than
-          // writing an outer `let`) so it stays correctly typed through the race.
-          const consume = async (): Promise<ReplanResult | null> => {
-            let result: ReplanResult | null = null;
-            for await (const ev of replanStream(message, tripId, images, userId)) {
-              if (ev.kind === 'done') {
-                result = ev.result;
-                continue;
-              }
-              send(ev satisfies ReplanEvent);
-            }
-            return result;
-          };
-          const final = await Promise.race([
-            consume(),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      'Penny timed out before finishing — the request was too complex to complete in time. Try breaking it into smaller steps.',
-                    ),
-                  ),
-                MODEL_LOOP_BUDGET_MS,
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        // Disable nginx/Vercel proxy buffering so events flush in real time
+        // instead of being held until the response completes.
+        'X-Accel-Buffering': 'no',
+        Connection: 'keep-alive',
+      },
+    });
+  } catch (err) {
+    if (userTurnSaved && tripIdForLog != null) {
+      await addChatMessage(
+        tripIdForLog,
+        'assistant',
+        userFacingError(err),
+        null
+      ).catch(() => {});
+    }
+    // Log fatal replan failures to usage_events so they show up in the admin
+    // Recent errors log. Per-action failures (add_leg etc) are already handled
+    // inline above with failedActions/failedCount.
+    await logUsageEvent({
+      userId: userIdForLog,
+      tripId: tripIdForLog,
+      provider: 'anthropic:replan',
+      requests: 1,
+      success: false,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    }).catch(() => {});
+    return errorResponse(err);
+  }
+}
+
+/**
+ * Execute one Penny replan turn: run the model loop, dispatch validated
+ * actions, persist Penny's reply, and record the durable outcome on the turn's
+ * `penny_turns` row (`done`/`error`). `send` streams SSE events to a live
+ * client for the foreground turn; for a queued turn drained in the background
+ * it's a no-op — the result is read back later via the reconcile endpoint.
+ *
+ * Self-contained error handling: any throw is caught here, persisted as a chat
+ * bubble (real message, survives reload), logged to usage_events, marked on the
+ * turn row, and emitted as an SSE `error`. This never rethrows.
+ */
+async function runTurnWork(
+  ctx: {
+    turnId: string;
+    tripId: string;
+    userId: string;
+    message: string;
+    images: PennyTurnImage[];
+  },
+  send: (e: Record<string, unknown>) => void
+): Promise<void> {
+  const { turnId, tripId, userId, message, images } = ctx;
+  try {
+    // Message lifecycle events for the chat UX. `received` fires
+    // right after the user message is persisted (≈ "delivered"),
+    // and `reading` fires before we call Claude (≈ "read / typing").
+    send({ kind: 'received' });
+    send({ kind: 'reading' });
+
+    // Consume the model loop, returning the terminal ReplanResult. Raced
+    // against a wall-clock budget so a pathologically long turn surfaces a
+    // real "timed out" error instead of being silently killed by the
+    // platform mid-stream. The closure returns its result (rather than
+    // writing an outer `let`) so it stays correctly typed through the race.
+    const consume = async (): Promise<ReplanResult | null> => {
+      let result: ReplanResult | null = null;
+      for await (const ev of replanStream(message, tripId, images, userId)) {
+        if (ev.kind === 'done') {
+          result = ev.result;
+          continue;
+        }
+        send(ev satisfies ReplanEvent);
+      }
+      return result;
+    };
+    const final = await Promise.race([
+      consume(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                'Penny timed out before finishing — the request was too complex to complete in time. Try breaking it into smaller steps.',
               ),
             ),
-          ]);
+          MODEL_LOOP_BUDGET_MS,
+        ),
+      ),
+    ]);
 
-          if (!final) throw new Error('replanStream finished without a result');
+    if (!final) throw new Error('replanStream finished without a result');
 
           if (final.truncated) {
             logUsageEvent({
@@ -625,8 +763,12 @@ export async function POST(req: Request) {
           // client doesn't need two parsers. `failedCount`/`failedActions`
           // remain the merged total (validation + persist) for ops/logging;
           // user-facing banners should use `persistFailed*` only.
-          send({
-            kind: 'applied',
+          // Terminal payload. Same shape the client already parses for the live
+          // stream AND the durable record it reads back on reconcile, so heal
+          // and live-apply share one code path. `failedCount`/`failedActions`
+          // stay the merged total (validation + persist) for ops/logging;
+          // user-facing banners use `persistFailed*` only.
+          const appliedPayload = {
             response: final.response,
             changes: changesEnvelope,
             appliedCount,
@@ -641,73 +783,78 @@ export async function POST(req: Request) {
             planSummary,
             retryCount: final.retryCount,
             truncated: final.truncated,
-          });
-        } catch (err) {
-          console.error('replan stream failed', err);
-          // Best-effort: surface a chat bubble so the user knows the turn
-          // failed — with the REAL error, not a generic line (so it survives a
-          // reload and the user can act on it). The outer try/catch above (for
-          // input parse errors etc.) does the same — this branch covers errors
-          // that surface AFTER the user message was already saved.
-          await addChatMessage(
-            tripId,
-            'assistant',
-            userFacingError(err),
-            null
-          ).catch(() => {});
-          await logUsageEvent({
-            userId,
-            tripId,
-            provider: 'anthropic:replan',
-            requests: 1,
-            success: false,
-            errorMessage: err instanceof Error ? err.message : String(err),
-          }).catch(() => {});
-          send({
-            kind: 'error',
-            message: err instanceof Error ? err.message : String(err),
-          });
-        } finally {
-          try {
-            controller.close();
-          } catch {
-            // Already closed or client disconnected — safe to ignore
-          }
-        }
-      },
-    });
+          };
+          send({ kind: 'applied', ...appliedPayload });
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        // Disable nginx/Vercel proxy buffering so events flush in real time
-        // instead of being held until the response completes.
-        'X-Accel-Buffering': 'no',
-        Connection: 'keep-alive',
-      },
-    });
+          // Durable success: record the outcome on the turn row so a client
+          // that dropped the stream (PWA backgrounded mid-turn) can re-attach
+          // and apply it — healing the false "Something went wrong" bubble —
+          // via the reconcile endpoint.
+          await markTurnDone(turnId, {
+            resultResponse: final.response,
+            resultMeta: appliedPayload,
+          });
   } catch (err) {
-    if (userTurnSaved && tripIdForLog != null) {
-      await addChatMessage(
-        tripIdForLog,
-        'assistant',
-        userFacingError(err),
-        null
-      ).catch(() => {});
-    }
-    // Log fatal replan failures to usage_events so they show up in the admin
-    // Recent errors log. Per-action failures (add_leg etc) are already handled
-    // inline above with failedActions/failedCount.
+    console.error('runTurnWork failed', err);
+    // Best-effort: surface a chat bubble so the user knows the turn failed —
+    // with the REAL error, not a generic line (so it survives a reload and the
+    // user can act on it).
+    await addChatMessage(
+      tripId,
+      'assistant',
+      userFacingError(err),
+      null
+    ).catch(() => {});
     await logUsageEvent({
-      userId: userIdForLog,
-      tripId: tripIdForLog,
+      userId,
+      tripId,
       provider: 'anthropic:replan',
       requests: 1,
       success: false,
       errorMessage: err instanceof Error ? err.message : String(err),
     }).catch(() => {});
-    return errorResponse(err);
+    // Record the failure on the turn row so a reconciling client shows the real
+    // error instead of dead-ending on the client-only "try again" bubble.
+    await markTurnError(
+      turnId,
+      err instanceof Error ? err.message : String(err)
+    ).catch(() => {});
+    send({
+      kind: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Upper bound on queued turns drained within a single request, so a
+ * pathological backlog can't run unbounded inside one invocation. Anything
+ * beyond this stays `queued` and is picked up by the next turn's drain.
+ */
+const MAX_DRAIN_TURNS = 5;
+
+/**
+ * Run turns that queued behind the just-finished foreground turn — serially,
+ * inside the still-alive request. Each claim is atomic (the status guard in the
+ * UPDATE), so concurrent drainers never run the same turn twice. A drained turn
+ * streams to nobody: its reply is persisted to chat + its `penny_turns` row,
+ * and the originating client reads it back via the reconcile endpoint. This is
+ * what lets a send fired while another was in flight survive the app closing.
+ */
+async function drainQueuedTurns(tripId: string): Promise<void> {
+  for (let i = 0; i < MAX_DRAIN_TURNS; i++) {
+    const claimed = await claimNextQueuedTurn(tripId);
+    if (!claimed) return;
+    await runTurnWork(
+      {
+        turnId: claimed.id,
+        tripId: claimed.trip_id,
+        userId: claimed.user_id,
+        message: claimed.user_message,
+        images: claimed.images ?? [],
+      },
+      () => {}
+    );
   }
 }
 

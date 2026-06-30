@@ -6,8 +6,61 @@ import { apiFetch } from '@/lib/api';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
 import { formatDate, parseISODate } from '@/lib/dates';
+import { deriveApplyOutcome } from '@/lib/penny/applyOutcome';
 import Spinner from '@/components/Spinner';
 import PennyPlanningVideo from '@/components/PennyPlanningVideo';
+
+/**
+ * Terminal payload shape the server emits as the `applied` SSE event AND stores
+ * on the durable `penny_turns` record. The live stream and the reconcile/heal
+ * path both apply it, so a turn looks identical whether the client saw it live
+ * or healed it on reopen. See docs/design/penny-turn-resilience.md.
+ */
+type AppliedEvent = {
+  response: string;
+  changes: { changes: unknown[] };
+  appliedCount: number;
+  failedCount: number;
+  failedActions: Array<{ action: string; error: string }>;
+  /** DB / feasibility failures — use for user-visible save warnings. */
+  persistFailedCount?: number;
+  persistFailedActions?: Array<{ action: string; error: string }>;
+  /** Exhausted validation retries; not indicative of unsuccessful writes. */
+  validationFailures?: Array<{ action: string; error: string }>;
+  /** Validated tool actions queued this turn — may exceed `changes.changes`. */
+  validatedQueuedCount?: number;
+  /** True when an inline plan_fuel_stops lookup wrote stops this turn. */
+  fuelStopsChanged: boolean;
+  /** Deterministic, DB-derived plan facts (source of truth for numbers). */
+  planSummary?: PlanSummary | null;
+  truncated: boolean;
+};
+
+/** Client view of a `penny_turns` row returned by the reconcile endpoint. */
+type TurnRecord = {
+  idempotency_key: string;
+  status: 'queued' | 'running' | 'done' | 'error';
+  result_response: string | null;
+  result_meta: AppliedEvent | null;
+  error_message: string | null;
+};
+
+/**
+ * Stable per-send id — the idempotency anchor for the durable turn record. A
+ * retry carrying the same key returns the existing turn instead of spawning a
+ * second replan. `crypto.randomUUID` is available in all secure-context
+ * browsers; the fallback keeps non-secure/legacy contexts working.
+ */
+function makeIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through
+  }
+  return `k-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /** Caption Penny "sends" alongside the dog-fetch clip on the first full build. */
 const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fuel…';
@@ -112,6 +165,13 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
    * so the user can scroll back to it while Penny builds the plan.
    */
   planningMedia?: boolean;
+  /**
+   * Idempotency key of the replan turn that produced this assistant bubble.
+   * Lets the client re-attach to the durable `penny_turns` record and heal a
+   * false "Something went wrong" bubble (or finish a queued turn) on reopen.
+   * Session-only — not persisted to chat history.
+   */
+  turnKey?: string;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -334,6 +394,12 @@ export default function ChatPanel({
     onboardingQuestion.kind === 'select';
   const attachImagesAllowed = !isOnboarding;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
+  // Latest messages, readable from event handlers (visibilitychange reconcile)
+  // without re-binding the listener on every message change.
+  const messagesRef = useRef<UIMessage[]>(initialMessages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [input, setInput] = useState('');
   // When an onboarding question arrives with a prefilled answer (e.g. a start
   // date we extracted from the trip description), drop it into the composer once
@@ -604,6 +670,165 @@ export default function ChatPanel({
     setImages((prev) => prev.filter((i) => i.id !== id));
   }
 
+  /**
+   * Apply a terminal `applied` payload to an assistant bubble — the single code
+   * path shared by the live stream and the reconcile/heal flow, so a healed
+   * turn renders identically to one seen live. Reloads the trip when something
+   * changed.
+   */
+  const applyAppliedEvent = useCallback(
+    (assistantMsgId: string, ev: AppliedEvent) => {
+      const outcome = deriveApplyOutcome(ev);
+      if (outcome.applyError && outcome.validationFailures.length > 0) {
+        // Validation details are technical (Zod errors aimed at the LLM) — log,
+        // don't surface.
+        console.warn('[Penny] validation failures:', outcome.validationFailures);
+      }
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                content: ev.response || m.content,
+                changes_made:
+                  ev.appliedCount > 0
+                    ? JSON.stringify(ev.changes ?? { changes: [] })
+                    : null,
+                applyError: outcome.applyError,
+                partialApplyWarning: outcome.partialApplyWarning,
+                plan_summary: ev.planSummary ?? null,
+                truncated: ev.truncated,
+                streaming: false,
+              }
+            : m
+        )
+      );
+      if (outcome.appliedChanges || ev.fuelStopsChanged) onTripUpdated();
+      onActivity?.(outcome.applyError ? 'error' : 'response');
+    },
+    [onTripUpdated, onActivity]
+  );
+
+  /** Put an assistant bubble into a stable error state (mirrors failAssistant). */
+  const setBubbleError = useCallback((assistantMsgId: string, msg: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantMsgId
+          ? { ...m, content: m.content || msg, streaming: false, applyError: m.content ? msg : null }
+          : m
+      )
+    );
+  }, []);
+
+  /**
+   * Re-attach to a turn's durable record and heal the bubble. Returns the
+   * terminal disposition; callers poll while it's still `pending`. This is the
+   * core of the "Something went wrong" fix: the server finished and recorded
+   * the reply even when the client's stream threw, so on reopen we read it back
+   * and replace the false error with Penny's real answer.
+   */
+  const reconcileTurn = useCallback(
+    async (
+      assistantMsgId: string,
+      key: string
+    ): Promise<'done' | 'error' | 'pending' | 'unknown'> => {
+      try {
+        const res = await fetch(
+          `/api/trips/${tripId}/turns?key=${encodeURIComponent(key)}`
+        );
+        if (!res.ok) return 'unknown';
+        const data = (await res.json().catch(() => null)) as { turn?: TurnRecord | null } | null;
+        const turn = data?.turn ?? null;
+        if (!turn) return 'unknown';
+        if (turn.status === 'done') {
+          if (turn.result_meta) {
+            applyAppliedEvent(assistantMsgId, {
+              ...turn.result_meta,
+              response: turn.result_meta.response || turn.result_response || '',
+            });
+          } else if (turn.result_response) {
+            // No structured meta (shouldn't happen) — at least show the prose.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, content: turn.result_response as string, streaming: false }
+                  : m
+              )
+            );
+          }
+          return 'done';
+        }
+        if (turn.status === 'error') {
+          setBubbleError(
+            assistantMsgId,
+            turn.error_message
+              ? `Error: ${turn.error_message}`
+              : 'Something went wrong while updating your trip.'
+          );
+          onActivity?.('error');
+          return 'error';
+        }
+        return 'pending';
+      } catch {
+        return 'unknown';
+      }
+    },
+    [tripId, applyAppliedEvent, setBubbleError, onActivity]
+  );
+
+  /**
+   * Poll a turn to completion. Used for a turn the server QUEUED behind another
+   * (no stream of its own) and as the heal path after a dropped stream. Bounded
+   * so it can't poll forever; gives up after a run of `unknown` reads (the row
+   * is gone) or the deadline.
+   */
+  const pollTurnUntilTerminal = useCallback(
+    async (
+      assistantMsgId: string,
+      key: string,
+      opts?: { timeoutMs?: number }
+    ): Promise<'done' | 'error' | 'timeout'> => {
+      const deadline = Date.now() + (opts?.timeoutMs ?? 5 * 60 * 1000);
+      let unknowns = 0;
+      while (Date.now() < deadline) {
+        const d = await reconcileTurn(assistantMsgId, key);
+        if (d === 'done' || d === 'error') return d;
+        if (d === 'unknown') {
+          unknowns += 1;
+          if (unknowns >= 3) return 'timeout';
+        } else {
+          unknowns = 0;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      return 'timeout';
+    },
+    [reconcileTurn]
+  );
+
+  // Reconcile on reopen/refocus — the user-facing core of the fix. When the PWA
+  // comes back to the foreground, any assistant bubble still streaming or stuck
+  // on a client-only error (with a known turn key) is re-checked against the
+  // durable record: if Penny's turn landed while we were backgrounded, the false
+  // error is silently replaced with her real reply.
+  useEffect(() => {
+    const reconcileOnOpen = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const candidates = messagesRef.current.filter(
+        (m) => m.role === 'assistant' && !!m.turnKey && (m.streaming || !!m.applyError)
+      );
+      for (const m of candidates) {
+        if (m.turnKey) void reconcileTurn(m.id, m.turnKey);
+      }
+    };
+    document.addEventListener('visibilitychange', reconcileOnOpen);
+    window.addEventListener('focus', reconcileOnOpen);
+    return () => {
+      document.removeEventListener('visibilitychange', reconcileOnOpen);
+      window.removeEventListener('focus', reconcileOnOpen);
+    };
+  }, [reconcileTurn]);
+
   // Shared inner engine for "user said X → Penny replies". `sendMessage`
   // is the free-text composer path (pulls from input/images state); the
   // onboarding handoff calls `sendChatMessage` directly with the first
@@ -631,6 +856,9 @@ export default function ChatPanel({
 
     const userMsgId = existingUserMsgId ?? `optimistic-${Date.now()}`;
     const assistantMsgId = `optimistic-${Date.now() + 1}`;
+    // Stable id for this send: the idempotency anchor + the key the client uses
+    // to re-attach and heal if the stream drops.
+    const idempotencyKey = makeIdempotencyKey();
 
     if (existingUserMsgId) {
       // Reuse the existing queued user bubble — just update its status and
@@ -650,6 +878,7 @@ export default function ChatPanel({
             changes_made: null,
             created_at: new Date().toISOString(),
             streaming: true,
+            turnKey: idempotencyKey,
           },
         ];
       });
@@ -674,6 +903,7 @@ export default function ChatPanel({
         changes_made: null,
         created_at: new Date().toISOString(),
         streaming: true,
+        turnKey: idempotencyKey,
       };
       // The dog-fetch clip sits between the user's prompt and Penny's streaming
       // bubble, so the transcript reads: [their trip] → [Penny's video] → [plan].
@@ -779,30 +1009,8 @@ export default function ChatPanel({
       return code;
     };
 
-    type AppliedEvent = {
-      response: string;
-      changes: { changes: unknown[] };
-      appliedCount: number;
-      failedCount: number;
-      failedActions: Array<{ action: string; error: string }>;
-      /** DB / feasibility failures — use for user-visible save warnings (SSE from replan). */
-      persistFailedCount?: number;
-      persistFailedActions?: Array<{ action: string; error: string }>;
-      /** Exhausted validation retries; not indicative of unsuccessful writes. */
-      validationFailures?: Array<{ action: string; error: string }>;
-      /** Validated tool actions queued this turn — may exceed `changes.changes` when saves failed or were gated. */
-      validatedQueuedCount?: number;
-      /**
-       * True when an inline plan_fuel_stops lookup wrote stops to a leg this
-       * turn (Penny ran the planner on an explicit ask). The client just
-       * reloads the trip so those stops render — there is no trip-wide fuel
-       * replan anymore (fuel is sourced lazily per day on open).
-       */
-      fuelStopsChanged: boolean;
-      /** Deterministic, DB-derived plan facts for this turn (source of truth for numbers). */
-      planSummary?: PlanSummary | null;
-      truncated: boolean;
-    };
+    // AppliedEvent + TurnRecord are declared at module scope (shared with the
+    // reconcile/heal path).
     let appliedEvent: AppliedEvent | null = null;
 
     try {
@@ -816,6 +1024,7 @@ export default function ChatPanel({
             dataUrl: i.dataUrl,
             mediaType: i.mediaType,
           })),
+          idempotencyKey,
         }),
       });
 
@@ -829,6 +1038,54 @@ export default function ChatPanel({
         onActivity?.('error');
         return;
       }
+
+      // The server streams (text/event-stream) only when it runs this turn now.
+      // It returns JSON instead when the turn was QUEUED behind another in-flight
+      // turn, or when this exact send was already accepted (idempotent replay).
+      // In those cases there's no live stream — apply the recorded result or poll
+      // the durable record until it lands.
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('text/event-stream')) {
+        const data = (await res.json().catch(() => null)) as { turn?: TurnRecord | null } | null;
+        const turn = data?.turn ?? null;
+        if (!turn) {
+          setDeliveryStatus('responded');
+          failAssistant('Something went wrong starting that. Please try again.');
+          onActivity?.('error');
+          return;
+        }
+        setDeliveryStatus('delivered');
+        if (turn.status === 'done' && turn.result_meta) {
+          applyAppliedEvent(assistantMsgId, {
+            ...turn.result_meta,
+            response: turn.result_meta.response || turn.result_response || '',
+          });
+          setDeliveryStatus('responded');
+          return;
+        }
+        if (turn.status === 'error') {
+          setBubbleError(
+            assistantMsgId,
+            turn.error_message ? `Error: ${turn.error_message}` : 'Something went wrong.'
+          );
+          setDeliveryStatus('responded');
+          onActivity?.('error');
+          return;
+        }
+        // queued / running — Penny is busy with the prior turn; poll until ours
+        // lands (it's drained by the in-flight request).
+        setDeliveryStatus('read');
+        const result = await pollTurnUntilTerminal(assistantMsgId, idempotencyKey);
+        setDeliveryStatus('responded');
+        if (result === 'timeout') {
+          failAssistant(
+            "Penny is taking longer than expected. Your message is saved — reopen the trip in a moment to see her reply."
+          );
+          onActivity?.('error');
+        }
+        return;
+      }
+
       if (!res.body) {
         setDeliveryStatus('responded');
         failAssistant('Stream not supported by this browser.');
@@ -902,8 +1159,16 @@ export default function ChatPanel({
       }
 
       if (!appliedEvent) {
-        // Stream ended without a terminal `applied` event — treat as failure
-        // but preserve whatever partial paragraphs already landed.
+        // Stream ended without a terminal `applied` event. The server may still
+        // have finished and recorded the turn (it doesn't stop when the client
+        // drops), so reconcile from the durable record before declaring failure.
+        const healed = await pollTurnUntilTerminal(assistantMsgId, idempotencyKey, {
+          timeoutMs: 20000,
+        });
+        if (healed === 'done' || healed === 'error') {
+          setDeliveryStatus('responded');
+          return;
+        }
         const code = reportStreamError('stream-incomplete');
         failAssistant(
           `Connection dropped before Penny finished (code ${code}). Your partial response is above; please retry.`
@@ -912,107 +1177,31 @@ export default function ChatPanel({
         return;
       }
 
-      const {
-        response: finalResponse,
-        changes,
-        appliedCount,
-        failedCount,
-        failedActions,
-        persistFailedCount: persistFailedCountRaw,
-        persistFailedActions: persistFailedActionsRaw,
-        validatedQueuedCount: validatedQueuedCountRaw,
-        validationFailures: validationFailuresRaw,
-        fuelStopsChanged,
-        planSummary: planSummaryRaw,
-        truncated,
-      } = appliedEvent;
-      const persistFieldsPresent =
-        typeof persistFailedCountRaw === 'number' || Array.isArray(persistFailedActionsRaw);
-
-      /** Legacy replan responses omitted persist* — preserve old behavior for those payloads only. */
-      const persistFailedActions = persistFieldsPresent
-        ? Array.isArray(persistFailedActionsRaw)
-          ? persistFailedActionsRaw
-          : []
-        : Array.isArray(failedActions)
-          ? failedActions
-          : [];
-
-      const persistFailedCount = persistFieldsPresent
-        ? typeof persistFailedCountRaw === 'number'
-          ? persistFailedCountRaw
-          : persistFailedActions.length
-        : failedCount;
-
-      const changeLen = Array.isArray(changes?.changes) ? changes.changes.length : 0;
-      /** Number of Penny actions validated and queued for dispatch (may be 0 while validationFailures are non-empty). */
-      const hadProposedChanges =
-        changeLen > 0 ||
-        (typeof validatedQueuedCountRaw === 'number' && validatedQueuedCountRaw > 0);
-      let applyError: string | null = null;
-      let partialApplyWarning: string | null = null;
-      if (persistFailedCount > 0 && appliedCount > 0) {
-        partialApplyWarning = `Some edits didn't save: ${persistFailedActions.map((f) => f.action).join(', ')}`;
-      } else if (persistFailedCount > 0) {
-        const details = persistFailedActions.map((f) => `${f.action}: ${f.error}`).join('; ');
-        applyError = `Changes failed to save — ${details}`;
-      } else if (hadProposedChanges && appliedCount === 0) {
-        // Validation details are technical (Zod errors aimed at the LLM) —
-        // don't dump them into the user-facing UI. Log them for debugging.
-        const valFailures = Array.isArray(validationFailuresRaw) ? validationFailuresRaw : [];
-        if (valFailures.length > 0) {
-          console.warn('[Penny] validation failures:', valFailures);
-        }
-        applyError =
-          'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
-      }
-
+      // Authoritative result from the server. `applyAppliedEvent` is the single
+      // path shared with reconcile/heal, so a live turn and a healed one render
+      // identically (and it reloads the trip when something changed).
       setDeliveryStatus('responded');
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? {
-                ...m,
-                // Authoritative final text from the server (the streamed
-                // chunks were the same content joined with double-newlines —
-                // this overwrite keeps us consistent with what's persisted
-                // server-side via addChatMessage).
-                content: finalResponse || m.content,
-                changes_made:
-                  appliedCount > 0 ? JSON.stringify(changes ?? { changes: [] }) : null,
-                applyError,
-                partialApplyWarning,
-                plan_summary: planSummaryRaw ?? null,
-                truncated,
-                streaming: false,
-              }
-            : m
-        )
-      );
-
-      if (appliedCount > 0) {
-        onTripUpdated();
-      }
-      // An inline plan_fuel_stops lookup (Penny ran the planner on an explicit
-      // ask) writes stops to a leg but dispatches no action, so appliedCount can
-      // be 0. Just reload the trip so those stops render — there is no trip-wide
-      // fuel replan anymore; every other day sources its fuel lazily on open.
-      else if (fuelStopsChanged) {
-        onTripUpdated();
-      }
-      onActivity?.(applyError ? 'error' : 'response');
+      applyAppliedEvent(assistantMsgId, appliedEvent);
     } catch (err) {
       console.warn('replan stream errored', err);
-      setDeliveryStatus('responded');
-      // This is almost always the PWA being backgrounded mid-turn: the browser
-      // tears down the fetch and `reader.read()` throws here. The server keeps
-      // running and persists Penny's reply regardless (Vercel request
-      // cancellation is opt-in and off — no vercel.json), so the work usually
-      // DID land. Beacon the failure with a code and surface it; the
-      // reconcile-on-reopen path (turn record) is what actually heals it.
+      // Almost always the PWA backgrounded mid-turn: the browser tears down the
+      // fetch and `reader.read()` throws here. The server keeps running and
+      // records Penny's reply regardless (no vercel.json → request cancellation
+      // off), so reconcile from the durable turn record and HEAL the bubble
+      // instead of dead-ending on "try again".
       const code = reportStreamError('stream-threw', err);
-      failAssistant(`Something went wrong (code ${code}). Please try again.`);
-      onActivity?.('error');
+      setDeliveryStatus('responded');
+      const healed = await pollTurnUntilTerminal(assistantMsgId, idempotencyKey, {
+        timeoutMs: 20000,
+      });
+      if (healed !== 'done' && healed !== 'error') {
+        // Couldn't confirm within the window — leave an accurate, non-alarming
+        // message. The visibilitychange reconcile heals it on reopen if it lands.
+        failAssistant(
+          `Connection interrupted (code ${code}). Penny may still be finishing — reopen the trip in a moment to see her reply.`
+        );
+        onActivity?.('error');
+      }
     } finally {
       setLoading(false);
       // Drain the message queue — send the next queued message now that Penny
