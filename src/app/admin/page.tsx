@@ -194,6 +194,12 @@ export default async function AdminPage() {
       sub: `${announcementStats.totalCount} total`,
       href: '/admin/announcements',
     },
+    {
+      label: 'Fuel data sources',
+      value: 'Monitor',
+      sub: 'Overpass + OSRM rate-limits',
+      href: '/admin/data-sources',
+    },
   ];
 
   return (

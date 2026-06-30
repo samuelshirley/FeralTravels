@@ -31,6 +31,20 @@ export async function getDirections(
   try {
     const url = `${osrmBase()}/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=polyline`;
     const res = await fetch(url);
+
+    if (!res.ok) {
+      // Rate-limit / overload from the (public) OSRM instance → record + alert.
+      // Dynamic import keeps the server-only alerter out of this module's static
+      // graph; fire-and-forget so monitoring never blocks routing.
+      if (res.status === 429 || res.status === 503 || res.status === 504) {
+        void import('@/server/dataSourceAlerts')
+          .then((m) => m.reportRateLimit('osrm', `OSRM HTTP ${res.status}`))
+          .catch(() => {});
+      }
+      console.error('OSRM HTTP error:', res.status);
+      return null;
+    }
+
     const data = await res.json();
 
     if (data.code !== 'Ok' || !data.routes?.length) {

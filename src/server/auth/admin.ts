@@ -29,6 +29,15 @@ function envAllowSet(): Set<string> {
   return set;
 }
 
+/**
+ * Recipients for operational admin alert emails (e.g. data-source rate-limit
+ * warnings). The hardcoded allowlist is the source of truth — same set that can
+ * reach /admin.
+ */
+export function adminAlertRecipients(): string[] {
+  return [...ADMIN_ALLOWLIST];
+}
+
 /** True if the email is in the hardcoded allowlist (case-insensitive). */
 export function isOnAdminAllowlist(email: string | null | undefined): boolean {
   if (!email) return false;
