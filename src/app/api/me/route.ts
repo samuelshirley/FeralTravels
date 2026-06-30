@@ -1,5 +1,5 @@
 import { requireUserId, errorResponse } from '@/server/auth/guards';
-import { getUnitsPref } from '@/server/repos/users';
+import { getUnitsPref, getUserTimezone } from '@/server/repos/users';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,8 +13,11 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const userId = await requireUserId();
-    const unitsPref = await getUnitsPref(userId);
-    return Response.json({ units_pref: unitsPref });
+    const [unitsPref, timezone] = await Promise.all([
+      getUnitsPref(userId),
+      getUserTimezone(userId),
+    ]);
+    return Response.json({ units_pref: unitsPref, timezone });
   } catch (err) {
     return errorResponse(err);
   }

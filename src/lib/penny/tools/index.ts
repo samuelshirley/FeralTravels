@@ -16,6 +16,7 @@ import * as planFuelStops from './planFuelStops';
 import * as addTask from './addTask';
 import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
+import * as resolvePlace from './resolvePlace';
 import * as extractTripIntent from './extractTripIntent';
 import * as checkTripFeasibility from './checkTripFeasibility';
 import * as updateVehicle from './updateVehicle';
@@ -37,6 +38,7 @@ export {
   addTask,
   updateTask,
   getRoute,
+  resolvePlace,
   extractTripIntent,
   checkTripFeasibility,
   updateVehicle,
@@ -55,6 +57,7 @@ export const TOOLS: Anthropic.Tool[] = [
   // check_trip_feasibility → add_leg ×N. List the gates first so their
   // "call me before X" wording lands prominently.
   extractTripIntent.tool,
+  resolvePlace.tool,
   getRoute.tool,
   checkTripFeasibility.tool,
   updateVehicle.tool,
@@ -104,6 +107,7 @@ export const ACTION_TOOL_NAMES: ReadonlySet<string> = new Set([
  * loop and feeds the result back as a tool_result block.
  */
 export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  resolvePlace.RESOLVE_PLACE,
   getRoute.GET_ROUTE,
   extractTripIntent.EXTRACT_TRIP_INTENT,
   checkTripFeasibility.CHECK_TRIP_FEASIBILITY,
@@ -138,6 +142,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [addTask.ADD_TASK]: addTask.validator,
   [updateTask.UPDATE_TASK]: updateTask.validator,
   [getRoute.GET_ROUTE]: getRoute.validator,
+  [resolvePlace.RESOLVE_PLACE]: resolvePlace.validator,
   [extractTripIntent.EXTRACT_TRIP_INTENT]: extractTripIntent.validator,
   [checkTripFeasibility.CHECK_TRIP_FEASIBILITY]: checkTripFeasibility.validator,
 };

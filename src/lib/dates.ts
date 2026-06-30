@@ -331,6 +331,32 @@ export function todayISO(): string {
 }
 
 /**
+ * Today's calendar date as ISO "YYYY-MM-DD" in a specific IANA timezone
+ * (e.g. "Europe/Oslo"). This is the user-facing "today": the server runs in UTC
+ * on Vercel, so any trip-logic notion of the current day MUST resolve through
+ * the driver's own zone or it drifts a day near midnight (the day-you're-on-
+ * shows-as-completed bug). Falls back to the runtime-local date when `timeZone`
+ * is null/empty (not yet captured) or invalid (Intl throws on a bad zone).
+ */
+export function todayISOInZone(
+  timeZone: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!timeZone) return toISO(now);
+  try {
+    // en-CA renders as "YYYY-MM-DD"; `format` applies the zone offset for us.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+  } catch {
+    return toISO(now);
+  }
+}
+
+/**
  * Decide how many leading legs are "behind" the driver — the cutoff index used
  * to tuck completed/past days into the collapsible "behind you" section so the
  * itinerary opens at today rather than at a day that has already passed.

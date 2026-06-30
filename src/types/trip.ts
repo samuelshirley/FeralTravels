@@ -385,13 +385,6 @@ export interface StopAlternative {
   distance_km: number;
 }
 
-export interface StopPhoto {
-  url: string;
-  attribution: string;
-  width_px: number;
-  height_px: number;
-}
-
 export interface Stop {
   id: string;
   leg_id: string;
@@ -414,8 +407,6 @@ export interface Stop {
   place_id: string | null;
   /** Direct Google Maps link — persisted at planning time. */
   google_maps_uri: string | null;
-  /** Photos from Places API — persisted at planning time to avoid API calls during viewing. */
-  photos: StopPhoto[] | null;
   /**
    * Finn fuel price (tri-state; never silently null once pricing has run):
    *  'priced' → price_per_litre + price_currency + price_as_of are set

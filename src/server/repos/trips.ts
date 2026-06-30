@@ -2,7 +2,13 @@ import 'server-only';
 import { and, asc, eq, gt, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
-import { tryParseToISO, legDateISO, constraintLocalDateISO, todayISO } from '@/lib/dates';
+import {
+  tryParseToISO,
+  legDateISO,
+  constraintLocalDateISO,
+  todayISO,
+  todayISOInZone,
+} from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import {
   materializeSchedule,
@@ -24,6 +30,7 @@ import {
   tasks,
   pois,
   legConstraints,
+  users,
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import type {
@@ -196,7 +203,6 @@ function stopRow(r: typeof stops.$inferSelect): Stop {
     alternatives: r.alternatives ?? null,
     place_id: r.placeId ?? null,
     google_maps_uri: r.googleMapsUri ?? null,
-    photos: r.photos ?? null,
     price_state: (r.priceState as StopPriceState | null) ?? null,
     price_per_litre: r.pricePerLitre ?? null,
     price_currency: r.priceCurrency ?? null,
@@ -278,6 +284,19 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
   const tripRows = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (tripRows.length === 0) return null;
   const trip = tripRow(tripRows[0]);
+
+  // The owner's timezone defines "today" for date anchoring below. Resolved here
+  // (not via todayISO()) so the server agrees with the driver's wall clock — the
+  // server runs in UTC, so a bare todayISO() drifts a day near midnight.
+  const ownerTz = tripRows[0].userId
+    ? (
+        await db
+          .select({ timezone: users.timezone })
+          .from(users)
+          .where(eq(users.id, tripRows[0].userId))
+          .limit(1)
+      )[0]?.timezone ?? null
+    : null;
 
   const [legRows, costRows, linkRows, routeRows, routeLinkRows, stopRows, taskRows, constraintRows] =
     await Promise.all([
@@ -386,7 +405,7 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
   if (trip.current_leg_id) {
     const currentRank = legRows.findIndex((l) => l.id === trip.current_leg_id);
     if (currentRank >= 0) {
-      const anchor = trip.progress_anchor_date ?? todayISO();
+      const anchor = trip.progress_anchor_date ?? todayISOInZone(ownerTz);
       effectiveStartISO = legDateISO(anchor, -currentRank);
     }
   }
@@ -1526,6 +1545,17 @@ export async function applyTripProgress(input: {
     .where(eq(legs.tripId, input.tripId))
     .orderBy(asc(legs.sortOrder));
 
+  // Resolve the owner's timezone so the anchor-date fallback ("today" when no
+  // explicit resume date) lands on the driver's wall-clock day, not the server's
+  // UTC day — the off-by-one that collapsed the current day into "behind you".
+  const ownerTzRows = await db
+    .select({ timezone: users.timezone })
+    .from(trips)
+    .innerJoin(users, eq(trips.userId, users.id))
+    .where(eq(trips.id, input.tripId))
+    .limit(1);
+  const ownerTz = ownerTzRows[0]?.timezone ?? null;
+
   let nextLegId: string | null = null;
   if (input.nextLegId && legRows.some((l) => l.id === input.nextLegId)) {
     nextLegId = input.nextLegId;
@@ -1566,7 +1596,7 @@ export async function applyTripProgress(input: {
       lastKnownLat: input.lat,
       lastKnownLng: input.lng,
       positionUpdatedAt: new Date(),
-      progressAnchorDate: input.resumeDateISO ?? todayISO(),
+      progressAnchorDate: input.resumeDateISO ?? todayISOInZone(ownerTz),
       progressUpdatedAt: new Date(),
       updatedAt: new Date(),
     })

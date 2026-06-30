@@ -37,6 +37,13 @@ interface ItineraryProps {
    * are briefly stale during a replan.
    */
   isFuelSyncing?: boolean;
+  /**
+   * Set when the user clicks a leg or stop marker on the map. We expand the
+   * owning leg (revealing it past the lazy window / "behind you" fold if
+   * needed) and scroll the leg — or the specific stop — into view. The nonce
+   * lets a repeat click on the same target re-trigger the scroll.
+   */
+  focusTarget?: { legId: string; stopId: string | null; nonce: number } | null;
 }
 
 export default function Itinerary({
@@ -47,6 +54,7 @@ export default function Itinerary({
   onChanged,
   readonly = false,
   isFuelSyncing = false,
+  focusTarget = null,
 }: ItineraryProps) {
   const allLegs = trip.legs;
   // Driver progress splits the itinerary into "behind you" (completed) and the
@@ -74,6 +82,9 @@ export default function Itinerary({
   const { units } = useUnits();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showPast, setShowPast] = useState(false);
+  // Stop id to briefly ring after a map marker click, so the user's eye lands
+  // on the right card. Cleared on a timer.
+  const [highlightStopId, setHighlightStopId] = useState<string | null>(null);
 
   // Compute a date label for each leg from the trip's confirmed start date.
   // Returns a Map<legId, formattedDate> so LegCard can display real calendar
@@ -208,6 +219,53 @@ export default function Itinerary({
     io.observe(node);
     return () => io.disconnect();
   }, [visibleCount, legs.length]);
+
+  // ── Map-marker focus → open in list ────────────────────────────────────
+  // When the user clicks a leg/stop marker on the map, expand the owning leg
+  // (revealing it past the lazy window or the "behind you" fold first), then
+  // scroll the leg — or the exact stop — into view and briefly ring it. Keyed
+  // on the focus nonce so a repeat click on the same target re-fires.
+  useEffect(() => {
+    if (!focusTarget) return;
+    const { legId, stopId } = focusTarget;
+    const allIdx = allLegs.findIndex((l) => l.id === legId);
+    if (allIdx === -1) return;
+
+    if (currentRank > 0 && allIdx < currentRank) {
+      // The leg is in the collapsed "behind you" section — open it.
+      setShowPast(true);
+    } else {
+      // Ensure it's within the lazily-revealed window so the card is mounted.
+      const fwdIdx = currentRank > 0 ? allIdx - currentRank : allIdx;
+      setVisibleCount((c) => Math.max(c, fwdIdx + 1));
+    }
+
+    setExpanded((prev) => {
+      if (prev.has(legId)) return prev;
+      const next = new Set(prev);
+      next.add(legId);
+      return next;
+    });
+    setHighlightStopId(stopId);
+
+    // Wait for the expand/reveal to render, then scroll the target into view.
+    const scrollTimer = setTimeout(() => {
+      const sel = stopId
+        ? `[data-stop-anchor="${stopId}"]`
+        : `[data-leg-id="${CSS.escape(legId)}"]`;
+      const el = document.querySelector(sel) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 90);
+
+    const clearHighlight = setTimeout(() => setHighlightStopId(null), 2200);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearHighlight);
+    };
+    // Intentionally keyed on the nonce only: allLegs/currentRank are read fresh
+    // at click time, and we don't want trip reloads to re-trigger a scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTarget?.nonce]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -514,8 +572,9 @@ export default function Itinerary({
         </button>
       </div>
 
-      {/* "Behind you" — completed days, collapsed by default so the trip opens
-          at where the driver actually is. Only shown once progress is reported. */}
+      {/* "Behind you" — earlier days, collapsed by default so the trip opens
+          at where the driver actually is. "Earlier" not "completed": the cutoff
+          is positional (calendar/report), not proof the driver finished them. */}
       {pastLegs.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <button
@@ -533,8 +592,8 @@ export default function Itinerary({
               cursor: 'pointer',
             }}
           >
-            {showPast ? '▾' : '▸'} Behind you — {pastLegs.length} day
-            {pastLegs.length === 1 ? '' : 's'} completed
+            {showPast ? '▾' : '▸'} Behind you — {pastLegs.length} earlier day
+            {pastLegs.length === 1 ? '' : 's'}
           </button>
           {showPast && (
             <div
@@ -561,6 +620,7 @@ export default function Itinerary({
                   dateLabel={legDateLabels.get(leg.id)}
                   isFuelSyncing={isFuelSyncing}
                   fuelSyncTotalLegs={allLegs.length}
+                  highlightStopId={highlightStopId}
                 />
               ))}
             </div>
@@ -672,6 +732,7 @@ export default function Itinerary({
                       dateLabel={legDateLabels.get(leg.id)}
                       isFuelSyncing={isFuelSyncing}
                       fuelSyncTotalLegs={legs.length}
+                      highlightStopId={highlightStopId}
                     />
                   ))}
                 </div>
@@ -703,6 +764,7 @@ export default function Itinerary({
               dateLabel={legDateLabels.get(leg.id)}
               isFuelSyncing={isFuelSyncing}
               fuelSyncTotalLegs={legs.length}
+              highlightStopId={highlightStopId}
             />
           ))}
         </div>

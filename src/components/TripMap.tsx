@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
-import type { LegWithDetails, POI } from '@/types/trip';
+import type { LegWithDetails, POI, Stop, StopType } from '@/types/trip';
+import { clusterPixels, type PixelPoint } from '@/lib/mapClustering';
 
 let optionsConfigured = false;
 
@@ -11,8 +12,85 @@ interface TripMapProps {
   pois: POI[];
   selectedLegId: string | null;
   onLegSelect: (legId: string) => void;
+  /**
+   * Fired when the user clicks a stop marker (fuel or user-added) on the map.
+   * The parent opens that stop in the list view (expand owning leg + scroll).
+   */
+  onStopSelect?: (legId: string, stopId: string) => void;
   trailsVersion?: number;
   tripId: string;
+}
+
+/** A stop flattened out of the legs for map rendering. */
+interface MapStopPoint {
+  legId: string;
+  stopId: string;
+  lat: number;
+  lng: number;
+  type: StopType;
+  name: string;
+  distanceKm: number | null;
+  priceState: Stop['price_state'];
+  pricePerLitre: number | null;
+  priceCurrency: string | null;
+  priceCountry: string | null;
+}
+
+const STOP_GRID_CELL_PX = 64;
+const FUEL_STOP_COLOR = '#C9912F';
+const OTHER_STOP_COLOR = '#7A7A7A';
+const CLUSTER_COLOR = '#4A5A6A';
+
+/** Flatten every renderable stop (has coords, not dismissed) out of the legs. */
+function collectStopPoints(legs: LegWithDetails[]): MapStopPoint[] {
+  const out: MapStopPoint[] = [];
+  for (const leg of legs) {
+    for (const stop of leg.stops) {
+      if (stop.status === 'dismissed') continue;
+      if (stop.lat == null || stop.lng == null) continue;
+      out.push({
+        legId: leg.id,
+        stopId: String(stop.id),
+        lat: stop.lat,
+        lng: stop.lng,
+        type: stop.stop_type,
+        name: stop.name,
+        distanceKm: stop.distance_from_start_km,
+        priceState: stop.price_state,
+        pricePerLitre: stop.price_per_litre,
+        priceCurrency: stop.price_currency,
+        priceCountry: stop.price_country,
+      });
+    }
+  }
+  return out;
+}
+
+const CURRENCY_SYMBOL: Record<string, string> = { EUR: '€', USD: '$', GBP: '£' };
+
+/** One-line price string for the hover tooltip, or null when nothing to show. */
+function stopPriceText(p: MapStopPoint): string | null {
+  switch (p.priceState) {
+    case 'priced': {
+      if (p.pricePerLitre == null) return null;
+      const sym = CURRENCY_SYMBOL[p.priceCurrency ?? 'EUR'] ?? `${p.priceCurrency} `;
+      return `${sym}${p.pricePerLitre.toFixed(2)}/L`;
+    }
+    case 'unknown':
+      return 'Price unknown';
+    case 'unavailable_in_country':
+      return `Price unavailable in ${p.priceCountry ?? 'this area'}`;
+    default:
+      return null;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 interface GpxFeatureCollection {
@@ -50,7 +128,7 @@ function legKey(leg: LegWithDetails): string {
   return `${leg.id}:${leg.start_lat},${leg.start_lng}->${leg.end_lat},${leg.end_lng}`;
 }
 
-export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trailsVersion = 0, tripId }: TripMapProps) {
+export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStopSelect, trailsVersion = 0, tripId }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   // directionsServiceRef removed — routes come from stored DB geometry now
@@ -60,18 +138,26 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     legMarkers: Map<string, google.maps.Marker>;
     finalMarker: google.maps.Marker | null;
     poiMarkers: google.maps.Marker[];
+    stopMarkers: google.maps.Marker[];
+    clusterMarkers: google.maps.Marker[];
+    stopsIdleListener: google.maps.MapsEventListener | null;
     gpxPolylines: Map<string, google.maps.Polyline[]>;
     fallbackPolyline: google.maps.Polyline | null;
     infoWindow: google.maps.InfoWindow | null;
+    stopInfoWindow: google.maps.InfoWindow | null;
   }>({
     routePolylines: new Map(),
     gapPolylines: [],
     legMarkers: new Map(),
     finalMarker: null,
     poiMarkers: [],
+    stopMarkers: [],
+    clusterMarkers: [],
+    stopsIdleListener: null,
     gpxPolylines: new Map(),
     fallbackPolyline: null,
     infoWindow: null,
+    stopInfoWindow: null,
   });
 
   // Cache fetched routes between renders so we don't re-call Directions every state change
@@ -84,6 +170,21 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
   useEffect(() => {
     onLegSelectRef.current = onLegSelect;
   }, [onLegSelect]);
+
+  const onStopSelectRef = useRef(onStopSelect);
+  useEffect(() => {
+    onStopSelectRef.current = onStopSelect;
+  }, [onStopSelect]);
+
+  // Hover tooltips only make sense on devices with a real pointer; touch falls
+  // back to tap-to-open. Computed once — the device class doesn't change.
+  const canHoverRef = useRef(false);
+  useEffect(() => {
+    canHoverRef.current =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(hover: hover)').matches;
+  }, []);
 
   // One-time Google Maps init
   useEffect(() => {
@@ -129,6 +230,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
 
         mapRef.current = map;
         layersRef.current.infoWindow = new google.maps.InfoWindow();
+        layersRef.current.stopInfoWindow = new google.maps.InfoWindow();
         setReady(true);
       } catch (err: any) {
         console.error('Google Maps load failed:', err);
@@ -148,6 +250,14 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
       layers.finalMarker = null;
       layers.poiMarkers.forEach((m) => m.setMap(null));
       layers.poiMarkers = [];
+      layers.stopMarkers.forEach((m) => m.setMap(null));
+      layers.stopMarkers = [];
+      layers.clusterMarkers.forEach((m) => m.setMap(null));
+      layers.clusterMarkers = [];
+      if (layers.stopsIdleListener) {
+        layers.stopsIdleListener.remove();
+        layers.stopsIdleListener = null;
+      }
       layers.gpxPolylines.forEach((arr) => arr.forEach((p) => p.setMap(null)));
       layers.gpxPolylines.clear();
       if (layers.fallbackPolyline) layers.fallbackPolyline.setMap(null);
@@ -391,6 +501,171 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     });
   }, [ready, legs, pois, selectedLegId, routesVersion]);
 
+  // ── Stop markers (fuel + user-added), clustered ────────────────────────────
+  // Stops only exist in `legs[].stops` once the owning day has been opened in
+  // the list (lazy fuel sourcing — option B). We render whatever is loaded; the
+  // map fills in as the user browses days. Clustering is screen-space (see
+  // lib/mapClustering) so dense fuel runs collapse into a count bubble when
+  // zoomed out and resolve into individual, clickable markers when zoomed in.
+  // Re-runs on every map 'idle' so the clustering tracks zoom/pan.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    const map = mapRef.current;
+    const layers = layersRef.current;
+
+    const points = collectStopPoints(legs);
+
+    const wipe = () => {
+      layers.stopMarkers.forEach((m) => m.setMap(null));
+      layers.stopMarkers = [];
+      layers.clusterMarkers.forEach((m) => m.setMap(null));
+      layers.clusterMarkers = [];
+    };
+
+    const projectToPixel = (lat: number, lng: number): { x: number; y: number } | null => {
+      const proj = map.getProjection();
+      if (!proj) return null;
+      const world = proj.fromLatLngToPoint(new google.maps.LatLng(lat, lng));
+      if (!world) return null;
+      const scale = 2 ** (map.getZoom() ?? 0);
+      return { x: world.x * scale, y: world.y * scale };
+    };
+
+    const renderStopMarker = (p: MapStopPoint) => {
+      const isFuel = p.type === 'fuel';
+      const marker = new google.maps.Marker({
+        position: { lat: p.lat, lng: p.lng },
+        map,
+        // Square glyph so stops read differently from the round leg/destination
+        // dots. Gold = fuel, slate = user-added.
+        icon: {
+          path: 'M -1,-1 L 1,-1 L 1,1 L -1,1 Z',
+          fillColor: isFuel ? FUEL_STOP_COLOR : OTHER_STOP_COLOR,
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 1.5,
+          scale: 5,
+          anchor: new google.maps.Point(0, 0),
+        },
+        title: p.name,
+        zIndex: 8,
+      });
+      marker.addListener('click', () => {
+        onStopSelectRef.current?.(p.legId, p.stopId);
+      });
+      if (canHoverRef.current) {
+        const priceText = stopPriceText(p);
+        const html = `
+          <div style="min-width: 160px; font-family: var(--tp-font-sans);">
+            <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#6b6b6b'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
+            <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(p.name)}</div>
+            ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${Math.round(p.distanceKm)} km from start</div>` : ''}
+            ${priceText ? `<div style="font-size: 11px; color: ${p.priceState === 'priced' ? FUEL_STOP_COLOR : '#8a8a8a'};">${escapeHtml(priceText)}</div>` : ''}
+            <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Click to open in list</div>
+          </div>`;
+        marker.addListener('mouseover', () => {
+          const iw = layers.stopInfoWindow;
+          if (iw) {
+            iw.setContent(html);
+            iw.open({ anchor: marker, map });
+          }
+        });
+        marker.addListener('mouseout', () => {
+          layers.stopInfoWindow?.close();
+        });
+      }
+      layers.stopMarkers.push(marker);
+    };
+
+    const renderClusterMarker = (members: MapStopPoint[]) => {
+      const count = members.length;
+      const lat = members.reduce((s, m) => s + m.lat, 0) / count;
+      const lng = members.reduce((s, m) => s + m.lng, 0) / count;
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: CLUSTER_COLOR,
+          fillOpacity: 0.92,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+          scale: 12 + Math.min(count, 9),
+        },
+        label: {
+          text: String(count),
+          color: '#ffffff',
+          fontSize: '11px',
+          fontWeight: '700',
+        },
+        zIndex: 9,
+      });
+      marker.addListener('click', () => {
+        const bounds = new google.maps.LatLngBounds();
+        members.forEach((m) => bounds.extend({ lat: m.lat, lng: m.lng }));
+        // Co-located members give an empty-area bounds → fitBounds zooms to max
+        // and the cluster never breaks apart. Nudge the zoom instead.
+        if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+          map.panTo({ lat, lng });
+          map.setZoom(Math.min((map.getZoom() ?? 0) + 2, 18));
+        } else {
+          map.fitBounds(bounds, 80);
+        }
+      });
+      layers.clusterMarkers.push(marker);
+    };
+
+    const render = () => {
+      wipe();
+      if (points.length === 0) return;
+
+      const byId = new Map(points.map((p) => [p.stopId, p]));
+      const pixels: PixelPoint[] = [];
+      let projectionReady = true;
+      for (const p of points) {
+        const px = projectToPixel(p.lat, p.lng);
+        if (!px) {
+          projectionReady = false;
+          break;
+        }
+        pixels.push({ id: p.stopId, x: px.x, y: px.y });
+      }
+
+      // Projection not ready yet (tiles still loading) → render everything as
+      // individual markers; the next 'idle' tick will cluster properly.
+      const groups = projectionReady
+        ? clusterPixels(pixels, STOP_GRID_CELL_PX)
+        : points.map((p) => ({ ids: [p.stopId] }));
+
+      for (const group of groups) {
+        if (group.ids.length === 1) {
+          const p = byId.get(group.ids[0]);
+          if (p) renderStopMarker(p);
+        } else {
+          const members = group.ids
+            .map((id) => byId.get(id))
+            .filter((m): m is MapStopPoint => m != null);
+          if (members.length === 1) renderStopMarker(members[0]);
+          else if (members.length > 1) renderClusterMarker(members);
+        }
+      }
+    };
+
+    render();
+
+    // Re-cluster after the map settles from any zoom/pan.
+    if (layers.stopsIdleListener) layers.stopsIdleListener.remove();
+    layers.stopsIdleListener = map.addListener('idle', render);
+
+    return () => {
+      if (layers.stopsIdleListener) {
+        layers.stopsIdleListener.remove();
+        layers.stopsIdleListener = null;
+      }
+      wipe();
+    };
+  }, [ready, legs]);
+
   // Fetch and render GPX trails for each leg
   useEffect(() => {
     if (!ready || !mapRef.current) return;
@@ -493,6 +768,14 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
     mapRef.current.panTo({ lat: leg.start_lat, lng: leg.start_lng });
   }, [ready, selectedLegId, legs]);
 
+  // Fuel stops are sourced lazily when a day is opened in the list, so a trip
+  // the user hasn't browsed has no stops to plot. Show a quiet hint so the
+  // empty map reads as intentional rather than broken (see option B writeup).
+  const hasLoadedStops = legs.some((l) =>
+    l.stops.some((s) => s.status !== 'dismissed' && s.lat != null && s.lng != null),
+  );
+  const showNoStopsHint = ready && !loadError && legs.length > 0 && !hasLoadedStops;
+
   return (
     <div
       data-testid="trip-map"
@@ -539,6 +822,31 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, trails
           }}
         >
           Loading Google Maps…
+        </div>
+      )}
+      {showNoStopsHint && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'var(--tp-surface)',
+            color: 'var(--tp-muted)',
+            border: '1px solid var(--tp-border)',
+            borderRadius: 999,
+            padding: '6px 14px',
+            fontSize: 12,
+            boxShadow: 'var(--tp-shadow-sm)',
+            pointerEvents: 'none',
+            maxWidth: '85%',
+            textAlign: 'center',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          Open a day to load its fuel stops
         </div>
       )}
     </div>

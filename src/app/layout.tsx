@@ -125,6 +125,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             min-height: 100dvh;
             overscroll-behavior: none;
           }
+          /* Stop iOS Safari from auto-inflating font sizes on orientation
+             change (and never resetting it on the way back to portrait). */
+          html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
           * { -webkit-tap-highlight-color: transparent; }
           /* Prevent iOS Safari from zooming on input focus */
           @supports (-webkit-touch-callout: none) {
@@ -291,9 +294,64 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             display: inline-block;
             animation: tp-dot-pulse 1.2s infinite ease-in-out both;
           }
+
+          /* ---- Landscape lock (phones only) ----
+             Web pages can't truly lock orientation (the Screen Orientation
+             lock API needs fullscreen and is unsupported on iOS Safari), so
+             instead we cover the app with a "rotate back to portrait" screen
+             whenever a touch phone is held in landscape. Gate on a short
+             viewport (max-height) + coarse pointer so desktops and tablets in
+             landscape are never affected. */
+          .landscape-lock {
+            display: none;
+          }
+          @media (orientation: landscape) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
+            .landscape-lock {
+              display: flex;
+              position: fixed;
+              inset: 0;
+              z-index: 2147483647;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              gap: 12px;
+              padding: 24px;
+              box-sizing: border-box;
+              text-align: center;
+              background: var(--tp-bg);
+              color: var(--tp-text);
+            }
+            /* Hide the app behind the overlay so its broken landscape layout
+               never paints or steals scroll/focus. */
+            body > :not(.landscape-lock) {
+              display: none !important;
+            }
+          }
+          .landscape-lock-icon {
+            font-size: 40px;
+            line-height: 1;
+          }
+          .landscape-lock-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0;
+          }
+          .landscape-lock-text {
+            font-size: 14px;
+            color: var(--tp-muted);
+            margin: 0;
+            max-width: 320px;
+          }
         `}</style>
       </head>
       <body>
+        <div className="landscape-lock" aria-hidden="true">
+          <div className="landscape-lock-icon">📱↻</div>
+          <p className="landscape-lock-title">Please rotate your device</p>
+          <p className="landscape-lock-text">
+            Feral Travels works in portrait. Turn your phone upright to keep going.
+          </p>
+        </div>
         {children}
         <ViewportTimeReporter />
         <ErrorNotifier />

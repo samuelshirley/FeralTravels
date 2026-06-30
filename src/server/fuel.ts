@@ -16,6 +16,7 @@ import {
   type LegFuelHistory,
 } from '@/lib/penny/fuelTankState';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
+import { logUsageEvent } from '@/server/repos/usage';
 import {
   fetchFuelCorridor,
   type OsmFuelStation,
@@ -74,6 +75,13 @@ const SKIP_PLANNING_THRESHOLD = 0.7;
 const MAX_DETOUR_KM = 15;
 // Overpass corridor half-width around the route polyline.
 const CORRIDOR_BUFFER_METERS = 2000;
+// A leg whose start and end are effectively the same point (within this
+// straight-line distance) is a no-op — nothing to fuel. These come from
+// same-place "legs" (e.g. a stay that got modelled as a leg) and must short-
+// circuit to a clean 'ready' BEFORE the OSRM call, otherwise OSRM returns a
+// trivial route that decodes to <2 points and Finn would hard-fail it with
+// "Route geometry was unusable". (Was the source of ~all prod 'failed' legs.)
+const TRIVIAL_LEG_KM = 0.1;
 
 export interface FuelPlanResult {
   legId: string;
@@ -114,6 +122,30 @@ async function setFuelStatus(
     set.fuelStopsUpdatedAt = null;
   }
   await db.update(legs).set(set).where(eq(legs.id, legId));
+}
+
+/**
+ * Mark a leg's fuel plan as failed AND record it to `usage_events` (provider
+ * `finn:fuel-plan`, success=false) so the failure shows up in the admin error
+ * log. Before the Google→OSM cutover, Places failures were logged via
+ * `recordGooglePlacesUsage`; Finn's failures wrote only to `legs.fuel_plan_error`
+ * and were invisible to /admin/errors. This restores that visibility.
+ */
+async function failLeg(
+  legId: string,
+  tripId: string | null,
+  userId: string,
+  reason: string
+): Promise<FuelPlanResult> {
+  await setFuelStatus(legId, 'failed', reason);
+  await logUsageEvent({
+    userId,
+    tripId,
+    provider: 'finn:fuel-plan',
+    success: false,
+    errorMessage: reason,
+  }).catch((e) => console.error('[finn] failed to log fuel failure to usage_events:', e));
+  return { legId, status: 'failed', reason };
 }
 
 /** Single-destination Google Maps link built from coords (no Google place data). */
@@ -186,21 +218,34 @@ export async function planFuelStopsForLeg(
     return { legId, status: 'skipped', reason: 'Missing leg coordinates' };
   }
 
+  // Trivial (same-place) leg: start ≈ end. Nothing to fuel. Short-circuit to a
+  // clean 'ready' BEFORE OSRM — a zero-distance route decodes to <2 points and
+  // would otherwise hard-fail as "Route geometry was unusable". This was the
+  // source of essentially every 'failed' leg in prod.
+  if (haversineKm(
+    { lat: leg.startLat, lng: leg.startLng },
+    { lat: leg.endLat, lng: leg.endLng }
+  ) < TRIVIAL_LEG_KM) {
+    await clearAutoPlannerOptionStops(legId);
+    await setFuelStatus(legId, 'ready');
+    return { legId, status: 'ready', stopsCreated: 0 };
+  }
+
   await setFuelStatus(legId, 'computing');
 
   // 2. Resolve the vehicle for this trip (falls back to the user's default).
   const vehicle = await resolveVehicleForTrip(leg.tripId, userId);
   if (!vehicle) {
-    const reason = 'No vehicle on file for user';
-    await setFuelStatus(legId, 'failed', reason);
-    return { legId, status: 'failed', reason };
+    return failLeg(legId, leg.tripId, userId, 'No vehicle on file for user');
   }
   const range = computeEffectiveRangeKm(vehicle.comfortable_range_km);
   if (!range) {
-    const reason =
-      'Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.';
-    await setFuelStatus(legId, 'failed', reason);
-    return { legId, status: 'failed', reason };
+    return failLeg(
+      legId,
+      leg.tripId,
+      userId,
+      'Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.'
+    );
   }
   // Hard ceiling — never route a dry stretch past this. Defaults to the
   // comfortable range when the user gave no separate ceiling (the invariant
@@ -219,17 +264,13 @@ export async function planFuelStopsForLeg(
     leg.endLng
   );
   if (!directions?.geometry) {
-    const reason = 'Could not fetch route geometry';
-    await setFuelStatus(legId, 'failed', reason);
-    return { legId, status: 'failed', reason };
+    return failLeg(legId, leg.tripId, userId, 'Could not fetch route geometry');
   }
 
   const polyline = decodePolyline(directions.geometry);
   const totalKm = polylineLengthKm(polyline);
   if (polyline.length < 2 || totalKm <= 0) {
-    const reason = 'Route geometry was unusable';
-    await setFuelStatus(legId, 'failed', reason);
-    return { legId, status: 'failed', reason };
+    return failLeg(legId, leg.tripId, userId, 'Route geometry was unusable');
   }
 
   // Cross-leg fuel state: how much range is already gone when this leg starts.
@@ -261,9 +302,8 @@ export async function planFuelStopsForLeg(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const reason = `Couldn't reach the OSM station service (${msg}). This is usually transient — try again shortly.`;
-    await setFuelStatus(legId, 'failed', reason);
     console.error(`[finn] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${msg}`);
-    return { legId, status: 'failed', reason };
+    return failLeg(legId, leg.tripId, userId, reason);
   }
 
   const { kept } = filterUsableStations(corridor);

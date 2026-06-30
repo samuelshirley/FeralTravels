@@ -1,5 +1,6 @@
 import 'server-only';
 import { parseCoords, needsServerResolution, type ParsedCoords } from '@/lib/coords';
+import { geocodePlace } from '@/lib/google/geocode';
 
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_MAPS_LINKS_PER_MESSAGE = 5;
@@ -145,12 +146,26 @@ async function resolveShortLink(url: string): Promise<ParsedCoords | null> {
       const text = await res.text();
       const fromBody = extractCoordsFromHtml(text, current);
       if (fromBody) return fromBody;
+      // Page resolved but carried no coordinates (common for EU consent
+      // interstitials and place pages that only render coords via JS). Fall
+      // back to geocoding the place name Google embedded in the page.
+      const name = extractPlaceNameFromHtml(text);
+      if (name) {
+        const geo = await geocodeName(name, url);
+        if (geo) return geo;
+      }
     }
     break;
   }
   return null;
 }
 
+/**
+ * Pull coordinates out of a Google Maps HTML page. Checks (in order): the
+ * canonical / og:url link, then the `!3d<lat>!4d<lng>` blob Google embeds in
+ * place pages, then a bare `@lat,lng` in the body. The latter two catch links
+ * whose canonical tag carries the place name but not the coords.
+ */
 function extractCoordsFromHtml(html: string, sourceUrl: string): ParsedCoords | null {
   const canonicalMatch =
     html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] ||
@@ -159,5 +174,66 @@ function extractCoordsFromHtml(html: string, sourceUrl: string): ParsedCoords | 
     const parsed = parseCoords(canonicalMatch);
     if (parsed) return { ...parsed, source_url: sourceUrl };
   }
+
+  const bang = html.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  if (bang) {
+    const lat = parseFloat(bang[1]);
+    const lng = parseFloat(bang[2]);
+    if (inWorldRange(lat, lng)) {
+      return { lat, lng, name: extractPlaceNameFromHtml(html), source: 'google_maps', source_url: sourceUrl };
+    }
+  }
+
+  const at = html.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (at) {
+    const lat = parseFloat(at[1]);
+    const lng = parseFloat(at[2]);
+    if (inWorldRange(lat, lng)) {
+      return { lat, lng, name: extractPlaceNameFromHtml(html), source: 'google_maps', source_url: sourceUrl };
+    }
+  }
+
   return null;
+}
+
+function inWorldRange(lat: number, lng: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180 &&
+    // Reject the 0,0 null-island artifact that some shells emit.
+    !(lat === 0 && lng === 0)
+  );
+}
+
+/** Extract the place name from og:title or <title>, stripping the Google suffix. */
+function extractPlaceNameFromHtml(html: string): string | undefined {
+  const raw =
+    html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+    html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1];
+  if (!raw) return undefined;
+  const cleaned = raw
+    .replace(/\s*[-–|·]\s*Google\s*Maps.*$/i, '')
+    .replace(/&amp;/g, '&')
+    .trim();
+  return cleaned || undefined;
+}
+
+/** Geocode a place name extracted from a resolved-but-coordless Maps page. */
+async function geocodeName(name: string, sourceUrl: string): Promise<ParsedCoords | null> {
+  const result = await geocodePlace(name);
+  if (result.status !== 'resolved') return null;
+  // Only trust a precise or city-level hit — a country centroid is too coarse
+  // to drop a pin on.
+  if (result.match.granularity === 'area' || result.match.granularity === 'country') return null;
+  return {
+    lat: result.match.lat,
+    lng: result.match.lng,
+    name: result.match.label,
+    source: 'google_maps',
+    source_url: sourceUrl,
+  };
 }

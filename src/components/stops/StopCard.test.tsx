@@ -9,11 +9,6 @@ const baseProps: StopCardProps = {
   stopType: 'fuel',
   name: 'Repsol Burgos Norte',
   distanceFromStartKm: 62,
-  photos: [
-    { url: 'https://example.com/photo1.jpg', attribution: 'Google' },
-    { url: 'https://example.com/photo2.jpg', attribution: 'Google' },
-    { url: 'https://example.com/photo3.jpg', attribution: 'Google' },
-  ],
   googleMapsUri: 'https://www.google.com/maps/place/Repsol+Burgos',
 };
 
@@ -33,13 +28,6 @@ describe('StopCard', () => {
     expect(screen.getByText('62 km from start')).toBeInTheDocument();
   });
 
-  it('renders all photos', () => {
-    render(<StopCard {...baseProps} />);
-    const images = screen.getAllByRole('img');
-    expect(images).toHaveLength(3);
-    expect(images[0]).toHaveAttribute('src', 'https://example.com/photo1.jpg');
-  });
-
   it('opens Google Maps in new tab when clicked', () => {
     render(<StopCard {...baseProps} />);
     const link = screen.getByRole('link');
@@ -50,12 +38,6 @@ describe('StopCard', () => {
   it('renders the user-added (other) stop type', () => {
     render(<StopCard {...baseProps} stopType="other" />);
     expect(screen.getByText('STOP')).toBeInTheDocument();
-  });
-
-  it('handles missing photos gracefully', () => {
-    render(<StopCard {...baseProps} photos={[]} />);
-    expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
-    expect(screen.queryAllByRole('img')).toHaveLength(0);
   });
 
   it('handles null distance', () => {
@@ -76,11 +58,5 @@ describe('StopCard', () => {
     const link = screen.getByRole('link');
     expect(link.getAttribute('href')).toContain('42.3441');
     expect(link.getAttribute('href')).toContain('-3.6969');
-  });
-
-  it('shows loading placeholders while photos are loading', () => {
-    render(<StopCard {...baseProps} photosLoading />);
-    const placeholders = screen.getAllByTestId('photo-placeholder');
-    expect(placeholders.length).toBeGreaterThanOrEqual(2);
   });
 });

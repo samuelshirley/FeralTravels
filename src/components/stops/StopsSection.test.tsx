@@ -61,7 +61,6 @@ const mockFuelStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
-  photos: null,
   price_state: null,
   price_per_litre: null,
   price_currency: null,
@@ -91,7 +90,6 @@ const mockUserStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
-  photos: null,
   price_state: null,
   price_per_litre: null,
   price_currency: null,
@@ -110,10 +108,10 @@ const mockDismissedStop: Stop = {
   status: 'dismissed',
 };
 
-// Suppress fetch calls for photos in tests
+// Stub fetch so the component's lazy fuel-stop POST on mount is inert in tests.
 beforeEach(() => {
   global.fetch = vi.fn().mockResolvedValue({
-    json: () => Promise.resolve({ photos: [] }),
+    json: () => Promise.resolve({}),
   }) as any;
 });
 

@@ -11,6 +11,7 @@ import {
   behindCutoffRank,
   tryParseToISO,
   extractDateFromText,
+  todayISOInZone,
 } from './dates';
 
 describe('extractDateFromText', () => {
@@ -193,6 +194,40 @@ describe('requiredRestDaysBefore', () => {
     expect(
       requiredRestDaysBefore({ tripStartISO: null, targetDateISO: '2026-06-03', driveDaysBefore: 2 }),
     ).toBeNull();
+  });
+});
+
+describe('todayISOInZone', () => {
+  // 2026-06-30T23:30:00Z — late evening UTC. In a positive-offset zone it's
+  // already the NEXT calendar day; in a negative-offset zone it's still the 30th.
+  const lateUtc = new Date('2026-06-30T23:30:00Z');
+
+  it('rolls forward to the local day in a positive-offset zone', () => {
+    // Oslo (UTC+2 in summer) → 01:30 on 2026-07-01.
+    expect(todayISOInZone('Europe/Oslo', lateUtc)).toBe('2026-07-01');
+  });
+
+  it('stays on the UTC day in a negative-offset zone', () => {
+    // New York (UTC-4 in summer) → 19:30 on 2026-06-30.
+    expect(todayISOInZone('America/New_York', lateUtc)).toBe('2026-06-30');
+  });
+
+  it('reproduces the bug class: same instant, different calendar day by zone', () => {
+    // Early-morning UTC where Oslo and New York disagree on the date.
+    const earlyUtc = new Date('2026-06-30T01:00:00Z');
+    expect(todayISOInZone('Europe/Oslo', earlyUtc)).toBe('2026-06-30'); // 03:00
+    expect(todayISOInZone('America/New_York', earlyUtc)).toBe('2026-06-29'); // 21:00 prev day
+  });
+
+  it('falls back to the runtime-local date when zone is null/empty', () => {
+    const now = new Date(2026, 5, 30, 12, 0, 0); // local noon Jun 30
+    expect(todayISOInZone(null, now)).toBe('2026-06-30');
+    expect(todayISOInZone('', now)).toBe('2026-06-30');
+  });
+
+  it('falls back to the runtime-local date when zone is invalid', () => {
+    const now = new Date(2026, 5, 30, 12, 0, 0);
+    expect(todayISOInZone('Not/AZone', now)).toBe('2026-06-30');
   });
 });
 

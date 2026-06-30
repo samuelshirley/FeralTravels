@@ -4,7 +4,6 @@ import { db } from '@/server/db/client';
 import { stops } from '@/server/db/schema';
 import type {
   Stop,
-  StopPhoto,
   StopStatus,
   StopSource,
   StopType,
@@ -42,7 +41,6 @@ export interface CreateStopInput {
   sort_order?: number | null;
   place_id?: string | null;
   google_maps_uri?: string | null;
-  photos?: StopPhoto[] | null;
 }
 
 export async function addStop(input: CreateStopInput): Promise<Stop> {
@@ -70,7 +68,6 @@ export async function addStop(input: CreateStopInput): Promise<Stop> {
       sourceUrl: input.source_url ?? null,
       placeId: input.place_id ?? null,
       googleMapsUri: input.google_maps_uri ?? null,
-      photos: input.photos ?? null,
     })
     .returning();
   return rowMappers.stopRow(row);
@@ -91,7 +88,6 @@ export type UpdateStopInput = Partial<{
   sort_order: number;
   place_id: string | null;
   google_maps_uri: string | null;
-  photos: StopPhoto[] | null;
 }>;
 
 export async function updateStop(id: string, data: UpdateStopInput): Promise<Stop | null> {
@@ -111,7 +107,6 @@ export async function updateStop(id: string, data: UpdateStopInput): Promise<Sto
   if (data.sort_order !== undefined) update.sortOrder = data.sort_order;
   if (data.place_id !== undefined) update.placeId = data.place_id;
   if (data.google_maps_uri !== undefined) update.googleMapsUri = data.google_maps_uri;
-  if (data.photos !== undefined) update.photos = data.photos;
   if (Object.keys(update).length === 0) return getStop(id);
   update.updatedAt = new Date();
   await db.update(stops).set(update).where(eq(stops.id, id));

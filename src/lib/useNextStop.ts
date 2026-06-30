@@ -59,6 +59,16 @@ export function useNextStop(
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>('pending');
 
   // Request GPS when enabled, watch while enabled.
+  //
+  // Prompt policy: this hook runs every time a leg card expands, so if it called
+  // getCurrentPosition unconditionally it would surface the browser's location
+  // prompt at a seemingly random moment (the "why is it asking now?" bug). The
+  // ONE deliberate prompt lives in TripWorkspace's on-load position report. Here
+  // we only read/watch when permission is ALREADY granted; if it's still in the
+  // "prompt" state we stay passive and fall back to the segment list rather than
+  // firing a second, mistimed prompt. When the Permissions API is unavailable
+  // (older webviews) we preserve the original prompt-on-expand behavior so the
+  // nav feature still works.
   useEffect(() => {
     if (!enabled) return;
     if (!navigator.geolocation) {
@@ -66,31 +76,68 @@ export function useNextStop(
       return;
     }
 
-    // Single fast read first so we have something immediately.
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setGpsStatus('active');
-      },
-      (err) => {
-        setGpsStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
-      },
-      { enableHighAccuracy: false, timeout: 8_000, maximumAge: 30_000 },
-    );
+    let cancelled = false;
+    let watchId: number | null = null;
 
-    // Then watch for updates while the card is open.
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setGpsStatus('active');
-      },
-      () => {
-        // Silent — we already have the initial read or its error.
-      },
-      { enableHighAccuracy: true, maximumAge: 15_000 },
-    );
+    const startReadingAndWatching = () => {
+      if (cancelled) return;
+      // Single fast read first so we have something immediately.
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (cancelled) return;
+          setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setGpsStatus('active');
+        },
+        (err) => {
+          if (cancelled) return;
+          setGpsStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
+        },
+        { enableHighAccuracy: false, timeout: 8_000, maximumAge: 30_000 },
+      );
 
-    return () => navigator.geolocation.clearWatch(watchId);
+      // Then watch for updates while the card is open.
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (cancelled) return;
+          setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setGpsStatus('active');
+        },
+        () => {
+          // Silent — we already have the initial read or its error.
+        },
+        { enableHighAccuracy: true, maximumAge: 15_000 },
+      );
+    };
+
+    if (!navigator.permissions?.query) {
+      // No Permissions API — preserve the original behavior (may prompt).
+      startReadingAndWatching();
+    } else {
+      navigator.permissions
+        .query({ name: 'geolocation' as PermissionName })
+        .then((status) => {
+          if (cancelled) return;
+          if (status.state === 'granted') {
+            startReadingAndWatching();
+          } else if (status.state === 'denied') {
+            setGpsStatus('denied');
+          } else {
+            // 'prompt' — don't fire a mistimed prompt here; show the list. The
+            // on-load request owns the single prompt.
+            setGpsStatus('unavailable');
+          }
+        })
+        .catch(() => {
+          // Query failed — fall back to the original behavior rather than
+          // leaving the card stuck without nav.
+          if (!cancelled) startReadingAndWatching();
+        });
+    }
+
+    return () => {
+      cancelled = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    };
   }, [enabled]);
 
   const allSegments = segments ?? [];

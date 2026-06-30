@@ -66,9 +66,10 @@ const waypointSchema = z.object({
 const baseSchema = z.object({
   /**
    * Origin and destination as free-text place names. Penny resolves these
-   * to lat/lng later via her own geocoding heuristics + get_route. We
-   * intentionally don't require lat/lng here — the user said "Tampa", we
-   * shouldn't make Penny pre-geocode just to get the intent on record.
+   * to lat/lng later via resolve_place (the deterministic geocoder) before
+   * get_route — never from her own knowledge. We intentionally don't require
+   * lat/lng here — the user said "Tampa", we shouldn't make Penny pre-geocode
+   * just to get the intent on record.
    */
   origin: z.string().min(1).max(200),
   destination: z.string().min(1).max(200),

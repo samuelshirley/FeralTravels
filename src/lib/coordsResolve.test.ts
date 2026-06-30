@@ -115,6 +115,76 @@ describe('resolveCoordsFromInput short links', () => {
   });
 });
 
+describe('resolveCoordsFromInput body scan', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.stubGlobal('fetch', originalFetch);
+  });
+
+  it('extracts coords from a !3d!4d blob with no canonical tag', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        '<html><head><title>Spot - Google Maps</title></head><body>data=!3d57.0!4d11.0</body></html>',
+        { status: 200 }
+      )
+    );
+    const result = await resolveCoordsFromInput('https://maps.app.goo.gl/bang');
+    expect(result).toMatchObject({ lat: 57, lng: 11, source: 'google_maps' });
+  });
+
+  it('extracts coords from a bare @lat,lng in the body', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('<html><body>...@56.5,10.2,17z...</body></html>', { status: 200 })
+    );
+    const result = await resolveCoordsFromInput('https://maps.app.goo.gl/at');
+    expect(result).toMatchObject({ lat: 56.5, lng: 10.2 });
+  });
+
+  it('geocodes the page name when the page has no coords', async () => {
+    const prevKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = 'test-key';
+    try {
+      vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('maps.app.goo.gl')) {
+          return new Response(
+            '<html><head><meta property="og:title" content="Clean Kokos - Google Maps"></head><body>no coords</body></html>',
+            { status: 200 }
+          );
+        }
+        if (url.includes('/place/textsearch/')) {
+          return new Response(
+            JSON.stringify({
+              status: 'OK',
+              results: [
+                {
+                  name: 'Clean Kokos',
+                  formatted_address: 'Bergen, Norway',
+                  geometry: { location: { lat: 60.39, lng: 5.32 } },
+                  types: ['establishment'],
+                },
+              ],
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response('', { status: 404 });
+      });
+
+      const result = await resolveCoordsFromInput('https://maps.app.goo.gl/named');
+      expect(result).toMatchObject({ lat: 60.39, lng: 5.32, name: 'Clean Kokos' });
+    } finally {
+      if (prevKey === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+      else process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = prevKey;
+    }
+  });
+});
+
 describe('resolveMapsLinksInMessage', () => {
   const originalFetch = globalThis.fetch;
 

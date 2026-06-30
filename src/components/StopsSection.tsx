@@ -8,7 +8,6 @@ import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
 import { apiFetch } from '@/lib/api';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
-import type { StopPhoto } from './stops';
 import Spinner from './Spinner';
 
 interface StopsSectionProps {
@@ -29,6 +28,12 @@ interface StopsSectionProps {
   fuelLoading?: boolean;
   onChanged?: () => void;
   readonly?: boolean;
+  /**
+   * Stop id to briefly ring after a map marker click scrolled here. The
+   * matching card gets a highlight outline; the anchor (data-stop-anchor) is
+   * the scroll target. Null = nothing highlighted.
+   */
+  highlightStopId?: string | null;
 }
 
 const sectionCardStyle: CSSProperties = {
@@ -49,8 +54,6 @@ const sectionTitleStyle: CSSProperties = {
 
 const TYPE_ORDER: StopType[] = ['fuel', 'other'];
 
-// Photos are now read directly from stop.photos (persisted in DB at planning time).
-
 export default function StopsSection({
   tripId,
   legId,
@@ -63,6 +66,7 @@ export default function StopsSection({
   fuelLoading = false,
   onChanged,
   readonly = false,
+  highlightStopId = null,
 }: StopsSectionProps) {
   void _legEndName;
   void _legStartCoords;
@@ -93,17 +97,6 @@ export default function StopsSection({
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
   const setupReturnTarget = pathname?.startsWith('/') ? pathname : `/trips/${tripId}`;
   const vehicleSetupHref = `/vehicle-setup?returnTo=${encodeURIComponent(setupReturnTarget)}`;
-
-  // --- Photos state ---
-  // Photos are now persisted in the DB at planning time — no external API calls.
-  // Build the photosMap from stop.photos directly.
-  const photosMap = useMemo(() => {
-    const map = new Map<string, StopPhoto[]>();
-    for (const stop of activeStops) {
-      map.set(stop.id.toString(), stop.photos ?? []);
-    }
-    return map;
-  }, [activeStops]);
 
   // --- Sort stops for display: by distance from start, then type ---
   const sortedStops = useMemo(() => {
@@ -219,18 +212,27 @@ export default function StopsSection({
         )}
 
         {/* Stops (fuel + user-added) */}
-        {sortedStops.map((stop) => (
+        {sortedStops.map((stop) => {
+          const highlighted = highlightStopId === String(stop.id);
+          return (
           <div
             key={stop.id}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            data-stop-anchor={String(stop.id)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              scrollMarginTop: 80,
+              borderRadius: 8,
+              boxShadow: highlighted ? '0 0 0 2px var(--tp-gold)' : 'none',
+              transition: 'box-shadow 0.3s ease',
+            }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
               <StopCard
                 stopType={stop.stop_type}
                 name={stop.name}
                 distanceFromStartKm={stop.distance_from_start_km}
-                photos={photosMap.get(stop.id.toString()) ?? []}
-                photosLoading={false}
                 googleMapsUri={
                   stop.lat != null && stop.lng != null
                     ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
@@ -275,7 +277,8 @@ export default function StopsSection({
               </button>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {sortedStops.length === 0 &&
           !fuelPlanning &&
@@ -306,7 +309,6 @@ export default function StopsSection({
                   stopType={stop.stop_type}
                   name={stop.name}
                   distanceFromStartKm={stop.distance_from_start_km}
-                  photos={[]}
                   googleMapsUri={
                     stop.lat != null && stop.lng != null
                       ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`

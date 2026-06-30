@@ -34,6 +34,10 @@ interface UnitsContextValue {
 
 const UnitsContext = createContext<UnitsContextValue | null>(null);
 
+// Module-scoped so the timezone sync fires at most once per page-load lifecycle,
+// even if multiple providers mount. Reset only on a full reload.
+let tzSynced = false;
+
 export function UnitsProvider({
   initialUnits,
   children,
@@ -62,6 +66,39 @@ export function UnitsProvider({
       cancelled = true;
     };
   }, [initialUnits]);
+
+  // Capture the browser's IANA timezone once on load and sync it to the server.
+  // This needs NO permission (it's Intl, not geolocation) and is the single
+  // source of truth for the user's "today" — so leg dates and the progress
+  // anchor resolve to the driver's wall-clock day instead of the server's UTC
+  // day. Best-effort: only PATCHes when the stored value differs.
+  useEffect(() => {
+    if (tzSynced) return;
+    tzSynced = true;
+    let cancelled = false;
+    let tz: string | null = null;
+    try {
+      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch {
+      tz = null;
+    }
+    if (!tz) return;
+    (async () => {
+      try {
+        const me = await apiFetch<{ timezone?: string | null }>('/api/me');
+        if (cancelled || me.timezone === tz) return;
+        await apiFetch('/api/me/preferences', {
+          method: 'PATCH',
+          body: { timezone: tz },
+        });
+      } catch {
+        // Best-effort — the day-math falls back to UTC until this lands.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const setUnits = useCallback(async (next: UnitsPref) => {
     const prev = units;

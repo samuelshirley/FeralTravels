@@ -52,6 +52,11 @@ interface LegCardProps {
   isFuelSyncing?: boolean;
   /** Total number of legs in the trip — used in the syncing tooltip copy. */
   fuelSyncTotalLegs?: number;
+  /**
+   * Stop id to briefly highlight (ring) after a map marker click landed here.
+   * Forwarded to StopsSection so the matching StopCard pulses. Null = none.
+   */
+  highlightStopId?: string | null;
 }
 
 export default function LegCard({
@@ -65,6 +70,7 @@ export default function LegCard({
   dateLabel,
   isFuelSyncing = false,
   fuelSyncTotalLegs,
+  highlightStopId = null,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === 'rest';
@@ -119,11 +125,16 @@ export default function LegCard({
       : false;
     const terminalSuccess =
       leg.fuel_status === 'ready' || leg.fuel_status === 'no_stations_found';
-    // Source lazily when never sourced ('none'), or a terminal-success cache
-    // that has gone stale. We deliberately DON'T auto-retry 'failed' on open
-    // (its cause is surfaced inline and a retry would re-hit Places on every
-    // expand) nor 'computing'/'pending' (a search is already in flight).
-    const needsFetch = leg.fuel_status === 'none' || (terminalSuccess && !fresh);
+    // Source lazily when never sourced ('none'), a terminal-success cache that
+    // has gone stale, OR a prior 'failed'. We auto-retry 'failed' now that Finn
+    // runs on free OSM/OSRM — there's no per-call cost to retrying, and it self-
+    // heals legs stranded on a stale error from the old Google Places path. We
+    // still skip 'computing'/'pending' (a search is already in flight); the
+    // signature guard below stops duplicate fires within a render session.
+    const needsFetch =
+      leg.fuel_status === 'none' ||
+      leg.fuel_status === 'failed' ||
+      (terminalSuccess && !fresh);
     if (!needsFetch) return;
 
     // Guard against duplicate fires: the effect re-runs on every trip reload.
@@ -569,6 +580,7 @@ export default function LegCard({
             fuelLoading={fuelLoading}
             onChanged={onChanged}
             readonly={readonly}
+            highlightStopId={highlightStopId}
           />
 
           {itemCosts.length > 0 && (

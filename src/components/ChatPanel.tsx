@@ -740,6 +740,45 @@ export default function ChatPanel({
       );
     };
 
+    /**
+     * Beacon a client-only stream failure to the server so it lands in
+     * /admin/errors, and return a short user-facing code. These failures
+     * (the dominant one being the PWA backgrounded mid-turn, which tears down
+     * the fetch) used to be a pure black hole: a generic string in React state,
+     * `console.warn` only, nothing persisted. `keepalive` lets the beacon
+     * survive the page being backgrounded/unloaded. Fire-and-forget — diagnostics
+     * must never break the chat. NOTE: the SERVER already persists its own errors
+     * (route.ts addChatMessage on the error branch), so we only beacon the
+     * client-side paths it can't see.
+     */
+    const reportStreamError = (
+      phase: 'stream-threw' | 'stream-incomplete',
+      err?: unknown
+    ): string => {
+      const code = `S-${Math.random().toString(36).slice(2, 8)}`;
+      const message =
+        err instanceof Error ? err.message : err != null ? String(err) : undefined;
+      const hidden =
+        typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      try {
+        void fetch('/api/analytics/client-error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({
+            tripId,
+            code,
+            phase,
+            message: message?.slice(0, 500),
+            hidden,
+          }),
+        }).catch(() => {});
+      } catch {
+        // never let diagnostics break the UI
+      }
+      return code;
+    };
+
     type AppliedEvent = {
       response: string;
       changes: { changes: unknown[] };
@@ -865,8 +904,9 @@ export default function ChatPanel({
       if (!appliedEvent) {
         // Stream ended without a terminal `applied` event — treat as failure
         // but preserve whatever partial paragraphs already landed.
+        const code = reportStreamError('stream-incomplete');
         failAssistant(
-          'Connection dropped before Penny finished. Your partial response is above; please retry.'
+          `Connection dropped before Penny finished (code ${code}). Your partial response is above; please retry.`
         );
         onActivity?.('error');
         return;
@@ -964,7 +1004,14 @@ export default function ChatPanel({
     } catch (err) {
       console.warn('replan stream errored', err);
       setDeliveryStatus('responded');
-      failAssistant('Something went wrong. Please try again.');
+      // This is almost always the PWA being backgrounded mid-turn: the browser
+      // tears down the fetch and `reader.read()` throws here. The server keeps
+      // running and persists Penny's reply regardless (Vercel request
+      // cancellation is opt-in and off — no vercel.json), so the work usually
+      // DID land. Beacon the failure with a code and surface it; the
+      // reconcile-on-reopen path (turn record) is what actually heals it.
+      const code = reportStreamError('stream-threw', err);
+      failAssistant(`Something went wrong (code ${code}). Please try again.`);
       onActivity?.('error');
     } finally {
       setLoading(false);

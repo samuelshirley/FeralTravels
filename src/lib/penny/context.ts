@@ -7,8 +7,8 @@ import {
   getVehicleForUser,
   type VehicleApi,
 } from '@/server/repos/vehicles';
-import { getUnitsPref } from '@/server/repos/users';
-import { todayISO } from '@/lib/dates';
+import { getUnitsPref, getUserTimezone } from '@/server/repos/users';
+import { todayISOInZone } from '@/lib/dates';
 import type { UnitsPref } from '@/lib/units';
 import type { ChatMessage, LegWithDetails, TripWithLegs } from '@/types/trip';
 
@@ -172,9 +172,10 @@ export async function buildPennyContext(
   const trip = await getTripFull(tripId);
   if (!trip) return null;
 
-  const [vehicle, unitsPref] = await Promise.all([
+  const [vehicle, unitsPref, timezone] = await Promise.all([
     resolveVehicle(trip, userId),
     getUnitsPref(userId),
+    getUserTimezone(userId),
   ]);
   const chatPage = await getChatPage({
     tripId,
@@ -205,7 +206,7 @@ export async function buildPennyContext(
       current_leg_id: trip.current_leg_id,
       current_place: currentLeg?.start_name ?? null,
     },
-    today: todayISO(),
+    today: todayISOInZone(timezone),
     vehicle: vehicle ? projectVehicle(vehicle) : null,
     legs: trip.legs.map(projectLeg),
     recentChat: chatPage.messages.map(projectChat),

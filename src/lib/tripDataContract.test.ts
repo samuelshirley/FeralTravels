@@ -79,14 +79,6 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
     alternatives: null,
     place_id: 'ChIJ_test_place_id',
     google_maps_uri: 'https://www.google.com/maps/place/?q=place_id:ChIJ_test_place_id',
-    photos: [
-      {
-        url: 'https://places.googleapis.com/v1/places/ChIJ_test/photos/abc/media?maxWidthPx=400',
-        attribution: 'Google',
-        width_px: 400,
-        height_px: 300,
-      },
-    ],
     price_state: null,
     price_per_litre: null,
     price_currency: null,
@@ -148,17 +140,6 @@ describe('Trip data contract — fields required by the UI', () => {
   });
 
   describe('Stop', () => {
-    it('has photos array for rendering without API calls', () => {
-      const stop = makeStop();
-      expect(stop).toHaveProperty('photos');
-      expect(stop.photos).toBeInstanceOf(Array);
-      expect(stop.photos!.length).toBeGreaterThan(0);
-      expect(stop.photos![0]).toHaveProperty('url');
-      expect(stop.photos![0]).toHaveProperty('attribution');
-      expect(stop.photos![0]).toHaveProperty('width_px');
-      expect(stop.photos![0]).toHaveProperty('height_px');
-    });
-
     it('has place_id for direct Google links', () => {
       const stop = makeStop();
       expect(stop).toHaveProperty('place_id');
@@ -175,19 +156,17 @@ describe('Trip data contract — fields required by the UI', () => {
       const stop = makeStop({
         place_id: null,
         google_maps_uri: null,
-        photos: null,
       });
       expect(stop.place_id).toBeNull();
       expect(stop.google_maps_uri).toBeNull();
-      expect(stop.photos).toBeNull();
     });
   });
 
   describe('LegWithDetails', () => {
-    it('includes stops with photos in the nested structure', () => {
+    it('includes stops in the nested structure', () => {
       const leg = makeLegWithDetails();
       expect(leg.stops.length).toBeGreaterThan(0);
-      expect(leg.stops[0].photos).toBeInstanceOf(Array);
+      expect(leg.stops[0]).toHaveProperty('google_maps_uri');
     });
 
     it('includes geometry in the nested structure', () => {
@@ -234,10 +213,9 @@ describe('Trip data contract — fields required by the UI', () => {
         expect(leg).toHaveProperty('geometry');
       }
 
-      // Each stop must have photo/place fields (can be null, but must exist)
+      // Each stop must have place fields (can be null, but must exist)
       for (const leg of trip.legs) {
         for (const stop of leg.stops) {
-          expect(stop).toHaveProperty('photos');
           expect(stop).toHaveProperty('place_id');
           expect(stop).toHaveProperty('google_maps_uri');
         }

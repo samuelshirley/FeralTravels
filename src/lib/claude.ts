@@ -9,12 +9,14 @@ import {
   VALIDATORS,
   type ValidatedAction,
   getRoute as getRouteTool,
+  resolvePlace as resolvePlaceTool,
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
   planFuelStops as planFuelStopsTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
+import { geocodePlace } from "@/lib/google/geocode";
 import { planFuelStopsForLeg } from "@/server/fuel";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
@@ -143,6 +145,7 @@ Be honest about what this app can and cannot do. NEVER claim a capability the ap
 
 What the app CAN do:
 - Plan routes, legs (driving + rest days), and the calendar.
+- Resolve a place the user NAMES — a city, address, or specific business ("Clean Kokos laundromat in Bergen") — to real coordinates via resolve_place. This is how every named location becomes lat/lng.
 - Find fuel stops along a leg via Finn (the plan_fuel_stops tool) — real stations with coordinates. You request them; you never hand-write a fuel stop yourself.
 - Add a user-named place to a leg (add_stop, stop_type "other"): a landmark, address, Maps link, or detour the user explicitly wants to route through.
 - Track the driver's position/progress (report_position) and re-anchor the plan.
@@ -151,7 +154,7 @@ What the app CANNOT do — do NOT claim or imply any of these:
 - Fuel/gas PRICES or "cheapest gas / best deal / current pricing". There is NO price data. You can plan WHERE to stop for fuel, but never compare or quote prices.
 - Real-time hours, availability, or open/closed status of any business (stations, restaurants, campgrounds).
 - Bookings, reservations, or payments.
-- Live traffic, or a browsable list of nearby businesses with details.
+- Live traffic, or DISCOVERY of unnamed places ("find me a good campsite near here", "what laundromats are around"). You can resolve a place the user NAMES (resolve_place), but you cannot browse, rank, or search for places by category — that's a finder we don't have yet.
 
 When the user asks for one of these unsupported things:
 1. If it's a reasonable trip-planning idea (e.g. "find the cheapest gas", "show fuel prices", "book this site", "show live traffic"): call submit_idea to log it, then say ONE short honest sentence — e.g. "I can't compare fuel prices yet, but that's a good idea — I've passed it to the team." Offer what you CAN do instead (e.g. "I can drop a fuel stop on this leg so you know where to refuel.").
@@ -313,6 +316,7 @@ Google Directions ONLY plans drivable paved routes with optional avoidance of mo
 <tool_use_protocol>
 - Tool definitions describe valid inputs. Read each tool's description carefully — it tells you when to call it.
 - ALWAYS call get_route FIRST when planning new legs that involve real driving. Never invent distance_km or drive_time_minutes from your own knowledge — you will be wrong, the validator will reject the leg, and Sam will see your retry as a regression.
+- NEVER write latitude/longitude from your own knowledge. Every coordinate you pass to get_route, add_leg, add_stop, or update_leg must come from one of exactly three sources: (a) resolve_place, (b) a resolved Maps link in <resolved_maps_links>, or (c) raw lat/lng the user typed. Guessing "Bergen is about 60.39, 5.32" is the bug that drops the driver near the right city but the wrong spot — resolve_place exists so you never have to guess. See <place_resolution>.
 - When a tool_result comes back with success, do NOT re-emit that tool call.
 - When a tool_result comes back with is_error: true, fix the specific problem the error message describes and emit a corrected call. Do not retry an unchanged call — it will fail the same way.
 - You may call multiple tools in one response (e.g. add_leg × N for a multi-day plan after one get_route).
@@ -320,7 +324,8 @@ Google Directions ONLY plans drivable paved routes with optional avoidance of mo
 <batching_for_multi_waypoint_trips>
 You have a hard cap on tool-use iterations per turn. Burning iterations one segment at a time will leave the user with a half-saved plan. Batch aggressively:
 
-- When the user gives MULTIPLE mandatory waypoints in one message (e.g. "Tampa → Smoky → Grand Canyon → Moab → Seattle"), emit ALL the get_route calls — one per segment — IN PARALLEL in a single response. Do not call get_route, wait, then call the next get_route. Fire them together as N tool_use blocks in one assistant turn.
+- First resolve coordinates: fire resolve_place for EVERY named point (origin, each waypoint, destination) IN PARALLEL in one response — not one at a time. You need their lat/lng before get_route, so batch the lookups in a single turn.
+- When the user gives MULTIPLE mandatory waypoints in one message (e.g. "Tampa → Smoky → Grand Canyon → Moab → Seattle"), then emit ALL the get_route calls — one per segment — IN PARALLEL in a single response, using the coordinates resolve_place returned. Do not call get_route, wait, then call the next get_route. Fire them together as N tool_use blocks in one assistant turn.
 - After all those get_route results come back in one batched tool_result, emit ALL the add_leg calls for the entire trip in your next response — every driving day across every segment in one batched assistant turn.
 - This collapses what would otherwise be ~2N+1 iterations down to 2-3 for any number of segments. It is the difference between a complete saved plan and a truncated one.
 - Sequential get_route calls are still fine for single-segment work or follow-up tweaks. The batching rule only applies when the user has named multiple mandatory stops up front.
@@ -341,7 +346,7 @@ You have a hard cap on tool-use iterations per turn. Burning iterations one segm
 This is the most common mistake to avoid. Read carefully:
 
 - add_route is ONLY for alternative DESTINATIONS — i.e. multiple candidate overnight points at different end coords. Routes that share the same start and end but differ in path (e.g. "highway vs scenic", "via Millau Bridge", "via mountain pass") cannot be modeled as add_route, because the leg's "Open in Google Maps" button only reads a route's end coords — it does NOT read intermediate path data, and the route's links[] are not used for navigation. Selecting such a route would silently fall back to Google's default highway routing.
-- For a landmark, bridge, pass, viewpoint, or detour the user wants to traverse on the way, use add_stop with stop_type="other", status="selected" (so it forces routing through), and a best-effort distance_from_start_km so it sorts correctly along the leg. The leg's "Open in Google Maps" URL will include selected stops as &waypoints= and Google Maps will route through them. ONLY do this when you have the place's coordinates from a Maps link/address the user provided — if you don't, ask them to paste a Google Maps link rather than guessing coordinates.
+- For a landmark, bridge, pass, viewpoint, or detour the user wants to traverse on the way, use add_stop with stop_type="other", status="selected" (so it forces routing through), and a best-effort distance_from_start_km so it sorts correctly along the leg. The leg's "Open in Google Maps" URL will include selected stops as &waypoints= and Google Maps will route through them. Get the coordinates from resolve_place (or a Maps link the user provided) — never type them from memory. If resolve_place can't pinpoint it, ask the user to sharpen it rather than guessing.
 - Rule of thumb: "go via X" → add_stop. "Stop at X for the night" with multiple options → add_route (one per option, status='option').
 </route_vs_stop_decision>
 
@@ -452,6 +457,21 @@ Same principle applies when splitting one leg into two: add the new leg AND upda
 </leg_merge_and_delete_rules>
 </leg_planning_rules>
 
+<place_resolution>
+This is how a named location becomes coordinates. You NEVER type lat/lng yourself.
+
+Whenever you need the coordinates of a place the user named — an origin, a destination, a waypoint to route through, or a stop to add — call resolve_place with the name (include the city/country when you know it; pass region when you know the 2-letter country code). Use the lat/lng it returns. Do this for cities too: "Bergen" → resolve_place → its centroid. Never shortcut this with coordinates from memory.
+
+Act on the status it returns:
+- resolved + granularity "precise": you have an exact point — use it.
+- resolved + granularity "locality"/"area"/"country": you only got a city/region centroid. That is the RIGHT answer if the user named a city ("drive to Bergen"). But if the user named something specific — a business, a campsite, an address — and you only got a centroid, it is TOO VAGUE. Do not pin the middle of the city. Tell the user you couldn't pinpoint it and ask them to sharpen it (paste a Google Maps link, or give the street / fuller name).
+- ambiguous: several real places match. Show the candidate labels and ask which one — don't pick for them.
+- not_found: no match. Do NOT invent coordinates. Ask for a Maps link, a fuller address, or raw lat/lng.
+- unavailable: the lookup is down. Say so honestly; do not guess.
+
+When you place a stop or leg endpoint from a resolve_place result, set source="user" (the user named it).
+</place_resolution>
+
 <maps_link_handling>
 When the user includes Google or Apple Maps links in their message, the server resolves them before you see the turn. Look for a <resolved_maps_links> block in the user message — each entry has url, resolved, and when successful lat/lng plus optional name.
 
@@ -460,15 +480,17 @@ When resolved is true:
 - Set source="user" and source_url to the original url from the block when adding stops or leg endpoints the user pointed at.
 
 When resolved is false (or the block is absent for a link-only message):
-- Ask for the place name or raw lat/lng — do not pretend you fetched the URL yourself.
+- If the link came with a place name the user also mentioned, try resolve_place on that name. Otherwise ask for the place name or raw lat/lng — do not pretend you fetched the URL yourself.
 </maps_link_handling>
 
 <spot_discovery_note>
-Keep this dead simple. You find FUEL stops and nothing else. You cannot search live business listings, campgrounds, overnight spots, restaurants, shops, viewpoints, or any other kind of place.
+The line is: you resolve places the user NAMES; you do not DISCOVER places they don't.
 
-When the user asks you to find or add anything that isn't fuel, do NOT invent a location, guess coordinates, or drop a placeholder stop. Decline in one friendly line and tell them: paste a Google Maps link (or an address) for the place and you'll add it to the trip plan.
+If the user names a specific place — "Clean Kokos laundromat in Bergen", an address, a campground by name — that is a resolve_place job: resolve it and add it via add_stop with stop_type="other" (or use it as a leg endpoint / waypoint). This is fully supported now; don't refuse it.
 
-The ONLY way a non-fuel stop gets created is from a location the user gives you: when they paste a Maps link / address / coords, the app resolves it (see <resolved_maps_links> / <maps_link_handling>) — add that resolved place via add_stop with stop_type="other". Never author one from a name alone.
+What you still cannot do is browse or search by category: "find me a good campsite near here", "what's a nice viewpoint on this leg", "any laundromats around". There's no finder for that yet. Decline in one friendly line and ask them to name the place (or paste a Maps link), and offer submit_idea if it's a reasonable feature.
+
+Never author a location from nothing: every non-fuel stop comes from a resolve_place match, a resolved Maps link, or raw coords the user gave. Fuel stops only ever come from Finn (plan_fuel_stops), never add_stop.
 </spot_discovery_note>`;
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1023,9 @@ async function executeLookupTool(
   context: PennyContext,
   userId: string,
 ): Promise<LookupResult> {
+  if (toolUse.name === resolvePlaceTool.RESOLVE_PLACE) {
+    return executeResolvePlace(toolUse, context);
+  }
   if (toolUse.name === getRouteTool.GET_ROUTE) {
     return executeGetRoute(toolUse, context);
   }
@@ -1196,6 +1221,85 @@ async function executeExtractTripIntent(
         "Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.",
     }),
   };
+}
+
+/**
+ * resolve_place — deterministic name/address/city → coordinates. This is the
+ * ONLY sanctioned source of lat/lng for a named location; the prompt forbids
+ * Penny from authoring coordinates herself. Mirrors executeGetRoute: validate
+ * the query, call the geocoder, hand back a compact JSON payload Penny can act
+ * on (including granularity so she clarifies a too-coarse match instead of
+ * pinning the middle of a city).
+ */
+async function executeResolvePlace(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext,
+): Promise<LookupResult> {
+  const schema = resolvePlaceTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on resolve_place inputs: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const input = parsed.data as resolvePlaceTool.ResolvePlaceInput;
+  const result = await geocodePlace(input.query, {
+    region: input.region ?? undefined,
+  });
+
+  switch (result.status) {
+    case 'resolved':
+      return {
+        is_error: false,
+        content: JSON.stringify({
+          status: 'resolved',
+          lat: round5(result.match.lat),
+          lng: round5(result.match.lng),
+          label: result.match.label,
+          address: result.match.address ?? null,
+          granularity: result.match.granularity,
+          // Reminder so Penny applies the coarse-match rule from the tool doc.
+          note:
+            result.match.granularity === 'precise'
+              ? 'Exact match — safe to use directly.'
+              : `Only a ${result.match.granularity} centroid. Fine if the user named a city; if they named a specific place, this is too vague — ask them to sharpen it instead of pinning here.`,
+          other_candidates: result.other_candidates.map((c) => ({
+            label: c.label,
+            address: c.address ?? null,
+          })),
+        }),
+      };
+    case 'ambiguous':
+      return {
+        is_error: false,
+        content: JSON.stringify({
+          status: 'ambiguous',
+          message: 'Several distinct places match — ask the user which one before adding it.',
+          candidates: result.candidates.map((c) => ({
+            label: c.label,
+            address: c.address ?? null,
+            lat: round5(c.lat),
+            lng: round5(c.lng),
+          })),
+        }),
+      };
+    case 'not_found':
+      return {
+        is_error: false,
+        content: JSON.stringify({
+          status: 'not_found',
+          message:
+            'No match. Do NOT invent coordinates — ask the user for a Google Maps link, a fuller address, or raw lat/lng.',
+        }),
+      };
+    case 'unavailable':
+      return {
+        is_error: true,
+        content: `resolve_place unavailable: ${result.reason} Tell the user the lookup is temporarily down; do not guess coordinates.`,
+      };
+  }
 }
 
 async function executeGetRoute(

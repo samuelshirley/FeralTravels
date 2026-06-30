@@ -20,24 +20,15 @@ function relativeAsOf(iso: string): string | null {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
-/** A single photo reference for display in a StopCard. */
-export interface StopPhoto {
-  url: string;
-  attribution?: string;
-}
-
 export interface StopCardProps {
   stopType: StopType;
   name: string;
   distanceFromStartKm: number | null;
-  photos: StopPhoto[];
   /** Direct Google Maps URI for this place (preferred). */
   googleMapsUri?: string | null;
   /** Fallback coordinates when no googleMapsUri is available. */
   lat?: number | null;
   lng?: number | null;
-  /** Show shimmer placeholders instead of photos. */
-  photosLoading?: boolean;
   /** When true, dims the card and shows a spinner overlay. */
   loading?: boolean;
   /** Finn fuel price (tri-state). Null/omitted → no price line shown. */
@@ -104,18 +95,16 @@ function buildFallbackMapsUrl(lat: number, lng: number): string {
 /**
  * Reusable stop card for the redesigned leg UI.
  *
- * Layout (Option B): top row = icon + type/name/distance, bottom row = photos.
+ * Layout (Option B): icon + type/name/distance, plus an optional price line.
  * The entire card is a link that opens Google Maps in a new tab.
  */
 export default function StopCard({
   stopType,
   name,
   distanceFromStartKm,
-  photos,
   googleMapsUri,
   lat,
   lng,
-  photosLoading = false,
   loading = false,
   priceState,
   pricePerLitre,
@@ -216,44 +205,6 @@ export default function StopCard({
           </div>
         )}
       </div>
-
-      {/* Photos row */}
-      {photosLoading ? (
-        <div style={{ display: 'flex', gap: 6, marginTop: 8, paddingLeft: 44 }}>
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              data-testid="photo-placeholder"
-              style={{
-                width: 72,
-                height: 52,
-                borderRadius: 6,
-                background: 'var(--tp-border)',
-                animation: 'tp-shimmer 1.5s ease-in-out infinite',
-                flexShrink: 0,
-              }}
-            />
-          ))}
-        </div>
-      ) : photos.length > 0 ? (
-        <div style={{ display: 'flex', gap: 6, marginTop: 8, paddingLeft: 44 }}>
-          {photos.slice(0, 3).map((photo, i) => (
-            <img
-              key={i}
-              src={photo.url}
-              alt={`${name} photo ${i + 1}`}
-              style={{
-                width: 72,
-                height: 52,
-                borderRadius: 6,
-                objectFit: 'cover',
-                flexShrink: 0,
-                background: 'var(--tp-border)',
-              }}
-            />
-          ))}
-        </div>
-      ) : null}
     </>
   );
 

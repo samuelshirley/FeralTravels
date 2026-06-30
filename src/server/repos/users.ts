@@ -38,3 +38,39 @@ export async function setUnitsPref(userId: string, raw: unknown): Promise<UnitsP
   await db.update(users).set({ unitsPref: pref }).where(eq(users.id, userId));
   return pref;
 }
+
+/**
+ * Read the user's stored IANA timezone, or null if never captured. Callers that
+ * need a concrete "today" should pass this straight to {@link todayISOInZone},
+ * which treats null as UTC-fallback — so no normalization is needed here.
+ */
+export async function getUserTimezone(userId: string): Promise<string | null> {
+  const rows = await db
+    .select({ timezone: users.timezone })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const tz = rows[0]?.timezone;
+  return tz && tz.trim() !== '' ? tz : null;
+}
+
+/**
+ * Persist the user's IANA timezone (captured from the browser on load). Validated
+ * against the runtime's Intl zone database so a malformed string can't poison the
+ * day-math; an unrecognized zone is rejected (returns null, nothing written).
+ */
+export async function setUserTimezone(
+  userId: string,
+  raw: unknown,
+): Promise<string | null> {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const tz = raw.trim();
+  try {
+    // Throws RangeError on an unknown timezone — the cheapest valid-zone check.
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+  } catch {
+    return null;
+  }
+  await db.update(users).set({ timezone: tz }).where(eq(users.id, userId));
+  return tz;
+}

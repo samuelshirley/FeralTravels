@@ -122,6 +122,15 @@ export default function TripWorkspace({
   const [trip, setTrip] = useState<TripWithLegs | null>(null);
   const [pois, setPois] = useState<POI[]>([]);
   const [selectedLegId, setSelectedLegId] = useState<string | null>(null);
+  // Drives "open this in the list view": set when the user clicks a leg or stop
+  // marker on the map. The nonce makes repeated clicks on the same target
+  // re-fire the Itinerary's expand+scroll effect. stopId is null for a leg
+  // click (open the day) or set for a stop click (scroll to that stop).
+  const [focusTarget, setFocusTarget] = useState<{
+    legId: string;
+    stopId: string | null;
+    nonce: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
 
@@ -155,8 +164,11 @@ export default function TripWorkspace({
     loadTrip();
   }, [loadTrip]);
 
-  // Report the user's GPS position once on mount so the nightly replan cron
-  // knows where they are. Fire-and-forget — never block the UI.
+  // Report the user's GPS position once on mount. This is also the ONE
+  // deliberate geolocation prompt for the app — useNextStop (per leg card) only
+  // reads when permission is already granted, so the prompt lands here on load
+  // rather than at a random moment when a day is expanded. Fire-and-forget —
+  // never block the UI; denial just means no position report.
   useEffect(() => {
     if (readonly) return;
     if (!navigator.geolocation) return;
@@ -208,6 +220,19 @@ export default function TripWorkspace({
     await loadTrip();
     await new Promise((r) => setTimeout(r, 250));
   }, [loadTrip]);
+
+  // Clicking a marker on the map opens that day/stop in the list view. On mobile
+  // that means switching to the list tab; on desktop the list pane is already
+  // visible, so we just expand + scroll it (handled inside Itinerary). We also
+  // keep selectedLegId in sync so the map pans/highlights the same leg.
+  const focusInList = useCallback(
+    (legId: string, stopId: string | null) => {
+      setSelectedLegId(legId);
+      setFocusTarget({ legId, stopId, nonce: Date.now() });
+      if (viewport === 'mobile') setMobileTab('list');
+    },
+    [viewport],
+  );
 
   // On tablet & desktop chat is now always visible — no chatOpen toggle to set.
   // On mobile, on a freshly-created trip (no legs yet), chat should be the
@@ -349,7 +374,8 @@ export default function TripWorkspace({
       legs={trip.legs}
       pois={pois}
       selectedLegId={selectedLegId}
-      onLegSelect={setSelectedLegId}
+      onLegSelect={(id) => focusInList(id, null)}
+      onStopSelect={(legId, stopId) => focusInList(legId, stopId)}
       trailsVersion={trailsVersion}
       tripId={tripId}
     />
@@ -371,6 +397,8 @@ export default function TripWorkspace({
       // stops. `tripFuelBusy` covers any leg whose fuel_status is
       // computing/pending.
       isFuelSyncing={tripFuelBusy}
+      // Map marker clicks open the owning day/stop here (expand + scroll).
+      focusTarget={focusTarget}
     />
   );
 

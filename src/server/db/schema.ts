@@ -58,6 +58,14 @@ export const users = pgTable('users', {
   isAdmin: boolean('is_admin').default(false).notNull(),
   /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
+  /**
+   * IANA timezone (e.g. "Europe/Oslo"), captured from the browser on load.
+   * Null until first captured → server falls back to UTC. The single source of
+   * truth for what "today" is *for this user*: leg-date anchoring, Penny's
+   * context.today, and the report_position anchor all resolve through it so the
+   * server's notion of the current day matches the driver's wall clock.
+   */
+  timezone: text('timezone'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -667,5 +675,59 @@ export const announcementDismissals = pgTable(
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.announcementId] }),
     userIdx: index('announcement_dismissals_user_idx').on(t.userId),
+  })
+);
+
+// ── Penny turns ─────────────────────────────────────────────────────────────
+
+/** Lifecycle of one Penny replan turn. */
+export type PennyTurnStatus = 'queued' | 'running' | 'done' | 'error';
+
+/**
+ * One row per Penny replan turn — the durable record of a chat turn's lifecycle,
+ * independent of the SSE stream the client reads.
+ *
+ * Why it exists: the chat stream rides a fetch the browser tears down whenever the
+ * PWA is backgrounded mid-turn. The server keeps running and persists Penny's reply
+ * regardless (Vercel request cancellation is opt-in and off here), but the client
+ * only saw a thrown error. This record lets a dropped client RE-ATTACH and reconcile
+ * (heal the false "Something went wrong" bubble) instead of dead-ending, gives the
+ * server an idempotency anchor so a retry/double-send can't spawn two concurrent
+ * replans on one trip, and persists a QUEUED turn so it survives the app closing and
+ * runs after the in-flight turn finishes. See docs/design/penny-turn-resilience.md.
+ */
+export const pennyTurns = pgTable(
+  'penny_turns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tripId: uuid('trip_id')
+      .notNull()
+      .references(() => trips.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Client-generated, stable per send — dedupes retries of the same turn. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    status: text('status')
+      .notNull()
+      .default('running')
+      .$type<PennyTurnStatus>(),
+    /** The user's message text — kept so a queued turn can run later. */
+    userMessage: text('user_message').notNull(),
+    /** Images attached to the turn (data URLs), so a queued turn can replay them. */
+    images: jsonb('images').$type<{ dataUrl: string; mediaType: string }[] | null>(),
+    /** Penny's final prose once `done`. */
+    resultResponse: text('result_response'),
+    /** Terminal `applied` payload (counts, planSummary, …) for client reconcile. */
+    resultMeta: jsonb('result_meta').$type<Record<string, unknown> | null>(),
+    /** Real error text when `status = 'error'`. */
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    keyIdx: uniqueIndex('penny_turns_idempotency_key_idx').on(t.idempotencyKey),
+    tripIdx: index('penny_turns_trip_idx').on(t.tripId),
+    tripStatusIdx: index('penny_turns_trip_status_idx').on(t.tripId, t.status),
   })
 );
