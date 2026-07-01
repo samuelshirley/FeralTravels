@@ -14,10 +14,6 @@ import {
   FIXTURE_USER_NAME,
   FIXTURE_TRIP_NAME,
   FIXTURE_VEHICLE_NAME,
-  REMEDIATION_FIXTURE_EMAIL,
-  REMEDIATION_USER_NAME,
-  REMEDIATION_TRIP_NAME,
-  REMEDIATION_VEHICLE_NAME,
 } from './fixtures/constants';
 
 function baseUrl(): string {
@@ -65,11 +61,5 @@ export default async function globalSetup() {
     userName: FIXTURE_USER_NAME,
     vehicleName: FIXTURE_VEHICLE_NAME,
     tripName: FIXTURE_TRIP_NAME,
-  });
-  await seedPersona({
-    email: REMEDIATION_FIXTURE_EMAIL,
-    userName: REMEDIATION_USER_NAME,
-    vehicleName: REMEDIATION_VEHICLE_NAME,
-    tripName: REMEDIATION_TRIP_NAME,
   });
 }

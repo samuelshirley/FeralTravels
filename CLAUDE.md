@@ -257,7 +257,9 @@ addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateR
 
 ### Scripts (`scripts/`)
 
-ship.sh, run-migrations.ts, seed-demo-trip.ts, seed-e2e-fixture.ts, cleanup-e2e.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
+ship.sh, run-migrations.ts, seed-demo-trip.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
+
+(E2E fixtures are seeded/cleaned over HTTP via `/api/test/*` from `global-setup.ts`/`global-teardown.ts` — the old `seed-e2e-fixture.ts` / `cleanup-e2e.ts` SQL scripts + `e2e:seed`/`e2e:cleanup` npm scripts were removed.)
 
 ### E2E Tests (`e2e/`)
 
@@ -295,7 +297,7 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Schema changes:** Edit `schema.ts` → `npm run db:generate` → `npm run db:migrate`
 - **New API route:** Create `src/app/api/<resource>/route.ts`, add repo if needed
 - **New Penny tool:** Add to `src/lib/penny/tools/`, register in `index.ts`
-- **E2E tests:** Need a running dev server and seeded test DB (`npm run e2e:seed`)
+- **E2E tests:** Playwright starts the app itself (webServer) and seeds fixtures over HTTP via `/api/test/*` in `global-setup.ts` — no manual seed step. In CI they run against an ephemeral Neon branch.
 
 ## Keeping this file current
 

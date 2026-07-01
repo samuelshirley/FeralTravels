@@ -4,7 +4,7 @@
  * guarded `/api/test/cleanup` endpoint (no direct DB access). The personas'
  * canonical data is fully reset on the next globalSetup.
  */
-import { FIXTURE_EMAIL, REMEDIATION_FIXTURE_EMAIL } from './fixtures/constants';
+import { FIXTURE_EMAIL } from './fixtures/constants';
 
 function baseUrl(): string {
   return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
@@ -28,7 +28,6 @@ export default async function globalTeardown() {
   }
   try {
     await cleanupPersona(FIXTURE_EMAIL);
-    await cleanupPersona(REMEDIATION_FIXTURE_EMAIL);
   } catch (err) {
     // Non-fatal — a failed cleanup shouldn't fail the run.
     console.warn(`[e2e] Cleanup error: ${err instanceof Error ? err.message : String(err)}`);
