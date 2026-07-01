@@ -157,15 +157,14 @@ describe('resolveCoordsFromInput body scan', () => {
             { status: 200 }
           );
         }
-        if (url.includes('/place/textsearch/')) {
+        if (url.includes('places.googleapis.com')) {
           return new Response(
             JSON.stringify({
-              status: 'OK',
-              results: [
+              places: [
                 {
-                  name: 'Clean Kokos',
-                  formatted_address: 'Bergen, Norway',
-                  geometry: { location: { lat: 60.39, lng: 5.32 } },
+                  location: { latitude: 60.39, longitude: 5.32 },
+                  displayName: { text: 'Clean Kokos' },
+                  formattedAddress: 'Bergen, Norway',
                   types: ['establishment'],
                 },
               ],

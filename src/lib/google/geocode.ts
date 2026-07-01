@@ -10,10 +10,17 @@ import 'server-only';
  * authoritative lookup against Google. The LLM supplies the query string;
  * the coordinates always come from here.
  *
- * Strategy: Places Text Search first (handles businesses, addresses, AND
- * cities), Geocoding API as a fallback for the rare query Text Search misses.
- * Both use the same key the rest of the app already uses
- * (NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) — geocoding/Places must be enabled on it.
+ * Endpoint: Google **Places API (New)** `places:searchText` — the same API the
+ * fuel-pricing provider uses (`fuelPricing/providers/google.ts`). It handles
+ * businesses, addresses, AND cities in one call. We deliberately do NOT use the
+ * legacy `place/textsearch/json` endpoint (that requires the deprecated "Places
+ * API" SKU, which this project does not have enabled — it caused a 100%
+ * REQUEST_DENIED outage) and we do NOT keep a Geocoding-API fallback: if Places
+ * (New) can't resolve it, we return not_found/unavailable and let the caller
+ * ask the user for a Maps link rather than silently trying a second product.
+ *
+ * Key: the one app-wide key, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY (there is no
+ * separate server key — see CLAUDE.md). Places API (New) must be enabled on it.
  *
  * The result is tri-state on purpose (see GeocodeResult): a coarse or
  * ambiguous match is NOT silently returned as if it were exact. Callers
@@ -21,9 +28,12 @@ import 'server-only';
  * ask the user to sharpen it.
  */
 
-const TEXT_SEARCH_URL = 'https://maps.googleapis.com/maps/api/place/textsearch/json';
-const GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
+const SEARCH_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText';
 const FETCH_TIMEOUT_MS = 5000;
+
+/** Places (New) fields we need back. Keep tight — field mask drives billing SKU. */
+const FIELD_MASK =
+  'places.location,places.displayName,places.formattedAddress,places.types,places.id';
 
 /** Two precise candidates farther apart than this count as genuinely different places. */
 const AMBIGUITY_KM = 2;
@@ -62,18 +72,19 @@ export interface GeocodeOptions {
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
   /**
-   * Optional region bias (ccTLD, e.g. "no" for Norway) — nudges Google toward
-   * the right country when the query is a bare name. Not required.
+   * Optional region bias (two-letter code, e.g. "no" for Norway) — nudges
+   * Google toward the right country when the query is a bare name. Not required.
    */
   region?: string;
 }
 
+/** Shape of one place in a Places (New) searchText response. */
 interface RawPlace {
-  name?: string;
-  formatted_address?: string;
-  geometry?: { location?: { lat?: number; lng?: number } };
+  id?: string;
+  formattedAddress?: string;
+  location?: { latitude?: number; longitude?: number };
+  displayName?: { text?: string };
   types?: string[];
-  place_id?: string;
 }
 
 const PRECISE_TYPES = new Set([
@@ -119,42 +130,83 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
 }
 
 function toMatch(p: RawPlace): GeocodeMatch | null {
-  const lat = p.geometry?.location?.lat;
-  const lng = p.geometry?.location?.lng;
+  const lat = p.location?.latitude;
+  const lng = p.location?.longitude;
   if (typeof lat !== 'number' || typeof lng !== 'number') return null;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  const label = (p.name || p.formatted_address || '').trim();
+  const label = (p.displayName?.text || p.formattedAddress || '').trim();
   if (!label) return null;
   return {
     lat,
     lng,
     label,
-    address: p.formatted_address?.trim() || undefined,
+    address: p.formattedAddress?.trim() || undefined,
     granularity: classifyGranularity(p.types),
-    place_id: p.place_id || undefined,
+    place_id: p.id || undefined,
   };
 }
 
-async function fetchJson(
-  url: string,
+type FetchOutcome =
+  | { kind: 'ok'; places: RawPlace[] }
+  /** Transport-level failure (network/timeout) — surface as unavailable, not not_found. */
+  | { kind: 'network' }
+  /** API-level rejection (bad key, API not enabled, quota) — surface as unavailable. */
+  | { kind: 'denied'; reason: string };
+
+/**
+ * One Places (New) searchText call. POST with the key in X-Goog-Api-Key and the
+ * field mask in X-Goog-FieldMask (Places New requires both). Distinguishes a
+ * transport failure from an API rejection so the caller can tell "lookup is
+ * down" from "no such place".
+ */
+async function searchText(
+  query: string,
+  apiKey: string,
+  region: string | undefined,
   fetchImpl: typeof fetch,
-): Promise<{ status?: string; results?: RawPlace[]; error_message?: string } | null> {
+): Promise<FetchOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(url, { signal: controller.signal });
-    if (!res.ok) return null;
-    return (await res.json()) as { status?: string; results?: RawPlace[]; error_message?: string };
+    const body: Record<string, unknown> = { textQuery: query };
+    if (region) body.regionCode = region.toUpperCase();
+
+    const res = await fetchImpl(SEARCH_TEXT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': FIELD_MASK,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      // Places (New) errors carry { error: { code, message, status } }.
+      let reason = `Places API (New) HTTP ${res.status}.`;
+      try {
+        const err = (await res.json()) as { error?: { message?: string; status?: string } };
+        if (err?.error?.message) reason = err.error.message;
+      } catch {
+        // Non-JSON error body — keep the status-based reason.
+      }
+      return { kind: 'denied', reason };
+    }
+
+    const data = (await res.json()) as { places?: RawPlace[] };
+    return { kind: 'ok', places: Array.isArray(data.places) ? data.places : [] };
   } catch {
-    return null;
+    return { kind: 'network' };
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * Turn the raw candidate list into a tri-state result. Shared by Text Search
- * and Geocoding so both score ambiguity the same way.
+ * Turn the raw candidate list into a tri-state result. Scores ambiguity so two
+ * genuinely different precise places force a clarification while same-named
+ * cities do not.
  */
 function decide(rawResults: RawPlace[]): GeocodeResult | null {
   const matches = rawResults.map(toMatch).filter((m): m is GeocodeMatch => m !== null);
@@ -179,9 +231,10 @@ function decide(rawResults: RawPlace[]): GeocodeResult | null {
 }
 
 /**
- * Resolve a free-text place/address/city to coordinates. Never guesses —
- * returns `not_found` rather than a best-effort wrong pin, and `unavailable`
- * (not a silent failure) when there's no key or the API errors.
+ * Resolve a free-text place/address/city to coordinates via Places API (New).
+ * Never guesses — returns `not_found` rather than a best-effort wrong pin, and
+ * `unavailable` (not a silent failure) when there's no key or the API errors.
+ * There is no second-product fallback: one call, one honest answer.
  */
 export async function geocodePlace(query: string, opts: GeocodeOptions = {}): Promise<GeocodeResult> {
   const q = query.trim();
@@ -192,39 +245,16 @@ export async function geocodePlace(query: string, opts: GeocodeOptions = {}): Pr
     return { status: 'unavailable', reason: 'No Google Maps API key configured.' };
   }
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const regionParam = opts.region ? `&region=${encodeURIComponent(opts.region)}` : '';
 
-  // 1) Places Text Search — handles businesses, addresses, and cities.
-  const textUrl = `${TEXT_SEARCH_URL}?query=${encodeURIComponent(q)}${regionParam}&key=${apiKey}`;
-  const text = await fetchJson(textUrl, fetchImpl);
-  if (text && (text.status === 'REQUEST_DENIED' || text.status === 'INVALID_REQUEST')) {
-    return {
-      status: 'unavailable',
-      reason: text.error_message || `Places Text Search ${text.status}.`,
-    };
+  const outcome = await searchText(q, apiKey, opts.region, fetchImpl);
+  if (outcome.kind === 'denied') {
+    return { status: 'unavailable', reason: outcome.reason };
   }
-  if (text && text.status === 'OK' && text.results && text.results.length > 0) {
-    const decided = decide(text.results);
-    if (decided) return decided;
-  }
-
-  // 2) Geocoding API fallback — catches the occasional bare address Text
-  // Search misses, and gives a clean city/region centroid.
-  const geoUrl = `${GEOCODE_URL}?address=${encodeURIComponent(q)}${regionParam}&key=${apiKey}`;
-  const geo = await fetchJson(geoUrl, fetchImpl);
-  if (geo && geo.status === 'REQUEST_DENIED') {
-    return { status: 'unavailable', reason: geo.error_message || 'Geocoding REQUEST_DENIED.' };
-  }
-  if (geo && geo.status === 'OK' && geo.results && geo.results.length > 0) {
-    const decided = decide(geo.results);
-    if (decided) return decided;
-  }
-
-  // If both ran cleanly but found nothing, it's genuinely not found. If both
-  // failed at the network level, surface that as unavailable (not "not found"
-  // — we don't want Penny telling the user a real place doesn't exist).
-  if (text === null && geo === null) {
+  if (outcome.kind === 'network') {
     return { status: 'unavailable', reason: 'Geocoding lookup failed (network/timeout).' };
   }
+
+  const decided = decide(outcome.places);
+  if (decided) return decided;
   return { status: 'not_found' };
 }

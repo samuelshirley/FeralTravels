@@ -21,6 +21,14 @@ import { haversineKm, polylineLengthKm, type LatLng } from '@/lib/polyline';
 export const DEFAULT_OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
 
 /**
+ * Identifying User-Agent for Overpass calls. REQUIRED — overpass-api.de rejects
+ * User-Agent-less requests with HTTP 406, and OSM's usage policy mandates an
+ * identifying agent with contact info. Do NOT remove this; a UA-less request
+ * fails 100% of the time (this was the "finn:fuel-plan HTTP 406" prod outage).
+ */
+export const OVERPASS_USER_AGENT = 'FeralTravels/1.0 (+https://feraltravels.app; contact: samuelashirley@gmail.com)';
+
+/**
  * A fuel station (or motorway service area) as stored from OSM. ODbL-licensed —
  * display OSM attribution wherever this is shown.
  */
@@ -249,7 +257,12 @@ export async function fetchFuelCorridor(
 
   const res = await fetchImpl(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      // Overpass returns HTTP 406 without an identifying User-Agent (see const).
+      'User-Agent': OVERPASS_USER_AGENT,
+      Accept: 'application/json',
+    },
     body: `data=${encodeURIComponent(query)}`,
   });
   if (!res.ok) {

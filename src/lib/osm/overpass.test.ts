@@ -175,6 +175,22 @@ describe('fetchFuelCorridor', () => {
     expect(out[0].osmId).toBe('node/9');
   });
 
+  it('sends a User-Agent header (Overpass rejects UA-less requests with HTTP 406)', async () => {
+    let capturedHeaders: Record<string, string> = {};
+    await fetchFuelCorridor(
+      route,
+      { bufferMeters: 1500 },
+      {
+        fetchImpl: async (_url, init) => {
+          capturedHeaders = init?.headers ?? {};
+          return { ok: true, status: 200, text: async () => '{"elements":[]}' };
+        },
+      }
+    );
+    expect(capturedHeaders['User-Agent']).toBeTruthy();
+    expect(capturedHeaders['User-Agent']).toContain('FeralTravels');
+  });
+
   it('throws on a non-200 response', async () => {
     await expect(
       fetchFuelCorridor(route, undefined, {

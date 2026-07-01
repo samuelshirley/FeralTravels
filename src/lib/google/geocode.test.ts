@@ -4,41 +4,39 @@ vi.mock('server-only', () => ({}));
 
 import { geocodePlace } from './geocode';
 
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
+/** One place in the Places API (New) searchText response shape. */
+interface PlaceLite {
+  location: { latitude: number; longitude: number };
+  displayName?: { text: string };
+  formattedAddress?: string;
+  types?: string[];
+  id?: string;
 }
 
-/** Fake fetch that answers Text Search and Geocoding separately. */
-function fakeFetch(byEndpoint: { text?: unknown; geo?: unknown }): typeof fetch {
-  return vi.fn(async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input.toString();
-    if (url.includes('/place/textsearch/')) return jsonResponse(byEndpoint.text ?? { status: 'ZERO_RESULTS', results: [] });
-    if (url.includes('/geocode/')) return jsonResponse(byEndpoint.geo ?? { status: 'ZERO_RESULTS', results: [] });
-    return jsonResponse({ status: 'ZERO_RESULTS', results: [] });
-  }) as unknown as typeof fetch;
+/** Fake fetch that returns a Places (New) searchText payload. */
+function okFetch(places: PlaceLite[]): typeof fetch {
+  return vi.fn(
+    async () =>
+      new Response(JSON.stringify({ places }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+  ) as unknown as typeof fetch;
 }
 
 const KEY = { apiKey: 'test-key' };
 
 describe('geocodePlace', () => {
   it('resolves a specific business to a precise point', async () => {
-    const fetchImpl = fakeFetch({
-      text: {
-        status: 'OK',
-        results: [
-          {
-            name: 'Clean Kokos',
-            formatted_address: 'Kong Oscars gate 45, Bergen, Norway',
-            geometry: { location: { lat: 60.391, lng: 5.324 } },
-            types: ['laundry', 'point_of_interest', 'establishment'],
-            place_id: 'abc',
-          },
-        ],
+    const fetchImpl = okFetch([
+      {
+        location: { latitude: 60.391, longitude: 5.324 },
+        displayName: { text: 'Clean Kokos' },
+        formattedAddress: 'Kong Oscars gate 45, Bergen, Norway',
+        types: ['laundry', 'point_of_interest', 'establishment'],
+        id: 'abc',
       },
-    });
+    ]);
 
     const result = await geocodePlace('Clean Kokos laundromat Bergen', { ...KEY, fetchImpl });
     expect(result).toMatchObject({
@@ -48,19 +46,14 @@ describe('geocodePlace', () => {
   });
 
   it('classifies a bare city as a locality centroid', async () => {
-    const fetchImpl = fakeFetch({
-      text: {
-        status: 'OK',
-        results: [
-          {
-            name: 'Bergen',
-            formatted_address: 'Bergen, Norway',
-            geometry: { location: { lat: 60.3913, lng: 5.3221 } },
-            types: ['locality', 'political'],
-          },
-        ],
+    const fetchImpl = okFetch([
+      {
+        location: { latitude: 60.3913, longitude: 5.3221 },
+        displayName: { text: 'Bergen' },
+        formattedAddress: 'Bergen, Norway',
+        types: ['locality', 'political'],
       },
-    });
+    ]);
 
     const result = await geocodePlace('Bergen', { ...KEY, fetchImpl });
     expect(result.status).toBe('resolved');
@@ -70,25 +63,20 @@ describe('geocodePlace', () => {
   });
 
   it('flags ambiguity when two distinct precise places match', async () => {
-    const fetchImpl = fakeFetch({
-      text: {
-        status: 'OK',
-        results: [
-          {
-            name: 'Springfield Diner',
-            formatted_address: 'Springfield, IL',
-            geometry: { location: { lat: 39.78, lng: -89.65 } },
-            types: ['restaurant', 'establishment'],
-          },
-          {
-            name: 'Springfield Diner',
-            formatted_address: 'Springfield, MO',
-            geometry: { location: { lat: 37.21, lng: -93.29 } },
-            types: ['restaurant', 'establishment'],
-          },
-        ],
+    const fetchImpl = okFetch([
+      {
+        location: { latitude: 39.78, longitude: -89.65 },
+        displayName: { text: 'Springfield Diner' },
+        formattedAddress: 'Springfield, IL',
+        types: ['restaurant', 'establishment'],
       },
-    });
+      {
+        location: { latitude: 37.21, longitude: -93.29 },
+        displayName: { text: 'Springfield Diner' },
+        formattedAddress: 'Springfield, MO',
+        types: ['restaurant', 'establishment'],
+      },
+    ]);
 
     const result = await geocodePlace('Springfield Diner', { ...KEY, fetchImpl });
     expect(result.status).toBe('ambiguous');
@@ -98,57 +86,71 @@ describe('geocodePlace', () => {
   });
 
   it('does NOT flag ambiguity for two same-named cities (centroid is fine)', async () => {
-    const fetchImpl = fakeFetch({
-      text: {
-        status: 'OK',
-        results: [
-          {
-            name: 'Bergen',
-            formatted_address: 'Bergen, Norway',
-            geometry: { location: { lat: 60.39, lng: 5.32 } },
-            types: ['locality', 'political'],
-          },
-          {
-            name: 'Bergen',
-            formatted_address: 'Bergen, NJ, USA',
-            geometry: { location: { lat: 40.92, lng: -74.03 } },
-            types: ['locality', 'political'],
-          },
-        ],
+    const fetchImpl = okFetch([
+      {
+        location: { latitude: 60.39, longitude: 5.32 },
+        displayName: { text: 'Bergen' },
+        formattedAddress: 'Bergen, Norway',
+        types: ['locality', 'political'],
       },
-    });
+      {
+        location: { latitude: 40.92, longitude: -74.03 },
+        displayName: { text: 'Bergen' },
+        formattedAddress: 'Bergen, NJ, USA',
+        types: ['locality', 'political'],
+      },
+    ]);
 
     const result = await geocodePlace('Bergen', { ...KEY, fetchImpl });
     expect(result.status).toBe('resolved');
   });
 
-  it('falls back to the Geocoding API when Text Search finds nothing', async () => {
-    const fetchImpl = fakeFetch({
-      text: { status: 'ZERO_RESULTS', results: [] },
-      geo: {
-        status: 'OK',
-        results: [
-          {
-            formatted_address: '1600 Pennsylvania Ave NW, Washington, DC',
-            geometry: { location: { lat: 38.8977, lng: -77.0365 }, location_type: 'ROOFTOP' },
-            types: ['street_address'],
-          },
-        ],
-      },
-    });
+  it('calls the Places API (New) searchText endpoint — never the legacy one', async () => {
+    let capturedUrl = '';
+    let capturedInit: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrl = String(input);
+      capturedInit = (init ?? {}) as Record<string, unknown>;
+      return new Response(JSON.stringify({ places: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
 
-    const result = await geocodePlace('1600 Pennsylvania Ave NW', { ...KEY, fetchImpl });
-    expect(result).toMatchObject({ status: 'resolved', match: { granularity: 'precise' } });
+    await geocodePlace('Bergen', { ...KEY, fetchImpl });
+
+    expect(capturedUrl).toContain('places.googleapis.com/v1/places:searchText');
+    // Guard against a regression back to the deprecated Places API endpoint.
+    expect(capturedUrl).not.toContain('/place/textsearch/');
+    const headers = capturedInit.headers as Record<string, string>;
+    expect(headers['X-Goog-Api-Key']).toBe('test-key');
+    expect(headers['X-Goog-FieldMask']).toContain('places.location');
+    expect(capturedInit.method).toBe('POST');
+    expect(String(capturedInit.body)).toContain('Bergen');
   });
 
-  it('returns not_found when both lookups are empty', async () => {
-    const fetchImpl = fakeFetch({ text: { status: 'ZERO_RESULTS', results: [] }, geo: { status: 'ZERO_RESULTS', results: [] } });
-    const result = await geocodePlace('asdkjfhaskjdfh nowhere', { ...KEY, fetchImpl });
+  it('returns not_found when the search is empty', async () => {
+    const result = await geocodePlace('asdkjfhaskjdfh nowhere', { ...KEY, fetchImpl: okFetch([]) });
     expect(result.status).toBe('not_found');
   });
 
   it('returns unavailable when the API rejects the key', async () => {
-    const fetchImpl = fakeFetch({ text: { status: 'REQUEST_DENIED', error_message: 'API not enabled', results: [] } });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { status: 'PERMISSION_DENIED', message: 'API not enabled' } }),
+          { status: 403 }
+        )
+    ) as unknown as typeof fetch;
+
+    const result = await geocodePlace('Bergen', { ...KEY, fetchImpl });
+    expect(result.status).toBe('unavailable');
+    if (result.status === 'unavailable') {
+      expect(result.reason).toContain('API not enabled');
+    }
+  });
+
+  it('returns unavailable on a network/transport failure', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network down');
+    }) as unknown as typeof fetch;
     const result = await geocodePlace('Bergen', { ...KEY, fetchImpl });
     expect(result.status).toBe('unavailable');
   });
@@ -157,7 +159,7 @@ describe('geocodePlace', () => {
     const prev = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     delete process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     try {
-      const result = await geocodePlace('Bergen', { fetchImpl: fakeFetch({}) });
+      const result = await geocodePlace('Bergen', { fetchImpl: okFetch([]) });
       expect(result.status).toBe('unavailable');
     } finally {
       if (prev !== undefined) process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = prev;

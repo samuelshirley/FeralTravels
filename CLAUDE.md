@@ -48,7 +48,7 @@ Overland trip planner. Next.js 14 app with an AI chat assistant ("Penny") that h
 - **Auth:** NextAuth v5 (beta) — OTP email + Google OAuth
 - **AI:** Anthropic SDK — chat agent with tool-use in `src/lib/penny/`. Model IDs are hardcoded in one registry (`src/lib/models.ts`) — no per-request fallback chains; update there when a model is sunset.
 - **Email:** Resend
-- **Maps:** Google Maps (client JS API + server Directions API for routes + Places `fuelOptions` as a per-station price fallback in `lib/fuelPricing/providers/google.ts` + Places Text Search / Geocoding API for name→coords resolution in `lib/google/geocode.ts`). **Fuel stations are NOT from Google** — Finn sources them from OSM Overpass; route geometry for fuel planning is OSRM (`lib/directions.ts`, free, no key). The Place Photos / Street View "stop photos" feature was **removed 2026-06-30** (see teardown note below).
+- **Maps:** Google Maps (client JS API + server Directions API for routes + Places `fuelOptions` as a per-station price fallback in `lib/fuelPricing/providers/google.ts` + **Places API (New) `places:searchText`** for name→coords resolution in `lib/google/geocode.ts`). NOTE (2026-07-01): `geocode.ts` uses **Places API (New) only** — the legacy `place/textsearch/json` endpoint and the `geocode/json` Geocoding-API fallback were removed. The legacy endpoint required the deprecated "Places API" SKU (not enabled on the one key) and caused a 100% `REQUEST_DENIED` outage; there is now a single `searchText` call and no cross-product fallback (a miss returns `not_found`/`unavailable`, and the caller asks for a Maps link). **Fuel stations are NOT from Google** — Finn sources them from OSM Overpass; route geometry for fuel planning is OSRM (`lib/directions.ts`, free, no key). NOTE (2026-07-01): the Overpass client (`lib/osm/overpass.ts`) MUST send an identifying `User-Agent` (`OVERPASS_USER_AGENT`) — overpass-api.de rejects UA-less requests with HTTP 406 (this was the `finn:fuel-plan` prod outage). The Place Photos / Street View "stop photos" feature was **removed 2026-06-30** (see teardown note below).
 - **Tests:** Vitest (unit), Playwright (e2e)
 - **Language:** TypeScript throughout, Zod for validation
 
@@ -268,6 +268,7 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - CSS Modules for component-scoped styles (e.g., `admin.module.css`).
 - Server components by default; `"use client"` only when needed.
 - Env vars: copy `.env.example` to `.env`. Never commit `.env`.
+- **Google Maps: there is exactly ONE API key — `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.** It is used for BOTH the browser Maps JS and every server-side Google REST call (Directions, Geocoding, Places). `GOOGLE_MAPS_SERVER_API_KEY` and the `src/server/google-maps-server-key.ts` helper are dead scaffolding — that env var is NOT set in Vercel, so the helper always falls back to the one public key. Do NOT assume a separate server key exists; do NOT propose "use the server key" as a fix. (This has confused past assistants repeatedly — hence this note.)
 - Admin access: hardcoded allowlist in `src/server/auth/admin.ts`.
 - **Never silently swallow errors.** Every mutation must either show inline error UI or go through the global `ErrorNotifier`. No empty `catch` blocks, no `console.error`-only handling. If something fails, the user must know.
 
