@@ -18,7 +18,9 @@
 #
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
-#   ANTHROPIC_API_KEY, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, RESEND_API_KEY
+#   AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET, AUTH_RESEND_KEY,
+#     AUTH_EMAIL_FROM   (Auth.js runtime config — the app runs locally here)
+#   ANTHROPIC_API_KEY, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
 #   AUTH_TEST_BACKDOOR_EMAIL, E2E_FIXTURE_EMAIL
 #   MAILSLURP_API_KEY   (real OTP e2e; login-otp skips without it)
 # NOTE: the prod DATABASE_URL secret is intentionally NOT used by this job.
@@ -85,14 +87,20 @@ jobs:
       - name: Run Playwright
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+          # Auth.js v5 runtime config — required because the app runs locally in
+          # this job (not a Vercel preview), so it can't inherit Vercel's env.
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          AUTH_GOOGLE_ID: ${{ secrets.AUTH_GOOGLE_ID }}
+          AUTH_GOOGLE_SECRET: ${{ secrets.AUTH_GOOGLE_SECRET }}
+          AUTH_RESEND_KEY: ${{ secrets.AUTH_RESEND_KEY }}
+          AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
           AUTH_TEST_BACKDOOR: '1'
           AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
           E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          # Real OTP e2e (login-otp.spec) — uses a MailSlurp inbox to read the
-          # actual emailed code. Skips if unset.
+          # Real OTP e2e (login-otp.spec) — MailSlurp inbox reads the actual
+          # emailed code. Skips if unset.
           MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
         run: npm run e2e
 
