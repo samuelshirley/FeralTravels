@@ -23,9 +23,9 @@ test.describe('Onboarding composer validation', () => {
       await composer.fill('400');
       await composer.press('Enter');
 
-      // The only remaining vehicle question is the optional hard-max ceiling —
-      // travel style / consecutive days / dump station were removed (MVP).
-      await expect(page.getByText(/furthest you'd ever let me push it/i)).toBeVisible({
+      // The only remaining vehicle question is the optional hard-max ceiling.
+      // Match the current prompt copy (vehicleProfile.ts hard_max_range_km label).
+      await expect(page.getByText(/hard max fuel range/i)).toBeVisible({
         timeout: 20_000,
       });
     } finally {

@@ -113,14 +113,16 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
           branch: ci-${{ github.run_id }}-${{ github.run_attempt }}
 
-  # Clickable "eyeball" preview of the tested commit — deployed to Vercel as a
-  # PREVIEW (never promoted), pointed at its own rolling Neon branch ("preview",
-  # a fresh copy of prod data refreshed each push) so you can click around
-  # without touching real prod data. The URL is printed to the run summary.
-  # Runs only after e2e is green, so a preview always reflects a promotable build.
+  # Clickable "eyeball" preview — deployed to Vercel as a PREVIEW (never
+  # promoted), pointed at its own rolling Neon branch ("preview", a fresh copy of
+  # prod data refreshed each push) so you can click around without touching real
+  # prod data. The URL is printed to the run summary.
+  # Runs after `unit` (in parallel with `e2e`), NOT gated on e2e — you always get
+  # a preview to eyeball, even when a spec is red (so you can tell test bugs from
+  # app bugs). Promotion to prod stays a separate manual gate.
   preview:
     name: Deploy eyeball preview
-    needs: e2e
+    needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

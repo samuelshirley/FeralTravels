@@ -55,9 +55,12 @@ test.describe('Email OTP login (MailSlurp)', () => {
       .or(page.locator('input[autocomplete="one-time-code"]'))
       .first();
     await firstDigit.click();
+    // The verify UI is six single-char boxes that auto-advance on keystroke, so
+    // fill() would dump all six digits into box 1 (→ InvalidCode). Type the code
+    // as real keystrokes so each digit lands in its own box.
     await Promise.all([
       page.waitForURL(/\/trips(\?|$)/, { timeout: 30_000 }),
-      firstDigit.fill(code),
+      page.keyboard.type(code),
     ]);
 
     await expect(page).toHaveURL(/\/trips/);
