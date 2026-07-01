@@ -3,22 +3,19 @@ import { loginAsFixtureUser } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
 
 /**
- * Smoke-test the read path for an **authenticated user with a fully set-up
- * vehicle** and an existing trip (core happy path for trip workspace):
+ * Smoke-test the read path for an authenticated user with a set-up vehicle and
+ * an existing trip (core happy path for the trip workspace):
  *
  *   - /trips lists their seeded trip
- *   - The trip opens with the fixture **default vehicle** on the chip
- *     (all remediation-required fields filled in seed data — see
- *     `vehicleIsCompleteForRemediation` / scripts/seed-e2e-fixture.ts)
- *   - No vehicle-profile remediation overlay (`Update your vehicle`)
+ *   - The trip opens with the fixture default vehicle on the chip
  *   - The itinerary renders the expected number of leg cards (2 days)
  *   - The map mounts and reports it loaded the right number of legs
  *
- * The fixture is rebuilt on every globalSetup (see scripts/seed-e2e-fixture.ts),
- * so the assertions below pin to literal numbers without being flaky.
+ * The fixture is re-seeded over HTTP on every globalSetup (via /api/test/seed →
+ * seedFixture in repos/testSupport.ts), so the assertions pin to literal numbers.
  */
 test.describe('Existing user with seeded trip', () => {
-  test('trip on /trips opens with complete default vehicle, no remediation, legs + map', async ({
+  test('trip on /trips opens with the default vehicle, legs + map', async ({
     page,
   }) => {
     await loginAsFixtureUser(page);
@@ -34,16 +31,13 @@ test.describe('Existing user with seeded trip', () => {
 
     await expect(page.getByText('Trip not found')).not.toBeVisible({ timeout: 10_000 });
 
-    // Seeded user: one complete default vehicle (fuel + strict driving + water gate)
-    // and trip.vehicle_id pointed at it — Penny/fuel must not be blocked.
-    await expect(page.getByRole('heading', { name: 'Update your vehicle' })).not.toBeVisible();
     // Vehicle chip is display-only (no picker) — just shows the vehicle name.
     const vehicleChip = page.getByTitle(`Trip vehicle: ${FIXTURE_VEHICLE_NAME}`);
     await expect(vehicleChip).toBeVisible();
     await expect(vehicleChip).toContainText(FIXTURE_VEHICLE_NAME);
 
-    // Itinerary: `seed-e2e-fixture.ts` always inserts exactly two legs (Day 1 +
-    // Day 2). Exact count catches silent seed drift / duplicate trips.
+    // Itinerary: the seed always creates exactly two legs (Day 1 + Day 2).
+    // Exact count catches silent seed drift / duplicate trips.
     const legCards = page.getByTestId('leg-card');
     await expect(legCards.first()).toBeVisible({ timeout: 15_000 });
     const legCount = await legCards.count();

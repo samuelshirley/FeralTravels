@@ -109,11 +109,22 @@ export async function seedFixture(opts: {
     is_default: true,
   });
 
+  // Anchor the fixture to "now" so the itinerary doesn't collapse the legs as
+  // "behind you" (past days) — that hides leg cards, points nav links at the
+  // wrong leg, and suppresses lazy fuel sourcing, all of which the
+  // existing-trip / lazy-fuel specs assert on. Hardcoded past dates broke them.
+  const isoPlus = (days: number) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const legDates = [isoPlus(0), isoPlus(1)];
+
   const trip = await createTrip({
     userId,
     name: opts.tripName,
-    startDate: '2026-06-01',
-    endDate: '2026-06-02',
+    startDate: legDates[0],
+    endDate: legDates[1],
     vehicleId: vehicle.id,
   });
   await db
@@ -122,7 +133,7 @@ export async function seedFixture(opts: {
     .where(eq(trips.id, trip.id));
 
   for (const leg of CANONICAL_TWO_LEGS) {
-    await addLeg({ tripId: trip.id, ...leg });
+    await addLeg({ tripId: trip.id, ...leg, dates: legDates[leg.sortOrder] ?? legDates[0] });
   }
 
   return { userId, vehicleId: vehicle.id, tripId: trip.id };
