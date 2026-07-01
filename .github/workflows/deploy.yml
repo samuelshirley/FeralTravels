@@ -14,11 +14,9 @@
 # the previous deployment. Emergency rollback = Vercel dashboard → prior
 # deployment → Promote to Production. There is deliberately NO skip-CI escape hatch.
 #
-# NOTE: this gate is the SOLE path to prod because Vercel's auto-alias is OFF —
-# `vercel.json` sets `github.autoAlias: false`, so a push to `main` builds a
-# STAGED (non-production) deployment and is only promoted by the `promote` job
-# below (via `vercel promote`) after `e2e` is green. Do NOT re-enable autoAlias
-# or a push that fails E2E will reach production.
+# NOTE: this gate is only the SOLE path to prod once Vercel's own Git auto-promote
+# for `main` is turned off (Vercel → Project → Settings → Git → Production Branch
+# set to a non-existent name). Until then, Vercel also auto-promotes on push.
 
 name: Deploy
 
