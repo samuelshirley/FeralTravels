@@ -144,6 +144,22 @@ describe('StopsSection (refactored)', () => {
     expect(screen.getByText('Planning fuel stops…')).toBeInTheDocument();
   });
 
+  it('suppresses the fuel planning spinner on a past day', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[]}
+        fuelStatus="computing"
+        fuelLoading
+        isPast
+      />
+    );
+    expect(screen.queryByText('Planning fuel stops…')).not.toBeInTheDocument();
+  });
+
   it('shows "no stops yet" when empty', () => {
     render(
       <StopsSection

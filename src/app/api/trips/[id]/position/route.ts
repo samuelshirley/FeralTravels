@@ -9,6 +9,13 @@ export const dynamic = 'force-dynamic';
 const bodySchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
+  /**
+   * Optional human-readable label for the coordinates, reverse-geocoded
+   * client-side (Maps JS Geocoder) so Penny/UI can show a name instead of raw
+   * lat/lng. Off-contract free text is rejected by the length cap; a miss just
+   * omits it (coords still stored).
+   */
+  place_name: z.string().min(1).max(200).nullish(),
 });
 
 export async function POST(req: Request, ctx: { params: { id: string } }) {
@@ -21,7 +28,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     await assertTripOwnedByUser(tripId, userId);
 
     const body = bodySchema.parse(await req.json());
-    await updateTripPosition(tripId, body.lat, body.lng);
+    await updateTripPosition(tripId, body.lat, body.lng, body.place_name ?? null);
 
     return Response.json({ ok: true });
   } catch (err) {

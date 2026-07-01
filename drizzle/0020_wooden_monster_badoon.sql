@@ -1,0 +1,1 @@
+ALTER TABLE "trips" ADD COLUMN "last_known_place" text;

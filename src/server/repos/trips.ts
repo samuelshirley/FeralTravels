@@ -73,6 +73,7 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     prefer_avoid_highways: !!r.preferAvoidHighways,
     last_known_lat: r.lastKnownLat ?? null,
     last_known_lng: r.lastKnownLng ?? null,
+    last_known_place: r.lastKnownPlace ?? null,
     position_updated_at: r.positionUpdatedAt ? r.positionUpdatedAt.toISOString() : null,
     current_leg_id: r.currentLegId ?? null,
     current_lat: r.currentLat ?? null,
@@ -1470,12 +1471,16 @@ export async function updateTripPosition(
   tripId: string,
   lat: number,
   lng: number,
+  place: string | null = null,
 ) {
   await db
     .update(trips)
     .set({
       lastKnownLat: lat,
       lastKnownLng: lng,
+      // Only overwrite the stored label when the caller resolved one — a failed
+      // reverse-geocode shouldn't wipe a previously good name.
+      ...(place != null ? { lastKnownPlace: place } : {}),
       positionUpdatedAt: new Date(),
       updatedAt: new Date(),
     })

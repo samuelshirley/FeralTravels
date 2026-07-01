@@ -36,6 +36,20 @@ export interface PennyContext {
   };
   /** Today's calendar date, ISO "YYYY-MM-DD" — use it to reason about progress. */
   today: string;
+  /**
+   * The driver's DEVICE location — captured from the browser's GPS each time
+   * they open the app (distinct from `trip.current_place`, which is the progress
+   * anchor Penny herself sets via report_position). This is what "where I am" /
+   * "my current location" refers to. Null when GPS was never granted / captured.
+   * `place` is a best-effort reverse-geocoded label (may be null even when coords
+   * exist); `as_of` is when it was captured so Penny can judge staleness.
+   */
+  device_location: {
+    lat: number;
+    lng: number;
+    place: string | null;
+    as_of: string | null;
+  } | null;
   vehicle: PennyVehicle | null;
   legs: PennyLeg[];
   recentChat: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -207,6 +221,15 @@ export async function buildPennyContext(
       current_place: currentLeg?.start_name ?? null,
     },
     today: todayISOInZone(timezone),
+    device_location:
+      trip.last_known_lat != null && trip.last_known_lng != null
+        ? {
+            lat: trip.last_known_lat,
+            lng: trip.last_known_lng,
+            place: trip.last_known_place,
+            as_of: trip.position_updated_at,
+          }
+        : null,
     vehicle: vehicle ? projectVehicle(vehicle) : null,
     legs: trip.legs.map(projectLeg),
     recentChat: chatPage.messages.map(projectChat),

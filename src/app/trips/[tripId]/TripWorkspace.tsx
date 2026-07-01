@@ -13,6 +13,7 @@ import PullToRefresh from '@/components/PullToRefresh';
 import { useViewport } from '@/lib/useMediaQuery';
 import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
+import { reverseGeocode } from '@/lib/reverseGeocode';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
@@ -174,17 +175,27 @@ export default function TripWorkspace({
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        fetch(`/api/trips/${tripId}/position`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          }),
-          credentials: 'same-origin',
-        }).catch(() => {
-          // Silently ignore — position reporting is best-effort.
-        });
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        // Best-effort reverse-geocode to a readable label so Penny can name the
+        // driver's current location instead of reciting coordinates. Never block
+        // the position report on it — post coords immediately if it misses.
+        void (async () => {
+          let place: string | null = null;
+          try {
+            place = await reverseGeocode(lat, lng);
+          } catch {
+            place = null;
+          }
+          fetch(`/api/trips/${tripId}/position`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat, lng, place_name: place }),
+            credentials: 'same-origin',
+          }).catch(() => {
+            // Silently ignore — position reporting is best-effort.
+          });
+        })();
       },
       () => {
         // User denied geolocation or it timed out — nothing to do.

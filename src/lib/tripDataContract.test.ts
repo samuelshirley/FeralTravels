@@ -191,6 +191,7 @@ describe('Trip data contract — fields required by the UI', () => {
         prefer_avoid_highways: false,
         last_known_lat: null,
         last_known_lng: null,
+        last_known_place: null,
         position_updated_at: null,
         current_leg_id: null,
         current_lat: null,

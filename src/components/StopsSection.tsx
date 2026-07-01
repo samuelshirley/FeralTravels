@@ -26,6 +26,12 @@ interface StopsSectionProps {
    * immediately on open. See LegCard's lazy-fuel effect.
    */
   fuelLoading?: boolean;
+  /**
+   * True when the owning leg is a past day. Past days are read-history: we
+   * suppress the "Planning fuel stops…" spinner entirely (LegCard also skips
+   * the lazy fetch), so opening an old day never shows fuel planning running.
+   */
+  isPast?: boolean;
   onChanged?: () => void;
   readonly?: boolean;
   /**
@@ -64,6 +70,7 @@ export default function StopsSection({
   fuelStatus = 'none',
   fuelPlanError = null,
   fuelLoading = false,
+  isPast = false,
   onChanged,
   readonly = false,
   highlightStopId = null,
@@ -91,8 +98,11 @@ export default function StopsSection({
   // --- Fuel planning UI state ---
   // `fuelLoading` reflects the client-initiated day-open search before the
   // trip reload surfaces the server's 'computing' status.
+  // A past day never shows fuel planning as running — even if the leg was left
+  // in a stale 'computing'/'pending' state, we don't re-plan history.
   const fuelPlanning =
-    fuelLoading || fuelStatus === 'computing' || fuelStatus === 'pending';
+    !isPast &&
+    (fuelLoading || fuelStatus === 'computing' || fuelStatus === 'pending');
   const pathname = usePathname();
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
   const setupReturnTarget = pathname?.startsWith('/') ? pathname : `/trips/${tripId}`;

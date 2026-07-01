@@ -64,9 +64,11 @@ export interface Trip {
   onboarding_state: OnboardingState;
   /** When true, Penny defaults `get_route` to Maps avoid=highways (motorways); user can toggle in workspace. */
   prefer_avoid_highways: boolean;
-  // ── GPS position (for nightly replan) ──
+  // ── GPS position (device location, refreshed each app open) ──
   last_known_lat: number | null;
   last_known_lng: number | null;
+  /** Client reverse-geocoded label for last_known_lat/lng (may be null). */
+  last_known_place: string | null;
   position_updated_at: string | null;
   // ── Driver-reported progress (see the `report_position` Penny tool) ──
   /** Leg the driver is on / about to drive next; earlier legs are "behind you". */

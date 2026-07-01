@@ -57,6 +57,16 @@ interface LegCardProps {
    * Forwarded to StopsSection so the matching StopCard pulses. Null = none.
    */
   highlightStopId?: string | null;
+  /**
+   * True when this leg sits in the collapsed "Behind you" section — a day the
+   * driver has already passed (before the progress/calendar cutoff). NOTE: this
+   * is cutoff membership, NOT simply date_iso < today — the *current* leg can
+   * carry a stale past date after a progress re-anchor yet must still plan fuel.
+   * Past days are read-history: we do NOT lazily source fuel for them on open
+   * and we suppress the "Planning fuel stops…" spinner, so opening an old day
+   * is instant and quiet.
+   */
+  isPast?: boolean;
 }
 
 export default function LegCard({
@@ -71,6 +81,7 @@ export default function LegCard({
   isFuelSyncing = false,
   fuelSyncTotalLegs,
   highlightStopId = null,
+  isPast = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === 'rest';
@@ -118,7 +129,9 @@ export default function LegCard({
   const fuelFetchSigRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (readonly || isRestDay || !expanded) return;
+    // Never source fuel for a past day — that drive is already behind the
+    // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
+    if (readonly || isRestDay || !expanded || isPast) return;
     const updatedAt = leg.fuel_stops_updated_at;
     const fresh = updatedAt
       ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS
@@ -170,6 +183,7 @@ export default function LegCard({
     expanded,
     isRestDay,
     readonly,
+    isPast,
     leg.id,
     leg.fuel_status,
     leg.fuel_stops_updated_at,
@@ -578,6 +592,7 @@ export default function LegCard({
             fuelStatus={leg.fuel_status}
             fuelPlanError={leg.fuel_plan_error}
             fuelLoading={fuelLoading}
+            isPast={isPast}
             onChanged={onChanged}
             readonly={readonly}
             highlightStopId={highlightStopId}

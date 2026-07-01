@@ -231,9 +231,15 @@ export const trips = pgTable(
     onboardingScan: jsonb('onboarding_scan').$type<import('@/types/trip').OnboardingScan | null>(),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
-    // ── GPS position (for nightly replan) ──
+    // ── GPS position (device location, refreshed each time the app opens) ──
+    // This is the driver's *device* location from the browser Geolocation API,
+    // distinct from the driver-reported progress anchor below. It's what powers
+    // "plan from my current location" — Penny reads it from context. `lastKnownPlace`
+    // is a client-side reverse-geocoded label (via the already-loaded Maps JS
+    // Geocoder) so Penny/UI can show a name instead of raw coordinates.
     lastKnownLat: doublePrecision('last_known_lat'),
     lastKnownLng: doublePrecision('last_known_lng'),
+    lastKnownPlace: text('last_known_place'),
     positionUpdatedAt: timestamp('position_updated_at'),
     // ── Driver-reported trip progress (see the `report_position` Penny tool) ──
     // `currentLegId` is the leg the driver is on / about to drive next; legs

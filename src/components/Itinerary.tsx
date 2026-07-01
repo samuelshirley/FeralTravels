@@ -621,6 +621,7 @@ export default function Itinerary({
                   isFuelSyncing={isFuelSyncing}
                   fuelSyncTotalLegs={allLegs.length}
                   highlightStopId={highlightStopId}
+                  isPast
                 />
               ))}
             </div>
