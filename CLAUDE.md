@@ -104,7 +104,7 @@ src/
     api.ts            # Client-side API helper
     models.ts         # Central registry of hardcoded Anthropic model IDs (PENNY_MODEL, DATE_PARSE_MODEL, RANGE_ESTIMATE_MODEL, ONBOARDING_SCAN_MODEL)
     coords.ts         # Coordinate parsing/formatting (sync; Google/Apple Maps URLs, lat/lng)
-    coordsResolve.ts  # Server-side Maps URL resolution (short-link redirects; scans page body for !3d!4d/@lat,lng; geocodes the embedded place name as a last resort); used by api/coords/parse and Penny chat enrichment
+    coordsResolve.ts  # Server-side Maps URL resolution (short-link redirects; scans page body for !3d!4d/@lat,lng; extracts the embedded google.com/maps?q=<addr> link and geocodes it; og:title place name as a last resort); used by api/coords/parse and Penny chat enrichment. NOTE (2026-07-01): short links MUST be fetched with a CRAWLER User-Agent (`SHORT_LINK_USER_AGENT` = facebookexternalhit) — a browser UA gets maps.app.goo.gl's JS-only interstitial with no coords/name/og-tags (the "links won't resolve" bug); the crawler UA is what makes Google embed the destination `?q=<address>` link that `extractEmbeddedMapsQuery` reads. Do NOT switch to a browser-like UA.
     google/geocode.ts # Deterministic name/address/city → coords (Places Text Search → Geocoding fallback). Tri-state result w/ granularity. Backs the resolve_place Penny tool; the ONLY name→coords path (no LLM coordinate guessing)
     maps.ts           # Google Maps client helpers
     mapClustering.ts  # Pure screen-space grid clusterer (clusterPixels) for TripMap stop markers — dependency-free stand-in for @googlemaps/markerclusterer. Unit-tested.

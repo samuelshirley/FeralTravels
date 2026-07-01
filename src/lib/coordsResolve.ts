@@ -5,6 +5,17 @@ import { geocodePlace } from '@/lib/google/geocode';
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_MAPS_LINKS_PER_MESSAGE = 5;
 
+/**
+ * User-Agent for short-link expansion. MUST be a crawler/social UA, NOT a
+ * browser one. A browser UA (e.g. Safari) gets Google's JS-only app-link
+ * interstitial for maps.app.goo.gl — no coords, no name, nothing extractable
+ * server-side (this was the "links won't resolve" bug). A crawler UA makes
+ * Google embed the real destination as an encoded `google.com/maps?q=<addr>`
+ * link, which extractEmbeddedMapsQuery pulls out. Do NOT change back to a
+ * browser UA without re-verifying interstitial resolution still works.
+ */
+const SHORT_LINK_USER_AGENT = 'facebookexternalhit/1.1 (+https://feraltravels.app)';
+
 /** URL token in free text — stops at whitespace or common trailing punctuation. */
 const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"')\]]+/gi;
 
@@ -99,8 +110,8 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
       ...init,
       signal: controller.signal,
       headers: {
-        'user-agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+        // Crawler UA on purpose — see SHORT_LINK_USER_AGENT.
+        'user-agent': SHORT_LINK_USER_AGENT,
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         ...(init.headers || {}),
       },
@@ -146,9 +157,22 @@ async function resolveShortLink(url: string): Promise<ParsedCoords | null> {
       const text = await res.text();
       const fromBody = extractCoordsFromHtml(text, current);
       if (fromBody) return fromBody;
-      // Page resolved but carried no coordinates (common for EU consent
-      // interstitials and place pages that only render coords via JS). Fall
-      // back to geocoding the place name Google embedded in the page.
+
+      // maps.app.goo.gl app-link interstitials carry no coords and no og:title,
+      // but (when fetched with a crawler UA) embed the destination as an encoded
+      // `google.com/maps?q=<address-or-latlng>` link. Prefer that: it's the
+      // actual shared place. q= is usually an address/name → geocode it; some
+      // links use q=<lat,lng> → parse directly.
+      const embeddedQuery = extractEmbeddedMapsQuery(text);
+      if (embeddedQuery) {
+        const asCoords = parseCoords(embeddedQuery);
+        if (asCoords) return { ...asCoords, source: 'google_maps', source_url: url };
+        const geo = await geocodeName(embeddedQuery, url);
+        if (geo) return geo;
+      }
+
+      // Last resort: geocode the place name embedded in an og:title / <title>
+      // (covers place pages that render coords only via JS but do set a title).
       const name = extractPlaceNameFromHtml(text);
       if (name) {
         const geo = await geocodeName(name, url);
@@ -207,6 +231,27 @@ function inWorldRange(lat: number, lng: number): boolean {
     // Reject the 0,0 null-island artifact that some shells emit.
     !(lat === 0 && lng === 0)
   );
+}
+
+/**
+ * Pull the destination query out of a Google Maps app-link interstitial.
+ *
+ * Google embeds it as an encoded link — `google.com/maps%3Fq%3D<value>%26ftid=…`
+ * — where `<value>` uses `%2B` for spaces (e.g. a full address or place name),
+ * or occasionally a bare `lat,lng`. Handles both the encoded (`%3Fq%3D`) and
+ * plain (`?q=`) forms. Returns the decoded query string, or null if absent.
+ */
+export function extractEmbeddedMapsQuery(html: string): string | null {
+  const m =
+    html.match(/google\.com\/maps%3Fq%3D(.+?)(?:%26|["'\\ ])/i) ||
+    html.match(/google\.com\/maps\?q=([^&"'\\ ]+)/i);
+  if (!m) return null;
+  try {
+    const decoded = decodeURIComponent(m[1]).replace(/\+/g, ' ').trim();
+    return decoded || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Extract the place name from og:title or <title>, stripping the Google suffix. */

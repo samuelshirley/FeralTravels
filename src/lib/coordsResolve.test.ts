@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 
 import {
+  extractEmbeddedMapsQuery,
   extractUrlsFromText,
   resolveCoordsFromInput,
   resolveMapsLinksInMessage,
@@ -181,6 +182,85 @@ describe('resolveCoordsFromInput body scan', () => {
       if (prevKey === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
       else process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = prevKey;
     }
+  });
+});
+
+describe('extractEmbeddedMapsQuery', () => {
+  it('decodes the q= address from a real app-link interstitial link', () => {
+    // Exact encoded shape Google serves to a crawler UA for maps.app.goo.gl.
+    const html =
+      '<a href="https://www.google.com/maps%3Fq%3DSaupstad%2BHundepark%2B(kommunal),%2BKongsvegen%2B132,%2B7088%2BHeimdal,%2BNorway%26ftid%3D0x466d2e77ba90cea3:0xa9f54e52147a50f4%26entry%3Dgps">open</a>';
+    expect(extractEmbeddedMapsQuery(html)).toBe(
+      'Saupstad Hundepark (kommunal), Kongsvegen 132, 7088 Heimdal, Norway'
+    );
+  });
+
+  it('returns null when no embedded maps link is present', () => {
+    expect(extractEmbeddedMapsQuery('<html><body>nothing here</body></html>')).toBeNull();
+  });
+});
+
+describe('resolveCoordsFromInput app-link interstitial', () => {
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
+  afterEach(() => vi.stubGlobal('fetch', originalFetch));
+
+  it('resolves a maps.app.goo.gl interstitial by geocoding the embedded q= address', async () => {
+    const prevKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = 'test-key';
+    try {
+      vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('maps.app.goo.gl')) {
+          // Crawler-UA interstitial: no coords, no og:title — only the encoded link.
+          return new Response(
+            '<!doctype html><html><head><link rel="canonical" href="https://maps.app.goo.gl/abc"></head><body>' +
+              '<a href="https://www.google.com/maps%3Fq%3DSaupstad%2BHundepark%2B(kommunal),%2BKongsvegen%2B132,%2B7088%2BHeimdal,%2BNorway%26ftid%3D0x466d2e77ba90cea3:0xa9f54e52147a50f4%26entry%3Dgps">open</a>' +
+              '</body></html>',
+            { status: 200 }
+          );
+        }
+        if (url.includes('places.googleapis.com')) {
+          return new Response(
+            JSON.stringify({
+              places: [
+                {
+                  location: { latitude: 63.3456, longitude: 10.3701 },
+                  displayName: { text: 'Saupstad Hundepark' },
+                  formattedAddress: 'Kongsvegen 132, 7088 Heimdal, Norway',
+                  types: ['park', 'point_of_interest'],
+                },
+              ],
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response('', { status: 404 });
+      });
+
+      const result = await resolveCoordsFromInput('https://maps.app.goo.gl/8C3LKU9kAJDxpvAt8?g_st=ic');
+      expect(result).toMatchObject({
+        lat: 63.3456,
+        lng: 10.3701,
+        name: 'Saupstad Hundepark',
+        source: 'google_maps',
+      });
+    } finally {
+      if (prevKey === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+      else process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = prevKey;
+    }
+  });
+
+  it('fetches short links with a crawler User-Agent (a browser UA gets a JS-only page)', async () => {
+    let capturedUA = '';
+    vi.mocked(fetch).mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      capturedUA = headers['user-agent'] ?? '';
+      return new Response('<html><body>no coords</body></html>', { status: 200 });
+    });
+
+    await resolveCoordsFromInput('https://maps.app.goo.gl/whatever');
+    expect(capturedUA.toLowerCase()).toContain('facebookexternalhit');
   });
 });
 
