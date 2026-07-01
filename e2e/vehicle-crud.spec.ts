@@ -101,11 +101,11 @@ test.describe('Vehicle CRUD', () => {
     await page.getByTestId('add-vehicle-button').click();
     await expect(page.getByTestId('vehicle-form')).toBeVisible();
 
+    // MVP vehicle form is name + comfortable range (+ optional hard-max ceiling).
+    // Travel style / max-consecutive-days / dump-station fields were removed
+    // (migrations 0014/0015) — do NOT reintroduce selectors for them.
     await page.getByTestId('vehicle-name-input').fill(vehicleName);
     await page.getByTestId('vehicle-refill-input').fill('400');
-    await page.getByTestId('vehicle-travel-style-select').selectOption('road_tripper');
-    await page.getByTestId('vehicle-max-consecutive-input').fill('3');
-    await page.getByTestId('vehicle-dump-station-no').check();
     await page.getByTestId('vehicle-save-button').click();
 
     // After save the form unmounts and a new VehicleCard appears.

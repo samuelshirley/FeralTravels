@@ -15,8 +15,8 @@ import { getDb, schema } from './fixtures/db';
 test.describe('Email OTP login', () => {
   test.skip(!isOtpE2EConfigured(), 'E2E_OTP_EMAIL not set — see .env.example');
 
-  // Ensure the OTP user has a complete vehicle so they land on the trips
-  // list (not the remediation gate). Modelled on a real Hilux Surf setup.
+  // Ensure the OTP user has a usable default vehicle so they land on the
+  // trips list with content to assert on. Modelled on a real Hilux Surf setup.
   test.beforeAll(async () => {
     const db = getDb();
     const [user] = await db
@@ -33,15 +33,13 @@ test.describe('Email OTP login', () => {
       .where(eq(schema.vehicles.userId, user.id))
       .limit(1);
 
+    // MVP vehicle is just name + comfortable range (hard-max optional, defaults
+    // to comfortable). The old driving-cadence / dump-station columns were
+    // dropped (migrations 0014/0015) — don't set them here.
     const completeVehicle = {
       name: 'E2E Hilux',
       isDefault: true,
       comfortableRangeKm: 500,
-      maxDriveHoursPerDay: 8,
-      maxDriveHoursPerWeek: 40,
-      maxConsecutiveDriveDays: 5,
-      dumpStationTrackingEnabled: false,
-      dumpStationIntervalDays: null,
     };
 
     if (existing.length) {
