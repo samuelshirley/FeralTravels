@@ -1,137 +1,73 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, request, type APIRequestContext } from '@playwright/test';
 import { loginAsFixtureUser } from './fixtures/auth';
-import { getDb, schema } from './fixtures/db';
-import { FIXTURE_EMAIL } from './fixtures/constants';
-import { eq, and, inArray } from 'drizzle-orm';
 
 /**
  * Announcement popup E2E — verifies the one-time announcement flow:
- *   1. Seed an active announcement
+ *   1. Seed an active announcement (over HTTP via /api/test/announcement)
  *   2. Log in → see the modal on /trips
- *   3. Click the dismiss button → modal disappears
+ *   3. Click dismiss → modal disappears
  *   4. Reload → modal does NOT reappear (dismissal persisted)
- *   5. Clean up the seeded announcement
+ *   5. Clean up the seeded announcement (restoring any parked real ones)
+ *
+ * Seeding/cleanup go through the guarded test-support API, so the spec never
+ * touches the database directly.
  */
+function targetBaseUrl(): string {
+  return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
+}
+
+async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
+  const ctx = await request.newContext({ baseURL: targetBaseUrl() });
+  try {
+    return await fn(ctx);
+  } finally {
+    await ctx.dispose();
+  }
+}
+
 test.describe('Announcement popup', () => {
   const ANNOUNCEMENT_TITLE = 'E2E Test Announcement';
   const ANNOUNCEMENT_BODY = 'This is a test announcement for E2E.';
   const ANNOUNCEMENT_BUTTON = 'Wow nice job Sam';
   let announcementId: string | null = null;
-  // Other active announcements we temporarily deactivate so this test is
-  // hermetic. The app's "active announcement" query returns the newest
-  // undismissed one — if a REAL announcement is live in the (shared dev/prod)
-  // DB, dismissing our seeded one would just surface the real one and the
-  // "modal does not reappear" assertion would flap. We park them and restore
-  // them in afterAll.
-  let parkedActiveIds: string[] = [];
+  let parkedIds: string[] = [];
 
   test.beforeAll(async () => {
-    const db = getDb();
-
-    // Clean up any leftover E2E announcements
-    await db
-      .delete(schema.announcements)
-      .where(eq(schema.announcements.title, ANNOUNCEMENT_TITLE));
-
-    // Park any other active announcements so they can't satisfy the
-    // active-announcement query during this test.
-    const others = await db
-      .select({ id: schema.announcements.id })
-      .from(schema.announcements)
-      .where(eq(schema.announcements.active, true));
-    parkedActiveIds = others.map((r) => r.id);
-    if (parkedActiveIds.length > 0) {
-      await db
-        .update(schema.announcements)
-        .set({ active: false })
-        .where(inArray(schema.announcements.id, parkedActiveIds));
-    }
-
-    // Seed a fresh active announcement
-    const [row] = await db
-      .insert(schema.announcements)
-      .values({
-        title: ANNOUNCEMENT_TITLE,
-        body: ANNOUNCEMENT_BODY,
-        buttonText: ANNOUNCEMENT_BUTTON,
-        active: true,
-      })
-      .returning();
-    announcementId = row.id;
+    await withApi(async (ctx) => {
+      const res = await ctx.post('/api/test/announcement', {
+        data: { title: ANNOUNCEMENT_TITLE, body: ANNOUNCEMENT_BODY, buttonText: ANNOUNCEMENT_BUTTON },
+      });
+      if (!res.ok()) throw new Error(`[e2e/announcement] seed failed (${res.status()}): ${await res.text()}`);
+      const body = (await res.json()) as { announcementId: string; parkedIds: string[] };
+      announcementId = body.announcementId;
+      parkedIds = body.parkedIds ?? [];
+    });
   });
 
   test.afterAll(async () => {
-    const db = getDb();
-    // Clean up the announcement + any dismissals
-    if (announcementId) {
-      await db
-        .delete(schema.announcementDismissals)
-        .where(eq(schema.announcementDismissals.announcementId, announcementId));
-      await db
-        .delete(schema.announcements)
-        .where(eq(schema.announcements.id, announcementId));
-    }
-    // Restore the real announcements we parked.
-    if (parkedActiveIds.length > 0) {
-      await db
-        .update(schema.announcements)
-        .set({ active: true })
-        .where(inArray(schema.announcements.id, parkedActiveIds));
-    }
+    if (!announcementId) return;
+    await withApi(async (ctx) => {
+      await ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } });
+    });
   });
 
   test('shows announcement on login, dismisses permanently', async ({ page }) => {
-    // Also clean up any prior dismissal for the fixture user (in case of a
-    // previous failed run)
-    if (announcementId) {
-      const db = getDb();
-      await db
-        .delete(schema.announcementDismissals)
-        .where(
-          and(
-            eq(schema.announcementDismissals.announcementId, announcementId),
-            eq(
-              schema.announcementDismissals.userId,
-              // Resolve the fixture user ID
-              (
-                await db
-                  .select({ id: schema.users.id })
-                  .from(schema.users)
-                  .where(eq(schema.users.email, FIXTURE_EMAIL))
-                  .limit(1)
-              )[0]?.id ?? '',
-            ),
-          ),
-        );
-    }
-
     await loginAsFixtureUser(page);
 
-    // The announcement modal should appear
     const modal = page.getByTestId('announcement-modal');
     await expect(modal).toBeVisible({ timeout: 10_000 });
     await expect(modal).toContainText(ANNOUNCEMENT_TITLE);
     await expect(modal).toContainText(ANNOUNCEMENT_BODY);
 
-    // The dismiss button should have the custom text
     const dismissBtn = page.getByTestId('announcement-dismiss-btn');
     await expect(dismissBtn).toContainText(ANNOUNCEMENT_BUTTON);
-
-    // Click dismiss
     await dismissBtn.click();
 
-    // Modal should disappear
-    await expect(page.getByTestId('announcement-modal-overlay')).not.toBeVisible({
-      timeout: 5_000,
-    });
+    await expect(page.getByTestId('announcement-modal-overlay')).not.toBeVisible({ timeout: 5_000 });
 
-    // Reload the page — the announcement should NOT reappear
+    // Reload — the announcement should NOT reappear (dismissal persisted).
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible({
-      timeout: 15_000,
-    });
-
-    // Give the fetch time to resolve — modal should NOT be visible
+    await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible({ timeout: 15_000 });
     await page.waitForTimeout(2_000);
     await expect(page.getByTestId('announcement-modal-overlay')).not.toBeVisible();
   });

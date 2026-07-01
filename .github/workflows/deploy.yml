@@ -1,34 +1,36 @@
-# Deploy — preview-gated, CI-orchestrated promote to production.
+# CI gate — test every push to main against an EPHEMERAL Neon branch, never prod.
 #
-# Three jobs run on every push to main, each gating the next:
-#   1. unit     — npm ci + unit tests (fast fail before we spend time on Vercel).
-#   2. e2e      — wait for Vercel's PREVIEW deployment of this commit, then seed
-#                 the fixture and run Playwright against the preview URL. This is
-#                 its OWN job so it shows up as a distinct check and so a failure
-#                 here visibly blocks promotion. Exposes the tested deployment id.
-#   3. promote  — `needs: e2e`, so it ONLY runs when e2e is green. Aliases the
-#                 prod domain to the EXACT deployment e2e just tested (no rebuild),
-#                 then backfills legacy Google Maps URLs.
+# Flow (single branch, no staging environment):
+#   1. unit  — npm ci + unit tests (fast fail).
+#   2. e2e   — create a throwaway Neon branch (copy-on-write clone of prod data),
+#              run migrations on it, build the app and run the full Playwright
+#              suite against a LOCAL `next start` pointed at that branch, then
+#              delete the branch. The app runs with AUTH_TEST_BACKDOOR on so the
+#              /api/test/* fixtures work; E2E never touches the prod database.
+#   3. preview — after e2e is green, deploy a clickable Vercel PREVIEW (never
+#              promoted) pointed at a rolling "preview" Neon branch, so you can
+#              eyeball the change before promoting. URL is printed to the summary.
 #
-# If e2e fails (or never reaches the tests), promote never runs and prod stays on
-# the previous deployment. Emergency rollback = Vercel dashboard → prior
-# deployment → Promote to Production. There is deliberately NO skip-CI escape hatch.
+# There is NO auto-promote here. Production is updated only by the manual
+# "Promote to production" workflow (.github/workflows/promote.yml), and Vercel's
+# own git auto-deploy for main is disabled in vercel.json
+# (git.deploymentEnabled.main = false). Green here = the commit is promotable.
 #
-# NOTE: this gate is only the SOLE path to prod once Vercel's own Git auto-promote
-# for `main` is turned off (Vercel → Project → Settings → Git → Production Branch
-# set to a non-existent name). Until then, Vercel also auto-promotes on push.
+# REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
+#   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
+#   ANTHROPIC_API_KEY, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, RESEND_API_KEY
+#   AUTH_TEST_BACKDOOR_EMAIL, E2E_FIXTURE_EMAIL
+#   MAILSLURP_API_KEY   (real OTP e2e; login-otp skips without it)
+# NOTE: the prod DATABASE_URL secret is intentionally NOT used by this job.
 
-name: Deploy
+name: CI
 
 on:
   push:
     branches: [main]
 
-# One push at a time. A newer push cancels an in-flight run so an older commit
-# can never promote over a newer one, and two runs never collide on the shared
-# seed database mid-suite.
 concurrency:
-  group: deploy-main
+  group: ci-main
   cancel-in-progress: true
 
 jobs:
@@ -43,22 +45,13 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
-      - name: Unit tests
-        run: npm run test
+      - run: npm run test
 
   e2e:
-    name: E2E tests
+    name: E2E tests (ephemeral Neon branch)
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-    # Expose the deployment we tested so the promote job can alias the EXACT
-    # same build to production (no rebuild between test and promote).
-    outputs:
-      deployment_id: ${{ steps.preview.outputs.id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,94 +60,62 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Fail fast with a clear message if a required secret is missing, instead
-      # of burning 5 minutes on the Vercel wait below and timing out silently.
-      - name: Check required secrets
+      # A disposable, copy-on-write clone of prod data. Auto-deleted below.
+      - name: Create ephemeral Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v5
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: ci-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Apply migrations to the branch
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          missing=""
-          for v in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID DATABASE_URL; do
-            if [ -z "${!v:-}" ]; then missing="$missing $v"; fi
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::Missing required GitHub Actions secret(s):$missing — set them in Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-
-      - name: Install Vercel CLI
-        run: npm i -g vercel@latest
-
-      - name: Wait for Vercel preview deployment
-        id: preview
-        run: |
-          set -euo pipefail
-          api="https://api.vercel.com/v6/deployments"
-          query="projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&meta-githubCommitSha=${GITHUB_SHA}&limit=1"
-          deadline=$((SECONDS + 300))   # 5 minutes
-          while [ "$SECONDS" -lt "$deadline" ]; do
-            resp="$(curl -sS -H "Authorization: Bearer $VERCEL_TOKEN" "$api?$query")"
-            state="$(echo "$resp" | jq -r '.deployments[0].state // .deployments[0].readyState // empty')"
-            id="$(echo "$resp" | jq -r '.deployments[0].uid // empty')"
-            host="$(echo "$resp" | jq -r '.deployments[0].url // empty')"
-            echo "state=${state:-<none>} id=${id:-<none>} host=${host:-<none>}"
-            case "$state" in
-              READY)
-                echo "id=$id" >> "$GITHUB_OUTPUT"
-                echo "url=https://$host" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-              ERROR|CANCELED|DELETED)
-                echo "::error::Preview deployment ended in state: $state"
-                exit 1
-                ;;
-            esac
-            sleep 10
-          done
-          echo "::error::Timed out after 5min waiting for a READY preview for $GITHUB_SHA"
-          exit 1
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+        run: npm run db:migrate
 
       - name: Install Playwright browsers
-        # `npm run e2e` runs with PLAYWRIGHT_BROWSERS_PATH=0 (browsers live under
-        # node_modules), so install to the SAME path — otherwise the run can't
-        # find the binary ("Executable doesn't exist at .../.local-browsers").
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
         run: npx playwright install --with-deps chromium
 
-      - name: Seed E2E fixture
+      # No E2E_BASE_URL → Playwright builds + starts the app locally (see
+      # playwright.config webServer) with this env, and seeds/tests via the
+      # /api/test/* HTTP endpoints. DATABASE_URL points at the ephemeral branch.
+      - name: Run Playwright
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+          AUTH_TEST_BACKDOOR: '1'
           AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
           E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
-        run: npm run e2e:seed
-
-      - name: Run Playwright against preview
-        env:
-          E2E_BASE_URL: ${{ steps.preview.outputs.url }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
-          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
+          # Real OTP e2e (login-otp.spec) — uses a MailSlurp inbox to read the
+          # actual emailed code. Skips if unset.
+          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
         run: npm run e2e
 
-      - name: Clean up E2E rows
+      # Always drop the branch, even on failure, so they don't accumulate.
+      - name: Delete ephemeral Neon branch
         if: always()
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
-          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
-        run: npm run e2e:cleanup
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: ci-${{ github.run_id }}-${{ github.run_attempt }}
 
-  promote:
-    name: Promote to production
+  # Clickable "eyeball" preview of the tested commit — deployed to Vercel as a
+  # PREVIEW (never promoted), pointed at its own rolling Neon branch ("preview",
+  # a fresh copy of prod data refreshed each push) so you can click around
+  # without touching real prod data. The URL is printed to the run summary.
+  # Runs only after e2e is green, so a preview always reflects a promotable build.
+  preview:
+    name: Deploy eyeball preview
     needs: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
@@ -165,13 +126,39 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Refresh the single rolling "preview" branch: drop the old one (ignore if
+      # absent), then re-create it from prod so the preview shows current data.
+      - name: Delete previous preview Neon branch
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: preview
+      - name: Create fresh preview Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v5
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: preview
+      - name: Apply migrations to the preview branch
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+        run: npm run db:migrate
+
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
 
-      - name: Promote tested deployment to production
-        run: vercel promote "${{ needs.e2e.outputs.deployment_id }}" --token="$VERCEL_TOKEN" --yes
-
-      - name: Backfill legacy Google Maps URLs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npm run backfill-maps-nav
+      # Deploy as a preview (no --prod) with DATABASE_URL overridden to the
+      # rolling preview branch. NEXT_PUBLIC_* build-time vars come from the
+      # project's preview env via `vercel pull`. No AUTH_TEST_BACKDOOR here — the
+      # eyeball preview behaves like real prod (sign in with OTP to your email).
+      - name: Deploy preview + print URL
+        run: |
+          vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" -e DATABASE_URL="${{ steps.neon.outputs.db_url }}")"
+          echo "## 🔍 Eyeball preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview: $URL"

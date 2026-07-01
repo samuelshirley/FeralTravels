@@ -1,206 +1,107 @@
-import { eq, and, like } from 'drizzle-orm';
-import { getDb, schema, withDbRetry } from './db';
+import { request, type APIRequestContext } from '@playwright/test';
 import { FIXTURE_EMAIL, playwrightName } from './constants';
 
 /**
- * Create a fresh, empty trip owned by the fixture user with
- * onboarding_state='done'. The Penny submit-trip test uses this so it can
- * skip the onboarding wizard and go straight to typing a prompt into the
- * chat composer.
- *
- * The trip name is prefixed with `playwright-<runId>-` so the cleanup
- * teardown sweeps it up automatically. Returns the trip id so the test
- * can navigate directly to /trips/<id>.
+ * Ad-hoc trip fixtures, driven over HTTP through the app's guarded
+ * `/api/test/*` endpoints instead of raw SQL. Each helper spins up a
+ * standalone Playwright request context (no browser/page needed) — the
+ * endpoints authorize by the `AUTH_TEST_BACKDOOR` env guard, not a session.
  */
-export async function createBlankPlanningTrip(label: string): Promise<{
-  tripId: string;
-  name: string;
-}> {
-  const db = getDb();
+function targetBaseUrl(): string {
+  return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
+}
 
-  const userRow = (
-    await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1)
-  )[0];
-  if (!userRow) {
-    throw new Error(
-      `[e2e/test-trip] Fixture user ${FIXTURE_EMAIL} not found. ` +
-        'Did global setup run? Try `npm run e2e:seed`.',
-    );
+async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
+  const ctx = await request.newContext({ baseURL: targetBaseUrl() });
+  try {
+    return await fn(ctx);
+  } finally {
+    await ctx.dispose();
   }
+}
 
-  // Prefer the fixture vehicle so Penny has a real comfortable_range_km
-  // value and the auto fuel planner does interesting work mid-test.
-  const vehicleRow = (
-    await db
-      .select({ id: schema.vehicles.id })
-      .from(schema.vehicles)
-      .where(
-        and(
-          eq(schema.vehicles.userId, userRow.id),
-          eq(schema.vehicles.isDefault, true),
-        ),
-      )
-      .limit(1)
-  )[0];
-
+async function createTrip(
+  kind: 'blank' | 'onboarding' | 'vehicle_new',
+  label: string,
+): Promise<{ tripId: string; vehicleId: string | null; name: string }> {
   const name = playwrightName(label);
-  const [trip] = await db
-    .insert(schema.trips)
-    .values({
-      userId: userRow.id,
-      vehicleId: vehicleRow?.id ?? null,
-      name,
-      status: 'planning',
-      onboardingState: 'done',
-    })
-    .returning({ id: schema.trips.id });
-
-  return { tripId: trip.id, name };
-}
-
-/**
- * Trip that has not run onboarding yet (`not_started`). The first GET to
- * `/api/trips/:id/onboarding` bumps the row to `trip_intent` and shows
- * Penny's greeting — the wizard then walks through trip_intent → trip_date →
- * units_pick → vehicle setup. There is no trip-naming step (Penny names the
- * trip from its route during planning). No Anthropic calls needed.
- */
-export async function createOnboardingTrip(label: string): Promise<{
-  tripId: string;
-  name: string;
-}> {
-  const db = getDb();
-
-  const userRow = (
-    await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1)
-  )[0];
-  if (!userRow) {
-    throw new Error(
-      `[e2e/test-trip] Fixture user ${FIXTURE_EMAIL} not found. ` +
-        'Did global setup run? Try `npm run e2e:seed`.',
-    );
-  }
-
-  const name = playwrightName(label);
-  const [trip] = await db
-    .insert(schema.trips)
-    .values({
-      userId: userRow.id,
-      vehicleId: null,
-      name,
-      status: 'planning',
-      onboardingState: 'not_started',
-    })
-    .returning({ id: schema.trips.id });
-
-  return { tripId: trip.id, name };
-}
-
-/**
- * Trip fixed in `vehicle_new` with an intentionally incomplete vehicle profile
- * (refill + driving limits unset). Skips units/vehicle pick — for exercising
- * numeric validation in the chat composer onboarding path.
- */
-export async function createVehicleNewProfileTrip(label: string): Promise<{
-  tripId: string;
-  vehicleId: string;
-  name: string;
-}> {
-  const db = getDb();
-
-  const userRow = (
-    await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1)
-  )[0];
-  if (!userRow) {
-    throw new Error(
-      `[e2e/test-trip] Fixture user ${FIXTURE_EMAIL} not found. ` +
-        'Did global setup run? Try `npm run e2e:seed`.',
-    );
-  }
-
-  const name = playwrightName(label);
-  const [vehicle] = await db
-    .insert(schema.vehicles)
-    .values({
-      userId: userRow.id,
-      name: `${name} vehicle`,
-      isDefault: false,
-      comfortableRangeKm: null,
-    })
-    .returning({ id: schema.vehicles.id });
-
-  const [trip] = await db
-    .insert(schema.trips)
-    .values({
-      userId: userRow.id,
-      vehicleId: vehicle.id,
-      name,
-      status: 'planning',
-      onboardingState: 'vehicle_new',
-    })
-    .returning({ id: schema.trips.id });
-
-  return { tripId: trip.id, vehicleId: vehicle.id, name };
-}
-
-/**
- * Remove the extra vehicle + trip created by {@link createVehicleNewProfileTrip}.
- * Deletes the trip first (FK from trip → vehicle is on delete set null; trip
- * cascades legs/chat), then the ad-hoc vehicle so later specs still see exactly
- * one vehicle on {@link FIXTURE_EMAIL}.
- */
-export async function deleteVehicleNewProfileFixture(opts: {
-  tripId: string;
-  vehicleId: string;
-}): Promise<void> {
-  const db = getDb();
-  await db.delete(schema.trips).where(eq(schema.trips.id, opts.tripId));
-  await db.delete(schema.vehicles).where(eq(schema.vehicles.id, opts.vehicleId));
-}
-
-/** Count the legs currently attached to a trip (post-Penny submit assertion). */
-export async function countLegs(tripId: string): Promise<number> {
-  return withDbRetry(async () => {
-    const db = getDb();
-    const rows = await db
-      .select({ id: schema.legs.id })
-      .from(schema.legs)
-      .where(eq(schema.legs.tripId, tripId));
-    return rows.length;
+  return withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/trip', {
+      data: { email: FIXTURE_EMAIL, name, kind },
+    });
+    if (!res.ok()) {
+      throw new Error(`[e2e/test-trip] create ${kind} trip failed (${res.status()}): ${await res.text()}`);
+    }
+    const body = (await res.json()) as { tripId: string; vehicleId: string | null };
+    return { tripId: body.tripId, vehicleId: body.vehicleId ?? null, name };
   });
 }
 
 /**
- * Scrub all playwright-* trips for the fixture user. Useful inside a
- * single-test cleanup when you want to reset state mid-suite without
- * waiting for globalTeardown.
+ * Empty trip with `onboarding_state='done'` and the fixture's default vehicle —
+ * lets the Penny submit test skip onboarding and type straight into the chat.
  */
-export async function deleteFixtureUserPlaywrightTrips(): Promise<void> {
-  const db = getDb();
-  const user = (
-    await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1)
-  )[0];
-  if (!user) return;
+export async function createBlankPlanningTrip(label: string): Promise<{ tripId: string; name: string }> {
+  const { tripId, name } = await createTrip('blank', label);
+  return { tripId, name };
+}
 
-  await db
-    .delete(schema.trips)
-    .where(
-      and(eq(schema.trips.userId, user.id), like(schema.trips.name, 'playwright-%')),
-    );
+/**
+ * Trip fixed at `onboarding_state='not_started'` — the wizard walks
+ * trip_intent → trip_date → units_pick. No vehicle attached.
+ */
+export async function createOnboardingTrip(label: string): Promise<{ tripId: string; name: string }> {
+  const { tripId, name } = await createTrip('onboarding', label);
+  return { tripId, name };
+}
+
+/**
+ * Trip fixed at `onboarding_state='vehicle_new'` with an intentionally
+ * incomplete vehicle (no range) — exercises numeric validation in the composer.
+ */
+export async function createVehicleNewProfileTrip(
+  label: string,
+): Promise<{ tripId: string; vehicleId: string; name: string }> {
+  const { tripId, vehicleId, name } = await createTrip('vehicle_new', label);
+  if (!vehicleId) throw new Error('[e2e/test-trip] vehicle_new trip returned no vehicleId');
+  return { tripId, vehicleId, name };
+}
+
+/**
+ * Tear down the extra trip + vehicle from {@link createVehicleNewProfileTrip}.
+ * Both are `playwright-`-prefixed, so the cleanup endpoint sweeps them (and any
+ * other stray playwright rows) for the fixture user.
+ */
+export async function deleteVehicleNewProfileFixture(_opts: {
+  tripId: string;
+  vehicleId: string;
+}): Promise<void> {
+  await cleanupPlaywrightFixtureData();
+}
+
+/** Delete all `playwright-`-prefixed trips + vehicles for the fixture user. */
+export async function cleanupPlaywrightFixtureData(): Promise<void> {
+  await withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/cleanup', { data: { email: FIXTURE_EMAIL } });
+    if (!res.ok()) {
+      throw new Error(`[e2e/test-trip] cleanup failed (${res.status()}): ${await res.text()}`);
+    }
+  });
+}
+
+/** Back-compat alias used by older specs. */
+export async function deleteFixtureUserPlaywrightTrips(): Promise<void> {
+  await cleanupPlaywrightFixtureData();
+}
+
+/** Count the legs on a trip via the authenticated trip API (post-Penny assertion). */
+export async function countLegs(tripId: string): Promise<number> {
+  return withApi(async (ctx) => {
+    await ctx.post('/api/test/session', { data: { email: FIXTURE_EMAIL } });
+    const res = await ctx.get(`/api/trips/${tripId}`);
+    if (!res.ok()) return 0;
+    const body = (await res.json()) as { legs?: unknown[]; trip?: { legs?: unknown[] } };
+    const legs = body.legs ?? body.trip?.legs ?? [];
+    return Array.isArray(legs) ? legs.length : 0;
+  });
 }

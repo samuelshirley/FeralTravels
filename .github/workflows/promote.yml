@@ -1,0 +1,63 @@
+# Promote to production — the manual "button".
+#
+# Run it from GitHub → Actions → "Promote to production" → Run workflow. It
+# applies any pending migrations to the PROD database, then builds and deploys
+# the chosen commit (default: current main) straight to production via the
+# Vercel CLI. Because vercel.json disables Vercel's own git auto-deploy for
+# main, this workflow is the ONLY path to production.
+#
+# Recommended use: let CI go green on a commit first (that's the test gate),
+# then run this to ship it.
+#
+# REQUIRED REPO SECRETS:
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#   DATABASE_URL   (the PROD Neon connection string — used only to migrate prod)
+
+name: Promote to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit SHA to promote (blank = current main)'
+        required: false
+        default: ''
+
+concurrency:
+  group: promote-prod
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Migrate prod + deploy to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.sha || 'main' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      # Apply pending migrations to PROD before the new code serves. Idempotent;
+      # run-migrations advances the journal so already-applied ones are skipped.
+      - name: Apply migrations to production DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run db:migrate
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      # Pull production project settings + env, build against them, deploy to prod.
+      - name: Build + deploy to production
+        run: |
+          vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"

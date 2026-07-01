@@ -1,12 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { eq, and, like } from 'drizzle-orm';
 import { loginAsFixtureUser } from './fixtures/auth';
-import {
-  playwrightName,
-  FIXTURE_EMAIL,
-  PLAYWRIGHT_NAME_PREFIX,
-} from './fixtures/constants';
-import { getDb, schema } from './fixtures/db';
+import { playwrightName } from './fixtures/constants';
+import { cleanupPlaywrightFixtureData } from './fixtures/test-trip';
 
 /**
  * Vehicle CRUD round-trip on the Settings page. Independent of every
@@ -68,25 +63,10 @@ test.describe('Vehicle CRUD', () => {
   });
 
   test('second vehicle enables Delete on both cards after reload', async ({ page }) => {
-    // CI retries replay this test against the real DB — a partial run may
-    // leave the playwright‑prefixed row. Clearing ad-hoc vehicles first makes
-    // "exactly two cards" deterministic (fixture van + the one we add below).
-    const db = getDb();
-    const [fixtureUser] = await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, FIXTURE_EMAIL))
-      .limit(1);
-    if (!fixtureUser)
-      throw new Error(`Fixture user missing: seed must create ${FIXTURE_EMAIL}`);
-    await db
-      .delete(schema.vehicles)
-      .where(
-        and(
-          eq(schema.vehicles.userId, fixtureUser.id),
-          like(schema.vehicles.name, `${PLAYWRIGHT_NAME_PREFIX}%`),
-        ),
-      );
+    // CI retries replay this test against the real app — a partial run may
+    // leave the playwright-prefixed row. Clearing ad-hoc rows first (over HTTP)
+    // makes "exactly two cards" deterministic (fixture van + the one we add).
+    await cleanupPlaywrightFixtureData();
 
     const vehicleName = playwrightName('Test Van');
 

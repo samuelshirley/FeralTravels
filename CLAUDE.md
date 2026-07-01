@@ -69,12 +69,20 @@ npm run ship         # deploy script (scripts/ship.sh)
 
 ## Workflow (current)
 
-Pre-launch project with **no real users yet** — we build fast ("vibe coding") directly on `main`. No feature branches or PR review gate at this stage.
+**Production has real users.** Prod is live — do NOT run tests or seed fixtures against the prod database, and treat prod deploys as consequential.
+
+Deploy pipeline (single branch `main`, no long-lived staging):
+
+1. **Push to `main`** → GitHub Actions `CI` workflow (`.github/workflows/deploy.yml`): unit tests → E2E against an **ephemeral Neon branch** (a throwaway copy-on-write clone of prod data, created + deleted per run). E2E never touches prod. Green = the commit is promotable.
+2. **Ship** → run the **"Promote to production"** workflow (`.github/workflows/promote.yml`) manually from the Actions tab ("Run workflow"). It applies migrations to prod, then builds + deploys that commit to production via the Vercel CLI.
+
+Vercel's own git auto-deploy for `main` is **disabled** in `vercel.json` (`git.deploymentEnabled.main = false`), so the promote workflow is the ONLY path to prod — nothing reaches production without a manual button press.
+
+E2E fixtures run entirely over HTTP against the app's guarded `/api/test/*` endpoints (session/seed/trip/cleanup/announcement) + a fixed test OTP code — no raw SQL in specs. Those endpoints + the test session/OTP bypass are gated by `AUTH_TEST_BACKDOOR` and are inert on real prod. `scripts/ship.sh` is legacy (it pushed straight to the old auto-promote flow); prefer the CI + promote-button path.
 
 Division of labor:
 
-- **Claude commits and pushes** finished work straight to `main` (after `tsc --noEmit` + `npm run test` pass).
-- **Sam runs `npm run ship`** to deploy.
+- **Claude commits** finished work (after `tsc --noEmit` + `npm run test` pass); **Sam pushes** and runs the promote button.
 
 Keep commits scoped to the change at hand — don't sweep unrelated in-progress edits into the same commit unless asked.
 
@@ -185,7 +193,12 @@ api/analytics/client-error
 api/admin/test-error      api/admin/announcements
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
+api/test/session          api/test/seed
+api/test/trip             api/test/cleanup
+api/test/announcement
 ```
+
+**`api/test/*` are TEST-ONLY** — guarded by `isAuthTestBackdoorConfigured()` (return 404 otherwise), so they don't exist on real prod. They let the E2E suite create/reset fixtures + sign in over HTTP (no direct DB). Backed by `repos/testSupport.ts` + `auth/test-session.ts`.
 
 ### Schema (24 tables in `src/server/db/schema.ts`)
 
@@ -231,7 +244,7 @@ users, accounts, sessions, verificationTokens, emailOtpCodes, vehicles, trips, l
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, announcements, pennyTurns
+trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, announcements, pennyTurns, testSupport (test-only)
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
