@@ -87,7 +87,24 @@ export default defineConfig({
     // Test-only header lets server code recognise E2E traffic if it ever
     // wants to short-circuit something (currently unused; reserved for
     // future use, e.g. if Penny gains a "deterministic mode").
-    extraHTTPHeaders: { 'x-e2e-test': '1' },
+    //
+    // When the target is the CI-tested Vercel preview, we also carry:
+    // - x-test-backdoor-secret (AUTH_TEST_BACKDOOR_SECRET): required by the
+    //   /api/test/* endpoints so a leaked preview URL can't mint sessions.
+    //   Browser-context requests (page.request in fixtures/auth.ts) inherit
+    //   these headers; standalone request.newContext() calls add them via
+    //   testBackdoorHeaders() in e2e/fixtures/constants.ts.
+    // - x-vercel-protection-bypass (VERCEL_AUTOMATION_BYPASS_SECRET): lets
+    //   the suite through Vercel Deployment Protection if it's enabled.
+    extraHTTPHeaders: {
+      'x-e2e-test': '1',
+      ...(process.env.AUTH_TEST_BACKDOOR_SECRET?.trim()
+        ? { 'x-test-backdoor-secret': process.env.AUTH_TEST_BACKDOOR_SECRET.trim() }
+        : {}),
+      ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim()
+        ? { 'x-vercel-protection-bypass': process.env.VERCEL_AUTOMATION_BYPASS_SECRET.trim() }
+        : {}),
+    },
   },
   projects: [
     {

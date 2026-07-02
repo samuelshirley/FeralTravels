@@ -97,9 +97,22 @@ test.describe('Penny — submit a trip plan', () => {
     // virtualised (lazy-renders the first 20) and counting visible
     // cards undercounts long plans.
     const legs = await countLegs(tripId);
+    // On failure, include Penny's actual reply in the error — CI uploads no
+    // DB and the ephemeral branch is deleted, so without this the transcript
+    // is unrecoverable and "got 0 legs" is undiagnosable (rename-only turn?
+    // resolve_place failure? clarifying question?).
+    let pennyReply = '';
+    if (legs < 3) {
+      pennyReply = (
+        await page
+          .locator('[data-testid="chat-message"][data-message-role="assistant"]')
+          .allInnerTexts()
+      ).join('\n---\n');
+    }
     expect(
       legs,
-      `Penny returned no legs — plan may have collapsed or only acknowledged the prompt (got ${legs}).`,
+      `Penny returned no/too few legs (got ${legs}) — plan may have collapsed or only acknowledged the prompt.` +
+        (pennyReply ? `\nPenny's reply was:\n${pennyReply}` : ''),
     ).toBeGreaterThanOrEqual(3);
 
     // Refresh the workspace so legs Penny just wrote land in the

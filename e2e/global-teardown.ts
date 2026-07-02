@@ -4,7 +4,7 @@
  * guarded `/api/test/cleanup` endpoint (no direct DB access). The personas'
  * canonical data is fully reset on the next globalSetup.
  */
-import { FIXTURE_EMAIL } from './fixtures/constants';
+import { FIXTURE_EMAIL, testBackdoorHeaders } from './fixtures/constants';
 
 function baseUrl(): string {
   return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
@@ -13,7 +13,7 @@ function baseUrl(): string {
 async function cleanupPersona(email: string): Promise<void> {
   const res = await fetch(`${baseUrl()}/api/test/cleanup`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...testBackdoorHeaders() },
     body: JSON.stringify({ email }),
   });
   if (!res.ok) {

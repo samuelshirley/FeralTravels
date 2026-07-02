@@ -45,8 +45,15 @@ test.describe('Email OTP login (MailSlurp)', () => {
     await expect(page.locator('text=/6-digit code/i')).toBeVisible();
 
     // Wait for the real OTP email, then pull the 6-digit code out of it.
+    // Parse the SUBJECT ("123456 is your Feral Travels sign-in code"), NOT the
+    // HTML body: the body's inline CSS contains numeric hex colors (#333333)
+    // that a bare \d{6} matches first, and the displayed code is split
+    // "123 456" so it never matches at all. Fall back to the hidden
+    // origin-bound "#<code>" line in the body (WICG one-time-code format).
     const email = await mailslurp.waitForLatestEmail(inbox.id, 60_000, true);
-    const match = (email.body || '').match(/\b(\d{6})\b/);
+    const match =
+      (email.subject || '').match(/\b(\d{6})\b/) ||
+      (email.body || '').match(/#(\d{6})\b/);
     expect(match, 'OTP email did not contain a 6-digit code').not.toBeNull();
     const code = match![1];
 

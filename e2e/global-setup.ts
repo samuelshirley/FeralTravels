@@ -14,6 +14,7 @@ import {
   FIXTURE_USER_NAME,
   FIXTURE_TRIP_NAME,
   FIXTURE_VEHICLE_NAME,
+  testBackdoorHeaders,
 } from './fixtures/constants';
 
 function baseUrl(): string {
@@ -43,7 +44,7 @@ async function seedPersona(p: {
 }): Promise<void> {
   const res = await fetch(`${baseUrl()}/api/test/seed`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...testBackdoorHeaders() },
     body: JSON.stringify(p),
   });
   if (!res.ok) {

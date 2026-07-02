@@ -1,6 +1,7 @@
 import { test, expect, type Request } from '@playwright/test';
 import { loginAsFixtureUser } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME } from './fixtures/constants';
+import { reseedCanonicalFixture } from './fixtures/test-trip';
 
 /**
  * Lazy fuel sourcing on day-open (migration 0013).
@@ -25,6 +26,14 @@ function isLazyFuelPost(req: Request): boolean {
 }
 
 test.describe('Lazy fuel sourcing on day-open', () => {
+  // Earlier specs share the seeded fixture trip and may have already expanded
+  // a day (existing-trip's nav-link test opens leg 1), which sources its fuel
+  // and leaves a FRESH cache — LegCard then correctly skips the lazy POST this
+  // spec asserts on. Re-seed so every leg starts at fuel_status='none'.
+  test.beforeEach(async () => {
+    await reseedCanonicalFixture();
+  });
+
   test('opening a day fires the lazy fuel POST; loading the trip alone does not', async ({
     page,
   }) => {

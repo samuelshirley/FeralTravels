@@ -1,5 +1,6 @@
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
 import { loginAsFixtureUser } from './fixtures/auth';
+import { testBackdoorHeaders } from './fixtures/constants';
 
 /**
  * Announcement popup E2E — verifies the one-time announcement flow:
@@ -17,7 +18,10 @@ function targetBaseUrl(): string {
 }
 
 async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
-  const ctx = await request.newContext({ baseURL: targetBaseUrl() });
+  const ctx = await request.newContext({
+    baseURL: targetBaseUrl(),
+    extraHTTPHeaders: testBackdoorHeaders(),
+  });
   try {
     return await fn(ctx);
   } finally {

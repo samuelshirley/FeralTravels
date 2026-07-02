@@ -1689,6 +1689,8 @@ export default function ChatPanel({
           return (
           <div
             key={msg.id}
+            data-testid="chat-message"
+            data-message-role={msg.role}
             style={{
               maxWidth: '80%',
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',

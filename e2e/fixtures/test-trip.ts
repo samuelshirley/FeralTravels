@@ -1,5 +1,12 @@
 import { request, type APIRequestContext } from '@playwright/test';
-import { FIXTURE_EMAIL, playwrightName } from './constants';
+import {
+  FIXTURE_EMAIL,
+  FIXTURE_USER_NAME,
+  FIXTURE_TRIP_NAME,
+  FIXTURE_VEHICLE_NAME,
+  playwrightName,
+  testBackdoorHeaders,
+} from './constants';
 
 /**
  * Ad-hoc trip fixtures, driven over HTTP through the app's guarded
@@ -12,7 +19,10 @@ function targetBaseUrl(): string {
 }
 
 async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
-  const ctx = await request.newContext({ baseURL: targetBaseUrl() });
+  const ctx = await request.newContext({
+    baseURL: targetBaseUrl(),
+    extraHTTPHeaders: testBackdoorHeaders(),
+  });
   try {
     return await fn(ctx);
   } finally {
@@ -92,6 +102,30 @@ export async function cleanupPlaywrightFixtureData(): Promise<void> {
 /** Back-compat alias used by older specs. */
 export async function deleteFixtureUserPlaywrightTrips(): Promise<void> {
   await cleanupPlaywrightFixtureData();
+}
+
+/**
+ * Re-seed the canonical fixture (same payload as globalSetup): deletes the
+ * fixture user's trips/vehicles and recreates the vehicle + trip + two legs.
+ * Use when a spec needs the seeded trip in a KNOWN-FRESH state — e.g.
+ * lazy-fuel-sourcing needs legs with `fuel_status='none'`, but an earlier spec
+ * (existing-trip) expands leg 1 and sources its fuel, leaving a fresh cache
+ * that correctly suppresses the lazy POST the spec asserts on.
+ */
+export async function reseedCanonicalFixture(): Promise<void> {
+  await withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/seed', {
+      data: {
+        email: FIXTURE_EMAIL,
+        userName: FIXTURE_USER_NAME,
+        vehicleName: FIXTURE_VEHICLE_NAME,
+        tripName: FIXTURE_TRIP_NAME,
+      },
+    });
+    if (!res.ok()) {
+      throw new Error(`[e2e/test-trip] reseed failed (${res.status()}): ${await res.text()}`);
+    }
+  });
 }
 
 /** Count the legs on a trip via the authenticated trip API (post-Penny assertion). */

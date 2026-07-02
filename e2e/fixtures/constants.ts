@@ -40,3 +40,20 @@ export const PLAYWRIGHT_NAME_PREFIX = 'playwright-';
 export function playwrightName(label: string): string {
   return `${PLAYWRIGHT_NAME_PREFIX}${RUN_ID}-${label}`;
 }
+
+/**
+ * Headers every `/api/test/*` call must carry. When `AUTH_TEST_BACKDOOR_SECRET`
+ * is set on the target app (CI generates a random one per run for the tested
+ * Vercel preview — see .github/workflows/deploy.yml), the endpoints require it
+ * echoed in `x-test-backdoor-secret`; without the env this is empty and local
+ * runs behave as before. Also carries the Vercel deployment-protection bypass
+ * header when VERCEL_AUTOMATION_BYPASS_SECRET is set.
+ */
+export function testBackdoorHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const secret = process.env.AUTH_TEST_BACKDOOR_SECRET?.trim();
+  if (secret) headers['x-test-backdoor-secret'] = secret;
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
+  if (bypass) headers['x-vercel-protection-bypass'] = bypass;
+  return headers;
+}
