@@ -127,8 +127,8 @@ export function splitLegByDriveTime(input: SplitInput): DayLeg[] {
 
   // We use Google's reported total_distance_km as the truth, and the
   // polyline's haversine-summed length as a secondary signal for
-  // *fractional* progress. They differ slightly because the polyline is a
-  // simplified path (overview_polyline ~50–500 points).
+  // *fractional* progress. They differ slightly because the polyline is
+  // simplified (step polylines DP-simplified to ~25m in directions.ts).
   if (polylineTotalKm <= 0) {
     return [
       {

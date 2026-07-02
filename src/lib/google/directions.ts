@@ -56,10 +56,18 @@ export interface DirectionsResult {
   drive_time_minutes: number;
   /**
    * Decoded polyline as a flat array of [lat, lng] tuples.
-   * Granularity comes from Google's encoded `overview_polyline.points` —
-   * usually ~50–500 points for a multi-hour drive. Enough resolution for
-   * the splitter; not enough for turn-by-turn (we don't need that — that's
-   * the phone's job after handoff).
+   *
+   * Built by concatenating the per-step polylines
+   * (`routes[0].legs[].steps[].polyline.points`) — full road-following
+   * resolution — then Douglas-Peucker-simplified to ~25m tolerance so the
+   * stored geometry stays compact while still hugging the road at street
+   * zoom. We deliberately do NOT use `overview_polyline`: Google documents it
+   * as an approximate *smoothed* path with a small point budget spread over
+   * the whole route, which renders as multi-km straight chords cutting
+   * across terrain once the map is zoomed in (the "straight lines over the
+   * lake" bug). `overview_polyline` remains only as a fallback if steps are
+   * ever missing. Same API response either way — no extra call, no billing
+   * change.
    */
   polyline_points: Array<[number, number]>;
   /** Resolved address strings Google returned for the start/end. */
@@ -170,6 +178,121 @@ export function decodePolyline(encoded: string): Array<[number, number]> {
 }
 
 // ---------------------------------------------------------------------------
+// Route geometry: step concatenation + simplification
+// ---------------------------------------------------------------------------
+
+/**
+ * Concatenate the per-step encoded polylines of a Directions route into one
+ * full-resolution [lat, lng] path.
+ *
+ * Each step's polyline starts where the previous step's ended, so we drop
+ * the duplicated boundary point when stitching. Steps missing a polyline are
+ * skipped (defensive — Google always sends them for driving routes).
+ * Returns [] when there are no usable steps, letting the caller fall back to
+ * `overview_polyline`.
+ */
+export function concatStepPolylines(
+  routeLegs: Array<Record<string, any>>
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const leg of routeLegs) {
+    const steps: Array<Record<string, any>> = Array.isArray(leg?.steps) ? leg.steps : [];
+    for (const step of steps) {
+      const encoded = step?.polyline?.points;
+      if (typeof encoded !== 'string' || encoded.length === 0) continue;
+      const pts = decodePolyline(encoded);
+      for (const pt of pts) {
+        const last = out[out.length - 1];
+        // Drop the step-boundary duplicate (encoded at 1e-5 precision, so
+        // exact equality is the right check — no epsilon needed).
+        if (last && last[0] === pt[0] && last[1] === pt[1]) continue;
+        out.push(pt);
+      }
+    }
+  }
+  return out;
+}
+
+/** Simplification tolerance for persisted route geometry, in metres. */
+export const POLYLINE_SIMPLIFY_TOLERANCE_M = 25;
+
+const EARTH_RADIUS_M = 6371000;
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Douglas-Peucker polyline simplification with a tolerance in metres.
+ *
+ * Points are [lat, lng]. Distances use a local equirectangular projection
+ * (metres per degree of longitude scaled by cos(mean latitude)) — plenty
+ * accurate for a 25m tolerance at road-trip scales, and much cheaper than
+ * true geodesic math. Iterative (explicit stack) so a 50k-point
+ * transcontinental route can't blow the call stack.
+ */
+export function simplifyPolyline(
+  points: Array<[number, number]>,
+  toleranceMeters: number
+): Array<[number, number]> {
+  if (points.length <= 2 || toleranceMeters <= 0) return points;
+
+  // Project once into local planar metres around the route's mean latitude.
+  const meanLatRad =
+    (points.reduce((s, p) => s + p[0], 0) / points.length) * DEG_TO_RAD;
+  const mPerDegLat = EARTH_RADIUS_M * DEG_TO_RAD;
+  const mPerDegLng = mPerDegLat * Math.cos(meanLatRad);
+  const xy: Array<[number, number]> = points.map(([lat, lng]) => [
+    lng * mPerDegLng,
+    lat * mPerDegLat,
+  ]);
+
+  const tolSq = toleranceMeters * toleranceMeters;
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+
+  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [first, last] = stack.pop()!;
+    const [x1, y1] = xy[first];
+    const [x2, y2] = xy[last];
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const segLenSq = dx * dx + dy * dy;
+
+    let maxDistSq = -1;
+    let maxIdx = -1;
+    for (let i = first + 1; i < last; i++) {
+      const [px, py] = xy[i];
+      let distSq: number;
+      if (segLenSq === 0) {
+        const ddx = px - x1;
+        const ddy = py - y1;
+        distSq = ddx * ddx + ddy * ddy;
+      } else {
+        // Perpendicular distance to the infinite line through the endpoints —
+        // standard DP (endpoints of the segment are already kept).
+        const cross = dx * (y1 - py) - dy * (x1 - px);
+        distSq = (cross * cross) / segLenSq;
+      }
+      if (distSq > maxDistSq) {
+        maxDistSq = distSq;
+        maxIdx = i;
+      }
+    }
+
+    if (maxDistSq > tolSq && maxIdx > 0) {
+      keep[maxIdx] = 1;
+      stack.push([first, maxIdx], [maxIdx, last]);
+    }
+  }
+
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < points.length; i++) {
+    if (keep[i]) out.push(points[i]);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -277,8 +400,8 @@ export async function getDirections(
   // With waypoints Google splits the trip into one `legs[]` entry PER segment
   // (origin→wp1, wp1→wp2, …, wpN→destination). Sum across all of them — reading
   // only legs[0] would report just the first hop's distance/time, which is the
-  // bug that made waypoints impossible to model. The overview polyline already
-  // spans the whole route, so it stays as-is.
+  // bug that made waypoints impossible to model. Step-polyline concatenation
+  // below likewise walks ALL legs, so the geometry spans the whole route.
   const routeLegs: Array<Record<string, any>> = route?.legs ?? [];
   if (!route || routeLegs.length === 0) {
     return {
@@ -291,12 +414,22 @@ export async function getDirections(
   const distanceMeters = routeLegs.reduce((s, l) => s + (l.distance?.value ?? 0), 0);
   const durationSeconds = routeLegs.reduce((s, l) => s + (l.duration?.value ?? 0), 0);
 
+  // Full-resolution road geometry from the per-step polylines, simplified to
+  // ~25m so persisted GeoJSON stays compact. overview_polyline (Google's
+  // smoothed low-point-budget approximation) is only a fallback — rendered
+  // as-is it cuts corners across terrain at street zoom.
+  const stepPoints = concatStepPolylines(routeLegs);
+  const polylinePoints =
+    stepPoints.length >= 2
+      ? simplifyPolyline(stepPoints, POLYLINE_SIMPLIFY_TOLERANCE_M)
+      : route.overview_polyline?.points
+        ? decodePolyline(route.overview_polyline.points)
+        : [];
+
   const result: DirectionsResult = {
     distance_km: Math.round(distanceMeters / 100) / 10, // metres → km, 1 decimal
     drive_time_minutes: Math.round(durationSeconds / 60),
-    polyline_points: route.overview_polyline?.points
-      ? decodePolyline(route.overview_polyline.points)
-      : [],
+    polyline_points: polylinePoints,
     start_address: routeLegs[0].start_address ?? '',
     end_address: routeLegs[routeLegs.length - 1].end_address ?? '',
     warnings: Array.isArray(route.warnings) ? route.warnings.filter((w: unknown) => typeof w === 'string') : [],
