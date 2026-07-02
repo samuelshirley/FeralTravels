@@ -140,20 +140,27 @@ export default function VehicleProfileSection() {
       ) : (
         <>
           {vehicles.length === 1 && (
+            // Neutral hint, NOT an error: it explains why Delete is hidden on
+            // a sole vehicle. This used to render as a red danger banner
+            // saying "You need at least one vehicle." — which a user with one
+            // vehicle read as "the app thinks I have no vehicle" (real user
+            // confusion, 2026-07-02). The danger styling belongs only on the
+            // delete-rejection error from the API, not on this standing note.
             <div
               data-testid="vehicle-solo-reminder"
               style={{
                 marginBottom: 12,
                 padding: '8px 12px',
                 borderRadius: 6,
-                background: 'var(--tp-danger-muted)',
-                border: '1px solid rgba(198, 93, 74, 0.35)',
-                color: 'var(--tp-danger)',
+                background: 'var(--tp-surface)',
+                border: '1px solid var(--tp-border)',
+                color: 'var(--tp-muted)',
                 fontSize: 12,
                 lineHeight: 1.4,
               }}
             >
-              You need at least one vehicle. Add another first.
+              This is your only vehicle, so it can&apos;t be deleted. Add another
+              vehicle first if you want to replace it.
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

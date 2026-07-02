@@ -27,9 +27,17 @@ test.describe('Vehicle CRUD', () => {
     await loginAsFixtureUser(page, { redirectTo: '/settings' });
     await expect(page.getByRole('heading', { name: 'Vehicle profile' })).toBeVisible();
 
+    // Wait for the vehicles fetch to settle (a card is rendered) BEFORE
+    // asserting on the reminder — it only renders after /api/vehicles
+    // resolves, which can exceed 10s on a cold CI preview (run #27 flake).
+    await expect(page.getByTestId('vehicle-card').first()).toBeVisible({ timeout: 30_000 });
+
+    // Neutral explanatory hint (why Delete is hidden), NOT the old red
+    // "You need at least one vehicle." danger banner — that copy read like
+    // "you have no vehicle" to a user who has exactly one.
     await expect(page.getByTestId('vehicle-solo-reminder')).toBeVisible();
     await expect(page.getByTestId('vehicle-solo-reminder')).toContainText(
-      'You need at least one vehicle. Add another first.',
+      "This is your only vehicle, so it can't be deleted.",
     );
 
     await expect(page.getByTestId('vehicle-card').getByTestId('vehicle-delete-button')).toHaveCount(
