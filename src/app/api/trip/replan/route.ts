@@ -901,10 +901,14 @@ async function dispatchAction(
         );
       }
 
-      // MVP: the update_vehicle tool only carries the fuel-range fields
-      // (comfortable_range_km / hard_max_range_km). Travel-style derivation was
-      // removed with the onboarding teardown.
-      const vehiclePatch: Record<string, unknown> = { ...action.input.data };
+      // LOCKED DOWN (2026-07-02): the update_vehicle tool carries fuel_type
+      // ONLY. The range fields (comfortable_range_km / hard_max_range_km) are
+      // safety numbers writable only via onboarding + Settings — never chat.
+      // Build the patch explicitly (not a spread) so a widened tool schema
+      // can never smuggle extra columns into the vehicle row.
+      const vehiclePatch: Record<string, unknown> = {
+        fuel_type: action.input.data.fuel_type,
+      };
 
       const updated = await updateVehicle(userId, vehicleId, vehiclePatch);
       if (!updated) throw new NotFoundError('Vehicle not found or not owned by user');
