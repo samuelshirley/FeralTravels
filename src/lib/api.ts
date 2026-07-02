@@ -152,22 +152,6 @@ export function tripApi(tripId: string) {
         reason?: string;
       }>(`/api/legs/${legId}/fuel-stops`, { method: 'POST', body: {} }),
 
-    /**
-     * Recompute auto fuel stops for legs on this trip (in sort order).
-     *
-     * Pass `startFromSortOrder` to skip legs ahead of a known edit point —
-     * cumulative tank-state math flows forward, so unchanged front legs don't
-     * need re-planning. Omit for a full replan (e.g. on vehicle change).
-     */
-    replenishFuelStops: (opts?: { startFromSortOrder?: number }) =>
-      apiFetch<{ ok: boolean }>(`/api/trips/${tripId}/fuel-stops/replan`, {
-        method: 'POST',
-        body:
-          opts?.startFromSortOrder !== undefined
-            ? { start_from_sort_order: opts.startFromSortOrder }
-            : {},
-      }),
-
     listStopsForLeg: (legId: string) => apiFetch(`/api/stops`, { query: { tripId, legId } }),
     addStop: (legId: string, payload: Record<string, unknown>) =>
       apiFetch(`/api/stops`, { body: { tripId, leg_id: legId, ...payload } }),

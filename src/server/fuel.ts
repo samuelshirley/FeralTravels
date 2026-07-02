@@ -549,45 +549,11 @@ async function clearAutoPlannerOptionStops(legId: string): Promise<void> {
   await db.delete(stops).where(autoPlannerOptionSql(legId));
 }
 
-export interface ReplenishFuelStopsOptions {
-  /**
-   * Skip every leg whose `sort_order` is strictly less than this value
-   * (forward-only replan; cumulative tank math flows forward). Omit to replan
-   * every leg.
-   */
-  startFromSortOrder?: number;
-}
-
-/**
- * Re-run auto fuel planning for legs on a trip in sort order (needed for
- * cumulative tank state across legs). Failures on one leg are logged; the rest
- * still run. Manual/admin re-plan only — not auto-triggered.
- */
-export async function replenishFuelStopsForTrip(
-  tripId: string,
-  userId: string,
-  opts: ReplenishFuelStopsOptions = {}
-): Promise<void> {
-  const legRows = await db
-    .select({ id: legs.id, sortOrder: legs.sortOrder })
-    .from(legs)
-    .where(eq(legs.tripId, tripId))
-    .orderBy(asc(legs.sortOrder));
-
-  const startFrom = opts.startFromSortOrder;
-  const toRun =
-    typeof startFrom === 'number'
-      ? legRows.filter((l) => l.sortOrder >= startFrom)
-      : legRows;
-
-  for (const row of toRun) {
-    try {
-      await planFuelStopsForLeg(row.id, userId);
-    } catch (e) {
-      console.error('replenishFuelStopsForTrip: leg', row.id, e);
-    }
-  }
-}
+// NOTE: the trip-wide fuel fan-out (`replenishFuelStopsForTrip` + its
+// POST /api/trips/[id]/fuel-stops/replan endpoint) was REMOVED 2026-07-02.
+// Fuel is sourced exclusively lazily, one leg at a time, on day-open
+// (planFuelStopsForLegLazy). Do not reintroduce a whole-trip fan-out — the
+// eager model was the original API cost sink the lazy design replaced.
 
 async function resolveVehicleForTrip(
   tripId: string | null,
