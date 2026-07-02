@@ -173,6 +173,21 @@ describe('StopsSection (refactored)', () => {
     expect(screen.getByText(/no stops yet/i)).toBeInTheDocument();
   });
 
+  it('shows "no fuel stop needed" when sourced (ready) with zero stops', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[]}
+        fuelStatus="ready"
+      />
+    );
+    expect(screen.getByText(/no fuel stop needed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no stops yet/i)).not.toBeInTheDocument();
+  });
+
   it('shows dismissed count in collapsed section', () => {
     render(
       <StopsSection

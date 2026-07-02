@@ -199,6 +199,25 @@ describe('fetchFuelCorridor', () => {
     ).rejects.toThrow(/HTTP 504/);
   });
 
+  it('throws on a 200 response carrying a remark (Overpass soft-failure)', async () => {
+    // Overpass can time out server-side and still return HTTP 200 with a
+    // `remark` and empty elements. That must NOT parse as "zero stations" —
+    // it once cached a false no_stations_found warning for 48h.
+    await expect(
+      fetchFuelCorridor(route, undefined, {
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              remark: 'runtime error: Query timed out in "query" at line 3.',
+              elements: [],
+            }),
+        }),
+      })
+    ).rejects.toThrow(/timed out/i);
+  });
+
   it('throws on non-JSON', async () => {
     await expect(
       fetchFuelCorridor(route, undefined, {

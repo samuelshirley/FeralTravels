@@ -295,7 +295,15 @@ export default function StopsSection({
           fuelStatus !== 'failed' &&
           fuelStatus !== 'no_stations_found' && (
             <div style={{ fontSize: 11, color: 'var(--tp-subtle)' }}>
-              {readonly ? 'No stops.' : 'No stops yet — fuel stops appear here automatically.'}
+              {fuelStatus === 'ready'
+                ? // Sourced, and the planner verified nothing is needed — say so
+                  // instead of the ambiguous "no stops yet" (which reads as
+                  // "nothing happened"). Only claims what the tank math checked;
+                  // no promises about when the next fuel stop comes.
+                  'No fuel stop needed on this day — it fits within your range (assuming a full tank at trip start).'
+                : readonly
+                  ? 'No stops.'
+                  : 'No stops yet — fuel stops appear here automatically.'}
             </div>
           )}
 

@@ -357,7 +357,22 @@ export async function planFuelStopsForLeg(
   });
 
   if (plan.gap) {
-    // A stop is needed but nothing reachable sits before the ceiling — honest
+    // A stop is needed but the candidate list is EMPTY — zero stations in the
+    // whole corridor (or all filtered out). On any leg long enough to need a
+    // stop that's near-certainly a data/service anomaly (Overpass overload,
+    // truncated response), not real geography — treat it as a retryable
+    // failure, NOT the cached `no_stations_found` safety warning. A false
+    // "carry extra fuel" warning costs the warning its credibility exactly
+    // where it matters (genuinely remote routes).
+    if (candidates.length === 0) {
+      return failLeg(
+        legId,
+        leg.tripId,
+        userId,
+        'No station data came back for this route — the station service likely returned an incomplete result. We\'ll retry automatically. If this route is genuinely remote, plan a fuel stop manually and carry extra fuel.'
+      );
+    }
+    // Stations exist but none reachable before the hard ceiling — honest
     // warning, not an empty "ready" plan that looks safe. [[feedback_fuel_safety_bias]]
     const reason =
       plan.gapDetail ??

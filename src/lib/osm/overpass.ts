@@ -275,5 +275,14 @@ export async function fetchFuelCorridor(
   } catch {
     throw new Error('Overpass returned non-JSON response');
   }
+  // Overpass can SOFT-fail: HTTP 200 with a `remark` field (e.g. "runtime
+  // error: Query timed out ...") and an empty or truncated `elements` array.
+  // Treat any remark as a failed fetch. Silently accepting one turned a
+  // transient overload into a false — and 48h-cached — "no stations found"
+  // safety warning (the 2026-07-02 Mosjøen→Narvik bug).
+  const remark = asRecord(json)?.remark;
+  if (typeof remark === 'string' && remark.trim() !== '') {
+    throw new Error(`Overpass returned a partial result: ${remark.trim()}`);
+  }
   return parseOverpassFuel(json);
 }
