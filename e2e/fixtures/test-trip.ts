@@ -128,14 +128,25 @@ export async function reseedCanonicalFixture(): Promise<void> {
   });
 }
 
-/** Count the legs on a trip via the authenticated trip API (post-Penny assertion). */
+/**
+ * Count the legs on a trip via the authenticated trip API (post-Penny
+ * assertion). Reads `GET /api/trip?tripId=` (the full-trip endpoint backed by
+ * getTripFull) — NOT `/api/trips/[id]`, which has no GET handler (PATCH/DELETE
+ * only): the old code GET it, took the 405, and silently returned 0, making
+ * every Penny run look like "0 legs" regardless of what she actually planned.
+ * Failures now THROW so a broken helper is distinguishable from an empty plan.
+ */
 export async function countLegs(tripId: string): Promise<number> {
   return withApi(async (ctx) => {
-    await ctx.post('/api/test/session', { data: { email: FIXTURE_EMAIL } });
-    const res = await ctx.get(`/api/trips/${tripId}`);
-    if (!res.ok()) return 0;
-    const body = (await res.json()) as { legs?: unknown[]; trip?: { legs?: unknown[] } };
-    const legs = body.legs ?? body.trip?.legs ?? [];
-    return Array.isArray(legs) ? legs.length : 0;
+    const session = await ctx.post('/api/test/session', { data: { email: FIXTURE_EMAIL } });
+    if (!session.ok()) {
+      throw new Error(`[e2e/countLegs] test session failed (${session.status()})`);
+    }
+    const res = await ctx.get(`/api/trip?tripId=${tripId}`);
+    if (!res.ok()) {
+      throw new Error(`[e2e/countLegs] GET /api/trip failed (${res.status()}): ${await res.text()}`);
+    }
+    const body = (await res.json()) as { legs?: unknown[] };
+    return Array.isArray(body.legs) ? body.legs.length : 0;
   });
 }

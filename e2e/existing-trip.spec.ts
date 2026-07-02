@@ -25,9 +25,12 @@ test.describe('Existing user with seeded trip', () => {
     await expect(fixtureCard).toBeVisible();
 
     // The card itself contains an <a> wrapper to /trips/<id>; click the
-    // visible name link to open the workspace.
+    // visible name link to open the workspace. 30s: against the CI preview
+    // the first workspace navigation can hit cold serverless functions +
+    // Neon branch wake-up (this exact wait flaked at 15s in run #26 while
+    // the same click passed in the next test at ~3s).
     await fixtureCard.getByText(FIXTURE_TRIP_NAME, { exact: false }).first().click();
-    await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 15_000 });
+    await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 30_000 });
 
     await expect(page.getByText('Trip not found')).not.toBeVisible({ timeout: 10_000 });
 
