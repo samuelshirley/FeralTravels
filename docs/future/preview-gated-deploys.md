@@ -1,8 +1,8 @@
 # Preview-Gated Deploys (CI-orchestrated)
 
-**Status:** Designed, not built. Pick up on solid wifi and ideally before the first real user lands. Plane-wifi-proof deploy gating that doesn't depend on the developer's local network.
+**Status:** SUPERSEDED — built 2026-07-02 as `.github/workflows/deploy.yml` + `promote.yml`; see CLAUDE.md "Workflow (current)". Kept for design history only. NOTE: every `AUTH_TEST_BACKDOOR*` reference below is obsolete — the auth backdoor was fully removed 2026-07-02 (e2e signs in via real OTP + MailSlurp; `/api/test/*` are fixture-data-only behind `E2E_TEST_ENDPOINTS`, hard-off in production).
 
-**Last updated:** 2026-05-25.
+**Last updated:** 2026-05-25 (superseded note added 2026-07-02).
 
 ---
 

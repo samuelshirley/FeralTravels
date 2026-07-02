@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
+import { seedCanonicalFixture } from './fixtures/test-trip';
 
 /**
  * Smoke-test the read path for an authenticated user with a set-up vehicle and
@@ -11,14 +12,19 @@ import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
  *   - The itinerary renders the expected number of leg cards (2 days)
  *   - The map mounts and reports it loaded the right number of legs
  *
- * The fixture is re-seeded over HTTP on every globalSetup (via /api/test/seed →
- * seedFixture in repos/testSupport.ts), so the assertions pin to literal numbers.
+ * Each test creates a fresh MailSlurp user and seeds its graph over HTTP
+ * (via /api/test/seed → seedFixture in repos/testSupport.ts), so the
+ * assertions pin to literal numbers.
  */
 test.describe('Existing user with seeded trip', () => {
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+
   test('trip on /trips opens with the default vehicle, legs + map', async ({
     page,
   }) => {
-    await loginAsFixtureUser(page);
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
+    await loginViaOtp(page, user);
     await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible();
 
     const fixtureCard = page.locator(`[data-testid="trip-card"][data-trip-name="${FIXTURE_TRIP_NAME}"]`);
@@ -63,7 +69,9 @@ test.describe('Existing user with seeded trip', () => {
   });
 
   test('leg cards render navigation links to Google Maps', async ({ page }) => {
-    await loginAsFixtureUser(page);
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
+    await loginViaOtp(page, user);
 
     const fixtureCard = page.locator(`[data-testid="trip-card"][data-trip-name="${FIXTURE_TRIP_NAME}"]`);
     await expect(fixtureCard).toBeVisible();

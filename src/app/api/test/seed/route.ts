@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
 import { seedFixture } from '@/server/repos/testSupport';
 
 /**
  * TEST-ONLY: reset a persona's graph and recreate the canonical fixture
- * (default vehicle + trip + two legs). 404 unless the test backdoor is on.
+ * (default vehicle + trip + two legs). 404 unless test endpoints are enabled.
  */
 const bodySchema = z.object({
   email: z.string().email(),

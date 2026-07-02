@@ -1,29 +1,23 @@
 /**
  * Single source of truth for E2E identifiers, prefixes, and timeouts.
  *
- * Fixtures are created/reset entirely over HTTP via the app's guarded
- * `/api/test/*` endpoints (see e2e/fixtures/auth.ts + test-trip.ts and
- * e2e/global-setup.ts) — no direct database access.
+ * Identity model: every test signs in as a FRESH MailSlurp user through the
+ * real OTP email flow (see fixtures/auth.ts) — there is no auth bypass and no
+ * shared fixture account. Fixture DATA (vehicle + trip + legs) is created for
+ * that fresh user over HTTP via the app's guarded `/api/test/*` endpoints
+ * (see test-trip.ts and the seed helpers) — no direct database access.
  *
- * - `FIXTURE_EMAIL` is the seeded planner persona. globalSetup resets its graph
- *   (vehicle + trip + 2 legs) via `/api/test/seed` before each run.
- * - Mid-suite ad-hoc rows use `RUN_ID` + `playwrightName()`; teardown scrubs
- *   anything `playwright-`-prefixed via `/api/test/cleanup`.
- * - The real OTP UI flow (login-otp.spec) uses MailSlurp, gated on
- *   MAILSLURP_API_KEY — no address constant needed here.
+ * - Mid-suite ad-hoc rows use `RUN_ID` + `playwrightName()`; specs scrub their
+ *   own user's `playwright-`-prefixed rows via `/api/test/cleanup`.
  */
 
-/** Email used by the seeded fixture user. The test-session endpoint signs in as this. */
-export const FIXTURE_EMAIL =
-  process.env.E2E_FIXTURE_EMAIL || 'feral-e2e-fixture@feraltravels.test';
-
-/** Display name on the fixture user row. */
+/** Display name seeded onto each fresh test user's row. */
 export const FIXTURE_USER_NAME = 'E2E Fixture User';
 
 /** The seeded trip's name. Tests look this up by name on /trips. */
 export const FIXTURE_TRIP_NAME = 'E2E Fixture Trip';
 
-/** Seeded vehicle on the fixture user. Penny + the workspace use it. */
+/** Seeded vehicle on the fresh test user. Penny + the workspace use it. */
 export const FIXTURE_VEHICLE_NAME = 'E2E Fixture Van';
 
 /**
@@ -42,17 +36,17 @@ export function playwrightName(label: string): string {
 }
 
 /**
- * Headers every `/api/test/*` call must carry. When `AUTH_TEST_BACKDOOR_SECRET`
- * is set on the target app (CI generates a random one per run for the tested
- * Vercel preview — see .github/workflows/deploy.yml), the endpoints require it
- * echoed in `x-test-backdoor-secret`; without the env this is empty and local
- * runs behave as before. Also carries the Vercel deployment-protection bypass
- * header when VERCEL_AUTOMATION_BYPASS_SECRET is set.
+ * Headers every `/api/test/*` fixture call must carry. When
+ * `E2E_TEST_ENDPOINTS_SECRET` is set on the target app (CI generates a random
+ * one per run for the tested Vercel preview — see .github/workflows/deploy.yml),
+ * the endpoints require it echoed in `x-e2e-test-secret`; without the env this
+ * is empty and local runs behave as before. Also carries the Vercel
+ * deployment-protection bypass header when VERCEL_AUTOMATION_BYPASS_SECRET is set.
  */
-export function testBackdoorHeaders(): Record<string, string> {
+export function testEndpointHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const secret = process.env.AUTH_TEST_BACKDOOR_SECRET?.trim();
-  if (secret) headers['x-test-backdoor-secret'] = secret;
+  const secret = process.env.E2E_TEST_ENDPOINTS_SECRET?.trim();
+  if (secret) headers['x-e2e-test-secret'] = secret;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
   if (bypass) headers['x-vercel-protection-bypass'] = bypass;
   return headers;

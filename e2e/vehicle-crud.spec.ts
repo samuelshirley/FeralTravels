@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
 import { playwrightName } from './fixtures/constants';
-import { cleanupPlaywrightFixtureData } from './fixtures/test-trip';
+import { seedCanonicalFixture } from './fixtures/test-trip';
 
 /**
  * Vehicle CRUD round-trip on the Settings page. Independent of every
@@ -12,8 +12,8 @@ import { cleanupPlaywrightFixtureData } from './fixtures/test-trip';
  *   - Solo vehicle: reminder banner + no Delete controls (exactly fixture van)
  *   - Sole-vehicle DELETE returns 400
  *   - Add a second vehicle, reload: reminder hidden; exactly two cards and two
- *     Delete buttons (`workers: 1`; third test also wipes `playwright-*` vehicles
- *     first so CI retries stay exact)
+ *     Delete buttons (each test signs in as a FRESH user with a freshly seeded
+ *     sole van, so counts are deterministic — including on CI retries)
  *
  * What we don't cover (other tests already do, or it'd be redundant):
  *   - Edit / delete flows — the form is the same widget, exercising add
@@ -23,8 +23,12 @@ import { cleanupPlaywrightFixtureData } from './fixtures/test-trip';
  *     network round trip; covered better by a unit test if/when added.
  */
 test.describe('Vehicle CRUD', () => {
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+
   test('solo vehicle shows reminder without delete button', async ({ page }) => {
-    await loginAsFixtureUser(page, { redirectTo: '/settings' });
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
+    await loginViaOtp(page, user, { redirectTo: '/settings' });
     await expect(page.getByRole('heading', { name: 'Vehicle profile' })).toBeVisible();
 
     // Wait for the vehicles fetch to settle (a card is rendered) BEFORE
@@ -46,7 +50,9 @@ test.describe('Vehicle CRUD', () => {
   });
 
   test('delete API rejects removing the sole vehicle', async ({ page }) => {
-    await loginAsFixtureUser(page, { redirectTo: '/settings' });
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
+    await loginViaOtp(page, user, { redirectTo: '/settings' });
 
     const result = await page.evaluate(async () => {
       const listRes = await fetch('/api/vehicles');
@@ -71,14 +77,15 @@ test.describe('Vehicle CRUD', () => {
   });
 
   test('second vehicle enables Delete on both cards after reload', async ({ page }) => {
-    // CI retries replay this test against the real app — a partial run may
-    // leave the playwright-prefixed row. Clearing ad-hoc rows first (over HTTP)
-    // makes "exactly two cards" deterministic (fixture van + the one we add).
-    await cleanupPlaywrightFixtureData();
+    // Fresh user per test: no stale playwright-prefixed rows can exist, so
+    // "exactly two cards" (seeded van + the one we add) is deterministic —
+    // including on CI retries, which get a brand-new user.
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
 
     const vehicleName = playwrightName('Test Van');
 
-    await loginAsFixtureUser(page, { redirectTo: '/settings' });
+    await loginViaOtp(page, user, { redirectTo: '/settings' });
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 
     // The fixture seed always installs `E2E Fixture Van` on this user,

@@ -1,18 +1,21 @@
-import { request, type APIRequestContext } from '@playwright/test';
+import { request, type APIRequestContext, type Page } from '@playwright/test';
 import {
-  FIXTURE_EMAIL,
   FIXTURE_USER_NAME,
   FIXTURE_TRIP_NAME,
   FIXTURE_VEHICLE_NAME,
   playwrightName,
-  testBackdoorHeaders,
+  testEndpointHeaders,
 } from './constants';
 
 /**
- * Ad-hoc trip fixtures, driven over HTTP through the app's guarded
+ * Fixture-data helpers, driven over HTTP through the app's guarded
  * `/api/test/*` endpoints instead of raw SQL. Each helper spins up a
  * standalone Playwright request context (no browser/page needed) — the
- * endpoints authorize by the `AUTH_TEST_BACKDOOR` env guard, not a session.
+ * endpoints authorize by the `E2E_TEST_ENDPOINTS` env guard (+ per-run
+ * secret in CI), not a session, and only touch fixture DATA.
+ *
+ * Every helper takes the disposable test user's email (from
+ * `createFreshUser()` in ./auth.ts) — there is no shared fixture account.
  */
 function targetBaseUrl(): string {
   return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
@@ -21,7 +24,7 @@ function targetBaseUrl(): string {
 async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
   const ctx = await request.newContext({
     baseURL: targetBaseUrl(),
-    extraHTTPHeaders: testBackdoorHeaders(),
+    extraHTTPHeaders: testEndpointHeaders(),
   });
   try {
     return await fn(ctx);
@@ -30,14 +33,39 @@ async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T
   }
 }
 
-async function createTrip(
+/**
+ * Seed the canonical fixture graph (default vehicle + trip + two legs) for
+ * `email`, creating the user row if needed. Same payload globalSetup used to
+ * send for the shared persona; now each spec seeds its own fresh user.
+ */
+export async function seedCanonicalFixture(email: string): Promise<void> {
+  await withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/seed', {
+      data: {
+        email,
+        userName: FIXTURE_USER_NAME,
+        vehicleName: FIXTURE_VEHICLE_NAME,
+        tripName: FIXTURE_TRIP_NAME,
+      },
+    });
+    if (!res.ok()) {
+      throw new Error(`[e2e/test-trip] seed failed (${res.status()}): ${await res.text()}`);
+    }
+  });
+}
+
+/** Back-compat name: re-seeding and seeding are the same POST. */
+export const reseedCanonicalFixture = seedCanonicalFixture;
+
+async function createTripFor(
+  email: string,
   kind: 'blank' | 'onboarding' | 'vehicle_new',
   label: string,
 ): Promise<{ tripId: string; vehicleId: string | null; name: string }> {
   const name = playwrightName(label);
   return withApi(async (ctx) => {
     const res = await ctx.post('/api/test/trip', {
-      data: { email: FIXTURE_EMAIL, name, kind },
+      data: { email, name, kind },
     });
     if (!res.ok()) {
       throw new Error(`[e2e/test-trip] create ${kind} trip failed (${res.status()}): ${await res.text()}`);
@@ -48,11 +76,15 @@ async function createTrip(
 }
 
 /**
- * Empty trip with `onboarding_state='done'` and the fixture's default vehicle —
+ * Empty trip with `onboarding_state='done'` and the user's default vehicle —
  * lets the Penny submit test skip onboarding and type straight into the chat.
+ * Seed the canonical fixture for `email` first (it creates the vehicle).
  */
-export async function createBlankPlanningTrip(label: string): Promise<{ tripId: string; name: string }> {
-  const { tripId, name } = await createTrip('blank', label);
+export async function createBlankPlanningTrip(
+  email: string,
+  label: string,
+): Promise<{ tripId: string; name: string }> {
+  const { tripId, name } = await createTripFor(email, 'blank', label);
   return { tripId, name };
 }
 
@@ -60,8 +92,11 @@ export async function createBlankPlanningTrip(label: string): Promise<{ tripId: 
  * Trip fixed at `onboarding_state='not_started'` — the wizard walks
  * trip_intent → trip_date → units_pick. No vehicle attached.
  */
-export async function createOnboardingTrip(label: string): Promise<{ tripId: string; name: string }> {
-  const { tripId, name } = await createTrip('onboarding', label);
+export async function createOnboardingTrip(
+  email: string,
+  label: string,
+): Promise<{ tripId: string; name: string }> {
+  const { tripId, name } = await createTripFor(email, 'onboarding', label);
   return { tripId, name };
 }
 
@@ -70,83 +105,37 @@ export async function createOnboardingTrip(label: string): Promise<{ tripId: str
  * incomplete vehicle (no range) — exercises numeric validation in the composer.
  */
 export async function createVehicleNewProfileTrip(
+  email: string,
   label: string,
 ): Promise<{ tripId: string; vehicleId: string; name: string }> {
-  const { tripId, vehicleId, name } = await createTrip('vehicle_new', label);
+  const { tripId, vehicleId, name } = await createTripFor(email, 'vehicle_new', label);
   if (!vehicleId) throw new Error('[e2e/test-trip] vehicle_new trip returned no vehicleId');
   return { tripId, vehicleId, name };
 }
 
-/**
- * Tear down the extra trip + vehicle from {@link createVehicleNewProfileTrip}.
- * Both are `playwright-`-prefixed, so the cleanup endpoint sweeps them (and any
- * other stray playwright rows) for the fixture user.
- */
-export async function deleteVehicleNewProfileFixture(_opts: {
-  tripId: string;
-  vehicleId: string;
-}): Promise<void> {
-  await cleanupPlaywrightFixtureData();
-}
-
-/** Delete all `playwright-`-prefixed trips + vehicles for the fixture user. */
-export async function cleanupPlaywrightFixtureData(): Promise<void> {
+/** Delete all `playwright-`-prefixed trips + vehicles for `email`. */
+export async function cleanupPlaywrightFixtureData(email: string): Promise<void> {
   await withApi(async (ctx) => {
-    const res = await ctx.post('/api/test/cleanup', { data: { email: FIXTURE_EMAIL } });
+    const res = await ctx.post('/api/test/cleanup', { data: { email } });
     if (!res.ok()) {
       throw new Error(`[e2e/test-trip] cleanup failed (${res.status()}): ${await res.text()}`);
     }
   });
 }
 
-/** Back-compat alias used by older specs. */
-export async function deleteFixtureUserPlaywrightTrips(): Promise<void> {
-  await cleanupPlaywrightFixtureData();
-}
-
-/**
- * Re-seed the canonical fixture (same payload as globalSetup): deletes the
- * fixture user's trips/vehicles and recreates the vehicle + trip + two legs.
- * Use when a spec needs the seeded trip in a KNOWN-FRESH state — e.g.
- * lazy-fuel-sourcing needs legs with `fuel_status='none'`, but an earlier spec
- * (existing-trip) expands leg 1 and sources its fuel, leaving a fresh cache
- * that correctly suppresses the lazy POST the spec asserts on.
- */
-export async function reseedCanonicalFixture(): Promise<void> {
-  await withApi(async (ctx) => {
-    const res = await ctx.post('/api/test/seed', {
-      data: {
-        email: FIXTURE_EMAIL,
-        userName: FIXTURE_USER_NAME,
-        vehicleName: FIXTURE_VEHICLE_NAME,
-        tripName: FIXTURE_TRIP_NAME,
-      },
-    });
-    if (!res.ok()) {
-      throw new Error(`[e2e/test-trip] reseed failed (${res.status()}): ${await res.text()}`);
-    }
-  });
-}
-
 /**
  * Count the legs on a trip via the authenticated trip API (post-Penny
- * assertion). Reads `GET /api/trip?tripId=` (the full-trip endpoint backed by
- * getTripFull) — NOT `/api/trips/[id]`, which has no GET handler (PATCH/DELETE
- * only): the old code GET it, took the 405, and silently returned 0, making
- * every Penny run look like "0 legs" regardless of what she actually planned.
- * Failures now THROW so a broken helper is distinguishable from an empty plan.
+ * assertion). Uses the PAGE's browser context — the caller is already signed
+ * in via the real OTP flow — so the request carries the session cookie.
+ * Reads `GET /api/trip?tripId=` (the full-trip endpoint backed by getTripFull)
+ * — NOT `/api/trips/[id]`, which has no GET handler (PATCH/DELETE only).
+ * Failures THROW so a broken helper is distinguishable from an empty plan.
  */
-export async function countLegs(tripId: string): Promise<number> {
-  return withApi(async (ctx) => {
-    const session = await ctx.post('/api/test/session', { data: { email: FIXTURE_EMAIL } });
-    if (!session.ok()) {
-      throw new Error(`[e2e/countLegs] test session failed (${session.status()})`);
-    }
-    const res = await ctx.get(`/api/trip?tripId=${tripId}`);
-    if (!res.ok()) {
-      throw new Error(`[e2e/countLegs] GET /api/trip failed (${res.status()}): ${await res.text()}`);
-    }
-    const body = (await res.json()) as { legs?: unknown[] };
-    return Array.isArray(body.legs) ? body.legs.length : 0;
-  });
+export async function countLegs(page: Page, tripId: string): Promise<number> {
+  const res = await page.request.get(`/api/trip?tripId=${tripId}`);
+  if (!res.ok()) {
+    throw new Error(`[e2e/countLegs] GET /api/trip failed (${res.status()}): ${await res.text()}`);
+  }
+  const body = (await res.json()) as { legs?: unknown[] };
+  return Array.isArray(body.legs) ? body.legs.length : 0;
 }

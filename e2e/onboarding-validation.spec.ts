@@ -1,15 +1,20 @@
 import { test, expect } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
 import {
+  cleanupPlaywrightFixtureData,
   createVehicleNewProfileTrip,
-  deleteVehicleNewProfileFixture,
+  seedCanonicalFixture,
 } from './fixtures/test-trip';
 
 test.describe('Onboarding composer validation', () => {
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+
   test('rejects fuel spacing below minimum then accepts valid value', async ({ page }) => {
-    const { tripId, vehicleId } = await createVehicleNewProfileTrip('Onboarding Validation');
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email);
+    const { tripId } = await createVehicleNewProfileTrip(user.email, 'Onboarding Validation');
     try {
-      await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
+      await loginViaOtp(page, user, { redirectTo: `/trips/${tripId}` });
 
       await expect(page.getByText(/comfortable driving range/i)).toBeVisible({ timeout: 25_000 });
 
@@ -29,7 +34,7 @@ test.describe('Onboarding composer validation', () => {
         timeout: 20_000,
       });
     } finally {
-      await deleteVehicleNewProfileFixture({ tripId, vehicleId });
+      await cleanupPlaywrightFixtureData(user.email);
     }
   });
 });

@@ -2,7 +2,7 @@ import 'server-only';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users, vehicles, trips, announcements, announcementDismissals } from '@/server/db/schema';
-import { isAuthTestBackdoorConfigured } from '@/server/auth/test-backdoor';
+import { areTestEndpointsEnabled } from '@/server/auth/test-endpoints';
 import { addVehicle, getDefaultVehicleId } from './vehicles';
 import { createTrip, addLeg } from './trips';
 
@@ -15,12 +15,13 @@ import { createTrip, addLeg } from './trips';
  * move that setup behind the app's own repo layer so it can be driven over HTTP
  * (see /api/test/*). Raw SQL stays here in the repo layer, never in the specs.
  *
- * SECURITY: every entry point asserts `isAuthTestBackdoorConfigured()`, which is
- * false on real Vercel production unless explicitly opted in. Inert in prod.
+ * SECURITY: every entry point asserts `areTestEndpointsEnabled()`, which is
+ * ALWAYS false on real Vercel production (no override exists). These helpers
+ * touch fixture DATA only — there is no session minting or auth bypass here.
  */
 
 function assertEnabled() {
-  if (!isAuthTestBackdoorConfigured()) {
+  if (!areTestEndpointsEnabled()) {
     throw new Error('test support is disabled');
   }
 }

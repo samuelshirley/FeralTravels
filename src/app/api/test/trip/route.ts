@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
 import { createAdHocTrip } from '@/server/repos/testSupport';
 
 /**
  * TEST-ONLY: create a throwaway `playwright-`-prefixed trip for a single spec.
  * `name` must already carry the run prefix so cleanup sweeps it. 404 unless the
- * test backdoor is on.
+ * test endpoints are enabled.
  */
 const bodySchema = z.object({
   email: z.string().email(),

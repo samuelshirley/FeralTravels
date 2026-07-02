@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
-import { createOnboardingTrip } from './fixtures/test-trip';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createOnboardingTrip, seedCanonicalFixture } from './fixtures/test-trip';
 
 /**
  * Exercises the pre-Penny onboarding wizard:
@@ -8,13 +8,17 @@ import { createOnboardingTrip } from './fixtures/test-trip';
  *   fuel-complete vehicle) → done.
  * There is no trip-naming step anymore (Penny names the trip from its route),
  * so the wizard must never ask for a name — this test guards that. No LLM
- * calls; the fixture user already has a fuel-ready default van.
+ * calls; the seeded fixture gives the user a fuel-ready default van.
  */
 test.describe('Onboarding wizard', () => {
-  test('onboarding never asks for a name, goes intent → units → single vehicle auto-selected', async ({ page }) => {
-    const { tripId } = await createOnboardingTrip('Onboarding Flow');
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
 
-    await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
+  test('onboarding never asks for a name, goes intent → units → single vehicle auto-selected', async ({ page }) => {
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email); // fuel-ready default van → auto-pick
+    const { tripId } = await createOnboardingTrip(user.email, 'Onboarding Flow');
+
+    await loginViaOtp(page, user, { redirectTo: `/trips/${tripId}` });
 
     // Step 1: trip_intent — Penny's greeting with the trip intent textarea
     await expect(

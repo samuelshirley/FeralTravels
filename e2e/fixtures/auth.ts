@@ -1,41 +1,113 @@
-import type { Page } from '@playwright/test';
-import { FIXTURE_EMAIL } from './constants';
+import { test, type Page } from '@playwright/test';
+import { MailSlurp } from 'mailslurp-client';
 
 /**
- * Sign in for E2E entirely over HTTP: POST the target app's guarded
- * `/api/test/session` endpoint, which mints a real Auth.js database session and
- * returns the session cookie. `page.request` shares the browser context's
- * cookie jar, so the Set-Cookie lands in the context and the subsequent
- * `page.goto` is authenticated — no direct DB access from the test.
+ * E2E authentication — the REAL sign-in path, no bypass.
  *
- * The endpoint only exists when `AUTH_TEST_BACKDOOR` is configured on the app
- * (off on real prod), which is exactly where E2E runs (local / preview).
+ * Every test signs in as a FRESH MailSlurp user: create a disposable inbox,
+ * submit its address on /login, wait for the actual OTP email the app sends
+ * (via Resend), extract the 6-digit code, and type it on /login/verify.
+ * `signInWithOtp` find-or-creates the user, so seeding fixture data for the
+ * same email (over `/api/test/seed`) before OR after login both work.
+ *
+ * Requirements: `MAILSLURP_API_KEY` (specs skip without it) and a working
+ * Resend key on the target app so OTP emails actually send.
+ *
+ * MailSlurp's free tier can rate-limit or auto-disable inbox creation; when
+ * it's unavailable we SKIP rather than fail — a third-party outage shouldn't
+ * red the whole pipeline. (Trade-off: a MailSlurp outage means most of the
+ * suite skips. Watch the run summary for mass-skips before promoting.)
  */
-function targetBaseUrl(): string {
-  return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
+
+export const MAILSLURP_API_KEY = process.env.MAILSLURP_API_KEY;
+
+export const SKIP_NO_MAILSLURP =
+  'MAILSLURP_API_KEY not set — real-OTP sign-in unavailable, spec skipped';
+
+export interface FreshUser {
+  email: string;
+  inboxId: string;
 }
 
-export async function loginAsE2eUser(
-  page: Page,
-  email: string,
-  opts: { redirectTo?: string } = {},
-) {
-  const redirectTo = opts.redirectTo || '/trips';
-  const res = await page.request.post(`${targetBaseUrl()}/api/test/session`, {
-    data: { email },
-  });
-  if (!res.ok()) {
-    throw new Error(
-      `[e2e/auth] /api/test/session failed (${res.status()}) for ${email}. ` +
-        'Is AUTH_TEST_BACKDOOR configured on the target app?',
+let client: MailSlurp | null = null;
+function mailslurp(): MailSlurp {
+  if (!MAILSLURP_API_KEY) throw new Error(SKIP_NO_MAILSLURP);
+  if (!client) client = new MailSlurp({ apiKey: MAILSLURP_API_KEY });
+  return client;
+}
+
+/**
+ * Create a fresh disposable user (MailSlurp inbox). Call inside a test or
+ * beforeEach — on MailSlurp outage it marks the test skipped instead of red.
+ */
+export async function createFreshUser(): Promise<FreshUser> {
+  try {
+    const inbox = await mailslurp().createInbox();
+    return { email: inbox.emailAddress, inboxId: inbox.id };
+  } catch (err) {
+    test.skip(
+      true,
+      `MailSlurp unavailable — skipping (${err instanceof Error ? err.message : String(err)})`,
     );
+    throw err; // unreachable (test.skip aborts); satisfies the type checker
   }
-  // domcontentloaded — the full 'load' can stall on Maps/analytics sub-resources
-  // while the page is already interactive; each test waits on its own assertions.
-  await page.goto(redirectTo, { waitUntil: 'domcontentloaded' });
 }
 
-/** Sign in as the primary planner fixture user (`FIXTURE_EMAIL`). */
-export async function loginAsFixtureUser(page: Page, opts: { redirectTo?: string } = {}) {
-  return loginAsE2eUser(page, FIXTURE_EMAIL, opts);
+/** Extract the 6-digit code from the OTP email. Subject first ("123456 is
+ * your Feral Travels sign-in code") — the HTML body's inline CSS contains
+ * numeric hex colors (#333333) that a bare \d{6} matches first, and the
+ * displayed code is split "123 456". Falls back to the hidden origin-bound
+ * "#<code>" line in the body (WICG one-time-code format). */
+function extractOtpCode(subject: string | undefined, body: string | undefined): string | null {
+  const match = (subject || '').match(/\b(\d{6})\b/) || (body || '').match(/#(\d{6})\b/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Drive the real OTP UI flow for `user` and land on `redirectTo`.
+ * Mirrors login-otp.spec.ts, which remains the focused test of this flow.
+ */
+export async function loginViaOtp(
+  page: Page,
+  user: FreshUser,
+  opts: { redirectTo?: string } = {},
+): Promise<void> {
+  const redirectTo = opts.redirectTo || '/trips';
+
+  await page.goto(`/login?callbackUrl=${encodeURIComponent(redirectTo)}`);
+  await page.locator('input[name="email"]').fill(user.email);
+  await Promise.all([
+    page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
+    page.getByRole('button', { name: /email me a code/i }).click(),
+  ]);
+
+  const email = await mailslurp().waitForLatestEmail(user.inboxId, 60_000, true);
+  const code = extractOtpCode(email.subject ?? undefined, email.body ?? undefined);
+  if (!code) throw new Error('[e2e/auth] OTP email did not contain a 6-digit code');
+
+  const firstDigit = page
+    .locator('input[aria-label="Digit 1 of 6"]')
+    .or(page.locator('input[autocomplete="one-time-code"]'))
+    .first();
+  await firstDigit.click();
+  // Six single-char boxes that auto-advance on keystroke — fill() would dump
+  // all six digits into box 1 (→ InvalidCode). Type real keystrokes instead.
+  const target = redirectTo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await Promise.all([
+    page.waitForURL(new RegExp(`${target}(\\?|$)`), { timeout: 30_000 }),
+    page.keyboard.type(code),
+  ]);
+}
+
+/**
+ * One-call setup used by most specs: fresh user + real OTP login.
+ * Seed fixture data for `user.email` before or after as the spec needs.
+ */
+export async function loginAsFreshUser(
+  page: Page,
+  opts: { redirectTo?: string } = {},
+): Promise<FreshUser> {
+  const user = await createFreshUser();
+  await loginViaOtp(page, user, opts);
+  return user;
 }

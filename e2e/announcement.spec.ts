@@ -1,6 +1,6 @@
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
-import { testBackdoorHeaders } from './fixtures/constants';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { testEndpointHeaders } from './fixtures/constants';
 
 /**
  * Announcement popup E2E — verifies the one-time announcement flow:
@@ -20,7 +20,7 @@ function targetBaseUrl(): string {
 async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
   const ctx = await request.newContext({
     baseURL: targetBaseUrl(),
-    extraHTTPHeaders: testBackdoorHeaders(),
+    extraHTTPHeaders: testEndpointHeaders(),
   });
   try {
     return await fn(ctx);
@@ -30,6 +30,8 @@ async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T
 }
 
 test.describe('Announcement popup', () => {
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+
   const ANNOUNCEMENT_TITLE = 'E2E Test Announcement';
   const ANNOUNCEMENT_BODY = 'This is a test announcement for E2E.';
   const ANNOUNCEMENT_BUTTON = 'Wow nice job Sam';
@@ -56,7 +58,10 @@ test.describe('Announcement popup', () => {
   });
 
   test('shows announcement on login, dismisses permanently', async ({ page }) => {
-    await loginAsFixtureUser(page);
+    // OTP sign-in find-or-creates the user — no seeding needed; the modal
+    // shows on /trips for any signed-in user while the announcement is active.
+    const user = await createFreshUser();
+    await loginViaOtp(page, user);
 
     const modal = page.getByTestId('announcement-modal');
     await expect(modal).toBeVisible({ timeout: 10_000 });

@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
 import { seedAnnouncement, cleanupAnnouncement } from '@/server/repos/testSupport';
 
 /**
  * TEST-ONLY: seed (POST) / clean up (DELETE) an announcement for the
- * announcement E2E. 404 unless the test backdoor is on.
+ * announcement E2E. 404 unless test endpoints are enabled.
  */
 const seedSchema = z.object({
   title: z.string().min(1),

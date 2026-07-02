@@ -78,9 +78,9 @@ Deploy pipeline (single branch `main`, no long-lived staging):
 
 Vercel's own git auto-deploy for `main` is **disabled** in `vercel.json` (`git.deploymentEnabled.main = false`), so the promote workflow is the ONLY path to prod — nothing reaches production without a manual button press, and the button refuses red commits.
 
-E2E fixtures run entirely over HTTP against the app's guarded `/api/test/*` endpoints (session/seed/trip/cleanup/announcement) + a fixed test OTP code — no raw SQL in specs. Those endpoints + the test session/OTP bypass are gated by `AUTH_TEST_BACKDOOR` and are inert on real prod. **Because the tested preview is internet-reachable, the endpoints are additionally locked by a per-run secret** (`AUTH_TEST_BACKDOOR_SECRET`, required in the `x-test-backdoor-secret` header when set — `isTestRequestAuthorized` in `auth/test-backdoor.ts`): CI derives it as HMAC(AUTH_SECRET, run id) identically in the preview + e2e jobs (nothing passed through job outputs), the runner sends it via `testBackdoorHeaders()` (`e2e/fixtures/constants.ts`) + the config `extraHTTPHeaders`. Locally the secret is unset and nothing changes. Optional `VERCEL_AUTOMATION_BYPASS_SECRET` is wired through the same headers if Vercel Deployment Protection ever gets enabled. App runtime/build env for the preview (Anthropic, Resend, Maps keys) comes from the Vercel project's **preview environment** via `vercel pull` — keep it complete there. `scripts/ship.sh` is legacy (it pushed straight to the old auto-promote flow); prefer the CI + promote-button path.
+**E2E auth: NO bypass exists (removed 2026-07-02).** Every authenticated spec creates a fresh MailSlurp inbox and signs in through the REAL OTP email flow (`createFreshUser()`/`loginViaOtp()` in `e2e/fixtures/auth.ts`; `MAILSLURP_API_KEY` required — authenticated specs skip without it, and the target app needs a working Resend key to actually send the code). The old `AUTH_TEST_BACKDOOR` family — login-page test sign-in, the Credentials provider, `/api/test/session` session minting — is deleted, and `src/lib/noBackdoorGuard.test.ts` fails the unit suite if anything resembling it (`/backdoor/i`, `createTestSession`, a Credentials provider) reappears in `src/`. E2E fixtures (DATA only: seed/trip/cleanup/announcement) run over HTTP against the guarded `/api/test/*` endpoints — no raw SQL in specs. Those endpoints are gated by `E2E_TEST_ENDPOINTS=1` (`areTestEndpointsEnabled` in `auth/test-endpoints.ts`) and are **hard-off on `VERCEL_ENV=production` with no override env** (unit-enforced in `test-endpoints.test.ts`). **Because the tested preview is internet-reachable, the endpoints are additionally locked by a per-run secret** (`E2E_TEST_ENDPOINTS_SECRET`, required in the `x-e2e-test-secret` header when set): CI derives it as HMAC(AUTH_SECRET, run id) identically in the preview + e2e jobs (nothing passed through job outputs), the runner sends it via `testEndpointHeaders()` (`e2e/fixtures/constants.ts`) + the config `extraHTTPHeaders`. Locally the secret is unset and nothing changes. Optional `VERCEL_AUTOMATION_BYPASS_SECRET` is wired through the same headers if Vercel Deployment Protection ever gets enabled. App runtime/build env for the preview (Anthropic, Resend, Maps keys) comes from the Vercel project's **preview environment** via `vercel pull` — keep it complete there. `scripts/ship.sh` is legacy (it pushed straight to the old auto-promote flow); prefer the CI + promote-button path.
 
-E2E cross-spec state: specs share one seeded fixture trip; a spec that needs it in a known-fresh state must re-seed first (`reseedCanonicalFixture()` in `e2e/fixtures/test-trip.ts` — lazy-fuel-sourcing does this because existing-trip expands leg 1 and sources its fuel).
+E2E cross-spec state: none — each test gets a fresh MailSlurp user and seeds its own canonical graph (`seedCanonicalFixture(email)` in `e2e/fixtures/test-trip.ts`), so specs can't contaminate each other. Cost of the model: ~1 MailSlurp inbox + 1 real Resend OTP send + ~5–10s per authenticated test; if MailSlurp quota becomes a problem, the documented fallback is one fresh user per RUN signed in once in global-setup with a shared Playwright `storageState`.
 
 Division of labor:
 
@@ -164,7 +164,7 @@ src/
       otp.ts          # OTP generation/validation
       otp-email.ts    # OTP email sending
       magic-email.ts  # Magic link emails
-      test-backdoor.ts # E2E test auth bypass
+      test-endpoints.ts # Guard for /api/test/* fixture-DATA endpoints (hard-off on prod; NO auth bypass exists)
   types/trip.ts       # Shared TypeScript types
 middleware.ts         # Root-level edge middleware (cookie check)
 scripts/              # CLI utilities (see Scripts below)
@@ -195,12 +195,11 @@ api/analytics/client-error
 api/admin/test-error      api/admin/announcements
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
-api/test/session          api/test/seed
-api/test/trip             api/test/cleanup
-api/test/announcement
+api/test/seed             api/test/trip
+api/test/cleanup          api/test/announcement
 ```
 
-**`api/test/*` are TEST-ONLY** — guarded by `isAuthTestBackdoorConfigured()` (return 404 otherwise), so they don't exist on real prod. They let the E2E suite create/reset fixtures + sign in over HTTP (no direct DB). Backed by `repos/testSupport.ts` + `auth/test-session.ts`.
+**`api/test/*` are TEST-ONLY and DATA-ONLY** — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP email (MailSlurp). Backed by `repos/testSupport.ts`.
 
 ### Schema (24 tables in `src/server/db/schema.ts`)
 

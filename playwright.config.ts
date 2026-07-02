@@ -39,7 +39,7 @@ import path from 'node:path';
  * for Anthropic streaming. Use `npm run e2e:smoke` for the fast path (no Penny).
  */
 
-// Read .env so DATABASE_URL, E2E_OTP_EMAIL, AUTH_TEST_BACKDOOR_*, etc. are
+// Read .env so DATABASE_URL, MAILSLURP_API_KEY, E2E_TEST_ENDPOINTS_*, etc. are
 // available to test code without exporting them in the shell. dotenv is
 // already a devDep for the migrate scripts.
 import 'dotenv/config';
@@ -89,17 +89,17 @@ export default defineConfig({
     // future use, e.g. if Penny gains a "deterministic mode").
     //
     // When the target is the CI-tested Vercel preview, we also carry:
-    // - x-test-backdoor-secret (AUTH_TEST_BACKDOOR_SECRET): required by the
-    //   /api/test/* endpoints so a leaked preview URL can't mint sessions.
-    //   Browser-context requests (page.request in fixtures/auth.ts) inherit
-    //   these headers; standalone request.newContext() calls add them via
-    //   testBackdoorHeaders() in e2e/fixtures/constants.ts.
+    // - x-e2e-test-secret (E2E_TEST_ENDPOINTS_SECRET): required by the
+    //   /api/test/* fixture endpoints so a leaked preview URL can't seed or
+    //   delete fixture data. Browser-context requests inherit these headers;
+    //   standalone request.newContext() calls add them via
+    //   testEndpointHeaders() in e2e/fixtures/constants.ts.
     // - x-vercel-protection-bypass (VERCEL_AUTOMATION_BYPASS_SECRET): lets
     //   the suite through Vercel Deployment Protection if it's enabled.
     extraHTTPHeaders: {
       'x-e2e-test': '1',
-      ...(process.env.AUTH_TEST_BACKDOOR_SECRET?.trim()
-        ? { 'x-test-backdoor-secret': process.env.AUTH_TEST_BACKDOOR_SECRET.trim() }
+      ...(process.env.E2E_TEST_ENDPOINTS_SECRET?.trim()
+        ? { 'x-e2e-test-secret': process.env.E2E_TEST_ENDPOINTS_SECRET.trim() }
         : {}),
       ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim()
         ? { 'x-vercel-protection-bypass': process.env.VERCEL_AUTOMATION_BYPASS_SECRET.trim() }
@@ -137,14 +137,12 @@ export default defineConfig({
             // (DATABASE_URL, ANTHROPIC_API_KEY, etc.) — then layer the
             // test-only overrides on top so they always win.
             ...process.env,
-            // The login backdoor must be ON for the test suite. We set
-            // it here (not in .env) so the developer's `npm run dev`
-            // doesn't unexpectedly enable it — only tests turn it on.
-            AUTH_TEST_BACKDOOR: '1',
-            AUTH_TEST_BACKDOOR_EMAIL:
-              process.env.AUTH_TEST_BACKDOOR_EMAIL ||
-              process.env.E2E_FIXTURE_EMAIL ||
-              'feral-e2e-fixture@feraltravels.test',
+            // The /api/test/* FIXTURE endpoints must be ON for the suite
+            // (seed/reset/cleanup of test data — there is no auth bypass;
+            // sign-in goes through the real OTP email via MailSlurp). Set
+            // here (not in .env) so a developer's `npm run dev` doesn't
+            // unexpectedly expose them — only tests turn them on.
+            E2E_TEST_ENDPOINTS: '1',
             AUTH_URL: BASE_URL,
             // The TripMap component reads NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
             // (Next bakes NEXT_PUBLIC_ vars into the client bundle at

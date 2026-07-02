@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { loginAsFixtureUser } from './fixtures/auth';
-import { createBlankPlanningTrip, countLegs } from './fixtures/test-trip';
+import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createBlankPlanningTrip, countLegs, seedCanonicalFixture } from './fixtures/test-trip';
 
 const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
 
@@ -42,6 +42,7 @@ const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
  */
 test.describe('Penny — submit a trip plan', () => {
   test.skip(!ANTHROPIC_CONFIGURED, 'ANTHROPIC_API_KEY not set — skipped (set key to run Penny E2E)');
+  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
 
   // Anthropic streams can take 30–60s end-to-end on a complex plan; the
   // tool-use loop adds another 10–20s of Google Places lookups. Generous
@@ -60,9 +61,11 @@ test.describe('Penny — submit a trip plan', () => {
     // composer is the first thing visible — we don't want this test to
     // also exercise the onboarding wizard (covered indirectly by the
     // existing-trip + vehicle tests).
-    const { tripId } = await createBlankPlanningTrip('Penny Submit Test');
+    const user = await createFreshUser();
+    await seedCanonicalFixture(user.email); // installs the default vehicle the blank trip uses
+    const { tripId } = await createBlankPlanningTrip(user.email, 'Penny Submit Test');
 
-    await loginAsFixtureUser(page, { redirectTo: `/trips/${tripId}` });
+    await loginViaOtp(page, user, { redirectTo: `/trips/${tripId}` });
 
     // Wait for the workspace to settle. The chat composer's textarea is
     // identifiable by its placeholder — see ChatPanel.tsx.
@@ -96,7 +99,7 @@ test.describe('Penny — submit a trip plan', () => {
     // from the DB rather than the UI because the itinerary list is
     // virtualised (lazy-renders the first 20) and counting visible
     // cards undercounts long plans.
-    const legs = await countLegs(tripId);
+    const legs = await countLegs(page, tripId);
     // On failure, include Penny's actual reply in the error — CI uploads no
     // DB and the ephemeral branch is deleted, so without this the transcript
     // is unrecoverable and "got 0 legs" is undiagnosable (rename-only turn?

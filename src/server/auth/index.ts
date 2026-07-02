@@ -4,12 +4,8 @@ import Google from 'next-auth/providers/google';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
-import {
-  isAuthTestBackdoorConfigured,
-} from './test-backdoor';
-import Credentials from 'next-auth/providers/credentials';
 
 declare module 'next-auth' {
   interface Session {
@@ -53,56 +49,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // src/server/auth/otp.ts — it verifies the code, finds/creates the user,
     // creates a database session, and sets the cookie. We bypass Auth.js's
     // Credentials provider because it doesn't support database sessions.
-
-    ...(isAuthTestBackdoorConfigured()
-      ? [
-          Credentials({
-            id: 'auth-test-backdoor',
-            name: 'Auth test backdoor',
-            credentials: {
-              email: { label: 'Email', type: 'email' },
-              token: { label: 'Token', type: 'password' },
-            },
-            async authorize(credentials) {
-              if (!isAuthTestBackdoorConfigured()) return null;
-              const expected = process.env.AUTH_TEST_BACKDOOR_EMAIL!.trim().toLowerCase();
-              const email = String(credentials?.email ?? '').trim().toLowerCase();
-              if (!email || email !== expected) return null;
-              const secret = process.env.AUTH_TEST_BACKDOOR_SECRET?.trim();
-              if (secret && String(credentials?.token ?? '') !== secret) return null;
-
-              const existing = await db
-                .select({ id: users.id, email: users.email, name: users.name })
-                .from(users)
-                .where(sql`lower(${users.email}) = ${email}`)
-                .limit(1);
-
-              let userId: string;
-              let name: string | null;
-
-              if (existing.length > 0) {
-                userId = existing[0].id;
-                name = existing[0].name;
-              } else {
-                const [row] = await db
-                  .insert(users)
-                  .values({
-                    email,
-                    emailVerified: new Date(),
-                    name: 'Test user (backdoor)',
-                  })
-                  .returning({ id: users.id, name: users.name });
-                userId = row.id;
-                name = row.name;
-
-                await syncAdminFlagOnSignIn(email).catch(() => {});
-              }
-
-              return { id: userId, email, name: name ?? 'Test user' };
-            },
-          }),
-        ]
-      : []),
+    // NOTE: Google + OTP are the ONLY sign-in paths. There is deliberately no
+    // test/bypass provider — a guard test in src/lib/ enforces this.
   ],
   callbacks: {
     session({ session, user }) {

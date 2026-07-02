@@ -8,18 +8,20 @@
 #                against this exact URL, and the same URL is printed to the run
 #                summary for eyeballing. It deploys BEFORE tests so you always
 #                get a clickable preview even when a spec is red (test bug vs
-#                app bug). The app runs with AUTH_TEST_BACKDOOR on so the
-#                /api/test/* fixtures work — guarded by a per-run secret (see
-#                below) since the URL is internet-reachable.
+#                app bug). The app runs with E2E_TEST_ENDPOINTS on so the
+#                /api/test/* FIXTURE-DATA endpoints work — guarded by a per-run
+#                secret (see below) since the URL is internet-reachable.
 #   3. e2e     — run the full Playwright suite against the preview URL
 #                (E2E_BASE_URL → playwright.config skips its local webServer).
 #                Artifacts (report + traces) upload on failure.
 #
-# Backdoor security: /api/test/session mints a session for an arbitrary email,
-# so on a public URL it MUST NOT be open. Both jobs derive the same per-run
-# secret as HMAC(AUTH_SECRET, run id) — the preview app requires it in the
-# x-test-backdoor-secret header (AUTH_TEST_BACKDOOR_SECRET), the Playwright
-# runner sends it. No extra repo secret to manage; it rotates every run.
+# There is NO auth bypass anywhere: e2e signs in as fresh MailSlurp users
+# through the real OTP email flow. The /api/test/* endpoints only seed/reset
+# fixture DATA, are hard-off on VERCEL_ENV=production, and on the public
+# preview URL additionally require a per-run secret: both jobs derive the same
+# HMAC(AUTH_SECRET, run id) — the preview app requires it in the
+# x-e2e-test-secret header (E2E_TEST_ENDPOINTS_SECRET), the Playwright runner
+# sends it. No extra repo secret to manage; it rotates every run.
 #
 # There is NO auto-promote here. Production is updated only by the manual
 # "Promote to production" workflow (.github/workflows/promote.yml) — which now
@@ -30,10 +32,11 @@
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
-#   AUTH_SECRET                     (also the HMAC key for the per-run backdoor secret)
-#   AUTH_TEST_BACKDOOR_EMAIL, E2E_FIXTURE_EMAIL
+#   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
 #   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
-#   MAILSLURP_API_KEY               (real OTP e2e; login-otp skips without it)
+#   MAILSLURP_API_KEY               (REQUIRED for a meaningful run: every spec
+#                                    signs in via a real OTP email; without it
+#                                    all authenticated specs skip)
 #   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
 #                                    Protection is enabled on the project)
 # App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
@@ -112,7 +115,7 @@ jobs:
       # Deploy as a preview (no --prod). Build-time env (NEXT_PUBLIC_*) comes
       # from the project's preview environment via `vercel pull`; runtime env
       # is overridden per-deployment: DATABASE_URL → the rolling preview
-      # branch, plus the guarded test backdoor so the E2E fixtures work.
+      # branch, plus the guarded fixture-data endpoints so E2E seeding works.
       - name: Deploy preview + print URL
         id: deploy
         env:
@@ -121,15 +124,14 @@ jobs:
           # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
           # jobs" increments the attempt without redeploying the preview, so
           # including it would desync the runner from the deployed app.
-          SECRET="$(printf 'backdoor-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
           echo "::add-mask::$SECRET"
           vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
           URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
-            -e AUTH_TEST_BACKDOOR="1" \
-            -e AUTH_TEST_BACKDOOR_EMAIL="${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}" \
-            -e AUTH_TEST_BACKDOOR_SECRET="$SECRET")"
+            -e E2E_TEST_ENDPOINTS="1" \
+            -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
@@ -155,28 +157,28 @@ jobs:
 
       # Same derivation as the preview job → same secret, nothing passed
       # through job outputs (GitHub drops outputs containing masked values).
-      - name: Derive per-run backdoor secret
+      - name: Derive per-run test-endpoint secret
         env:
           HMAC_KEY: ${{ secrets.AUTH_SECRET }}
         run: |
           # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
           # jobs" increments the attempt without redeploying the preview, so
           # including it would desync the runner from the deployed app.
-          SECRET="$(printf 'backdoor-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
           echo "::add-mask::$SECRET"
-          echo "AUTH_TEST_BACKDOOR_SECRET=$SECRET" >> "$GITHUB_ENV"
+          echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
 
       # E2E_BASE_URL → playwright.config skips its local webServer and the
       # whole suite (fixtures included) targets the deployed preview.
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Real OTP e2e (login-otp.spec) — MailSlurp inbox reads the actual
-          # emailed code. Skips if unset.
+          # Real OTP sign-in for EVERY authenticated spec — a fresh MailSlurp
+          # inbox per test reads the actual emailed code. Specs skip if unset,
+          # so without this key the run is close to a no-op.
           MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
           # Only needed if Vercel Deployment Protection is enabled.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
