@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isAuthTestBackdoorConfigured } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
 import { seedAnnouncement, cleanupAnnouncement } from '@/server/repos/testSupport';
 
 /**
@@ -18,7 +18,7 @@ const cleanupSchema = z.object({
 });
 
 export async function POST(req: Request) {
-  if (!isAuthTestBackdoorConfigured()) return new Response('Not found', { status: 404 });
+  if (!isTestRequestAuthorized(req)) return new Response('Not found', { status: 404 });
   try {
     const body = seedSchema.parse(await req.json());
     const result = await seedAnnouncement(body);
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  if (!isAuthTestBackdoorConfigured()) return new Response('Not found', { status: 404 });
+  if (!isTestRequestAuthorized(req)) return new Response('Not found', { status: 404 });
   try {
     const body = cleanupSchema.parse(await req.json());
     await cleanupAnnouncement(body);

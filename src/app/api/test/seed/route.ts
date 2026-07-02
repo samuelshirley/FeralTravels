@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isAuthTestBackdoorConfigured } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
 import { seedFixture } from '@/server/repos/testSupport';
 
 /**
@@ -14,7 +14,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
-  if (!isAuthTestBackdoorConfigured()) return new Response('Not found', { status: 404 });
+  if (!isTestRequestAuthorized(req)) return new Response('Not found', { status: 404 });
   try {
     const body = bodySchema.parse(await req.json());
     const result = await seedFixture(body);

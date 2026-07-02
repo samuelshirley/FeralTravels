@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isAuthTestBackdoorConfigured } from '@/server/auth/test-backdoor';
+import { isTestRequestAuthorized } from '@/server/auth/test-backdoor';
 import { createTestSession } from '@/server/auth/test-session';
 
 /**
@@ -10,7 +10,7 @@ import { createTestSession } from '@/server/auth/test-session';
 const bodySchema = z.object({ email: z.string().email() });
 
 export async function POST(req: Request) {
-  if (!isAuthTestBackdoorConfigured()) return new Response('Not found', { status: 404 });
+  if (!isTestRequestAuthorized(req)) return new Response('Not found', { status: 404 });
   try {
     const { email } = bodySchema.parse(await req.json());
     const { userId } = await createTestSession(email);

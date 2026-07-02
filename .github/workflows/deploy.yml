@@ -1,29 +1,45 @@
-# CI gate — test every push to main against an EPHEMERAL Neon branch, never prod.
+# CI gate — build ONE preview per push, test against it, never touch prod.
 #
 # Flow (single branch, no staging environment):
-#   1. unit  — npm ci + unit tests (fast fail).
-#   2. e2e   — create a throwaway Neon branch (copy-on-write clone of prod data),
-#              run migrations on it, build the app and run the full Playwright
-#              suite against a LOCAL `next start` pointed at that branch, then
-#              delete the branch. The app runs with AUTH_TEST_BACKDOOR on so the
-#              /api/test/* fixtures work; E2E never touches the prod database.
-#   3. preview — after e2e is green, deploy a clickable Vercel PREVIEW (never
-#              promoted) pointed at a rolling "preview" Neon branch, so you can
-#              eyeball the change before promoting. URL is printed to the summary.
+#   1. unit    — npm ci + unit tests (fast fail).
+#   2. preview — refresh the rolling "preview" Neon branch (copy-on-write clone
+#                of prod data), run migrations on it, and deploy a Vercel
+#                PREVIEW pointed at it. This is THE preview: the E2E suite runs
+#                against this exact URL, and the same URL is printed to the run
+#                summary for eyeballing. It deploys BEFORE tests so you always
+#                get a clickable preview even when a spec is red (test bug vs
+#                app bug). The app runs with AUTH_TEST_BACKDOOR on so the
+#                /api/test/* fixtures work — guarded by a per-run secret (see
+#                below) since the URL is internet-reachable.
+#   3. e2e     — run the full Playwright suite against the preview URL
+#                (E2E_BASE_URL → playwright.config skips its local webServer).
+#                Artifacts (report + traces) upload on failure.
+#
+# Backdoor security: /api/test/session mints a session for an arbitrary email,
+# so on a public URL it MUST NOT be open. Both jobs derive the same per-run
+# secret as HMAC(AUTH_SECRET, run id) — the preview app requires it in the
+# x-test-backdoor-secret header (AUTH_TEST_BACKDOOR_SECRET), the Playwright
+# runner sends it. No extra repo secret to manage; it rotates every run.
 #
 # There is NO auto-promote here. Production is updated only by the manual
-# "Promote to production" workflow (.github/workflows/promote.yml), and Vercel's
-# own git auto-deploy for main is disabled in vercel.json
-# (git.deploymentEnabled.main = false). Green here = the commit is promotable.
+# "Promote to production" workflow (.github/workflows/promote.yml) — which now
+# refuses to promote a commit whose CI run isn't green — and Vercel's own git
+# auto-deploy for main is disabled in vercel.json
+# (git.deploymentEnabled.main = false).
 #
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
-#   AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET, AUTH_RESEND_KEY,
-#     AUTH_EMAIL_FROM   (Auth.js runtime config — the app runs locally here)
-#   ANTHROPIC_API_KEY, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#   AUTH_SECRET                     (also the HMAC key for the per-run backdoor secret)
 #   AUTH_TEST_BACKDOOR_EMAIL, E2E_FIXTURE_EMAIL
-#   MAILSLURP_API_KEY   (real OTP e2e; login-otp skips without it)
-# NOTE: the prod DATABASE_URL secret is intentionally NOT used by this job.
+#   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
+#   MAILSLURP_API_KEY               (real OTP e2e; login-otp skips without it)
+#   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
+#                                    Protection is enabled on the project)
+# App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
+# NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, …) comes from the Vercel project's PREVIEW
+# environment via `vercel pull` — keep that env complete there, not here.
+# NOTE: the prod DATABASE_URL secret is intentionally NOT used by this workflow.
 
 name: CI
 
@@ -49,82 +65,14 @@ jobs:
       - run: npm ci
       - run: npm run test
 
-  e2e:
-    name: E2E tests (ephemeral Neon branch)
-    needs: unit
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-      - run: npm ci
-
-      # A disposable, copy-on-write clone of prod data. Auto-deleted below.
-      - name: Create ephemeral Neon branch
-        id: neon
-        uses: neondatabase/create-branch-action@v5
-        with:
-          project_id: ${{ secrets.NEON_PROJECT_ID }}
-          api_key: ${{ secrets.NEON_API_KEY }}
-          branch_name: ci-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Apply migrations to the branch
-        env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
-        run: npm run db:migrate
-
-      - name: Install Playwright browsers
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: '0'
-        run: npx playwright install --with-deps chromium
-
-      # No E2E_BASE_URL → Playwright builds + starts the app locally (see
-      # playwright.config webServer) with this env, and seeds/tests via the
-      # /api/test/* HTTP endpoints. DATABASE_URL points at the ephemeral branch.
-      - name: Run Playwright
-        env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
-          # Auth.js v5 runtime config — required because the app runs locally in
-          # this job (not a Vercel preview), so it can't inherit Vercel's env.
-          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-          AUTH_GOOGLE_ID: ${{ secrets.AUTH_GOOGLE_ID }}
-          AUTH_GOOGLE_SECRET: ${{ secrets.AUTH_GOOGLE_SECRET }}
-          AUTH_RESEND_KEY: ${{ secrets.AUTH_RESEND_KEY }}
-          AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
-          AUTH_TEST_BACKDOOR: '1'
-          AUTH_TEST_BACKDOOR_EMAIL: ${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}
-          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
-          # Real OTP e2e (login-otp.spec) — MailSlurp inbox reads the actual
-          # emailed code. Skips if unset.
-          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
-        run: npm run e2e
-
-      # Always drop the branch, even on failure, so they don't accumulate.
-      - name: Delete ephemeral Neon branch
-        if: always()
-        uses: neondatabase/delete-branch-action@v3
-        with:
-          project_id: ${{ secrets.NEON_PROJECT_ID }}
-          api_key: ${{ secrets.NEON_API_KEY }}
-          branch: ci-${{ github.run_id }}-${{ github.run_attempt }}
-
-  # Clickable "eyeball" preview — deployed to Vercel as a PREVIEW (never
-  # promoted), pointed at its own rolling Neon branch ("preview", a fresh copy of
-  # prod data refreshed each push) so you can click around without touching real
-  # prod data. The URL is printed to the run summary.
-  # Runs after `unit` (in parallel with `e2e`), NOT gated on e2e — you always get
-  # a preview to eyeball, even when a spec is red (so you can tell test bugs from
-  # app bugs). Promotion to prod stays a separate manual gate.
+  # THE preview — tested by e2e below, clickable by humans from the summary.
   preview:
-    name: Deploy eyeball preview
+    name: Deploy tested preview
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -138,6 +86,7 @@ jobs:
 
       # Refresh the single rolling "preview" branch: drop the old one (ignore if
       # absent), then re-create it from prod so the preview shows current data.
+      # E2E seeds its fixture users into this branch over HTTP; prod is untouched.
       - name: Delete previous preview Neon branch
         continue-on-error: true
         uses: neondatabase/delete-branch-action@v3
@@ -160,15 +109,82 @@ jobs:
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
 
-      # Deploy as a preview (no --prod) with DATABASE_URL overridden to the
-      # rolling preview branch. NEXT_PUBLIC_* build-time vars come from the
-      # project's preview env via `vercel pull`. No AUTH_TEST_BACKDOOR here — the
-      # eyeball preview behaves like real prod (sign in with OTP to your email).
+      # Deploy as a preview (no --prod). Build-time env (NEXT_PUBLIC_*) comes
+      # from the project's preview environment via `vercel pull`; runtime env
+      # is overridden per-deployment: DATABASE_URL → the rolling preview
+      # branch, plus the guarded test backdoor so the E2E fixtures work.
       - name: Deploy preview + print URL
+        id: deploy
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
         run: |
+          SECRET="$(printf 'backdoor-%s-%s' "${{ github.run_id }}" "${{ github.run_attempt }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
           vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
-          URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" -e DATABASE_URL="${{ steps.neon.outputs.db_url }}")"
-          echo "## 🔍 Eyeball preview" >> "$GITHUB_STEP_SUMMARY"
+          URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
+            -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
+            -e AUTH_TEST_BACKDOOR="1" \
+            -e AUTH_TEST_BACKDOOR_EMAIL="${{ secrets.AUTH_TEST_BACKDOOR_EMAIL }}" \
+            -e AUTH_TEST_BACKDOOR_SECRET="$SECRET")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
+
+  e2e:
+    name: E2E tests (against preview)
+    needs: preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: npx playwright install --with-deps chromium
+
+      # Same derivation as the preview job → same secret, nothing passed
+      # through job outputs (GitHub drops outputs containing masked values).
+      - name: Derive per-run backdoor secret
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          SECRET="$(printf 'backdoor-%s-%s' "${{ github.run_id }}" "${{ github.run_attempt }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          echo "AUTH_TEST_BACKDOOR_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      # E2E_BASE_URL → playwright.config skips its local webServer and the
+      # whole suite (fixtures included) targets the deployed preview.
+      - name: Run Playwright against the preview
+        env:
+          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          E2E_FIXTURE_EMAIL: ${{ secrets.E2E_FIXTURE_EMAIL }}
+          # Runner-side gate only (the app's own key comes from Vercel preview
+          # env): presence makes the Penny spec run instead of skip.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Real OTP e2e (login-otp.spec) — MailSlurp inbox reads the actual
+          # emailed code. Skips if unset.
+          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
+          # Only needed if Vercel Deployment Protection is enabled.
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e
+
+      # Traces/screenshots/videos for red specs — without this the failure
+      # context is unrecoverable once the runner is gone.
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -6,8 +6,9 @@
 # Vercel CLI. Because vercel.json disables Vercel's own git auto-deploy for
 # main, this workflow is the ONLY path to production.
 #
-# Recommended use: let CI go green on a commit first (that's the test gate),
-# then run this to ship it.
+# The CI gate is ENFORCED, not a convention: the first step queries the CI
+# workflow's runs for the exact commit being promoted and fails unless the
+# latest one completed green. A red or still-running CI blocks the promote.
 #
 # REQUIRED REPO SECRETS:
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
@@ -27,6 +28,10 @@ concurrency:
   group: promote-prod
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   promote:
     name: Migrate prod + deploy to production
@@ -39,6 +44,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.sha || 'main' }}
+
+      # HARD GATE: refuse to promote a commit whose CI run isn't green. Looks
+      # up the CI workflow runs for the EXACT sha checked out above; the most
+      # recent run must be completed + successful. In-progress counts as not
+      # green (wait for it), no runs counts as not green (push it first).
+      - name: Require green CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          echo "Promoting commit: $SHA"
+          RESULT="$(gh run list -R "$GITHUB_REPOSITORY" --workflow 'CI' --commit "$SHA" \
+            --limit 1 --json status,conclusion \
+            --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end')"
+          echo "Latest CI run for $SHA: $RESULT"
+          if [ "$RESULT" != "completed/success" ]; then
+            echo "::error::CI is not green for $SHA (state: $RESULT). Fix or wait for CI, then promote."
+            exit 1
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
