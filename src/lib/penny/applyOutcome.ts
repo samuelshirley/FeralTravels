@@ -34,6 +34,27 @@ export interface ApplyOutcome {
   appliedChanges: boolean;
 }
 
+/**
+ * Count the validated actions that represent TRIP MUTATIONS — the number the
+ * server reports as `validatedQueuedCount` (and which `deriveApplyOutcome`
+ * treats as "Penny proposed changes").
+ *
+ * `submit_idea` is a side-effect log (usage_events), not a trip mutation. The
+ * dispatch loop already excludes it from `appliedCount` so it doesn't fire the
+ * green "Changes applied" banner; it MUST be excluded here for the same reason,
+ * or a submit_idea-only turn counts as "proposed 1 / applied 0" and renders the
+ * false red "Penny proposed changes but nothing was saved" banner even though
+ * the idea logged successfully (the "find me a fuel stop within 250km" bug).
+ *
+ * Structurally typed ({ name: string }) so this client-shared module doesn't
+ * import the server-only ValidatedAction union.
+ */
+export function countQueuedMutations(
+  actions: ReadonlyArray<{ name: string }>
+): number {
+  return actions.filter((a) => a.name !== 'submit_idea').length;
+}
+
 export function deriveApplyOutcome(ev: ApplyOutcomeInput): ApplyOutcome {
   const persistFieldsPresent =
     typeof ev.persistFailedCount === 'number' || Array.isArray(ev.persistFailedActions);

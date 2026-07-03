@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { deriveApplyOutcome } from './applyOutcome';
+import { countQueuedMutations, deriveApplyOutcome } from './applyOutcome';
+
+describe('countQueuedMutations', () => {
+  it('excludes submit_idea, keeps real mutations', () => {
+    expect(countQueuedMutations([])).toBe(0);
+    expect(countQueuedMutations([{ name: 'submit_idea' }])).toBe(0);
+    expect(
+      countQueuedMutations([
+        { name: 'submit_idea' },
+        { name: 'add_stop' },
+        { name: 'update_leg' },
+      ])
+    ).toBe(2);
+  });
+});
 
 describe('deriveApplyOutcome', () => {
   it('clean success: changes applied, no errors', () => {
@@ -65,6 +79,22 @@ describe('deriveApplyOutcome', () => {
     // persistFailedCount falls back to failedCount (2) → hard error path
     expect(r.applyError).toContain('Changes failed to save');
     expect(r.applyError).toContain('update_leg');
+  });
+
+  it('submit_idea-only turn → no false "nothing was saved" banner', () => {
+    // The real bug: submit_idea was never counted as applied but WAS counted
+    // as queued, so a turn whose only action was submit_idea rendered the red
+    // error banner even though the idea logged fine. With countQueuedMutations
+    // the server reports validatedQueuedCount=0 → clean outcome.
+    const r = deriveApplyOutcome({
+      appliedCount: 0,
+      failedCount: 0,
+      validatedQueuedCount: countQueuedMutations([{ name: 'submit_idea' }]),
+      changes: { changes: [] },
+    });
+    expect(r.applyError).toBeNull();
+    expect(r.partialApplyWarning).toBeNull();
+    expect(r.appliedChanges).toBe(false);
   });
 
   it('pure chat reply (no changes) → no error, no reload', () => {

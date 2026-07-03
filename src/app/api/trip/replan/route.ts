@@ -37,6 +37,7 @@ import { getDirections } from '@/lib/google/directions';
 import { invalidateLegFuelCache } from '@/server/fuel';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
+import { countQueuedMutations } from '@/lib/penny/applyOutcome';
 import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
 import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
 import type { PlanSummary } from '@/types/trip';
@@ -739,7 +740,11 @@ async function runTurnWork(
             changes: appliedActions.map(actionToLegacyChange),
           };
 
-          const validatedQueuedCount = final.validatedActions.length;
+          // Mutations only — submit_idea is excluded (it's a side-effect log,
+          // never counted as applied; counting it as "queued" here made every
+          // submit_idea-only turn render the false red "nothing was saved"
+          // banner). See countQueuedMutations in lib/penny/applyOutcome.ts.
+          const validatedQueuedCount = countQueuedMutations(final.validatedActions);
 
           // Deterministic, DB-derived plan summary — the source of truth for the
           // plan FACTS the user sees (day counts, depart/arrive dates, totals,
