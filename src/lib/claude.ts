@@ -453,6 +453,10 @@ When merging two consecutive legs into one (e.g. the user says "I'm OK with a lo
 NEVER delete a leg without updating the preceding or following leg to close the gap. After your tool calls, every consecutive pair of legs must be contiguous: leg N's end coords must match (approximately) leg N+1's start coords. A gap in the chain means the map will show a broken route and the user loses a day of their plan.
 
 Same principle applies when splitting one leg into two: add the new leg AND update the original so start/end coords chain correctly.
+
+RESTRUCTURING A STRETCH REPLACES IT. When the user asks to re-split an existing stretch of the trip (e.g. "make Trondheim to Tromsø 4 days of driving"), the new legs REPLACE the old ones covering that stretch — you MUST emit delete_leg for every superseded leg in the SAME turn as the add_leg calls. Leaving both versions in place makes the trip drive the stretch twice.
+
+PLACEMENT: every add_leg that belongs mid-route MUST carry after_leg_id (the leg it follows). Without it the leg lands at the END of the whole trip. The server can usually rescue a mis-placed leg whose start matches an existing endpoint, but do not rely on that — pass after_leg_id on at least the first leg of any inserted stretch.
 </leg_merge_and_delete_rules>
 </leg_planning_rules>
 

@@ -5,6 +5,7 @@ import { legs, costs, trips } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
 import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
+import { restLegBlockedFields, restLegEditRejectionMessage } from '@/lib/penny/tools/updateLeg';
 import {
   requireUser,
   assertTripOwnedByUser,
@@ -37,6 +38,7 @@ import { invalidateLegFuelCache } from '@/server/fuel';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
 import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
+import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
@@ -548,11 +550,24 @@ async function runTurnWork(
               final.feasibilityVerdict === 'over_budget');
 
           // Pre-dispatch contiguity gate: simulate the final leg state and
-          // reject any delete_leg that would leave a gap in the route. Penny
-          // sometimes deletes a leg without updating the neighbor to close
-          // the gap, leaving a hole in the map.
-          const blockedDeleteLegIds = await findGapCreatingDeletes(
-            tripId,
+          // reject any delete_leg that would leave a NEW gap in the route
+          // (pre-existing gaps don't count — see lib/penny/contiguityGate.ts).
+          // Penny sometimes deletes a leg without updating the neighbor to
+          // close the gap, leaving a hole in the map.
+          const gateLegs = await db
+            .select({
+              id: legs.id,
+              sortOrder: legs.sortOrder,
+              startLat: legs.startLat,
+              startLng: legs.startLng,
+              endLat: legs.endLat,
+              endLng: legs.endLng,
+            })
+            .from(legs)
+            .where(eq(legs.tripId, tripId))
+            .orderBy(legs.sortOrder);
+          const blockedDeleteLegIds = findGapCreatingDeletes(
+            gateLegs,
             final.validatedActions
           );
 
@@ -750,10 +765,24 @@ async function runTurnWork(
 
           const assistantChangesMade =
             appliedCount > 0 ? JSON.stringify(changesEnvelope) : null;
+          // Honest transcript: Penny's prose streams BEFORE dispatch, so when
+          // every queued change is then rejected her already-streamed "Done —
+          // ..." is a lie the transcript would otherwise keep forever (real
+          // incident: 36/36 delete_legs blocked, message still said the legs
+          // were cleared). Append a server-authored correction so the
+          // persisted message — and the payload the client/heal path renders —
+          // matches what actually happened.
+          let persistedResponse = final.response;
+          if (validatedQueuedCount > 0 && appliedCount === 0 && persistFailedCount > 0) {
+            const firstError = persistFailedActions[0]?.error ?? 'unknown error';
+            persistedResponse +=
+              `\n\n⚠️ Correction: none of these changes could be saved — ` +
+              `the app rejected them (${firstError}). Your plan is unchanged.`;
+          }
           await addChatMessage(
             tripId,
             'assistant',
-            final.response,
+            persistedResponse,
             assistantChangesMade,
             'ai',
             planSummary,
@@ -769,7 +798,7 @@ async function runTurnWork(
           // stay the merged total (validation + persist) for ops/logging;
           // user-facing banners use `persistFailed*` only.
           const appliedPayload = {
-            response: final.response,
+            response: persistedResponse,
             changes: changesEnvelope,
             appliedCount,
             failedCount,
@@ -1066,6 +1095,20 @@ async function dispatchAction(
         dequeueNewLegFallback: true,
       });
 
+      // Rest-leg guard (apply-time). The validator already rejects this
+      // in-loop when the leg was in Penny's context snapshot; this covers the
+      // stale-context / remapped-id paths. Without it, rebuildTripSchedule
+      // silently reverts the location edit seconds after we persist it while
+      // Penny's prose claims it saved (the "campsite near Alset" bug).
+      const existingRows = await db.select().from(legs).where(eq(legs.id, leg_id)).limit(1);
+      const existingLeg = existingRows[0];
+      if ((existingLeg?.legType ?? 'drive') === 'rest') {
+        const blocked = restLegBlockedFields(data as Record<string, unknown>);
+        if (blocked.length > 0) {
+          throw new Error(restLegEditRejectionMessage(blocked));
+        }
+      }
+
       // Manual update + per-row costs replacement preserved from the
       // pre-tool-use version. The shape mismatch (snake_case from Penny vs
       // camelCase columns) is handled here rather than in the repo because
@@ -1101,9 +1144,9 @@ async function dispatchAction(
         data.end_lng !== undefined;
       if (coordsChanged) {
         // Resolve final coords: use updated values where provided, fall back
-        // to existing DB values for unchanged coords.
-        const existing = await db.select().from(legs).where(eq(legs.id, leg_id)).limit(1);
-        const cur = existing[0];
+        // to existing DB values for unchanged coords (row fetched above for
+        // the rest-leg guard).
+        const cur = existingLeg;
         const sLat = data.start_lat ?? cur?.startLat;
         const sLng = data.start_lng ?? cur?.startLng;
         const eLat = data.end_lat ?? cur?.endLat;
@@ -1278,223 +1321,12 @@ async function dispatchAction(
 }
 
 // ---------------------------------------------------------------------------
-// Pre-dispatch contiguity gate
-//
-// Before committing actions, simulate the final leg state and reject any
-// delete_leg that would leave a gap (>50 km) between consecutive legs. Penny
-// sometimes deletes a leg without updating the neighbor to close the gap.
-// Returns the set of Penny-proposed leg_ids (pre-resolution) that should be
-// blocked from dispatch.
-// ---------------------------------------------------------------------------
-
-type SimLeg = {
-  id: string;
-  sortOrder: number | null;
-  startLat: number | null;
-  startLng: number | null;
-  endLat: number | null;
-  endLng: number | null;
-};
-
-/**
- * In-memory resolve: mirrors resolvePennyLegIdOnTrip but against a Map
- * instead of the DB. Returns the real leg id or null if unresolvable.
- * With UUIDs there's no sort_order confusion — just a direct Map lookup.
- */
-function simResolveId(proposedId: string, legMap: Map<string, SimLeg>): string | null {
-  if (legMap.has(proposedId)) return proposedId;
-  return null;
-}
-
-/** Check whether a sorted leg array has any contiguity gap >threshold. */
-function simHasGaps(sortedLegs: SimLeg[]): boolean {
-  for (let i = 0; i < sortedLegs.length - 1; i++) {
-    const curr = sortedLegs[i];
-    const next = sortedLegs[i + 1];
-    if (
-      curr.endLat == null || curr.endLng == null ||
-      next.startLat == null || next.startLng == null
-    ) continue;
-    if (haversineKm(curr.endLat, curr.endLng, next.startLat, next.startLng) > LEG_GAP_THRESHOLD_KM) {
-      return true;
-    }
-  }
-  return false;
-}
-
-async function findGapCreatingDeletes(
-  tripId: string,
-  actions: ValidatedAction[]
-): Promise<Set<string>> {
-  // 1. Load current legs
-  const currentLegs = await db
-    .select({
-      id: legs.id,
-      sortOrder: legs.sortOrder,
-      startLat: legs.startLat,
-      startLng: legs.startLng,
-      endLat: legs.endLat,
-      endLng: legs.endLng,
-    })
-    .from(legs)
-    .where(eq(legs.tripId, tripId))
-    .orderBy(legs.sortOrder);
-
-  const deleteActions = actions.filter(
-    (a): a is ValidatedAction & { name: 'delete_leg' } => a.name === 'delete_leg'
-  );
-
-  // No deletes or fewer than 2 legs → nothing to check
-  if (deleteActions.length === 0 || currentLegs.length < 2) return new Set();
-
-  // 2. Simulate all actions on a mutable copy
-  const legMap = new Map<string, SimLeg>();
-  for (const leg of currentLegs) {
-    legMap.set(leg.id, { ...leg });
-  }
-
-  // Max sort_order for add_leg entries without an explicit sort_order
-  let maxSort = currentLegs.reduce(
-    (mx, l) => Math.max(mx, l.sortOrder ?? 0),
-    0
-  );
-  let syntheticIdCounter = 0;
-
-  for (const action of actions) {
-    switch (action.name) {
-      case 'update_leg': {
-        const resolved = simResolveId(action.input.leg_id, legMap);
-        if (resolved != null) {
-          const leg = legMap.get(resolved)!;
-          const d = action.input.data;
-          if (d.start_lat !== undefined) leg.startLat = d.start_lat ?? null;
-          if (d.start_lng !== undefined) leg.startLng = d.start_lng ?? null;
-          if (d.end_lat !== undefined) leg.endLat = d.end_lat ?? null;
-          if (d.end_lng !== undefined) leg.endLng = d.end_lng ?? null;
-        }
-        break;
-      }
-      case 'add_leg': {
-        const synId = `__synthetic_${syntheticIdCounter++}`;
-        const so = action.input.sort_order ?? ++maxSort;
-        legMap.set(synId, {
-          id: synId,
-          sortOrder: so,
-          startLat: action.input.start_lat ?? null,
-          startLng: action.input.start_lng ?? null,
-          endLat: action.input.end_lat ?? null,
-          endLng: action.input.end_lng ?? null,
-        });
-        break;
-      }
-      case 'delete_leg': {
-        const resolved = simResolveId(action.input.leg_id, legMap);
-        if (resolved != null) legMap.delete(resolved);
-        break;
-      }
-      // Other action types don't affect leg geometry
-      default:
-        break;
-    }
-  }
-
-  // 3. Sort remaining legs and check for gaps
-  const finalLegs = [...legMap.values()].sort(
-    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
-  );
-
-  if (finalLegs.length < 2 || !simHasGaps(finalLegs)) {
-    return new Set();
-  }
-
-  // 4. Gaps detected — identify culprit deletes by re-simulating without each
-  //    one. If un-deleting a leg removes all gaps, that delete is the culprit.
-  const blockedIds = new Set<string>();
-
-  for (const del of deleteActions) {
-    // Rebuild simulated state skipping this one delete
-    const testMap = new Map<string, SimLeg>();
-    for (const leg of currentLegs) {
-      testMap.set(leg.id, { ...leg });
-    }
-    let testMaxSort = maxSort;
-    let testSynCounter = 0;
-
-    // Resolve this delete's target so we can skip it
-    const delResolved = simResolveId(
-      del.input.leg_id,
-      // Use a fresh map for resolution (before any mutations)
-      new Map<string, SimLeg>(currentLegs.map((l) => [l.id, { ...l }]))
-    );
-
-    for (const action of actions) {
-      switch (action.name) {
-        case 'update_leg': {
-          const r = simResolveId(action.input.leg_id, testMap);
-          if (r != null) {
-            const leg = testMap.get(r)!;
-            const d = action.input.data;
-            if (d.start_lat !== undefined) leg.startLat = d.start_lat ?? null;
-            if (d.start_lng !== undefined) leg.startLng = d.start_lng ?? null;
-            if (d.end_lat !== undefined) leg.endLat = d.end_lat ?? null;
-            if (d.end_lng !== undefined) leg.endLng = d.end_lng ?? null;
-          }
-          break;
-        }
-        case 'add_leg': {
-          const synId = `__test_synthetic_${testSynCounter++}`;
-          const so = action.input.sort_order ?? ++testMaxSort;
-          testMap.set(synId, {
-            id: synId,
-            sortOrder: so,
-            startLat: action.input.start_lat ?? null,
-            startLng: action.input.start_lng ?? null,
-            endLat: action.input.end_lat ?? null,
-            endLng: action.input.end_lng ?? null,
-          });
-          break;
-        }
-        case 'delete_leg': {
-          const r = simResolveId(action.input.leg_id, testMap);
-          // Skip the delete we're testing
-          if (r != null && r !== delResolved) {
-            testMap.delete(r);
-          }
-          break;
-        }
-        default:
-          break;
-      }
-    }
-
-    const testFinal = [...testMap.values()].sort(
-      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
-    );
-    if (!simHasGaps(testFinal)) {
-      blockedIds.add(del.input.leg_id);
-    }
-  }
-
-  // If gaps exist but no single delete is the isolated cause (e.g., two
-  // deletes each partially contribute), block all deletes conservatively.
-  // A leg that stays is always safer than a gap in the route.
-  if (blockedIds.size === 0) {
-    for (const del of deleteActions) {
-      blockedIds.add(del.input.leg_id);
-    }
-  }
-
-  return blockedIds;
-}
-
-// ---------------------------------------------------------------------------
 // Post-dispatch leg contiguity check
 //
 // After Penny's tool calls land, verify that consecutive legs chain properly
 // (leg N end ≈ leg N+1 start). A gap means Penny deleted a leg without
 // updating the neighbor — the map will show a broken route.
 // ---------------------------------------------------------------------------
-const LEG_GAP_THRESHOLD_KM = 50; // anything >50km between consecutive legs is suspect
 
 async function checkLegContiguity(tripId: string, userId: string): Promise<void> {
   const tripLegs = await db

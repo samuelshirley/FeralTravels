@@ -19,6 +19,7 @@ import {
   type ContinuityRouteOutcome,
 } from '@/lib/penny/schedule';
 import { getDirections } from '@/lib/google/directions';
+import { inferInsertAfterSort } from '@/lib/penny/legPlacement';
 import {
   trips,
   legs,
@@ -687,10 +688,28 @@ export async function addLeg(input: {
   }
   if (sortOrder == null) {
     const existing = await db
-      .select({ sortOrder: legs.sortOrder })
+      .select({ sortOrder: legs.sortOrder, endLat: legs.endLat, endLng: legs.endLng })
       .from(legs)
       .where(eq(legs.tripId, input.tripId));
-    sortOrder = (existing.reduce((m, r) => Math.max(m, r.sortOrder), -1) ?? -1) + 1;
+    // No explicit placement: infer it from geography before falling back to
+    // append. A leg whose START matches an existing leg's END belongs right
+    // after that leg — not at the end of the trip (where continuity repair
+    // would chain it to whatever the last leg is and manufacture a monster
+    // day; see lib/penny/legPlacement.ts for the 3,383 km incident).
+    const inferredAfterSort = inferInsertAfterSort(
+      existing,
+      input.startLat ?? null,
+      input.startLng ?? null,
+    );
+    if (inferredAfterSort != null) {
+      await db
+        .update(legs)
+        .set({ sortOrder: sql`${legs.sortOrder} + 1`, updatedAt: new Date() })
+        .where(and(eq(legs.tripId, input.tripId), gt(legs.sortOrder, inferredAfterSort)));
+      sortOrder = inferredAfterSort + 1;
+    } else {
+      sortOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1) + 1;
+    }
   }
 
   const [row] = await db
