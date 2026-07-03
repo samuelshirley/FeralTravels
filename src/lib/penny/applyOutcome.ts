@@ -21,6 +21,13 @@ export interface ApplyOutcomeInput {
   validationFailures?: Array<{ action: string; error: string }>;
   validatedQueuedCount?: number;
   changes?: { changes?: unknown[] } | null;
+  /**
+   * update_leg edits the deterministic pipeline (schedule rebuild / continuity
+   * repair) rewrote AFTER they were applied — Penny's already-streamed prose
+   * describes them, but the persisted plan differs. Absent on legacy payloads.
+   * See lib/penny/editOverride.ts.
+   */
+  overriddenEdits?: Array<{ legId: string; legTitle: string | null; fields: string[] }>;
 }
 
 export interface ApplyOutcome {
@@ -91,6 +98,22 @@ export function deriveApplyOutcome(ev: ApplyOutcomeInput): ApplyOutcome {
   } else if (hadProposedChanges && ev.appliedCount === 0) {
     applyError =
       'Penny proposed changes but nothing was saved. Re-ask her with more detail (e.g. starting point, destination).';
+  }
+
+  // Pipeline-overridden edits: the writes LANDED (so this is never a hard
+  // failure) but the schedule rebuild / continuity repair then rewrote what
+  // Penny wrote, so her description may no longer match the plan. Surface as a
+  // soft warning on the same channel as partial saves — appended when one is
+  // already present.
+  const overridden = Array.isArray(ev.overriddenEdits) ? ev.overriddenEdits : [];
+  if (overridden.length > 0) {
+    const names = overridden.map((o) => `"${o.legTitle ?? o.legId}"`).join(', ');
+    const overrideMsg = `The schedule adjusted ${
+      overridden.length === 1 ? 'one of these edits' : `${overridden.length} of these edits`
+    } after saving (${names}) — check the itinerary, it may differ from the description above.`;
+    partialApplyWarning = partialApplyWarning
+      ? `${partialApplyWarning} ${overrideMsg}`
+      : overrideMsg;
   }
 
   return {

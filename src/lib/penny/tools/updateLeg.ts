@@ -53,22 +53,72 @@ const baseSchema = z.object({
 
 export type UpdateLegInput = z.infer<typeof baseSchema>;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function validator(_ctx: PennyContext) {
-  return baseSchema.refine(
-    (input) => {
-      const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
-      if (input.data.drive_time_minutes == null) return true;
-      return input.data.drive_time_minutes <= cap * 60;
-    },
-    (input) => {
-      const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
-      return {
+/**
+ * Fields that redefine a leg's identity as a drive: where it goes and how far.
+ * On a REST leg these are meaningless — the deterministic scheduler
+ * (rebuildTripSchedule) re-materializes every rest day as "stay at the previous
+ * drive's end", so any location/metric edit Penny lands here is silently
+ * reverted seconds later while her prose claims it saved (the "campsite near
+ * Alset" bug: a rest day was update_leg'd into a pseudo-drive, the rebuild put
+ * it back in Trondheim, and the user was told the campsite was saved).
+ * Blocking at validation time turns that silent divergence into an in-loop
+ * tool error Penny can react to within the same turn.
+ */
+const REST_LEG_BLOCKED_FIELDS = [
+  'title',
+  'start_name',
+  'end_name',
+  'start_lat',
+  'start_lng',
+  'end_lat',
+  'end_lng',
+  'distance_km',
+  'drive_time_minutes',
+] as const;
+
+/** Which blocked fields does this patch touch? Pure — shared by the validator and the apply-time guard. */
+export function restLegBlockedFields(data: Record<string, unknown>): string[] {
+  return REST_LEG_BLOCKED_FIELDS.filter((f) => data[f] !== undefined);
+}
+
+/** The instructive rejection Penny sees in-loop (and the user sees on the apply-time path). */
+export function restLegEditRejectionMessage(blocked: string[]): string {
+  return (
+    `This leg is a rest day — rest days always stay at the previous drive's end, and the ` +
+    `schedule rebuild will revert location/route edits on them (blocked fields: ${blocked.join(', ')}). ` +
+    `Do NOT convert a rest day into a drive. To take the driver somewhere: change the ` +
+    `surrounding DRIVE leg's destination (update_leg on that leg), add a waypoint on it ` +
+    `(add_stop), or restructure the days with add_leg/delete_leg. Non-route fields on this ` +
+    `rest day (notes, status, color, costs) are still editable.`
+  );
+}
+
+export function validator(ctx: PennyContext) {
+  return baseSchema.superRefine((input, issueCtx) => {
+    const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
+    if (input.data.drive_time_minutes != null && input.data.drive_time_minutes > cap * 60) {
+      issueCtx.addIssue({
+        code: z.ZodIssueCode.custom,
         message: `data.drive_time_minutes (${input.data.drive_time_minutes}) exceeds vehicle drive cap (${cap}h). If the route really needs more, split into separate legs via add_leg instead of growing this one.`,
         path: ['data', 'drive_time_minutes'],
-      };
+      });
     }
-  );
+
+    // Rest-leg guard. Context legs are a snapshot from the start of the turn;
+    // a leg we can't find here (e.g. one added earlier in this same turn) is
+    // skipped — the apply-time guard in the dispatcher covers that path.
+    const leg = ctx.legs?.find((l) => l.id === input.leg_id);
+    if (leg && leg.leg_type === 'rest') {
+      const blocked = restLegBlockedFields(input.data as Record<string, unknown>);
+      if (blocked.length > 0) {
+        issueCtx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: restLegEditRejectionMessage(blocked),
+          path: ['data'],
+        });
+      }
+    }
+  });
 }
 
 export const tool: Anthropic.Tool = {

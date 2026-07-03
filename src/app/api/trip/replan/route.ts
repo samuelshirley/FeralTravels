@@ -40,6 +40,12 @@ import { computePlanSummary } from '@/lib/penny/planSummary';
 import { countQueuedMutations } from '@/lib/penny/applyOutcome';
 import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
 import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
+import {
+  detectOverriddenLegEdits,
+  overriddenEditsSummary,
+  type OverriddenEdit,
+  type OverrideCheckAction,
+} from '@/lib/penny/editOverride';
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 
@@ -726,6 +732,51 @@ async function runTurnWork(
             );
           }
 
+          // Edit-override detection: did the pipeline (rebuild + repair) rewrite
+          // a leg Penny JUST edited? Her prose streamed before dispatch, so an
+          // overridden edit means the transcript claims something the plan no
+          // longer contains (the "campsite near Alset" bug: a rest-day edit was
+          // re-materialized back to Trondheim while her reply said the campsite
+          // was saved). Detect, log for /admin/errors, and pass to the client
+          // so the bubble carries a warning. Best-effort — never block the turn.
+          let overriddenEdits: OverriddenEdit[] = [];
+          if (appliedCount > 0) {
+            try {
+              const editedLegActions = appliedActions.filter((a) => a.name === 'update_leg');
+              if (editedLegActions.length > 0) {
+                const settledLegs = await db
+                  .select({
+                    id: legs.id,
+                    title: legs.title,
+                    startName: legs.startName,
+                    endName: legs.endName,
+                    startLat: legs.startLat,
+                    startLng: legs.startLng,
+                    endLat: legs.endLat,
+                    endLng: legs.endLng,
+                  })
+                  .from(legs)
+                  .where(eq(legs.tripId, tripId));
+                overriddenEdits = detectOverriddenLegEdits(
+                  editedLegActions as unknown as OverrideCheckAction[],
+                  settledLegs
+                );
+                if (overriddenEdits.length > 0) {
+                  logUsageEvent({
+                    userId,
+                    tripId,
+                    provider: 'penny:edit-overridden',
+                    requests: 0,
+                    success: false,
+                    errorMessage: overriddenEditsSummary(overriddenEdits).slice(0, 500),
+                  }).catch(() => {});
+                }
+              }
+            } catch (e) {
+              console.warn('[edit-override] detection failed', e);
+            }
+          }
+
           // Lazy fuel: we no longer fan out a trip-wide fuel replan on leg
           // edits — that eager fan-out was the Google Places cost sink. Each
           // day now sources its own fuel lazily on open, and leg edits below
@@ -813,6 +864,8 @@ async function runTurnWork(
             validationFailures,
             /** Count of Penny actions that validated and queued for dispatch (incl. failed persist). */
             validatedQueuedCount,
+            /** update_leg edits the deterministic pipeline rewrote after they landed (see lib/penny/editOverride.ts). */
+            overriddenEdits,
             fuelStopsChanged,
             planSummary,
             retryCount: final.retryCount,
@@ -1331,6 +1384,14 @@ async function dispatchAction(
 // After Penny's tool calls land, verify that consecutive legs chain properly
 // (leg N end ≈ leg N+1 start). A gap means Penny deleted a leg without
 // updating the neighbor — the map will show a broken route.
+//
+// ANCHOR-AWARE: legs at/behind the driver's progress anchor are deliberately
+// left alone by repairLegContinuity — their "gaps" record where the driver
+// actually jumped (report_position re-points the upcoming leg, not history).
+// Checking them re-logged the SAME behind-you gap on every subsequent turn
+// (real case: a 217 km Bøverkinnhalsen→Heimdal gap spammed /admin/errors for
+// days), burying real gaps in noise. Mirror the repair's anchor logic and
+// start at the anchor pair.
 // ---------------------------------------------------------------------------
 
 async function checkLegContiguity(tripId: string, userId: string): Promise<void> {
@@ -1351,7 +1412,17 @@ async function checkLegContiguity(tripId: string, userId: string): Promise<void>
 
   if (tripLegs.length < 2) return;
 
-  for (let i = 0; i < tripLegs.length - 1; i++) {
+  const anchorRows = await db
+    .select({ currentLegId: trips.currentLegId })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  const currentLegId = anchorRows[0]?.currentLegId ?? null;
+  const anchorIndex = currentLegId
+    ? Math.max(0, tripLegs.findIndex((l) => l.id === currentLegId))
+    : 0;
+
+  for (let i = anchorIndex; i < tripLegs.length - 1; i++) {
     const current = tripLegs[i];
     const next = tripLegs[i + 1];
     if (
