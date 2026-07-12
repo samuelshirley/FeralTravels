@@ -2,7 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
-import { distanceToSegmentKm } from '@/lib/penny/geo';
+import { distanceToSegmentKm, haversineKm } from '@/lib/penny/geo';
 import {
   latSchema,
   lngSchema,
@@ -57,9 +57,38 @@ export type AddStopInput = z.infer<typeof baseSchema>;
 const MAX_STOP_CORRIDOR_DEVIATION_KM = 200;
 
 /**
+ * A stop this close to the leg's END coords is a duplicate of the destination.
+ *
+ * The UI auto-generates a "Route to Destination" navigation button for every
+ * leg from its end coords (buildSegmentedNavUrls in lib/maps.ts) — the
+ * destination NEVER needs a stop row to be navigable. The real incident this
+ * guards (trip d0b5741b, 2026-07-12): the user couldn't see the destination
+ * button (mobile smart-nav collapses to the single next stop), told Penny "I
+ * don't have the link to the end point", and Penny compensated by adding an
+ * 'other' stop at exactly the leg-end coords — producing THREE nav buttons on
+ * desktop, two of them to the same place. Display complaints must never be
+ * answered with data writes; see <app_ui_awareness> in src/lib/claude.ts.
+ */
+const DUPLICATE_DESTINATION_RADIUS_KM = 1;
+
+/** Instructive rejection Penny sees in-loop, so she self-corrects this turn. */
+export function duplicateDestinationRejectionMessage(name: string, legTitle: string | null) {
+  return (
+    `Stop "${name}" is at the ${legTitle ?? 'assigned leg'}'s destination coords. ` +
+    `Do not add the destination as a stop — every leg already gets an automatic ` +
+    `"Route to Destination" navigation button built from its end coords, so this ` +
+    `would create a duplicate button to the same place. If the user can't see the ` +
+    `destination button, explain the navigation UI instead of editing the plan ` +
+    `(see <app_ui_awareness>). If they want to END the day somewhere else, that is ` +
+    `an update_leg destination change, not a stop.`
+  );
+}
+
+/**
  * Cross-leg validator:
  * 1. distance_from_start_km must be ≤ leg.distance_km
  * 2. stop lat/lng must be within a reasonable corridor of the assigned leg
+ * 3. stop must not duplicate the leg's destination (see above)
  */
 export function validator(ctx: PennyContext) {
   return baseSchema.superRefine((input, refCtx) => {
@@ -103,13 +132,36 @@ export function validator(ctx: PennyContext) {
         });
       }
     }
+
+    // Duplicate-destination check: a stop at the leg's end coords duplicates
+    // the destination's automatic nav button (see constant docs above).
+    if (
+      input.data.lat != null &&
+      input.data.lng != null &&
+      leg?.end_lat != null &&
+      leg?.end_lng != null
+    ) {
+      const distToEndKm = haversineKm(
+        input.data.lat,
+        input.data.lng,
+        leg.end_lat,
+        leg.end_lng
+      );
+      if (distToEndKm <= DUPLICATE_DESTINATION_RADIUS_KM) {
+        refCtx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['data', 'lat'],
+          message: duplicateDestinationRejectionMessage(input.data.name, leg.title ?? null),
+        });
+      }
+    }
   });
 }
 
 export const tool: Anthropic.Tool = {
   name: ADD_STOP,
   description:
-    'Add a user-named place to a leg. stop_type is ALWAYS "other": a place the user explicitly wants to visit or route through — a Google Maps link, address, place name, landmark, bridge, pass, viewpoint, or detour. This is the ONLY kind of stop you create. Do NOT use this for fuel — fuel stops are found by Finn via plan_fuel_stops, never authored by hand (a hand-made fuel stop has no real station behind it). Default status is "option" unless the user explicitly picks it. Use status="selected" to force the route through a place — these become &waypoints= in the leg\'s Google Maps URL. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
+    'Add a user-named place to a leg. stop_type is ALWAYS "other": a place the user explicitly wants to visit or route through — a Google Maps link, address, place name, landmark, bridge, pass, viewpoint, or detour. This is the ONLY kind of stop you create. Do NOT use this for fuel — fuel stops are found by Finn via plan_fuel_stops, never authored by hand (a hand-made fuel stop has no real station behind it). NEVER add a stop at the leg\'s destination coords — the destination automatically gets its own "Route to Destination" navigation button, so that stop would be a duplicate (rejected within ~1 km of the leg end). Default status is "option" unless the user explicitly picks it. Use status="selected" to force the route through a place — these become &waypoints= in the leg\'s Google Maps URL. Always provide lat/lng plus a best-effort distance_from_start_km so waypoints sort correctly along the driving direction.',
   input_schema: {
     type: 'object',
     required: ['leg_id', 'data'],
