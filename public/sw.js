@@ -1,5 +1,5 @@
 // Bump this on every deploy that changes SW strategy so old SWs purge.
-const CACHE_NAME = 'trip-planner-v5';
+const CACHE_NAME = 'trip-planner-v6';
 
 // We deliberately do NOT precache HTML. Next.js ships hashed bundles and the
 // HTML shell references them by hash; caching stale HTML makes the app point
@@ -43,6 +43,23 @@ function isImmutableAsset(url) {
   return url.pathname.startsWith('/_next/static/');
 }
 
+function isRscRequest(req, url) {
+  // Next.js App Router client-side navigations, prefetches, and
+  // router.refresh() do NOT fetch HTML — they fetch React Server Component
+  // payloads: same-origin GETs carrying an `RSC: 1` header, an
+  // `accept: text/x-component`, and/or a `_rsc` cache-buster param. These are
+  // DYNAMIC per-user data (the trips list, the trip workspace), not static
+  // assets. Caching them stale-while-revalidate served deleted trips from a
+  // days-old cache and even answered router.refresh() (pull-to-refresh) from
+  // cache — the "phantom trips on the home page" bug. Treat them exactly like
+  // /api/: never touch them, let the network own it.
+  return (
+    url.searchParams.has('_rsc') ||
+    req.headers.get('RSC') === '1' ||
+    req.headers.get('accept')?.includes('text/x-component')
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
 
@@ -59,6 +76,9 @@ self.addEventListener('fetch', (event) => {
   // Never cache API responses through the SW — let fetch hit the network
   // and let the app handle offline itself.
   if (url.pathname.startsWith('/api/')) return;
+
+  // Never cache RSC payloads (see isRscRequest) — dynamic per-user data.
+  if (isRscRequest(req, url)) return;
 
   // Network-first for HTML navigations so a deploy lands on next refresh.
   if (isNavigationRequest(req)) {
