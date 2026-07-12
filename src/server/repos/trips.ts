@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, gt, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, like, lt, lte, ne, or, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { ConflictError, HttpError } from '@/server/auth/guards';
 import {
@@ -32,6 +32,7 @@ import {
   pois,
   legConstraints,
   users,
+  chatHistory,
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import type {
@@ -274,11 +275,21 @@ export const rowMappers = {
 // ---------------------------------------------------------------------------
 
 export async function listTripsForUser(userId: string) {
+  // "Last activity" for list ordering — most recently used/changed first.
+  // trips.updated_at alone is NOT enough: most edits land on legs (Penny
+  // replans, day-open fuel sourcing) or only in chat_history (a conversation
+  // with no plan change), neither of which bumps the trips row. GREATEST of
+  // all three is what "most recently used" actually means.
+  const lastActivity = sql`GREATEST(
+    ${trips.updatedAt},
+    COALESCE((SELECT max(${legs.updatedAt}) FROM ${legs} WHERE ${legs.tripId} = ${trips.id}), ${trips.updatedAt}),
+    COALESCE((SELECT max(${chatHistory.createdAt}) FROM ${chatHistory} WHERE ${chatHistory.tripId} = ${trips.id}), ${trips.updatedAt})
+  )`;
   const rows = await db
     .select()
     .from(trips)
     .where(or(eq(trips.userId, userId), eq(trips.isTemplate, true)))
-    .orderBy(asc(trips.isTemplate), asc(trips.id));
+    .orderBy(asc(trips.isTemplate), desc(lastActivity), asc(trips.id));
   return rows.map(tripRow);
 }
 
