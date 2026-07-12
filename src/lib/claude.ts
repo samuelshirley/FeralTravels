@@ -13,11 +13,13 @@ import {
   extractTripIntent as extractTripIntentTool,
   checkTripFeasibility as checkTripFeasibilityTool,
   planFuelStops as planFuelStopsTool,
+  declareFuelState as declareFuelStateTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { geocodePlace } from "@/lib/google/geocode";
-import { planFuelStopsForLeg } from "@/server/fuel";
+import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
+import { setDeclaredFuelState } from "@/server/repos/trips";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
 import {
@@ -255,6 +257,10 @@ If the user explicitly asks to change their range ("set my comfortable range to 
 
 CRITICAL — do not confuse a FUEL REQUEST with a range preference. "I'll need fuel within 250 km tomorrow", "top up before the border", "make sure I don't run dry on day 3" are requests to FIND FUEL: call plan_fuel_stops for that leg per <fuel_planning_rules>. They are NOT instructions to rewrite the saved range numbers, even though they mention a distance.
 
+THE THIRD CATEGORY — a TANK-STATE statement. "I only have ~150 km in the tank", "my truck will run out 150 km into tomorrow's drive", "I'm at half a tank" describe the fuel in the tank RIGHT NOW, not the vehicle's capability. For these, call declare_fuel_state (anchored to the drive leg the number applies to), then plan_fuel_stops for that leg so Finn re-plans against the real tank. Never argue with the driver's number, never redirect a tank statement to Settings, and never rewrite saved ranges from it — the tank today says nothing about the vehicle's range when full.
+
+WHEN A NUMBER IS AMBIGUOUS between these categories, ASK — don't pick. One short clarifying question beats pushback every time: "Is that what's in the tank right now, or your truck's usual range on a full tank?" Fractional statements ("half a tank") need the km pinned too: ask, or compute from the saved comfortable range and CONFIRM the km number before declaring. If the number describes "right now" mid-drive, ask what they'll have at the NEXT leg's start rather than guessing.
+
 The one vehicle field you CAN save from chat is fuel_type: call update_vehicle when the user says what their vehicle burns ("it's a diesel" / "runs on petrol"), confirm in one sentence, and move on.
 
 Driving days are capped at ~8 hours of driving each — that's a fixed default, not something the user configures. Don't ask about travel style or driving cadence; just split long segments into ~8h days.
@@ -269,7 +275,7 @@ Each turn you receive a <context>…</context> block in the user message with th
                 on app open. THIS is "my current location" / "where I am" / "plan
                 from here". Use it directly (don't ask them to type coords) when
                 present; null means GPS wasn't shared. See <reporting_progress>.
-  trip       — { id, name, start_date, end_date, status, current_leg_id, current_place }
+  trip       — { id, name, start_date, end_date, status, current_leg_id, current_place, declared_fuel_state }
                 current_leg_id is the leg the driver is on / about to drive next
                 (set when they report progress); legs before it are behind them.
                 current_place is where they currently are (the progress anchor YOU
@@ -286,6 +292,13 @@ Each turn you receive a <context>…</context> block in the user message with th
                 Each driving day is capped at ~8 hours of driving — a fixed
                 default, not something the vehicle configures. Split long
                 segments into ~8h driving days accordingly.
+
+                trip.declared_fuel_state — { remaining_range_km, leg_id, as_of } or
+                null. The driver's declared tank state (the declare_fuel_state
+                tool): they said they can cover remaining_range_km from that
+                leg's START before needing fuel. Finn's math already uses it;
+                a passed fuel stop supersedes it. Check this before re-asking
+                about tank state or re-declaring identical numbers.
   legs       — array of { id, title, start/end names + lat/lng, distance_km,
                 drive_time_minutes, terrain, status, notes[], routes[], stops[], tasks[],
                 sort_order }
@@ -340,6 +353,7 @@ You have a hard cap on tool-use iterations per turn. Burning iterations one segm
 - Call plan_fuel_stops only when the user EXPLICITLY asks for fuel on a specific leg right now (per the rule above), not speculatively while planning.
 - ALWAYS RUN FINN FIRST — never skip to submit_idea on a fuel request. A distance-qualified ask ("find me a fuel stop within 250 km tomorrow", "fuel in the first half of day 2") is still a FUEL REQUEST (see <vehicle_preference_updates>): call plan_fuel_stops for that leg and report the real result. Do NOT pre-judge that Finn will say "none needed" (e.g. because the leg fits the comfortable range) and route the ask to submit_idea instead — that skips the search the user explicitly asked for.
 - Finn places stops where the driver would otherwise run low — it does NOT place a stop "exactly at the start" or at a precise km the user names. If the user asked for a specific point and Finn returns "none needed", say so honestly ("you're within range on this leg, so no stop was added"); do NOT invent a marker to satisfy the literal phrasing. ONLY IF the user then pushes for a stop at that specific point anyway may you log the missing capability with submit_idea — after Finn has run, never instead of running him.
+- TANK STATE CHANGES FINN'S MATH. When the user tells you how much fuel/range they actually have ("I only have 150 km in the tank"), that is neither a preference nor a plain fuel request — call declare_fuel_state FIRST (see <vehicle_preference_updates>), THEN plan_fuel_stops for the same leg in the same turn. Finn's stop placement depends on the tank baseline, so re-running him without declaring just reproduces the stop the user already objected to. If Finn's result contradicts what the user told you about their tank, the missing declaration is almost always why.
 </fuel_planning_rules>
 
 <route_vs_stop_decision>
@@ -1071,9 +1085,74 @@ async function executeLookupTool(
   if (toolUse.name === planFuelStopsTool.PLAN_FUEL_STOPS) {
     return executePlanFuelStops(toolUse, context, userId);
   }
+  if (toolUse.name === declareFuelStateTool.DECLARE_FUEL_STATE) {
+    return executeDeclareFuelState(toolUse, context);
+  }
   return {
     is_error: true,
     content: `Unhandled lookup tool: ${toolUse.name}.`,
+  };
+}
+
+/**
+ * declare_fuel_state — persist the driver's stated tank state INLINE, then
+ * invalidate the fuel cache for the anchor leg and everything after it (their
+ * cached stops were computed against the old tank baseline). Inline for
+ * sequencing: the natural flow is declare → plan_fuel_stops in the SAME turn,
+ * and Finn must see the declaration when he re-runs.
+ */
+async function executeDeclareFuelState(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext,
+): Promise<LookupResult> {
+  const schema = declareFuelStateTool.validator(context);
+  const parsed = schema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on declare_fuel_state: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+
+  const { leg_id, remaining_range_km } =
+    parsed.data as declareFuelStateTool.DeclareFuelStateInput;
+  // The validator guarantees the leg exists in context (= this user's trip);
+  // this re-check is defensive only.
+  const leg = context.legs.find((l) => l.id === leg_id);
+  if (!leg) {
+    return {
+      is_error: true,
+      content: "leg_id does not match a saved leg on this trip.",
+    };
+  }
+
+  await setDeclaredFuelState(context.trip.id, {
+    remainingRangeKm: remaining_range_km,
+    legId: leg_id,
+  });
+
+  // The anchor leg and every leg after it were fuel-planned against the old
+  // tank baseline — drop their caches so they re-source (lazily, on day-open,
+  // or via a plan_fuel_stops call later this same turn).
+  const affected = context.legs.filter(
+    (l) => l.sort_order >= leg.sort_order && l.leg_type !== "rest",
+  );
+  for (const l of affected) {
+    await invalidateLegFuelCache(l.id);
+  }
+
+  const legLabel = leg.end_name
+    ? `the ${leg.start_name ?? "start"} → ${leg.end_name} leg`
+    : "that leg";
+  return {
+    is_error: false,
+    fuelPlanned: true,
+    content:
+      `Recorded: ~${remaining_range_km} km of range remaining at the start of ${legLabel}. ` +
+      `Fuel planning for that leg onward now uses this tank state instead of assuming a fuller tank; ` +
+      `it resets automatically once a fuel stop is passed. ` +
+      `NOW call plan_fuel_stops for that same leg so Finn re-plans with the corrected tank, and report the real result. ` +
+      `The vehicle's saved range numbers were NOT changed.`,
   };
 }
 

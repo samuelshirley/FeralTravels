@@ -109,3 +109,57 @@ describe('kmBurnedSinceLastRefuel (continuous-drive model)', () => {
     expect(kmBurnedSinceLastRefuel(history)).toBe(0);
   });
 });
+
+describe('declared tank state (the declare_fuel_state tool)', () => {
+  it('a declaration on a preceding leg is terminal: burn = declared baseline + everything since', () => {
+    // Trip d0b5741b shape: driver declares 150 km remaining (500 comfortable →
+    // 350 burned) at the start of yesterday's 296 km leg... then drives it.
+    // Planning today's leg: 350 + 296 = 646 burned.
+    const history: LegFuelHistory[] = [
+      { distanceKm: 296, latestFuelDistanceKm: null, declaredBurnedKmAtStart: 350 },
+    ];
+    expect(kmBurnedSinceLastRefuel(history)).toBe(646);
+  });
+
+  it('legs before the declared anchor are ignored (the declaration IS the baseline)', () => {
+    const history: LegFuelHistory[] = [
+      { distanceKm: 100, latestFuelDistanceKm: null },
+      { distanceKm: 200, latestFuelDistanceKm: null, declaredBurnedKmAtStart: 50 },
+      { distanceKm: 900, latestFuelDistanceKm: null }, // must not count
+    ];
+    // 100 + 200 + 50 = 350; the 900 km leg predates the declaration.
+    expect(kmBurnedSinceLastRefuel(history)).toBe(350);
+  });
+
+  it('a real fuel stop on the SAME leg beats the declaration (refuel is later than leg start)', () => {
+    // Driver declared low tank at leg start, then Finn placed a stop at 150 on
+    // that 200 km leg. Burn since refuel = 200 − 150 = 50; declaration is
+    // superseded.
+    const history: LegFuelHistory[] = [
+      { distanceKm: 200, latestFuelDistanceKm: 150, declaredBurnedKmAtStart: 350 },
+    ];
+    expect(kmBurnedSinceLastRefuel(history)).toBe(50);
+  });
+
+  it('a fuel stop on a leg NEARER than the anchor supersedes the declaration', () => {
+    const history: LegFuelHistory[] = [
+      { distanceKm: 300, latestFuelDistanceKm: 250 }, // refuel after declaring
+      { distanceKm: 296, latestFuelDistanceKm: null, declaredBurnedKmAtStart: 350 },
+    ];
+    expect(kmBurnedSinceLastRefuel(history)).toBe(50);
+  });
+
+  it('a full-tank declaration (declared ≥ comfortable → 0 burned) clamps cleanly', () => {
+    const history: LegFuelHistory[] = [
+      { distanceKm: 120, latestFuelDistanceKm: null, declaredBurnedKmAtStart: 0 },
+    ];
+    expect(kmBurnedSinceLastRefuel(history)).toBe(120);
+  });
+
+  it('a negative declared burn (declared > comfortable, defensive) clamps to 0', () => {
+    const history: LegFuelHistory[] = [
+      { distanceKm: 120, latestFuelDistanceKm: null, declaredBurnedKmAtStart: -40 },
+    ];
+    expect(kmBurnedSinceLastRefuel(history)).toBe(120);
+  });
+});

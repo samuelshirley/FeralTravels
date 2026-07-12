@@ -78,6 +78,12 @@ export interface Trip {
   /** ISO date the current leg falls on — re-anchors remaining leg dates. */
   progress_anchor_date: string | null;
   progress_updated_at: string | null;
+  // ── Declared tank state (see the `declare_fuel_state` Penny tool) ──
+  /** Driver-declared remaining range (km) from the start of `declared_range_leg_id`. */
+  declared_range_km: number | null;
+  /** Leg whose START the declaration anchors to (plain uuid — stale after leg deletion, then ignored). */
+  declared_range_leg_id: string | null;
+  declared_range_at: string | null;
   created_at: string;
   updated_at: string;
   user_id: string;

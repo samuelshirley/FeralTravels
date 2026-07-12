@@ -1,7 +1,7 @@
 import 'server-only';
 import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { legs, stops } from '@/server/db/schema';
+import { legs, stops, trips } from '@/server/db/schema';
 import { getDirections } from '@/lib/directions';
 import {
   decodePolyline,
@@ -276,7 +276,16 @@ export async function planFuelStopsForLeg(
   // Cross-leg fuel state: how much range is already gone when this leg starts.
   // Without this, three sequential 500 km legs each pass the "fits within range"
   // check individually and zero stops get proposed even though the tank empties.
-  const kmAlreadyBurned = await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder);
+  //
+  // The driver's declared tank state (the `declare_fuel_state` Penny tool —
+  // "I only have ~150 km in the tank") overrides the default "full tank at
+  // trip start" baseline at its anchor leg. Without it, Finn placed a stop at
+  // 181 km for a driver who said they'd run dry at 150 (trip d0b5741b).
+  const declaredAnchor = await resolveDeclaredTankAnchor(leg.tripId, range);
+  const kmAlreadyBurned =
+    declaredAnchor && declaredAnchor.legId === leg.id
+      ? declaredAnchor.burnedKm
+      : await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder, declaredAnchor);
 
   const belowMinLeg = totalKm < MIN_LEG_KM_FOR_PLANNING;
   const cumulativeFitsComfortably =
@@ -596,6 +605,47 @@ async function resolveVehicleForTrip(
   return getDefaultVehicleForUser(userId).catch(() => null);
 }
 
+/** Resolved `trips.declared_range_*` anchor: burned-km baseline at a leg's start. */
+type DeclaredTankAnchor = { legId: string; burnedKm: number };
+
+/**
+ * Resolve the trip's declared tank state (the `declare_fuel_state` Penny tool)
+ * into a burned-km baseline at its anchor leg's start. Returns null when there
+ * is no declaration or the anchor leg no longer exists on this trip (the
+ * anchor is a plain uuid, no FK — a deleted leg leaves a stale pointer that is
+ * deliberately ignored, same contract as `trips.current_leg_id`).
+ *
+ * burnedKm = comfortable range − declared remaining km, clamped ≥ 0 (a driver
+ * declaring MORE than the comfortable range is treated as a full tank).
+ */
+async function resolveDeclaredTankAnchor(
+  tripId: string,
+  comfortableRangeKm: number
+): Promise<DeclaredTankAnchor | null> {
+  const rows = await db
+    .select({
+      declaredRangeKm: trips.declaredRangeKm,
+      declaredRangeLegId: trips.declaredRangeLegId,
+    })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  const t = rows[0];
+  if (!t?.declaredRangeKm || !t.declaredRangeLegId) return null;
+
+  const anchorLeg = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(and(eq(legs.id, t.declaredRangeLegId), eq(legs.tripId, tripId)))
+    .limit(1);
+  if (anchorLeg.length === 0) return null;
+
+  return {
+    legId: t.declaredRangeLegId,
+    burnedKm: Math.max(0, comfortableRangeKm - t.declaredRangeKm),
+  };
+}
+
 /**
  * DB shim around the pure [[kmBurnedSinceLastRefuel]] tank-state math. Walks
  * back through preceding legs (by sort_order) gathering each leg's distance and
@@ -606,10 +656,18 @@ async function resolveVehicleForTrip(
  * the trip start) refills the tank — rest days/overnights do NOT. Both
  * `selected` and `option` fuel stops count as refuels; `dismissed` does not.
  * Returns 0 for the first leg.
+ *
+ * `declaredAnchor` (optional): the driver's declared tank state resolved by
+ * [[resolveDeclaredTankAnchor]]. When the anchor is one of the preceding legs,
+ * its `declaredBurnedKmAtStart` joins the walk — the pure math stops there
+ * unless a real fuel stop (a refuel, which supersedes the declaration) is
+ * found first. An anchor at the leg being planned is handled by the caller
+ * (the declaration IS the burn at that leg's start).
  */
 async function computeKmBurnedSinceLastRefuel(
   tripId: string,
-  thisLegSortOrder: number
+  thisLegSortOrder: number,
+  declaredAnchor?: DeclaredTankAnchor | null
 ): Promise<number> {
   const previous = await db
     .select({ id: legs.id, distanceKm: legs.distanceKm })
@@ -639,12 +697,17 @@ async function computeKmBurnedSinceLastRefuel(
       )
       .sort((a, b) => (b.distanceFromStartKm ?? 0) - (a.distanceFromStartKm ?? 0))[0];
 
+    const isDeclaredAnchor = declaredAnchor != null && prev.id === declaredAnchor.legId;
+
     history.push({
       distanceKm: prev.distanceKm,
       latestFuelDistanceKm: latestFuel?.distanceFromStartKm ?? null,
+      declaredBurnedKmAtStart: isDeclaredAnchor ? declaredAnchor.burnedKm : null,
     });
 
-    if (latestFuel?.distanceFromStartKm != null) break;
+    // Both are terminal for the walk: a fuel stop is a refuel; the declared
+    // anchor is the tank baseline (nothing before it matters).
+    if (latestFuel?.distanceFromStartKm != null || isDeclaredAnchor) break;
   }
 
   return kmBurnedSinceLastRefuel(history);

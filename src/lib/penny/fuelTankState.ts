@@ -34,6 +34,16 @@ export interface LegFuelHistory {
    * self-consistent; only `dismissed` stops are excluded by the caller.
    */
   latestFuelDistanceKm: number | null;
+  /**
+   * Declared tank state anchored at this leg's START: the equivalent km of
+   * range ALREADY BURNED when the leg begins (comfortable_range − the driver's
+   * declared remaining km, clamped ≥ 0 by the caller). Set on at most one leg —
+   * the `trips.declared_range_leg_id` anchor. The declaration is a baseline,
+   * not a refuel: a real fuel stop on this same leg is LATER than its start
+   * and therefore wins (the walk-back hits the stop first). See the
+   * `declare_fuel_state` Penny tool.
+   */
+  declaredBurnedKmAtStart?: number | null;
 }
 
 /**
@@ -47,9 +57,12 @@ export interface LegFuelHistory {
  *
  * Walk back accumulating each leg's distance. The first leg that contains an
  * actual fuel stop is the last refuel: add only the distance driven AFTER that
- * stop (legDistance − fuelStopDistanceFromStart) and stop. If we reach the trip
- * start without finding a fuel stop, the whole accumulated distance has been
- * burned on a single tank.
+ * stop (legDistance − fuelStopDistanceFromStart) and stop. A leg carrying a
+ * declared tank state at its start (and no fuel stop) is likewise terminal:
+ * the declaration IS the tank baseline there, so add the leg's full distance
+ * plus the declared burned km and stop — nothing before the declaration
+ * matters. If we reach the trip start without finding either, the whole
+ * accumulated distance has been burned on a single tank.
  */
 export function kmBurnedSinceLastRefuel(
   precedingReversed: LegFuelHistory[]
@@ -59,8 +72,17 @@ export function kmBurnedSinceLastRefuel(
     const legDist = leg.distanceKm ?? 0;
     if (leg.latestFuelDistanceKm != null) {
       // Refuel anchor: only the post-refuel portion of this leg is burned.
+      // Note this deliberately beats a declaration on the same leg — the fuel
+      // stop is later in the leg than its start, so the tank was reset after
+      // the declared baseline applied.
       kmBurned += Math.max(0, legDist - leg.latestFuelDistanceKm);
       return kmBurned;
+    }
+    if (leg.declaredBurnedKmAtStart != null) {
+      // Declared-tank anchor: the driver told us the tank state at this leg's
+      // start. Burn = everything since (this leg + later legs already
+      // accumulated) on top of the declared baseline.
+      return kmBurned + legDist + Math.max(0, leg.declaredBurnedKmAtStart);
     }
     // No refuel here (driving leg with no fuel stop, or a rest day → 0 km).
     // Carry the full distance forward and keep walking back.

@@ -148,6 +148,13 @@
       "when": 1782920336885,
       "tag": "0020_wooden_monster_badoon",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783883252148,
+      "tag": "0021_zippy_cerebro",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import * as addStop from './addStop';
 import * as updateStop from './updateStop';
 import * as deleteStop from './deleteStop';
 import * as planFuelStops from './planFuelStops';
+import * as declareFuelState from './declareFuelState';
 import * as addTask from './addTask';
 import * as updateTask from './updateTask';
 import * as getRoute from './getRoute';
@@ -35,6 +36,7 @@ export {
   updateStop,
   deleteStop,
   planFuelStops,
+  declareFuelState,
   addTask,
   updateTask,
   getRoute,
@@ -74,6 +76,7 @@ export const TOOLS: Anthropic.Tool[] = [
   updateStop.tool,
   deleteStop.tool,
   planFuelStops.tool,
+  declareFuelState.tool,
   addTask.tool,
   updateTask.tool,
 ];
@@ -116,6 +119,11 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
   // Penny can report what actually happened — created N / none / not-found /
   // failed — instead of pre-claiming completion. See executePlanFuelStops.
   planFuelStops.PLAN_FUEL_STOPS,
+  // declare_fuel_state runs INLINE for the same reason AND for sequencing: the
+  // natural flow is declare → plan_fuel_stops in the SAME turn, so the
+  // declaration must be persisted before Finn re-runs. See
+  // executeDeclareFuelState.
+  declareFuelState.DECLARE_FUEL_STATE,
 ]);
 
 /**
@@ -139,6 +147,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [updateStop.UPDATE_STOP]: updateStop.validator,
   [deleteStop.DELETE_STOP]: deleteStop.validator,
   [planFuelStops.PLAN_FUEL_STOPS]: planFuelStops.validator,
+  [declareFuelState.DECLARE_FUEL_STATE]: declareFuelState.validator,
   [addTask.ADD_TASK]: addTask.validator,
   [updateTask.UPDATE_TASK]: updateTask.validator,
   [getRoute.GET_ROUTE]: getRoute.validator,

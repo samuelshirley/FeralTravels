@@ -252,6 +252,18 @@ export const trips = pgTable(
     currentLng: doublePrecision('current_lng'),
     progressAnchorDate: date('progress_anchor_date', { mode: 'string' }),
     progressUpdatedAt: timestamp('progress_updated_at'),
+    // ── Declared tank state (the `declare_fuel_state` Penny tool) ──────────
+    // The driver's own statement of how far they can drive from the START of
+    // `declaredRangeLegId` before needing fuel ("I only have ~150 km in the
+    // tank"). Finn's tank math treats it as the remaining-range baseline at
+    // that leg's start, overriding the "full tank at trip start" assumption.
+    // A real fuel stop between the anchor and the leg being planned supersedes
+    // it (refuel resets the tank). Plain uuid anchor, no FK — same rationale
+    // as `currentLegId`: a deleted leg leaves a stale pointer that is simply
+    // ignored (anchor resolution checks the leg still exists on this trip).
+    declaredRangeKm: doublePrecision('declared_range_km'),
+    declaredRangeLegId: uuid('declared_range_leg_id'),
+    declaredRangeAt: timestamp('declared_range_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

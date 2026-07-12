@@ -82,6 +82,9 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     current_lng: r.currentLng ?? null,
     progress_anchor_date: r.progressAnchorDate ?? null,
     progress_updated_at: r.progressUpdatedAt ? r.progressUpdatedAt.toISOString() : null,
+    declared_range_km: r.declaredRangeKm ?? null,
+    declared_range_leg_id: r.declaredRangeLegId ?? null,
+    declared_range_at: r.declaredRangeAt ? r.declaredRangeAt.toISOString() : null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
@@ -1512,6 +1515,28 @@ export async function updateTripPosition(
       // reverse-geocode shouldn't wipe a previously good name.
       ...(place != null ? { lastKnownPlace: place } : {}),
       positionUpdatedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(trips.id, tripId));
+}
+
+/**
+ * Record the driver's declared tank state (the `declare_fuel_state` Penny
+ * tool): "I can drive ~X km from the start of leg Y before needing fuel."
+ * Finn's tank math uses it as the remaining-range baseline at that leg's
+ * start (see resolveDeclaredTankAnchor in server/fuel.ts). Overwrites any
+ * previous declaration — the newest statement wins.
+ */
+export async function setDeclaredFuelState(
+  tripId: string,
+  input: { remainingRangeKm: number; legId: string },
+) {
+  await db
+    .update(trips)
+    .set({
+      declaredRangeKm: input.remainingRangeKm,
+      declaredRangeLegId: input.legId,
+      declaredRangeAt: new Date(),
       updatedAt: new Date(),
     })
     .where(eq(trips.id, tripId));

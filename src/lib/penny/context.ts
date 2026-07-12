@@ -33,6 +33,18 @@ export interface PennyContext {
      */
     current_leg_id: string | null;
     current_place: string | null;
+    /**
+     * The driver's declared tank state (the `declare_fuel_state` tool), or
+     * null when none is active. `leg_id` anchors it: the driver said they can
+     * cover `remaining_range_km` from that leg's START before needing fuel.
+     * Superseded automatically once a fuel stop is passed. Read this before
+     * re-asking about tank state or re-declaring the same numbers.
+     */
+    declared_fuel_state: {
+      remaining_range_km: number;
+      leg_id: string;
+      as_of: string | null;
+    } | null;
   };
   /** Today's calendar date, ISO "YYYY-MM-DD" — use it to reason about progress. */
   today: string;
@@ -219,6 +231,18 @@ export async function buildPennyContext(
       status: trip.status,
       current_leg_id: trip.current_leg_id,
       current_place: currentLeg?.start_name ?? null,
+      declared_fuel_state:
+        trip.declared_range_km != null &&
+        trip.declared_range_leg_id != null &&
+        // A stale anchor (leg deleted since) is ignored — same contract as
+        // resolveDeclaredTankAnchor in server/fuel.ts.
+        trip.legs.some((l) => l.id === trip.declared_range_leg_id)
+          ? {
+              remaining_range_km: trip.declared_range_km,
+              leg_id: trip.declared_range_leg_id,
+              as_of: trip.declared_range_at,
+            }
+          : null,
     },
     today: todayISOInZone(timezone),
     device_location:
