@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { haversineKm, type LatLng } from '@/lib/polyline';
 import type { NavSegment } from '@/lib/maps';
+import { useDeviceLocation, type GpsStatus } from '@/components/DeviceLocationContext';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type GpsStatus = 'pending' | 'active' | 'denied' | 'unavailable';
+export type { GpsStatus };
 
 export interface NextStopResult {
   /** The single recommended "navigate to" segment, or null while loading / if no segments. */
@@ -33,123 +34,13 @@ const FAR_FROM_ROUTE_KM = 50;
 const ARRIVAL_RADIUS_KM = 2;
 
 // ---------------------------------------------------------------------------
-// Hook
+// Pure selection logic (unit-tested in useNextStop.test.ts)
 // ---------------------------------------------------------------------------
 
-/**
- * Determine the next navigation stop for a leg based on the user's GPS
- * position. Falls back gracefully:
- *
- *  - GPS available + near route → single `nextStop` (first stop in route
- *    order the user hasn't reached yet)
- *  - GPS available but far from route → `isNearRoute = false`, caller
- *    should show `allSegments` as a list
- *  - GPS denied / unavailable → `gpsStatus` tells caller to show list
- *
- * GPS is only requested when the hook mounts (i.e., when the leg card
- * expands) and watched while mounted. No server calls.
- */
-export function useNextStop(
-  segments: NavSegment[] | null,
-  legStart: LatLng | null,
-  /** Only request GPS when true (e.g., card is expanded). */
-  enabled = true,
-): NextStopResult {
-  const [userPos, setUserPos] = useState<LatLng | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('pending');
-
-  // Request GPS when enabled, watch while enabled.
-  //
-  // Prompt policy: this hook runs every time a leg card expands, so if it called
-  // getCurrentPosition unconditionally it would surface the browser's location
-  // prompt at a seemingly random moment (the "why is it asking now?" bug). The
-  // ONE deliberate prompt lives in TripWorkspace's on-load position report. Here
-  // we only read/watch when permission is ALREADY granted; if it's still in the
-  // "prompt" state we stay passive and fall back to the segment list rather than
-  // firing a second, mistimed prompt. When the Permissions API is unavailable
-  // (older webviews) we preserve the original prompt-on-expand behavior so the
-  // nav feature still works.
-  useEffect(() => {
-    if (!enabled) return;
-    if (!navigator.geolocation) {
-      setGpsStatus('unavailable');
-      return;
-    }
-
-    let cancelled = false;
-    let watchId: number | null = null;
-
-    const startReadingAndWatching = () => {
-      if (cancelled) return;
-      // Single fast read first so we have something immediately.
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (cancelled) return;
-          setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setGpsStatus('active');
-        },
-        (err) => {
-          if (cancelled) return;
-          setGpsStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
-        },
-        { enableHighAccuracy: false, timeout: 8_000, maximumAge: 30_000 },
-      );
-
-      // Then watch for updates while the card is open.
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          if (cancelled) return;
-          setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setGpsStatus('active');
-        },
-        () => {
-          // Silent — we already have the initial read or its error.
-        },
-        { enableHighAccuracy: true, maximumAge: 15_000 },
-      );
-    };
-
-    if (!navigator.permissions?.query) {
-      // No Permissions API — preserve the original behavior (may prompt).
-      startReadingAndWatching();
-    } else {
-      navigator.permissions
-        .query({ name: 'geolocation' as PermissionName })
-        .then((status) => {
-          if (cancelled) return;
-          if (status.state === 'granted') {
-            startReadingAndWatching();
-          } else if (status.state === 'denied') {
-            setGpsStatus('denied');
-          } else {
-            // 'prompt' — don't fire a mistimed prompt here; show the list. The
-            // on-load request owns the single prompt.
-            setGpsStatus('unavailable');
-          }
-        })
-        .catch(() => {
-          // Query failed — fall back to the original behavior rather than
-          // leaving the card stuck without nav.
-          if (!cancelled) startReadingAndWatching();
-        });
-    }
-
-    return () => {
-      cancelled = true;
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
-    };
-  }, [enabled]);
-
-  const allSegments = segments ?? [];
-
-  // Build the ordered destination points (for distance checks).
-  // Each NavSegment's URL contains the destination coords — but we also
-  // receive them implicitly via the segment list order matching the stop
-  // order. To avoid parsing URLs we pass the coords alongside.
-  //
-  // We extract destination coords from the segment URLs:
-  const destPoints: LatLng[] = useMemo(() => {
-    return allSegments.map((seg) => {
+/** Extract destination coords from segment URLs (they carry `destination=lat,lng`). */
+export function segmentDestinations(segments: NavSegment[]): LatLng[] {
+  return segments
+    .map((seg) => {
       try {
         const u = new URL(seg.url);
         const dest = u.searchParams.get('destination');
@@ -159,49 +50,91 @@ export function useNextStop(
             return { lat, lng };
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       return null;
-    }).filter((p): p is LatLng => p !== null);
-  }, [allSegments]);
+    })
+    .filter((p): p is LatLng => p !== null);
+}
+
+/**
+ * Pick the smart-nav "next stop" for a user position.
+ *
+ * - Far from every route point (> FAR_FROM_ROUTE_KM) → not near route,
+ *   caller shows the full list.
+ * - Near the route → the first destination (in route order) the user hasn't
+ *   reached yet (> ARRIVAL_RADIUS_KM away).
+ * - Within arrival radius of everything → the final destination.
+ */
+export function pickNextStop(
+  segments: NavSegment[],
+  destPoints: LatLng[],
+  userPos: LatLng,
+  legStart: LatLng | null,
+): { nextStop: NavSegment | null; isNearRoute: boolean } {
+  if (segments.length === 0) return { nextStop: null, isNearRoute: false };
+
+  const allPoints: LatLng[] = legStart ? [legStart, ...destPoints] : destPoints;
+  if (allPoints.length === 0) return { nextStop: null, isNearRoute: false };
+
+  const nearestPointDist = Math.min(...allPoints.map((p) => haversineKm(userPos, p)));
+  if (nearestPointDist > FAR_FROM_ROUTE_KM) {
+    return { nextStop: null, isNearRoute: false };
+  }
+
+  for (let i = 0; i < destPoints.length; i++) {
+    if (haversineKm(userPos, destPoints[i]) > ARRIVAL_RADIUS_KM) {
+      return { nextStop: segments[i], isNearRoute: true };
+    }
+  }
+
+  // Within arrival radius of every stop — show the final destination.
+  return { nextStop: segments[segments.length - 1], isNearRoute: true };
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+/**
+ * Determine the next navigation stop for a leg based on the device position
+ * from DeviceLocationContext (the app's single GPS pipeline — this hook no
+ * longer touches the Geolocation API itself). Falls back gracefully:
+ *
+ *  - GPS active + near route → single `nextStop` (first stop in route
+ *    order the user hasn't reached yet)
+ *  - GPS active but far from route → `isNearRoute = false`, caller
+ *    should show `allSegments` as a list
+ *  - GPS denied / unavailable / still pending → `gpsStatus` tells caller
+ *    to show the list
+ *
+ * History: this hook used to run its own permissions.query + watchPosition
+ * per card-expand. If the permission state was 'prompt' at that moment (the
+ * on-load popup visible but unanswered) it locked itself to 'unavailable'
+ * for the whole mount — granting the prompt did nothing until a reload. The
+ * shared provider subscribes to permission changes, so that race is gone.
+ */
+export function useNextStop(
+  segments: NavSegment[] | null,
+  legStart: LatLng | null,
+  /** Compute only when the card is expanded (result is unused while collapsed). */
+  enabled = true,
+): NextStopResult {
+  const { position: userPos, gpsStatus } = useDeviceLocation();
+
+  const allSegments = useMemo(() => segments ?? [], [segments]);
+
+  const destPoints: LatLng[] = useMemo(
+    () => segmentDestinations(allSegments),
+    [allSegments],
+  );
 
   return useMemo(() => {
-    // No segments at all — nothing to show.
-    if (allSegments.length === 0) {
+    if (!enabled || allSegments.length === 0 || !userPos || gpsStatus !== 'active') {
       return { nextStop: null, allSegments, isNearRoute: false, gpsStatus };
     }
-
-    // No GPS yet — caller decides how to render.
-    if (!userPos || gpsStatus !== 'active') {
-      return { nextStop: null, allSegments, isNearRoute: false, gpsStatus };
-    }
-
-    // Check if user is near the route at all.
-    const allPoints: LatLng[] = legStart ? [legStart, ...destPoints] : destPoints;
-    const nearestPointDist = Math.min(
-      ...allPoints.map((p) => haversineKm(userPos, p)),
-    );
-    const isNearRoute = nearestPointDist <= FAR_FROM_ROUTE_KM;
-
-    if (!isNearRoute) {
-      return { nextStop: null, allSegments, isNearRoute: false, gpsStatus };
-    }
-
-    // Walk stops in route order. The "next stop" is the first destination
-    // the user is more than ARRIVAL_RADIUS_KM from.
-    for (let i = 0; i < destPoints.length; i++) {
-      const dist = haversineKm(userPos, destPoints[i]);
-      if (dist > ARRIVAL_RADIUS_KM) {
-        return { nextStop: allSegments[i], allSegments, isNearRoute: true, gpsStatus };
-      }
-    }
-
-    // User is within arrival radius of every stop — show the last one
-    // (the final destination). They might be wrapping up.
-    return {
-      nextStop: allSegments[allSegments.length - 1],
-      allSegments,
-      isNearRoute: true,
-      gpsStatus,
-    };
-  }, [userPos, gpsStatus, allSegments, destPoints, legStart]);
+    const { nextStop, isNearRoute } = pickNextStop(allSegments, destPoints, userPos, legStart);
+    return { nextStop, allSegments, isNearRoute, gpsStatus };
+  }, [enabled, userPos, gpsStatus, allSegments, destPoints, legStart]);
 }

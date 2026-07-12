@@ -14,6 +14,10 @@ import { useViewport } from '@/lib/useMediaQuery';
 import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
 import { reverseGeocode } from '@/lib/reverseGeocode';
+import {
+  DeviceLocationProvider,
+  useDeviceLocation,
+} from '@/components/DeviceLocationContext';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
@@ -103,7 +107,19 @@ function ResizeHandle({ direction = 'horizontal' }: { direction?: 'horizontal' |
   );
 }
 
-export default function TripWorkspace({
+export default function TripWorkspace(props: Props) {
+  // The provider owns the app's single geolocation pipeline: the one on-load
+  // prompt, the live position watch, and the permission-change subscription.
+  // Everything below (the position report + every leg card's smart nav)
+  // consumes the shared position instead of calling the Geolocation API.
+  return (
+    <DeviceLocationProvider promptAllowed={!props.readonly}>
+      <TripWorkspaceInner {...props} />
+    </DeviceLocationProvider>
+  );
+}
+
+function TripWorkspaceInner({
   tripId,
   serverTrip,
   readonly,
@@ -165,43 +181,38 @@ export default function TripWorkspace({
     loadTrip();
   }, [loadTrip]);
 
-  // Report the user's GPS position once on mount. This is also the ONE
-  // deliberate geolocation prompt for the app — useNextStop (per leg card) only
-  // reads when permission is already granted, so the prompt lands here on load
-  // rather than at a random moment when a day is expanded. Fire-and-forget —
-  // never block the UI; denial just means no position report.
+  // Report the user's GPS position once per workspace mount, from the shared
+  // DeviceLocationProvider (which owns the ONE deliberate location prompt and
+  // the live watch). Fires on the first position fix — whether that fix
+  // arrived immediately (permission already granted) or after the user
+  // answered the on-load prompt. Fire-and-forget — never block the UI;
+  // denial just means no position report.
+  const { position: devicePosition } = useDeviceLocation();
+  const positionReportedRef = useRef(false);
   useEffect(() => {
-    if (readonly) return;
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        // Best-effort reverse-geocode to a readable label so Penny can name the
-        // driver's current location instead of reciting coordinates. Never block
-        // the position report on it — post coords immediately if it misses.
-        void (async () => {
-          let place: string | null = null;
-          try {
-            place = await reverseGeocode(lat, lng);
-          } catch {
-            place = null;
-          }
-          fetch(`/api/trips/${tripId}/position`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lng, place_name: place }),
-            credentials: 'same-origin',
-          }).catch(() => {
-            // Silently ignore — position reporting is best-effort.
-          });
-        })();
-      },
-      () => {
-        // User denied geolocation or it timed out — nothing to do.
-      },
-    );
-  }, [tripId, readonly]);
+    if (readonly || !devicePosition || positionReportedRef.current) return;
+    positionReportedRef.current = true;
+    const { lat, lng } = devicePosition;
+    // Best-effort reverse-geocode to a readable label so Penny can name the
+    // driver's current location instead of reciting coordinates. Never block
+    // the position report on it — post coords immediately if it misses.
+    void (async () => {
+      let place: string | null = null;
+      try {
+        place = await reverseGeocode(lat, lng);
+      } catch {
+        place = null;
+      }
+      fetch(`/api/trips/${tripId}/position`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lng, place_name: place }),
+        credentials: 'same-origin',
+      }).catch(() => {
+        // Silently ignore — position reporting is best-effort.
+      });
+    })();
+  }, [tripId, readonly, devicePosition]);
 
   // Auto-open chat and switch to chat tab when arriving from the off-route
   // email deep link (?replan=true). Runs once on mount.
