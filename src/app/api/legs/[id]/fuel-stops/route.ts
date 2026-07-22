@@ -5,8 +5,6 @@ import {
 } from '@/server/auth/guards';
 import { planFuelStopsForLegLazy } from '@/server/fuel';
 import { parseUUID } from '@/lib/validation';
-import { isRateLimitSignal } from '@/lib/dataSourceRateLimit';
-import { reportRateLimit } from '@/server/dataSourceAlerts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,11 +34,6 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     await assertLegOwnedByUser(legId, userId);
     const force = new URL(req.url).searchParams.get('force') === '1';
     const result = await planFuelStopsForLegLazy(legId, userId, { force });
-    // If Finn's failure looks like Overpass throttling us, record it + (throttled)
-    // alert the admin. Fire-and-forget so it never delays the response.
-    if (result.status === 'failed' && isRateLimitSignal(result.reason)) {
-      void reportRateLimit('overpass', result.reason ?? 'Overpass rate-limited').catch(() => {});
-    }
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);

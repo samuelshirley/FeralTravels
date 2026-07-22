@@ -11,7 +11,7 @@ import 'server-only';
  * the coordinates always come from here.
  *
  * Endpoint: Google **Places API (New)** `places:searchText` — the same API the
- * fuel-pricing provider uses (`fuelPricing/providers/google.ts`). It handles
+ * fuel station search uses (`lib/google/places.ts`). It handles
  * businesses, addresses, AND cities in one call. We deliberately do NOT use the
  * legacy `place/textsearch/json` endpoint (that requires the deprecated "Places
  * API" SKU, which this project does not have enabled — it caused a 100%

@@ -7,7 +7,7 @@
  * is carried into the leg. From each refuel anchor Finn may drive at most
  * `H − B` (hard ceiling, never crossed) and *prefers* to stop by `C − B`
  * (comfortable). It walks the leg placing the fewest safe stops, and at each
- * stop applies the price preference Sam specified.
+ * stop, minimising the number of stops.
  *
  * Pure + dependency-light: no I/O, no LLM. The server layer (`server/fuel.ts`)
  * feeds it candidates already projected onto the route and filtered for
@@ -17,16 +17,10 @@
  */
 
 export interface PlacementCandidate {
-  /** Stable id (OSM `node/way` id). */
+  /** Stable id (Google place id). */
   id: string;
   /** Distance from leg start along the route, km. */
   alongKm: number;
-  /**
-   * Price per litre for the vehicle's fuel type, if known. `null`/`undefined` =
-   * unknown (no feed coverage or the station has no price). Non-priced
-   * candidates are deprioritised but never disqualified.
-   */
-  pricePerLitre?: number | null;
   /** Cheap detour proxy (km off the route), used only as a tiebreak for now. */
   detourKm?: number;
 }
@@ -71,23 +65,10 @@ const EPS = 1e-6;
 const MAX_ITERATIONS = 64;
 
 /**
- * Choose one stop from a non-empty pool of reachable candidates.
- *
- * Price preference (Sam): prefer a station we have a price for; among priced
- * ones, the cheapest wins (tiebreak: farther along = fewer future stops). When
- * none are priced, fall back to the farthest reachable — minimising stop count.
+ * Choose one stop from a non-empty pool of reachable candidates: the farthest
+ * reachable one, which minimises the total number of stops on the leg.
  */
 function choose(pool: PlacementCandidate[]): PlacementCandidate {
-  const priced = pool.filter((c) => c.pricePerLitre != null);
-  if (priced.length > 0) {
-    return priced.reduce((best, c) => {
-      const bp = best.pricePerLitre as number;
-      const cp = c.pricePerLitre as number;
-      if (cp < bp) return c;
-      if (cp === bp && c.alongKm > best.alongKm) return c;
-      return best;
-    });
-  }
   return pool.reduce((best, c) => (c.alongKm > best.alongKm ? c : best));
 }
 

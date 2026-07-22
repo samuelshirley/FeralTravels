@@ -188,7 +188,7 @@ export const tool: Anthropic.Tool = {
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
           source: {
             type: 'string',
-            enum: ['penny', 'user', 'google_places', 'osm', 'manual'],
+            enum: ['penny', 'user', 'google_places', 'google', 'manual'],
             description: 'Use "user" for a place the user named/linked; "penny" only for a verify-me placeholder.',
           },
           source_url: { type: 'string', format: 'uri' },

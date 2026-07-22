@@ -1,5 +1,16 @@
 # ADR: Finn — the fuel-stop + pricing engine
 
+> **Update 2026-07-22 — Google-only cutover.** Finn no longer uses OSM. Station
+> search moved from OSM Overpass to **Google Places Text Search (New)**
+> (search-along-route), and route geometry now comes from the leg's stored
+> **Google Directions** polyline (the OSRM client was removed). **Fuel pricing
+> was removed entirely** — no tankerkoenig, no Google `fuelOptions`, no price
+> columns on `stops`. The ODbL-vs-Google-ToS rationale below is therefore
+> historical: we now persist only the Google `place_id` (ToS-allowed) plus the
+> coords/name of stops the user keeps. Everything about the *placement* engine
+> (range math, tank state, greedy placer, `no_stations_found` safety warning)
+> is unchanged. See `docs/plans/google-only-teardown.md`.
+
 **Status:** Proposed
 **Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display)
 **Deciders:** Sam

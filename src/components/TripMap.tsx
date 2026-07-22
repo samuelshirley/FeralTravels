@@ -30,10 +30,6 @@ interface MapStopPoint {
   type: StopType;
   name: string;
   distanceKm: number | null;
-  priceState: Stop['price_state'];
-  pricePerLitre: number | null;
-  priceCurrency: string | null;
-  priceCountry: string | null;
 }
 
 const STOP_GRID_CELL_PX = 64;
@@ -56,33 +52,10 @@ function collectStopPoints(legs: LegWithDetails[]): MapStopPoint[] {
         type: stop.stop_type,
         name: stop.name,
         distanceKm: stop.distance_from_start_km,
-        priceState: stop.price_state,
-        pricePerLitre: stop.price_per_litre,
-        priceCurrency: stop.price_currency,
-        priceCountry: stop.price_country,
       });
     }
   }
   return out;
-}
-
-const CURRENCY_SYMBOL: Record<string, string> = { EUR: '€', USD: '$', GBP: '£' };
-
-/** One-line price string for the hover tooltip, or null when nothing to show. */
-function stopPriceText(p: MapStopPoint): string | null {
-  switch (p.priceState) {
-    case 'priced': {
-      if (p.pricePerLitre == null) return null;
-      const sym = CURRENCY_SYMBOL[p.priceCurrency ?? 'EUR'] ?? `${p.priceCurrency} `;
-      return `${sym}${p.pricePerLitre.toFixed(2)}/L`;
-    }
-    case 'unknown':
-      return 'Price unknown';
-    case 'unavailable_in_country':
-      return `Price unavailable in ${p.priceCountry ?? 'this area'}`;
-    default:
-      return null;
-  }
 }
 
 function escapeHtml(s: string): string {
@@ -554,13 +527,11 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         onStopSelectRef.current?.(p.legId, p.stopId);
       });
       if (canHoverRef.current) {
-        const priceText = stopPriceText(p);
         const html = `
           <div style="min-width: 160px; font-family: var(--tp-font-sans);">
             <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#6b6b6b'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
             <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(p.name)}</div>
             ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${Math.round(p.distanceKm)} km from start</div>` : ''}
-            ${priceText ? `<div style="font-size: 11px; color: ${p.priceState === 'priced' ? FUEL_STOP_COLOR : '#8a8a8a'};">${escapeHtml(priceText)}</div>` : ''}
             <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Click to open in list</div>
           </div>`;
         marker.addListener('mouseover', () => {

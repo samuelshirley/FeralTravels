@@ -145,7 +145,6 @@ export type GooglePlacesEndpoint =
  * IMPORTANT: This only tracks Places Nearby Search calls. Other Google API
  * costs NOT tracked here include:
  *   - Directions API ($5/1000 requests) — called by get_route + add_leg
- *   - Places fuelOptions (per-station price fallback) — fuelPricing/providers/google.ts
  *   - Maps JavaScript API (Dynamic Maps $7/1000 loads)
  * (The Place Photos + Street View "stop photos" feature was removed 2026-06-30.)
  * The dashboard underreports total Google spend. Cross-check against

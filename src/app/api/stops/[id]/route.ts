@@ -17,7 +17,7 @@ const stopSourceEnum = z.enum([
   'penny',
   'user',
   'google_places',
-  'osm',
+  'google',
   'manual',
 ]);
 

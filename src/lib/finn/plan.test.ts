@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { planLegFuelStops, type PlacementCandidate } from './plan';
 
-const c = (id: string, alongKm: number, pricePerLitre?: number): PlacementCandidate => ({
+const c = (id: string, alongKm: number): PlacementCandidate => ({
   id,
   alongKm,
-  pricePerLitre,
 });
 
 describe('planLegFuelStops', () => {
@@ -32,18 +31,7 @@ describe('planLegFuelStops', () => {
     expect(r.stops.map((s) => s.candidate.id)).toEqual(['a', 'b']);
   });
 
-  it('prefers a priced station and picks the cheapest in the comfort pool', () => {
-    const r = planLegFuelStops({
-      legLengthKm: 900,
-      comfortableRangeKm: 500,
-      hardMaxRangeKm: 600,
-      kmBurnedAtStart: 0,
-      candidates: [c('near', 300, 1.8), c('cheap', 400, 1.6), c('far', 450, 1.7)],
-    });
-    expect(r.stops[0].candidate.id).toBe('cheap');
-  });
-
-  it('falls back to the farthest reachable when no candidate is priced', () => {
+  it('picks the farthest reachable station (fewest stops)', () => {
     const r = planLegFuelStops({
       legLengthKm: 900,
       comfortableRangeKm: 500,
@@ -54,13 +42,13 @@ describe('planLegFuelStops', () => {
     expect(r.stops[0].candidate.id).toBe('far');
   });
 
-  it('still picks an unpriced station when it is the only safe option', () => {
+  it('picks the only safe station when there is just one', () => {
     const r = planLegFuelStops({
       legLengthKm: 700,
       comfortableRangeKm: 400,
       hardMaxRangeKm: 500,
       kmBurnedAtStart: 0,
-      candidates: [c('onlyone', 350)], // unpriced, but reachable & needed
+      candidates: [c('onlyone', 350)], // reachable & needed
     });
     expect(r.gap).toBe(false);
     expect(r.stops.map((s) => s.candidate.id)).toEqual(['onlyone']);

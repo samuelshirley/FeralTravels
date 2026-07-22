@@ -35,7 +35,7 @@ export const taskPrioritySchema = z.enum(['low', 'normal', 'high']);
 
 export const stopTypeSchema = z.enum(['fuel', 'other']);
 export const fuelTypeSchema = z.enum(['diesel', 'petrol', 'premium', 'lpg']);
-export const stopSourceSchema = z.enum(['penny', 'user', 'google_places', 'osm', 'manual']);
+export const stopSourceSchema = z.enum(['penny', 'user', 'google_places', 'google', 'manual']);
 export const surfaceSchema = z.enum(['paved', 'gravel', 'mix']);
 export const terrainSchema = z.enum(['highway', 'mixed', 'offroad', 'urban']);
 

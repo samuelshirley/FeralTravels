@@ -1,25 +1,27 @@
 /**
  * Finn station eligibility filter — drop fuel stations a passenger / overland
- * vehicle can't (or shouldn't) use: truck-only HGV stations, fleet depots, and
- * private / restricted-access pumps. Pure + tag-driven; runs over the
- * `OsmFuelStation` rows from the Overpass corridor BEFORE range placement.
+ * vehicle can't (or shouldn't) use. Pure + tag-light; runs over the
+ * `FuelStation` rows from the Google Places corridor BEFORE range placement.
  *
- * Why this exists: a bare `amenity=fuel` search returns unmanned HGV diesel
- * stations (e.g. "St1 Truck") parked in industrial lots — card-only, diesel-only,
- * no normal pumps. Routing a normal vehicle there is the "CarPlay sent me to a
- * truckstop" failure Sam hit. OSM's tags let us catch these; Google Places has no
- * truck type, so this filtering is only possible on the OSM data source. See
- * docs/design/finn-fuel-agent.md.
+ * Why this exists: a bare "gas station" search can surface truck-only stops
+ * ("St1 Truck", "ESSO Truckstop") — card-only, diesel-only, no normal pumps.
+ * Routing a normal vehicle there is the "CarPlay sent me to a truckstop"
+ * failure Sam hit.
  *
- * Safety bias — KEEP when unsure. Excluding a usable station can route the driver
- * into a fuel gap, which is a worse failure than one annoying truck stop. So we
- * only reject on *positive evidence* of truck-only / non-public, never on missing
- * tags. A plain `amenity=fuel` with no extra tags always passes.
+ * Data-source note: the old OSM source exposed `access=*` and `fuel:*` tags,
+ * which let us catch private fleet pumps and diesel-only forecourts. Google
+ * Places (New) exposes neither, so those two defenses are gone (accepted
+ * regression at the Google cutover). What remains works on Google data: the
+ * name/brand truck marker regex, and Google's own `truck_stop` place type.
+ *
+ * Safety bias — KEEP when unsure. Excluding a usable station can route the
+ * driver into a fuel gap, a worse failure than one annoying truck stop. So we
+ * only reject on *positive evidence* of a truck stop, never on missing data.
  */
 
-import type { OsmFuelStation } from '@/lib/osm/overpass';
+import type { FuelStation } from '@/lib/google/places';
 
-export type StationRejectionReason = 'private_access' | 'truck_only';
+export type StationRejectionReason = 'truck_only';
 
 export interface StationEligibility {
   usable: boolean;
@@ -29,21 +31,6 @@ export interface StationEligibility {
 }
 
 /**
- * `access=*` values that mean "not for the general public." `customers` /
- * `employees` on a fuel node almost always means a fleet/depot pump, not a
- * retail forecourt, so they're excluded too.
- */
-const PRIVATE_ACCESS = new Set([
-  'private',
-  'no',
-  'permit',
-  'military',
-  'delivery',
-  'customers',
-  'employees',
-]);
-
-/**
  * Name/brand markers for truck-only stations across the languages we route in.
  * Word-boundary anchored so it catches "St1 Truck" / "ESSO Truckstop" / "LKW"
  * but NOT substrings like the town "Truckee" (no boundary after "truck").
@@ -51,50 +38,17 @@ const PRIVATE_ACCESS = new Set([
  */
 const TRUCK_NAME_RE = /\b(trucks?|truckstop|truckpark\w*|lkw|camion)\b/i;
 
-const PETROL_FUEL_KEYS = [
-  'fuel:octane_91',
-  'fuel:octane_95',
-  'fuel:octane_98',
-  'fuel:octane_100',
-  'fuel:e5',
-  'fuel:e10',
-  'fuel:e85',
-  'fuel:petrol',
-  'fuel:gasoline',
-] as const;
-
-const DIESEL_FUEL_KEYS = [
-  'fuel:diesel',
-  'fuel:diesel_B7',
-  'fuel:diesel_B10',
-  'fuel:GTL_diesel',
-] as const;
-
-const HGV_DIESEL_KEY = 'fuel:HGV_diesel';
-
-function anyKeyEquals(
-  tags: Record<string, string>,
-  keys: readonly string[],
-  value: string
-): boolean {
-  return keys.some((k) => tags[k] === value);
-}
-
 /**
- * Classify a single station. Order matters: access is the hardest signal, then
- * the name marker, then the diesel-only fuel composition heuristic.
+ * Classify a single station. Order: Google's explicit `truck_stop` type is the
+ * hardest signal, then the name/brand marker.
  */
-export function classifyStation(station: OsmFuelStation): StationEligibility {
-  const { tags } = station;
-
-  // 1. Restricted / private access — hardest signal.
-  const access = tags['access'];
-  if (access && PRIVATE_ACCESS.has(access)) {
-    return {
-      usable: false,
-      reason: 'private_access',
-      detail: `access=${access}`,
-    };
+export function classifyStation(station: FuelStation): StationEligibility {
+  // 1. Google's own place type. A place typed `truck_stop` but NOT also
+  //    `gas_station` is a dedicated truck stop — skip it. (Many normal
+  //    forecourts carry both types; those stay.)
+  const types = station.types ?? [];
+  if (types.includes('truck_stop') && !types.includes('gas_station')) {
+    return { usable: false, reason: 'truck_only', detail: 'Google type=truck_stop' };
   }
 
   // 2. Explicit truck naming (e.g. "St1 Truck", "ESSO Truckstop").
@@ -107,44 +61,20 @@ export function classifyStation(station: OsmFuelStation): StationEligibility {
     };
   }
 
-  // 3. Fuel composition. Truck-only stations sell diesel (+ AdBlue) and no
-  //    petrol. We require POSITIVE evidence — never exclude a station that just
-  //    doesn't tag its petrol grades.
-  const hasPetrolYes = anyKeyEquals(tags, PETROL_FUEL_KEYS, 'yes');
-  const hasPetrolNo = anyKeyEquals(tags, PETROL_FUEL_KEYS, 'no');
-  const hasDieselYes = anyKeyEquals(tags, DIESEL_FUEL_KEYS, 'yes');
-  const hasHgvDiesel = tags[HGV_DIESEL_KEY] === 'yes';
-  const hgvDesignated = tags['hgv'] === 'designated';
-
-  if (!hasPetrolYes) {
-    // HGV diesel offered with no petrol → truck pump.
-    if (hasHgvDiesel) {
-      return { usable: false, reason: 'truck_only', detail: 'HGV diesel, no petrol' };
-    }
-    // Diesel offered AND petrol explicitly absent → diesel-only forecourt.
-    if (hasDieselYes && hasPetrolNo) {
-      return { usable: false, reason: 'truck_only', detail: 'diesel-only (petrol=no)' };
-    }
-    // HGV-designated with no petrol → truck-oriented.
-    if (hgvDesignated) {
-      return { usable: false, reason: 'truck_only', detail: 'hgv=designated, no petrol' };
-    }
-  }
-
   return { usable: true };
 }
 
 export interface StationFilterResult {
-  kept: OsmFuelStation[];
-  rejected: Array<{ station: OsmFuelStation; eligibility: StationEligibility }>;
+  kept: FuelStation[];
+  rejected: Array<{ station: FuelStation; eligibility: StationEligibility }>;
 }
 
 /**
  * Partition a corridor's stations into the ones Finn may route to and the ones
  * it must skip, keeping the rejection reason for logging / the debug endpoint.
  */
-export function filterUsableStations(stations: OsmFuelStation[]): StationFilterResult {
-  const kept: OsmFuelStation[] = [];
+export function filterUsableStations(stations: FuelStation[]): StationFilterResult {
+  const kept: FuelStation[] = [];
   const rejected: StationFilterResult['rejected'] = [];
   for (const station of stations) {
     const eligibility = classifyStation(station);

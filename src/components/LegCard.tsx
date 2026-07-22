@@ -139,10 +139,10 @@ export default function LegCard({
     const terminalSuccess =
       leg.fuel_status === 'ready' || leg.fuel_status === 'no_stations_found';
     // Source lazily when never sourced ('none'), a terminal-success cache that
-    // has gone stale, OR a prior 'failed'. We auto-retry 'failed' now that Finn
-    // runs on free OSM/OSRM — there's no per-call cost to retrying, and it self-
-    // heals legs stranded on a stale error from the old Google Places path. We
-    // still skip 'computing'/'pending' (a search is already in flight); the
+    // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
+    // station/route calls are cheap and cache-guarded, so a retry self-heals
+    // legs stranded on a stale/transient error. We still skip
+    // 'computing'/'pending' (a search is already in flight); the
     // signature guard below stops duplicate fires within a render session.
     const needsFetch =
       leg.fuel_status === 'none' ||

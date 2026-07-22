@@ -329,7 +329,7 @@ export const legs = pgTable(
      */
     continuityWarning: text('continuity_warning'),
     /**
-     * Driving route geometry stored as GeoJSON LineString (from Directions/OSRM).
+     * Driving route geometry stored as GeoJSON LineString (from Google Directions).
      * Persisted at planning time so the UI never calls external APIs during viewing.
      */
     geometry: jsonb('geometry').$type<GeoJSONLineString | null>(),
@@ -519,21 +519,6 @@ export const stops = pgTable(
     googleMapsUri: text('google_maps_uri'),
     /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
     photos: jsonb('photos').$type<StopPhoto[]>(),
-    /**
-     * Finn fuel price (tri-state, never silently null). `price_state` is the
-     * source of truth for display:
-     *   'priced'                 → price_per_litre + currency + as_of are set
-     *   'unknown'                → country covered, this station has no price
-     *   'unavailable_in_country' → no price source for price_country
-     * See docs/design/finn-fuel-agent.md → "Price availability model".
-     */
-    priceState: text('price_state'),
-    pricePerLitre: doublePrecision('price_per_litre'),
-    priceCurrency: text('price_currency'),
-    priceFuelType: text('price_fuel_type'),
-    priceCountry: text('price_country'),
-    priceSource: text('price_source'),
-    priceAsOf: timestamp('price_as_of'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

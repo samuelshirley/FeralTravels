@@ -2,15 +2,15 @@
  * GET /api/debug/fuel — checks every dependency Finn (the fuel planner) needs.
  * Hit this in the browser after logging in to see exactly what's failing.
  *
- * Finn's data sources: OSRM (route geometry, free) + OSM Overpass (stations,
- * free, ODbL). No Google Places key is involved in fuel planning anymore.
+ * Finn's data sources (all Google Maps Platform): Directions (route geometry) +
+ * Places search-along-route (stations). Both use the server Google key.
  */
 import { requireUserId } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { computeEffectiveRangeKm } from '@/lib/penny/context';
-import { getDirections } from '@/lib/directions';
-import { decodePolyline } from '@/lib/polyline';
-import { fetchFuelCorridor } from '@/lib/osm/overpass';
+import { getDirections } from '@/lib/google/directions';
+import { encodePolyline, type LatLng } from '@/lib/polyline';
+import { searchFuelAlongRoute } from '@/lib/google/places';
 import { filterUsableStations } from '@/lib/finn';
 
 export const runtime = 'nodejs';
@@ -39,49 +39,57 @@ export async function GET() {
       results['vehicle'] = `Error: ${e instanceof Error ? e.message : String(e)}`;
     }
 
-    // 2. OSRM reachability + geometry — Barcelona → Girona (~100 km).
-    let geometry: string | undefined;
+    // 2. Google Directions reachability + geometry — Barcelona → Girona (~100 km).
+    let polyline: LatLng[] = [];
     try {
-      const dir = await getDirections(41.3851, 2.1734, 41.9794, 2.8214);
-      geometry = dir?.geometry;
-      results['osrm'] = dir
-        ? { ok: true, distance_km: dir.distance_km, has_geometry: !!dir.geometry }
-        : { ok: false, reason: 'getDirections returned null' };
+      const dir = await getDirections(
+        { lat: 41.3851, lng: 2.1734 },
+        { lat: 41.9794, lng: 2.8214 }
+      );
+      if (dir.ok) {
+        polyline = dir.polyline_points.map(([lat, lng]) => ({ lat, lng }));
+        results['directions'] = {
+          ok: true,
+          distance_km: dir.distance_km,
+          points: polyline.length,
+        };
+      } else {
+        results['directions'] = { ok: false, kind: dir.kind, message: dir.message };
+      }
     } catch (e) {
-      results['osrm'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      results['directions'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
 
-    // 3. OSM Overpass — stations in the corridor + how many survive the filter.
-    if (!geometry) {
-      results['osm_overpass'] = 'Skipped — no route geometry from OSRM above';
+    // 3. Google Places — stations along the route + how many survive the filter.
+    if (polyline.length < 2) {
+      results['places'] = 'Skipped — no route geometry from Directions above';
     } else {
       try {
-        const polyline = decodePolyline(geometry);
-        const corridor = await fetchFuelCorridor(polyline, { bufferMeters: 2000 });
+        const corridor = await searchFuelAlongRoute(encodePolyline(polyline));
         const { kept, rejected } = filterUsableStations(corridor);
-        results['osm_overpass'] = {
+        results['places'] = {
           ok: true,
           stations_found: corridor.length,
           usable_after_filter: kept.length,
           rejected: rejected.length,
           rejected_sample: rejected.slice(0, 3).map((r) => ({
-            name: r.station.name ?? r.station.brand ?? r.station.osmId,
+            name: r.station.name ?? r.station.placeId,
             reason: r.eligibility.reason,
             detail: r.eligibility.detail,
           })),
         };
       } catch (e) {
-        results['osm_overpass'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        results['places'] = { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
     }
 
     // Summary
-    const osrmOk = (results['osrm'] as { ok?: boolean })?.ok === true;
-    const osmOk = (results['osm_overpass'] as { ok?: boolean })?.ok === true;
-    results['summary'] = !osrmOk
-      ? '❌ OSRM unreachable — route geometry fetch will fail'
-      : !osmOk
-        ? '❌ OSM Overpass failing — station lookup will fail (usually transient; retry)'
+    const directionsOk = (results['directions'] as { ok?: boolean })?.ok === true;
+    const placesOk = (results['places'] as { ok?: boolean })?.ok === true;
+    results['summary'] = !directionsOk
+      ? '❌ Google Directions unreachable — route geometry fetch will fail'
+      : !placesOk
+        ? '❌ Google Places failing — station lookup will fail (check GOOGLE_MAPS_SERVER_API_KEY + Places API New enabled)'
         : !range
           ? '❌ No vehicle / range — set your range on the default vehicle in Settings'
           : '✅ All checks passed — if stops are still missing, trigger a replan';

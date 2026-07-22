@@ -158,3 +158,36 @@ export function polylineLengthKm(polyline: LatLng[]): number {
   }
   return total;
 }
+
+/**
+ * Encode a polyline into Google's "Encoded Polyline Algorithm Format".
+ * Inverse of `decodePolyline`. Used to hand a route to the Places
+ * search-along-route request (which takes an encoded polyline).
+ * https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+ */
+export function encodePolyline(points: LatLng[]): string {
+  let lastLat = 0;
+  let lastLng = 0;
+  let out = '';
+
+  const encodeSigned = (value: number): string => {
+    let v = value < 0 ? ~(value << 1) : value << 1;
+    let chunk = '';
+    while (v >= 0x20) {
+      chunk += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    chunk += String.fromCharCode(v + 63);
+    return chunk;
+  };
+
+  for (const p of points) {
+    const lat = Math.round(p.lat * 1e5);
+    const lng = Math.round(p.lng * 1e5);
+    out += encodeSigned(lat - lastLat);
+    out += encodeSigned(lng - lastLng);
+    lastLat = lat;
+    lastLng = lng;
+  }
+  return out;
+}

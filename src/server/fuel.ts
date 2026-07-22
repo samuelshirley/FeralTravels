@@ -1,10 +1,10 @@
 import 'server-only';
 import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { legs, stops, trips } from '@/server/db/schema';
-import { getDirections } from '@/lib/directions';
+import { legs, stops, trips, type GeoJSONLineString } from '@/server/db/schema';
+import { getDirections } from '@/lib/google/directions';
 import {
-  decodePolyline,
+  encodePolyline,
   haversineKm,
   polylineLengthKm,
   type LatLng,
@@ -18,9 +18,9 @@ import {
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { logUsageEvent } from '@/server/repos/usage';
 import {
-  fetchFuelCorridor,
-  type OsmFuelStation,
-} from '@/lib/osm/overpass';
+  searchFuelAlongRoute,
+  type FuelStation,
+} from '@/lib/google/places';
 import {
   filterUsableStations,
   planLegFuelStops,
@@ -28,36 +28,28 @@ import {
   cumulativeDistancesKm,
   type PlacementCandidate,
 } from '@/lib/finn';
-import {
-  resolveStationPrices,
-  NO_PRICE_COUNTRIES,
-  type FuelType,
-  type PriceResult,
-  type PriceableStation,
-} from '@/lib/fuelPricing';
-import { buildBulkPriceProviders, buildPriceProviders } from '@/server/fuelPricingProviders';
 
 /**
- * Auto fuel-stop planner — **Finn** (OSM + deterministic placement).
+ * Auto fuel-stop planner — **Finn** (Google Places + deterministic placement).
  *
  * Flow for a leg with start + end coords and a vehicle on file:
- *   1. Fetch the OSRM polyline for start→end (route geometry, never stored).
- *   2. Query OSM Overpass for fuel stations in a tight corridor around it.
- *   3. Drop truck-only / private stations (`stationFilter.ts`).
+ *   1. Take the leg's stored Google route geometry (fresh Directions call only
+ *      as a fallback when a leg has none yet).
+ *   2. Query Google Places (search-along-route) for fuel stations along it.
+ *   3. Drop truck stops (`stationFilter.ts`).
  *   4. Project each remaining station onto the route (along-km + detour proxy).
  *   5. Run the greedy multi-stop placer (`finn/plan.ts`): never route past the
- *      hard-max ceiling, prefer comfortable range, prefer priced+cheapest
- *      stations (pricing layer lands later — candidates are price-unknown today).
- *   6. Replace previous auto fuel stops (source='osm', status='option').
+ *      hard-max ceiling, prefer comfortable range, minimise stop count.
+ *   6. Replace previous auto fuel stops (source='google', status='option').
  *      User-picked / user-authored stops are never touched.
  *
- * Data-source split (legal backbone): OSM station data is ODbL — storable in the
- * `stops` cache with attribution. Google place data is NOT persisted anywhere in
- * this path anymore. Routing geometry comes from OSRM (free, no key).
+ * All data comes from the Google Maps Platform key already used for routing.
+ * We persist only the Google `place_id` (ToS-storable) plus the coords/name of
+ * the stop the user sees. No fuel pricing (removed at the Google cutover).
  *
  * Fails loudly (`fuel_status='failed'` + `fuel_plan_error`) when the vehicle has
- * no range data, the route can't be decoded, or Overpass errors. A genuinely
- * remote leg with no reachable station is `no_stations_found` (not a failure).
+ * no range data, the route can't be decoded, or the Places call errors. A
+ * genuinely remote leg with no reachable station is `no_stations_found`.
  */
 
 // Hard cap on how many fuel stops we'll propose per leg — keeps a very long leg
@@ -67,20 +59,17 @@ const MAX_STOPS_PER_LEG = 8;
 // certainly covers the drive.
 const MIN_LEG_KM_FOR_PLANNING = 100;
 // Carry-over allowance: if cumulative km since the last refuel + this leg's
-// distance is under range × this, skip planning (and the Overpass call) entirely.
+// distance is under range × this, skip planning (and the Places call) entirely.
 const SKIP_PLANNING_THRESHOLD = 0.7;
 // Max straight-line distance a station may sit off the route to still count as
-// "on the way." The Overpass corridor buffer is ~2 km, but it widens on long
-// legs; this caps the detour we'll ever propose.
+// "on the way." Caps the detour we'll ever propose.
 const MAX_DETOUR_KM = 15;
-// Overpass corridor half-width around the route polyline.
-const CORRIDOR_BUFFER_METERS = 2000;
 // A leg whose start and end are effectively the same point (within this
 // straight-line distance) is a no-op — nothing to fuel. These come from
 // same-place "legs" (e.g. a stay that got modelled as a leg) and must short-
-// circuit to a clean 'ready' BEFORE the OSRM call, otherwise OSRM returns a
-// trivial route that decodes to <2 points and Finn would hard-fail it with
-// "Route geometry was unusable". (Was the source of ~all prod 'failed' legs.)
+// circuit to a clean 'ready' BEFORE any routing, otherwise the geometry decodes
+// to <2 points and Finn would hard-fail it with "Route geometry was unusable".
+// (Was the source of ~all prod 'failed' legs.)
 const TRIVIAL_LEG_KM = 0.1;
 
 export interface FuelPlanResult {
@@ -148,44 +137,21 @@ async function failLeg(
   return { legId, status: 'failed', reason };
 }
 
-/** Single-destination Google Maps link built from coords (no Google place data). */
+/** Single-destination Google Maps link built from coords (fallback when a place has no googleMapsUri). */
 function mapsCoordUrl(lat: number, lng: number): string {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }
 
-/** Map a tri-state PriceResult to the stop row's price columns. */
-function priceColumns(pr: PriceResult | undefined) {
-  if (pr?.state === 'priced') {
-    return {
-      priceState: 'priced',
-      pricePerLitre: pr.price.amount,
-      priceCurrency: pr.price.currency,
-      priceFuelType: pr.price.fuelType,
-      priceCountry: null,
-      priceSource: pr.price.source,
-      priceAsOf: new Date(pr.price.asOf),
-    };
+/** Convert a stored GeoJSON LineString (lng,lat order) to LatLng[]. */
+function geometryToLatLngs(geom: GeoJSONLineString | null): LatLng[] {
+  if (!geom || !Array.isArray(geom.coordinates)) return [];
+  const out: LatLng[] = [];
+  for (const c of geom.coordinates) {
+    if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+      out.push({ lat: c[1], lng: c[0] });
+    }
   }
-  if (pr?.state === 'unavailable_in_country') {
-    return {
-      priceState: 'unavailable_in_country',
-      pricePerLitre: null,
-      priceCurrency: null,
-      priceFuelType: null,
-      priceCountry: pr.country,
-      priceSource: null,
-      priceAsOf: null,
-    };
-  }
-  return {
-    priceState: pr?.state === 'unknown' ? 'unknown' : null,
-    pricePerLitre: null,
-    priceCurrency: null,
-    priceFuelType: null,
-    priceCountry: null,
-    priceSource: null,
-    priceAsOf: null,
-  };
+  return out;
 }
 
 /**
@@ -219,7 +185,7 @@ export async function planFuelStopsForLeg(
   }
 
   // Trivial (same-place) leg: start ≈ end. Nothing to fuel. Short-circuit to a
-  // clean 'ready' BEFORE OSRM — a zero-distance route decodes to <2 points and
+  // clean 'ready' BEFORE routing — a zero-distance route decodes to <2 points and
   // would otherwise hard-fail as "Route geometry was unusable". This was the
   // source of essentially every 'failed' leg in prod.
   if (haversineKm(
@@ -251,23 +217,26 @@ export async function planFuelStopsForLeg(
   // comfortable range when the user gave no separate ceiling (the invariant
   // hard_max ≥ comfortable is enforced at every write path).
   const hardMax = Math.max(range, vehicle.hard_max_range_km ?? range);
-  // Fuel type drives which per-fuel price we fetch. Defaults to diesel (the
-  // overlander norm) until the driver sets it; see vehicles.fuel_type.
-  const fuelType: FuelType = vehicle.fuel_type === 'petrol' ? 'petrol' : 'diesel';
-
-  // 3. OSRM route geometry (free, no key). We need the full polyline to project
-  //    stations onto it.
-  const directions = await getDirections(
-    leg.startLat,
-    leg.startLng,
-    leg.endLat,
-    leg.endLng
-  );
-  if (!directions?.geometry) {
-    return failLeg(legId, leg.tripId, userId, 'Could not fetch route geometry');
+  // 3. Route geometry to project stations onto. Prefer the leg's already-stored
+  //    Google geometry — zero extra API calls, and the fuel plan then matches
+  //    the exact route drawn on the map. Fall back to a fresh Directions call
+  //    only when a leg has no stored geometry yet.
+  let polyline = geometryToLatLngs(leg.geometry);
+  if (polyline.length < 2) {
+    const directions = await getDirections(
+      { lat: leg.startLat, lng: leg.startLng },
+      { lat: leg.endLat, lng: leg.endLng }
+    );
+    if (!directions.ok) {
+      return failLeg(
+        legId,
+        leg.tripId,
+        userId,
+        `Could not fetch route geometry: ${directions.message}`
+      );
+    }
+    polyline = directions.polyline_points.map(([lat, lng]) => ({ lat, lng }));
   }
-
-  const polyline = decodePolyline(directions.geometry);
   const totalKm = polylineLengthKm(polyline);
   if (polyline.length < 2 || totalKm <= 0) {
     return failLeg(legId, leg.tripId, userId, 'Route geometry was unusable');
@@ -291,69 +260,37 @@ export async function planFuelStopsForLeg(
   const cumulativeFitsComfortably =
     kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD;
 
-  // Early exit (and skip the Overpass call) when no stop can be needed.
+  // Early exit (and skip the Places call) when no stop can be needed.
   if (belowMinLeg || cumulativeFitsComfortably) {
     await clearAutoPlannerOptionStops(legId);
     await setFuelStatus(legId, 'ready');
     return { legId, status: 'ready', stopsCreated: 0 };
   }
 
-  // 4. OSM corridor → eligibility filter → route projection → candidates.
-  let corridor: OsmFuelStation[];
+  // 4. Google Places corridor → eligibility filter → route projection → candidates.
+  let corridor: FuelStation[];
   try {
-    corridor = await fetchFuelCorridor(
-      polyline,
-      { bufferMeters: CORRIDOR_BUFFER_METERS },
-      // Point at a self-hosted / paid Overpass before scale; falls back to the
-      // public instance when unset (fair-use only — see finn-fuel-agent.md).
-      { endpoint: process.env.OVERPASS_ENDPOINT?.trim() || undefined }
-    );
+    corridor = await searchFuelAlongRoute(encodePolyline(polyline));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const reason = `Couldn't reach the OSM station service (${msg}). This is usually transient — try again shortly.`;
+    const reason = `Couldn't reach the Google station service (${msg}). This is usually transient — try again shortly.`;
     console.error(`[finn] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${msg}`);
     return failLeg(legId, leg.tripId, userId, reason);
   }
 
   const { kept } = filterUsableStations(corridor);
   const cumulative = cumulativeDistancesKm(polyline);
-  const byId = new Map<string, OsmFuelStation>();
+  const byId = new Map<string, FuelStation>();
   const candidates: PlacementCandidate[] = [];
   for (const st of kept) {
     const proj = projectPointOntoRoute({ lat: st.lat, lng: st.lng }, polyline, cumulative);
     if (proj.perpKm > MAX_DETOUR_KM) continue;
-    byId.set(st.osmId, st);
+    byId.set(st.placeId, st);
     candidates.push({
-      id: st.osmId,
+      id: st.placeId,
       alongKm: proj.alongKm,
       detourKm: proj.perpKm,
-      pricePerLitre: null, // filled below by the bulk pricing pass when available
     });
-  }
-
-  // 4b. Price candidates for selection — BULK providers only (feeds are cheap
-  //     enough to price every candidate; per-station Google is reserved for
-  //     finalist display). Feeds `pricePerLitre` into the planner so it can
-  //     prefer the cheapest in-range station. No providers configured / no key
-  //     → no prices → selection falls back to distance (graceful).
-  const bulkProviders = buildBulkPriceProviders();
-  if (bulkProviders.length > 0 && candidates.length > 0) {
-    const priceable: PriceableStation[] = candidates.map((c) => {
-      const st = byId.get(c.id)!;
-      return {
-        id: c.id,
-        lat: st.lat,
-        lng: st.lng,
-        name: st.name,
-        brand: st.brand,
-        country: st.tags['addr:country'] ?? null,
-      };
-    });
-    const selectionPrices = await resolveStationPrices(priceable, fuelType, bulkProviders);
-    for (const c of candidates) {
-      const pr = selectionPrices.get(c.id);
-      if (pr?.state === 'priced') c.pricePerLitre = pr.price.amount;
-    }
   }
 
   // 5. Deterministic greedy placement.
@@ -368,7 +305,7 @@ export async function planFuelStopsForLeg(
   if (plan.gap) {
     // A stop is needed but the candidate list is EMPTY — zero stations in the
     // whole corridor (or all filtered out). On any leg long enough to need a
-    // stop that's near-certainly a data/service anomaly (Overpass overload,
+    // stop that's near-certainly a data/service anomaly (Places overload,
     // truncated response), not real geography — treat it as a retryable
     // failure, NOT the cached `no_stations_found` safety warning. A false
     // "carry extra fuel" warning costs the warning its credibility exactly
@@ -393,39 +330,6 @@ export async function planFuelStopsForLeg(
 
   const chosen = plan.stops.slice(0, MAX_STOPS_PER_LEG);
 
-  // 5b. Authoritative tri-state price for each chosen finalist (display +
-  //     persistence). Runs ALL providers — bulk re-checks the few finalists,
-  //     per-station Google fills gaps — EXCEPT a known no-price country (the
-  //     Nordics) resolves to `unavailable_in_country` upfront, never burning a
-  //     Google call there. No providers configured → empty map → price columns
-  //     stay null (no price UI).
-  const allProviders = buildPriceProviders();
-  const finalPrices = new Map<string, PriceResult>();
-  if (allProviders.length > 0 && chosen.length > 0) {
-    const finalists: PriceableStation[] = [];
-    for (const placed of chosen) {
-      const st = byId.get(placed.candidate.id);
-      if (!st) continue;
-      const country = st.tags['addr:country'] ?? null;
-      if (country && NO_PRICE_COUNTRIES.has(country)) {
-        finalPrices.set(placed.candidate.id, { state: 'unavailable_in_country', country });
-        continue;
-      }
-      finalists.push({
-        id: placed.candidate.id,
-        lat: st.lat,
-        lng: st.lng,
-        name: st.name,
-        brand: st.brand,
-        country,
-      });
-    }
-    if (finalists.length > 0) {
-      const resolved = await resolveStationPrices(finalists, fuelType, allProviders);
-      for (const [id, pr] of resolved) finalPrices.set(id, pr);
-    }
-  }
-
   // 6. Replace previous auto fuel stops. Transactional delete+insert so the UI
   //    never sees a half-applied plan. A station the user promoted to 'selected'
   //    is preserved (the clear only matches status='option') and de-duped against.
@@ -436,7 +340,7 @@ export async function planFuelStopsForLeg(
       .where(
         and(
           eq(stops.legId, legId),
-          eq(stops.source, 'osm'),
+          eq(stops.source, 'google'),
           eq(stops.status, 'selected')
         )
       );
@@ -461,15 +365,14 @@ export async function planFuelStopsForLeg(
         lng: station.lng,
         distanceFromStartKm: distanceKm,
         fuelType: null,
-        source: 'osm',
-        sourceUrl: mapsCoordUrl(station.lat, station.lng),
-        placeId: null,
-        googleMapsUri: mapsCoordUrl(station.lat, station.lng),
+        source: 'google',
+        sourceUrl: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
+        placeId: station.placeId,
+        googleMapsUri: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
         notes: placed.reason
           ? `Top up here — ${placed.reason}.`
           : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
         alternatives: null,
-        ...priceColumns(finalPrices.get(placed.candidate.id)),
       });
     }
   });
@@ -539,8 +442,8 @@ export async function invalidateTripFuelCache(tripId: string): Promise<void> {
 
 /**
  * True if a candidate station matches an existing user-promoted ('selected')
- * fuel stop on the same leg by a tight haversine threshold (~80 m). OSM stations
- * carry no Google place_id, so coordinates are the dedupe key.
+ * fuel stop on the same leg by a tight haversine threshold (~80 m). Coordinates
+ * are the dedupe key (robust across option/selected rows).
  */
 function matchesExistingSelected(
   candidateLat: number,
@@ -563,7 +466,7 @@ function matchesExistingSelected(
 function autoPlannerOptionSql(legId: string) {
   return and(
     eq(stops.legId, legId),
-    eq(stops.source, 'osm'),
+    eq(stops.source, 'google'),
     eq(stops.status, 'option'),
     eq(stops.stopType, 'fuel')
   );

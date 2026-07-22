@@ -72,7 +72,7 @@ export const tool: Anthropic.Tool = {
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
           fuel_type: { type: 'string', enum: ['diesel', 'petrol', 'premium', 'lpg'] },
           fuel_amount_l: { type: 'number', minimum: 0 },
-          source: { type: 'string', enum: ['penny', 'user', 'google_places', 'osm', 'manual'] },
+          source: { type: 'string', enum: ['penny', 'user', 'google_places', 'google', 'manual'] },
           source_url: { type: 'string', format: 'uri' },
         },
       },
