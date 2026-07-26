@@ -26,16 +26,14 @@
 export const PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
 
 /**
- * Server-side Google key: never the referrer-locked NEXT_PUBLIC key first
- * (Google 403s browser keys from Node). Prefer GOOGLE_MAPS_SERVER_API_KEY,
- * fall back to the public key for local dev. Inlined (rather than importing the
- * `server-only` helper) so this module stays unit-testable.
+ * Google key. The whole app uses the single NEXT_PUBLIC_GOOGLE_MAPS_API_KEY for
+ * every Maps Platform call — the browser map, server-side Directions, and this
+ * Places call. The key is unrestricted / IP-restricted (not referrer-locked),
+ * so Google accepts it from Node. Read directly (same as google/directions.ts)
+ * rather than via a `server-only` helper, so this module stays unit-testable.
  */
 function serverApiKey(): string | undefined {
-  const server = process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim();
-  if (server) return server;
-  const pub = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
-  return pub || undefined;
+  return process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() || undefined;
 }
 
 /**
@@ -162,7 +160,7 @@ export async function searchFuelAlongRoute(
   const apiKey = deps?.apiKey ?? serverApiKey();
   if (!apiKey) {
     throw new Error(
-      'No Google Maps server API key configured. Set GOOGLE_MAPS_SERVER_API_KEY (Places API New enabled, no referrer restriction).'
+      'No Google Maps API key configured. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY (Places API New enabled on the key).'
     );
   }
   const endpoint = deps?.endpoint ?? PLACES_SEARCH_URL;

@@ -89,7 +89,7 @@ export async function GET() {
     results['summary'] = !directionsOk
       ? '❌ Google Directions unreachable — route geometry fetch will fail'
       : !placesOk
-        ? '❌ Google Places failing — station lookup will fail (check GOOGLE_MAPS_SERVER_API_KEY + Places API New enabled)'
+        ? '❌ Google Places failing — station lookup will fail (check NEXT_PUBLIC_GOOGLE_MAPS_API_KEY + Places API (New) enabled)'
         : !range
           ? '❌ No vehicle / range — set your range on the default vehicle in Settings'
           : '✅ All checks passed — if stops are still missing, trigger a replan';
