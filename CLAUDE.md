@@ -194,6 +194,7 @@ api/directions            api/gpx                 api/gpx/[id]
 api/tasks                 api/tasks/[id]
 api/pois                  api/coords/parse
 api/me                    api/me/preferences
+api/mobile/otp/send       api/mobile/otp/verify
 api/support               api/analytics/viewport-time
 api/analytics/client-error
 api/admin/test-error      api/admin/announcements
@@ -293,6 +294,7 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Units:** User preference (metric/imperial) stored in DB, propagated via `UnitsContext`.
 - **Schema:** Single file at `src/server/db/schema.ts`. Drizzle manages all migrations.
 - **Auth middleware:** Edge-safe cookie check in root `middleware.ts`; real auth via `auth()` in server code.
+- **Mobile auth (2026-07-31, `feature/ios-app`):** the Expo app (`mobile/`) signs in via `POST /api/mobile/otp/send` + `/verify` — the SAME OTP machinery as web (`signInWithOtpCore` in `auth/otp.ts`, extracted from `signInWithOtp`), but the session token is returned in the body instead of a Set-Cookie. The app stores it in the iOS keychain and sends `Authorization: Bearer <token>`; `requireUserId`/`requireUser` (guards.ts) resolve bearer tokens against the same `sessions` table as the cookie path. NOT a parallel auth system, NOT a bypass — no token exists without a completed OTP sign-in. Admin guards deliberately stay cookie-only.
 
 ## Conventions
 
