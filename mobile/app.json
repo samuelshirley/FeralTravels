@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Feral Travels",
+    "slug": "feral-travels",
+    "version": "1.0.0",
+    "scheme": "feraltravels",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.feraltravels.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Feral Travels uses your location to anchor your trip progress and plan fuel stops along your route."
+      }
+    },
+    "android": {
+      "package": "com.feraltravels.app"
+    },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
