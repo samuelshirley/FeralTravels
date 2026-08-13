@@ -13,14 +13,14 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://feraltravels.com"
+        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://feraltravels.com"
+        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com"
       }
     }
   },

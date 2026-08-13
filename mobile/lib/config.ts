@@ -9,5 +9,8 @@
  *   EXPO_PUBLIC_API_URL=http://localhost:3000 npx expo start --ios
  *   (use your Mac's LAN IP instead of localhost on a physical device)
  */
+// NOTE: www is the CANONICAL host — bare feraltravels.com answers with a
+// redirect page ("Redirecting..."), which native fetch handles poorly for
+// POSTs. Always use www here.
 export const API_BASE_URL: string =
-  process.env.EXPO_PUBLIC_API_URL ?? "https://feraltravels.com";
+  process.env.EXPO_PUBLIC_API_URL ?? "https://www.feraltravels.com";
