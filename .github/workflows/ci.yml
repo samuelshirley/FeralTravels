@@ -1,7 +1,9 @@
 # CI — the PR gate. Runs on every push to a pull request targeting main.
 #
 # Flow:
-#   1. unit    — npm ci + vitest (pure logic + React component tests). Fast fail.
+#   1. unit    — vitest `unit` project: 43 pure-logic specs, node env, no jsdom.
+#      ui      — vitest `ui` project: the React component specs under jsdom.
+#                 unit and ui run CONCURRENTLY; both gate the preview.
 #   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
 #                clone of PROD data), run migrations on it, and deploy a Vercel
 #                PREVIEW pointed at it. One preview per PR, refreshed on every
@@ -70,10 +72,13 @@ env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
+  # unit and ui have no `needs`, so they start together and run concurrently.
+  # Splitting them means a red component test doesn't hide behind 43 logic
+  # specs (and vice versa) in a single wall of output.
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -81,12 +86,25 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
-      - run: npm run test
+      - run: npm run test:unit
+
+  ui:
+    name: UI tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:ui
 
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:
     name: Deploy tested preview
-    needs: unit
+    needs: [unit, ui]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:

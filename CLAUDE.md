@@ -74,10 +74,11 @@ npm run ship         # LEGACY, DO NOT USE — bypasses CI + the promote gate
 Deploy pipeline (**pull-request based** since 2026-08-13 — `main` is protected and only moves via PRs):
 
 1. **Open a PR into `main`** → GitHub Actions `CI` workflow (`.github/workflows/ci.yml`), re-run on every push to the PR:
-   - **Unit tests** — vitest (pure logic + React component tests).
+   - **Unit tests** — vitest `unit` project (`npm run test:unit`): the 43 `*.test.ts` logic specs, `node` environment, no jsdom and no setup file.
+   - **UI tests** — vitest `ui` project (`npm run test:ui`): the `*.test.tsx` component specs under jsdom with Testing Library. Runs as its own job **concurrently with Unit tests**; both must pass before the preview deploys. `npm run test` still runs both projects locally.
    - **Deploy tested preview** — creates an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write clone of PROD data, recreated from prod on every push), runs migrations on it, and deploys a Vercel preview pointed at it. The URL lands in a **sticky PR comment** and the run summary. It deploys *before* the tests so a red spec still leaves you a clickable preview (test bug vs app bug). Prod's DB is never touched; the migration run here is also the rehearsal for the prod migration.
    - **E2E tests** — the full Playwright suite against that exact preview URL (`E2E_BASE_URL`; playwright.config skips its local webServer), then `scripts/assert-e2e-ran.mjs` **fails the job if the suite mass-skipped** (MailSlurp quota/outage makes specs skip, not fail — see `e2e/fixtures/auth.ts`). Artifacts upload on failure.
-   These three are the **required checks** in branch protection.
+   These four are the **required checks** in branch protection.
 2. **Merge the PR** → `.github/workflows/promote.yml` fires on push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No manual button. The same workflow is still `workflow_dispatch`-able for re-deploying an older SHA (that's the rollback path).
 3. **PR closes** → `.github/workflows/pr-cleanup.yml` deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
 

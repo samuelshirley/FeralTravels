@@ -20,7 +20,9 @@
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",
     "ship": "bash scripts/ship.sh",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:ui": "vitest run --project ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
