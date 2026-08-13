@@ -16,14 +16,25 @@ export function isAuthError(err: unknown): boolean {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getToken();
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+  const url = `${API_BASE_URL}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    // fetch threw = the request never reached a server (DNS, refused, offline).
+    // Surface WHERE we tried to go — "check your connection" alone hides the
+    // most common dev mistake (wrong/unset EXPO_PUBLIC_API_URL).
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[api] network failure for ${url}: ${detail}`);
+    throw new ApiError(0, `Could not reach ${API_BASE_URL} (${detail})`);
+  }
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
