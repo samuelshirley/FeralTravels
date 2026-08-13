@@ -63,6 +63,10 @@ export default defineConfig({
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],
+    // Machine-readable run stats. CI feeds this to scripts/assert-e2e-ran.mjs,
+    // which fails the build when the suite mass-SKIPPED (MailSlurp quota) —
+    // a green-but-empty run would otherwise auto-ship to production on merge.
+    ['json', { outputFile: 'playwright-results.json' }],
   ],
   timeout: 60_000,
   expect: { timeout: 10_000 },

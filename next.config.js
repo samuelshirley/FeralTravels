@@ -12,6 +12,19 @@ const nextConfig = {
   // deploy on refresh instead of a stale cached version.
   async headers() {
     return [
+      // Preview deployments serve a CLONE OF PRODUCTION DATA on a public URL
+      // (see .github/workflows/ci.yml). They must never be indexed. Only
+      // VERCEL_ENV=production is exempt.
+      ...(process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production'
+        ? [
+            {
+              source: '/:path*',
+              headers: [
+                { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
+              ],
+            },
+          ]
+        : []),
       {
         // All pages — no CDN/browser caching of HTML
         source: '/:path*',

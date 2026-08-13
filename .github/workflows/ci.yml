@@ -1,19 +1,24 @@
-# CI gate — build ONE preview per push, test against it, never touch prod.
+# CI — the PR gate. Runs on every push to a pull request targeting main.
 #
-# Flow (single branch, no staging environment):
-#   1. unit    — npm ci + unit tests (fast fail).
-#   2. preview — refresh the rolling "preview" Neon branch (copy-on-write clone
-#                of prod data), run migrations on it, and deploy a Vercel
-#                PREVIEW pointed at it. This is THE preview: the E2E suite runs
-#                against this exact URL, and the same URL is printed to the run
-#                summary for eyeballing. It deploys BEFORE tests so you always
-#                get a clickable preview even when a spec is red (test bug vs
-#                app bug). The app runs with E2E_TEST_ENDPOINTS on so the
-#                /api/test/* FIXTURE-DATA endpoints work — guarded by a per-run
-#                secret (see below) since the URL is internet-reachable.
-#   3. e2e     — run the full Playwright suite against the preview URL
-#                (E2E_BASE_URL → playwright.config skips its local webServer).
-#                Artifacts (report + traces) upload on failure.
+# Flow:
+#   1. unit    — npm ci + vitest (pure logic + React component tests). Fast fail.
+#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
+#                clone of PROD data), run migrations on it, and deploy a Vercel
+#                PREVIEW pointed at it. One preview per PR, refreshed on every
+#                push, torn down when the PR closes (pr-cleanup.yml). Prod's DB
+#                is never touched. The URL is posted as a sticky PR comment and
+#                to the run summary. It deploys BEFORE the tests intentionally,
+#                so you get a clickable preview even when a spec is red
+#                (test bug vs app bug).
+#   3. e2e     — full Playwright suite against that exact preview URL
+#                (E2E_BASE_URL → playwright.config skips its local webServer),
+#                then assert-e2e-ran.mjs fails the job if the suite mass-SKIPPED
+#                (MailSlurp quota/outage) — otherwise "green" could mean
+#                "tested nothing", which now auto-ships to prod on merge.
+#
+# These three are the checks you make REQUIRED in branch protection. Merging a
+# green PR to main triggers promote.yml, which deploys to production without a
+# human step — so this workflow is the only thing standing in front of prod.
 #
 # There is NO auth bypass anywhere: e2e signs in as fresh MailSlurp users
 # through the real OTP email flow. The /api/test/* endpoints only seed/reset
@@ -23,20 +28,20 @@
 # x-e2e-test-secret header (E2E_TEST_ENDPOINTS_SECRET), the Playwright runner
 # sends it. No extra repo secret to manage; it rotates every run.
 #
-# There is NO auto-promote here. Production is updated only by the manual
-# "Promote to production" workflow (.github/workflows/promote.yml) — which now
-# refuses to promote a commit whose CI run isn't green — and Vercel's own git
-# auto-deploy for main is disabled in vercel.json
-# (git.deploymentEnabled.main = false).
+# NOTE: preview deployments carry a clone of REAL production data on a public
+# URL (Vercel Deployment Protection is off — the Hobby plan can't protect
+# previews without also protecting prod). pr-cleanup.yml deletes the DB branch
+# on PR close to bound the exposure window, and next.config.js sends
+# X-Robots-Tag: noindex on every non-production deployment.
 #
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
 #   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
-#   MAILSLURP_API_KEY               (REQUIRED for a meaningful run: every spec
-#                                    signs in via a real OTP email; without it
-#                                    all authenticated specs skip)
+#   MAILSLURP_API_KEY               (REQUIRED: every spec signs in via a real
+#                                    OTP email; without it everything skips and
+#                                    assert-e2e-ran.mjs fails the run)
 #   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
 #                                    Protection is enabled on the project)
 # App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
@@ -47,12 +52,22 @@
 name: CI
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
+# One CI run per PR: a new push cancels the in-flight run (and its preview
+# build) rather than racing it for the same Neon branch.
 concurrency:
-  group: ci-main
+  group: ci-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
   unit:
@@ -68,7 +83,7 @@ jobs:
       - run: npm ci
       - run: npm run test
 
-  # THE preview — tested by e2e below, clickable by humans from the summary.
+  # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:
     name: Deploy tested preview
     needs: unit
@@ -87,24 +102,27 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Refresh the single rolling "preview" branch: drop the old one (ignore if
-      # absent), then re-create it from prod so the preview shows current data.
-      # E2E seeds its fixture users into this branch over HTTP; prod is untouched.
-      - name: Delete previous preview Neon branch
+      # Recreate this PR's branch from prod on every push: drop the old one
+      # (ignore if absent — first push), then re-create it so the preview shows
+      # CURRENT prod data and none of the previous run's fixture junk. E2E seeds
+      # its users into this branch over HTTP; prod is untouched.
+      - name: Delete previous Neon branch for this PR
         continue-on-error: true
         uses: neondatabase/delete-branch-action@v3
         with:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
           api_key: ${{ secrets.NEON_API_KEY }}
-          branch: preview
-      - name: Create fresh preview Neon branch
+          branch: ${{ env.NEON_BRANCH }}
+      - name: Create fresh Neon branch from prod
         id: neon
         uses: neondatabase/create-branch-action@v5
         with:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
           api_key: ${{ secrets.NEON_API_KEY }}
-          branch_name: preview
-      - name: Apply migrations to the preview branch
+          branch_name: ${{ env.NEON_BRANCH }}
+      # This is also the migration rehearsal: a migration that fails here never
+      # reaches the prod DB, because promote.yml only runs after a green CI.
+      - name: Apply migrations to the PR branch
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: npm run db:migrate
@@ -114,8 +132,8 @@ jobs:
 
       # Deploy as a preview (no --prod). Build-time env (NEXT_PUBLIC_*) comes
       # from the project's preview environment via `vercel pull`; runtime env
-      # is overridden per-deployment: DATABASE_URL → the rolling preview
-      # branch, plus the guarded fixture-data endpoints so E2E seeding works.
+      # is overridden per-deployment: DATABASE_URL → this PR's Neon branch,
+      # plus the guarded fixture-data endpoints so E2E seeding works.
       - name: Deploy preview + print URL
         id: deploy
         env:
@@ -136,6 +154,35 @@ jobs:
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
+
+      # Sticky comment: created once, edited in place on every later push, so
+      # the PR doesn't accumulate one comment per commit.
+      - name: Comment the preview URL on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- feraltravels-preview -->';
+            const body = [
+              marker,
+              '### 🔍 Preview for this PR',
+              '',
+              `**${{ steps.deploy.outputs.url }}**`,
+              '',
+              `Fresh clone of the production database (Neon branch \`${{ env.NEON_BRANCH }}\`), rebuilt on every push and deleted when this PR closes. Nothing you do here touches prod.`,
+              '',
+              `Commit \`${context.payload.pull_request.head.sha.slice(0, 7)}\` · [CI run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.payload.pull_request.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: context.payload.pull_request.number, body,
+              });
+            }
 
   e2e:
     name: E2E tests (against preview)
@@ -177,12 +224,20 @@ jobs:
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Real OTP sign-in for EVERY authenticated spec — a fresh MailSlurp
-          # inbox per test reads the actual emailed code. Specs skip if unset,
-          # so without this key the run is close to a no-op.
+          # inbox per test reads the actual emailed code. Specs skip if unset
+          # or if MailSlurp is rate-limited, which the next step catches.
           MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
           # Only needed if Vercel Deployment Protection is enabled.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e
+
+      # A skipped spec is not a passing spec. MailSlurp quota exhaustion makes
+      # e2e/fixtures/auth.ts skip instead of fail (deliberately — a third-party
+      # outage shouldn't red the pipeline), which would otherwise hand a green
+      # check to a PR that tested nothing and let it auto-ship to prod.
+      - name: Assert the suite actually ran
+        if: always()
+        run: node scripts/assert-e2e-ran.mjs
 
       # Traces/screenshots/videos for red specs — without this the failure
       # context is unrecoverable once the runner is gone.
@@ -193,6 +248,7 @@ jobs:
           name: playwright-artifacts
           path: |
             playwright-report/
+            playwright-results.json
             test-results/
           retention-days: 7
           if-no-files-found: ignore
