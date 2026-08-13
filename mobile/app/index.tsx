@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { getToken } from "@/lib/auth";
+import { theme } from "@/lib/theme";
 
 /**
  * Entry gate: route to /trips when a stored session exists, /sign-in when
@@ -24,7 +25,7 @@ export default function Gate() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Feral Travels</Text>
-      <ActivityIndicator color="#d4a24e" />
+      <ActivityIndicator color={theme.primary} />
     </View>
   );
 }
@@ -35,11 +36,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 16,
-    backgroundColor: "#1a1a1a",
+    backgroundColor: theme.bg,
   },
   title: {
     fontSize: 34,
     fontWeight: "700",
-    color: "#f5f0e8",
+    color: theme.text,
   },
 });

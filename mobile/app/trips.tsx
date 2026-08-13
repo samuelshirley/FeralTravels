@@ -11,6 +11,7 @@ import {
 import { router } from "expo-router";
 import { listTrips, isAuthError, type TripSummary } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
+import { theme } from "@/lib/theme";
 
 export default function Trips() {
   const [trips, setTrips] = useState<TripSummary[] | null>(null);
@@ -50,7 +51,7 @@ export default function Trips() {
   if (trips === null) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color="#d4a24e" size="large" />
+        <ActivityIndicator color={theme.primary} size="large" />
       </View>
     );
   }
@@ -62,7 +63,7 @@ export default function Trips() {
         data={trips}
         keyExtractor={(t) => t.id}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d4a24e" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
         }
         ListEmptyComponent={
           <View style={styles.center}>
@@ -93,14 +94,14 @@ export default function Trips() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1a1a1a",
+    backgroundColor: theme.bg,
   },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: "#1a1a1a",
+    backgroundColor: theme.bg,
   },
   list: {
     padding: 16,
@@ -109,40 +110,47 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   card: {
-    backgroundColor: "#2a2a2a",
-    borderRadius: 12,
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: theme.radiusMd,
     padding: 16,
     marginBottom: 12,
+    shadowColor: theme.text,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
   },
   cardTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#f5f0e8",
+    color: theme.text,
     marginBottom: 4,
   },
   cardMeta: {
     fontSize: 13,
-    color: "#b8b0a4",
+    color: theme.muted,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#f5f0e8",
+    color: theme.text,
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 14,
-    color: "#b8b0a4",
+    lineHeight: 20,
+    color: theme.muted,
     textAlign: "center",
   },
   error: {
-    color: "#e0705a",
+    color: theme.danger,
     fontSize: 14,
     textAlign: "center",
     paddingTop: 12,
   },
   signOut: {
-    color: "#6b6459",
+    color: theme.subtle,
     fontSize: 14,
     textAlign: "center",
     padding: 16,
