@@ -191,16 +191,24 @@ function getSessionCookieName(): string {
 }
 
 /**
- * Full OTP sign-in: verify the code, find-or-create the user, create a
- * database session, and set the session cookie.
+ * Core OTP sign-in: verify the code, find-or-create the user, and create a
+ * database session row. Does NOT touch cookies — the caller decides how the
+ * session token reaches the client:
+ *   - Web (signInWithOtp): sets the Auth.js session cookie.
+ *   - Mobile (/api/mobile/otp/verify): returns the token in the response body;
+ *     the app stores it in secure storage and sends it as a Bearer header,
+ *     which the guards resolve against the SAME sessions table.
  *
  * We bypass Auth.js's `signIn('credentials', ...)` because the Credentials
  * provider does NOT work with `session: { strategy: 'database' }` — it only
  * supports JWT sessions. So we handle the database session ourselves.
  *
- * Returns the userId on success, or null if the code is invalid/expired.
+ * Returns the session on success, or null if the code is invalid/expired.
  */
-export async function signInWithOtp(email: string, code: string): Promise<string | null> {
+export async function signInWithOtpCore(
+  email: string,
+  code: string
+): Promise<{ userId: string; sessionToken: string; expires: Date } | null> {
   const normalized = email.trim().toLowerCase();
   const submitted = code.trim();
   if (!normalized || !submitted) return null;
@@ -248,16 +256,27 @@ export async function signInWithOtp(email: string, code: string): Promise<string
     expires,
   });
 
-  // 4. Set the session cookie so Auth.js picks it up.
+  return { userId, sessionToken, expires };
+}
+
+/**
+ * Full web OTP sign-in: core flow + set the Auth.js session cookie.
+ * Returns the userId on success, or null if the code is invalid/expired.
+ */
+export async function signInWithOtp(email: string, code: string): Promise<string | null> {
+  const result = await signInWithOtpCore(email, code);
+  if (!result) return null;
+
+  // Set the session cookie so Auth.js picks it up.
   const cookieStore = await cookies();
   const secure = useSecureSessionCookies();
-  cookieStore.set(getSessionCookieName(), sessionToken, {
+  cookieStore.set(getSessionCookieName(), result.sessionToken, {
     httpOnly: true,
     secure,
     sameSite: 'lax',
     path: '/',
-    expires,
+    expires: result.expires,
   });
 
-  return userId;
+  return result.userId;
 }

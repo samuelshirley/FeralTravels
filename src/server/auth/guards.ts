@@ -1,7 +1,8 @@
 import 'server-only';
 import { eq } from 'drizzle-orm';
+import { headers } from 'next/headers';
 import { db } from '@/server/db/client';
-import { trips, legs, routes, stops, tasks, gpxTrails } from '@/server/db/schema';
+import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
 
 export class HttpError extends Error {
@@ -36,10 +37,45 @@ export class ConflictError extends HttpError {
   }
 }
 
+/**
+ * Mobile auth: resolve a `Authorization: Bearer <token>` header against the
+ * SAME `sessions` table the Auth.js cookie path uses. The token IS a session
+ * token — minted only by signInWithOtpCore (the real OTP flow), same entropy,
+ * same expiry, revoked by deleting the row. This is NOT a parallel auth
+ * system and NOT a bypass: no token exists without a completed OTP sign-in.
+ *
+ * Deliberately narrow: admin guards do NOT accept bearer tokens (the mobile
+ * app has no admin surface; keep the admin attack surface cookie-only).
+ */
+async function userFromBearerToken(): Promise<{ id: string; email: string | null } | null> {
+  let authz: string | null = null;
+  try {
+    authz = (await headers()).get('authorization');
+  } catch {
+    // headers() unavailable (e.g. called outside a request scope) — no bearer.
+    return null;
+  }
+  if (!authz?.startsWith('Bearer ')) return null;
+  const token = authz.slice('Bearer '.length).trim();
+  if (!token) return null;
+
+  const rows = await db
+    .select({ userId: sessions.userId, expires: sessions.expires, email: users.email })
+    .from(sessions)
+    .innerJoin(users, eq(sessions.userId, users.id))
+    .where(eq(sessions.sessionToken, token))
+    .limit(1);
+  if (rows.length === 0) return null;
+  if (rows[0].expires < new Date()) return null;
+  return { id: rows[0].userId, email: rows[0].email ?? null };
+}
+
 export async function requireUserId(): Promise<string> {
   const session = await auth();
-  if (!session?.user?.id) throw new UnauthorizedError();
-  return session.user.id;
+  if (session?.user?.id) return session.user.id;
+  const bearer = await userFromBearerToken();
+  if (bearer) return bearer.id;
+  throw new UnauthorizedError();
 }
 
 /**
@@ -63,10 +99,17 @@ export async function requireUser(): Promise<{
   isAdmin: boolean;
 }> {
   const session = await auth();
-  if (!session?.user?.id) throw new UnauthorizedError();
-  const email = session.user.email ?? null;
-  const admin = email ? await isAdminEmail(email) : false;
-  return { id: session.user.id, email, isAdmin: admin };
+  if (session?.user?.id) {
+    const email = session.user.email ?? null;
+    const admin = email ? await isAdminEmail(email) : false;
+    return { id: session.user.id, email, isAdmin: admin };
+  }
+  const bearer = await userFromBearerToken();
+  if (bearer) {
+    const admin = bearer.email ? await isAdminEmail(bearer.email) : false;
+    return { id: bearer.id, email: bearer.email, isAdmin: admin };
+  }
+  throw new UnauthorizedError();
 }
 
 // Admin authorization lives in src/server/auth/admin.ts — hardcoded allowlist
