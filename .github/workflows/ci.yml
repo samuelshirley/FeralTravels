@@ -173,33 +173,72 @@ jobs:
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
 
-      # Sticky comment: created once, edited in place on every later push, so
-      # the PR doesn't accumulate one comment per commit.
-      - name: Comment the preview URL on the PR
+      # Publish the preview URL in TWO places, because one of them is never
+      # where you're looking:
+      #
+      #   1. A sticky comment (created once, edited in place on later pushes,
+      #      so the thread doesn't collect one per commit). Editing has a cost
+      #      though — an edited comment keeps its ORIGINAL position in the
+      #      timeline, so after six more commits the link is buried up-thread
+      #      and looks stale even when it isn't.
+      #   2. A pinned block at the TOP OF THE PR DESCRIPTION, which is always
+      #      on screen no matter how long the conversation gets. Only the text
+      #      between our two markers is touched; anything you wrote in the
+      #      description is left alone.
+      - name: Publish the preview URL on the PR
         uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          NEON_BRANCH: ${{ env.NEON_BRANCH }}
         with:
           script: |
+            const pr = context.payload.pull_request;
+            const url = process.env.PREVIEW_URL;
+            const branch = process.env.NEON_BRANCH;
+            const sha = pr.head.sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
             const marker = '<!-- feraltravels-preview -->';
+            const endMarker = '<!-- /feraltravels-preview -->';
+
             const body = [
               marker,
               '### 🔍 Preview for this PR',
               '',
-              `**${{ steps.deploy.outputs.url }}**`,
+              `**${url}**`,
               '',
-              `Fresh clone of the production database (Neon branch \`${{ env.NEON_BRANCH }}\`), rebuilt on every push and deleted when this PR closes. Nothing you do here touches prod.`,
+              `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
-              `Commit \`${context.payload.pull_request.head.sha.slice(0, 7)}\` · [CI run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              `Built from \`${sha}\` · [CI run](${runUrl})`,
+              endMarker,
             ].join('\n');
+
+            // 1. Sticky comment.
             const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo, issue_number: context.payload.pull_request.number, per_page: 100,
+              ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
             if (existing) {
               await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
             } else {
-              await github.rest.issues.createComment({
-                ...context.repo, issue_number: context.payload.pull_request.number, body,
-              });
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
+
+            // 2. Pinned block at the top of the PR description. Replace only
+            // our own marked region; never rewrite the author's prose.
+            const pinned = [
+              marker,
+              `> **🔍 Preview:** ${url}`,
+              `> Built from \`${sha}\` · Neon branch \`${branch}\` · [CI run](${runUrl})`,
+              endMarker,
+            ].join('\n');
+            const current = pr.body || '';
+            const region = new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n*`);
+            const updated = region.test(current)
+              ? current.replace(region, `${pinned}\n\n`)
+              : `${pinned}\n\n${current}`;
+            if (updated !== current) {
+              await github.rest.pulls.update({ ...context.repo, pull_number: pr.number, body: updated });
             }
 
   e2e:
