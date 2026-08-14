@@ -24,6 +24,52 @@ export const MAILSLURP_API_KEY = process.env.MAILSLURP_API_KEY;
 export const SKIP_NO_MAILSLURP =
   'MAILSLURP_API_KEY not set — real-OTP sign-in unavailable, spec skipped';
 
+/**
+ * Turn whatever MailSlurp threw into something a CI log can act on.
+ *
+ * `String(err)` gave us "[object Object]" for eleven straight skipped specs —
+ * mailslurp-client rejects with a response-shaped object, not an Error, so
+ * neither `err.message` nor `String(err)` says anything. The HTTP status is
+ * the whole diagnosis here: 401 means the key is wrong or revoked, 402/403
+ * means the plan or account won't allow it, 429 means rate limited. Without
+ * it you cannot tell "I pasted the key wrong" from "they blocked me again".
+ */
+export async function describeMailSlurpError(err: unknown): Promise<string> {
+  if (!err || typeof err !== 'object') return String(err);
+
+  const e = err as {
+    message?: string;
+    status?: number;
+    statusCode?: number;
+    response?: { status?: number; statusText?: string; text?: () => Promise<string> };
+  };
+  const res = e.response;
+  const status = res?.status ?? e.status ?? e.statusCode;
+
+  let body = '';
+  if (res && typeof res.text === 'function') {
+    // Best-effort: the body may already have been consumed by the client.
+    try {
+      body = (await res.text()).slice(0, 300);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const parts = [
+    status != null ? `HTTP ${status}${res?.statusText ? ` ${res.statusText}` : ''}` : '',
+    e.message ?? '',
+    body,
+  ].filter(Boolean);
+
+  if (parts.length) return parts.join(' — ');
+  try {
+    return JSON.stringify(err).slice(0, 300);
+  } catch {
+    return String(err); // circular
+  }
+}
+
 export interface FreshUser {
   email: string;
   inboxId: string;
@@ -45,10 +91,7 @@ export async function createFreshUser(): Promise<FreshUser> {
     const inbox = await mailslurp().createInbox();
     return { email: inbox.emailAddress, inboxId: inbox.id };
   } catch (err) {
-    test.skip(
-      true,
-      `MailSlurp unavailable — skipping (${err instanceof Error ? err.message : String(err)})`,
-    );
+    test.skip(true, `MailSlurp unavailable — skipping (${await describeMailSlurpError(err)})`);
     throw err; // unreachable (test.skip aborts); satisfies the type checker
   }
 }

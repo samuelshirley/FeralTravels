@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { MailSlurp } from 'mailslurp-client';
+import { describeMailSlurpError } from './fixtures/auth';
 
 /**
  * Real OTP end-to-end via MailSlurp. Creates a disposable inbox, submits its
@@ -31,7 +32,7 @@ test.describe('Email OTP login (MailSlurp)', () => {
     } catch (err) {
       test.skip(
         true,
-        `MailSlurp unavailable — skipping OTP e2e (${err instanceof Error ? err.message : String(err)})`,
+        `MailSlurp unavailable — skipping OTP e2e (${await describeMailSlurpError(err)})`,
       );
       throw err; // unreachable (test.skip aborts the test); satisfies the type checker
     }
