@@ -71,7 +71,7 @@ export async function readOtpCode(
   let lastBody = '';
 
   while (Date.now() < deadline) {
-    const res = await page.request.get(`/api/test/otp?email=${encodeURIComponent(email)}`);
+    const res = await page.request.post('/api/test/otp', { data: { email } });
     lastStatus = res.status();
     if (res.ok()) {
       const body = (await res.json()) as { code?: string | null };
@@ -79,7 +79,8 @@ export async function readOtpCode(
       lastBody = 'code not written yet';
     } else {
       lastBody = await res.text().catch(() => '');
-      // 404 means the endpoint is off — no amount of polling fixes that.
+      // 404 means the endpoint is off, or the secret didn't match — no amount
+      // of polling fixes either.
       if (lastStatus === 404) break;
     }
     await page.waitForTimeout(500);
