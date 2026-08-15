@@ -87,12 +87,14 @@ const reportUrl = process.env.REPORT_URL;
 const artifact = process.env.ARTIFACT_URL;
 
 if (reportUrl) {
-  out.push(`**[🎭 Open the full report](${reportUrl})** — every step, with screenshots, video and traces.`);
-  if (artifact) out.push(`<sub>Also downloadable as a <a href="${artifact}">build artifact</a>.</sub>`);
+  out.push(`## [▶ Open the Playwright report](${reportUrl})`);
+  out.push('');
+  out.push('Every step of every spec, with screenshots, video and the trace viewer. No download.');
+  if (artifact) out.push(`<sub>Also available as a <a href="${artifact}">downloadable artifact</a>.</sub>`);
 } else if (artifact) {
   out.push(
-    `**[⬇︎ Full HTML report](${artifact})** — publishing didn't run, so download, unzip and open` +
-      ' `playwright-report/index.html`.'
+    `**[⬇︎ Download the report](${artifact})** — publishing the hosted version failed (see the` +
+      ' "Publish the HTML report" step). Unzip and open `playwright-report/index.html`.'
   );
 }
 out.push('');

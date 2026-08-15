@@ -310,34 +310,55 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Publish the HTML report so it's one click from the PR — traces,
-      # screenshots, video, assertion-by-assertion.
+      # Publish the Playwright HTML report so it is ONE CLICK from the PR —
+      # the real report: every step, screenshots, video, and the trace viewer.
       #
-      # GitHub Pages can't do this: it needs a paid plan on a private repo.
-      # Vercel can, and the token is already here. It goes to its OWN project
-      # (named after the e2e-report directory, auto-created on first run) —
-      # NOT the app project, whose Next.js framework preset would try to build
-      # a folder of static HTML.
+      # Deployed via the Build Output API (.vercel/output) so Vercel uploads a
+      # FINISHED static site and never tries to detect a framework or run a
+      # build — the app project's Next.js preset would otherwise attempt to
+      # build a folder of static HTML. That also means it needs no project of
+      # its own: it goes to the existing project as an ordinary preview
+      # deployment, so there is nothing to create and nothing to configure.
       #
-      # continue-on-error: publishing is a convenience. If Vercel is having a
-      # day, the run should still report its results, and the comment falls
-      # back to the artifact link.
+      # The previous version shelled out to `vercel deploy <dir> --yes` hoping
+      # it would auto-create a project. It didn't — no such project exists —
+      # and because the failure happened inside $(...) with no exit check, the
+      # step went green while producing no URL. Hence the explicit exit code
+      # check and the unconditional echo of the CLI output below: this can fail
+      # again, but it can no longer fail SILENTLY.
       - name: Publish the HTML report
         id: publish
         if: always()
         continue-on-error: true
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           if [ ! -f playwright-report/index.html ]; then
-            echo "No HTML report to publish (the suite didn't get that far)."
+            echo "::warning::No HTML report to publish — the suite didn't get that far."
             exit 0
           fi
           npm i -g vercel@latest
-          # The Vercel project takes its name from the directory, so copy to a
-          # name that reads well in the dashboard.
-          rm -rf e2e-report && cp -r playwright-report e2e-report
-          URL="$(vercel deploy e2e-report --yes --token="${{ secrets.VERCEL_TOKEN }}" | tail -n1)"
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -R playwright-report/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          set +e
+          OUT="$(vercel deploy --prebuilt --archive=tgz --token="${{ secrets.VERCEL_TOKEN }}" 2>&1)"
+          CODE=$?
+          set -e
+          echo "--- vercel output ---"
+          echo "$OUT"
+          echo "---------------------"
+          if [ "$CODE" -ne 0 ]; then
+            echo "::warning::Publishing the report failed (exit $CODE). The PR comment will link the downloadable artifact instead."
+            exit 0
+          fi
+          URL="$(printf '%s' "$OUT" | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | tail -n1)"
+          if [ -z "$URL" ]; then
+            echo "::warning::Deploy succeeded but no URL was found in the output above."
+            exit 0
+          fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "## 🎭 Playwright report" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
