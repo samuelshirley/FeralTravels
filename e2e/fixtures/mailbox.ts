@@ -129,8 +129,11 @@ export async function waitForOtpCode(
 
           let code = extractOtpCode(msg.envelope?.subject);
           if (!code) {
+            // fetchOne returns `false | FetchMessageObject`, and `?.` does not
+            // narrow away the `false` — check it explicitly.
             const full = await client.fetchOne(String(uid), { source: true }, { uid: true });
-            code = extractOtpCode(msg.envelope?.subject, full?.source?.toString('utf8'));
+            const source = full ? full.source?.toString('utf8') : undefined;
+            code = extractOtpCode(msg.envelope?.subject, source);
           }
           if (!code) continue;
 
