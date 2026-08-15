@@ -92,14 +92,21 @@ export function describeImapError(err: unknown): string {
     message?: string;
     code?: string;
     serverResponseCode?: string;
+    responseStatus?: string;
     responseText?: string;
-    response?: string;
+    response?: unknown;
     authenticationFailed?: boolean;
   };
+  // `response` is a PARSED OBJECT at imap-flow.js:1313 and a STRING at :1553.
+  // Using it blindly reproduces the [object Object] bug this function exists
+  // to kill, so only take it when it's actually a string.
+  const responseText =
+    e.responseText || (typeof e.response === 'string' ? e.response : undefined);
   const bits = [
     e.serverResponseCode,
     e.code,
-    e.responseText || e.response,
+    e.responseStatus ? `response ${e.responseStatus}` : '',
+    responseText,
     e.message,
     e.authenticationFailed ? 'authenticationFailed' : '',
   ].filter(Boolean) as string[];
