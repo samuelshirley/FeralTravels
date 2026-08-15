@@ -294,22 +294,20 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e
 
-      # A skipped spec is not a passing spec. The allowance is 1 and it is
-      # spent on login-otp, which skips only while AUTH_RESEND_KEY /
-      # E2E_INBOX_DOMAIN are missing from the repo secrets.
+      # A skipped spec is not a passing spec, and the allowance is now ZERO:
+      # every spec must run, including login-otp, which proves the app can
+      # actually send a sign-in email. That became possible once AUTH_RESEND_KEY
+      # and E2E_INBOX_DOMAIN landed as repo secrets — if either goes missing,
+      # login-otp skips and this step reds the build, which is the point.
       #
-      # >>> SET IT TO 0 once those two secrets are added. <<<
-      # At 0, every spec must run, including the one that proves the app can
-      # actually send a sign-in email.
-      #
-      # It was briefly raised to 11 while the suite depended on a third-party
-      # inbox that got switched off, and a suite testing nothing shipped green
-      # for two weeks. If you find yourself raising it again, the question is
+      # It was briefly 11 while the suite depended on a third-party inbox that
+      # got switched off, and a suite testing nothing shipped green for two
+      # weeks. If you find yourself raising it, the question to answer first is
       # what the suite has started depending on that it doesn't control.
       - name: Assert the suite actually ran
         if: always()
         env:
-          E2E_MAX_SKIPPED: '1'
+          E2E_MAX_SKIPPED: '0'
         run: node scripts/assert-e2e-ran.mjs
 
       # Always, not just on failure: the report is how you see what the specs
