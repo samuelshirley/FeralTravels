@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import { playwrightName } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -23,10 +23,10 @@ import { seedCanonicalFixture } from './fixtures/test-trip';
  *     network round trip; covered better by a unit test if/when added.
  */
 test.describe('Vehicle CRUD', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('solo vehicle shows reminder without delete button', async ({ page }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     await loginViaOtp(page, user, { redirectTo: '/settings' });
     await expect(page.getByRole('heading', { name: 'Vehicle profile' })).toBeVisible();
@@ -50,7 +50,7 @@ test.describe('Vehicle CRUD', () => {
   });
 
   test('delete API rejects removing the sole vehicle', async ({ page }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     await loginViaOtp(page, user, { redirectTo: '/settings' });
 
@@ -80,7 +80,7 @@ test.describe('Vehicle CRUD', () => {
     // Fresh user per test: no stale playwright-prefixed rows can exist, so
     // "exactly two cards" (seeded van + the one we add) is deterministic —
     // including on CI retries, which get a brand-new user.
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
 
     const vehicleName = playwrightName('Test Van');

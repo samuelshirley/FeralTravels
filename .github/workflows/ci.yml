@@ -41,9 +41,12 @@
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
 #   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
-#   MAILSLURP_API_KEY               (REQUIRED: every spec signs in via a real
-#                                    OTP email; without it everything skips and
-#                                    assert-e2e-ran.mjs fails the run)
+#   E2E_IMAP_USER                   (the test mailbox, e.g. e2e@feraltravels.com)
+#   E2E_IMAP_PASSWORD               (a Google APP PASSWORD for it — never the
+#                                    account password. REQUIRED: every spec
+#                                    signs in via a real OTP email; without
+#                                    these everything skips and the preflight
+#                                    fails the run first)
 #   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
 #                                    Protection is enabled on the project)
 # App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
@@ -254,38 +257,18 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Fail in 5 seconds on a dead credential instead of 2 minutes later as
-      # eleven silent skips. Run #57 through #63 all died here and it took a
-      # skip-reason extractor plus a manual curl to find out why; the answer
-      # was always going to be one HTTP status.
-      #
-      # This is a HARD fail, deliberately. e2e/fixtures/auth.ts skips on a
-      # MailSlurp outage so a third-party wobble doesn't red the pipeline —
-      # but a credential that doesn't resolve to a user isn't a wobble, it's a
-      # misconfiguration, and with auto-promote on merge it must not pass.
-      - name: Preflight — MailSlurp credential
+      # Fail in seconds on a broken mailbox instead of minutes later as eleven
+      # silent skips. This checks the CAPABILITY (log in, open the folder the
+      # suite reads), not just the credential — the MailSlurp preflight this
+      # replaces passed on HTTP 200 from /user/info while inbox creation was
+      # refused for an expired trial, which is precisely the failure it existed
+      # to catch.
+      - name: Preflight — e2e mailbox
         env:
-          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
-        run: |
-          if [ -z "${MAILSLURP_API_KEY:-}" ]; then
-            echo "::error::MAILSLURP_API_KEY is empty. Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-          # Length ONLY, never the value. If this doesn't match what your local
-          # .env has, the paste picked up surrounding quotes or a newline:
-          #   printf %s "$(sed -n 's/^MAILSLURP_API_KEY=//p' .env | tr -d '\"\r' | head -1)" | wc -c
-          echo "Key length: ${#MAILSLURP_API_KEY}"
-          OUT="$(curl -sS -m 20 -w '\n%{http_code}' -H "x-api-key: ${MAILSLURP_API_KEY}" https://api.mailslurp.com/user/info)"
-          CODE="$(printf '%s' "$OUT" | tail -n1)"
-          JSON="$(printf '%s' "$OUT" | sed '$d')"
-          if [ "$CODE" != "200" ]; then
-            echo "::error::MailSlurp rejected this key (HTTP $CODE). 401/'User not found' = the secret is stale or mis-pasted; 402/403 = plan or account; 429 = rate limited. Response: $JSON"
-            exit 1
-          fi
-          # Which account the CI secret actually points at — the thing that was
-          # impossible to see while the secret and .env silently disagreed.
-          echo "MailSlurp OK (HTTP 200):"
-          printf '%s' "$JSON" | tr ',' '\n' | grep -E 'emailAddress|accountState|accountType' || true
+          E2E_IMAP_USER: ${{ secrets.E2E_IMAP_USER }}
+          E2E_IMAP_PASSWORD: ${{ secrets.E2E_IMAP_PASSWORD }}
+          E2E_IMAP_MAILBOX: ${{ vars.E2E_IMAP_MAILBOX }}
+        run: npm run e2e:preflight
 
       - name: Install Playwright browsers
         env:
@@ -313,10 +296,14 @@ jobs:
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Real OTP sign-in for EVERY authenticated spec — a fresh MailSlurp
-          # inbox per test reads the actual emailed code. Specs skip if unset
-          # or if MailSlurp is rate-limited, which the next step catches.
-          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
+          # Real OTP sign-in for EVERY authenticated spec. Each test mints a
+          # unique plus-addressed user (e2e+playwright-<run>-<n>@…) and reads
+          # the actual emailed code out of this mailbox over IMAP. Specs skip
+          # only if these are unset — the preflight above already proved the
+          # mailbox works, so anything else is a real failure.
+          E2E_IMAP_USER: ${{ secrets.E2E_IMAP_USER }}
+          E2E_IMAP_PASSWORD: ${{ secrets.E2E_IMAP_PASSWORD }}
+          E2E_IMAP_MAILBOX: ${{ vars.E2E_IMAP_MAILBOX }}
           # Only needed if Vercel Deployment Protection is enabled.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e

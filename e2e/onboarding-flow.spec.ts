@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import { createOnboardingTrip, seedCanonicalFixture } from './fixtures/test-trip';
 
 /**
@@ -11,10 +11,10 @@ import { createOnboardingTrip, seedCanonicalFixture } from './fixtures/test-trip
  * calls; the seeded fixture gives the user a fuel-ready default van.
  */
 test.describe('Onboarding wizard', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('onboarding never asks for a name, goes intent → units → single vehicle auto-selected', async ({ page }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email); // fuel-ready default van → auto-pick
     const { tripId } = await createOnboardingTrip(user.email, 'Onboarding Flow');
 

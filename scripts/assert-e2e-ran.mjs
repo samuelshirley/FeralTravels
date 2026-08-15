@@ -2,11 +2,11 @@
 /**
  * Fail CI when the E2E suite reported green without actually testing anything.
  *
- * Every authenticated spec signs in through a real OTP email via MailSlurp, and
- * e2e/fixtures/auth.ts deliberately SKIPS (rather than fails) when MailSlurp is
- * unavailable — a third-party outage shouldn't red the pipeline. The cost of
- * that choice is that quota exhaustion produces a run where nearly every spec
- * skipped and Playwright still exits 0.
+ * Every authenticated spec signs in through a real OTP email read from the test
+ * mailbox over IMAP, and the specs SKIP (rather than fail) when the mailbox
+ * isn't configured. That's the right behaviour for a fresh checkout and the
+ * wrong behaviour for CI, where a run in which nearly every spec skipped still
+ * exits 0.
  *
  * That was survivable when promoting to production was a manual button. It is
  * not survivable now that a green PR auto-ships on merge: "green" has to mean
@@ -113,14 +113,14 @@ if (skipped > 0 && skipped <= MAX_SKIPPED) {
 
 if (ran === 0) {
   summary(
-    '::error::Every E2E test skipped — nothing was verified. Almost always MAILSLURP_API_KEY missing, or the MailSlurp free-tier quota exhausted/auto-disabled. Fix that before merging; a green check here would otherwise auto-ship to production.',
+    '::error::Every E2E test skipped — nothing was verified. Almost always E2E_IMAP_USER/E2E_IMAP_PASSWORD missing on the runner. Fix that before merging; a green check here would otherwise auto-ship to production.',
   );
   process.exit(1);
 }
 
 if (skipped > MAX_SKIPPED) {
   summary(
-    `::error::${skipped} E2E tests skipped (max ${MAX_SKIPPED}). Check the MailSlurp quota — mass-skips make CI green while testing nothing. If the skips are intentional, raise E2E_MAX_SKIPPED in .github/workflows/ci.yml.`,
+    `::error::${skipped} E2E tests skipped (max ${MAX_SKIPPED}). Mass-skips make CI green while testing nothing — check the mailbox preflight output above. If the skips are intentional, raise E2E_MAX_SKIPPED in .github/workflows/ci.yml.`,
   );
   process.exit(1);
 }

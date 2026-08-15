@@ -1,5 +1,5 @@
 import { test, expect, type Request } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -26,7 +26,7 @@ function isLazyFuelPost(req: Request): boolean {
 }
 
 test.describe('Lazy fuel sourcing on day-open', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('opening a day fires the lazy fuel POST; loading the trip alone does not', async ({
     page,
@@ -39,7 +39,7 @@ test.describe('Lazy fuel sourcing on day-open', () => {
 
     // Fresh user = freshly seeded legs, so every leg starts at
     // fuel_status='none' and the first day-open must fire the lazy POST.
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     await loginViaOtp(page, user);
     await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible();

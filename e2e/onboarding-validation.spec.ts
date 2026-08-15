@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import {
   cleanupPlaywrightFixtureData,
   createVehicleNewProfileTrip,
@@ -7,10 +7,10 @@ import {
 } from './fixtures/test-trip';
 
 test.describe('Onboarding composer validation', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('rejects fuel spacing below minimum then accepts valid value', async ({ page }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     const { tripId } = await createVehicleNewProfileTrip(user.email, 'Onboarding Validation');
     try {

@@ -1,109 +1,57 @@
 import { test, type Page } from '@playwright/test';
-import { MailSlurp } from 'mailslurp-client';
+import {
+  MAILBOX_CONFIGURED,
+  SKIP_NO_MAILBOX,
+  taggedAddress,
+  waitForOtpCode,
+} from './mailbox';
 
 /**
  * E2E authentication — the REAL sign-in path, no bypass.
  *
- * Every test signs in as a FRESH MailSlurp user: create a disposable inbox,
- * submit its address on /login, wait for the actual OTP email the app sends
- * (via Resend), extract the 6-digit code, and type it on /login/verify.
- * `signInWithOtp` find-or-creates the user, so seeding fixture data for the
- * same email (over `/api/test/seed`) before OR after login both work.
+ * Every test signs in as a FRESH user: mint a unique plus-addressed variant of
+ * the test mailbox, submit it on /login, wait for the actual OTP email the app
+ * sends (via Resend), read the 6-digit code out of it over IMAP, and type it
+ * on /login/verify. `signInWithOtp` find-or-creates the user, so seeding
+ * fixture data for the same email (over `/api/test/seed`) before OR after
+ * login both work.
  *
- * Requirements: `MAILSLURP_API_KEY` (specs skip without it) and a working
- * Resend key on the target app so OTP emails actually send.
+ * Requirements: `E2E_IMAP_USER` + `E2E_IMAP_PASSWORD` (specs skip without
+ * them) and a working Resend key on the target app so OTP emails actually
+ * send. See `mailbox.ts` for the Gmail app-password setup.
  *
- * MailSlurp's free tier can rate-limit or auto-disable inbox creation; when
- * it's unavailable we SKIP rather than fail — a third-party outage shouldn't
- * red the whole pipeline. (Trade-off: a MailSlurp outage means most of the
- * suite skips. Watch the run summary for mass-skips before promoting.)
+ * Unlike the MailSlurp era this SKIPS only when the mailbox isn't configured.
+ * A mailbox that is configured but not working is a genuine failure and reds
+ * the spec — there's no third party left whose outage we're absorbing, and CI
+ * preflights the credentials before the suite runs anyway.
  */
 
-export const MAILSLURP_API_KEY = process.env.MAILSLURP_API_KEY;
-
-export const SKIP_NO_MAILSLURP =
-  'MAILSLURP_API_KEY not set — real-OTP sign-in unavailable, spec skipped';
-
-/**
- * Turn whatever MailSlurp threw into something a CI log can act on.
- *
- * `String(err)` gave us "[object Object]" for eleven straight skipped specs —
- * mailslurp-client rejects with a response-shaped object, not an Error, so
- * neither `err.message` nor `String(err)` says anything. The HTTP status is
- * the whole diagnosis here: 401 means the key is wrong or revoked, 402/403
- * means the plan or account won't allow it, 429 means rate limited. Without
- * it you cannot tell "I pasted the key wrong" from "they blocked me again".
- */
-export async function describeMailSlurpError(err: unknown): Promise<string> {
-  if (!err || typeof err !== 'object') return String(err);
-
-  const e = err as {
-    message?: string;
-    status?: number;
-    statusCode?: number;
-    response?: { status?: number; statusText?: string; text?: () => Promise<string> };
-  };
-  const res = e.response;
-  const status = res?.status ?? e.status ?? e.statusCode;
-
-  let body = '';
-  if (res && typeof res.text === 'function') {
-    // Best-effort: the body may already have been consumed by the client.
-    try {
-      body = (await res.text()).slice(0, 300);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const parts = [
-    status != null ? `HTTP ${status}${res?.statusText ? ` ${res.statusText}` : ''}` : '',
-    e.message ?? '',
-    body,
-  ].filter(Boolean);
-
-  if (parts.length) return parts.join(' — ');
-  try {
-    return JSON.stringify(err).slice(0, 300);
-  } catch {
-    return String(err); // circular
-  }
-}
+export { MAILBOX_CONFIGURED, SKIP_NO_MAILBOX };
 
 export interface FreshUser {
   email: string;
-  inboxId: string;
+  tag: string;
+  /** When this user was minted — bounds the mailbox search. */
+  since: Date;
 }
 
-let client: MailSlurp | null = null;
-function mailslurp(): MailSlurp {
-  if (!MAILSLURP_API_KEY) throw new Error(SKIP_NO_MAILSLURP);
-  if (!client) client = new MailSlurp({ apiKey: MAILSLURP_API_KEY });
-  return client;
-}
+let seq = 0;
 
 /**
- * Create a fresh disposable user (MailSlurp inbox). Call inside a test or
- * beforeEach — on MailSlurp outage it marks the test skipped instead of red.
+ * Mint a fresh user address. No network call, so unlike the old
+ * `createFreshUser()` this can't fail or skip — there is no inbox to
+ * provision, just an address the mailbox already accepts.
  */
-export async function createFreshUser(): Promise<FreshUser> {
-  try {
-    const inbox = await mailslurp().createInbox();
-    return { email: inbox.emailAddress, inboxId: inbox.id };
-  } catch (err) {
-    test.skip(true, `MailSlurp unavailable — skipping (${await describeMailSlurpError(err)})`);
-    throw err; // unreachable (test.skip aborts); satisfies the type checker
-  }
-}
-
-/** Extract the 6-digit code from the OTP email. Subject first ("123456 is
- * your Feral Travels sign-in code") — the HTML body's inline CSS contains
- * numeric hex colors (#333333) that a bare \d{6} matches first, and the
- * displayed code is split "123 456". Falls back to the hidden origin-bound
- * "#<code>" line in the body (WICG one-time-code format). */
-function extractOtpCode(subject: string | undefined, body: string | undefined): string | null {
-  const match = (subject || '').match(/\b(\d{6})\b/) || (body || '').match(/#(\d{6})\b/);
-  return match ? match[1] : null;
+export function createFreshUser(): FreshUser {
+  const runId = process.env.GITHUB_RUN_ID || `local${process.pid}`;
+  const tag = `${runId}-${Date.now().toString(36)}-${seq++}`;
+  return {
+    email: taggedAddress(tag),
+    tag,
+    // Back-date slightly so clock skew between the runner and the mail server
+    // can't put the email just outside the search window.
+    since: new Date(Date.now() - 60_000),
+  };
 }
 
 /**
@@ -113,7 +61,7 @@ function extractOtpCode(subject: string | undefined, body: string | undefined): 
 export async function loginViaOtp(
   page: Page,
   user: FreshUser,
-  opts: { redirectTo?: string } = {},
+  opts: { redirectTo?: string } = {}
 ): Promise<void> {
   const redirectTo = opts.redirectTo || '/trips';
 
@@ -124,9 +72,7 @@ export async function loginViaOtp(
     page.getByRole('button', { name: /email me a code/i }).click(),
   ]);
 
-  const email = await mailslurp().waitForLatestEmail(user.inboxId, 60_000, true);
-  const code = extractOtpCode(email.subject ?? undefined, email.body ?? undefined);
-  if (!code) throw new Error('[e2e/auth] OTP email did not contain a 6-digit code');
+  const code = await waitForOtpCode(user.email, { since: user.since });
 
   const firstDigit = page
     .locator('input[aria-label="Digit 1 of 6"]')
@@ -148,9 +94,14 @@ export async function loginViaOtp(
  */
 export async function loginAsFreshUser(
   page: Page,
-  opts: { redirectTo?: string } = {},
+  opts: { redirectTo?: string } = {}
 ): Promise<FreshUser> {
-  const user = await createFreshUser();
+  const user = createFreshUser();
   await loginViaOtp(page, user, opts);
   return user;
+}
+
+/** Kept so specs can guard consistently. */
+export function skipUnlessMailbox(): void {
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 }

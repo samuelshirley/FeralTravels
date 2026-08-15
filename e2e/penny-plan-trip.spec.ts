@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import { createBlankPlanningTrip, countLegs, seedCanonicalFixture } from './fixtures/test-trip';
 
 const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
@@ -42,7 +42,7 @@ const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
  */
 test.describe('Penny — submit a trip plan', () => {
   test.skip(!ANTHROPIC_CONFIGURED, 'ANTHROPIC_API_KEY not set — skipped (set key to run Penny E2E)');
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   // Anthropic streams can take 30–60s end-to-end on a complex plan; the
   // tool-use loop adds another 10–20s of Google Places lookups. Generous
@@ -61,7 +61,7 @@ test.describe('Penny — submit a trip plan', () => {
     // composer is the first thing visible — we don't want this test to
     // also exercise the onboarding wizard (covered indirectly by the
     // existing-trip + vehicle tests).
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email); // installs the default vehicle the blank trip uses
     const { tripId } = await createBlankPlanningTrip(user.email, 'Penny Submit Test');
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -12,17 +12,17 @@ import { seedCanonicalFixture } from './fixtures/test-trip';
  *   - The itinerary renders the expected number of leg cards (2 days)
  *   - The map mounts and reports it loaded the right number of legs
  *
- * Each test creates a fresh MailSlurp user and seeds its graph over HTTP
+ * Each test mints a fresh plus-addressed user and seeds its graph over HTTP
  * (via /api/test/seed → seedFixture in repos/testSupport.ts), so the
  * assertions pin to literal numbers.
  */
 test.describe('Existing user with seeded trip', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('trip on /trips opens with the default vehicle, legs + map', async ({
     page,
   }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     await loginViaOtp(page, user);
     await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible();
@@ -69,7 +69,7 @@ test.describe('Existing user with seeded trip', () => {
   });
 
   test('leg cards render navigation links to Google Maps', async ({ page }) => {
-    const user = await createFreshUser();
+    const user = createFreshUser();
     await seedCanonicalFixture(user.email);
     await loginViaOtp(page, user);
 

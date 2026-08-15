@@ -1,62 +1,47 @@
 import { test, expect } from '@playwright/test';
-import { MailSlurp } from 'mailslurp-client';
-import { describeMailSlurpError } from './fixtures/auth';
+import { MAILBOX_CONFIGURED, SKIP_NO_MAILBOX, createFreshUser } from './fixtures/auth';
+import { waitForOtpCode } from './fixtures/mailbox';
 
 /**
- * Real OTP end-to-end via MailSlurp. Creates a disposable inbox, submits its
- * address on /login, waits for the ACTUAL OTP email the app sends (via Resend),
- * extracts the 6-digit code, enters it, and lands on /trips.
+ * Real OTP end-to-end. Mints a unique plus-addressed user, submits it on
+ * /login, waits for the ACTUAL email the app sends (via Resend) to arrive in
+ * the test mailbox, reads the 6-digit code over IMAP, enters it, lands on
+ * /trips.
  *
- * This deliberately exercises the real path — generate → email → verify — with
- * no bypass, so a broken OTP flow fails here instead of passing silently.
- * `signInWithOtp` find-or-creates the user, so no pre-seed is needed.
+ * This is the ONE spec that proves the whole email path — generation, Resend
+ * delivery, and the template actually containing a parseable code. The other
+ * specs use the same machinery to sign in, but this one is the reason the
+ * machinery reads real mail rather than shortcutting to the database: a change
+ * to the email template that breaks the code should fail here.
  *
- * Gated on MAILSLURP_API_KEY; auto-skips without it so a fresh checkout passes.
+ * Gated on the mailbox being configured; auto-skips without it so a fresh
+ * checkout passes.
  */
-const MAILSLURP_API_KEY = process.env.MAILSLURP_API_KEY;
-
-test.describe('Email OTP login (MailSlurp)', () => {
-  test.skip(!MAILSLURP_API_KEY, 'MAILSLURP_API_KEY not set — real OTP e2e skipped');
+test.describe('Email OTP login (real mailbox)', () => {
+  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('round-trip: real emailed code → land on /trips', async ({ page }) => {
-    test.setTimeout(90_000);
-    const mailslurp = new MailSlurp({ apiKey: MAILSLURP_API_KEY! });
+    test.setTimeout(120_000);
 
-    // MailSlurp's free tier can auto-disable the account (abuse/spam filter) or
-    // rate-limit inbox creation. When it's unavailable, SKIP rather than fail —
-    // a third-party outage shouldn't red the whole deploy pipeline. This
-    // auto-resumes the moment MailSlurp works again (e.g. account restored).
-    let inbox;
-    try {
-      inbox = await mailslurp.createInbox();
-    } catch (err) {
-      test.skip(
-        true,
-        `MailSlurp unavailable — skipping OTP e2e (${await describeMailSlurpError(err)})`,
-      );
-      throw err; // unreachable (test.skip aborts the test); satisfies the type checker
-    }
+    // No inbox to provision — plus-addressing means the mailbox already
+    // accepts this address. Nothing here can fail or skip.
+    const user = createFreshUser();
 
     await page.goto('/login');
-    await page.locator('input[name="email"]').fill(inbox.emailAddress);
+    await page.locator('input[name="email"]').fill(user.email);
     await Promise.all([
       page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
       page.getByRole('button', { name: /email me a code/i }).click(),
     ]);
     await expect(page.locator('text=/6-digit code/i')).toBeVisible();
 
-    // Wait for the real OTP email, then pull the 6-digit code out of it.
-    // Parse the SUBJECT ("123456 is your Feral Travels sign-in code"), NOT the
-    // HTML body: the body's inline CSS contains numeric hex colors (#333333)
-    // that a bare \d{6} matches first, and the displayed code is split
-    // "123 456" so it never matches at all. Fall back to the hidden
-    // origin-bound "#<code>" line in the body (WICG one-time-code format).
-    const email = await mailslurp.waitForLatestEmail(inbox.id, 60_000, true);
-    const match =
-      (email.subject || '').match(/\b(\d{6})\b/) ||
-      (email.body || '').match(/#(\d{6})\b/);
-    expect(match, 'OTP email did not contain a 6-digit code').not.toBeNull();
-    const code = match![1];
+    // Real delivery, so this is the slow part. waitForOtpCode parses the
+    // SUBJECT ("123456 is your Feral Travels sign-in code") rather than the
+    // HTML body — the body's inline CSS hex colours (#333333) match a bare
+    // \d{6} first, and the displayed code is split "123 456" so it never
+    // matches. See extractOtpCode in fixtures/mailbox.ts.
+    const code = await waitForOtpCode(user.email, { since: user.since });
+    expect(code, 'OTP email did not contain a 6-digit code').toMatch(/^\d{6}$/);
 
     const firstDigit = page
       .locator('input[aria-label="Digit 1 of 6"]')
