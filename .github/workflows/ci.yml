@@ -335,6 +335,39 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # Publish the HTML report so it's one click from the PR — traces,
+      # screenshots, video, assertion-by-assertion.
+      #
+      # GitHub Pages can't do this: it needs a paid plan on a private repo.
+      # Vercel can, and the token is already here. It goes to its OWN project
+      # (named after the e2e-report directory, auto-created on first run) —
+      # NOT the app project, whose Next.js framework preset would try to build
+      # a folder of static HTML.
+      #
+      # continue-on-error: publishing is a convenience. If Vercel is having a
+      # day, the run should still report its results, and the comment falls
+      # back to the artifact link.
+      - name: Publish the HTML report
+        id: publish
+        if: always()
+        continue-on-error: true
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          if [ ! -f playwright-report/index.html ]; then
+            echo "No HTML report to publish (the suite didn't get that far)."
+            exit 0
+          fi
+          npm i -g vercel@latest
+          # The Vercel project takes its name from the directory, so copy to a
+          # name that reads well in the dashboard.
+          rm -rf e2e-report && cp -r playwright-report e2e-report
+          URL="$(vercel deploy e2e-report --yes --token="${{ secrets.VERCEL_TOKEN }}" | tail -n1)"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🎭 Playwright report" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Report: $URL"
+
       # Per-spec results + a link to the report, as a sticky PR comment.
       #
       # The HTML report is a directory, so it can't be inlined, and it is
@@ -346,6 +379,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           ARTIFACT_URL: ${{ steps.report.outputs.artifact-url }}
+          REPORT_URL: ${{ steps.publish.outputs.url }}
         with:
           script: |
             const { execFileSync } = require('node:child_process');
@@ -354,7 +388,11 @@ jobs:
             try {
               table = execFileSync('node', ['scripts/e2e-pr-summary.mjs'], {
                 encoding: 'utf8',
-                env: { ...process.env, ARTIFACT_URL: process.env.ARTIFACT_URL },
+                env: {
+                  ...process.env,
+                  ARTIFACT_URL: process.env.ARTIFACT_URL,
+                  REPORT_URL: process.env.REPORT_URL,
+                },
               });
             } catch (err) {
               table = `### 🎭 E2E results\n\nCould not build the summary: ${err.message}`;

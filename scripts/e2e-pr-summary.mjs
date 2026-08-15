@@ -2,12 +2,17 @@
 /**
  * Turn Playwright's JSON report into a markdown summary for a PR comment.
  *
- * The HTML report is a directory of files, so it can't live in a comment —
- * and it deliberately does NOT get published to a public URL: its screenshots,
- * videos and traces are of a preview backed by a CLONE OF PRODUCTION DATA
- * (real users, real trips, real GPS). It ships as a build artifact, which is
- * behind repo auth. What goes in the comment is the per-spec result table plus
- * the artifact link.
+ * The HTML report is a directory of files, so it can't live in a comment. CI
+ * publishes it to Vercel and this links it — one click to traces, screenshots,
+ * video and every assertion. The artifact stays as a fallback for when
+ * publishing fails.
+ *
+ * NOTE for whoever reads this later: that report URL is PUBLIC and unguessable
+ * only by obscurity, and it renders whatever the app showed during the run —
+ * i.e. the contents of a preview backed by a clone of the production database.
+ * That is fine today because the app's data is Sam's own. If FeralTravels ever
+ * has real users, this link is a data leak and should go back to being an
+ * artifact behind repo auth.
  *
  * Writes markdown to stdout. Reads playwright-results.json (the `json`
  * reporter configured in playwright.config.ts).
@@ -78,17 +83,18 @@ for (const r of ordered) {
 }
 out.push('');
 
+const reportUrl = process.env.REPORT_URL;
 const artifact = process.env.ARTIFACT_URL;
-if (artifact) {
+
+if (reportUrl) {
+  out.push(`**[🎭 Open the full report](${reportUrl})** — every step, with screenshots, video and traces.`);
+  if (artifact) out.push(`<sub>Also downloadable as a <a href="${artifact}">build artifact</a>.</sub>`);
+} else if (artifact) {
   out.push(
-    `**[⬇︎ Full HTML report](${artifact})** — download, unzip, open \`playwright-report/index.html\`` +
-      ' for the trace, screenshots and video of every step of every spec.'
-  );
-  out.push('');
-  out.push(
-    '<sub>Not published to a URL on purpose: the report shows a preview backed by a clone of the' +
-      ' production database, so its screenshots contain real user data. The artifact is behind repo auth.</sub>'
+    `**[⬇︎ Full HTML report](${artifact})** — publishing didn't run, so download, unzip and open` +
+      ' `playwright-report/index.html`.'
   );
 }
+out.push('');
 
 process.stdout.write(out.join('\n') + '\n');
