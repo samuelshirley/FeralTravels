@@ -12,9 +12,11 @@ import {
  *
  *   1. The app really sends: the live Resend API, with the deployment's own
  *      key and from-address, produces a message that lands in a mailbox we
- *      read back over HTTP rather than out of our own database. (What this
- *      cannot prove — that the mail crosses the open internet cleanly — is
- *      documented honestly in fixtures/mailbox.ts.)
+ *      read back over HTTP rather than out of our own database.
+ *   1b. And that the mail is DELIVERABLE, not merely delivered — SES's
+ *      authentication verdicts (spf/dkim/dmarc) come back on the received
+ *      message and are asserted below. See fixtures/mailbox.ts for what that
+ *      does and doesn't cover.
  *   2. The delivered mail actually contains the code, in both parts: the
  *      subject line the phone shows on the lock screen, and a body a human
  *      could read it out of.
@@ -61,6 +63,19 @@ test.describe('Email OTP login — real delivery', () => {
     const message = await waitForMessage(email, { timeoutMs: 90_000 });
 
     expect(message.to, 'delivered to the address we typed').toContain(email);
+
+    // Deliverability, not just delivery. Resend sends via Amazon SES and
+    // receives on SES inbound, so the message arrives stamped with SES's own
+    // verdicts. These are what actually break in production — a DNS edit that
+    // drops the SPF include, a DKIM key rotated without updating the record —
+    // and they break SILENTLY: authentication failures get filed as spam
+    // rather than bounced, so the first signal is a user who can't sign in.
+    // If Resend ever stops surfacing this header, relax these three lines
+    // deliberately; don't let them rot into a check of nothing.
+    const auth = message.headers['authentication-results'] ?? '';
+    expect(auth, 'no authentication-results header on the received message').not.toBe('');
+    expect(auth, `SPF did not pass — ${auth}`).toContain('spf=pass');
+    expect(auth, `DMARC did not pass — ${auth}`).toContain('dmarc=pass');
 
     // The subject is what shows on a lock screen, so the code has to be in it.
     // It is also where the spec takes the code FROM: the HTML body renders it

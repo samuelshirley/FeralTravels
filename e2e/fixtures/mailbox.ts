@@ -15,16 +15,26 @@
  * at all, and a custom subdomain needs one MX record. Inbound messages count
  * against the same quota as outbound — this spec spends 2 of 3,000/month.
  *
- * WHAT THIS DOES NOT PROVE (be honest about it): mail sent from Resend to an
- * address Resend also receives may never leave their network, so a pass here
- * is not evidence that SPF, DKIM and DMARC line up for Gmail or iCloud. What
- * it DOES prove — that the send path executes against the live API with the
- * deployment's real key and from-address, that the template renders a code a
- * human can read, and that the code works — is the great majority of what
- * actually breaks. An inbox on independent MX (Mailosaur et al.) would close
- * the last gap; it costs ~$20/month and this is a side project, so it doesn't.
- * If sign-in mail ever starts landing in spam, that is the gap, and that is
- * when to revisit it.
+ * WHAT THIS PROVES — more than expected, and verified against the live API
+ * before this was written (2026-08-15). The worry was that mail Resend both
+ * sends and receives might never leave their network, making a pass here
+ * worthless as evidence about real deliverability. It doesn't work that way:
+ * Resend sends via Amazon SES and receives on SES inbound, so the message
+ * makes a real SMTP hop and arrives carrying SES's own verdict headers. A
+ * probe came back with `spf=pass`, `dkim=pass header.i=@feraltravels.com` and
+ * `dmarc=pass header.from=feraltravels.com`, plus a full Received chain.
+ *
+ * The spec asserts those verdicts, which turns this from a smoke test into a
+ * genuine deliverability check: if the sending domain's SPF include is dropped
+ * or a DKIM key is rotated without updating DNS, this goes red — BEFORE users
+ * find out by having sign-in mail filed as spam. That failure mode is silent
+ * in production (authentication failures get filtered, not bounced), so an
+ * early warning is worth a lot.
+ *
+ * The residual gap is narrow: passing here is not proof that a specific
+ * consumer mailbox accepts the mail, since Gmail and iCloud also weigh sender
+ * reputation, which no test can assert. It IS proof that the mail is properly
+ * authenticated and well-formed, which is the part we control.
  *
  * WHY NO SDK: `resend` is already a dependency, but its receiving helpers are
  * newer than the pinned v4 and the whole integration is two documented GET
@@ -74,6 +84,19 @@ export interface DeliveredMessage {
   html: string;
   text: string;
   to: string[];
+  /** Lower-cased header names → values. Carries SES's spf/dkim/dmarc verdicts. */
+  headers: Record<string, string>;
+}
+
+/** Header names arrive lower-cased today; normalize so a lookup can't miss. */
+function normalizeHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+      k.toLowerCase(),
+      typeof v === 'string' ? v : String(v ?? ''),
+    ]),
+  );
 }
 
 /** Recipients come back as strings or objects depending on the endpoint; flatten both. */
@@ -143,6 +166,7 @@ export async function waitForMessage(
         html: String(full.html ?? ''),
         text: String(full.text ?? ''),
         to: normalizeTo(full.to ?? hit.to),
+        headers: normalizeHeaders(full.headers),
       };
     }
     await new Promise((r) => setTimeout(r, pollMs));
