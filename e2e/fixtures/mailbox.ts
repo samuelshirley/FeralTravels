@@ -27,7 +27,13 @@ import { ImapFlow } from 'imapflow';
  */
 
 export const IMAP_USER = process.env.E2E_IMAP_USER?.trim();
-export const IMAP_PASSWORD = process.env.E2E_IMAP_PASSWORD?.trim();
+/**
+ * ALL whitespace stripped, not just trimmed. Google displays app passwords as
+ * four spaced groups ("abcd efgh ijkl mnop") and the natural thing to do is
+ * paste exactly that — which Gmail then rejects. A real app password is 16
+ * characters with no spaces, so stripping them can only help.
+ */
+export const IMAP_PASSWORD = process.env.E2E_IMAP_PASSWORD?.replace(/\s+/g, '');
 export const IMAP_HOST = process.env.E2E_IMAP_HOST?.trim() || 'imap.gmail.com';
 export const IMAP_PORT = Number(process.env.E2E_IMAP_PORT) || 993;
 export const IMAP_MAILBOX = process.env.E2E_IMAP_MAILBOX?.trim() || 'INBOX';
@@ -70,13 +76,52 @@ function connect(): ImapFlow {
   });
 }
 
+/**
+ * Say what the IMAP server actually objected to.
+ *
+ * imapflow rejects with `message: "Command failed"` — true and useless. The
+ * detail lives on other properties: `serverResponseCode` ('AUTHENTICATIONFAILED',
+ * 'NONEXISTENT', 'ALERT'), `responseText` (the server's own words, which for
+ * Gmail includes a support URL), and `authenticationFailed`. This is the same
+ * mistake the MailSlurp code made with `[object Object]` — a thrown value
+ * stringified without looking at what it carries.
+ */
+export function describeImapError(err: unknown): string {
+  if (!err || typeof err !== 'object') return String(err);
+  const e = err as {
+    message?: string;
+    code?: string;
+    serverResponseCode?: string;
+    responseText?: string;
+    response?: string;
+    authenticationFailed?: boolean;
+  };
+  const bits = [
+    e.serverResponseCode,
+    e.code,
+    e.responseText || e.response,
+    e.message,
+    e.authenticationFailed ? 'authenticationFailed' : '',
+  ].filter(Boolean) as string[];
+  return bits.length ? [...new Set(bits)].join(' — ') : String(err);
+}
+
+/** Character count only — never the value. 16 is a Google app password. */
+export function passwordShape(): string {
+  const raw = process.env.E2E_IMAP_PASSWORD ?? '';
+  const stripped = IMAP_PASSWORD ?? '';
+  return `${stripped.length} chars` + (raw.length !== stripped.length ? ` (${raw.length - stripped.length} whitespace char(s) stripped)` : '');
+}
+
 /** Verify the credentials work at all. Used by the CI preflight. */
 export async function verifyMailboxAccess(): Promise<{ mailbox: string; exists: number }> {
   const client = connect();
-  await client.connect();
   try {
+    await client.connect();
     const box = await client.mailboxOpen(IMAP_MAILBOX, { readOnly: true });
     return { mailbox: IMAP_MAILBOX, exists: box.exists };
+  } catch (err) {
+    throw new Error(describeImapError(err));
   } finally {
     await client.logout().catch(() => {});
   }
@@ -146,7 +191,7 @@ export async function waitForOtpCode(
         lock.release();
       }
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      lastError = describeImapError(err);
     } finally {
       await client.logout().catch(() => {});
     }

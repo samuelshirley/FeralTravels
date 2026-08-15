@@ -12,6 +12,7 @@
  */
 import {
   verifyMailboxAccess,
+  passwordShape,
   IMAP_USER,
   IMAP_HOST,
   IMAP_MAILBOX,
@@ -26,6 +27,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Shape, never the value. A Google app password is 16 characters; anything
+  // else is the diagnosis before we even connect.
+  console.log(`E2E_IMAP_USER: ${IMAP_USER}`);
+  console.log(`E2E_IMAP_PASSWORD: ${passwordShape()}`);
+
   try {
     const { mailbox, exists } = await verifyMailboxAccess();
     console.log(`Mailbox OK — ${IMAP_USER} @ ${IMAP_HOST}, folder "${mailbox}" (${exists} messages)`);
@@ -34,8 +40,18 @@ async function main(): Promise<void> {
     console.error(
       `::error::Cannot reach the e2e mailbox (${IMAP_USER} @ ${IMAP_HOST}, folder "${IMAP_MAILBOX}"): ${msg}`
     );
+    console.error('Most likely causes, in order:');
     console.error(
-      'AUTHENTICATIONFAILED usually means E2E_IMAP_PASSWORD is the account password rather than an app password, or 2-Step Verification is off so app passwords are unavailable. NONEXISTENT means the folder name is wrong — try E2E_IMAP_MAILBOX="[Gmail]/All Mail".'
+      '  1. E2E_IMAP_PASSWORD is the ACCOUNT password, not an app password. Google Account → Security → 2-Step Verification → App passwords.'
+    );
+    console.error(
+      '  2. IMAP is off for this mailbox. Gmail → Settings → Forwarding and POP/IMAP → Enable IMAP. For Workspace also check Admin console → Apps → Google Workspace → Gmail → End User Access → IMAP.'
+    );
+    console.error(
+      '  3. Workspace policy blocks app passwords (2-Step Verification not enforced, or "Less secure app access" locked down by the admin).'
+    );
+    console.error(
+      '  4. NONEXISTENT means the folder is wrong, not the credentials — set the E2E_IMAP_MAILBOX repo variable to "[Gmail]/All Mail".'
     );
     process.exit(1);
   }
