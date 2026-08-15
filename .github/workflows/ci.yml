@@ -254,6 +254,39 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Fail in 5 seconds on a dead credential instead of 2 minutes later as
+      # eleven silent skips. Run #57 through #63 all died here and it took a
+      # skip-reason extractor plus a manual curl to find out why; the answer
+      # was always going to be one HTTP status.
+      #
+      # This is a HARD fail, deliberately. e2e/fixtures/auth.ts skips on a
+      # MailSlurp outage so a third-party wobble doesn't red the pipeline —
+      # but a credential that doesn't resolve to a user isn't a wobble, it's a
+      # misconfiguration, and with auto-promote on merge it must not pass.
+      - name: Preflight — MailSlurp credential
+        env:
+          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
+        run: |
+          if [ -z "${MAILSLURP_API_KEY:-}" ]; then
+            echo "::error::MAILSLURP_API_KEY is empty. Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # Length ONLY, never the value. If this doesn't match what your local
+          # .env has, the paste picked up surrounding quotes or a newline:
+          #   printf %s "$(sed -n 's/^MAILSLURP_API_KEY=//p' .env | tr -d '\"\r' | head -1)" | wc -c
+          echo "Key length: ${#MAILSLURP_API_KEY}"
+          OUT="$(curl -sS -m 20 -w '\n%{http_code}' -H "x-api-key: ${MAILSLURP_API_KEY}" https://api.mailslurp.com/user/info)"
+          CODE="$(printf '%s' "$OUT" | tail -n1)"
+          JSON="$(printf '%s' "$OUT" | sed '$d')"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::MailSlurp rejected this key (HTTP $CODE). 401/'User not found' = the secret is stale or mis-pasted; 402/403 = plan or account; 429 = rate limited. Response: $JSON"
+            exit 1
+          fi
+          # Which account the CI secret actually points at — the thing that was
+          # impossible to see while the secret and .env silently disagreed.
+          echo "MailSlurp OK (HTTP 200):"
+          printf '%s' "$JSON" | tr ',' '\n' | grep -E 'emailAddress|accountState|accountType' || true
+
       - name: Install Playwright browsers
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
