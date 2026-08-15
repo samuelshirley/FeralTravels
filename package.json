@@ -21,8 +21,7 @@
     "e2e:report": "playwright show-report",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
-    "test:ui": "vitest run --project ui",
-    "e2e:preflight": "tsx scripts/preflight-mailbox.ts"
+    "test:ui": "vitest run --project ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
@@ -56,7 +55,6 @@
     "better-sqlite3": "^11.0.0",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.28.1",
-    "imapflow": "^1.7.1",
     "jsdom": "^29.1.1",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",

@@ -15,15 +15,17 @@
 #   3. e2e     — full Playwright suite against that exact preview URL
 #                (E2E_BASE_URL → playwright.config skips its local webServer),
 #                then assert-e2e-ran.mjs fails the job if the suite mass-SKIPPED
-#                (MailSlurp quota/outage) — otherwise "green" could mean
+#                (no mail path, misconfigured endpoint) — otherwise "green"
+#                could mean
 #                "tested nothing", which now auto-ships to prod on merge.
 #
 # These three are the checks you make REQUIRED in branch protection. Merging a
 # green PR to main triggers promote.yml, which deploys to production without a
 # human step — so this workflow is the only thing standing in front of prod.
 #
-# There is NO auth bypass anywhere: e2e signs in as fresh MailSlurp users
-# through the real OTP email flow. The /api/test/* endpoints only seed/reset
+# There is NO auth bypass anywhere: e2e signs in as fresh fixture users through
+# the real OTP flow, reading the code the app generated from the guarded
+# /api/test/otp endpoint — nothing is minted, nothing is granted. The /api/test/* endpoints only seed/reset
 # fixture DATA, are hard-off on VERCEL_ENV=production, and on the public
 # preview URL additionally require a per-run secret: both jobs derive the same
 # HMAC(AUTH_SECRET, run id) — the preview app requires it in the
@@ -41,12 +43,6 @@
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
 #   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
-#   E2E_IMAP_USER                   (the test mailbox, e.g. e2e@feraltravels.com)
-#   E2E_IMAP_PASSWORD               (a Google APP PASSWORD for it — never the
-#                                    account password. REQUIRED: every spec
-#                                    signs in via a real OTP email; without
-#                                    these everything skips and the preflight
-#                                    fails the run first)
 #   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
 #                                    Protection is enabled on the project)
 # App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
@@ -257,19 +253,6 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Fail in seconds on a broken mailbox instead of minutes later as eleven
-      # silent skips. This checks the CAPABILITY (log in, open the folder the
-      # suite reads), not just the credential — the MailSlurp preflight this
-      # replaces passed on HTTP 200 from /user/info while inbox creation was
-      # refused for an expired trial, which is precisely the failure it existed
-      # to catch.
-      - name: Preflight — e2e mailbox
-        env:
-          E2E_IMAP_USER: ${{ secrets.E2E_IMAP_USER }}
-          E2E_IMAP_PASSWORD: ${{ secrets.E2E_IMAP_PASSWORD }}
-          E2E_IMAP_MAILBOX: ${{ vars.E2E_IMAP_MAILBOX }}
-        run: npm run e2e:preflight
-
       - name: Install Playwright browsers
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
@@ -296,26 +279,18 @@ jobs:
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Real OTP sign-in for EVERY authenticated spec. Each test mints a
-          # unique plus-addressed user (e2e+playwright-<run>-<n>@…) and reads
-          # the actual emailed code out of this mailbox over IMAP. Specs skip
-          # only if these are unset — the preflight above already proved the
-          # mailbox works, so anything else is a real failure.
-          E2E_IMAP_USER: ${{ secrets.E2E_IMAP_USER }}
-          E2E_IMAP_PASSWORD: ${{ secrets.E2E_IMAP_PASSWORD }}
-          E2E_IMAP_MAILBOX: ${{ vars.E2E_IMAP_MAILBOX }}
           # Only needed if Vercel Deployment Protection is enabled.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e
 
-      # A skipped spec is not a passing spec. MailSlurp quota exhaustion makes
-      # e2e/fixtures/auth.ts skip instead of fail (deliberately — a third-party
-      # outage shouldn't red the pipeline), which would otherwise hand a green
-      # check to a PR that tested nothing and let it auto-ship to prod.
-      # Allowance is 1: exactly one spec may legitimately skip. It was briefly
-      # raised to 11 on 2026-08-13 while MailSlurp had the account blocked —
-      # if you ever find yourself raising it again, the question to ask is why
-      # the suite depends on something that can be switched off from outside.
+      # A skipped spec is not a passing spec. Exactly ONE spec is expected to
+      # skip — login-otp, which needs an inbound mail path that doesn't exist
+      # yet. A second skip means the suite is quietly covering less, and CI
+      # should go red rather than auto-ship on it.
+      # Allowance is 1: login-otp, and nothing else. It was briefly raised to
+      # 11 while the suite depended on a third-party inbox that got switched
+      # off. If you find yourself raising it again, the question is what the
+      # suite has started depending on that it doesn't control.
       - name: Assert the suite actually ran
         if: always()
         run: node scripts/assert-e2e-ran.mjs

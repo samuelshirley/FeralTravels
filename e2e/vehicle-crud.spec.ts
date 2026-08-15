@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
+import { createFreshUser, loginViaOtp } from './fixtures/auth';
 import { playwrightName } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -23,7 +23,6 @@ import { seedCanonicalFixture } from './fixtures/test-trip';
  *     network round trip; covered better by a unit test if/when added.
  */
 test.describe('Vehicle CRUD', () => {
-  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('solo vehicle shows reminder without delete button', async ({ page }) => {
     const user = createFreshUser();

@@ -1,5 +1,5 @@
 import { test, expect, type Request } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
+import { createFreshUser, loginViaOtp } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -26,7 +26,6 @@ function isLazyFuelPost(req: Request): boolean {
 }
 
 test.describe('Lazy fuel sourcing on day-open', () => {
-  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('opening a day fires the lazy fuel POST; loading the trip alone does not', async ({
     page,

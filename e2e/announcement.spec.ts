@@ -1,5 +1,5 @@
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
+import { createFreshUser, loginViaOtp } from './fixtures/auth';
 import { testEndpointHeaders } from './fixtures/constants';
 
 /**
@@ -30,7 +30,6 @@ async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T
 }
 
 test.describe('Announcement popup', () => {
-  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   const ANNOUNCEMENT_TITLE = 'E2E Test Announcement';
   const ANNOUNCEMENT_BODY = 'This is a test announcement for E2E.';

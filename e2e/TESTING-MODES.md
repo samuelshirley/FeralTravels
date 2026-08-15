@@ -4,9 +4,9 @@ There is ONE identity model and two data patterns. Locally the suite runs
 against your dev database via the Playwright webServer; in CI it runs against
 the tested Vercel preview on the rolling `preview` Neon branch (never prod).
 
-## 1. Identity: a fresh MailSlurp user per test (real OTP sign-in)
+## 1. Identity: a fresh fixture user per test (real OTP sign-in)
 
-**What it is:** every authenticated test creates a disposable MailSlurp inbox
+**What it is:** every authenticated test mints a unique fixture address
 and signs in through the REAL login flow — submit the address on `/login`,
 read the actual OTP email the app sends via Resend, type the code on
 `/login/verify`. There is **no auth bypass**: no session-minting endpoint, no
@@ -15,9 +15,10 @@ unit level).
 
 **How:** [`createFreshUser()`](fixtures/auth.ts) → inbox;
 [`loginViaOtp(page, user, { redirectTo })`](fixtures/auth.ts) → the UI dance.
-Needs `MAILSLURP_API_KEY` (specs skip without it) and a working Resend key on
-the target app. MailSlurp outage → tests skip rather than fail (third-party
-uptime shouldn't red the pipeline — but watch for mass-skips before promoting).
+Needs nothing external: the code is read from the guarded `/api/test/otp`
+endpoint, which is 404 unless `E2E_TEST_ENDPOINTS=1` (never on production) and
+refuses any address outside the `playwright-*@e2e.feraltravels.com` pattern.
+(uptime shouldn't red the pipeline — but watch for mass-skips before promoting).
 
 **Why per-test:** total isolation. No cross-spec state, no shared account
 races, deterministic counts ("exactly two vehicle cards") even on CI retries.

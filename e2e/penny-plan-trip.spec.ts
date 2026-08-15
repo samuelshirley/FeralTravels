@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
+import { createFreshUser, loginViaOtp } from './fixtures/auth';
 import { createBlankPlanningTrip, countLegs, seedCanonicalFixture } from './fixtures/test-trip';
 
 const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
@@ -42,7 +42,6 @@ const ANTHROPIC_CONFIGURED = !!process.env.ANTHROPIC_API_KEY?.trim();
  */
 test.describe('Penny — submit a trip plan', () => {
   test.skip(!ANTHROPIC_CONFIGURED, 'ANTHROPIC_API_KEY not set — skipped (set key to run Penny E2E)');
-  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   // Anthropic streams can take 30–60s end-to-end on a complex plan; the
   // tool-use loop adds another 10–20s of Google Places lookups. Generous

@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { areTestEndpointsEnabled, isTestRequestAuthorized } from './test-endpoints';
+import { areTestEndpointsEnabled, isTestRequestAuthorized, isFixtureEmail, isFixtureRecipient } from './test-endpoints';
 
 function req(headers: Record<string, string> = {}): Request {
   return new Request('http://localhost/api/test/seed', { method: 'POST', headers });
@@ -66,5 +66,46 @@ describe('isTestRequestAuthorized', () => {
     expect(isTestRequestAuthorized(req(), env)).toBe(false);
     expect(isTestRequestAuthorized(req({ 'x-e2e-test-secret': 'wrong' }), env)).toBe(false);
     expect(isTestRequestAuthorized(req({ 'x-e2e-test-secret': 'per-run' }), env)).toBe(true);
+  });
+});
+
+describe('isFixtureEmail', () => {
+  it('accepts only the playwright-* @e2e subdomain shape', () => {
+    expect(isFixtureEmail('playwright-abc123-0@e2e.feraltravels.com')).toBe(true);
+    expect(isFixtureEmail('PLAYWRIGHT-ABC@E2E.FERALTRAVELS.COM')).toBe(true);
+  });
+
+  it('refuses real accounts, near-misses and lookalike domains', () => {
+    for (const email of [
+      'sam@feraltravels.com',
+      'playwright-abc@feraltravels.com', // right prefix, WRONG (real) domain
+      'someone@e2e.feraltravels.com', // right domain, wrong prefix
+      'playwright-abc@e2e.feraltravels.com.evil.tld',
+      'playwright-abc@e2eXferaltravels.com', // the dot must be a dot
+      'a@b.c',
+      '',
+    ]) {
+      expect(isFixtureEmail(email), email).toBe(false);
+    }
+  });
+});
+
+describe('isFixtureRecipient', () => {
+  it('needs BOTH the fixture shape and test endpoints enabled', () => {
+    const on = { E2E_TEST_ENDPOINTS: '1' };
+    expect(isFixtureRecipient('playwright-a@e2e.feraltravels.com', on)).toBe(true);
+    expect(isFixtureRecipient('sam@feraltravels.com', on)).toBe(false);
+    expect(isFixtureRecipient('playwright-a@e2e.feraltravels.com', {})).toBe(false);
+  });
+
+  it('is ALWAYS false on Vercel production, even for fixture addresses', () => {
+    // The invariant that keeps a fixture-shaped address from ever suppressing
+    // a real send, or being readable, on production.
+    for (const env of [
+      { VERCEL_ENV: 'production', E2E_TEST_ENDPOINTS: '1' },
+      { VERCEL_ENV: 'production', E2E_TEST_ENDPOINTS: '1', E2E_TEST_ENDPOINTS_SECRET: 'x' },
+    ]) {
+      expect(isFixtureRecipient('playwright-a@e2e.feraltravels.com', env)).toBe(false);
+    }
   });
 });

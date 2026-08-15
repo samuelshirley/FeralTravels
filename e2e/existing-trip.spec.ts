@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILBOX_CONFIGURED, SKIP_NO_MAILBOX } from './fixtures/auth';
+import { createFreshUser, loginViaOtp } from './fixtures/auth';
 import { FIXTURE_TRIP_NAME, FIXTURE_VEHICLE_NAME } from './fixtures/constants';
 import { seedCanonicalFixture } from './fixtures/test-trip';
 
@@ -17,7 +17,6 @@ import { seedCanonicalFixture } from './fixtures/test-trip';
  * assertions pin to literal numbers.
  */
 test.describe('Existing user with seeded trip', () => {
-  test.skip(!MAILBOX_CONFIGURED, SKIP_NO_MAILBOX);
 
   test('trip on /trips opens with the default vehicle, legs + map', async ({
     page,
