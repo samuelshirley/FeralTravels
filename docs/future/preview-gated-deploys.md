@@ -1,6 +1,6 @@
 # Preview-Gated Deploys (CI-orchestrated)
 
-**Status:** SUPERSEDED — built 2026-07-02 as `.github/workflows/deploy.yml` + `promote.yml`; see CLAUDE.md "Workflow (current)". Kept for design history only. NOTE: every `AUTH_TEST_BACKDOOR*` reference below is obsolete — the auth backdoor was fully removed 2026-07-02 (e2e signs in via real OTP + MailSlurp; `/api/test/*` are fixture-data-only behind `E2E_TEST_ENDPOINTS`, hard-off in production).
+**Status:** SUPERSEDED — built 2026-07-02, then rebuilt PR-based 2026-08-13 as `.github/workflows/ci.yml` + `promote.yml` + `pr-cleanup.yml`; see CLAUDE.md "Workflow (current)". Kept for design history only. NOTE: every `AUTH_TEST_BACKDOOR*` reference below is obsolete — the auth backdoor was fully removed 2026-07-02. E2E now signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`; `/api/test/*` are behind `E2E_TEST_ENDPOINTS`, hard-off in production. `scripts/ship.sh` is deleted.
 
 **Last updated:** 2026-05-25 (superseded note added 2026-07-02).
 

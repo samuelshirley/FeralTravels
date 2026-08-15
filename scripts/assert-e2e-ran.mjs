@@ -113,7 +113,7 @@ if (skipped > 0 && skipped <= MAX_SKIPPED) {
 
 if (ran === 0) {
   summary(
-    '::error::Every E2E test skipped — nothing was verified. Almost always E2E_IMAP_USER/E2E_IMAP_PASSWORD missing on the runner. Fix that before merging; a green check here would otherwise auto-ship to production.',
+    '::error::Every E2E test skipped — nothing was verified. Almost always E2E_TEST_ENDPOINTS=1 missing on the target, or the x-e2e-test-secret header not matching. Fix that before merging; a green check here would otherwise auto-ship to production.',
   );
   process.exit(1);
 }

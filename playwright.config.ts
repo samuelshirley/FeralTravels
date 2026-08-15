@@ -39,7 +39,7 @@ import path from 'node:path';
  * for Anthropic streaming. Use `npm run e2e:smoke` for the fast path (no Penny).
  */
 
-// Read .env so DATABASE_URL, MAILSLURP_API_KEY, E2E_TEST_ENDPOINTS_*, etc. are
+// Read .env so DATABASE_URL, E2E_TEST_ENDPOINTS_*, etc. are
 // available to test code without exporting them in the shell. dotenv is
 // already a devDep for the migrate scripts.
 import 'dotenv/config';
@@ -64,7 +64,7 @@ export default defineConfig({
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],
     // Machine-readable run stats. CI feeds this to scripts/assert-e2e-ran.mjs,
-    // which fails the build when the suite mass-SKIPPED (MailSlurp quota) —
+    // which fails the build when the suite mass-SKIPPED —
     // a green-but-empty run would otherwise auto-ship to production on merge.
     ['json', { outputFile: 'playwright-results.json' }],
   ],
@@ -143,7 +143,7 @@ export default defineConfig({
             ...process.env,
             // The /api/test/* FIXTURE endpoints must be ON for the suite
             // (seed/reset/cleanup of test data — there is no auth bypass;
-            // sign-in goes through the real OTP email via MailSlurp). Set
+            // sign-in goes through the real OTP flow). Set
             // here (not in .env) so a developer's `npm run dev` doesn't
             // unexpectedly expose them — only tests turn them on.
             E2E_TEST_ENDPOINTS: '1',
