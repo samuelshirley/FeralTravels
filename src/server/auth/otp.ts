@@ -134,9 +134,11 @@ export async function sendOtpCode(email: string): Promise<string> {
   // wrecked — the same shape of problem as the disposable-inbox account that
   // got shut off. It also keeps CI off the 100-emails/day free-tier ceiling.
   //
-  // COVERAGE NOTE: this means the suite no longer proves Resend delivers.
-  // e2e/login-otp.spec.ts is the spec that covers that, and it is SKIPPED
-  // until there's a real inbound mail path. Don't let that stay true forever.
+  // COVERAGE NOTE: this means the eleven signed-in specs do not prove Resend
+  // delivers. e2e/login-otp.spec.ts does, on every PR. Its address lives on a
+  // Resend RECEIVING domain (E2E_INBOX_DOMAIN), which is NOT a fixture
+  // address — so it falls straight through to the real send below, and the
+  // code has to come back out of a mailbox before that spec can pass.
   if (isFixtureRecipient(normalized)) {
     // Still render, so a broken email template is a broken test rather than a
     // surprise in production.

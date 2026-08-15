@@ -2,11 +2,10 @@
 /**
  * Fail CI when the E2E suite reported green without actually testing anything.
  *
- * Every authenticated spec signs in through a real OTP email read from the test
- * mailbox over IMAP, and the specs SKIP (rather than fail) when the mailbox
- * isn't configured. That's the right behaviour for a fresh checkout and the
- * wrong behaviour for CI, where a run in which nearly every spec skipped still
- * exits 0.
+ * Specs SKIP (rather than fail) when something they need isn't configured — a
+ * real mailbox for login-otp, an Anthropic key for the Penny spec. That's the
+ * right behaviour for a fresh checkout and the wrong behaviour for CI, where a
+ * run in which nearly every spec skipped still exits 0.
  *
  * That was survivable when promoting to production was a manual button. It is
  * not survivable now that a green PR auto-ships on merge: "green" has to mean

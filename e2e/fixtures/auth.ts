@@ -26,11 +26,14 @@ import { type Page } from '@playwright/test';
  * is still gone and `src/lib/noBackdoorGuard.test.ts` still fails the build if
  * it returns.
  *
- * WHAT IS NO LONGER COVERED: that Resend actually delivers, and that the email
- * template contains a parseable code. e2e/login-otp.spec.ts is that test and
- * it SKIPS until there's a real inbound mail path. E2E_MAX_SKIPPED=1 exists to
- * tolerate exactly that one — if a second spec starts skipping, CI goes red
- * rather than quietly covering less.
+ * WHAT THIS PATH DOES NOT COVER: that Resend actually delivers, and that the
+ * email template contains a code a human can read. e2e/login-otp.spec.ts
+ * covers exactly that, on every PR, through a real mailbox on a Resend
+ * receiving domain (fixtures/mailbox.ts). The split is the point: eleven specs
+ * that need a signed-in user take the cheap path, and one spec does real mail
+ * — so a mail problem reds ONE spec instead of switching the pipeline off,
+ * which is what happened in August. E2E_MAX_SKIPPED is the backstop against a
+ * spec quietly ceasing to run; drop it to 0 once E2E_INBOX_DOMAIN is set.
  */
 
 /** Addresses live on a subdomain with no MX: they can never receive mail. */
