@@ -347,3 +347,18 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Changed the stack (new dependency, swapped service)** → update the Stack section
 
 Don't wait until the end — update CLAUDE.md as part of the same commit as the structural change.
+
+## Playwright MCP — use it FIRST
+
+`.mcp.json` in the repo root registers the Playwright MCP server. When working on
+anything Playwright — writing a spec, changing a locator, or diagnosing a failing
+test — drive a real browser through the flow with that MCP **before** theorising
+about the cause or writing a diagnostic script.
+
+Reproduce first, then explain. Reading a CI log and reasoning about what the page
+"must" be doing is how three days went into a mail-provider migration for what was
+actually a React hydration crash, visible in the browser console in ten seconds.
+
+Point it at the deployed preview (the URL is pinned at the top of the PR), not a
+local dev server — the bugs that matter here only appear on a cold production
+build.
