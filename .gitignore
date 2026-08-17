@@ -39,3 +39,6 @@ playwright/.cache/
 
 # Quarantined dead files (bridge cannot unlink; safe to delete)
 _graveyard/
+
+# Playwright saved auth state (per-run, never commit)
+playwright/.auth/
