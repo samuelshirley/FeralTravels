@@ -130,10 +130,28 @@ export async function loginViaOtp(
  * almost instantly so the race never showed; a cold preview is slow enough to
  * lose every time.
  *
- * The fix does not depend on that diagnosis being exactly right, which is the
- * point: `fill()` is idempotent (it clears the box first) so the whole entry
- * can simply be RETRIED until the value sticks. A box that holds its value is
- * direct proof React is listening — no sleep, no hydration heuristic.
+ * WHY THE FIRST FIX DIDN'T TAKE (2026-08-17): it retried the entry and asserted
+ * `box(5)` held its value, reasoning that "a box that holds its value is direct
+ * proof React is listening". It is not. A pre-hydration DOM write satisfies that
+ * assertion identically, because nothing has overwritten the value yet — and
+ * box 5 is the box that ALWAYS survives, since by the fifth fill React is live.
+ * The guard could never fail on the thing it was guarding against.
+ *
+ * The error-context snapshots from CI run 32012644704 show what actually
+ * happens: digit 1 EMPTY, digits 2-6 filled, Verify disabled, no error banner.
+ * Only the FIRST fill lands pre-hydration. It goes into the DOM, hydration then
+ * re-renders the controlled input from empty state and wipes it, `codeComplete`
+ * never flips, and the form is never submitted.
+ *
+ * So gate on a signal only React can produce, then verify every box we filled.
+ * verify-form.tsx focuses box 1 from a mount effect, and an effect cannot run
+ * before hydration — that is real proof of interactivity. A value assertion on
+ * a controlled input never is.
+ *
+ * NOTE (2026-08-17): this race was latent long before it fired. The MailSlurp
+ * era awaited real email delivery between landing on /login/verify and the
+ * first keystroke — an accidental sleep that guaranteed hydration had finished.
+ * /api/test/otp returns in milliseconds, which removed the sleep, not the bug.
  *
  * Only the first five are retried. Six digits triggers the form's auto-submit
  * (the `codeComplete` effect in verify-form.tsx), which navigates away and
@@ -147,10 +165,14 @@ export async function submitOtpCode(
 ): Promise<void> {
   const box = (n: number) => page.locator(`input[aria-label="Digit ${n} of 6"]`);
   await expect(box(1)).toBeVisible({ timeout: 15_000 });
+  // The mount effect that focuses box 1 cannot run before React has hydrated,
+  // so this is the hydration gate. Do not weaken it to a value assertion.
+  await expect(box(1)).toBeFocused({ timeout: 30_000 });
 
   await expect(async () => {
     for (let i = 1; i <= 5; i++) await box(i).fill(code[i - 1]);
-    await expect(box(5)).toHaveValue(code[4]);
+    // Every box we filled, not just the last: box 1 is the one that gets wiped.
+    for (let i = 1; i <= 5; i++) await expect(box(i)).toHaveValue(code[i - 1]);
   }).toPass({ timeout: 30_000, intervals: [250, 500, 1000, 2000] });
 
   await Promise.all([
