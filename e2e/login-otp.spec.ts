@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { submitOtpCode } from './fixtures/auth';
 import {
   MAILBOX_CONFIGURED,
   SKIP_NO_MAILBOX,
@@ -98,17 +99,9 @@ test.describe('Email OTP login — real delivery', () => {
     ).toContain(displayed);
 
     // --- 3. Sign in with the code that arrived by mail ---------------------
-    const firstDigit = page
-      .locator('input[aria-label="Digit 1 of 6"]')
-      .or(page.locator('input[autocomplete="one-time-code"]'))
-      .first();
-    await firstDigit.click();
-    // Six single-char boxes that auto-advance on keystroke — fill() would dump
-    // all six digits into box 1 (→ InvalidCode). Type real keystrokes instead.
-    await Promise.all([
-      page.waitForURL(/\/trips(\?|$)/, { timeout: 30_000 }),
-      page.keyboard.type(code),
-    ]);
+    // Shared with the cheap path on purpose: entering the code is the same UI
+    // dance either way, and the hydration race it works around bit both.
+    await submitOtpCode(page, code, /\/trips(\?|$)/);
 
     await expect(page).toHaveURL(/\/trips/);
     await expect(page.locator('h1')).toHaveText(/Trips/i);

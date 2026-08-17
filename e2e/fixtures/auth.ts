@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /**
  * E2E authentication — the real sign-in flow, minus the mailbox.
@@ -113,17 +113,49 @@ export async function loginViaOtp(
 
   const code = await readOtpCode(page, user.email);
 
-  const firstDigit = page
-    .locator('input[aria-label="Digit 1 of 6"]')
-    .or(page.locator('input[autocomplete="one-time-code"]'))
-    .first();
-  await firstDigit.click();
-  // Six single-char boxes that auto-advance on keystroke — fill() would dump
-  // all six digits into box 1 (→ InvalidCode). Type real keystrokes instead.
   const target = redirectTo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await submitOtpCode(page, code, new RegExp(`${target}(\\?|$)`));
+}
+
+/**
+ * Enter the six digits and wait to land on `landingUrl`.
+ *
+ * WHY THIS IS NOT JUST `keyboard.type(code)` (2026-08-15): it was, and every
+ * authenticated spec failed against the Vercel preview while passing locally.
+ * The failure snapshots showed all six boxes EMPTY after 30s with no error
+ * banner — the form had never been submitted, because the keystrokes were
+ * delivered before React hydrated. Characters typed into a server-rendered
+ * input that nothing is listening to are discarded the moment hydration
+ * replaces the value with controlled state. Locally the app is interactive
+ * almost instantly so the race never showed; a cold preview is slow enough to
+ * lose every time.
+ *
+ * The fix does not depend on that diagnosis being exactly right, which is the
+ * point: `fill()` is idempotent (it clears the box first) so the whole entry
+ * can simply be RETRIED until the value sticks. A box that holds its value is
+ * direct proof React is listening — no sleep, no hydration heuristic.
+ *
+ * Only the first five are retried. Six digits triggers the form's auto-submit
+ * (the `codeComplete` effect in verify-form.tsx), which navigates away and
+ * would make a retry race a page that no longer exists. So five prove the form
+ * is live, then the sixth fires the submit.
+ */
+export async function submitOtpCode(
+  page: Page,
+  code: string,
+  landingUrl: RegExp
+): Promise<void> {
+  const box = (n: number) => page.locator(`input[aria-label="Digit ${n} of 6"]`);
+  await expect(box(1)).toBeVisible({ timeout: 15_000 });
+
+  await expect(async () => {
+    for (let i = 1; i <= 5; i++) await box(i).fill(code[i - 1]);
+    await expect(box(5)).toHaveValue(code[4]);
+  }).toPass({ timeout: 30_000, intervals: [250, 500, 1000, 2000] });
+
   await Promise.all([
-    page.waitForURL(new RegExp(`${target}(\\?|$)`), { timeout: 30_000 }),
-    page.keyboard.type(code),
+    page.waitForURL(landingUrl, { timeout: 30_000 }),
+    box(6).fill(code[5]),
   ]);
 }
 
