@@ -143,10 +143,20 @@ export async function loginViaOtp(
  * re-renders the controlled input from empty state and wipes it, `codeComplete`
  * never flips, and the form is never submitted.
  *
- * So gate on a signal only React can produce, then verify every box we filled.
- * verify-form.tsx focuses box 1 from a mount effect, and an effect cannot run
- * before hydration — that is real proof of interactivity. A value assertion on
- * a controlled input never is.
+ * WHY THERE IS NO HYDRATION GATE (2026-08-17): a `toBeFocused` gate on box 1
+ * was tried and removed the same day. verify-form.tsx does focus box 1 from a
+ * mount effect, but on the preview that focus never holds — 34 polls over 30s
+ * across 11 specs, never once focused, on a page a human can use normally.
+ * Whatever the reason (the leading suspect is React discarding and re-creating
+ * the form subtree after a hydration mismatch, which would drop focus AND wipe
+ * digit 1 while leaving React live — matching both failure runs exactly), a
+ * gate that never opens short-circuits the retry below, which is the part that
+ * actually works.
+ *
+ * The retry needs no theory. Whatever wipes a box, refilling until every box
+ * holds its value survives it. Assert ALL five, not just the last: box 5 always
+ * survives, box 1 is the one that gets wiped, and checking only box 5 is what
+ * let this through twice.
  *
  * NOTE (2026-08-17): this race was latent long before it fired. The MailSlurp
  * era awaited real email delivery between landing on /login/verify and the
@@ -165,9 +175,6 @@ export async function submitOtpCode(
 ): Promise<void> {
   const box = (n: number) => page.locator(`input[aria-label="Digit ${n} of 6"]`);
   await expect(box(1)).toBeVisible({ timeout: 15_000 });
-  // The mount effect that focuses box 1 cannot run before React has hydrated,
-  // so this is the hydration gate. Do not weaken it to a value assertion.
-  await expect(box(1)).toBeFocused({ timeout: 30_000 });
 
   await expect(async () => {
     for (let i = 1; i <= 5; i++) await box(i).fill(code[i - 1]);
