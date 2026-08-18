@@ -38,3 +38,4 @@ playwright/.cache/
 
 # Quarantined dead files (bridge cannot unlink; safe to delete)
 _graveyard/
+playwright-results.json
