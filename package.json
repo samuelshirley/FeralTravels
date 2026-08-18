@@ -19,8 +19,9 @@
     "e2e:headed": "playwright test --headed",
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",
-    "ship": "bash scripts/ship.sh",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:ui": "vitest run --project ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
@@ -55,7 +56,6 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.28.1",
     "jsdom": "^29.1.1",
-    "mailslurp-client": "^17.2.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.6"

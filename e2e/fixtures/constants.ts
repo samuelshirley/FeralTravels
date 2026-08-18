@@ -1,9 +1,9 @@
 /**
  * Single source of truth for E2E identifiers, prefixes, and timeouts.
  *
- * Identity model: every test signs in as a FRESH MailSlurp user through the
- * real OTP email flow (see fixtures/auth.ts) — there is no auth bypass and no
- * shared fixture account. Fixture DATA (vehicle + trip + legs) is created for
+ * Identity model: every test signs in as a FRESH user through the real OTP
+ * flow (see fixtures/auth.ts), reading the code from the guarded
+ * /api/test/otp endpoint — there is no auth bypass and no shared account. Fixture DATA (vehicle + trip + legs) is created for
  * that fresh user over HTTP via the app's guarded `/api/test/*` endpoints
  * (see test-trip.ts and the seed helpers) — no direct database access.
  *
@@ -38,7 +38,7 @@ export function playwrightName(label: string): string {
 /**
  * Headers every `/api/test/*` fixture call must carry. When
  * `E2E_TEST_ENDPOINTS_SECRET` is set on the target app (CI generates a random
- * one per run for the tested Vercel preview — see .github/workflows/deploy.yml),
+ * one per run for the tested Vercel preview — see .github/workflows/ci.yml),
  * the endpoints require it echoed in `x-e2e-test-secret`; without the env this
  * is empty and local runs behave as before. Also carries the Vercel
  * deployment-protection bypass header when VERCEL_AUTOMATION_BYPASS_SECRET is set.

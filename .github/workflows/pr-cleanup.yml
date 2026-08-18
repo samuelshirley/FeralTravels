@@ -1,0 +1,36 @@
+# Tear down a PR's ephemeral environment when the PR closes (merged or not).
+#
+# Each PR gets a Neon branch `preview/pr-<N>` that is a copy-on-write clone of
+# the PRODUCTION database — real users, real trips, real GPS positions — served
+# from a Vercel preview URL that is publicly reachable (Deployment Protection
+# is off; the Hobby plan can't protect previews without also protecting prod).
+#
+# Deleting the branch here does two things: it bounds how long that data sits
+# behind a guessable URL, and it keeps the project under Neon's branch limit.
+# Once the branch is gone the preview URL still resolves but can't reach a DB,
+# which is the intended end state.
+
+name: PR cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  delete-neon-branch:
+    name: Delete the PR's Neon branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # continue-on-error: a PR closed before CI ever ran has no branch to
+      # delete, and that shouldn't show up as a failed run.
+      - name: Delete preview/pr-${{ github.event.pull_request.number }}
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: preview/pr-${{ github.event.pull_request.number }}

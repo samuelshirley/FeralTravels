@@ -3,7 +3,7 @@
  * or the local webServer) to be reachable — robust whether the preview is
  * still warming or the local webServer hasn't finished booting.
  *
- * No seeding happens here: every spec creates its own fresh MailSlurp user
+ * No seeding happens here: every spec creates its own fresh fixture user
  * and seeds that user's fixture graph via `seedCanonicalFixture()`
  * (e2e/fixtures/test-trip.ts). There is no shared fixture account.
  */

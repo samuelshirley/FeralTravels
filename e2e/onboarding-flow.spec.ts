@@ -1,53 +1,36 @@
 import { test, expect } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { uniqueEmail, login } from './fixtures/auth';
 import { createOnboardingTrip, seedCanonicalFixture } from './fixtures/test-trip';
 
 /**
- * Exercises the pre-Penny onboarding wizard:
- *   trip_intent → trip_date → units_pick → (vehicle auto-pick when only one
- *   fuel-complete vehicle) → done.
- * There is no trip-naming step anymore (Penny names the trip from its route),
- * so the wizard must never ask for a name — this test guards that. No LLM
- * calls; the seeded fixture gives the user a fuel-ready default van.
+ * The onboarding wizard: intent -> start date -> units. The vehicle step is
+ * skipped automatically because the seeded user has exactly one fuel-ready van.
+ *
+ * There is no trip-naming step (Penny names the trip from its route) and this
+ * test guards that it never comes back.
  */
 test.describe('Onboarding wizard', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
-
-  test('onboarding never asks for a name, goes intent → units → single vehicle auto-selected', async ({ page }) => {
-    const user = await createFreshUser();
-    await seedCanonicalFixture(user.email); // fuel-ready default van → auto-pick
-    const { tripId } = await createOnboardingTrip(user.email, 'Onboarding Flow');
-
-    await loginViaOtp(page, user, { redirectTo: `/trips/${tripId}` });
-
-    // Step 1: trip_intent — Penny's greeting with the trip intent textarea
-    await expect(
-      page.getByText(/Tell me where you want to go/),
-    ).toBeVisible({ timeout: 20_000 });
+  test('asks for the trip, the date and units — and never for a name', async ({ page }) => {
+    const email = uniqueEmail();
+    await seedCanonicalFixture(email);
+    const { tripId } = await createOnboardingTrip(email, 'Onboarding Flow');
+    await login(page, email, `/trips/${tripId}`);
 
     const composer = page.getByTestId('trip-chat-composer');
+
+    await expect(page.getByText(/Tell me where you want to go/)).toBeVisible({ timeout: 30_000 });
     await composer.fill('Road trip from Girona to Berlin');
     await composer.press('Enter');
 
-    // The naming step has been removed entirely — Penny must NOT ask
-    // "What would you like to name this trip?".
-    await expect(
-      page.getByText(/What would you like to name this trip/),
-    ).toHaveCount(0);
+    await expect(page.getByText(/What would you like to name this trip/)).toHaveCount(0);
 
-    // Step 2: trip_date — forced start-date entry (must parse to a real day).
-    await expect(
-      page.getByText(/When are you setting off/),
-    ).toBeVisible({ timeout: 15_000 });
-
+    await expect(page.getByText(/When are you setting off/)).toBeVisible({ timeout: 20_000 });
     await composer.fill('June 3 2026');
     await composer.press('Enter');
 
-    // Step 3: units_pick — metric or imperial
     await expect(
       page.getByText('Do you want distances in metric (kilometers) or imperial (miles)?'),
-    ).toBeVisible({ timeout: 15_000 });
-
+    ).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: 'Metric (km)' }).click();
   });
 });

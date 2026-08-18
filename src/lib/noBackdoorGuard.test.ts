@@ -2,7 +2,8 @@
  * Architectural guardrail: there is NO auth backdoor. Anywhere. Ever.
  *
  * Auth happens exactly two ways: Google OAuth, or the real emailed OTP code
- * (E2E reads the email via MailSlurp). The `/api/test/*` endpoints may only
+ * (E2E reads the code for its OWN fixture address from `/api/test/otp`, which
+ * mints nothing). The `/api/test/*` endpoints may only
  * manipulate fixture DATA — they must never mint a session, set an auth
  * cookie, or bypass sign-in.
  *
@@ -27,7 +28,7 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
   },
   {
     pattern: /createTestSession/,
-    description: 'test session minting — E2E signs in via the real OTP flow (MailSlurp)',
+    description: 'test session minting — E2E signs in via the real OTP flow',
   },
 ];
 
@@ -100,7 +101,7 @@ describe('No auth backdoor exists anywhere in src/', () => {
             `  Pattern: ${description}\n` +
             `  Match: "${match[0]}"\n\n` +
             `  There is no auth backdoor in this app. E2E authenticates through the\n` +
-            `  real OTP email flow (MailSlurp) and fixture endpoints only touch data.`,
+            `  real OTP flow and fixture endpoints only touch data.`,
         );
       });
     }
