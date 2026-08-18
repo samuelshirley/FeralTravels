@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 import { signInWithOtpCore } from '@/server/auth/otp';
 import { errorResponse, UnauthorizedError } from '@/server/auth/guards';
 
@@ -33,6 +33,11 @@ export async function POST(req: Request) {
       user: { id: result.userId, email: body.email },
     });
   } catch (err) {
+    // Zod validation failures are client errors. errorResponse only knows
+    // HttpError, so an unmapped ZodError would surface as a 500.
+    if (err instanceof ZodError) {
+      return Response.json({ error: 'Enter a valid email address and 6-digit code.' }, { status: 400 });
+    }
     return errorResponse(err);
   }
 }

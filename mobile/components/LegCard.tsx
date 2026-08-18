@@ -1,0 +1,551 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import type { LegWithDetails } from "@/shared/types/trip";
+import { tripApi } from "@/lib/api";
+import {
+  buildLegDirectionsUrl,
+  buildSegmentedNavUrls,
+  legDirectionsWaypoints,
+} from "@/shared/lib/maps";
+import { useNextStop } from "@/shared/lib/useNextStop";
+import StopsSection from "@/components/StopsSection";
+import { Distance, Spinner, StatusBadge } from "@/components/ui";
+import { theme } from "@/lib/theme";
+import { emitPennyPrefill } from "@/lib/pennyPrefill";
+import { font } from "@/lib/typography";
+
+/**
+ * How long a leg's sourced fuel stops stay fresh before the day-open loader
+ * re-checks them. The web imports this from src/lib/fuelCache.ts, which is not
+ * part of the shared mirror (it also carries server-side cache plumbing), so the
+ * window is restated here. Keep the two in sync — a shorter window here just
+ * means extra cache-hit round trips, not extra Places calls.
+ */
+const FUEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Format a stop type slug into a readable label for nav buttons. */
+function formatStopType(stopType?: string): string {
+  switch (stopType) {
+    case "fuel":
+      return "Fuel";
+    case "destination":
+      return "Destination";
+    case "other":
+      return "Stop";
+    default:
+      return "Stop";
+  }
+}
+
+/** Build "Route to {Type} — {Name}" label for nav buttons. */
+function navButtonLabel(seg: { label: string; stopType?: string }): string {
+  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+}
+
+interface LegCardProps {
+  tripId: string;
+  leg: LegWithDetails;
+  expanded: boolean;
+  onToggle: () => void;
+  onChanged?: () => void;
+  readonly?: boolean;
+  /**
+   * Computed date string for this leg, e.g. "Wed 28 May" (metric) or
+   * "Wed May 28" (imperial). Null when the trip has no confirmed start date
+   * — falls back to leg.label or "Day N".
+   */
+  dateLabel?: string | null;
+  /**
+   * True while a fuel replan is in flight for the trip. The nav buttons compose
+   * their waypoints from the trip's stops, so during a replan the URLs are
+   * briefly stale (waypoints from the previous plan). We render a loading
+   * affordance so the user knows the links will update shortly.
+   */
+  isFuelSyncing?: boolean;
+  /** Total number of legs in the trip — used in the syncing copy. */
+  fuelSyncTotalLegs?: number;
+  /** Stop id to briefly highlight after a map marker tap landed here. */
+  highlightStopId?: string | null;
+  /**
+   * True when this leg sits in the collapsed "Behind you" section — a day the
+   * driver has already passed (before the progress/calendar cutoff). NOTE: this
+   * is cutoff membership, NOT simply date_iso < today — the *current* leg can
+   * carry a stale past date after a progress re-anchor yet must still plan fuel.
+   * Past days are read-history: we do NOT lazily source fuel for them on open
+   * and we suppress the "Planning fuel stops…" spinner, so opening an old day
+   * is instant and quiet.
+   */
+  isPast?: boolean;
+  /** True when this leg is the one currently selected on the map. */
+  selected?: boolean;
+}
+
+/** Native port of src/components/LegCard.tsx. */
+export default function LegCard({
+  tripId,
+  leg,
+  expanded,
+  onToggle,
+  onChanged,
+  readonly = false,
+  dateLabel,
+  isFuelSyncing = false,
+  fuelSyncTotalLegs,
+  highlightStopId = null,
+  isPast = false,
+  selected = false,
+}: LegCardProps) {
+  const api = useMemo(() => tripApi(tripId), [tripId]);
+  const isRestDay = leg.leg_type === "rest";
+  const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
+  const totalCost = leg.costs.find((c) => c.is_total);
+  const itemCosts = leg.costs.filter((c) => !c.is_total);
+
+  const selectedRoute = leg.routes.find((r) => r.status === "selected") ?? null;
+  const legCoords = {
+    start_lat: leg.start_lat,
+    start_lng: leg.start_lng,
+    end_lat: leg.end_lat,
+    end_lng: leg.end_lng,
+  };
+  const navWaypointCount = legDirectionsWaypoints(leg.stops).length;
+  const navSegments = buildSegmentedNavUrls({
+    legCoords,
+    endName: leg.end_name,
+    selectedRoute,
+    stops: leg.stops,
+  });
+  // Fallback single URL for the syncing state (doesn't need segments)
+  const directionsUrl = buildLegDirectionsUrl({ legCoords, selectedRoute, stops: leg.stops });
+
+  // GPS-aware "next stop" — only computed when the card is expanded.
+  const legStart =
+    leg.start_lat != null && leg.start_lng != null
+      ? { lat: leg.start_lat, lng: leg.start_lng }
+      : null;
+  const { nextStop, allSegments, isNearRoute, gpsStatus } = useNextStop(
+    navSegments,
+    legStart,
+    expanded
+  );
+  // Show the smart single button when GPS is active and user is near the route.
+  const showSmartNav = gpsStatus === "active" && isNearRoute && nextStop != null;
+
+  // ── Lazy fuel sourcing on day-open ──────────────────────────────────────
+  // Fuel stops are sourced when the user OPENS a day (no eager trip-wide
+  // planning — that was the Google Places cost sink). When this card expands,
+  // we POST to the leg's lazy fuel endpoint, which is cache-aware: a leg
+  // sourced within FUEL_CACHE_TTL_MS is a server-side cache hit (zero Places
+  // calls); a never-sourced or stale leg runs the real search. We mirror that
+  // freshness check here so we don't even round-trip on a fresh cache.
+  const [fuelLoading, setFuelLoading] = useState(false);
+  const fuelFetchSigRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Never source fuel for a past day — that drive is already behind the
+    // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
+    if (readonly || isRestDay || !expanded || isPast) return;
+    const updatedAt = leg.fuel_stops_updated_at;
+    const fresh = updatedAt ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS : false;
+    const terminalSuccess =
+      leg.fuel_status === "ready" || leg.fuel_status === "no_stations_found";
+    // Source lazily when never sourced ('none'), a terminal-success cache that
+    // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
+    // station/route calls are cheap and cache-guarded, so a retry self-heals
+    // legs stranded on a stale/transient error. We still skip
+    // 'computing'/'pending' (a search is already in flight); the
+    // signature guard below stops duplicate fires within a render session.
+    const needsFetch =
+      leg.fuel_status === "none" ||
+      leg.fuel_status === "failed" ||
+      (terminalSuccess && !fresh);
+    if (!needsFetch) return;
+
+    // Guard against duplicate fires: the effect re-runs on every trip reload.
+    // The signature folds in the fuel state, so once a fetch lands new data the
+    // guard naturally allows a future genuinely-new state through.
+    const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? "none"}`;
+    if (fuelFetchSigRef.current === sig) return;
+    fuelFetchSigRef.current = sig;
+
+    let cancelled = false;
+    setFuelLoading(true);
+    api
+      .planFuelStops(leg.id)
+      .then(() => {
+        // Reload the trip so the freshly-sourced stops + new fuel_status render.
+        // Safe to call even if this card unmounted — it's a parent reload.
+        onChanged?.();
+      })
+      .catch((e) => {
+        // apiFetch already surfaced this via the global error surface (no silent
+        // swallow). Clear the guard so the next open can retry.
+        fuelFetchSigRef.current = null;
+        console.warn("lazy fuel fetch failed", e);
+      })
+      .finally(() => {
+        if (!cancelled) setFuelLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    expanded,
+    isRestDay,
+    readonly,
+    isPast,
+    leg.id,
+    leg.fuel_status,
+    leg.fuel_stops_updated_at,
+    api,
+    onChanged,
+  ]);
+
+  // Rest day accent color — softer green vs driving day blue
+  // src/components/LegCard.tsx:195
+  const restDayColor = "#6BA368";
+  // src/components/LegCard.tsx:196 — falls back to the --tp-primary literal.
+  const driveColor = leg.color || "#4E7AB0";
+  const dotColor = isRestDay ? restDayColor : driveColor;
+
+  // The web rotates the chevron with a CSS transition; Animated is the native
+  // equivalent and runs the rotation off the JS thread.
+  const chevron = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(chevron, {
+      toValue: expanded ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [expanded, chevron]);
+  const chevronRotate = chevron.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  const openUrl = (url: string) => {
+    void Linking.openURL(url);
+  };
+
+  return (
+    <View
+      style={[
+        styles.card,
+        expanded && (isRestDay ? styles.cardExpandedRest : styles.cardExpanded),
+        isRestDay && styles.cardRest,
+        selected && styles.cardSelected,
+      ]}
+    >
+      <Pressable onPress={onToggle} style={styles.headerRow}>
+        <View
+          style={[
+            styles.dot,
+            { backgroundColor: dotColor, borderRadius: isRestDay ? 3 : 5 },
+          ]}
+        />
+        <View style={styles.headerBody}>
+          <View style={styles.titleLine}>
+            {isRestDay ? <Text style={[styles.kicker, { color: restDayColor }]}>REST</Text> : null}
+            {dateLabel ? (
+              <Text style={[styles.kicker, { color: isRestDay ? restDayColor : theme.subtle }]}>
+                {dateLabel.toUpperCase()}
+              </Text>
+            ) : !isRestDay && leg.label ? (
+              <Text style={styles.kicker}>{leg.label}</Text>
+            ) : null}
+            <Text style={styles.title}>{leg.title}</Text>
+          </View>
+          <View style={styles.metaLine}>
+            {!isRestDay && leg.distance_km ? (
+              // Distance's `style` prop is a ViewStyle; wrapping in a Text lets
+              // the inline variant inherit the meta type styles instead.
+              <Text style={styles.meta}>
+                <Distance km={leg.distance_km} layout="inline" />
+              </Text>
+            ) : null}
+            {!isRestDay && driveHours ? <Text style={styles.meta}>{driveHours} hrs</Text> : null}
+            {isRestDay && leg.end_name ? (
+              <Text style={[styles.meta, { color: restDayColor }]}>{leg.end_name}</Text>
+            ) : null}
+          </View>
+          {leg.continuity_warning ? (
+            <View style={styles.continuityWarning}>
+              <Text style={styles.continuityIcon}>⚠</Text>
+              <Text style={styles.continuityText}>{leg.continuity_warning}</Text>
+            </View>
+          ) : null}
+        </View>
+        <StatusBadge status={leg.status} />
+        <Animated.Text style={[styles.chevron, { transform: [{ rotate: chevronRotate }] }]}>
+          ▾
+        </Animated.Text>
+      </Pressable>
+
+      {expanded && isRestDay ? (
+        <View style={styles.expandedBody}>
+          {/* Location */}
+          <View>
+            <Text style={[styles.blockLabel, { color: restDayColor }]}>LOCATION</Text>
+            <Text style={styles.blockValue}>{leg.end_name || leg.overnight || "—"}</Text>
+          </View>
+
+          {/* Notes */}
+          {leg.parsedNotes.length > 0 ? (
+            <View style={styles.notesBlock}>
+              <Text style={[styles.blockLabel, { color: restDayColor }]}>PLANS & NOTES</Text>
+              {leg.parsedNotes.map((note: string, i: number) => (
+                <View key={i} style={[styles.note, { borderLeftColor: `${restDayColor}40` }]}>
+                  <Text style={styles.noteText}>{note}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {/* Add to this day button — hands Penny the context for this rest day */}
+          {!readonly ? (
+            <Pressable
+              onPress={() =>
+                emitPennyPrefill({
+                  legId: leg.id,
+                  dayTitle: leg.title,
+                  location: leg.end_name || leg.overnight || "",
+                  dates: leg.dates,
+                })
+              }
+              style={[
+                styles.addToDay,
+                { backgroundColor: `${restDayColor}12`, borderColor: `${restDayColor}30` },
+              ]}
+            >
+              <Text style={[styles.addToDayText, { color: restDayColor }]}>+ Add to this day</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {expanded && !isRestDay ? (
+        <View style={styles.expandedBody}>
+          {leg.parsedNotes.length > 0 ? (
+            <View style={styles.notesBlock}>
+              {leg.parsedNotes.map((note: string, i: number) => (
+                <View key={i} style={[styles.note, { borderLeftColor: theme.border }]}>
+                  <Text style={styles.noteText}>{note}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {allSegments.length > 0 ? (
+            <View style={styles.navBlock}>
+              {isFuelSyncing ? (
+                /* Syncing state — placeholder while fuel stops refresh. The web
+                   puts the explanation in a hover tooltip, which a phone can't
+                   show, so it rides along as the accessibility label instead of
+                   inventing new visible copy. */
+                <Pressable
+                  onPress={directionsUrl ? () => openUrl(directionsUrl) : undefined}
+                  disabled={!directionsUrl}
+                  accessibilityLabel={
+                    fuelSyncTotalLegs && fuelSyncTotalLegs > 0
+                      ? `Refreshing fuel stops across ${fuelSyncTotalLegs} leg${
+                          fuelSyncTotalLegs === 1 ? "" : "s"
+                        } — links will update in a moment.`
+                      : "Refreshing fuel stops — links will update in a moment."
+                  }
+                  style={styles.syncingPill}
+                >
+                  <Spinner />
+                  <Text style={styles.syncingText}>Updating route…</Text>
+                </Pressable>
+              ) : showSmartNav ? (
+                /* GPS-aware: single button to next stop */
+                <Pressable onPress={() => openUrl(nextStop!.url)} style={styles.navButton}>
+                  <Text style={styles.navButtonText}>▶</Text>
+                  <Text style={styles.navButtonText}>{navButtonLabel(nextStop!)}</Text>
+                </Pressable>
+              ) : (
+                /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
+                <View style={styles.navList}>
+                  <Text style={styles.navListLabel}>
+                    {gpsStatus === "pending"
+                      ? "FINDING YOUR LOCATION…"
+                      : `NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? "" : "S"})`}
+                  </Text>
+                  {allSegments.map((seg, i) => (
+                    <Pressable key={i} onPress={() => openUrl(seg.url)} style={styles.navButton}>
+                      <Text style={styles.navButtonText}>▶</Text>
+                      <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              {driveHours ? (
+                <Text style={styles.caveat}>
+                  {navWaypointCount > 0
+                    ? `Shown driving time (~${driveHours} h) is the leg headline start→destination only — it excludes detours via added stops.`
+                    : `Shown driving time (~${driveHours} h) assumes start→destination without intermediate stops inside this leg card.`}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          <StopsSection
+            tripId={tripId}
+            legId={leg.id}
+            initialStops={leg.stops}
+            fuelStatus={leg.fuel_status}
+            fuelPlanError={leg.fuel_plan_error}
+            fuelLoading={fuelLoading}
+            isPast={isPast}
+            onChanged={onChanged}
+            readonly={readonly}
+            highlightStopId={highlightStopId}
+          />
+
+          {itemCosts.length > 0 ? (
+            <View style={styles.costsBlock}>
+              <Text style={styles.costsTitle}>ESTIMATED COSTS</Text>
+              {itemCosts.map((c, i) => (
+                <View key={i} style={styles.costRow}>
+                  <Text style={styles.costItem}>{c.item}</Text>
+                  <Text style={styles.costEstimate}>{c.estimate}</Text>
+                </View>
+              ))}
+              {totalCost ? (
+                <View style={styles.costTotalRow}>
+                  <Text style={styles.costTotalText}>{totalCost.item}</Text>
+                  <Text style={styles.costTotalText}>{totalCost.estimate}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: { marginBottom: 2, borderRadius: 8, overflow: "hidden" },
+  cardExpanded: { backgroundColor: theme.surfaceMuted },
+  // src/components/LegCard.tsx:208
+  cardExpandedRest: { backgroundColor: "rgba(107, 163, 104, 0.06)" },
+  // src/components/LegCard.tsx:214 — `3px solid ${restDayColor}40` (#6BA368 @ 0x40).
+  cardRest: { borderLeftWidth: 3, borderLeftColor: "rgba(107, 163, 104, 0.25)" },
+  // The web has no selected state (the desktop list is always beside the map);
+  // on a phone the list and map are separate tabs, so the leg the map is
+  // highlighting gets a matching tint here.
+  cardSelected: { backgroundColor: theme.primaryMuted },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  dot: { width: 10, height: 10 },
+  headerBody: { flex: 1, minWidth: 0 },
+  titleLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  kicker: { fontSize: 10, fontFamily: font.bold, letterSpacing: 1, color: theme.subtle },
+  title: { fontSize: 15, fontFamily: font.semibold, color: theme.text },
+  metaLine: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 3 },
+  meta: { fontFamily: font.regular, fontSize: 12, color: theme.subtle },
+  continuityWarning: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    // src/components/LegCard.tsx:310
+    backgroundColor: "rgba(217, 119, 6, 0.12)",
+    borderWidth: 1,
+    // src/components/LegCard.tsx:311
+    borderColor: "rgba(217, 119, 6, 0.35)",
+  },
+  // src/components/LegCard.tsx:317
+  continuityIcon: { fontFamily: font.regular, color: "#d97706", fontSize: 12 },
+  continuityText: { fontFamily: font.regular, flex: 1, fontSize: 12, lineHeight: 17, color: theme.text },
+  chevron: { fontFamily: font.regular, color: theme.subtle, fontSize: 18 },
+  expandedBody: { paddingRight: 16, paddingBottom: 16, paddingLeft: 40 },
+  blockLabel: { fontSize: 10, fontFamily: font.bold, letterSpacing: 0.8, marginBottom: 2 },
+  blockValue: { fontFamily: font.regular, fontSize: 13, color: theme.muted },
+  notesBlock: { marginTop: 8 },
+  note: { borderLeftWidth: 2, paddingVertical: 3, paddingLeft: 12, marginBottom: 2 },
+  noteText: { fontFamily: font.regular, fontSize: 13, color: theme.muted, lineHeight: 19 },
+  addToDay: {
+    marginTop: 14,
+    alignSelf: "flex-start",
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  addToDayText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5 },
+  navBlock: { marginTop: 10 },
+  syncingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 13,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: theme.borderStrong,
+    backgroundColor: theme.surfaceMuted,
+  },
+  syncingText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5, color: theme.muted },
+  navList: { gap: 4 },
+  navListLabel: {
+    fontSize: 10,
+    fontFamily: font.bold,
+    letterSpacing: 0.8,
+    color: theme.subtle,
+    marginBottom: 2,
+  },
+  navButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    backgroundColor: theme.primary,
+  },
+  navButtonText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5, color: theme.onPrimary },
+  caveat: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 8, maxWidth: 460, lineHeight: 16 },
+  costsBlock: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: theme.surfaceMuted,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  costsTitle: {
+    fontSize: 10,
+    fontFamily: font.bold,
+    letterSpacing: 0.8,
+    color: theme.subtle,
+    marginBottom: 6,
+  },
+  costRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2, gap: 12 },
+  costItem: { fontFamily: font.regular, flex: 1, fontSize: 13, color: theme.muted },
+  costEstimate: { fontFamily: font.regular, fontSize: 13, color: theme.text },
+  costTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: 6,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    gap: 12,
+  },
+  costTotalText: { fontSize: 14, fontFamily: font.bold, color: theme.text },
+});

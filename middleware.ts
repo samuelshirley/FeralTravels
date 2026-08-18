@@ -8,6 +8,10 @@ const SESSION_COOKIE_NAMES = ['authjs.session-token', '__Secure-authjs.session-t
 const PUBLIC_PREFIXES = [
   '/login',
   '/api/auth',
+  // Native sign-in: requesting/redeeming a code IS the start of sign-in, so
+  // these must be reachable without a session cookie. Not public-by-accident:
+  // both routes are Zod-validated and rate-limited.
+  '/api/mobile/otp',
   '/_next',
   '/favicon.ico',
   '/manifest.json',
