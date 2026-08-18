@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { auth, signIn } from '@/server/auth';
+import { auth, signIn, isAppleSignInConfigured } from '@/server/auth';
 import { sendOtpCode } from '@/server/auth/otp';
 
 interface LoginPageProps {
@@ -149,6 +149,43 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             Continue with Google
           </button>
         </form>
+
+        {/* Apple — rendered only when AUTH_APPLE_ID + AUTH_APPLE_SECRET exist.
+            Guideline 4.8 (Google implies Apple) governs the iOS app, not this
+            page, so on web this sits below Google rather than above it. */}
+        {isAppleSignInConfigured && (
+          <form
+            action={async () => {
+              'use server';
+              await signIn('apple', { redirectTo: callbackUrl });
+            }}
+          >
+            <button
+              type="submit"
+              data-testid="login-apple-button"
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                marginTop: 10,
+                background: 'var(--tp-surface)',
+                color: 'var(--tp-text)',
+                border: '1px solid var(--tp-border-strong)',
+                borderRadius: 'var(--tp-radius-sm)',
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                boxShadow: 'var(--tp-shadow-sm)',
+              }}
+            >
+              <span style={{ fontWeight: 800 }}>&#63743;</span>
+              Continue with Apple
+            </button>
+          </form>
+        )}
 
         <div
           style={{

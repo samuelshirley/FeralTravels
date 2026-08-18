@@ -5,37 +5,17 @@ import { db } from '@/server/db/client';
 import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
 
-export class HttpError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-export class UnauthorizedError extends HttpError {
-  constructor(message = 'Unauthorized') {
-    super(401, message);
-  }
-}
-
-export class ForbiddenError extends HttpError {
-  constructor(message = 'Forbidden') {
-    super(403, message);
-  }
-}
-
-export class NotFoundError extends HttpError {
-  constructor(message = 'Not found') {
-    super(404, message);
-  }
-}
-
-export class ConflictError extends HttpError {
-  constructor(message = 'Conflict') {
-    super(409, message);
-  }
-}
+// The error classes live in ./errors so modules that only throw them (e.g.
+// oauthIdentity.ts) can skip this file's Auth.js + DB import chain. Re-exported
+// here so every existing import site keeps working unchanged.
+export {
+  HttpError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  ConflictError,
+} from './errors';
+import { HttpError, UnauthorizedError, ForbiddenError, NotFoundError } from './errors';
 
 /**
  * Mobile auth: resolve a `Authorization: Bearer <token>` header against the

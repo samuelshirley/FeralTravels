@@ -1,0 +1,51 @@
+import { z, ZodError } from 'zod';
+import { createSessionForEmail } from '@/server/auth/otp';
+import { errorResponse } from '@/server/auth/guards';
+import { verifyIdentityToken } from '@/server/auth/oauthIdentity';
+
+// jose needs Node crypto; keep this off the edge runtime.
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+/**
+ * Native OAuth exchange: a provider ID token in, a session token out.
+ *
+ * The iOS app runs Google (authorization code + PKCE) and Sign in with Apple
+ * natively, then posts the resulting ID token here. This route verifies that
+ * token against the provider's JWKS and mints a session through the SAME
+ * createSessionForEmail() the OTP routes use — so a user who signs in with
+ * Google on web and Apple on device lands on ONE account, keyed by verified
+ * email, with an identical session row either way.
+ *
+ * Mirrors /api/mobile/otp/verify's response shape exactly, because the app
+ * treats all three sign-in paths as one `SessionResult`.
+ */
+const bodySchema = z.object({
+  provider: z.enum(['google', 'apple']),
+  idToken: z.string().min(1),
+  /** Apple only, and only on the user's first-ever authorization. */
+  fullName: z.string().max(200).nullish(),
+});
+
+export async function POST(req: Request) {
+  try {
+    const body = bodySchema.parse(await req.json().catch(() => ({})));
+
+    const identity = await verifyIdentityToken(body.provider, body.idToken, body.fullName);
+
+    const session = await createSessionForEmail(identity.email, identity.name);
+
+    return Response.json({
+      token: session.sessionToken,
+      expires: session.expires.toISOString(),
+      user: { id: session.userId, email: identity.email },
+    });
+  } catch (err) {
+    // errorResponse only knows HttpError, so an unmapped ZodError would
+    // surface as a 500 — same reasoning as /api/mobile/otp/verify.
+    if (err instanceof ZodError) {
+      return Response.json({ error: 'InvalidRequest' }, { status: 400 });
+    }
+    return errorResponse(err);
+  }
+}

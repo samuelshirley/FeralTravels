@@ -1,9 +1,10 @@
 /**
  * Architectural guardrail: there is NO auth backdoor. Anywhere. Ever.
  *
- * Auth happens exactly two ways: Google OAuth, or the real emailed OTP code
- * (E2E reads the code for its OWN fixture address from `/api/test/otp`, which
- * mints nothing). The `/api/test/*` endpoints may only
+ * Auth happens exactly three ways: Google OAuth, Sign in with Apple (web via
+ * Auth.js when configured, native via /api/mobile/oauth/exchange), or the real
+ * emailed OTP code (E2E reads the code for its OWN fixture address from
+ * `/api/test/otp`, which mints nothing). The `/api/test/*` endpoints may only
  * manipulate fixture DATA — they must never mint a session, set an auth
  * cookie, or bypass sign-in.
  *
@@ -71,16 +72,17 @@ describe('No auth backdoor exists anywhere in src/', () => {
     }
   });
 
-  it('the login page has no test sign-in path (only Google + OTP email)', () => {
+  it('the login page has no test sign-in path (only Google / Apple + OTP email)', () => {
     const login = fs.readFileSync(path.join(SRC_DIR, 'app/login/page.tsx'), 'utf-8');
     expect(login).not.toMatch(/test.?sign.?in/i);
     expect(login).not.toMatch(/instant session/i);
   });
 
   it('the auth config registers no Credentials provider', () => {
-    // OTP sign-in is handled outside Auth.js (signInWithOtp); Google is the
-    // only Auth.js provider. A Credentials provider is how the old backdoor
-    // snuck in — its reappearance is a red flag.
+    // OTP sign-in is handled outside Auth.js (signInWithOtp); Google and
+    // Apple are the only Auth.js providers, and both verify the email
+    // themselves. A Credentials provider is how the old backdoor snuck in —
+    // its reappearance is a red flag.
     const authConfig = fs.readFileSync(path.join(SRC_DIR, 'server/auth/index.ts'), 'utf-8');
     expect(authConfig).not.toMatch(/next-auth\/providers\/credentials/);
   });

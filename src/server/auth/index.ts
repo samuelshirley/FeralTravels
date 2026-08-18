@@ -1,6 +1,7 @@
 import 'server-only';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Google from 'next-auth/providers/google';
+import Apple from 'next-auth/providers/apple';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
@@ -14,6 +15,25 @@ declare module 'next-auth' {
     } & DefaultSession['user'];
   }
 }
+
+/**
+ * Sign in with Apple on the WEB is opt-in on configuration, not on a flag.
+ *
+ * Unlike Google, Apple's "client secret" is not a static string: it is a JWT
+ * you sign with a .p8 key, and Apple caps its lifetime at SIX MONTHS. When it
+ * expires, Apple sign-in starts failing with an opaque `invalid_client` and
+ * nothing in this repo changes. Generate a fresh one with
+ * `npx tsx scripts/generate-apple-client-secret.ts` and update AUTH_APPLE_SECRET.
+ *
+ * Until both vars exist, the provider is not registered and the login page
+ * does not render the button — the same "no dead buttons" rule the iOS screen
+ * follows. Note this is the WEB flow only: the iOS app's native Sign in with
+ * Apple does not go through Auth.js at all, it posts its identity token to
+ * /api/mobile/oauth/exchange.
+ */
+export const isAppleSignInConfigured = Boolean(
+  process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET
+);
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
@@ -45,12 +65,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       authorization: { params: { prompt: 'select_account' } },
     }),
 
+    // Apple. Spread rather than a ternary inside the array so the provider is
+    // ABSENT (not present-and-broken) when unconfigured — Auth.js will happily
+    // register a provider with undefined credentials and only fail at redirect.
+    ...(isAppleSignInConfigured
+      ? [
+          Apple({
+            clientId: process.env.AUTH_APPLE_ID,
+            clientSecret: process.env.AUTH_APPLE_SECRET,
+            // Same reasoning as Google above: Apple verifies the address on
+            // the identity token, so linking it to an existing user with that
+            // email is correct — and refusing to would hand the user a second
+            // account with none of their trips in it.
+            //
+            // CAVEAT worth knowing before you support-ticket it: a user who
+            // picks "Hide My Email" arrives as
+            // <opaque>@privaterelay.appleid.com, which is a DIFFERENT address
+            // from their real one. There is nothing to link it to, so that is
+            // a separate account by design, not a bug.
+            allowDangerousEmailAccountLinking: true,
+          }),
+        ]
+      : []),
+
     // OTP email sign-in is handled directly by signInWithOtp() in
     // src/server/auth/otp.ts — it verifies the code, finds/creates the user,
     // creates a database session, and sets the cookie. We bypass Auth.js's
     // Credentials provider because it doesn't support database sessions.
-    // NOTE: Google + OTP are the ONLY sign-in paths. There is deliberately no
-    // test/bypass provider — a guard test in src/lib/ enforces this.
+    // NOTE: Google, Apple (when configured) and OTP are the ONLY sign-in
+    // paths. There is deliberately no test/bypass provider — a guard test in
+    // src/lib/ enforces this.
   ],
   callbacks: {
     session({ session, user }) {
@@ -77,12 +121,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // "emailVerified IS NOT NULL" check. We only touch rows that haven't
       // already been verified through some other flow (e.g. OTP sign-in).
       try {
-        const trustedOAuthProviders = new Set(['google']);
+        const trustedOAuthProviders = new Set(['google', 'apple']);
+        // Apple sends this claim as the STRING "true"; Google sends a boolean.
+        // Auth.js types it as boolean, so read it widened — a strict
+        // `=== true` check would silently skip every Apple user, leaving
+        // emailVerified null and the admin guard failing for them.
+        const emailVerifiedClaim = profile?.email_verified as boolean | string | undefined;
         if (
           user?.email &&
           account?.provider &&
           trustedOAuthProviders.has(account.provider) &&
-          profile?.email_verified === true
+          (emailVerifiedClaim === true || emailVerifiedClaim === 'true')
         ) {
           await db
             .update(users)
