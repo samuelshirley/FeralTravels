@@ -64,23 +64,45 @@ npm run db:generate  # drizzle-kit generate migrations
 npm run db:push      # push schema to DB
 npm run db:migrate   # run migrations via tsx
 npm run db:studio    # drizzle-kit studio (DB browser)
-npm run ship         # deploy script (scripts/ship.sh)
 ```
 
 ## Workflow (current)
 
 **Production has real users.** Prod is live — do NOT run tests or seed fixtures against the prod database, and treat prod deploys as consequential.
 
-Deploy pipeline (single branch `main`, no long-lived staging):
+Deploy pipeline (**pull-request based** since 2026-08-13 — `main` is protected and only moves via PRs):
 
-1. **Push to `main`** → GitHub Actions `CI` workflow (`.github/workflows/deploy.yml`): unit tests → **deploy ONE tested Vercel preview** (pointed at the rolling `preview` Neon branch, a copy-on-write clone of prod data refreshed each push, migrated before deploy) → **E2E runs against that exact preview URL** (`E2E_BASE_URL`; playwright.config skips its local webServer). The same URL is printed to the run summary for eyeballing — it deploys *before* tests so a red spec still leaves you a clickable preview to distinguish test bugs from app bugs. Playwright artifacts (report/traces) upload on failure. E2E never touches prod. Green = the commit is promotable.
-2. **Ship** → run the **"Promote to production"** workflow (`.github/workflows/promote.yml`) manually from the Actions tab ("Run workflow"). Its first step **enforces the gate**: it queries the CI runs for the exact SHA being promoted and fails unless the latest is completed+green. Then it applies migrations to prod and builds + deploys that commit to production via the Vercel CLI.
+1. **Open a PR into `main`** → GitHub Actions `CI` workflow (`.github/workflows/ci.yml`), re-run on every push to the PR:
+   - **Unit tests** — vitest `unit` project (`npm run test:unit`): the 43 `*.test.ts` logic specs, `node` environment, no jsdom and no setup file.
+   - **UI tests** — vitest `ui` project (`npm run test:ui`): the `*.test.tsx` component specs under jsdom with Testing Library. Runs as its own job **concurrently with Unit tests**; both must pass before the preview deploys. `npm run test` still runs both projects locally.
+   - **Deploy tested preview** — creates an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write clone of PROD data, recreated from prod on every push), runs migrations on it, and deploys a Vercel preview pointed at it. The URL lands in a **sticky PR comment** and the run summary. It deploys *before* the tests so a red spec still leaves you a clickable preview (test bug vs app bug). Prod's DB is never touched; the migration run here is also the rehearsal for the prod migration.
+   - **E2E tests** — the full Playwright suite against that exact preview URL (`E2E_BASE_URL`; playwright.config skips its local webServer), then `scripts/assert-e2e-ran.mjs` **fails the job if the suite mass-skipped** (only `login-otp` is expected to skip — see `e2e/fixtures/auth.ts`). Artifacts upload on failure.
+   These four are the **required checks** in branch protection.
+2. **Merge the PR** → `.github/workflows/promote.yml` fires on push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No manual button. The same workflow is still `workflow_dispatch`-able for re-deploying an older SHA (that's the rollback path).
+3. **PR closes** → `.github/workflows/pr-cleanup.yml` deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
 
-Vercel's own git auto-deploy for `main` is **disabled** in `vercel.json` (`git.deploymentEnabled.main = false`), so the promote workflow is the ONLY path to prod — nothing reaches production without a manual button press, and the button refuses red commits.
+The promote gate is enforced, not a convention. Because a squash/merge commit has a different SHA than anything CI tested, the gate resolves the PR the commit came from and requires the CI run for **that PR's head SHA** to be completed+green. A direct push to `main` has no CI run and is therefore **blocked** — push through a PR.
 
-**E2E auth: NO bypass exists (removed 2026-07-02).** Every authenticated spec creates a fresh MailSlurp inbox and signs in through the REAL OTP email flow (`createFreshUser()`/`loginViaOtp()` in `e2e/fixtures/auth.ts`; `MAILSLURP_API_KEY` required — authenticated specs skip without it, and the target app needs a working Resend key to actually send the code). The old `AUTH_TEST_BACKDOOR` family — login-page test sign-in, the Credentials provider, `/api/test/session` session minting — is deleted, and `src/lib/noBackdoorGuard.test.ts` fails the unit suite if anything resembling it (`/backdoor/i`, `createTestSession`, a Credentials provider) reappears in `src/`. E2E fixtures (DATA only: seed/trip/cleanup/announcement) run over HTTP against the guarded `/api/test/*` endpoints — no raw SQL in specs. Those endpoints are gated by `E2E_TEST_ENDPOINTS=1` (`areTestEndpointsEnabled` in `auth/test-endpoints.ts`) and are **hard-off on `VERCEL_ENV=production` with no override env** (unit-enforced in `test-endpoints.test.ts`). **Because the tested preview is internet-reachable, the endpoints are additionally locked by a per-run secret** (`E2E_TEST_ENDPOINTS_SECRET`, required in the `x-e2e-test-secret` header when set): CI derives it as HMAC(AUTH_SECRET, run id) identically in the preview + e2e jobs (nothing passed through job outputs), the runner sends it via `testEndpointHeaders()` (`e2e/fixtures/constants.ts`) + the config `extraHTTPHeaders`. Locally the secret is unset and nothing changes. Optional `VERCEL_AUTOMATION_BYPASS_SECRET` is wired through the same headers if Vercel Deployment Protection ever gets enabled. App runtime/build env for the preview (Anthropic, Resend, Maps keys) comes from the Vercel project's **preview environment** via `vercel pull` — keep it complete there. `scripts/ship.sh` is legacy (it pushed straight to the old auto-promote flow); prefer the CI + promote-button path.
+Vercel's own git auto-deploy is **disabled for every branch** in `vercel.json` (`git.deploymentEnabled: false`), so GitHub Actions owns every deployment: leaving it on would produce a second, untested preview per PR wired to whatever `DATABASE_URL` sits in the Vercel Preview env.
 
-E2E cross-spec state: none — each test gets a fresh MailSlurp user and seeds its own canonical graph (`seedCanonicalFixture(email)` in `e2e/fixtures/test-trip.ts`), so specs can't contaminate each other. Cost of the model: ~1 MailSlurp inbox + 1 real Resend OTP send + ~5–10s per authenticated test; if MailSlurp quota becomes a problem, the documented fallback is one fresh user per RUN signed in once in global-setup with a shared Playwright `storageState`.
+**Known sharp edges of this design (deliberately accepted):**
+- Preview deployments serve a clone of **real production data on a public URL** — Vercel Deployment Protection is off because the Hobby plan can't protect previews without also protecting prod. Mitigations: the Neon branch dies when the PR closes, and `next.config.js` sends `X-Robots-Tag: noindex` on every non-production deployment. Vercel Pro would allow protecting previews only.
+- Auto-promote means **migrations reach prod without a human**. They already ran against a clone of that same database in CI. The uncovered window: migrate succeeds → deploy fails → prod runs OLD code against a NEW schema (the 2026-06 outage shape). Keep migrations additive (add → backfill → switch code → drop later) and that window is harmless; the workflow shouts in the run log if it happens.
+- Turn on **"require branches to be up to date before merging"** in branch protection. Without it, a PR tested against a stale `main` can auto-ship on merge.
+
+**E2E auth: no session bypass exists.** Every authenticated spec signs in through the REAL OTP flow: mint a unique fixture address (`playwright-<runid>-<n>@e2e.feraltravels.com`), submit it on `/login`, read the code the app just generated from the guarded **`POST /api/test/otp`**, and type it into the real six-box verify UI. Nothing is minted and nothing is granted — the code is stored with its real expiry and checked by the real `verifyOtpCode` with its attempt limits.
+
+Three guards, all required: `E2E_TEST_ENDPOINTS=1` (never on `VERCEL_ENV=production`, no override, unit-enforced); the per-run HMAC in `x-e2e-test-secret`; and `FIXTURE_EMAIL_PATTERN` — a hardcoded shape on `e2e.`, a subdomain with NO MX, so a fixture address can never be a real person's. `isFixtureRecipient()` also makes `sendOtpCode` skip the Resend transport for those addresses (it still renders the template): the subdomain would hard-bounce every send, and 12 bounces per CI run against the domain the real sign-in emails come from is how sending reputations die.
+
+**Why not a mailbox for all of them:** MailSlurp's free trial expired and can't be renewed (2026-08-14); a Google Workspace mailbox over IMAP then cost an afternoon on app passwords, alias-vs-user and Workspace policy without ever authenticating. Both were third parties who could switch the whole pipeline off, and did. Eleven of the twelve specs never cared about email — they needed a signed-in user.
+
+**Real delivery — the second layer (2026-08-15).** Exactly ONE spec sends a real email and reads it back: `e2e/login-otp.spec.ts`, via `e2e/fixtures/mailbox.ts`. It signs in at `playwright-<tag>@<E2E_INBOX_DOMAIN>` — an address on a **Resend receiving domain**, deliberately NOT matching `FIXTURE_EMAIL_PATTERN`, so `sendOtpCode` falls through to the real Resend send. It then asserts the delivered subject carries the 6-digit code, both body parts contain it (HTML as `123 456`, per `renderOtpEmail`), and that code signs the user in through the real verify UI. This is the only thing in the repo that proves the app can send a sign-in email at all.
+
+**Why Resend Inbound:** no new vendor, no new account to get banned, no bill — same account and key the app already sends with (this is a side project and stays free). Addresses on the managed domain (`<anything>@<id>.resend.app`) need zero DNS; a custom subdomain needs one MX record. Inbound counts against the same quota as outbound; this spec spends 2 of 3,000/month. **It proves more than expected (verified against the live API 2026-08-15):** Resend sends via Amazon SES and receives on SES inbound, so the message makes a real SMTP hop and arrives carrying SES's verdict headers — a probe returned `spf=pass`, `dkim=pass header.i=@feraltravels.com`, `dmarc=pass header.from=feraltravels.com`. **The spec asserts `spf=pass` and `dmarc=pass`**, so a dropped SPF include or an unrotated DKIM record reds CI instead of silently filing sign-in mail as spam. Residual gap: it can't assert sender *reputation*, so it isn't proof Gmail will accept the mail — only that the mail is authenticated and well-formed. No SDK — `mailbox.ts` is ~130 lines of `fetch` against two endpoints (`GET /emails/receiving` to list, `GET /emails/receiving/:id` for the body; the list has no recipient filter, so it polls and filters client-side — fine at one message per run). **Setup:** repo secrets `AUTH_RESEND_KEY` + `E2E_INBOX_DOMAIN` (same vars in `.env` locally, plus optional `RESEND_API_KEY` override). Absent → the spec skips; **wrong → it fails loudly**, never skips. `E2E_MAX_SKIPPED=1` in `ci.yml` covers exactly that skip — **set it to 0 once the secrets are added.**
+
+The old `AUTH_TEST_BACKDOOR` family — login-page test sign-in, the Credentials provider, `/api/test/session` session minting — is deleted, and `src/lib/noBackdoorGuard.test.ts` fails the unit suite if anything resembling it (`/backdoor/i`, `createTestSession`, a Credentials provider) reappears in `src/`. E2E fixtures (DATA only: seed/trip/cleanup/announcement) run over HTTP against the guarded `/api/test/*` endpoints — no raw SQL in specs. Those endpoints are gated by `E2E_TEST_ENDPOINTS=1` (`areTestEndpointsEnabled` in `auth/test-endpoints.ts`) and are **hard-off on `VERCEL_ENV=production` with no override env** (unit-enforced in `test-endpoints.test.ts`). **Because the tested preview is internet-reachable, the endpoints are additionally locked by a per-run secret** (`E2E_TEST_ENDPOINTS_SECRET`, required in the `x-e2e-test-secret` header when set): CI derives it as HMAC(AUTH_SECRET, run id) identically in the preview + e2e jobs (nothing passed through job outputs), the runner sends it via `testEndpointHeaders()` (`e2e/fixtures/constants.ts`) + the config `extraHTTPHeaders`. Locally the secret is unset and nothing changes. Optional `VERCEL_AUTOMATION_BYPASS_SECRET` is wired through the same headers if Vercel Deployment Protection ever gets enabled. App runtime/build env for the preview (Anthropic, Resend, Maps keys) comes from the Vercel project's **preview environment** via `vercel pull` — keep it complete there. `scripts/ship.sh` and `npm run ship` are GONE (deleted 2026-08-14) — the script pushed straight to prod outside every gate. Open a PR instead; that is the only path.
+
+E2E cross-spec state: none — each test gets a fresh fixture user and seeds its own canonical graph (`seedCanonicalFixture(email)` in `e2e/fixtures/test-trip.ts`), so specs can't contaminate each other. Cost of the model: one DB round-trip per sign-in and no email at all, so a fresh user per test is now essentially free; if sign-in ever becomes the bottleneck, the documented fallback is one fresh user per RUN signed in once in global-setup with a shared Playwright `storageState`.
 
 Division of labor:
 
@@ -204,7 +226,7 @@ api/test/seed             api/test/trip
 api/test/cleanup          api/test/announcement
 ```
 
-**`api/test/*` are TEST-ONLY and DATA-ONLY** — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP email (MailSlurp). Backed by `repos/testSupport.ts`.
+**`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
 
 ### Schema (24 tables in `src/server/db/schema.ts`)
 
@@ -270,7 +292,7 @@ addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute, updateR
 
 ### Scripts (`scripts/`)
 
-ship.sh, run-migrations.ts, seed-demo-trip.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
+run-migrations.ts, seed-demo-trip.ts, smoke-api.ts, db-reset.ts, seed-migration-journal.ts, backfill-google-maps-nav.ts, backfill-anthropic-zero-cost-rows.ts, reconcile-anthropic-spend.ts, migrate-sqlite-to-neon.ts, verify-maps-waypoints.ts, seed-first-announcement.ts
 
 (E2E fixtures are seeded/cleaned over HTTP via `/api/test/*` from `global-setup.ts`/`global-teardown.ts` — the old `seed-e2e-fixture.ts` / `cleanup-e2e.ts` SQL scripts + `e2e:seed`/`e2e:cleanup` npm scripts were removed.)
 
@@ -327,3 +349,18 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Changed the stack (new dependency, swapped service)** → update the Stack section
 
 Don't wait until the end — update CLAUDE.md as part of the same commit as the structural change.
+
+## Playwright MCP — use it FIRST
+
+`.mcp.json` in the repo root registers the Playwright MCP server. When working on
+anything Playwright — writing a spec, changing a locator, or diagnosing a failing
+test — drive a real browser through the flow with that MCP **before** theorising
+about the cause or writing a diagnostic script.
+
+Reproduce first, then explain. Reading a CI log and reasoning about what the page
+"must" be doing is how three days went into a mail-provider migration for what was
+actually a React hydration crash, visible in the browser console in ten seconds.
+
+Point it at the deployed preview (the URL is pinned at the top of the PR), not a
+local dev server — the bugs that matter here only appear on a cold production
+build.

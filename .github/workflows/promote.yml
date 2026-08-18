@@ -1,14 +1,29 @@
-# Promote to production — the manual "button".
+# Promote to production.
 #
-# Run it from GitHub → Actions → "Promote to production" → Run workflow. It
-# applies any pending migrations to the PROD database, then builds and deploys
-# the chosen commit (default: current main) straight to production via the
-# Vercel CLI. Because vercel.json disables Vercel's own git auto-deploy for
-# main, this workflow is the ONLY path to production.
+# AUTOMATIC on every push to main (i.e. every PR merge): applies pending
+# migrations to the PROD database, then builds and deploys that commit to
+# production via the Vercel CLI. Because vercel.json disables Vercel's own git
+# auto-deploy, this workflow is the ONLY path to production.
 #
-# The CI gate is ENFORCED, not a convention: the first step queries the CI
-# workflow's runs for the exact commit being promoted and fails unless the
-# latest one completed green. A red or still-running CI blocks the promote.
+# Still runnable MANUALLY (Actions → "Promote to production" → Run workflow)
+# for re-deploying an older commit — e.g. rolling back by promoting the
+# previous SHA.
+#
+# The CI gate is ENFORCED, not a convention. Since a squash/merge commit has a
+# different SHA than anything CI ever tested, the gate resolves the pull
+# request this commit came from and requires the CI run for that PR's HEAD to
+# be green. A direct push to main (no PR) has no CI run and is therefore
+# BLOCKED — push through a PR. Branch protection on main should require the
+# CI checks anyway; this is the second lock on the same door.
+#
+# WHY AUTO: the PR already ran the full suite against a Vercel preview backed
+# by a fresh clone of the prod DB, migrations included — so the merge itself is
+# the decision point. The residual risk this does NOT cover: if the migration
+# step below succeeds and the deploy step then fails, prod runs OLD code
+# against a NEW schema until you fix forward. Keep migrations additive
+# (add column/table, backfill, switch code, drop later) and that window is
+# harmless. Also: "require branches to be up to date before merging" in branch
+# protection is what stops a PR tested against a stale main from shipping.
 #
 # REQUIRED REPO SECRETS:
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
@@ -17,6 +32,8 @@
 name: Promote to production
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       sha:
@@ -24,6 +41,7 @@ on:
         required: false
         default: ''
 
+# Never two promotes at once, and never cancel one mid-migration.
 concurrency:
   group: promote-prod
   cancel-in-progress: false
@@ -31,6 +49,7 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 jobs:
   promote:
@@ -43,35 +62,64 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.sha || 'main' }}
+          ref: ${{ github.event.inputs.sha || github.sha }}
 
-      # HARD GATE: refuse to promote a commit whose CI run isn't green. Looks
-      # up the CI workflow runs for the EXACT sha checked out above; the most
-      # recent run must be completed + successful. In-progress counts as not
-      # green (wait for it), no runs counts as not green (push it first).
+      # HARD GATE: refuse to promote code that CI hasn't proven green.
+      #
+      # CI runs on pull_request, so its runs are keyed to the PR's HEAD sha,
+      # not to the merge/squash commit sitting on main. Resolve the PR that
+      # produced this commit, take its head sha, and require the latest CI run
+      # for THAT sha to be completed + successful. If the commit has its own CI
+      # run (e.g. promoting a PR head directly), that counts too.
+      #
+      # In-progress counts as not green (wait for it). No run at all counts as
+      # not green (open a PR).
       - name: Require green CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           echo "Promoting commit: $SHA"
-          RESULT="$(gh run list -R "$GITHUB_REPOSITORY" --workflow 'CI' --commit "$SHA" \
-            --limit 1 --json status,conclusion \
-            --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end')"
-          echo "Latest CI run for $SHA: $RESULT"
-          if [ "$RESULT" != "completed/success" ]; then
-            echo "::error::CI is not green for $SHA (state: $RESULT). Fix or wait for CI, then promote."
+
+          ci_state() {
+            gh run list -R "$GITHUB_REPOSITORY" --workflow 'CI' --commit "$1" \
+              --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end'
+          }
+
+          # 1. Did this exact commit get a CI run? (unusual on main, but honour it)
+          TESTED_SHA="$SHA"
+          STATE="$(ci_state "$SHA")"
+
+          # 2. Otherwise walk back to the PR this commit came from.
+          if [ "$STATE" = "none" ]; then
+            PR_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
+              --jq '[.[] | select(.state == "closed" or .state == "open")][0].head.sha // empty' 2>/dev/null || true)"
+            if [ -n "$PR_HEAD" ]; then
+              TESTED_SHA="$PR_HEAD"
+              STATE="$(ci_state "$PR_HEAD")"
+              echo "Commit came from PR head: $PR_HEAD"
+            fi
+          fi
+
+          echo "Latest CI run for $TESTED_SHA: $STATE"
+          if [ "$STATE" != "completed/success" ]; then
+            echo "::error::CI is not green for $TESTED_SHA (state: $STATE). Production was NOT updated. Merge through a pull request with green CI checks, or wait for the run to finish."
             exit 1
           fi
+          echo "CI green for $TESTED_SHA — promoting." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - run: npm ci
 
       # Apply pending migrations to PROD before the new code serves. Idempotent;
       # run-migrations advances the journal so already-applied ones are skipped.
+      # These exact migrations already ran against a clone of this database in
+      # the PR's CI run.
       - name: Apply migrations to production DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -83,6 +131,16 @@ jobs:
       # Pull production project settings + env, build against them, deploy to prod.
       - name: Build + deploy to production
         run: |
+          set -euo pipefail
           vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
           vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
-          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          URL="$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")"
+          echo "## 🚀 Promoted to production" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+      # Prod schema is now ahead of prod code — the exact failure mode from the
+      # earlier outage. Make it loud instead of silent.
+      - name: Warn if the deploy failed after migrating
+        if: failure()
+        run: |
+          echo "::error::Promote failed. If 'Apply migrations to production DB' succeeded and the deploy did not, PRODUCTION IS RUNNING OLD CODE AGAINST A NEW SCHEMA. Re-run this workflow or promote the previous SHA immediately."

@@ -1,0 +1,426 @@
+# CI — the PR gate. Runs on every push to a pull request targeting main.
+#
+# Flow:
+#   1. unit    — vitest `unit` project: 43 pure-logic specs, node env, no jsdom.
+#      ui      — vitest `ui` project: the React component specs under jsdom.
+#                 unit and ui run CONCURRENTLY; both gate the preview.
+#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
+#                clone of PROD data), run migrations on it, and deploy a Vercel
+#                PREVIEW pointed at it. One preview per PR, refreshed on every
+#                push, torn down when the PR closes (pr-cleanup.yml). Prod's DB
+#                is never touched. The URL is posted as a sticky PR comment and
+#                to the run summary. It deploys BEFORE the tests intentionally,
+#                so you get a clickable preview even when a spec is red
+#                (test bug vs app bug).
+#   3. e2e     — full Playwright suite against that exact preview URL
+#                (E2E_BASE_URL → playwright.config skips its local webServer),
+#                then assert-e2e-ran.mjs fails the job if the suite mass-SKIPPED
+#                (no mail path, misconfigured endpoint) — otherwise "green"
+#                could mean
+#                "tested nothing", which now auto-ships to prod on merge.
+#
+# These three are the checks you make REQUIRED in branch protection. Merging a
+# green PR to main triggers promote.yml, which deploys to production without a
+# human step — so this workflow is the only thing standing in front of prod.
+#
+# There is NO auth bypass anywhere: e2e signs in as fresh fixture users through
+# the real OTP flow, reading the code the app generated from the guarded
+# /api/test/otp endpoint — nothing is minted, nothing is granted. The /api/test/* endpoints only seed/reset
+# fixture DATA, are hard-off on VERCEL_ENV=production, and on the public
+# preview URL additionally require a per-run secret: both jobs derive the same
+# HMAC(AUTH_SECRET, run id) — the preview app requires it in the
+# x-e2e-test-secret header (E2E_TEST_ENDPOINTS_SECRET), the Playwright runner
+# sends it. No extra repo secret to manage; it rotates every run.
+#
+# NOTE: preview deployments carry a clone of REAL production data on a public
+# URL (Vercel Deployment Protection is off — the Hobby plan can't protect
+# previews without also protecting prod). pr-cleanup.yml deletes the DB branch
+# on PR close to bound the exposure window, and next.config.js sends
+# X-Robots-Tag: noindex on every non-production deployment.
+#
+# REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
+#   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
+#   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
+#   AUTH_RESEND_KEY                 (runner-side copy of the app's Resend key —
+#                                    lets login-otp read the inbound mailbox)
+#   E2E_INBOX_DOMAIN                (the Resend receiving domain, e.g.
+#                                    <id>.resend.app — gates login-otp, the ONE
+#                                    spec that proves mail actually gets sent)
+#   VERCEL_AUTOMATION_BYPASS_SECRET (optional — only if Vercel Deployment
+#                                    Protection is enabled on the project)
+# App runtime/build env (ANTHROPIC_API_KEY, AUTH_RESEND_KEY, AUTH_EMAIL_FROM,
+# NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, …) comes from the Vercel project's PREVIEW
+# environment via `vercel pull` — keep that env complete there, not here.
+# NOTE: the prod DATABASE_URL secret is intentionally NOT used by this workflow.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# One CI run per PR: a new push cancels the in-flight run (and its preview
+# build) rather than racing it for the same Neon branch.
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
+
+jobs:
+  # unit and ui have no `needs`, so they start together and run concurrently.
+  # Splitting them means a red component test doesn't hide behind 43 logic
+  # specs (and vice versa) in a single wall of output.
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+
+  ui:
+    name: UI tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:ui
+
+  # THE preview — tested by e2e below, clickable by humans from the PR comment.
+  preview:
+    name: Deploy tested preview
+    needs: [unit, ui]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      # Recreate this PR's branch from prod on every push: drop the old one
+      # (ignore if absent — first push), then re-create it so the preview shows
+      # CURRENT prod data and none of the previous run's fixture junk. E2E seeds
+      # its users into this branch over HTTP; prod is untouched.
+      - name: Delete previous Neon branch for this PR
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: ${{ env.NEON_BRANCH }}
+      - name: Create fresh Neon branch from prod
+        id: neon
+        uses: neondatabase/create-branch-action@v5
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: ${{ env.NEON_BRANCH }}
+      # This is also the migration rehearsal: a migration that fails here never
+      # reaches the prod DB, because promote.yml only runs after a green CI.
+      - name: Apply migrations to the PR branch
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+        run: npm run db:migrate
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      # Deploy as a preview (no --prod). Build-time env (NEXT_PUBLIC_*) comes
+      # from the project's preview environment via `vercel pull`; runtime env
+      # is overridden per-deployment: DATABASE_URL → this PR's Neon branch,
+      # plus the guarded fixture-data endpoints so E2E seeding works.
+      - name: Deploy preview + print URL
+        id: deploy
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
+          # jobs" increments the attempt without redeploying the preview, so
+          # including it would desync the runner from the deployed app.
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
+            -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
+            -e E2E_TEST_ENDPOINTS="1" \
+            -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview: $URL"
+
+      # Publish the preview URL in TWO places, because one of them is never
+      # where you're looking:
+      #
+      #   1. A sticky comment (created once, edited in place on later pushes,
+      #      so the thread doesn't collect one per commit). Editing has a cost
+      #      though — an edited comment keeps its ORIGINAL position in the
+      #      timeline, so after six more commits the link is buried up-thread
+      #      and looks stale even when it isn't.
+      #   2. A pinned block at the TOP OF THE PR DESCRIPTION, which is always
+      #      on screen no matter how long the conversation gets. Only the text
+      #      between our two markers is touched; anything you wrote in the
+      #      description is left alone.
+      - name: Publish the preview URL on the PR
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          NEON_BRANCH: ${{ env.NEON_BRANCH }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const url = process.env.PREVIEW_URL;
+            const branch = process.env.NEON_BRANCH;
+            const sha = pr.head.sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const marker = '<!-- feraltravels-preview -->';
+            const endMarker = '<!-- /feraltravels-preview -->';
+
+            const body = [
+              marker,
+              '### 🔍 Preview for this PR',
+              '',
+              `**${url}**`,
+              '',
+              `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
+              '',
+              `Built from \`${sha}\` · [CI run](${runUrl})`,
+              endMarker,
+            ].join('\n');
+
+            // 1. Sticky comment.
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
+
+            // 2. Pinned block at the top of the PR description. Replace only
+            // our own marked region; never rewrite the author's prose.
+            const pinned = [
+              marker,
+              `> **🔍 Preview:** ${url}`,
+              `> Built from \`${sha}\` · Neon branch \`${branch}\` · [CI run](${runUrl})`,
+              endMarker,
+            ].join('\n');
+            const current = pr.body || '';
+            const region = new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n*`);
+            const updated = region.test(current)
+              ? current.replace(region, `${pinned}\n\n`)
+              : `${pinned}\n\n${current}`;
+            if (updated !== current) {
+              await github.rest.pulls.update({ ...context.repo, pull_number: pr.number, body: updated });
+            }
+
+  e2e:
+    name: E2E tests (against preview)
+    needs: preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: npx playwright install --with-deps chromium
+
+      # Same derivation as the preview job → same secret, nothing passed
+      # through job outputs (GitHub drops outputs containing masked values).
+      - name: Derive per-run test-endpoint secret
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
+          # jobs" increments the attempt without redeploying the preview, so
+          # including it would desync the runner from the deployed app.
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      # E2E_BASE_URL → playwright.config skips its local webServer and the
+      # whole suite (fixtures included) targets the deployed preview.
+      - name: Run Playwright against the preview
+        env:
+          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          # Runner-side gate only (the app's own key comes from Vercel preview
+          # env): presence makes the Penny spec run instead of skip.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The real inbox for login-otp.spec.ts — the only spec that sends an
+          # actual email and reads it back. Resend Inbound, so it's the account
+          # and key we already have. Absent, the spec skips (see
+          # E2E_MAX_SKIPPED below); wrong, it fails loudly.
+          AUTH_RESEND_KEY: ${{ secrets.AUTH_RESEND_KEY }}
+          E2E_INBOX_DOMAIN: ${{ secrets.E2E_INBOX_DOMAIN }}
+          # Only needed if Vercel Deployment Protection is enabled.
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e
+
+      # A skipped spec is not a passing spec, and the allowance is now ZERO:
+      # every spec must run, including login-otp, which proves the app can
+      # actually send a sign-in email. That became possible once AUTH_RESEND_KEY
+      # and E2E_INBOX_DOMAIN landed as repo secrets — if either goes missing,
+      # login-otp skips and this step reds the build, which is the point.
+      #
+      # It was briefly 11 while the suite depended on a third-party inbox that
+      # got switched off, and a suite testing nothing shipped green for two
+      # weeks. If you find yourself raising it, the question to answer first is
+      # what the suite has started depending on that it doesn't control.
+      - name: Assert the suite actually ran
+        if: always()
+        env:
+          E2E_MAX_SKIPPED: '0'
+        run: node scripts/assert-e2e-ran.mjs
+
+      # Always, not just on failure: the report is how you see what the specs
+      # actually DID, and that's as useful on a green run as a red one.
+      - name: Upload Playwright report
+        id: report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            playwright-results.json
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Publish the Playwright HTML report so it is ONE CLICK from the PR —
+      # the real report: every step, screenshots, video, and the trace viewer.
+      #
+      # Deployed via the Build Output API (.vercel/output) so Vercel uploads a
+      # FINISHED static site and never tries to detect a framework or run a
+      # build — the app project's Next.js preset would otherwise attempt to
+      # build a folder of static HTML. That also means it needs no project of
+      # its own: it goes to the existing project as an ordinary preview
+      # deployment, so there is nothing to create and nothing to configure.
+      #
+      # The previous version shelled out to `vercel deploy <dir> --yes` hoping
+      # it would auto-create a project. It didn't — no such project exists —
+      # and because the failure happened inside $(...) with no exit check, the
+      # step went green while producing no URL. Hence the explicit exit code
+      # check and the unconditional echo of the CLI output below: this can fail
+      # again, but it can no longer fail SILENTLY.
+      - name: Publish the HTML report
+        id: publish
+        if: always()
+        continue-on-error: true
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ ! -f playwright-report/index.html ]; then
+            echo "::warning::No HTML report to publish — the suite didn't get that far."
+            exit 0
+          fi
+          npm i -g vercel@latest
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -R playwright-report/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          set +e
+          OUT="$(vercel deploy --prebuilt --archive=tgz --token="${{ secrets.VERCEL_TOKEN }}" 2>&1)"
+          CODE=$?
+          set -e
+          echo "--- vercel output ---"
+          echo "$OUT"
+          echo "---------------------"
+          if [ "$CODE" -ne 0 ]; then
+            echo "::warning::Publishing the report failed (exit $CODE). The PR comment will link the downloadable artifact instead."
+            exit 0
+          fi
+          URL="$(printf '%s' "$OUT" | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | tail -n1)"
+          if [ -z "$URL" ]; then
+            echo "::warning::Deploy succeeded but no URL was found in the output above."
+            exit 0
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🎭 Playwright report" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Report: $URL"
+
+      # Per-spec results + a link to the report, as a sticky PR comment.
+      #
+      # The HTML report is a directory, so it can't be inlined, and it is
+      # deliberately NOT published to a URL: its screenshots and videos are of
+      # a preview backed by a CLONE OF PRODUCTION DATA. The artifact link is
+      # behind repo auth; a Pages or Vercel deploy of it would not be.
+      - name: Comment E2E results on the PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_URL: ${{ steps.report.outputs.artifact-url }}
+          REPORT_URL: ${{ steps.publish.outputs.url }}
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const marker = '<!-- feraltravels-e2e-results -->';
+            let table;
+            try {
+              table = execFileSync('node', ['scripts/e2e-pr-summary.mjs'], {
+                encoding: 'utf8',
+                env: {
+                  ...process.env,
+                  ARTIFACT_URL: process.env.ARTIFACT_URL,
+                  REPORT_URL: process.env.REPORT_URL,
+                },
+              });
+            } catch (err) {
+              table = `### 🎭 E2E results\n\nCould not build the summary: ${err.message}`;
+            }
+            const pr = context.payload.pull_request;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              table,
+              `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }

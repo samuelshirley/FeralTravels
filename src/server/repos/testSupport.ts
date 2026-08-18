@@ -1,8 +1,8 @@
 import 'server-only';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { users, vehicles, trips, announcements, announcementDismissals } from '@/server/db/schema';
-import { areTestEndpointsEnabled } from '@/server/auth/test-endpoints';
+import { users, vehicles, trips, announcements, announcementDismissals, emailOtpCodes } from '@/server/db/schema';
+import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
 import { addVehicle, getDefaultVehicleId } from './vehicles';
 import { createTrip, addLeg } from './trips';
 
@@ -255,4 +255,28 @@ export async function cleanupAnnouncement(opts: {
       .set({ active: true })
       .where(inArray(announcements.id, opts.parkedIds));
   }
+}
+
+/**
+ * TEST-ONLY: the pending OTP code for a fixture address.
+ *
+ * Refuses anything outside the fixture pattern, so this cannot be pointed at a
+ * real account even by a caller holding the per-run secret. Returns null when
+ * no unexpired code exists — the spec polls, because the code is written by
+ * the /login request it just made.
+ */
+export async function readFixtureOtp(email: string): Promise<string | null> {
+  assertEnabled();
+  const normalized = email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('readFixtureOtp: not a fixture address');
+  }
+  const rows = await db
+    .select({ code: emailOtpCodes.code, expires: emailOtpCodes.expires })
+    .from(emailOtpCodes)
+    .where(eq(emailOtpCodes.email, normalized))
+    .limit(1);
+  if (rows.length === 0) return null;
+  if (rows[0].expires.getTime() < Date.now()) return null;
+  return rows[0].code;
 }

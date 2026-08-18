@@ -25,10 +25,12 @@ import path from 'node:path';
  *   `FIXTURE_EMAIL` must clean it before later specs (e.g. vehicle CRUD assumes
  *   a sole seeded van mid-run); teardown alone runs too late.
  *
- * - **One Playwright worker (`workers: 1`)** — every spec uses the same Auth
- *   identity and DB rows. Parallelizing across files caused cross-spec races
- *   (e.g. fleet counts). See `TESTING-MODES.md` and the comment above
- *   `defineConfig` for when that could change.
+ * - **Fully parallel, one fresh user per test.** Every spec mints its own
+ *   `playwright-<runid>-...@e2e.feraltravels.com` address, signs in through the
+ *   real OTP flow, and seeds its own fixture graph over `/api/test/*`. Nothing
+ *   is shared, so nothing can race. The announcement spec is the exception —
+ *   announcements are global app state — and runs alone in its own project.
+
  *
  * - Single browser project (chromium) — we're not testing rendering quirks,
  *   we're testing app behaviour. Multiple browsers would ~3× the run time
@@ -39,7 +41,7 @@ import path from 'node:path';
  * for Anthropic streaming. Use `npm run e2e:smoke` for the fast path (no Penny).
  */
 
-// Read .env so DATABASE_URL, MAILSLURP_API_KEY, E2E_TEST_ENDPOINTS_*, etc. are
+// Read .env so DATABASE_URL, E2E_TEST_ENDPOINTS_*, etc. are
 // available to test code without exporting them in the shell. dotenv is
 // already a devDep for the migrate scripts.
 import 'dotenv/config';
@@ -58,11 +60,19 @@ const useExternalServer = !!process.env.E2E_BASE_URL;
 
 export default defineConfig({
   testDir: path.join(__dirname, 'e2e'),
-  fullyParallel: false,
-  workers: 1,
+  // Every spec signs in as its OWN fresh user and seeds its OWN data, so there
+  // is no shared state left to race — which is what makes parallel safe. The
+  // one exception is the announcement, which is global to the app; it runs in
+  // its own project after everything else (see `projects` below).
+  fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],
+    // Machine-readable run stats. CI feeds this to scripts/assert-e2e-ran.mjs,
+    // which fails the build when the suite mass-SKIPPED —
+    // a green-but-empty run would otherwise auto-ship to production on merge.
+    ['json', { outputFile: 'playwright-results.json' }],
   ],
   timeout: 60_000,
   expect: { timeout: 10_000 },
@@ -107,9 +117,21 @@ export default defineConfig({
     },
   },
   projects: [
+    // Everything except the announcement. Fully parallel: one fresh user per
+    // test, one fresh fixture graph per test, nothing shared.
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /announcement\.spec\.ts/,
+    },
+    // The announcement is GLOBAL app state — an active announcement pops a
+    // modal over every signed-in user's /trips, which would block clicks in
+    // any spec running beside it. So it runs on its own, after the rest.
+    {
+      name: 'announcement',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /announcement\.spec\.ts/,
+      dependencies: ['chromium'],
     },
   ],
   ...(useExternalServer
@@ -139,7 +161,7 @@ export default defineConfig({
             ...process.env,
             // The /api/test/* FIXTURE endpoints must be ON for the suite
             // (seed/reset/cleanup of test data — there is no auth bypass;
-            // sign-in goes through the real OTP email via MailSlurp). Set
+            // sign-in goes through the real OTP flow). Set
             // here (not in .env) so a developer's `npm run dev` doesn't
             // unexpectedly expose them — only tests turn them on.
             E2E_TEST_ENDPOINTS: '1',

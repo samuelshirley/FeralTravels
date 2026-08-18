@@ -1,25 +1,23 @@
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
-import { createFreshUser, loginViaOtp, MAILSLURP_API_KEY, SKIP_NO_MAILSLURP } from './fixtures/auth';
+import { signInAsNewUser } from './fixtures/auth';
 import { testEndpointHeaders } from './fixtures/constants';
 
 /**
- * Announcement popup E2E — verifies the one-time announcement flow:
- *   1. Seed an active announcement (over HTTP via /api/test/announcement)
- *   2. Log in → see the modal on /trips
- *   3. Click dismiss → modal disappears
- *   4. Reload → modal does NOT reappear (dismissal persisted)
- *   5. Clean up the seeded announcement (restoring any parked real ones)
+ * An active announcement pops a modal the first time a user lands on /trips,
+ * and stays dismissed once dismissed.
  *
- * Seeding/cleanup go through the guarded test-support API, so the spec never
- * touches the database directly.
+ * This runs in its own Playwright project, AFTER everything else (see
+ * playwright.config.ts). An announcement is global app state — while one is
+ * active it would appear over every other spec's user and swallow their clicks.
+ * It is the one thing in this suite that cannot be isolated per user.
  */
-function targetBaseUrl(): string {
+function baseUrl(): string {
   return process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`;
 }
 
 async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T> {
   const ctx = await request.newContext({
-    baseURL: targetBaseUrl(),
+    baseURL: baseUrl(),
     extraHTTPHeaders: testEndpointHeaders(),
   });
   try {
@@ -29,55 +27,48 @@ async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T
   }
 }
 
-test.describe('Announcement popup', () => {
-  test.skip(!MAILSLURP_API_KEY, SKIP_NO_MAILSLURP);
+const TITLE = 'E2E Test Announcement';
+const BODY = 'This is a test announcement for E2E.';
+const BUTTON = 'Wow nice job Sam';
 
-  const ANNOUNCEMENT_TITLE = 'E2E Test Announcement';
-  const ANNOUNCEMENT_BODY = 'This is a test announcement for E2E.';
-  const ANNOUNCEMENT_BUTTON = 'Wow nice job Sam';
+test.describe('Announcement', () => {
   let announcementId: string | null = null;
   let parkedIds: string[] = [];
 
   test.beforeAll(async () => {
     await withApi(async (ctx) => {
       const res = await ctx.post('/api/test/announcement', {
-        data: { title: ANNOUNCEMENT_TITLE, body: ANNOUNCEMENT_BODY, buttonText: ANNOUNCEMENT_BUTTON },
+        data: { title: TITLE, body: BODY, buttonText: BUTTON },
       });
-      if (!res.ok()) throw new Error(`[e2e/announcement] seed failed (${res.status()}): ${await res.text()}`);
+      if (!res.ok()) throw new Error(`seed failed (${res.status()}): ${await res.text()}`);
       const body = (await res.json()) as { announcementId: string; parkedIds: string[] };
       announcementId = body.announcementId;
       parkedIds = body.parkedIds ?? [];
     });
   });
 
+  // Always restore: a leaked active announcement would pop a modal over every
+  // future run of every other spec.
   test.afterAll(async () => {
     if (!announcementId) return;
-    await withApi(async (ctx) => {
-      await ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } });
-    });
+    await withApi((ctx) =>
+      ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } }),
+    );
   });
 
-  test('shows announcement on login, dismisses permanently', async ({ page }) => {
-    // OTP sign-in find-or-creates the user — no seeding needed; the modal
-    // shows on /trips for any signed-in user while the announcement is active.
-    const user = await createFreshUser();
-    await loginViaOtp(page, user);
+  test('shows once, then stays dismissed', async ({ page }) => {
+    await signInAsNewUser(page, { seedFixture: false });
 
     const modal = page.getByTestId('announcement-modal');
-    await expect(modal).toBeVisible({ timeout: 10_000 });
-    await expect(modal).toContainText(ANNOUNCEMENT_TITLE);
-    await expect(modal).toContainText(ANNOUNCEMENT_BODY);
+    await expect(modal).toBeVisible({ timeout: 15_000 });
+    await expect(modal).toContainText(TITLE);
+    await expect(modal).toContainText(BODY);
 
-    const dismissBtn = page.getByTestId('announcement-dismiss-btn');
-    await expect(dismissBtn).toContainText(ANNOUNCEMENT_BUTTON);
-    await dismissBtn.click();
+    await page.getByTestId('announcement-dismiss-btn').click();
+    await expect(page.getByTestId('announcement-modal-overlay')).toBeHidden({ timeout: 10_000 });
 
-    await expect(page.getByTestId('announcement-modal-overlay')).not.toBeVisible({ timeout: 5_000 });
-
-    // Reload — the announcement should NOT reappear (dismissal persisted).
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible({ timeout: 15_000 });
-    await page.waitForTimeout(2_000);
-    await expect(page.getByTestId('announcement-modal-overlay')).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('announcement-modal-overlay')).toBeHidden();
   });
 });

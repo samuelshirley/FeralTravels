@@ -33,9 +33,12 @@ next-env.d.ts
 # Playwright
 test-results/
 playwright-report/
+playwright-results.json
 playwright/.cache/
 .env*
 
 # Quarantined dead files (bridge cannot unlink; safe to delete)
 _graveyard/
-playwright-results.json
+
+# Playwright saved auth state (per-run, never commit)
+playwright/.auth/

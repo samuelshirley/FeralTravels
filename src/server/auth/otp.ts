@@ -3,6 +3,7 @@ import { db } from '@/server/db/client';
 import { emailOtpCodes, users, sessions } from '@/server/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
+import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
 import { syncAdminFlagOnSignIn } from './admin';
 import { cookies } from 'next/headers';
@@ -120,6 +121,30 @@ export async function sendOtpCode(email: string): Promise<string> {
 
   const code = generateOtpCode();
   await storeOtpCode(normalized, code);
+
+  // E2E fixture addresses (`playwright-*@e2e.feraltravels.com`, and only when
+  // test endpoints are enabled — never on production) skip the TRANSPORT only.
+  // The code above is already generated and stored; the spec reads it from
+  // /api/test/otp and types it into the real verify UI, so the sign-in itself
+  // is in no way shortened.
+  //
+  // Why not just let it send: that subdomain has no MX, so every send would
+  // hard-bounce. Twelve bounces per CI run against the same domain the real
+  // sign-in emails come from is a good way to get a sending reputation
+  // wrecked — the same shape of problem as the disposable-inbox account that
+  // got shut off. It also keeps CI off the 100-emails/day free-tier ceiling.
+  //
+  // COVERAGE NOTE: this means the eleven signed-in specs do not prove Resend
+  // delivers. e2e/login-otp.spec.ts does, on every PR. Its address lives on a
+  // Resend RECEIVING domain (E2E_INBOX_DOMAIN), which is NOT a fixture
+  // address — so it falls straight through to the real send below, and the
+  // code has to come back out of a mailbox before that spec can pass.
+  if (isFixtureRecipient(normalized)) {
+    // Still render, so a broken email template is a broken test rather than a
+    // surprise in production.
+    renderOtpEmail({ code, to: normalized, domain: undefined });
+    return code;
+  }
 
   const apiKey = process.env.AUTH_RESEND_KEY;
   if (!apiKey) {
