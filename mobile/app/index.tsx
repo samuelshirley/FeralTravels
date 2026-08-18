@@ -1,13 +1,15 @@
 import { useEffect } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { getToken } from "@/lib/auth";
+import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
+import { font } from "@/lib/typography";
 
 /**
  * Entry gate: route to /trips when a stored session exists, /sign-in when
- * not. The token might be expired — /trips handles a 401 by clearing it and
- * bouncing back here, so the gate stays dumb and fast.
+ * not. The token might be expired — apiFetch clears it on any 401 and the
+ * screens bounce back here, so the gate stays dumb and fast.
  */
 export default function Gate() {
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function Gate() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Feral Travels</Text>
-      <ActivityIndicator color={theme.primary} />
+      <Spinner />
     </View>
   );
 }
@@ -38,9 +40,5 @@ const styles = StyleSheet.create({
     gap: 16,
     backgroundColor: theme.bg,
   },
-  title: {
-    fontSize: 34,
-    fontWeight: "700",
-    color: theme.text,
-  },
+  title: { fontSize: 34, fontFamily: font.bold, color: theme.text },
 });
