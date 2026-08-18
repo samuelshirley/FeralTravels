@@ -76,9 +76,14 @@ env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
-  # unit and ui have no `needs`, so they start together and run concurrently.
-  # Splitting them means a red component test doesn't hide behind 43 logic
-  # specs (and vice versa) in a single wall of output.
+  # ONE job for both vitest projects, because both ARE unit tests. The
+  # project split (`unit` in node, `components` in jsdom) still exists — it
+  # keeps logic specs from paying for a DOM they never touch — but it is a
+  # vitest concern, not a CI one. Two boxes labelled "Unit tests" and "UI
+  # tests" read as though one of them drove a browser; only the E2E job
+  # does, and that ambiguity cost more than the ~20s of parallelism it
+  # bought against a five-minute pipeline. Vitest still reports each
+  # project separately, so a red component spec is no harder to spot.
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -90,25 +95,12 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run test:unit
-
-  ui:
-    name: UI tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npm run test:ui
+      - run: npm test
 
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:
     name: Deploy tested preview
-    needs: [unit, ui]
+    needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:

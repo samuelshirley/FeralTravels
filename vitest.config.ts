@@ -5,16 +5,19 @@ import { defineConfig } from 'vitest/config';
 const alias = { '@': path.resolve(__dirname, 'src') };
 
 /**
- * Two projects, so CI can run them as two jobs in parallel (`--project unit`
- * / `--project ui`) and so the logic tests stop paying for a DOM they never
- * touch.
+ * Two projects so the logic tests stop paying for a DOM they never touch.
+ * BOTH are unit tests and CI runs them in a single "Unit tests" job — the
+ * split is about the environment, not about parallelising CI. (It was two
+ * jobs once; "UI tests" sitting next to "E2E tests" read as though it drove
+ * a browser, which it does not.)
  *
  * - `unit` — the `*.test.ts` files. Pure logic: Finn/Penny planning, date
  *   math, polyline decoding, the guard tests. None of them render anything,
  *   so they run in the `node` environment with no setup file. Booting jsdom
  *   per worker for these was pure overhead.
- * - `ui`   — the `*.test.tsx` component specs, under jsdom with Testing
- *   Library's matchers (`src/test/setup.ts`).
+ * - `components` — the `*.test.tsx` component specs, under jsdom with
+ *   Testing Library's matchers (`src/test/setup.ts`). Still no browser:
+ *   jsdom, in-process. The browser lives in the Playwright suite.
  *
  * BOTH projects load the React plugin, and the reason is worth keeping:
  * a `.ts` test can still pull `.tsx` modules in transitively. `useNextStop.test.ts`
@@ -49,7 +52,7 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias },
         test: {
-          name: 'ui',
+          name: 'components',
           environment: 'jsdom',
           include: ['src/**/*.test.tsx'],
           setupFiles: ['./src/test/setup.ts'],

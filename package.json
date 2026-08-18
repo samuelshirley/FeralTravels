@@ -21,7 +21,7 @@
     "e2e:report": "playwright show-report",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
-    "test:ui": "vitest run --project ui"
+    "test:components": "vitest run --project components"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
