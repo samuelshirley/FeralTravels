@@ -2,16 +2,23 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Resend } from 'resend';
 import { auth } from '@/server/auth';
+import { requireUser } from '@/server/auth/guards';
 
 const supportSchema = z.object({
   message: z.string().min(1, 'Message is required').max(5000),
 });
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
+  // requireUser() accepts the web session cookie OR the mobile bearer token,
+  // so Contact Support works from both clients. auth() is still consulted for
+  // the display NAME, which only exists on the cookie path.
+  let user: { id: string; email: string | null };
+  try {
+    user = await requireUser();
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const session = await auth();
 
   const body = await req.json().catch(() => null);
   const parsed = supportSchema.safeParse(body);
@@ -34,13 +41,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Email not configured' }, { status: 500 });
   }
 
-  const userName = session.user.name || 'Unknown';
-  const userEmail = session.user.email || 'Unknown';
+  const userName = session?.user?.name || user.email || 'Unknown';
+  const userEmail = user.email || 'Unknown';
 
   const resend = new Resend(apiKey);
   const result = await resend.emails.send({
     from,
-    to: 'support@feralltravels.com',
+    to: 'support@feraltravels.com',
     replyTo: userEmail,
     subject: `Support request from ${userName}`,
     text: [
