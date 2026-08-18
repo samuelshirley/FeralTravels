@@ -74,9 +74,10 @@ module.exports = {
       [
         'expo-splash-screen',
         {
-          // splash-icon.png is feathered into transparency at its edges so it
-          // dissolves into backgroundColor — the master art has a vignette, and
-          // pasting it as a hard square leaves a visible seam on device.
+          // splash-icon.png is the master art verbatim. An earlier revision
+          // feathered its edges into transparency to hide the vignette seam;
+          // contain-mode rendered that feather as a halo on device. Plain
+          // square, flat background, no alpha.
           image: './assets/splash-icon.png',
           imageWidth: 300,
           resizeMode: 'contain',
