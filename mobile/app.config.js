@@ -21,8 +21,15 @@ module.exports = {
   expo: {
     name: 'Feral Travels',
     slug: 'feral-travels',
+    owner: 'samuelashirley',
+    // EAS project link. app.config.js is a dynamic config, so `eas init`
+    // cannot write this itself — it must be maintained by hand.
+    extra: {
+      eas: { projectId: '8228a0d9-1f26-4a3a-bcf0-aa86d90c3886' },
+    },
     version: '1.0.0',
     scheme: 'feraltravels',
+    icon: './assets/icon.png',
     orientation: 'portrait',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
@@ -55,9 +62,28 @@ module.exports = {
           : {}),
       },
     },
-    android: { package: 'com.feraltravels.app' },
+    android: {
+      package: 'com.feraltravels.app',
+      adaptiveIcon: {
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#55346F',
+      },
+    },
     plugins: [
       'expo-router',
+      [
+        'expo-splash-screen',
+        {
+          // splash-icon.png is the master art verbatim. An earlier revision
+          // feathered its edges into transparency to hide the vignette seam;
+          // contain-mode rendered that feather as a halo on device. Plain
+          // square, flat background, no alpha.
+          image: './assets/splash-icon.png',
+          imageWidth: 300,
+          resizeMode: 'contain',
+          backgroundColor: '#55346F',
+        },
+      ],
       'expo-secure-store',
       'expo-web-browser',
       ...(APPLE_SIGNIN ? ['expo-apple-authentication'] : []),
