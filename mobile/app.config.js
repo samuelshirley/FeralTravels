@@ -27,6 +27,15 @@ module.exports = {
     extra: {
       eas: { projectId: '8228a0d9-1f26-4a3a-bcf0-aa86d90c3886' },
     },
+    // EAS Update. Written by hand because `eas build` cannot edit a
+    // dynamic config; the URL is derived from the projectId above.
+    updates: {
+      url: 'https://u.expo.dev/8228a0d9-1f26-4a3a-bcf0-aa86d90c3886',
+    },
+    // appVersion policy: an OTA update only reaches builds sharing the
+    // same `version`, so a native change can never be handed JS that
+    // expects a different native surface.
+    runtimeVersion: { policy: 'appVersion' },
     version: '1.0.0',
     scheme: 'feraltravels',
     icon: './assets/icon.png',
@@ -53,6 +62,9 @@ module.exports = {
           : {}),
       },
       infoPlist: {
+        // No custom cryptography: HTTPS only. Declaring it here stops App
+        // Store Connect asking on every single upload.
+        ITSAppUsesNonExemptEncryption: false,
         NSLocationWhenInUseUsageDescription:
           'Feral Travels uses your location to anchor your trip progress and plan fuel stops along your route.',
         NSPhotoLibraryUsageDescription:
