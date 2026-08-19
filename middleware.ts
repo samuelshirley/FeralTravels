@@ -12,6 +12,19 @@ const PUBLIC_PREFIXES = [
   // these must be reachable without a session cookie. Not public-by-accident:
   // both routes are Zod-validated and rate-limited.
   '/api/mobile/otp',
+  // Same reasoning for the native OAuth exchange — a request that trades a
+  // Google/Apple ID token for a session has no session yet by definition.
+  // Without this the route 302s to /login and every "Continue with Google"
+  // tap dies on an HTML response, with nothing in the error copy to explain
+  // it. NOTE: unlike the OTP routes this one is NOT rate-limited yet.
+  '/api/mobile/oauth',
+  // The legal pages are fetched ANONYMOUSLY by Google brand verification and
+  // Apple App Review. src/app/(legal)/layout.tsx calls them "deliberately
+  // public", but that only governs the layout — middleware runs first, so
+  // without these entries a reviewer sees a sign-in wall on the exact URLs
+  // submitted to the consent screen and to App Store Connect.
+  '/privacy',
+  '/terms',
   '/_next',
   '/favicon.ico',
   '/manifest.json',
