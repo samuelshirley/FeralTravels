@@ -1,49 +1,46 @@
-# Promote to production.
+# Deploy to production.
 #
-# AUTOMATIC on every push to main (i.e. every PR merge): applies pending
-# migrations to the PROD database, then builds and deploys that commit to
-# production via the Vercel CLI. Because vercel.json disables Vercel's own git
+# MERGING IS DEPLOYING. This workflow fires on every push to `main` — i.e. on
+# every PR merge — applies pending migrations to the PROD database, then builds
+# and deploys that commit to production via the Vercel CLI. There is no button
+# to press and no second step. Because vercel.json disables Vercel's own git
 # auto-deploy, this workflow is the ONLY path to production.
-#
-# Still runnable MANUALLY (Actions → "Promote to production" → Run workflow)
-# for re-deploying an older commit — e.g. rolling back by promoting the
-# previous SHA.
 #
 # The CI gate is ENFORCED, not a convention. Since a squash/merge commit has a
 # different SHA than anything CI ever tested, the gate resolves the pull
 # request this commit came from and requires the CI run for that PR's HEAD to
-# be green. A direct push to main (no PR) has no CI run and is therefore
-# BLOCKED — push through a PR. Branch protection on main should require the
-# CI checks anyway; this is the second lock on the same door.
+# be green. A direct push to `main` has no CI run and is therefore BLOCKED —
+# push through a PR. Branch protection on main should require the CI checks
+# anyway; this is the second lock on the same door.
 #
-# WHY AUTO: the PR already ran the full suite against a Vercel preview backed
-# by a fresh clone of the prod DB, migrations included — so the merge itself is
-# the decision point. The residual risk this does NOT cover: if the migration
-# step below succeeds and the deploy step then fails, prod runs OLD code
-# against a NEW schema until you fix forward. Keep migrations additive
-# (add column/table, backfill, switch code, drop later) and that window is
-# harmless. Also: "require branches to be up to date before merging" in branch
-# protection is what stops a PR tested against a stale main from shipping.
+# WHY THIS IS SAFE ENOUGH TO BE AUTOMATIC: the PR already ran the full suite
+# against a Vercel preview backed by a fresh clone of the prod DB, migrations
+# included — so the merge itself is the decision point. The residual risk this
+# does NOT cover: if the migration step below succeeds and the deploy step then
+# fails, prod runs OLD code against a NEW schema until you fix forward. Keep
+# migrations additive (add column/table, backfill, switch code, drop later) and
+# that window is harmless. Also: "require branches to be up to date before
+# merging" in branch protection is what stops a PR tested against a stale main
+# from shipping.
+#
+# ROLLBACK: open a revert PR — it goes through the same gate and redeploys on
+# merge. For an instant fix, re-promote the previous production deployment from
+# the Vercel dashboard; note that neither undoes a migration, which is the
+# other reason to keep them additive.
 #
 # REQUIRED REPO SECRETS:
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   DATABASE_URL   (the PROD Neon connection string — used only to migrate prod)
 
-name: Promote to production
+name: Deploy to production
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: 'Commit SHA to promote (blank = current main)'
-        required: false
-        default: ''
 
-# Never two promotes at once, and never cancel one mid-migration.
+# Never two deploys at once, and never cancel one mid-migration.
 concurrency:
-  group: promote-prod
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
@@ -52,7 +49,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  promote:
+  deploy:
     name: Migrate prod + deploy to production
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -61,16 +58,14 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.sha || github.sha }}
 
-      # HARD GATE: refuse to promote code that CI hasn't proven green.
+      # HARD GATE: refuse to deploy code that CI hasn't proven green.
       #
       # CI runs on pull_request, so its runs are keyed to the PR's HEAD sha,
       # not to the merge/squash commit sitting on main. Resolve the PR that
       # produced this commit, take its head sha, and require the latest CI run
       # for THAT sha to be completed + successful. If the commit has its own CI
-      # run (e.g. promoting a PR head directly), that counts too.
+      # run (e.g. deploying a PR head directly), that counts too.
       #
       # In-progress counts as not green (wait for it). No run at all counts as
       # not green (open a PR).
@@ -80,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
-          echo "Promoting commit: $SHA"
+          echo "Deploying commit: $SHA"
 
           ci_state() {
             gh run list -R "$GITHUB_REPOSITORY" --workflow 'CI' --commit "$1" \
@@ -108,7 +103,7 @@ jobs:
             echo "::error::CI is not green for $TESTED_SHA (state: $STATE). Production was NOT updated. Merge through a pull request with green CI checks, or wait for the run to finish."
             exit 1
           fi
-          echo "CI green for $TESTED_SHA — promoting." >> "$GITHUB_STEP_SUMMARY"
+          echo "CI green for $TESTED_SHA — deploying." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-node@v4
         with:
@@ -135,7 +130,7 @@ jobs:
           vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
           vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
           URL="$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")"
-          echo "## 🚀 Promoted to production" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🚀 Deployed to production" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
 
       # Prod schema is now ahead of prod code — the exact failure mode from the
@@ -143,4 +138,4 @@ jobs:
       - name: Warn if the deploy failed after migrating
         if: failure()
         run: |
-          echo "::error::Promote failed. If 'Apply migrations to production DB' succeeded and the deploy did not, PRODUCTION IS RUNNING OLD CODE AGAINST A NEW SCHEMA. Re-run this workflow or promote the previous SHA immediately."
+          echo "::error::Deploy failed. If 'Apply migrations to production DB' succeeded and the deploy did not, PRODUCTION IS RUNNING OLD CODE AGAINST A NEW SCHEMA. Re-run this workflow, or merge a revert PR immediately."
