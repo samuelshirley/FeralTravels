@@ -4,6 +4,26 @@ The code is done on both sides. Google sign-in does not appear in the app yet
 because **nothing here is a code problem** — the remaining work is three
 console tasks and four env vars.
 
+## Current state (2026-08-18)
+
+- iOS OAuth client created in the `feral-travels` project:
+  `205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com`
+  (bundle id `com.feraltravels.app`, team `4CG2UE2L49`). Written into
+  `mobile/.env` and both EAS profiles; `AUTH_GOOGLE_IOS_CLIENT_ID` is set in
+  Vercel and GitHub Actions.
+- **Consent screen published to "In production."** It had been sitting on
+  "Testing" with zero test users, which restricts EVERY client in the project
+  — so Google sign-in on the live web app was failing for everyone except the
+  project owner. No verification was needed to publish: Data Access lists no
+  sensitive and no restricted scopes.
+- Outstanding: the Branding page warns "your branding needs to be verified
+  before it can be shown to users," and the home page / privacy policy / terms
+  fields are all empty. Sign-in works regardless — this only affects how
+  polished the consent screen looks. Authorized domains already cover both
+  `feraltravels.com` and `feral-travels.vercel.app`, and no logo is uploaded
+  (a logo is itself a verification trigger).
+- Remaining before the button appears on device: a NEW native build.
+
 ## Why the button is missing (the actual answer)
 
 `mobile/lib/oauth.ts` sets `googleAvailable = GOOGLE_IOS_CLIENT_ID != null`.
@@ -56,7 +76,7 @@ need it in the profile). It then prints the two things it cannot do for you.
 
 ## 2. The server side, and a NEW native build
 
-- Vercel, **prod and preview**: `GOOGLE_IOS_CLIENT_ID=<the same id>`. The
+- Vercel, **prod and preview**: `AUTH_GOOGLE_IOS_CLIENT_ID=<the same id>`. The
   exchange route checks the token's `aud` against it; a mismatch is a 401
   `InvalidToken`.
 - Rebuild. The client ID's reversed form becomes a `CFBundleURLScheme`
@@ -111,7 +131,7 @@ real one, so it is a separate account — by design, not a bug.
 
 ## Verifying it works
 
-1. `GOOGLE_IOS_CLIENT_ID` set on the preview deployment.
+1. `AUTH_GOOGLE_IOS_CLIENT_ID` set on the preview deployment.
 2. New native build with the `EXPO_PUBLIC_` var → button is on the screen.
 3. Tap it → Google sheet → back in the app on `/trips`.
 4. Sign in on web with the **same** Google account → same trips, one user row.
@@ -121,6 +141,6 @@ If the button is there but the tap fails:
 | Symptom | Cause |
 | --- | --- |
 | Browser opens, never returns | reversed-client-id URL scheme missing → `expo prebuild --clean` |
-| 401 `InvalidToken` | server `GOOGLE_IOS_CLIENT_ID` ≠ the client the app used |
-| 503 `ProviderNotConfigured` | server `GOOGLE_IOS_CLIENT_ID` unset on that deployment |
+| 401 `InvalidToken` | server `AUTH_GOOGLE_IOS_CLIENT_ID` ≠ the client the app used |
+| 503 `ProviderNotConfigured` | server `AUTH_GOOGLE_IOS_CLIENT_ID` unset on that deployment |
 | 401 `EmailNotVerified` | the Google account's address is genuinely unverified |

@@ -36,7 +36,7 @@ const rejectingVerifier: VerifyDeps['verify'] = async () => {
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  process.env.GOOGLE_IOS_CLIENT_ID = IOS_CLIENT;
+  process.env.AUTH_GOOGLE_IOS_CLIENT_ID = IOS_CLIENT;
   process.env.AUTH_GOOGLE_ID = WEB_CLIENT;
 });
 
@@ -113,7 +113,7 @@ describe('Google identity tokens', () => {
   it('reports 503 ProviderNotConfigured when the iOS client id is unset', async () => {
     // The pre-launch state: the app hides its Google button, but a stale build
     // could still reach here. Nothing is broken — it just is not set up.
-    delete process.env.GOOGLE_IOS_CLIENT_ID;
+    delete process.env.AUTH_GOOGLE_IOS_CLIENT_ID;
     const { verify } = verifierReturning({ email: 'a@b.com', email_verified: true });
     const err = await verifyIdentityToken('google', 'tok', null, { verify }).catch((e) => e);
     expect(err).toBeInstanceOf(HttpError);

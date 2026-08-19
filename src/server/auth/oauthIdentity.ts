@@ -73,7 +73,7 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
    * audience bug: any app the user has ever signed into with Google could
    * present its own ID token here and be handed a session as that user.
    */
-  const audience = process.env.GOOGLE_IOS_CLIENT_ID;
+  const audience = process.env.AUTH_GOOGLE_IOS_CLIENT_ID;
   if (!audience) {
     // 503, not 500: nothing is broken, the provider just isn't set up in this
     // environment yet. The app maps this code to "use your email instead".

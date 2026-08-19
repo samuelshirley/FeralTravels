@@ -73,7 +73,7 @@ writeFileSync(EAS_PATH, JSON.stringify(eas, null, 2) + '\n');
 
 console.log(`Wrote ${path.relative(repoRoot, ENV_PATH)} and the preview + production profiles in ${path.relative(repoRoot, EAS_PATH)}.`);
 console.log('\nStill to do — neither can be done from here:');
-console.log(`  1. Vercel env (prod AND preview):  GOOGLE_IOS_CLIENT_ID=${clientId}`);
+console.log(`  1. Vercel env (prod AND preview):  AUTH_GOOGLE_IOS_CLIENT_ID=${clientId}`);
 console.log('  2. A NEW native build. The reversed client id is a CFBundleURLScheme,');
 console.log('     so an OTA update cannot deliver it:');
 console.log('       cd mobile && npx expo prebuild --clean && npx expo run:ios');
