@@ -286,3 +286,48 @@ img, svg, canvas { max-width: 100%; }
   margin: 0;
   max-width: 320px;
 }
+
+/* ---------------------------------------------------------------------------
+   Public legal pages (/privacy, /terms).
+   Plain document typography — these are read by App Review and by Google's
+   brand verification as much as by users, so readability beats brand.
+   --------------------------------------------------------------------------- */
+.legal-doc {
+  display: block;
+  margin-top: 20px;
+  color: var(--tp-text);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.legal-doc h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.legal-doc h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 32px 0 8px;
+}
+.legal-doc p,
+.legal-doc li {
+  color: var(--tp-muted);
+}
+.legal-doc ul {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+.legal-doc li {
+  margin-bottom: 6px;
+}
+.legal-doc a {
+  color: var(--tp-primary);
+}
+.legal-doc .updated {
+  font-size: 13px;
+  color: var(--tp-subtle);
+  margin-bottom: 24px;
+}
+.legal-doc strong {
+  color: var(--tp-text);
+}

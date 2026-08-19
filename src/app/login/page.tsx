@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth, signIn, isAppleSignInConfigured } from '@/server/auth';
 import { sendOtpCode } from '@/server/auth/otp';
@@ -293,6 +294,27 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             Email me a code
           </button>
         </form>
+
+        {/* Both Google's brand verification and Apple's App Review look for
+            reachable legal links on the sign-in surface. Keeping them here
+            rather than in a global footer means they sit on the one page a
+            reviewer is guaranteed to see. */}
+        <p
+          style={{
+            marginTop: 20,
+            textAlign: 'center',
+            fontSize: 11,
+            color: 'var(--tp-subtle)',
+          }}
+        >
+          <Link href="/privacy" style={{ color: 'var(--tp-subtle)' }}>
+            Privacy
+          </Link>
+          {' · '}
+          <Link href="/terms" style={{ color: 'var(--tp-subtle)' }}>
+            Terms
+          </Link>
+        </p>
       </div>
     </div>
   );
