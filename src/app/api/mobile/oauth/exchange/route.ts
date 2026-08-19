@@ -2,6 +2,7 @@ import { z, ZodError } from 'zod';
 import { createSessionForEmail } from '@/server/auth/otp';
 import { errorResponse } from '@/server/auth/guards';
 import { verifyIdentityToken } from '@/server/auth/oauthIdentity';
+import { consumeIdToken, pruneExpiredTokenUses } from '@/server/auth/oauthReplay';
 
 // jose needs Node crypto; keep this off the edge runtime.
 export const runtime = 'nodejs';
@@ -19,6 +20,10 @@ export const dynamic = 'force-dynamic';
  *
  * Mirrors /api/mobile/otp/verify's response shape exactly, because the app
  * treats all three sign-in paths as one `SessionResult`.
+ *
+ * Verifying the token proves it is authentic, not that it is fresh, so
+ * consumeIdToken() enforces single use and a per-address rate limit before any
+ * session is minted — see oauthReplay.ts for why that is a table and not a Map.
  */
 const bodySchema = z.object({
   provider: z.enum(['google', 'apple']),
@@ -33,7 +38,16 @@ export async function POST(req: Request) {
 
     const identity = await verifyIdentityToken(body.provider, body.idToken, body.fullName);
 
+    // Between verification and session creation on purpose: a token that has
+    // already been spent must not produce a second session, and a caller
+    // hammering this route must not be able to keep going. Throws 401
+    // TokenAlreadyUsed or 429 RateLimited.
+    await consumeIdToken(body.idToken, identity.email, identity.expiresAt);
+
     const session = await createSessionForEmail(identity.email, identity.name);
+
+    // Housekeeping, after the work that matters and never blocking it.
+    void pruneExpiredTokenUses().catch(() => {});
 
     return Response.json({
       token: session.sessionToken,

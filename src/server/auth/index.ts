@@ -97,6 +97,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // src/lib/ enforces this.
   ],
   callbacks: {
+    /**
+     * The web counterpart of the check in oauthIdentity.ts.
+     *
+     * Both Google and Apple are registered with
+     * `allowDangerousEmailAccountLinking: true`, which links an OAuth identity
+     * onto whatever local user already holds that email. That is the right
+     * behaviour for a PROVEN address and account takeover for an unproven one,
+     * so the proof has to be enforced at the door. `events.signIn` cannot do
+     * it — an event fires after the decision and its return value is ignored;
+     * it only decides whether to stamp users.emailVerified. This callback is
+     * the only place a sign-in can actually be refused.
+     *
+     * Kept deliberately identical to the native rule so the two paths cannot
+     * disagree about who is allowed in: an explicitly unverified address is
+     * refused, an absent claim is refused, and the sole exception is Apple's
+     * Hide My Email alias, a domain Apple owns and routes.
+     */
+    signIn({ account, profile }) {
+      const trustedOAuthProviders = new Set(['google', 'apple']);
+      if (!account?.provider || !trustedOAuthProviders.has(account.provider)) return true;
+
+      // Google sends a boolean, Apple the string "true".
+      const claim = profile?.email_verified as boolean | string | undefined;
+      if (claim === true || claim === 'true') return true;
+      if (claim === false || claim === 'false') return false;
+
+      const email = typeof profile?.email === 'string' ? profile.email.toLowerCase() : '';
+      return account.provider === 'apple' && email.endsWith('@privaterelay.appleid.com');
+    },
     session({ session, user }) {
       session.user.id = user.id;
       return session;

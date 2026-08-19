@@ -127,6 +127,41 @@ export const emailOtpCodes = pgTable(
   })
 );
 
+/**
+ * One row per native OAuth ID token that has been redeemed at
+ * /api/mobile/oauth/exchange. Two jobs, one table:
+ *
+ *  - REPLAY: `tokenHash` is the primary key, so redeeming the same provider
+ *    token twice is a unique-constraint miss rather than a second session.
+ *    Provider ID tokens live ~1h and the iOS client id ships inside the app
+ *    binary, so a captured token was otherwise good for unlimited 30-day
+ *    sessions until it expired.
+ *  - RATE LIMIT: `email` + `usedAt` let the route cap how many exchanges one
+ *    address can drive in a window, in the same DB-backed way the OTP
+ *    cooldown works (in-memory counters are useless across serverless
+ *    invocations).
+ *
+ * `expires` is the TOKEN's own exp, not a session lifetime — rows are only
+ * useful until the token they guard would be rejected anyway, and the route
+ * prunes past-expiry rows opportunistically.
+ *
+ * Stores a SHA-256 of the token, never the token itself: the raw JWT is a
+ * bearer credential and this table has no business holding one.
+ */
+export const oauthTokenUses = pgTable(
+  'oauth_token_uses',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    email: text('email').notNull(),
+    usedAt: timestamp('used_at').defaultNow().notNull(),
+    expires: timestamp('expires', { mode: 'date' }).notNull(),
+  },
+  (t) => ({
+    emailUsedAtIdx: index('oauth_token_uses_email_used_at_idx').on(t.email, t.usedAt),
+    expiresIdx: index('oauth_token_uses_expires_idx').on(t.expires),
+  })
+);
+
 // --- Enums ─────────────────────────────────────────────────────────────────
 
 export const tripStatusEnum = pgEnum('trip_status', [

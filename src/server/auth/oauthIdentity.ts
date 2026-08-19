@@ -41,6 +41,28 @@ export type OAuthProvider = 'google' | 'apple';
 export interface VerifiedIdentity {
   email: string;
   name?: string;
+  /**
+   * The token's own `exp`, surfaced so the caller's replay guard can keep its
+   * record exactly as long as the token could still be presented — no longer,
+   * no shorter. A token with no `exp` is rejected outright below: jose only
+   * enforces the claim when it is present, and a never-expiring bearer
+   * credential is not something to be lenient about.
+   */
+  expiresAt: Date;
+}
+
+/**
+ * Apple's "Hide My Email" alias domain. Apple mints these itself and routes
+ * them, so the address is Apple-proven by construction even when the token
+ * carries no `email_verified` claim — which is the ONLY case where a missing
+ * claim is acceptable. See verifyApple.
+ */
+const APPLE_RELAY_DOMAIN = '@privaterelay.appleid.com';
+
+/** Shared: a token with no usable `exp` is not something to mint a session from. */
+function expiryFrom(payload: JWTPayload): Date {
+  if (typeof payload.exp !== 'number') throw new UnauthorizedError('InvalidToken');
+  return new Date(payload.exp * 1000);
 }
 
 /** Deps seam so the tests can inject a verifier instead of hitting the network. */
@@ -107,7 +129,11 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
     throw new UnauthorizedError('EmailNotVerified');
   }
 
-  return { email: email.toLowerCase(), name: claimString(payload, 'name') ?? undefined };
+  return {
+    email: email.toLowerCase(),
+    name: claimString(payload, 'name') ?? undefined,
+    expiresAt: expiryFrom(payload),
+  };
 }
 
 async function verifyApple(
@@ -130,14 +156,27 @@ async function verifyApple(
   if (!email) throw new UnauthorizedError('InvalidToken');
 
   /**
-   * Apple only puts `email_verified` on the token for real (non-relay)
-   * addresses in some flows, but every address Apple returns — including a
-   * `@privaterelay.appleid.com` alias — is one Apple has already proven the
-   * user controls. Treat the claim as advisory: reject only an explicit
-   * `false`, rather than requiring a claim Apple may simply omit.
+   * Apple's `email_verified` handling, deliberately NOT symmetric with
+   * Google's — but far narrower than "advisory".
+   *
+   * An earlier revision here rejected only an explicit `false`, so a token
+   * that simply OMITTED the claim minted a session for whatever address it
+   * carried. That matters because createSessionForEmail links by email onto
+   * an existing OTP user and stamps users.emailVerified, which is in turn a
+   * precondition of the admin guard — so an unasserted address could inherit
+   * a real account. Apple asserting nothing is not Apple asserting yes.
+   *
+   * The one genuine exception is the Hide My Email alias: Apple owns and
+   * routes @privaterelay.appleid.com, so such an address is Apple-proven by
+   * construction and there is no other party who could claim it. Scope the
+   * leniency to exactly that domain rather than to every Apple token.
    */
   const verified = payload['email_verified'];
+  const lowered = email.toLowerCase();
   if (verified === false || verified === 'false') {
+    throw new UnauthorizedError('EmailNotVerified');
+  }
+  if (!claimIsTrue(payload, 'email_verified') && !lowered.endsWith(APPLE_RELAY_DOMAIN)) {
     throw new UnauthorizedError('EmailNotVerified');
   }
 
@@ -148,7 +187,7 @@ async function verifyApple(
    */
   const name = fullName?.trim() || undefined;
 
-  return { email: email.toLowerCase(), name };
+  return { email: lowered, name, expiresAt: expiryFrom(payload) };
 }
 
 export function verifyIdentityToken(
