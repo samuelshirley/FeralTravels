@@ -140,7 +140,7 @@ export default defineConfig({
         webServer: {
           // We deliberately do NOT run `npm run db:push` here — the suite
           // assumes the DB schema is already current (which it is for
-          // anyone who has run `ship` or `db:push` before). The seed
+          // anyone who has run `db:migrate` or `db:push` before). The seed
           // script in globalSetup is what guarantees fixture rows exist.
           //
           // `npm run build` is included so a fresh checkout works, but
