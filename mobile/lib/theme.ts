@@ -44,6 +44,14 @@ export const theme = {
   warningMuted: "rgba(184, 149, 106, 0.14)", // src/types/trip.ts:464 `bg`
   /** src/components/LegCard.tsx:195 — `const restDayColor = '#6BA368'`. */
   rest: "#6BA368",
+  /**
+   * Not a web token — native only. The launch-screen purple, kept in step with
+   * `expo-splash-screen.backgroundColor` and the Android adaptive-icon
+   * background in app.config.js:81,96. Any screen that can paint while the
+   * native splash is still up (the entry gate, the font-loading fallback) uses
+   * this so the handover is one continuous colour instead of a cream flash.
+   */
+  splash: "#55346F",
 } as const;
 
 /**

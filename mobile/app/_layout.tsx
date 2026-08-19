@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { View } from "react-native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   useFonts,
@@ -14,6 +16,12 @@ import { UnitsProvider } from "@/lib/units";
 import { ErrorProvider } from "@/lib/errors";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
+
+// Hold the native splash (purple, Finn) past the first JS frame. app/index.tsx
+// releases it once it has decided whether to route to /trips or /sign-in, so
+// the launch screen hands straight over to a real screen. Failures are ignored
+// on purpose — this call must never be able to strand the app on the splash.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /**
  * Root shell. Mirrors the providers the web mounts around every signed-in
@@ -32,13 +40,24 @@ export default function RootLayout() {
     Onest_800ExtraBold,
   });
 
-  // expo-splash-screen isn't a dependency, so instead of holding the native
-  // splash we hold the first frame: paint the app background until the faces
-  // are in memory. Without this every screen paints once in San Francisco and
-  // then reflows into Onest. `fontError` still lets the app through — a failed
-  // font download should degrade to the system face, not a blank screen.
+  // Safety net. app/index.tsx lifts the splash the moment it has routed; this
+  // only ever fires if that never happens (fonts that neither load nor error).
+  // A blank purple screen forever is a worse failure than an unstyled one.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 8000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Hold the first frame until the faces are in memory — without this every
+  // screen paints once in San Francisco and then reflows into Onest. This
+  // normally sits *under* the still-visible native splash, so it is painted in
+  // the splash purple rather than the app cream; a slow font fetch must not
+  // flash a second background colour. `fontError` still lets the app through —
+  // a failed font download should degrade to the system face, not a dead app.
   if (!fontsLoaded && !fontError) {
-    return <View style={{ flex: 1, backgroundColor: theme.bg }} />;
+    return <View style={{ flex: 1, backgroundColor: theme.splash }} />;
   }
 
   return (
