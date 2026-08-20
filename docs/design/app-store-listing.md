@@ -150,11 +150,44 @@ it near the bottom of the range.
 account deletion from inside the app. There is no endpoint and no UI. This is a
 rejection, not a warning.
 
-**App Review sign-in.** The app is gated behind an emailed OTP, and the test OTP
-endpoint is hard-off in production. A reviewer will enter an email address and
-wait forever for a code they cannot read. Needs a designated review account with
-a fixed server-side code, supplied in the "Sign-In Required" section of App
-Review Information.
+**App Review sign-in.** Guideline 2.1(a): "If your app includes account-based
+features, provide either an active demo account or fully-featured demo mode."
+The app is gated behind an emailed OTP and the test OTP endpoint is hard-off in
+production, so a reviewer left on the OTP path waits forever for a code they
+cannot read.
+
+**Sign in with Apple is the answer, and it is already built** — the reviewer
+uses their own Apple ID and gets a real, fully functional account. No demo
+credentials, no fixed code, no backdoor. What remains is delivery, not code:
+
+1. **Merge and promote `feat/native-oauth`.** `POST /api/mobile/oauth/exchange`
+   is 12 commits ahead of `main` and is NOT in production. Ship a build that
+   offers Apple sign-in against today's prod and every tap 404s.
+2. **Cut a fresh native build.** `usesAppleSignIn` is an entitlement, so OTA
+   cannot add it — and `appleAvailable()` returns false without it, which means
+   the button silently does not render. eas.json gained
+   `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1` in 0099bf9, AFTER build 3 was cut, so
+   build 3 almost certainly has no Apple button. Rebuild:
+   `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1 npx expo prebuild --clean` then a
+   production EAS build, uploaded as a new build.
+3. **Verify on a real device via TestFlight.** Apple sign-in cannot be exercised
+   on the simulator. Include a Hide My Email run — the relay address path
+   (`@privaterelay.appleid.com`) is handled in `oauthIdentity.ts` but untested
+   against the live provider.
+4. **App Review Information → Notes**, something like:
+
+   > This app is passwordless. Tap "Sign in with Apple" on the sign-in screen
+   > and use your own Apple ID (Hide My Email works) — that creates a full
+   > account with no demo credentials needed. The email + 6-digit code option is
+   > for users who prefer email; it sends a real code to a real inbox, so please
+   > use Sign in with Apple.
+
+   Leave the demo username/password fields empty.
+
+**Fallback, only if a reviewer rejects on 2.1(a) anyway:** an env-gated fixed
+code for one designated review address. Do NOT build this pre-emptively — it is
+backdoor-shaped, it sits directly next to `noBackdoorGuard.test.ts`, and it
+contradicts the no-bypass rule the rest of the auth surface is built on.
 
 **Agreements.** App Store Connect → Business → the Free Apps agreement must show
 Active before the version can be submitted.
