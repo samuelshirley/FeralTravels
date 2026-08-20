@@ -8,6 +8,7 @@ import { getUnitsPref } from '@/server/repos/users';
 import AppNavbar from '@/components/AppNavbar';
 import BottomNav from '@/components/BottomNav';
 import VehicleProfileSection from '@/components/VehicleProfileSection';
+import DeleteAccountSection from '@/components/DeleteAccountSection';
 import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
 
@@ -226,6 +227,13 @@ export default async function SettingsPage() {
               </section>
             </>
           )}
+
+          {/*
+            Very bottom of the page, below the admin block, because it is the
+            most destructive thing on it and nothing should sit under it. The
+            typing gesture and the confirm dialog live inside the component.
+          */}
+          <DeleteAccountSection />
         </div>
 
         <BottomNav active="settings" />

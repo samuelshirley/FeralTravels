@@ -90,6 +90,14 @@ const ERROR_COPY: Record<string, string> = {
     "A code was already sent recently — please wait 60 seconds before requesting another.",
   InvalidCode:
     "That code is incorrect or has expired. Please try again or request a new one.",
+  // --- native OAuth exchange (/api/mobile/oauth/exchange) ---
+  InvalidToken:
+    "That sign-in didn't check out. Please try again, or use your email to get a code.",
+  EmailNotVerified:
+    "That account's email address isn't verified with its provider, so we can't sign you in with it. Use your email to get a code instead.",
+  ProviderNotConfigured:
+    "That sign-in option isn't available yet. Please use your email to get a code.",
+  InvalidRequest: "Something went wrong signing you in. Please try again.",
 };
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";

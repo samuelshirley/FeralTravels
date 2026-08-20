@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users } from '@/server/db/schema';
 import { asUnitsPref, type UnitsPref } from '@/lib/units';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 
 /**
  * Read stored units preference, or null if the user has not chosen yet
@@ -73,4 +74,36 @@ export async function setUserTimezone(
   }
   await db.update(users).set({ timezone: tz }).where(eq(users.id, userId));
   return tz;
+}
+
+/**
+ * The signed-in user's own identity, for their own account UI.
+ *
+ * Deliberately separate from `GET /api/me`, which stays PII-free (units +
+ * timezone) because `UnitsProvider` calls it on every page load and had no
+ * business pulling an address down with it. This is the identity read, and
+ * it is only ever the CALLER's own row — there is no id parameter on the
+ * route, so it cannot be pointed at anybody else.
+ */
+export async function getUserIdentity(
+  userId: string
+): Promise<{ email: string | null; name: string | null; image: string | null }> {
+  const [row] = await db
+    .select({ email: users.email, name: users.name, image: users.image })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!row) return { email: null, name: null, image: null };
+  return {
+    email: row.email ?? null,
+    name: row.name ?? null,
+    /**
+     * Re-checked on the way OUT as well as in. The column predates the
+     * allowlist (Auth.js's adapter wrote whatever Google sent at user
+     * creation), so an old row can hold a URL that would not be accepted
+     * today. Filtering here means the fix reaches existing users without a
+     * backfill migration, and a value that fails just becomes the glyph.
+     */
+    image: sanitizeAvatarUrl(row.image),
+  };
 }

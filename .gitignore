@@ -42,3 +42,7 @@ _graveyard/
 
 # Playwright saved auth state (per-run, never commit)
 playwright/.auth/
+
+# Local one-off push/deploy helpers. They tend to accumulate credentials and
+# branch names that mean nothing to anyone else.
+push-*.sh

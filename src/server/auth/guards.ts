@@ -5,44 +5,30 @@ import { db } from '@/server/db/client';
 import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
 
-export class HttpError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-export class UnauthorizedError extends HttpError {
-  constructor(message = 'Unauthorized') {
-    super(401, message);
-  }
-}
-
-export class ForbiddenError extends HttpError {
-  constructor(message = 'Forbidden') {
-    super(403, message);
-  }
-}
-
-export class NotFoundError extends HttpError {
-  constructor(message = 'Not found') {
-    super(404, message);
-  }
-}
-
-export class ConflictError extends HttpError {
-  constructor(message = 'Conflict') {
-    super(409, message);
-  }
-}
+// The error classes live in ./errors so modules that only throw them (e.g.
+// oauthIdentity.ts) can skip this file's Auth.js + DB import chain. Re-exported
+// here so every existing import site keeps working unchanged.
+export {
+  HttpError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  ConflictError,
+} from './errors';
+import { HttpError, UnauthorizedError, ForbiddenError, NotFoundError } from './errors';
 
 /**
  * Mobile auth: resolve a `Authorization: Bearer <token>` header against the
  * SAME `sessions` table the Auth.js cookie path uses. The token IS a session
- * token — minted only by signInWithOtpCore (the real OTP flow), same entropy,
- * same expiry, revoked by deleting the row. This is NOT a parallel auth
- * system and NOT a bypass: no token exists without a completed OTP sign-in.
+ * token — same entropy, same expiry, revoked by deleting the row. This is NOT
+ * a parallel auth system and NOT a bypass.
+ *
+ * Two mints exist, both going through createSessionForEmail: a completed OTP
+ * sign-in (signInWithOtpCore) and a provider ID token verified against
+ * Google's or Apple's JWKS (/api/mobile/oauth/exchange). Neither issues a
+ * token without a proven email address. If a third ever appears, it belongs
+ * on that list — this comment is the file's stated security invariant, and an
+ * out-of-date one is worse than none.
  *
  * Deliberately narrow: admin guards do NOT accept bearer tokens (the mobile
  * app has no admin surface; keep the admin attack surface cookie-only).

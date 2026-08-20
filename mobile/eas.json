@@ -7,24 +7,35 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": { "simulator": true }
+      "ios": {
+        "simulator": true
+      }
     },
     "preview": {
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com"
+        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com",
+        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com"
+        "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com",
+        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6802705582",
+        "appleTeamId": "4CG2UE2L49"
+      }
+    }
   }
 }

@@ -5,6 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { syncAdminFlagOnSignIn } from './admin';
 import { cookies } from 'next/headers';
 
@@ -216,9 +217,105 @@ function getSessionCookieName(): string {
 }
 
 /**
- * Core OTP sign-in: verify the code, find-or-create the user, and create a
- * database session row. Does NOT touch cookies — the caller decides how the
- * session token reaches the client:
+ * Find-or-create the user for an ALREADY-VERIFIED email address, and mint a
+ * database session row for them.
+ *
+ * "Already verified" is the caller's job and is the entire contract here: this
+ * function asks no questions about HOW the address was proven — an emailed OTP
+ * code, a Google ID token checked against Google's JWKS, an Apple identity
+ * token. Every non-Auth.js sign-in path funnels through this one function on
+ * purpose. If a second path grows its own copy, session lifetime, token
+ * entropy, user-creation defaults and the emailVerified / admin-flag
+ * bookkeeping drift apart, and the drift surfaces months later as a support
+ * ticket ("my trips are gone") caused by a duplicate user row.
+ *
+ * `image` is the Google profile photo (Apple never sends one). Display-only,
+ * refreshed on each Google sign-in, and deleted with the user row.
+ *
+ * `name` is display-only and is NEVER used for identity. It is written on
+ * create and backfilled on an existing row only when that row has no name yet:
+ * Apple hands the name over exactly once, on the user's first-ever
+ * authorization for the app, so this is the single chance to record it — but
+ * it must not clobber a name the user has set since.
+ */
+export async function createSessionForEmail(
+  email: string,
+  name?: string | null,
+  image?: string | null
+): Promise<{ userId: string; sessionToken: string; expires: Date }> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) throw new Error('createSessionForEmail requires an email address');
+  const displayName = name?.trim() || null;
+  /**
+   * Re-validated here rather than trusted from the caller: this function is
+   * the last thing standing between a provider claim and the database, and
+   * `image` reaches it from the native OAuth exchange. Non-Google callers
+   * (OTP) pass nothing and land on null.
+   */
+  const avatar = sanitizeAvatarUrl(image);
+
+  // 1. Find or create the user row.
+  const existing = await db
+    .select({ id: users.id, name: users.name, emailVerified: users.emailVerified })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+
+  let userId: string;
+
+  if (existing.length > 0) {
+    userId = existing[0].id;
+    const patch: { emailVerified?: Date; name?: string; image?: string } = {};
+    if (!existing[0].emailVerified) patch.emailVerified = new Date();
+    if (displayName && !existing[0].name) patch.name = displayName;
+    /**
+     * The avatar is REFRESHED on every Google sign-in, unlike the name, which
+     * is only backfilled. The two are different kinds of value: a name the
+     * user may have edited here and would not want clobbered, an avatar URL
+     * that goes stale the moment they change their photo at Google — a stale
+     * one 404s and the glyph appears instead. An OTP sign-in passes no image
+     * and so never wipes a good one.
+     */
+    if (avatar) patch.image = avatar;
+    if (Object.keys(patch).length > 0) {
+      await db.update(users).set(patch).where(eq(users.id, userId));
+    }
+  } else {
+    const [row] = await db
+      .insert(users)
+      .values({
+        email: normalized,
+        emailVerified: new Date(),
+        ...(displayName ? { name: displayName } : {}),
+        ...(avatar ? { image: avatar } : {}),
+      })
+      .returning({ id: users.id });
+    userId = row.id;
+  }
+
+  // Re-sync the admin flag on every sign-in (mirrors the signIn event handler).
+  // Deliberately ONE call: the pre-refactor code ran this twice on the
+  // create path (once in the branch, once after it), which was redundant —
+  // it is idempotent and takes the same argument both times.
+  await syncAdminFlagOnSignIn(normalized).catch(() => {});
+
+  // 2. Create a database session.
+  const sessionToken = crypto.randomUUID();
+  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
+
+  await db.insert(sessions).values({
+    sessionToken,
+    userId,
+    expires,
+  });
+
+  return { userId, sessionToken, expires };
+}
+
+/**
+ * Core OTP sign-in: verify the code, then hand off to createSessionForEmail.
+ * Does NOT touch cookies — the caller decides how the session token reaches
+ * the client:
  *   - Web (signInWithOtp): sets the Auth.js session cookie.
  *   - Mobile (/api/mobile/otp/verify): returns the token in the response body;
  *     the app stores it in secure storage and sends it as a Bearer header,
@@ -238,50 +335,10 @@ export async function signInWithOtpCore(
   const submitted = code.trim();
   if (!normalized || !submitted) return null;
 
-  // 1. Verify the OTP code.
   const valid = await verifyOtpCode(normalized, submitted);
   if (!valid) return null;
 
-  // 2. Find or create the user row.
-  const existing = await db
-    .select({ id: users.id, email: users.email, name: users.name, emailVerified: users.emailVerified })
-    .from(users)
-    .where(sql`lower(${users.email}) = ${normalized}`)
-    .limit(1);
-
-  let userId: string;
-
-  if (existing.length > 0) {
-    userId = existing[0].id;
-    if (!existing[0].emailVerified) {
-      await db
-        .update(users)
-        .set({ emailVerified: new Date() })
-        .where(eq(users.id, userId));
-    }
-  } else {
-    const [row] = await db
-      .insert(users)
-      .values({ email: normalized, emailVerified: new Date() })
-      .returning({ id: users.id });
-    userId = row.id;
-    await syncAdminFlagOnSignIn(normalized).catch(() => {});
-  }
-
-  // Re-sync admin flag on every sign-in (mirrors the signIn event handler).
-  await syncAdminFlagOnSignIn(normalized).catch(() => {});
-
-  // 3. Create a database session.
-  const sessionToken = crypto.randomUUID();
-  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
-
-  await db.insert(sessions).values({
-    sessionToken,
-    userId,
-    expires,
-  });
-
-  return { userId, sessionToken, expires };
+  return createSessionForEmail(normalized);
 }
 
 /**

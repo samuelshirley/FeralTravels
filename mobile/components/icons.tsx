@@ -1,4 +1,4 @@
-import Svg, { Path } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 
 /**
  * Single source of truth for iconography.
@@ -172,6 +172,25 @@ export function SendArrowIcon({ color, size = 16 }: IconProps) {
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Path d="M12 19V5" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
       <Path d="m5 12 7-7 7 7" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/* ── src/components/AppNavbar.tsx (AccountGlyph) ───────────────────────────
+   The generic account bust shown in the navbar avatar. Same two shapes, same
+   viewBox, same strokeWidth as the web glyph. Nothing identity-bearing has
+   ever been drawn here: no photo, no initials.                            */
+export function AccountIcon({ color, size = 18 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Circle cx={12} cy={7} r={4} stroke={color} strokeWidth={2} />
     </Svg>
   );
 }

@@ -8,6 +8,7 @@ import {
   legDirectionsWaypoints,
 } from "@/shared/lib/maps";
 import { useNextStop } from "@/shared/lib/useNextStop";
+import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
 import { Distance, Spinner, StatusBadge } from "@/components/ui";
 import { theme } from "@/lib/theme";
@@ -128,6 +129,9 @@ export default function LegCard({
     legStart,
     expanded
   );
+  // Only for the "location is off" affordance below — useNextStop reads the
+  // same context for position and status.
+  const { request: requestLocation, enablePath } = useDeviceLocation();
   // Show the smart single button when GPS is active and user is near the route.
   const showSmartNav = gpsStatus === "active" && isNearRoute && nextStop != null;
 
@@ -367,11 +371,33 @@ export default function LegCard({
               ) : (
                 /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
                 <View style={styles.navList}>
-                  <Text style={styles.navListLabel}>
-                    {gpsStatus === "pending"
-                      ? "FINDING YOUR LOCATION…"
-                      : `NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? "" : "S"})`}
-                  </Text>
+                  {gpsStatus === "pending" ? (
+                    <Text style={styles.navListLabel}>FINDING YOUR LOCATION…</Text>
+                  ) : enablePath !== "none" &&
+                    (gpsStatus === "denied" || gpsStatus === "unavailable") ? (
+                    /* Without a way back, "Not now" in LocationPrimer is a
+                       one-way door — nothing else in the app can re-enable
+                       location. enablePath picks the branch that actually does
+                       something, and its "none" case keeps the control off
+                       read-only template trips, which never prompt. */
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => {
+                        if (enablePath === "settings") void Linking.openSettings();
+                        else void requestLocation();
+                      }}
+                    >
+                      <Text style={[styles.navListLabel, styles.navListLabelAction]}>
+                        {enablePath === "settings"
+                          ? "LOCATION OFF — OPEN SETTINGS"
+                          : "LOCATION OFF — TAP TO TURN ON"}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.navListLabel}>
+                      {`NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? "" : "S"})`}
+                    </Text>
+                  )}
                   {allSegments.map((seg, i) => (
                     <Pressable key={i} onPress={() => openUrl(seg.url)} style={styles.navButton}>
                       <Text style={styles.navButtonText}>▶</Text>
@@ -500,6 +526,7 @@ const styles = StyleSheet.create({
   },
   syncingText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5, color: theme.muted },
   navList: { gap: 4 },
+  navListLabelAction: { color: theme.primary, textDecorationLine: "underline" },
   navListLabel: {
     fontSize: 10,
     fontFamily: font.bold,

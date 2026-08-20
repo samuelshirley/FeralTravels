@@ -195,8 +195,39 @@ export interface Me {
 
 export const getMe = () => apiFetch<Me>("/api/me");
 
+/**
+ * The signed-in user's own identity — the account button's data.
+ *
+ * A SECOND route rather than fields on `Me` on purpose: `/api/me` is fetched
+ * on app start for units + timezone and is deliberately PII-free, so identity
+ * gets its own narrow read. `image` is the Google profile photo, already
+ * host-allowlisted server-side; it is null for Apple (whose ID token carries
+ * no picture claim, ever) and for emailed-code sign-ins.
+ */
+export interface Identity {
+  email: string | null;
+  name: string | null;
+  image: string | null;
+}
+
+export const getIdentity = () => apiFetch<Identity>("/api/me/identity");
+
 export const updatePreferences = (body: { units_pref?: string; timezone?: string }) =>
   apiFetch("/api/me/preferences", { method: "PATCH", body });
+
+/**
+ * Permanently delete the signed-in account. Same route the web calls — the
+ * server resolves our bearer token against the same sessions table a cookie
+ * would hit, so there is one deletion implementation, not a native copy of one.
+ *
+ * `confirm` must be the phrase from shared/lib/accountDeletion; the server
+ * re-checks it, so a UI bug cannot delete an account on its own.
+ *
+ * Opted out of the global notifier: the confirm dialog shows the failure inline,
+ * and a toast over a modal the user is already reading is just noise.
+ */
+export const deleteAccount = (confirm: string): Promise<{ ok: boolean }> =>
+  apiFetch("/api/me/delete", { method: "POST", body: { confirm }, skipGlobalErrorReport: true });
 
 // ---------------------------------------------------------------------------
 // Trips

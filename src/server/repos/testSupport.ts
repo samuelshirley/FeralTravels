@@ -1,8 +1,9 @@
 import 'server-only';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { users, vehicles, trips, announcements, announcementDismissals, emailOtpCodes } from '@/server/db/schema';
+import { users, vehicles, trips, announcements, announcementDismissals, emailOtpCodes, deletedUsers } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
+import { hashEmail } from '@/server/deletedUserCrypto';
 import { addVehicle, getDefaultVehicleId } from './vehicles';
 import { createTrip, addLeg } from './trips';
 
@@ -180,6 +181,16 @@ export async function cleanupPlaywright(
 ): Promise<{ deletedTrips: number; deletedVehicles: number }> {
   assertEnabled();
   const normalized = email.trim().toLowerCase();
+
+  // BEFORE the user lookup, deliberately. The account-deletion spec leaves a
+  // tombstone behind and no user row — which is the feature working — so a
+  // cleanup that bails on "user not found" would never reach this and every
+  // local run would add permanent `playwright-*` noise to /admin/deleted. Safe
+  // by construction: the endpoint only accepts fixture addresses, and the
+  // digest is deterministic, so this matches exactly the rows this address
+  // produced.
+  await db.delete(deletedUsers).where(eq(deletedUsers.emailHash, hashEmail(normalized)));
+
   const found = await db
     .select({ id: users.id })
     .from(users)
@@ -196,6 +207,7 @@ export async function cleanupPlaywright(
     .delete(vehicles)
     .where(and(eq(vehicles.userId, userId), like(vehicles.name, 'playwright-%')))
     .returning({ id: vehicles.id });
+
   return { deletedTrips: dt.length, deletedVehicles: dv.length };
 }
 

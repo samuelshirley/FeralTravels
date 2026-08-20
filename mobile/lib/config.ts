@@ -21,8 +21,15 @@ export const API_BASE_URL: string =
  * Sign-in with Google is hidden when this is unset rather than showing a
  * button that dead-ends.
  */
-export const GOOGLE_IOS_CLIENT_ID: string | null =
-  process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? null;
+const rawGoogleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim();
+export const GOOGLE_IOS_CLIENT_ID: string | null = rawGoogleIosClientId
+  ? rawGoogleIosClientId
+  : // An EMPTY string has to collapse to null too, not just an absent var: an
+    // `env` key declared in eas.json with no value inlines as "" at build
+    // time, and `?? null` would keep it — showing the button, then failing at
+    // the redirect with an unregistered client id. Same trap as the empty
+    // googleMapsApiKey that renders a grey rectangle.
+    null;
 
 /** Google Maps SDK key for react-native-maps (iOS uses Apple Maps by default). */
 export const GOOGLE_MAPS_API_KEY: string | null =

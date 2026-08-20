@@ -88,16 +88,31 @@ export const accounts = pgTable(
   },
   (account) => ({
     pk: primaryKey({ columns: [account.provider, account.providerAccountId] }),
+    // The composite PK is (provider, providerAccountId), so `userId` is
+    // unindexed and the delete cascade would seq-scan. Same reasoning as
+    // sessions_user_idx.
+    userIdx: index('accounts_user_idx').on(account.userId),
   })
 );
 
-export const sessions = pgTable('sessions', {
-  sessionToken: text('sessionToken').primaryKey(),
-  userId: text('userId')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  expires: timestamp('expires', { mode: 'date' }).notNull(),
-});
+export const sessions = pgTable(
+  'sessions',
+  {
+    sessionToken: text('sessionToken').primaryKey(),
+    userId: text('userId')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    expires: timestamp('expires', { mode: 'date' }).notNull(),
+  },
+  (t) => ({
+    // Postgres does NOT index a foreign key automatically. Without this, the
+    // ON DELETE CASCADE fired by account deletion has to seq-scan the whole
+    // sessions table — inside the deletion transaction. See the note on
+    // `usage_events.trip_id` below for the failure mode this class of missing
+    // index produces.
+    userIdx: index('sessions_user_idx').on(t.userId),
+  })
+);
 
 export const verificationTokens = pgTable(
   'verificationTokens',
@@ -124,6 +139,41 @@ export const emailOtpCodes = pgTable(
   },
   (t) => ({
     emailIdx: index('otp_email_idx').on(t.email),
+  })
+);
+
+/**
+ * One row per native OAuth ID token that has been redeemed at
+ * /api/mobile/oauth/exchange. Two jobs, one table:
+ *
+ *  - REPLAY: `tokenHash` is the primary key, so redeeming the same provider
+ *    token twice is a unique-constraint miss rather than a second session.
+ *    Provider ID tokens live ~1h and the iOS client id ships inside the app
+ *    binary, so a captured token was otherwise good for unlimited 30-day
+ *    sessions until it expired.
+ *  - RATE LIMIT: `email` + `usedAt` let the route cap how many exchanges one
+ *    address can drive in a window, in the same DB-backed way the OTP
+ *    cooldown works (in-memory counters are useless across serverless
+ *    invocations).
+ *
+ * `expires` is the TOKEN's own exp, not a session lifetime — rows are only
+ * useful until the token they guard would be rejected anyway, and the route
+ * prunes past-expiry rows opportunistically.
+ *
+ * Stores a SHA-256 of the token, never the token itself: the raw JWT is a
+ * bearer credential and this table has no business holding one.
+ */
+export const oauthTokenUses = pgTable(
+  'oauth_token_uses',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    email: text('email').notNull(),
+    usedAt: timestamp('used_at').defaultNow().notNull(),
+    expires: timestamp('expires', { mode: 'date' }).notNull(),
+  },
+  (t) => ({
+    emailUsedAtIdx: index('oauth_token_uses_email_used_at_idx').on(t.email, t.usedAt),
+    expiresIdx: index('oauth_token_uses_expires_idx').on(t.expires),
   })
 );
 
@@ -624,6 +674,15 @@ export const usageEvents = pgTable(
     userIdx: index('usage_user_idx').on(t.userId),
     createdIdx: index('usage_created_idx').on(t.createdAt),
     providerIdx: index('usage_provider_idx').on(t.provider),
+    /**
+     * The referential action behind `trip_id`'s ON DELETE SET NULL runs once per
+     * DELETED PARENT ROW, so deleting an account with N trips ran N unindexed
+     * UPDATEs over the largest and fastest-growing table in the schema — inside
+     * the deletion transaction. A heavy user could time out the function, abort
+     * the transaction and be left unable to delete their account on any retry:
+     * the failure would land hardest on exactly the people with the most data.
+     */
+    tripIdx: index('usage_trip_idx').on(t.tripId),
   })
 );
 
@@ -731,6 +790,8 @@ export const pennyTurns = pgTable(
   (t) => ({
     keyIdx: uniqueIndex('penny_turns_idempotency_key_idx').on(t.idempotencyKey),
     tripIdx: index('penny_turns_trip_idx').on(t.tripId),
+    // Indexed by trip but not by user, so the user cascade seq-scanned.
+    userIdx: index('penny_turns_user_idx').on(t.userId),
     tripStatusIdx: index('penny_turns_trip_status_idx').on(t.tripId, t.status),
     // At most ONE `running` turn per trip — the DB-enforced execution slot.
     // Promoting a queued turn to `running` while another is running raises a
@@ -741,5 +802,63 @@ export const pennyTurns = pgTable(
     oneRunningPerTripIdx: uniqueIndex('penny_turns_one_running_per_trip_idx')
       .on(t.tripId)
       .where(sql`${t.status} = 'running'`),
+  })
+);
+
+/**
+ * Tombstone for a deleted account — the ONLY thing that survives a deletion.
+ *
+ * Account deletion is a hard delete: the `users` row is removed and every FK in
+ * this schema cascades from it, so trips, legs, stops, routes, chat history,
+ * vehicles, sessions and OAuth accounts all go with it. `usage_events` is the
+ * deliberate exception (`user_id` is `set null`, not cascade) so AI-spend and
+ * error history stay intact but anonymous.
+ *
+ * This table exists so two questions stay answerable after the fact:
+ *   1. "Did this address ever have an account here?" — `email_hash` is a keyed
+ *      (HMAC) digest of the lowercased address, so a candidate email can be
+ *      hashed and matched without the table ever holding a readable address, and
+ *      without the digest being guessable offline from a table dump.
+ *   2. "Who is churning, and how far did they get before quitting?" — the
+ *      counts plus `account_created_at` → `deleted_at` give the trial-then-leave
+ *      picture, and `email_encrypted` lets an admin read the actual address.
+ *
+ * `email_encrypted` is AES-256-GCM under `DELETED_USER_ENC_KEY`, which lives in
+ * the Vercel env and NOT in the database — a dump of this table alone reveals no
+ * addresses. Decryption happens only behind the admin allowlist. The column is
+ * nullable on purpose: if the key is missing or malformed the deletion still
+ * completes and simply stores the hash. A user's right to delete must never
+ * depend on our bookkeeping succeeding.
+ *
+ * NOT unique on `email_hash` — someone can sign up, delete, sign up again and
+ * delete again, and each deletion is its own event worth counting.
+ */
+export const deletedUsers = pgTable(
+  'deleted_users',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    /**
+     * HMAC-SHA256 of the lowercased, trimmed email, keyed with the same env
+     * secret as `email_encrypted` (bare SHA-256 only when no key is set).
+     * One-way: matchable against a candidate address, never reversible.
+     */
+    emailHash: text('email_hash').notNull(),
+    /** AES-256-GCM ciphertext (`v1:<iv>:<tag>:<data>`, base64 parts). Null when no key configured. */
+    emailEncrypted: text('email_encrypted'),
+    /** `'google' | 'apple' | 'otp'` etc. — which provider(s) the account had linked. */
+    signInProviders: text('sign_in_providers'),
+    /** When the account was originally created — pairs with `deletedAt` to give tenure. */
+    accountCreatedAt: timestamp('account_created_at'),
+    /** How much they had built before quitting. Cheap churn signal, no PII. */
+    tripCount: integer('trip_count').default(0).notNull(),
+    vehicleCount: integer('vehicle_count').default(0).notNull(),
+    chatMessageCount: integer('chat_message_count').default(0).notNull(),
+    /** `'self'` today; leaves room for `'admin'` / `'support'` later. */
+    deletedBy: text('deleted_by').default('self').notNull(),
+    deletedAt: timestamp('deleted_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    hashIdx: index('deleted_users_email_hash_idx').on(t.emailHash),
+    deletedAtIdx: index('deleted_users_deleted_at_idx').on(t.deletedAt),
   })
 );

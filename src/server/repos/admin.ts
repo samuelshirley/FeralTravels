@@ -10,6 +10,7 @@ import {
   usageEvents,
   userViewportTime,
   vehicles,
+  deletedUsers,
 } from '@/server/db/schema';
 
 export async function getAdminOverview() {
@@ -27,6 +28,7 @@ export async function getAdminOverview() {
     [{ totalVehicles }],
     [{ newUsers24h }],
     [{ newUsers7d }],
+    [{ totalDeletedUsers }],
   ] = await Promise.all([
     db.select({ totalUsers: sql<number>`COUNT(*)::int` }).from(users),
     db
@@ -50,6 +52,9 @@ export async function getAdminOverview() {
       .from(users)
       .where(gte(users.createdAt, since24)),
     db.select({ newUsers7d: sql<number>`COUNT(*)::int` }).from(users).where(gte(users.createdAt, since7d)),
+    // Tombstones, not live users — `totalUsers` above counts who is still here,
+    // this counts who left. Both matter and neither implies the other.
+    db.select({ totalDeletedUsers: sql<number>`COUNT(*)::int` }).from(deletedUsers),
   ]);
 
   return {
@@ -63,6 +68,7 @@ export async function getAdminOverview() {
     totalVehicles,
     newUsers24h,
     newUsers7d,
+    totalDeletedUsers,
   };
 }
 
