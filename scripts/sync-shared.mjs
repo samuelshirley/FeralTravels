@@ -25,6 +25,7 @@ export const SHARED_FILES = [
   ['src/lib/useNextStop.ts', 'mobile/shared/lib/useNextStop.ts'],
   ['src/lib/sillyErrors.ts', 'mobile/shared/lib/sillyErrors.ts'],
   ['src/lib/models.ts', 'mobile/shared/lib/models.ts'],
+  ['src/lib/accountDeletion.ts', 'mobile/shared/lib/accountDeletion.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

@@ -169,6 +169,13 @@
       "when": 1787148095184,
       "tag": "0023_oauth_token_uses",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787223251620,
+      "tag": "0024_deleted_users",
+      "breakpoints": true
     }
   ]
 }

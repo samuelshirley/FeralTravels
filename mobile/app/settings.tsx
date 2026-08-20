@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import BottomNav from "@/components/BottomNav";
 import UnitsToggle from "@/components/UnitsToggle";
 import VehicleProfileSection from "@/components/VehicleProfileSection";
+import DeleteAccountSection from "@/components/DeleteAccountSection";
 import { Card, Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
 import { useSignedInEmail } from "@/lib/identity";
@@ -92,6 +93,13 @@ export default function SettingsScreen() {
           </Text>
           <VehicleProfileSection />
         </Card>
+
+        {/*
+          Last thing on the screen, same as the web. Apple 5.1.1(v) requires
+          this to be reachable in the app itself, so it is not admin-gated or
+          hidden behind a web link.
+        */}
+        <DeleteAccountSection />
       </ScrollView>
 
       {/*

@@ -147,6 +147,12 @@ export default async function AdminPage() {
       href: '/admin/vehicles',
     },
     {
+      label: 'Deleted accounts',
+      value: overview.totalDeletedUsers,
+      sub: 'churn — click for detail',
+      href: '/admin/deleted',
+    },
+    {
       label: 'Active trips',
       value: overview.totalTrips,
       sub: `${overview.totalTemplates} template(s)`,

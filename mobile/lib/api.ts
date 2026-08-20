@@ -198,6 +198,20 @@ export const getMe = () => apiFetch<Me>("/api/me");
 export const updatePreferences = (body: { units_pref?: string; timezone?: string }) =>
   apiFetch("/api/me/preferences", { method: "PATCH", body });
 
+/**
+ * Permanently delete the signed-in account. Same route the web calls — the
+ * server resolves our bearer token against the same sessions table a cookie
+ * would hit, so there is one deletion implementation, not a native copy of one.
+ *
+ * `confirm` must be the phrase from shared/lib/accountDeletion; the server
+ * re-checks it, so a UI bug cannot delete an account on its own.
+ *
+ * Opted out of the global notifier: the confirm dialog shows the failure inline,
+ * and a toast over a modal the user is already reading is just noise.
+ */
+export const deleteAccount = (confirm: string): Promise<{ ok: boolean }> =>
+  apiFetch("/api/me/delete", { method: "POST", body: { confirm }, skipGlobalErrorReport: true });
+
 // ---------------------------------------------------------------------------
 // Trips
 // ---------------------------------------------------------------------------

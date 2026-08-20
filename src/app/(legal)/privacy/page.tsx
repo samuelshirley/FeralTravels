@@ -129,6 +129,14 @@ export default function PrivacyPage() {
         <li>Sign-in codes: deleted once used, and in any case after 10 minutes.</li>
         <li>Sign-in sessions: 30 days, or until you sign out.</li>
         <li>Error and usage records: kept while they are useful for diagnosing problems, then discarded.</li>
+        <li>
+          After you delete your account: a single record that an account on your email address
+          existed and when it was deleted, together with counts of how many trips and vehicles it
+          had. The address itself is stored encrypted and as a one-way hash, and is kept so that a
+          deletion can be evidenced and to understand how many people leave. Everything else — your
+          trips, routes, stops, vehicles, conversations and sign-in details — is deleted immediately
+          and permanently.
+        </li>
       </ul>
 
       <h2>Your rights</h2>
@@ -136,7 +144,14 @@ export default function PrivacyPage() {
         Under the GDPR you can ask for a copy of your data, correct it, have it deleted,
         take it elsewhere in a portable form, or object to processing based on legitimate
         interests. Email <a href={`mailto:${CONTACT}`}>{CONTACT}</a> and it will be handled
-        within 30 days; account deletion removes your trips, vehicles and conversations.
+        within 30 days.
+      </p>
+      <p>
+        You can delete your account yourself at any time, from Settings in the app or on the web.
+        It happens immediately, there is no waiting period, and it cannot be undone — your trips,
+        routes, stops, fuel plans, vehicles, conversations and sign-in details are removed from the
+        database at once. The one exception is the deletion record described above, and anonymous
+        usage and cost records that are no longer linked to you.
       </p>
       <p>
         If you are not satisfied with the response, you can complain to the Spanish data
