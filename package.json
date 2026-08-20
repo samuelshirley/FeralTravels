@@ -19,6 +19,8 @@
     "e2e:headed": "playwright test --headed",
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",
+    "sync-shared": "node scripts/sync-shared.mjs",
+    "check:shared": "vitest run --project unit src/lib/sharedMirror.test.ts",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:components": "vitest run --project components"

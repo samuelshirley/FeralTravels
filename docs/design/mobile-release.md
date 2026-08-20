@@ -85,11 +85,13 @@ social sign-in buttons for everyone.
 **A green Mobile job means "queued".** The build step is `--no-wait`. Track the
 real build on expo.dev.
 
-**There is no test gate on the mobile path.** `ci.yml` runs vitest and
-Playwright against the web app; nothing type-checks or tests `mobile/` in CI.
-Until that exists, `cd mobile && npx tsc --noEmit` before merging is the only
-thing standing between a typo and every tester's phone. Worth adding as a
-required check.
+**The mobile gate is typecheck-only.** `ci.yml` has a `Mobile typecheck` job
+(`tsc --noEmit` in `mobile/`) and the unit project carries the mirror-drift
+guard, but `mobile/` still has no test suite of its own — no component specs,
+no Detox, nothing that exercises a screen. A change that compiles and drifts
+nothing can still be wrong, and an OTA puts it on devices in seconds. Treat
+TestFlight as the test suite for behaviour, and keep the release notes honest
+about what changed.
 
 ## Forcing a path by hand
 

@@ -1,7 +1,12 @@
 // Mirrors the DOM-free domain modules from the Next app into mobile/shared/.
 // Canonical source is src/lib + src/types — never edit mobile/shared/ by hand.
-// `npm run check:shared` (vitest) fails if the mirror drifts.
-import { copyFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+//
+// `npm run sync-shared` rewrites the mirror; `npm run check:shared` fails if it
+// has drifted (src/lib/sharedMirror.test.ts, so it also runs as part of the
+// normal unit suite and gates every PR). Both matter more than they used to:
+// the Mobile workflow now publishes mobile/ over the air on merge, so a stale
+// mirror ships straight to devices instead of waiting for someone to notice.
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 export const SHARED_FILES = [
   ['src/types/trip.ts', 'mobile/shared/types/trip.ts'],
@@ -23,18 +28,50 @@ export const SHARED_FILES = [
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {
-  const depth = destRel.startsWith('mobile/shared/lib/') ? '..' : '..';
-  return source
-    .replace(/from '@\/types\//g, `from '${depth}/types/`)
-    .replace(/from '@\/lib\//g, `from '${depth}/lib/`)
-    .replace(/^'use client';\n/m, '');
+  // Always '..': the mirror is exactly two sibling directories
+  // (mobile/shared/lib and mobile/shared/types), so a file in either one
+  // reaches the other by going up exactly once. Kept as a named constant
+  // rather than inlined because the ternary it replaced had the same value in
+  // both branches, which read like a bug every time.
+  const depth = '..';
+  void destRel;
+  return (
+    source
+      .replace(/from '@\/types\//g, `from '${depth}/types/`)
+      .replace(/from '@\/lib\//g, `from '${depth}/lib/`)
+      /**
+       * The one PLATFORM SEAM in the mirror. useNextStop needs a location
+       * provider, and each platform has its own: the web's React context lives
+       * at src/components/DeviceLocationContext.tsx, the native one at
+       * mobile/lib/location.tsx. `@/` means the mobile root over there, so this
+       * resolves correctly without the shared file knowing which platform it
+       * is on.
+       *
+       * MUST run after the '@/lib/' rule above, or the '@/lib/location' this
+       * produces would itself be rewritten to '../lib/location' — i.e. a
+       * non-existent mobile/shared/lib/location. That ordering is the whole
+       * reason these are chained rather than looped over a map.
+       *
+       * This rewrite was previously missing and the mirrored file carried the
+       * corrected import by hand, so the first successful sync would have
+       * overwritten it with an unresolvable path.
+       */
+      .replace(
+        /from '@\/components\/DeviceLocationContext'/g,
+        "from '@/lib/location'"
+      )
+      .replace(/^'use client';\n/m, '')
+  );
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
   for (const [src, dest] of SHARED_FILES) {
     if (!existsSync(src)) { console.error(`missing ${src}`); process.exit(1); }
     mkdirSync(dirname(dest), { recursive: true });
     const out = transform(readFileSync(src, 'utf8'), dest);
-    require('node:fs').writeFileSync(dest, out);
+    // Was `require('node:fs').writeFileSync(...)`, which is a ReferenceError in
+    // an ESM .mjs — the script threw on the FIRST file, so it had never
+    // successfully synced anything.
+    writeFileSync(dest, out);
     console.log(`synced ${src} -> ${dest}`);
   }
 }

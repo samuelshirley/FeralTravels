@@ -4,6 +4,12 @@
 #   1. unit    — vitest `unit` project: 43 pure-logic specs, node env, no jsdom.
 #      ui      — vitest `ui` project: the React component specs under jsdom.
 #                 unit and ui run CONCURRENTLY; both gate the preview.
+#      mobile  — tsc --noEmit over mobile/. Runs alongside unit and does NOT
+#                gate the preview (the preview is the web app; a broken Expo
+#                type has nothing to say about it). It exists because the
+#                Mobile workflow publishes mobile/ over the air on merge:
+#                without this job the first thing to catch a type error in the
+#                app is a tester's phone.
 #   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
 #                clone of PROD data), run migrations on it, and deploy a Vercel
 #                PREVIEW pointed at it. One preview per PR, refreshed on every
@@ -96,6 +102,29 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # The mobile half of the gate. Deliberately typecheck-only for now: mobile/
+  # has no test suite of its own, and the shared domain logic it depends on is
+  # already covered by the unit project (including the mirror-drift guard in
+  # src/lib/sharedMirror.test.ts). Type errors are the failure mode this
+  # actually needs to stop, because an OTA update ships whatever compiles.
+  mobile:
+    name: Mobile typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          # mobile/ has its own lockfile — the root one would cache the wrong
+          # tree and reinstall from scratch every run.
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+        working-directory: mobile
+      - run: npx tsc --noEmit
+        working-directory: mobile
 
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:

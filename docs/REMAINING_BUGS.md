@@ -1,5 +1,12 @@
 # Remaining Bugs — Index
 
+> **STALE — do not treat as a live list (noted 2026-08-19).** Everything below
+> was written on 2026-06-01 and last verified against HEAD `62a4d79`. Since
+> then the app pivoted to Google-only data sources, the fuel pipeline was
+> rebuilt on OSM/OSRM, and the PR-based CI pipeline landed. Re-verify any entry
+> against current `main` before starting it; several may already be fixed or
+> obsolete. Delete this banner when the list has been triaged.
+
 > **Context:** Cleanup list from the debugging session on 2026-06-01. Each bug below now has its own self-contained spec file in `docs/bugs/` — one per chat / agent. Per `[[user_multi_agent_git_workflow]]`, these are parallelizable; no agent needs to coordinate with another.
 
 ## Active (each gets its own chat)
