@@ -10,7 +10,15 @@ export const metadata: Metadata = {
  *
  * This exact URL (/support) is the Support URL in App Store Connect. App Review
  * fetches it anonymously, so — like /privacy and /terms — it lives in the
- * (legal) route group: no auth() call, no session read, no redirect to /login.
+ * (legal) route group: no auth() call, no session read.
+ *
+ * That is necessary and NOT sufficient. The route group only governs what this
+ * layout does; middleware runs first, so the path must ALSO be in
+ * PUBLIC_PREFIXES (middleware.ts) or an anonymous fetch is redirected to
+ * /login before any of this code runs — and so must every asset the page
+ * loads, which is why the photo lives under public/legal/. Adding a page here
+ * and assuming it is public is a mistake this file has already made twice.
+ *
  * Changing the path means editing the submitted listing, so don't.
  */
 const SUPPORT_EMAIL = 'support@feraltravels.com';
@@ -23,7 +31,7 @@ export default function SupportPage() {
 
       <figure style={{ margin: '8px 0 28px' }}>
         <img
-          src="/support-dogs.jpg"
+          src="/legal/support-dogs.jpg"
           alt="Penny and Finn on a pavement, mid-walk, looking up at the camera"
           width={360}
           height={480}

@@ -25,6 +25,14 @@ const PUBLIC_PREFIXES = [
   // submitted to the consent screen and to App Store Connect.
   '/privacy',
   '/terms',
+  '/support',
+  // Anything a legal page LOADS has to be public too, not just the page.
+  // Next runs middleware for files in public/ as well — that is why
+  // /favicon.ico, /manifest.json, /icon- and /sw.js are all listed
+  // individually below. An <img> that 302s to /login renders as a broken
+  // image to the reviewer fetching the page. One prefix instead of one entry
+  // per file: put assets referenced by these pages in public/legal/.
+  '/legal/',
   '/_next',
   '/favicon.ico',
   '/manifest.json',
