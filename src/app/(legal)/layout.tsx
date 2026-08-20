@@ -43,6 +43,10 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
           <Link href="/terms" style={{ color: 'var(--tp-subtle)' }}>
             Terms
           </Link>
+          {' · '}
+          <Link href="/support" style={{ color: 'var(--tp-subtle)' }}>
+            Support
+          </Link>
         </p>
       </div>
     </div>

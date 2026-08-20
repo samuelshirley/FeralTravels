@@ -124,6 +124,10 @@ src/
     admin/            # Admin dashboard: users/, vehicles/, chats/, errors/, announcements/
     login/            # OTP + Google auth flow (verify/ sub-route)
     settings/         # User settings page
+    (legal)/          # PUBLIC pages, route group so URLs stay /privacy /terms /support.
+                      # No auth() call anywhere in here — Google brand verification and
+                      # Apple App Review fetch them anonymously. /support is the Support URL
+                      # submitted to App Store Connect; changing the path means editing the listing.
     vehicle-setup/    # Vehicle onboarding
   components/
     ChatPanel.tsx     # Penny chat UI
