@@ -7,6 +7,7 @@ import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 
 declare module 'next-auth' {
   interface Session {
@@ -142,6 +143,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // tampered with manually, and ensures admin status is reflected even on
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
+
+      /**
+       * Refresh the stored avatar on every Google sign-in.
+       *
+       * The Drizzle adapter only writes `image` when it CREATES the user, so
+       * without this: a user who signed in by emailed code first and linked
+       * Google later never got a photo at all, and anyone who changed their
+       * photo at Google kept the old URL until it 404'd. Mirrors what
+       * createSessionForEmail does on the native path, so web and iOS agree
+       * about what the account looks like.
+       *
+       * The URL goes through the host allowlist first — `profile.picture` is
+       * a third-party string even on a verified token.
+       */
+      try {
+        if (user?.email && account?.provider === 'google') {
+          const avatar = sanitizeAvatarUrl((profile as { picture?: unknown } | undefined)?.picture);
+          if (avatar) {
+            await db
+              .update(users)
+              .set({ image: avatar })
+              .where(eq(users.email, user.email.toLowerCase()));
+          }
+        }
+      } catch {
+        // Non-fatal bookkeeping: a failed avatar refresh must never block a
+        // sign-in. The previous photo (or the glyph) stands until next time.
+      }
 
       // Trusted-OAuth email verification: Google (and any OIDC provider) ships
       // an `email_verified` claim on the ID token. When that claim is true we

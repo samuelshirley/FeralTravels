@@ -3,9 +3,41 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import SupportModal from './SupportModal';
 
+/**
+ * The fallback account glyph — what everyone without a Google photo gets.
+ *
+ * It replaced the user's initials, which were both identity on screen for no
+ * reason and impossible to centre reliably: a two-letter `<Text>` centres on
+ * the FONT's line box, not the glyph, so Onest ExtraBold sat visibly high in
+ * a 32pt circle on iOS. This is positioned off the 24-unit viewBox alone, so
+ * geometry does the centring. `mobile/components/icons.tsx` carries the
+ * character-for-character twin — change one, change both.
+ */
+function AccountGlyph() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ display: 'block' }}
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
 interface AppNavbarProps {
+  /** Straight off the Auth.js session; `image` is the Google profile photo. */
   user: { name?: string | null; email?: string | null; image?: string | null };
   tripName?: string;
   tripsHref?: string;
@@ -15,6 +47,19 @@ interface AppNavbarProps {
 
 export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightSlot, isAdmin = false }: AppNavbarProps) {
   const [open, setOpen] = useState(false);
+  /**
+   * Hover/focus state for the "Signed in as" card. Kept in React rather than
+   * done with a CSS `:hover` rule because the card must also appear on
+   * keyboard focus and must NOT appear while the menu is open (the menu
+   * already shows the address, and two overlapping panels read as a bug).
+   */
+  const [hinting, setHinting] = useState(false);
+  /**
+   * A photo URL that fails to load falls back to the glyph for the rest of
+   * the page. Google's avatar URLs go stale when the user changes their
+   * picture, and the stored one is only refreshed at the next sign-in.
+   */
+  const [photoBroken, setPhotoBroken] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -29,14 +74,20 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
     }
   }, [open]);
 
-  const initials = (user.name || user.email || '?')
-    .split(/[\s@]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() ?? '')
-    .join('');
+  const signedInAs = user.email || user.name || null;
 
-  const hasPhoto = Boolean(user.image?.trim());
+  /**
+   * The avatar is the Google profile photo when there is one, and the generic
+   * glyph otherwise. There is deliberately no third case: initials are gone
+   * (2026-08-20). A user who signed in with an emailed code, or with Apple —
+   * whose ID token carries no `picture` claim, ever — gets the glyph, not
+   * their own letters.
+   *
+   * `user.image` is only ever written from a verified Google token and passes
+   * the `sanitizeAvatarUrl` host allowlist before it is stored, so what lands
+   * here is a `*.googleusercontent.com` URL or nothing.
+   */
+  const photo = photoBroken ? null : sanitizeAvatarUrl(user.image);
 
   return (
     <nav
@@ -125,50 +176,111 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}
       >
         {rightSlot}
-        <div ref={ref} style={{ position: 'relative' }}>
+        <div
+          ref={ref}
+          style={{ position: 'relative' }}
+          onMouseEnter={() => setHinting(true)}
+          onMouseLeave={() => setHinting(false)}
+        >
           <button
             type="button"
-            className={
-              'tp-app-navbar__account-btn ' +
-              (hasPhoto ? 'tp-app-navbar__account-btn--photo' : 'tp-app-navbar__account-btn--initials')
-            }
+            className="tp-app-navbar__account-btn"
             onClick={() => setOpen((v) => !v)}
+            onFocus={() => setHinting(true)}
+            onBlur={() => setHinting(false)}
             style={{
               width: 32,
               height: 32,
               borderRadius: '50%',
               border: '2px solid var(--tp-surface)',
-              fontWeight: 800,
-              fontSize: 12,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              // No padding: the glyph is centred by the flex box above, and
+              // any UA button padding would push a 32px box off its own centre.
+              padding: 0,
               boxShadow: 'var(--tp-shadow-sm)',
               appearance: 'none',
               WebkitAppearance: 'none',
-              ...(hasPhoto
-                ? {
-                    backgroundImage: `url(${user.image}), linear-gradient(145deg, var(--tp-primary) 0%, var(--tp-success) 100%)`,
-                    backgroundSize: 'cover, cover',
-                    backgroundPosition: 'center, center',
-                    backgroundRepeat: 'no-repeat, no-repeat',
-                    color: 'var(--tp-on-primary)',
-                  }
-                : {
-                    // Use an opaque color instead of the 14%-opacity CSS var.
-                    // iOS standalone (PWA) mode applies UA button resets that
-                    // can override the translucent background, leaving the
-                    // initials invisible on white. A solid hex survives that.
-                    background: '#DFE5ED',
-                    color: '#4E7AB0',
-                  }),
+              // Opaque literals rather than the 14%-opacity CSS var: iOS
+              // standalone (PWA) mode applies UA button resets that can drop a
+              // translucent background, leaving the glyph invisible on white.
+              // The photo covers this entirely; it shows through only in the
+              // instant before the image loads, and if it never does.
+              background: '#DFE5ED',
+              color: '#4E7AB0',
+              overflow: 'hidden',
             }}
-            aria-label="Account menu"
-            title={user.email || user.name || 'Account'}
+            aria-label={signedInAs ? `Account menu — signed in as ${signedInAs}` : 'Account menu'}
+            aria-expanded={open}
+            aria-haspopup="menu"
           >
-            {!hasPhoto && initials}
+            {photo ? (
+              /*
+                A plain <img>, not next/image: the host is a third party we do
+                not want to proxy or optimise through our own bandwidth, and
+                at 28px there is nothing to optimise. `onError` matters — a
+                Google avatar URL rots when the user changes their photo, and
+                without this the button would show a broken-image icon
+                forever instead of falling back to the glyph.
+              */
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={photo}
+                alt=""
+                width={28}
+                height={28}
+                referrerPolicy="no-referrer"
+                onError={() => setPhotoBroken(true)}
+                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', display: 'block' }}
+              />
+            ) : (
+              <AccountGlyph />
+            )}
           </button>
+          {/*
+            "Signed in as <address>" on hover and on keyboard focus. This
+            replaces the old native `title` tooltip, which took a second to
+            appear, could not be styled, and never showed on focus at all.
+            Suppressed while the menu is open — the menu says the same thing.
+          */}
+          {hinting && !open && signedInAs && (
+            <div
+              role="tooltip"
+              className="tp-app-navbar__account-hint"
+              style={{
+                position: 'absolute',
+                right: 0,
+                top: 'calc(100% + 8px)',
+                maxWidth: 260,
+                padding: '6px 10px',
+                background: 'var(--tp-surface)',
+                border: '1px solid var(--tp-border)',
+                borderRadius: 'var(--tp-radius-sm)',
+                boxShadow: 'var(--tp-shadow-md)',
+                zIndex: 2000,
+                // The card is a label, not a target: swallowing the pointer
+                // here would make the button flicker as the cursor crossed it.
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <div style={{ fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--tp-subtle)' }}>
+                Signed in as
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--tp-text)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {signedInAs}
+              </div>
+            </div>
+          )}
           {open && (
             <div
               style={{
@@ -185,6 +297,17 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               }}
             >
               <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--tp-border)' }}>
+                <div
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--tp-subtle)',
+                    marginBottom: 2,
+                  }}
+                >
+                  Signed in as
+                </div>
                 {user.name && (
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp-text)' }}>{user.name}</div>
                 )}
@@ -308,25 +431,15 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         }
 
         /* iOS standalone (PWA) mode and native button :active / :focus can
-           repaint with system colors, washing out initials. Pin the solid
+           repaint with system colors, washing the glyph out. Pin the solid
            palette across every state so the button is always legible. */
-        .tp-app-navbar__account-btn--initials {
+        .tp-app-navbar__account-btn,
+        .tp-app-navbar__account-btn:hover,
+        .tp-app-navbar__account-btn:active,
+        .tp-app-navbar__account-btn:focus,
+        .tp-app-navbar__account-btn:focus-visible {
           background: #DFE5ED !important;
           color: #4E7AB0 !important;
-        }
-        .tp-app-navbar__account-btn--initials:hover,
-        .tp-app-navbar__account-btn--initials:active,
-        .tp-app-navbar__account-btn--initials:focus,
-        .tp-app-navbar__account-btn--initials:focus-visible {
-          background: #DFE5ED !important;
-          color: #4E7AB0 !important;
-        }
-
-        .tp-app-navbar__account-btn--photo:hover,
-        .tp-app-navbar__account-btn--photo:active,
-        .tp-app-navbar__account-btn--photo:focus,
-        .tp-app-navbar__account-btn--photo:focus-visible {
-          color: var(--tp-on-primary) !important;
         }
 
         @media (max-width: 480px) {

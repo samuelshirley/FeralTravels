@@ -11,7 +11,8 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { clearToken } from "@/lib/auth";
 import { getMe, listVehicles, type Me, type Vehicle } from "@/lib/api";
-import { useSignedInEmail, initialsFor } from "@/lib/identity";
+import AccountButton from "@/components/AccountButton";
+import { useIdentity } from "@/lib/identity";
 import SupportModal from "@/components/SupportModal";
 import { theme, shadow } from "@/lib/theme";
 import { ChevronLeftIcon, TruckIcon } from "@/components/icons";
@@ -71,8 +72,8 @@ export default function TripHeader({
     };
   }, []);
 
-  const signedInEmail = useSignedInEmail();
-  const initials = initialsFor(signedInEmail);
+  const identity = useIdentity();
+  const signedInEmail = identity.email;
 
   const go = useCallback(
     (path: "/trips" | "/settings") => {
@@ -126,27 +127,27 @@ export default function TripHeader({
           </View>
         ) : null}
         {!readonly ? <VehicleChip vehicleId={vehicleId} /> : null}
-        <Pressable
+        <AccountButton
+          email={signedInEmail}
+          image={identity.image}
           onPress={() => setMenuOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Account menu"
-          style={styles.accountBtn}
-        >
-          <Text style={styles.accountInitials}>{initials}</Text>
-        </Pressable>
+        />
       </View>
 
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         {/* Tap-anywhere-to-dismiss stands in for the web's outside-mousedown handler. */}
         <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
           <View style={[styles.menu, { top: insets.top + 48 }]}>
-            <View style={styles.menuIdentity}>
-              {signedInEmail ? (
+            {signedInEmail ? (
+              <View style={styles.menuIdentity}>
+                {/* Native counterpart of the web navbar's hover card: a phone
+                    has no hover, so the address is labelled here instead. */}
+                <Text style={styles.menuIdentityLabel}>SIGNED IN AS</Text>
                 <Text style={styles.menuEmail} numberOfLines={1}>
                   {signedInEmail}
                 </Text>
-              ) : null}
-            </View>
+              </View>
+            ) : null}
             <Pressable style={styles.menuItem} onPress={() => go("/trips")}>
               <Text style={styles.menuItemText}>Trips</Text>
             </Pressable>
@@ -244,20 +245,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   vehicleText: { fontFamily: font.regular, fontSize: 12, letterSpacing: 0.24, color: theme.text, flexShrink: 1 },
-  accountBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: theme.surface,
-    // src/components/AppNavbar.tsx:163 — deliberate opaque literal, not a token.
-    backgroundColor: "#DFE5ED",
-    alignItems: "center",
-    justifyContent: "center",
-    ...shadow.sm,
-  },
-  // src/components/AppNavbar.tsx:164 — deliberate opaque literal, not a token.
-  accountInitials: { color: "#4E7AB0", fontSize: 12, fontFamily: font.extrabold },
+  // The account button's own styling lives in components/AccountButton.tsx —
+  // this header and the trips list render the identical circle.
 
   // Native-only: src/components/AppNavbar.tsx closes the menu on outside
   // mousedown with no visible scrim, so there is no web value to copy.
@@ -275,7 +264,13 @@ const styles = StyleSheet.create({
   },
   menuIdentity: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
   menuName: { fontSize: 13, fontFamily: font.semibold, color: theme.text },
-  menuEmail: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 2 },
+  menuIdentityLabel: {
+    fontFamily: font.regular,
+    fontSize: 10,
+    letterSpacing: 0.6,
+    color: theme.subtle,
+  },
+  menuEmail: { fontFamily: font.regular, fontSize: 11, color: theme.text, marginTop: 2 },
   menuItem: { paddingHorizontal: 14, paddingVertical: 10 },
   menuDivider: { borderTopWidth: 1, borderTopColor: theme.border },
   menuItemText: { fontFamily: font.regular, fontSize: 13, color: theme.text },

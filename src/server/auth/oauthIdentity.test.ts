@@ -68,6 +68,7 @@ describe('Google identity tokens', () => {
     await expect(verifyIdentityToken('google', 'tok', null, { verify })).resolves.toEqual({
       email: 'sam@example.com',
       name: 'Sam Shirley',
+      picture: undefined,
       expiresAt: EXPECTED_EXPIRY,
     });
   });
@@ -151,6 +152,7 @@ describe('Apple identity tokens', () => {
     await expect(verifyIdentityToken('apple', 'tok', null, { verify })).resolves.toEqual({
       email: 'abc123@privaterelay.appleid.com',
       name: undefined,
+      picture: undefined,
       expiresAt: EXPECTED_EXPIRY,
     });
   });
@@ -337,5 +339,48 @@ describe('real jose verification (not a stub)', () => {
     await expect(verifyIdentityToken('google', stale, null, { verify })).rejects.toMatchObject({
       message: 'InvalidToken',
     });
+  });
+});
+
+describe('Google profile photo', () => {
+  it('carries a Google-hosted picture through', async () => {
+    const picture = 'https://lh3.googleusercontent.com/a/ACg8ocL-abc=s96-c';
+    const { verify } = verifierReturning({ email: 'a@b.com', email_verified: true, picture });
+    await expect(
+      verifyIdentityToken('google', 'tok', null, { verify })
+    ).resolves.toMatchObject({ picture });
+  });
+
+  it('DROPS a picture claim pointing anywhere but Google', async () => {
+    // A verified token proves who the user is, not that every string on it is
+    // safe to store and hand to every viewer's browser. sanitizeAvatarUrl is
+    // what stops a hostile or merely wrong `picture` becoming a stored URL.
+    const { verify } = verifierReturning({
+      email: 'a@b.com',
+      email_verified: true,
+      picture: 'https://evil.example.com/pixel.gif',
+    });
+    await expect(
+      verifyIdentityToken('google', 'tok', null, { verify })
+    ).resolves.toMatchObject({ picture: undefined });
+  });
+
+  it('is undefined when the token carries no picture at all', async () => {
+    const { verify } = verifierReturning({ email: 'a@b.com', email_verified: true });
+    await expect(
+      verifyIdentityToken('google', 'tok', null, { verify })
+    ).resolves.toMatchObject({ picture: undefined });
+  });
+
+  it('never reads a picture off an APPLE token', async () => {
+    // Apple's ID token has no picture claim; if one ever appeared it would not
+    // be an Apple-issued photo, so it is ignored rather than trusted.
+    const { verify } = verifierReturning({
+      email: 'a@b.com',
+      email_verified: true,
+      picture: 'https://lh3.googleusercontent.com/a/photo',
+    });
+    const identity = await verifyIdentityToken('apple', 'tok', null, { verify });
+    expect(identity).not.toHaveProperty('picture', expect.any(String));
   });
 });

@@ -5,6 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { syncAdminFlagOnSignIn } from './admin';
 import { cookies } from 'next/headers';
 
@@ -228,6 +229,9 @@ function getSessionCookieName(): string {
  * bookkeeping drift apart, and the drift surfaces months later as a support
  * ticket ("my trips are gone") caused by a duplicate user row.
  *
+ * `image` is the Google profile photo (Apple never sends one). Display-only,
+ * refreshed on each Google sign-in, and deleted with the user row.
+ *
  * `name` is display-only and is NEVER used for identity. It is written on
  * create and backfilled on an existing row only when that row has no name yet:
  * Apple hands the name over exactly once, on the user's first-ever
@@ -236,11 +240,19 @@ function getSessionCookieName(): string {
  */
 export async function createSessionForEmail(
   email: string,
-  name?: string | null
+  name?: string | null,
+  image?: string | null
 ): Promise<{ userId: string; sessionToken: string; expires: Date }> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) throw new Error('createSessionForEmail requires an email address');
   const displayName = name?.trim() || null;
+  /**
+   * Re-validated here rather than trusted from the caller: this function is
+   * the last thing standing between a provider claim and the database, and
+   * `image` reaches it from the native OAuth exchange. Non-Google callers
+   * (OTP) pass nothing and land on null.
+   */
+  const avatar = sanitizeAvatarUrl(image);
 
   // 1. Find or create the user row.
   const existing = await db
@@ -253,9 +265,18 @@ export async function createSessionForEmail(
 
   if (existing.length > 0) {
     userId = existing[0].id;
-    const patch: { emailVerified?: Date; name?: string } = {};
+    const patch: { emailVerified?: Date; name?: string; image?: string } = {};
     if (!existing[0].emailVerified) patch.emailVerified = new Date();
     if (displayName && !existing[0].name) patch.name = displayName;
+    /**
+     * The avatar is REFRESHED on every Google sign-in, unlike the name, which
+     * is only backfilled. The two are different kinds of value: a name the
+     * user may have edited here and would not want clobbered, an avatar URL
+     * that goes stale the moment they change their photo at Google — a stale
+     * one 404s and the glyph appears instead. An OTP sign-in passes no image
+     * and so never wipes a good one.
+     */
+    if (avatar) patch.image = avatar;
     if (Object.keys(patch).length > 0) {
       await db.update(users).set(patch).where(eq(users.id, userId));
     }
@@ -266,6 +287,7 @@ export async function createSessionForEmail(
         email: normalized,
         emailVerified: new Date(),
         ...(displayName ? { name: displayName } : {}),
+        ...(avatar ? { image: avatar } : {}),
       })
       .returning({ id: users.id });
     userId = row.id;

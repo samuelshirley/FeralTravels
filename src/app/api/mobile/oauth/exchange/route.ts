@@ -44,11 +44,18 @@ export async function POST(req: Request) {
     // TokenAlreadyUsed or 429 RateLimited.
     await consumeIdToken(body.idToken, identity.email, identity.expiresAt);
 
-    const session = await createSessionForEmail(identity.email, identity.name);
+    const session = await createSessionForEmail(identity.email, identity.name, identity.picture);
 
     // Housekeeping, after the work that matters and never blocking it.
     void pruneExpiredTokenUses().catch(() => {});
 
+    /**
+     * The response stays the OTP route's shape — id + email — even though a
+     * Google exchange now has a name and an avatar in hand. The app reads
+     * both from GET /api/me/identity instead, so a user who signed in months
+     * ago on an older build still gets their photo, and a photo changed at
+     * Google turns up without signing out and back in.
+     */
     return Response.json({
       token: session.sessionToken,
       expires: session.expires.toISOString(),

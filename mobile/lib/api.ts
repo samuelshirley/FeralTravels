@@ -195,6 +195,23 @@ export interface Me {
 
 export const getMe = () => apiFetch<Me>("/api/me");
 
+/**
+ * The signed-in user's own identity — the account button's data.
+ *
+ * A SECOND route rather than fields on `Me` on purpose: `/api/me` is fetched
+ * on app start for units + timezone and is deliberately PII-free, so identity
+ * gets its own narrow read. `image` is the Google profile photo, already
+ * host-allowlisted server-side; it is null for Apple (whose ID token carries
+ * no picture claim, ever) and for emailed-code sign-ins.
+ */
+export interface Identity {
+  email: string | null;
+  name: string | null;
+  image: string | null;
+}
+
+export const getIdentity = () => apiFetch<Identity>("/api/me/identity");
+
 export const updatePreferences = (body: { units_pref?: string; timezone?: string }) =>
   apiFetch("/api/me/preferences", { method: "PATCH", body });
 

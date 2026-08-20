@@ -1,5 +1,6 @@
 import 'server-only';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { HttpError, UnauthorizedError } from './errors';
 
 /**
@@ -41,6 +42,13 @@ export type OAuthProvider = 'google' | 'apple';
 export interface VerifiedIdentity {
   email: string;
   name?: string;
+  /**
+   * The Google profile photo URL, already run through `sanitizeAvatarUrl` —
+   * so it is either a `*.googleusercontent.com` https URL or absent, never
+   * whatever string the token happened to carry. Absent for Apple, always:
+   * the Apple ID token has no `picture` claim.
+   */
+  picture?: string;
   /**
    * The token's own `exp`, surfaced so the caller's replay guard can keep its
    * record exactly as long as the token could still be presented — no longer,
@@ -132,6 +140,14 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
   return {
     email: email.toLowerCase(),
     name: claimString(payload, 'name') ?? undefined,
+    /**
+     * The avatar rides along on the SAME verified token as the address, so it
+     * is as trustworthy as the identity itself — but the URL inside it is
+     * still a third-party string, so it goes through the host allowlist
+     * before anyone stores or renders it. A claim that fails the check is
+     * dropped silently; the UI falls back to the generic glyph.
+     */
+    picture: sanitizeAvatarUrl(payload['picture']) ?? undefined,
     expiresAt: expiryFrom(payload),
   };
 }

@@ -27,7 +27,8 @@ import {
   type Me,
 } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
-import { useSignedInEmail, initialsFor } from "@/lib/identity";
+import AccountButton from "@/components/AccountButton";
+import { useIdentity } from "@/lib/identity";
 import { theme, shadow } from "@/lib/theme";
 import type { Trip } from "@/shared/types/trip";
 import { font } from "@/lib/typography";
@@ -44,6 +45,12 @@ import { font } from "@/lib/typography";
 /** `/api/me` returns the user row; lib/api's Me only declares the fields the
  *  settings screen needed, so widen it here instead of editing that client. */
 type MeWithId = Me & { id?: string };
+
+/**
+ * See `styles.headerAccount`: 14pt page gutter − 16pt UIKit nav-bar margin.
+ * If the button still doesn't line up on a given device, this is the one knob.
+ */
+const HEADER_ACCOUNT_EDGE_NUDGE = -2;
 
 type Row =
   | { key: string; kind: "empty" }
@@ -167,23 +174,21 @@ export default function TripsScreen() {
     router.replace("/sign-in");
   }
 
-  const displayName = null;
-  const displayEmail = useSignedInEmail();
-  const initials = initialsFor(displayEmail);
+  const identity = useIdentity();
+  const displayName = identity.name;
+  const displayEmail = identity.email;
 
   return (
     <>
       <Stack.Screen
         options={{
           headerRight: () => (
-            <Pressable
-              accessibilityLabel="Account menu"
-              accessibilityRole="button"
+            <AccountButton
+              email={displayEmail}
+              image={identity.image}
               onPress={() => setMenuOpen(true)}
-              style={styles.avatar}
-            >
-              <Text style={styles.avatarText}>{initials}</Text>
-            </Pressable>
+              style={styles.headerAccount}
+            />
           ),
         }}
       />
@@ -427,14 +432,19 @@ function AccountMenu({
       <Pressable style={styles.menuBackdrop} onPress={onClose}>
         {/* Swallow taps inside the panel so they don't dismiss the menu. */}
         <Pressable style={[styles.menuPanel, { top }]} onPress={() => {}}>
-          <View style={styles.menuIdentity}>
-            {name ? <Text style={styles.menuName}>{name}</Text> : null}
-            {email ? (
-              <Text style={styles.menuEmail} numberOfLines={1}>
-                {email}
-              </Text>
-            ) : null}
-          </View>
+          {name || email ? (
+            <View style={styles.menuIdentity}>
+              {/* Native counterpart of the web navbar's hover card: a phone has
+                  no hover, so the address is labelled here instead. */}
+              <Text style={styles.menuIdentityLabel}>SIGNED IN AS</Text>
+              {name ? <Text style={styles.menuName}>{name}</Text> : null}
+              {email ? (
+                <Text style={styles.menuEmail} numberOfLines={1}>
+                  {email}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {/* This screen IS the trips list, so "Trips" just dismisses. */}
           <Pressable style={styles.menuItem} onPress={onClose}>
             <Text style={styles.menuItemText}>Trips</Text>
@@ -534,17 +544,19 @@ const styles = StyleSheet.create({
     ...shadow.md,
   },
   overlayText: { fontFamily: font.regular, fontSize: 14, color: theme.text },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    // src/components/AppNavbar.tsx:163 — deliberate opaque literal, not a token.
-    backgroundColor: "#DFE5ED",
-  },
-  // src/components/AppNavbar.tsx:164 — deliberate opaque literal, not a token.
-  avatarText: { fontSize: 12, fontFamily: font.extrabold, color: "#4E7AB0" },
+  /**
+   * The account button hangs off the NATIVE navigation bar (`headerRight`),
+   * so UIKit — not this stylesheet — decides how far it sits from the screen
+   * edge: the standard iPhone nav-bar layout margin is 16pt. Everything below
+   * it on this screen lives inside `listContent`, whose gutter is 14pt
+   * (mirroring the web's `.page-main` padding). The button therefore lands 2pt
+   * further left than the "+ New trip" button and the trip cards it sits
+   * above, which is exactly the misalignment that reads as "not centred".
+   *
+   * Pull it back over those 2pt rather than widening the page gutter to 16 —
+   * the gutter is a mirrored web token and should keep matching the web.
+   */
+  headerAccount: { marginRight: HEADER_ACCOUNT_EDGE_NUDGE },
   // Native-only: the web account menu closes on outside-mousedown with no
   // visible scrim, so this tint has no web counterpart to copy.
   menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.2)" },
@@ -565,8 +577,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
   },
-  menuName: { fontSize: 13, fontFamily: font.semibold, color: theme.text },
-  menuEmail: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 2 },
+  menuIdentityLabel: {
+    fontFamily: font.regular,
+    fontSize: 10,
+    letterSpacing: 0.6,
+    color: theme.subtle,
+  },
+  menuName: { fontSize: 13, fontFamily: font.semibold, color: theme.text, marginTop: 2 },
+  menuEmail: { fontFamily: font.regular, fontSize: 11, color: theme.text, marginTop: 2 },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
   menuItemDivided: { borderTopWidth: 1, borderTopColor: theme.border },
   menuItemText: { fontFamily: font.regular, fontSize: 13, color: theme.text },
