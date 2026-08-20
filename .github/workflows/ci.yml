@@ -25,9 +25,10 @@
 #                could mean
 #                "tested nothing", which now auto-ships to prod on merge.
 #
-# These three are the checks you make REQUIRED in branch protection. Merging a
-# green PR to main triggers promote.yml, which deploys to production without a
-# human step — so this workflow is the only thing standing in front of prod.
+# These three are the checks you make REQUIRED in branch protection. MERGING IS
+# DEPLOYING: a green PR merged to main triggers deploy-production.yml, which
+# migrates prod and ships that commit with no human step — so this workflow is
+# the only thing standing in front of prod.
 #
 # There is NO auth bypass anywhere: e2e signs in as fresh fixture users through
 # the real OTP flow, reading the code the app generated from the guarded
@@ -164,7 +165,8 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
           branch_name: ${{ env.NEON_BRANCH }}
       # This is also the migration rehearsal: a migration that fails here never
-      # reaches the prod DB, because promote.yml only runs after a green CI.
+      # reaches the prod DB, because deploy-production.yml only runs after a
+      # green CI.
       - name: Apply migrations to the PR branch
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}

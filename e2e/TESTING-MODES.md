@@ -45,10 +45,9 @@ in August.
 
 **Setup:** `E2E_INBOX_DOMAIN` + a Resend key (`RESEND_API_KEY`, or
 `AUTH_RESEND_KEY` which it falls back to). Add a receiving domain in the Resend
-dashboard first — the managed `<id>.resend.app` needs no DNS. Unset → this spec
-skips and `E2E_MAX_SKIPPED=1` tolerates exactly that one skip. **Set the
-secrets, then drop that allowance to 0.** A *wrong* credential fails loudly
-rather than skipping — see [fixtures/mailbox.ts](fixtures/mailbox.ts), which
+dashboard first — the managed `<id>.resend.app` needs no DNS. Both secrets are set in CI, so `E2E_MAX_SKIPPED` is **0** — this spec skipping
+reds the build, which is the point. Unset locally → it skips and the local run
+is fine. A *wrong* credential fails loudly rather than skipping — see [fixtures/mailbox.ts](fixtures/mailbox.ts), which
 also documents honestly what a Resend→Resend round-trip does not prove.
 
 ## 2. Seeded canonical graph (per fresh user)
