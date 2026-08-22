@@ -1,7 +1,13 @@
 # check_trip_feasibility — input integrity
 
 **Status:** suspected (architectural risk, not yet observed)
-**Noted:** May 2026, during the scale-fix work that introduced `check_trip_feasibility`
+**Noted:** 2026-05-04, during the scale-fix work that introduced `check_trip_feasibility`
+**Last reviewed:** 2026-08-20 — still valid, none of the mitigations below have been built
+
+> Moved here from the repo-root `possible-bugs/` folder on 2026-08-20. That folder held
+> exactly this one file, went unreviewed for three months, and its own README warned
+> against becoming a graveyard — so it was removed and the live risk filed with the rest
+> of the design notes.
 
 ## Where it lives
 
@@ -36,7 +42,7 @@ The first case is the one that erodes trust silently. The second case shows up a
 
 What you (or a user) would see:
 
-- **Trip totals don't match what Penny said.** Penny's chat says "12 driving days + 7 nights = 19 days, fits your 21-day budget" but the dashboard `TOTAL DAYS` shows 23. (We don't display total days yet; today this would surface as `LEGS` count + sum of waypoint nights diverging from the budget the user stated. Worth adding a `TOTAL DAYS` stat to the itinerary header — it would be both useful UX and a forcing function for catching this.)
+- **Trip totals don't match what Penny said.** Penny's chat says "12 driving days + 7 nights = 19 days, fits your 21-day budget" but the dashboard `TOTAL DAYS` shows 23. (**Updated 2026-08-20:** the `TOTAL DAYS` follow-up proposed here has shipped. `lib/penny/planSummary.ts` derives `total_days` deterministically from the DB and the plan summary card displays it, while Penny's prose is now forbidden from stating plan numbers at all. That makes this the cleanest available tell: her qualitative claim that a plan "fits" sitting next to a card whose day count exceeds the stated budget.)
 - **Plan saves successfully but obviously over-budget.** User said "two weeks", chat shows "fits", but counting legs in the dashboard adds up to clearly more than 14 days of driving + nights.
 - **"Plan rejected" errors on trips that should clearly fit.** User asks for a 21-day Tampa→Seattle with three short stops and gets the rejection banner. They re-prompt with the same content and it goes through. (Indicates the first attempt had bad inputs; the retry got them right.)
 - **Penny revises a plan and lands wrong.** User says "drop Moab, extend to 18 days." Penny says "fits now". Dashboard still shows 21 days of work because the new inputs to `check_trip_feasibility` were stale.
@@ -48,18 +54,19 @@ What you'd see in logs, the DB, or the admin view:
 
 - **`usage_events` for `provider = 'anthropic:replan'` show `failedActions` clusters of `add_leg` rejections.** Already-known signal that the dispatcher gate fired. If you see lots of these on plans that look like they should fit, the upstream inputs are wrong (false `over_budget`).
 - **`usage_events` for `provider = 'anthropic:replan-truncated'` (added in the earlier round) drop, but trip-quality complaints rise.** Indicates Penny is no longer running out of room — but the quality of what she's saving is suspect.
-- **Trips in the DB where `sum(legs.distance_km) / vehicle.fuel_economy_kmpl_proxy_for_speed` implies more days than the trip's `start_date → end_date` window.** A SQL check could surface these. Sketch:
+- **Trips in the DB whose leg count exceeds their own date window.** A SQL check surfaces these. **Corrected 2026-08-20 — the original sketch here was broken:** it cast `trips.start_date` / `end_date`, which are the ORIGINAL free-text columns and hold things like `"late May"`; they will not cast to `date`. The machine-readable columns are `start_date_parsed` (NOT NULL) and `end_date_parsed` (nullable — many trips are open-ended). Both are already `date`, so subtracting them yields an integer with no cast:
   ```sql
-  -- Trips whose actual leg count exceeds the stated date range
-  SELECT t.id, t.name, COUNT(l.id) AS leg_count,
-         (t.end_date::date - t.start_date::date + 1) AS budget_days
+  -- Trips whose leg count exceeds the machine-readable date window
+  SELECT t.id, t.name,
+         COUNT(l.id) AS leg_count,
+         (t.end_date_parsed - t.start_date_parsed + 1) AS budget_days
   FROM trips t
   JOIN legs l ON l.trip_id = t.id
-  WHERE t.start_date IS NOT NULL AND t.end_date IS NOT NULL
-  GROUP BY t.id, t.name, t.start_date, t.end_date
-  HAVING COUNT(l.id) > (t.end_date::date - t.start_date::date + 1);
+  WHERE t.end_date_parsed IS NOT NULL
+  GROUP BY t.id, t.name, t.start_date_parsed, t.end_date_parsed
+  HAVING COUNT(l.id) > (t.end_date_parsed - t.start_date_parsed + 1);
   ```
-  Caveat: today's data model doesn't store overnight nights as a first-class field, so this query catches obvious cases (driving days alone > budget) but misses nights. Worth a follow-up to track `overnight_nights` per trip.
+  The May caveat about nights is **also obsolete**: overnight stays are materialized as first-class `legs` rows with `leg_type = 'rest'` (see `lib/penny/schedule.ts`), so one leg is one calendar day and `COUNT(l.id)` covers driving days *and* nights. The proposed `overnight_nights` column isn't needed. Remaining caveat: the query only catches trips where the user actually supplied an end date.
 - **Chat history with `assistant` messages that say "fits" followed by the same trip getting `add_leg` rejections two turns later.** Indicates Penny re-checked and got a different answer — the first set of inputs was likely wrong.
 - **Discrepancy between `extract_trip_intent`'s `time_budget_days` and `check_trip_feasibility`'s `time_budget_days` in the same conversation.** These should always match within a turn. If they don't, Penny restated the budget.
 
@@ -100,3 +107,9 @@ In rough priority order, the things that would convince me to promote this from 
 ## History
 
 - 2026-05-04 — Noted at the time the feature shipped. Not yet observed in the wild. Review again after the change has been in production for a couple weeks of real use.
+- 2026-08-20 — **First actual review** (the two-week one above never happened). Re-read against the current code; still valid, status unchanged at `suspected`. Verified:
+  - The gate is intact and unchanged: `api/trip/replan/route.ts` still rejects every `add_leg` when `extractIntentCalled` is true and `feasibilityVerdict` is `null` or `over_budget`.
+  - `executeCheckTripFeasibility` (`lib/claude.ts`) still does Zod-parse → `computeFeasibility` → return verdict, with **no** cross-check against the turn's own `get_route` results, **no** `usage_events` logging of the inputs, and not even the cheap `segment_drive_days.length === get_route call count` check. All three mitigations proposed above remain unbuilt.
+  - `checkTripFeasibility.test.ts` has 13 specs, every one of them on `computeFeasibility` arithmetic and none on input provenance — which is precisely this file's thesis: the math is correct by construction, the inputs are not.
+  - Two sections were stale and have been corrected in place: the detection SQL (wrong columns) and the `TOTAL DAYS` symptom (that follow-up shipped).
+  - Still no confirming evidence from production either way — none of the three promotion triggers under "What I'm watching for" has been checked against real `usage_events` data. That check, not another code re-read, is what should happen next.
