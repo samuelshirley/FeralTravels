@@ -29,7 +29,23 @@
 #   eas.json           build profile, channel, env baked into the bundle.
 #   assets/**          icon and splash art are compiled in at prebuild.
 #
-# Everything else under mobile/ is JS and goes out over the air.
+# Everything else under mobile/ is JS and goes out over the air — PROVIDED
+# something out there can receive it.
+#
+# THE ESCALATION, and why it exists. `eas update` exits 0 whether ten thousand
+# devices are on this runtimeVersion or none are. So a repo whose first native
+# build never completed can publish green OTA updates forever while nothing
+# reaches a phone — which is exactly the state this workflow sat in after its
+# first run died on a missing EXPO_TOKEN. Before publishing, `decide` asks EAS
+# whether any iOS build exists at this runtimeVersion (finished, or still in
+# the queue from an earlier merge). None, or an answer it cannot get, and the
+# run escalates to a native build instead. The cost is ~40s of `npm ci` on a
+# JS-only merge; the thing it buys is that a green Mobile run always means the
+# change went somewhere.
+#
+# Net effect: the FIRST merge after a version bump cuts a binary on its own,
+# every JS merge after that is an OTA in seconds, and nobody has to remember
+# which is which.
 #
 # GREEN HERE IS NOT "ON TESTFLIGHT". The build step uses --no-wait: it queues
 # the build on EAS and returns, so the job goes green in about a minute. Watch
@@ -76,13 +92,16 @@ jobs:
     name: Decide OTA vs native
     runs-on: ubuntu-latest
     outputs:
-      mode: ${{ steps.pick.outputs.mode }}
+      mode: ${{ steps.final.outputs.mode }}
+      reason: ${{ steps.final.outputs.reason }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - id: pick
+      # Step 1 — the cheap answer, from the diff alone. No toolchain, no
+      # network, no EXPO_TOKEN.
+      - id: want
         env:
           INPUT_MODE: ${{ inputs.mode || 'auto' }}
           BEFORE: ${{ github.event.before }}
@@ -92,7 +111,7 @@ jobs:
 
           if [ "$INPUT_MODE" != "auto" ]; then
             echo "Forced by workflow_dispatch: $INPUT_MODE"
-            echo "mode=$INPUT_MODE" >> "$GITHUB_OUTPUT"
+            echo "want=$INPUT_MODE" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -102,7 +121,7 @@ jobs:
           # says nothing about it.
           if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             echo "No usable base commit ($BEFORE) — assuming native."
-            echo "mode=build" >> "$GITHUB_OUTPUT"
+            echo "want=build" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -113,11 +132,128 @@ jobs:
           NATIVE_RE='^mobile/(app\.config\.js|package\.json|package-lock\.json|eas\.json|assets/)'
           if echo "$CHANGED" | grep -Eq "$NATIVE_RE"; then
             echo "Native input touched -> full build."
-            echo "mode=build" >> "$GITHUB_OUTPUT"
+            echo "want=build" >> "$GITHUB_OUTPUT"
           else
-            echo "JS only -> over-the-air update."
-            echo "mode=update" >> "$GITHUB_OUTPUT"
+            echo "JS only -> over-the-air update, if anything can receive one."
+            echo "want=update" >> "$GITHUB_OUTPUT"
           fi
+
+      # Steps 2-5 run ONLY when the diff says OTA, because that is the only
+      # answer that can be wrong in a way nobody notices. `eas update` exits 0
+      # whether ten thousand devices are on this runtimeVersion or none are —
+      # so a repo that has never completed a native build can publish green
+      # updates forever while nothing reaches a phone. That is exactly the
+      # state this workflow was in after its first run failed on a missing
+      # EXPO_TOKEN. Before publishing, ask EAS whether a target exists.
+      - name: Require EXPO_TOKEN
+        if: steps.want.outputs.want == 'update'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.want.outputs.want == 'update'
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        if: steps.want.outputs.want == 'update'
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+        if: steps.want.outputs.want == 'update'
+        working-directory: mobile
+
+      - id: target
+        name: Does a binary exist for this runtime?
+        if: steps.want.outputs.want == 'update'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+
+          # runtimeVersion policy is `appVersion`, so the runtime IS the
+          # version string. Read it rather than restating it, and refuse to
+          # guess if the policy ever changes — a wrong runtime here would
+          # answer the question about the wrong set of builds.
+          POLICY=$(node -p "require('./app.config.js').expo.runtimeVersion.policy" 2>/dev/null || echo "")
+          if [ "$POLICY" != "appVersion" ]; then
+            echo "::warning::runtimeVersion policy is '$POLICY', not 'appVersion' — cannot resolve the runtime, assuming native."
+            echo "found=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RT=$(node -p "require('./app.config.js').expo.version")
+          echo "runtimeVersion: $RT"
+          echo "runtime=$RT" >> "$GITHUB_OUTPUT"
+
+          # Counts builds that could still become a target, not just finished
+          # ones: a native build queued by an earlier merge is `--no-wait`, so
+          # it is still in the EAS queue while this run happens. Without that,
+          # two merges in half an hour would cut two binaries.
+          if ! RAW=$(eas build:list --platform ios --runtime-version "$RT" --limit 50 --json --non-interactive 2>/dev/null); then
+            echo "::warning::could not query EAS for existing builds — assuming native."
+            echo "found=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COUNT=$(printf '%s' "$RAW" | node -e '
+            let s = "";
+            process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              try {
+                const builds = JSON.parse(s);
+                if (!Array.isArray(builds)) return console.log("unknown");
+                const live = new Set(["finished", "new", "in-queue", "in-progress"]);
+                const n = builds.filter((b) =>
+                  live.has(String(b.status || "").toLowerCase().replace(/_/g, "-"))
+                ).length;
+                console.log(String(n));
+              } catch {
+                console.log("unknown");
+              }
+            });
+          ')
+
+          echo "builds at $RT that are finished or still building: $COUNT"
+          echo "found=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - id: final
+        env:
+          WANT: ${{ steps.want.outputs.want }}
+          FOUND: ${{ steps.target.outputs.found }}
+          RT: ${{ steps.target.outputs.runtime }}
+        run: |
+          set -euo pipefail
+
+          if [ "$WANT" != "update" ]; then
+            echo "mode=build" >> "$GITHUB_OUTPUT"
+            echo "reason=a native input changed (or the build was forced)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "${FOUND:-unknown}" in
+            0)
+              echo "::notice::No iOS build exists at runtimeVersion ${RT:-?} — escalating to a native build so this change can actually reach a device."
+              echo "mode=build" >> "$GITHUB_OUTPUT"
+              echo "reason=no binary exists at runtimeVersion ${RT:-?}, so an OTA would reach nobody" >> "$GITHUB_OUTPUT"
+              ;;
+            unknown|"")
+              echo "::warning::Could not establish whether a binary exists — building rather than publishing into the void."
+              echo "mode=build" >> "$GITHUB_OUTPUT"
+              echo "reason=could not confirm a binary exists at this runtime" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "mode=update" >> "$GITHUB_OUTPUT"
+              echo "reason=${FOUND} build(s) at runtimeVersion ${RT:-?} can receive this update" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
   update:
     name: OTA update
@@ -174,9 +310,13 @@ jobs:
           eas update --channel production --non-interactive --message "${GITHUB_SHA:0:7} ${MSG}"
 
       - name: Summary
+        env:
+          REASON: ${{ needs.decide.outputs.reason }}
         run: |
           {
             echo "### Mobile: OTA update published"
+            echo
+            echo "Chosen because ${REASON}."
             echo
             echo "Channel \`production\`; runtimeVersion is the \`version\` in app.config.js."
             echo "Testers pick it up on next app launch — no TestFlight build needed."
@@ -232,9 +372,12 @@ jobs:
       - name: Summary
         env:
           AUTO_SUBMIT: ${{ vars.EAS_AUTO_SUBMIT }}
+          REASON: ${{ needs.decide.outputs.reason }}
         run: |
           {
             echo "### Mobile: native build queued"
+            echo
+            echo "Chosen because ${REASON}."
             echo
             echo "Green here means **queued**, not built. Track it at <https://expo.dev>."
             if [ "${AUTO_SUBMIT:-}" = "true" ]; then

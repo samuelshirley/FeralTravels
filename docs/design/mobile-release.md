@@ -19,6 +19,20 @@ paths:
 so they never appear in a diff — that's why the native list is the *inputs* to
 prebuild rather than its output.
 
+**Then it checks the OTA has somewhere to land.** An OTA only reaches builds on
+the same `runtimeVersion`, and `eas update` exits 0 whether that number is ten
+thousand or zero — so a repo with no completed native build can publish green
+updates forever while nothing reaches a phone. Before publishing, `decide` asks
+EAS whether any iOS build exists at this runtime (finished, or still queued
+from an earlier merge). None — or an answer it can't get — and the run cuts a
+native build instead.
+
+That makes the pipeline self-starting: the first merge after a `version` bump
+builds a binary on its own, every JS merge after that is an OTA in seconds, and
+the choice never needs a human. The cost is about 40 seconds of `npm ci` on a
+JS-only merge, paid so that a green Mobile run always means the change went
+somewhere.
+
 ## Setup
 
 ### 1. `EXPO_TOKEN` (required — nothing works without it)
@@ -32,9 +46,10 @@ repository secret, named `EXPO_TOKEN`.
 
 ### 2. App Store Connect credentials (needed only for auto-submit)
 
-`submit.production` in `eas.json` is currently `{}`. That's fine for
-interactive `eas submit` on your Mac, where it prompts — but a CI run has
-nobody to prompt, so `--auto-submit` fails *after* the build succeeds.
+`submit.production.ios` in `eas.json` pins `ascAppId` and `appleTeamId` — but
+those are identifiers, not credentials. Interactive `eas submit` on your Mac
+prompts for the rest; a CI run has nobody to prompt, so `--auto-submit` fails
+*after* the build succeeds.
 
 Use an App Store Connect **API key**, not an Apple ID + app-specific password:
 it doesn't carry 2FA and doesn't expire when your password changes.
