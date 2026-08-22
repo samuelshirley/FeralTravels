@@ -1,6 +1,7 @@
 import 'server-only';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
+import { isProviderEmailProven } from './emailVerification';
 import { HttpError, UnauthorizedError } from './errors';
 
 /**
@@ -59,14 +60,6 @@ export interface VerifiedIdentity {
   expiresAt: Date;
 }
 
-/**
- * Apple's "Hide My Email" alias domain. Apple mints these itself and routes
- * them, so the address is Apple-proven by construction even when the token
- * carries no `email_verified` claim — which is the ONLY case where a missing
- * claim is acceptable. See verifyApple.
- */
-const APPLE_RELAY_DOMAIN = '@privaterelay.appleid.com';
-
 /** Shared: a token with no usable `exp` is not something to mint a session from. */
 function expiryFrom(payload: JWTPayload): Date {
   if (typeof payload.exp !== 'number') throw new UnauthorizedError('InvalidToken');
@@ -85,15 +78,29 @@ export interface VerifyDeps {
 const defaultVerify: NonNullable<VerifyDeps['verify']> = (token, jwks, options) =>
   jwtVerify(token, jwks, options);
 
+/**
+ * Why verification failed — to the SERVER LOG only.
+ *
+ * The client answer stays a flat `InvalidToken` on purpose: jose distinguishes
+ * "no matching key" from "bad signature" from "expired", and handing that
+ * difference to a caller probing the endpoint is an oracle. But flattening it
+ * in the logs too means an outage and an attack look identical. A JWKS fetch
+ * that never completes (`ERR_JWKS_TIMEOUT`, a DNS failure) breaks EVERY real
+ * sign-in while the e2e suite stays green, because a forged token and an
+ * unreachable provider both end here.
+ *
+ * Codes only. Never the token — it is a live bearer credential — and never the
+ * payload.
+ */
+function logVerificationFailure(provider: OAuthProvider, err: unknown): void {
+  const code = (err as { code?: unknown } | null)?.code;
+  const name = err instanceof Error ? err.name : typeof err;
+  console.error(`[oauth] ${provider} id-token verification failed: ${String(code ?? name)}`);
+}
+
 function claimString(payload: JWTPayload, key: string): string | null {
   const value = payload[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-/** Providers are inconsistent: `email_verified` arrives as boolean or "true". */
-function claimIsTrue(payload: JWTPayload, key: string): boolean {
-  const value = payload[key];
-  return value === true || value === 'true';
 }
 
 async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<VerifiedIdentity> {
@@ -120,7 +127,8 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
       audience,
       clockTolerance: 5,
     }));
-  } catch {
+  } catch (err) {
+    logVerificationFailure('google', err);
     throw new UnauthorizedError('InvalidToken');
   }
 
@@ -133,7 +141,7 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
    * Without this check, anyone could create a Google account claiming someone
    * else's address and take over their trips.
    */
-  if (!claimIsTrue(payload, 'email_verified')) {
+  if (!isProviderEmailProven('google', payload['email_verified'], email)) {
     throw new UnauthorizedError('EmailNotVerified');
   }
 
@@ -164,7 +172,8 @@ async function verifyApple(
       audience: APPLE_AUDIENCE,
       clockTolerance: 5,
     }));
-  } catch {
+  } catch (err) {
+    logVerificationFailure('apple', err);
     throw new UnauthorizedError('InvalidToken');
   }
 
@@ -187,12 +196,8 @@ async function verifyApple(
    * construction and there is no other party who could claim it. Scope the
    * leniency to exactly that domain rather than to every Apple token.
    */
-  const verified = payload['email_verified'];
   const lowered = email.toLowerCase();
-  if (verified === false || verified === 'false') {
-    throw new UnauthorizedError('EmailNotVerified');
-  }
-  if (!claimIsTrue(payload, 'email_verified') && !lowered.endsWith(APPLE_RELAY_DOMAIN)) {
+  if (!isProviderEmailProven('apple', payload['email_verified'], lowered)) {
     throw new UnauthorizedError('EmailNotVerified');
   }
 

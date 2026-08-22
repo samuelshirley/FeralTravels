@@ -78,6 +78,7 @@ Deploy pipeline (**pull-request based** since 2026-08-13 — `main` is protected
    - **E2E tests** — the full Playwright suite against that exact preview URL (`E2E_BASE_URL`; playwright.config skips its local webServer), then `scripts/assert-e2e-ran.mjs` **fails the job if the suite mass-skipped** — the allowance is `E2E_MAX_SKIPPED=0`, so **no spec may skip**, `login-otp` included. Artifacts upload always (not just on failure) and the Playwright HTML report is published to a URL linked from a sticky PR comment.
    - **Mobile typecheck** — `tsc --noEmit` in `mobile/`. Runs alongside Unit tests and does NOT gate the preview (the preview is the web app, and a broken Expo type has nothing to say about it). It exists because the Mobile workflow publishes `mobile/` over the air on merge — without this job the first thing to catch a mobile type error is a tester's phone.
    These three are the **required checks** in branch protection; Mobile typecheck runs alongside them and deliberately does not gate.
+- **Mobile releases self-start.** `mobile.yml`'s `decide` job picks OTA vs native build from the diff, then — when the answer is OTA — asks EAS whether any iOS build exists at this `runtimeVersion` before publishing. `eas update` exits 0 with zero installed binaries, so without that check a repo whose first native build never completed publishes green updates that reach nobody (which is exactly what happened after PR #7's merge died on a missing EXPO_TOKEN). No target, or no answer, and the run escalates to a native build. So the first merge after a `version` bump cuts a binary on its own and every JS merge after that is an OTA.
 2. **Merge the PR — that IS the deploy.** `.github/workflows/deploy-production.yml` fires on the push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No button, no second step, no ship script. **Rollback** = merge a revert PR through the same gate, or re-promote the previous production deployment from the Vercel dashboard for an instant fix; neither undoes a migration.
 3. **PR closes** → `.github/workflows/pr-cleanup.yml` deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
 
@@ -222,6 +223,7 @@ api/pois                  api/coords/parse
 api/me                    api/me/preferences      api/me/identity
 api/me/delete
 api/mobile/otp/send       api/mobile/otp/verify
+api/mobile/oauth/exchange
 api/support               api/analytics/viewport-time
 api/analytics/client-error
 api/admin/test-error      api/admin/announcements
@@ -229,6 +231,7 @@ api/announcements/active  api/announcements/dismiss
 api/debug/fuel
 api/test/seed             api/test/trip
 api/test/cleanup          api/test/announcement
+api/test/otp              api/test/deletion
 ```
 
 **`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
@@ -320,7 +323,15 @@ run-migrations.ts, seed-demo-trip.ts, smoke-api.ts, db-reset.ts, seed-migration-
 
 ### E2E Tests (`e2e/`)
 
-existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, lazy-fuel-sourcing, announcement, account-deletion
+existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange
+
+**`account-deletion`** gained a database vantage point in **`POST /api/test/deletion`** (`state` / `seed-usage` / `cleanup-usage`, same three guards as the rest of `/api/test/*`). Without it the suite's strongest claim was `GET /api/trips` → 401, which only proves the SESSION died — an implementation that deleted `sessions` and left every trip, usage row and tombstone in place passed the whole file. It now asserts the tombstone's counts and provider inference, that the ciphertext decrypts back to the address (compared server-side; the plaintext never crosses the wire), that `usage_events` rows SURVIVE with `user_id` detached and `error_message` scrubbed, that the trip rows are gone by user id, and that the address can sign up again into a clean account. Two of those double as config checks and fail loudly rather than skipping: `DELETED_USER_ENC_KEY` must be set on the target environment, as must `AUTH_GOOGLE_IOS_CLIENT_ID` (see `oauth-exchange`).
+
+**`cleanupPlaywright` now requires a fixture address.** Its comment claimed "the endpoint only accepts fixture addresses"; `/api/test/cleanup` validated only `isTestRequestAuthorized` + `z.string().email()`. That gap became real when the function grew a `deleted_users` delete: on a preview — a copy-on-write clone of PROD data — a caller holding the per-run secret could erase the tombstones of a real person who had asked to be forgotten. `deleteUsageByMarker` requires an `e2e-` prefix for the same reason: without it, `{ marker: "anthropic" }` would delete the real billing history.
+
+**`legal-pages`** asserts `/privacy`, `/terms`, `/support` and `/legal/*` are 200 for an anonymous caller — the one property whose failure is an App Review or Google brand-verification rejection, and which nothing else in the suite can notice because every other spec signs in first. It checks both the raw HTTP response (what a crawler gets) and the rendered page (what a human gets).
+
+**`oauth-exchange`** fires forged ID tokens at `POST /api/mobile/oauth/exchange` against the deployed preview: malformed bodies → 400, and structurally perfect JWTs signed with a key the provider never published → 401 `InvalidToken`, including the wrong-audience (confused-deputy), wrong-issuer, expired and **no-`exp`** cases. It also asserts a refusal never carries a session token and never leaks jose's own message. The happy path is unreachable from CI (we cannot mint a token Google or Apple would vouch for) and lives in `oauthIdentity.test.ts` plus a real device. **One test doubles as a config check:** "the Google provider is configured on this deployment" fails with 503 when `AUTH_GOOGLE_IOS_CLIENT_ID` is unset in the target Vercel environment — the fix is to set the variable, not to relax the test, because an unset one means every Google sign-in from the iOS app 503s with nothing on the web side to notice it by.
 
 ## Lockdown invariants (load-bearing — do not loosen)
 
@@ -352,6 +363,7 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **`users.image` is written on EVERY Google sign-in, both paths.** Native: `createSessionForEmail(email, name, image)` (`auth/otp.ts`) from the exchange's verified `picture` claim. Web: `events.signIn` in `auth/index.ts` — the Drizzle adapter only writes `image` at user *creation*, so without that hook a user who signed in by emailed code first and linked Google later never got a photo. Refreshed (not just backfilled) unlike `name`, which the user may have edited. An OTP sign-in passes no image and never wipes one. Deleted with the user row by the account-deletion flow.
 - **The address is surfaced deliberately, not baked into the avatar:** a "Signed in as" card under the web button on hover AND keyboard focus (replacing the old native `title` tooltip, which did neither well), and a "SIGNED IN AS" row atop the account menu on web, the trips list and TripHeader.
 - **Never silently swallow errors.** Every mutation must either show inline error UI or go through the global `ErrorNotifier`. No empty `catch` blocks, no `console.error`-only handling. If something fails, the user must know.
+- **Every error code an API returns must have copy in every client that calls it.** `src/lib/nativeErrorCopyGuard.test.ts` scans the exchange's call chain (`oauthIdentity.ts`, `oauthReplay.ts`, the route) for thrown codes and fails if one is missing from `ERROR_COPY`/`OAUTH_ERROR_COPY` in `mobile/app/sign-in.tsx`. There is no type across an HTTP boundary that could catch this: `TokenAlreadyUsed` shipped unmapped and showed the generic "Something went wrong" for the one failure a user can fix by tapping the button again. `OAUTH_ERROR_COPY` exists because `RateLimited` means two different things — "your emailed code is already in your inbox" on the OTP path, "you are over the per-address exchange limit" on the OAuth one — so `messageFor` takes a `context` and `runOAuth` is the single call site that passes `"oauth"`.
 
 ## Working with this codebase
 

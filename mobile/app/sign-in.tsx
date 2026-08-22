@@ -100,6 +100,27 @@ const ERROR_COPY: Record<string, string> = {
   InvalidRequest: "Something went wrong signing you in. Please try again.",
 };
 
+/**
+ * Codes whose wording only makes sense on the OAuth path, or whose shared
+ * wording is wrong there.
+ *
+ * `RateLimited` is the reason this map exists. The same code comes back from
+ * the OTP send route (where "a code was already sent" is exactly right, and
+ * the code is sitting in the user's inbox) and from the native exchange's
+ * per-address limiter (where there is no code, no inbox, and nothing to wait
+ * for except the window). Telling someone who just tapped "Continue with
+ * Google" to wait for an email is worse than saying nothing.
+ *
+ * `TokenAlreadyUsed` is OAuth-only by construction: it means the provider
+ * token was already spent, which a fresh tap of the same button fixes, so the
+ * copy has to say that rather than dead-ending.
+ */
+const OAUTH_ERROR_COPY: Record<string, string> = {
+  TokenAlreadyUsed:
+    "That sign-in has already been used. Tap the button again to start a fresh one.",
+  RateLimited: "Too many sign-in attempts just now. Please wait a minute and try again.",
+};
+
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 
 function typoSuggestionCopy(suggested: string): string {
@@ -111,7 +132,7 @@ function typoSuggestionCopy(suggested: string): string {
  * and keeps the parsed body on `.payload`. Map the code to the web's wording,
  * and never leak a raw code (or "HTTP 500") into the banner.
  */
-function messageFor(err: unknown): string {
+function messageFor(err: unknown, context: "email" | "oauth" = "email"): string {
   if (!(err instanceof ApiError)) {
     return err instanceof Error && err.message ? err.message : GENERIC_ERROR;
   }
@@ -125,7 +146,7 @@ function messageFor(err: unknown): string {
     const suggested = typeof payload?.suggested === "string" ? payload.suggested : "";
     return typoSuggestionCopy(suggested);
   }
-  const known = ERROR_COPY[code];
+  const known = (context === "oauth" ? OAUTH_ERROR_COPY[code] : undefined) ?? ERROR_COPY[code];
   if (known) return known;
   // A message with spaces is prose the server meant for humans; a bare token
   // is an unmapped code and would read as gibberish.
@@ -351,7 +372,7 @@ export default function SignInScreen() {
         // Backing out of the system sheet is a deliberate choice, not a
         // failure — return to the form silently.
         if (isOAuthCancelled(err)) return;
-        setError(messageFor(err));
+        setError(messageFor(err, "oauth"));
       } finally {
         setOauthBusy(null);
       }
