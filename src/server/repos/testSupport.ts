@@ -1,9 +1,20 @@
 import 'server-only';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { users, vehicles, trips, announcements, announcementDismissals, emailOtpCodes, deletedUsers } from '@/server/db/schema';
+import {
+  users,
+  vehicles,
+  trips,
+  announcements,
+  announcementDismissals,
+  emailOtpCodes,
+  deletedUsers,
+  oauthTokenUses,
+  verificationTokens,
+  usageEvents,
+} from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
-import { hashEmail } from '@/server/deletedUserCrypto';
+import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
 import { addVehicle, getDefaultVehicleId } from './vehicles';
 import { createTrip, addLeg } from './trips';
 
@@ -182,11 +193,26 @@ export async function cleanupPlaywright(
   assertEnabled();
   const normalized = email.trim().toLowerCase();
 
+  /**
+   * The fixture-address check that this function's comment used to CLAIM the
+   * route already made. It did not: /api/test/cleanup validates only
+   * `isTestRequestAuthorized` plus `z.string().email()` — unlike
+   * `readFixtureOtp` below, which has always checked. That gap mattered once
+   * this function grew a `deleted_users` delete: on a preview (a copy-on-write
+   * clone of PROD data) a caller holding the per-run secret could erase the
+   * tombstones of a real person who had asked to be forgotten. Production is
+   * not exposed — test endpoints are hard-off there — but "not exposed in prod"
+   * is not the same as "safe", and a comment asserting a guard that does not
+   * exist is worse than no comment.
+   */
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('cleanupPlaywright: not a fixture address');
+  }
+
   // BEFORE the user lookup, deliberately. The account-deletion spec leaves a
   // tombstone behind and no user row — which is the feature working — so a
   // cleanup that bails on "user not found" would never reach this and every
-  // local run would add permanent `playwright-*` noise to /admin/deleted. Safe
-  // by construction: the endpoint only accepts fixture addresses, and the
+  // local run would add permanent `playwright-*` noise to /admin/deleted. The
   // digest is deterministic, so this matches exactly the rows this address
   // produced.
   await db.delete(deletedUsers).where(eq(deletedUsers.emailHash, hashEmail(normalized)));
@@ -291,4 +317,187 @@ export async function readFixtureOtp(email: string): Promise<string | null> {
   if (rows.length === 0) return null;
   if (rows[0].expires.getTime() < Date.now()) return null;
   return rows[0].code;
+}
+
+/**
+ * TEST-ONLY: plant a `usage_events` row for a fixture user.
+ *
+ * Account deletion does not delete usage rows — it ANONYMISES them: the FK
+ * actions null out `user_id` and `trip_id`, and the repo explicitly clears
+ * `error_message`, which is where the user's own words end up (`penny:user-idea`
+ * holds the sentence they typed; `penny:contiguity-gap` holds place names from
+ * their itinerary). That is the actual privacy promise the policy page makes,
+ * and nothing asserted it.
+ *
+ * `provider` is the marker column: it is NOT NULL and deletion never touches
+ * it, so a per-run value survives and lets the spec find its own rows again
+ * afterwards without racing the three other workers.
+ */
+export async function seedUsageEvent(opts: {
+  email: string;
+  provider: string;
+  errorMessage: string;
+}): Promise<{ id: number; userId: string }> {
+  assertEnabled();
+  const normalized = opts.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('seedUsageEvent: not a fixture address');
+  }
+
+  const found = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+  if (!found[0]) throw new Error('seedUsageEvent: no such user');
+
+  const [row] = await db
+    .insert(usageEvents)
+    .values({
+      userId: found[0].id,
+      provider: opts.provider,
+      success: false,
+      errorMessage: opts.errorMessage,
+    })
+    .returning({ id: usageEvents.id });
+
+  return { id: row.id, userId: found[0].id };
+}
+
+/** What {@link readDeletionState} reports. Counts only — never an address. */
+export interface DeletionState {
+  /** Rows in `users` for this address: 1 before, 0 after. */
+  userRows: number;
+  /** The user's id while they still exist, so the caller can ask about it later. */
+  userId: string | null;
+  /** Rows still bearing `userId` — trips cascade, usage rows are set NULL. */
+  tripsForUser: number;
+  usageForUser: number;
+  /** Marker rows anywhere, and how many still carry free text. */
+  usageWithMarker: number;
+  usageWithMarkerText: number;
+  /** The three email-keyed tables a cascade cannot see. */
+  otpCodes: number;
+  oauthTokenUses: number;
+  verificationTokens: number;
+  tombstones: Array<{
+    signInProviders: string | null;
+    accountCreatedAt: string | null;
+    tripCount: number;
+    vehicleCount: number;
+    chatMessageCount: number;
+    deletedBy: string;
+    /** Whether a ciphertext was written at all (false when no key is configured). */
+    hasCiphertext: boolean;
+    /** Whether that ciphertext decrypts back to the address that was asked about. */
+    ciphertextMatchesEmail: boolean;
+  }>;
+}
+
+/**
+ * TEST-ONLY: what the database still holds about a fixture address.
+ *
+ * Exists because the deletion spec had no vantage point after the fact. Its
+ * strongest assertion was `GET /api/trips` → 401, which only proves the
+ * SESSION died: an implementation that deleted `sessions` and nothing else
+ * passed every test in the file. Everything below is a count or a boolean —
+ * the decrypted address is compared here and never crosses the wire, so this
+ * reads data without becoming a way to read data out.
+ */
+export async function readDeletionState(opts: {
+  email: string;
+  userId?: string | null;
+  marker?: string | null;
+}): Promise<DeletionState> {
+  assertEnabled();
+  const normalized = opts.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('readDeletionState: not a fixture address');
+  }
+
+  const userRows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`);
+
+  const userId = opts.userId ?? userRows[0]?.id ?? null;
+
+  const tripRows = userId
+    ? await db.select({ id: trips.id }).from(trips).where(eq(trips.userId, userId))
+    : [];
+  const usageRows = userId
+    ? await db.select({ id: usageEvents.id }).from(usageEvents).where(eq(usageEvents.userId, userId))
+    : [];
+
+  const markerRows = opts.marker
+    ? await db
+        .select({ id: usageEvents.id, errorMessage: usageEvents.errorMessage })
+        .from(usageEvents)
+        .where(eq(usageEvents.provider, opts.marker))
+    : [];
+
+  const otpRows = await db
+    .select({ email: emailOtpCodes.email })
+    .from(emailOtpCodes)
+    .where(sql`lower(${emailOtpCodes.email}) = ${normalized}`);
+  const oauthRows = await db
+    .select({ tokenHash: oauthTokenUses.tokenHash })
+    .from(oauthTokenUses)
+    .where(sql`lower(${oauthTokenUses.email}) = ${normalized}`);
+  const verificationRows = await db
+    .select({ identifier: verificationTokens.identifier })
+    .from(verificationTokens)
+    .where(sql`lower(${verificationTokens.identifier}) = ${normalized}`);
+
+  const tombstoneRows = await db
+    .select()
+    .from(deletedUsers)
+    .where(eq(deletedUsers.emailHash, hashEmail(normalized)));
+
+  return {
+    userRows: userRows.length,
+    userId,
+    tripsForUser: tripRows.length,
+    usageForUser: usageRows.length,
+    usageWithMarker: markerRows.length,
+    usageWithMarkerText: markerRows.filter((r) => r.errorMessage !== null).length,
+    otpCodes: otpRows.length,
+    oauthTokenUses: oauthRows.length,
+    verificationTokens: verificationRows.length,
+    tombstones: tombstoneRows.map((row) => ({
+      signInProviders: row.signInProviders,
+      accountCreatedAt: row.accountCreatedAt ? row.accountCreatedAt.toISOString() : null,
+      tripCount: row.tripCount,
+      vehicleCount: row.vehicleCount,
+      chatMessageCount: row.chatMessageCount,
+      deletedBy: row.deletedBy,
+      hasCiphertext: row.emailEncrypted !== null,
+      ciphertextMatchesEmail: decryptEmail(row.emailEncrypted) === normalized,
+    })),
+  };
+}
+
+/**
+ * TEST-ONLY: drop the marker rows {@link seedUsageEvent} planted.
+ *
+ * After the account goes, those rows are anonymous by design — no `user_id`,
+ * no address — so `cleanupPlaywright` has nothing to find them by and the
+ * suite would leave one orphan per run behind forever.
+ *
+ * The `e2e-` prefix is a hard requirement, not a convention: without it this
+ * would be "delete every usage row for the provider you name", and
+ * `{ marker: 'anthropic' }` would erase the real billing history on any
+ * environment where test endpoints are on — which includes previews, and a
+ * preview is a copy-on-write clone of production data.
+ */
+export async function deleteUsageByMarker(marker: string): Promise<{ deleted: number }> {
+  assertEnabled();
+  if (!/^e2e-/.test(marker)) {
+    throw new Error('deleteUsageByMarker: marker must start with "e2e-"');
+  }
+  const rows = await db
+    .delete(usageEvents)
+    .where(eq(usageEvents.provider, marker))
+    .returning({ id: usageEvents.id });
+  return { deleted: rows.length };
 }
