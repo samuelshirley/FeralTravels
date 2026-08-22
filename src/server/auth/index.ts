@@ -8,6 +8,7 @@ import { users, accounts, sessions, verificationTokens } from '@/server/db/schem
 import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
+import { isProviderEmailProven } from './emailVerification';
 
 declare module 'next-auth' {
   interface Session {
@@ -110,22 +111,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
      * it only decides whether to stamp users.emailVerified. This callback is
      * the only place a sign-in can actually be refused.
      *
-     * Kept deliberately identical to the native rule so the two paths cannot
-     * disagree about who is allowed in: an explicitly unverified address is
-     * refused, an absent claim is refused, and the sole exception is Apple's
-     * Hide My Email alias, a domain Apple owns and routes.
+     * The rule itself lives in `emailVerification.ts` and is shared with the
+     * native path: an explicitly unverified address is refused, an absent
+     * claim is refused, and the sole exception is Apple's Hide My Email alias,
+     * a domain Apple owns and routes. `emailVerification.test.ts` covers it —
+     * including the property that this callback and `oauthIdentity.ts` answer
+     * identically, which a comment alone never guaranteed.
      */
     signIn({ account, profile }) {
-      const trustedOAuthProviders = new Set(['google', 'apple']);
-      if (!account?.provider || !trustedOAuthProviders.has(account.provider)) return true;
+      const provider = account?.provider;
+      if (provider !== 'google' && provider !== 'apple') return true;
 
-      // Google sends a boolean, Apple the string "true".
-      const claim = profile?.email_verified as boolean | string | undefined;
-      if (claim === true || claim === 'true') return true;
-      if (claim === false || claim === 'false') return false;
-
-      const email = typeof profile?.email === 'string' ? profile.email.toLowerCase() : '';
-      return account.provider === 'apple' && email.endsWith('@privaterelay.appleid.com');
+      // The SAME predicate the native exchange uses — imported, not restated,
+      // because two copies of this rule is how the two paths come to disagree
+      // about who is allowed in.
+      const email = typeof profile?.email === 'string' ? profile.email : '';
+      return isProviderEmailProven(provider, profile?.email_verified, email);
     },
     session({ session, user }) {
       session.user.id = user.id;
