@@ -39,6 +39,45 @@ export function hashIdToken(idToken: string): string {
 }
 
 /**
+ * Deps seam, same shape and same reason as `VerifyDeps` in oauthIdentity.ts:
+ * the two properties worth testing here — that a replay loses, and that the
+ * INSERT happens before the count — are properties of the ORDER of these two
+ * calls, not of the SQL. Injecting them lets the test drive both concurrently
+ * and assert the ordering without a database.
+ *
+ * Production never passes this. The defaults below are the only implementation
+ * that ships.
+ */
+export interface ReplayDeps {
+  /**
+   * Record the hash. Resolves `true` only for the call that actually inserted
+   * the row — a conflict (someone got there first) resolves `false`.
+   */
+  claimTokenHash?: (row: { tokenHash: string; email: string; expires: Date }) => Promise<boolean>;
+  /** How many exchanges this address has made since `since`. */
+  countRecentUses?: (email: string, since: Date) => Promise<number>;
+  /** Injectable clock so the window boundary is testable. */
+  now?: () => number;
+}
+
+const defaultClaimTokenHash: NonNullable<ReplayDeps['claimTokenHash']> = async (row) => {
+  const inserted = await db
+    .insert(oauthTokenUses)
+    .values(row)
+    .onConflictDoNothing({ target: oauthTokenUses.tokenHash })
+    .returning({ tokenHash: oauthTokenUses.tokenHash });
+  return inserted.length > 0;
+};
+
+const defaultCountRecentUses: NonNullable<ReplayDeps['countRecentUses']> = async (email, since) => {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(oauthTokenUses)
+    .where(and(eq(oauthTokenUses.email, email), gt(oauthTokenUses.usedAt, since)));
+  return count;
+};
+
+/**
  * Claim this token. Returns normally exactly once per token.
  *
  * Order matters: the INSERT goes first so that two concurrent requests racing
@@ -54,26 +93,24 @@ export function hashIdToken(idToken: string): string {
 export async function consumeIdToken(
   idToken: string,
   email: string,
-  expiresAt: Date
+  expiresAt: Date,
+  deps: ReplayDeps = {}
 ): Promise<void> {
   const tokenHash = hashIdToken(idToken);
   const normalized = email.trim().toLowerCase();
 
-  const inserted = await db
-    .insert(oauthTokenUses)
-    .values({ tokenHash, email: normalized, expires: expiresAt })
-    .onConflictDoNothing({ target: oauthTokenUses.tokenHash })
-    .returning({ tokenHash: oauthTokenUses.tokenHash });
+  const claimed = await (deps.claimTokenHash ?? defaultClaimTokenHash)({
+    tokenHash,
+    email: normalized,
+    expires: expiresAt,
+  });
 
-  if (inserted.length === 0) {
+  if (!claimed) {
     throw new UnauthorizedError('TokenAlreadyUsed');
   }
 
-  const since = new Date(Date.now() - WINDOW_MS);
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(oauthTokenUses)
-    .where(and(eq(oauthTokenUses.email, normalized), gt(oauthTokenUses.usedAt, since)));
+  const since = new Date((deps.now ?? Date.now)() - WINDOW_MS);
+  const count = await (deps.countRecentUses ?? defaultCountRecentUses)(normalized, since);
 
   if (count > MAX_EXCHANGES_PER_WINDOW) {
     throw new HttpError(429, 'RateLimited');
