@@ -1,70 +1,64 @@
 # Mobile release pipeline.
 #
-# Merging a PR does NOT put a build on TestFlight by itself — ci.yml and
-# promote.yml only know about the Next.js app. This workflow is the mobile half.
+# EVERY merge to main that touches mobile/ does BOTH:
 #
-# TWO SHIPPING MECHANISMS, and picking the right one per merge is the whole
-# point of this file:
+#   1. `eas update`  — publishes the JS bundle over the air. Testers on an
+#                      installed build get it on next launch, in seconds.
+#   2. `eas build`   — cuts a native binary and submits it to TestFlight, so
+#      + submit        TestFlight always holds the newest code and is ready
+#                      to promote to the App Store.
 #
-#   eas update  — pushes a new JS/asset bundle over the air to already-installed
-#                 builds. Lands in seconds, costs nothing, no Apple review, no
-#                 TestFlight. Reaches only builds whose runtimeVersion matches;
-#                 the policy is `appVersion` (app.config.js), so a bundle
-#                 published at version 1.0.0 reaches 1.0.0 binaries and nobody
-#                 else.
-#   eas build   — a real native binary. ~15-30 min in the queue plus App Store
-#     + submit    Connect processing before it shows up in TestFlight, and it
-#                 spends build credits. Mandatory whenever a NATIVE input moved.
+# These are not alternatives. The OTA is how a fix reaches a phone today;
+# the binary is what Apple reviews and what ships. An earlier version of
+# this file treated them as an either/or and picked the OTA for JS-only
+# merges — which meant TestFlight silently went stale for a week while two
+# PRs' worth of fixes existed only as bundles.
+#
+# THE ONE EXCEPTION, and it is a safety property rather than an
+# optimisation. If a NATIVE input moved in this push, the OTA is SKIPPED.
+# A bundle that expects a native module the installed binary does not carry
+# crashes on launch, and runtimeVersion only protects against that when
+# `version` is also bumped. On those merges the binary is the only safe
+# delivery, so we build and say nothing went out over the air.
 #
 # WHAT COUNTS AS NATIVE. mobile/ios and mobile/android are gitignored (CNG —
-# EAS regenerates them at build time), so they can never appear in a diff and
-# path-filtering on them would be a silent no-op. The real native inputs are:
+# EAS regenerates them at build time), so they can never appear in a diff.
+# The real native inputs are:
 #
-#   app.config.js      plugins, Info.plist strings, entitlements, bundle id —
-#                      and `version`, which IS the runtimeVersion. Bumping it
-#                      without a native build strands every later OTA: they are
-#                      published for a runtime no installed binary has.
+#   app.config.js      plugins, Info.plist, entitlements, bundle id, and
+#                      `version`, which IS the runtimeVersion.
 #   package.json       a new or removed native module changes the binary.
 #   package-lock.json  same, transitively.
 #   eas.json           build profile, channel, env baked into the bundle.
 #   assets/**          icon and splash art are compiled in at prebuild.
 #
-# Everything else under mobile/ is JS and goes out over the air — PROVIDED
-# something out there can receive it.
-#
-# THE ESCALATION, and why it exists. `eas update` exits 0 whether ten thousand
-# devices are on this runtimeVersion or none are. So a repo whose first native
-# build never completed can publish green OTA updates forever while nothing
-# reaches a phone — which is exactly the state this workflow sat in after its
-# first run died on a missing EXPO_TOKEN. Before publishing, `decide` asks EAS
-# whether any iOS build exists at this runtimeVersion (finished, or still in
-# the queue from an earlier merge). None, or an answer it cannot get, and the
-# run escalates to a native build instead. The cost is ~40s of `npm ci` on a
-# JS-only merge; the thing it buys is that a green Mobile run always means the
-# change went somewhere.
-#
-# Net effect: the FIRST merge after a version bump cuts a binary on its own,
-# every JS merge after that is an OTA in seconds, and nobody has to remember
-# which is which.
-#
-# GREEN HERE IS NOT "ON TESTFLIGHT". The build step uses --no-wait: it queues
-# the build on EAS and returns, so the job goes green in about a minute. Watch
-# the real build at https://expo.dev. Waiting instead would spend ~30 minutes
-# of Actions time per merge to learn nothing the EAS dashboard doesn't show.
+# THIS JOB WAITS for the build and the submission — no --no-wait. A green
+# run means the binary really is on App Store Connect, not merely queued.
+# The cost is ~30-40 min of Actions time and one EAS build credit per
+# qualifying merge. Switch to --no-wait if that ever hurts, but understand
+# the trade: green would go back to meaning "queued", which is exactly what
+# made the earlier failures invisible for a week.
 #
 # REQUIRED REPO SECRET:
-#   EXPO_TOKEN   Expo access token (expo.dev -> account settings -> access
-#                tokens). Use a robot account, not a personal login.
+#   EXPO_TOKEN  An access token belonging to the SAME Expo account that owns
+#               the project — `owner` in app.config.js, currently
+#               samuelashirley. A token from any other account, including a
+#               robot user created under a different account, fails every
+#               call with "Entity not authorized: AppEntity[...]". That is
+#               what broke Mobile #1 and #2. Create it at
+#               expo.dev -> account -> Access tokens.
 #
-# OPTIONAL REPO VARIABLE (Settings -> Secrets and variables -> Actions ->
-# Variables tab, NOT Secrets):
-#   EAS_AUTO_SUBMIT = true   adds --auto-submit, so a finished build uploads
-#                            itself to TestFlight. Leave it unset until
-#                            submit.production in eas.json has App Store
-#                            Connect credentials — without them the submit
-#                            fails AFTER a successful 30-minute build, which is
-#                            the most annoying possible ordering.
-#                            Setup steps: docs/design/mobile-release.md
+# REQUIRED FOR THE UPLOAD:
+#   An App Store Connect API key stored on EAS: `eas credentials` -> iOS ->
+#   production -> App Store Connect API Key. eas.json pins ascAppId and
+#   appleTeamId, but those are identifiers, not credentials. Without the key
+#   --auto-submit fails AFTER a successful thirty-minute build.
+#
+# VERSIONS. buildNumber comes from EAS (appVersionSource: remote +
+# autoIncrement in eas.json), so nothing is committed back to the repo.
+# Bumping `version` in app.config.js starts a new TestFlight version group
+# and a new OTA runtime in one move.
+
 name: Mobile
 
 on:
@@ -74,54 +68,74 @@ on:
       - 'mobile/**'
       - '.github/workflows/mobile.yml'
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'auto = decide from the diff, update = force OTA, build = force native build'
-        type: choice
-        options: [auto, update, build]
-        default: auto
 
 concurrency:
   # Serialised rather than cancel-in-progress: a cancelled run can leave a
-  # build queued on EAS that this workflow is no longer tracking.
+  # build running on EAS that nothing is tracking any more.
   group: mobile-release
   cancel-in-progress: false
 
 jobs:
-  decide:
-    name: Decide OTA vs native
+  ship:
+    name: OTA now, TestFlight build behind it
     runs-on: ubuntu-latest
-    outputs:
-      mode: ${{ steps.final.outputs.mode }}
-      reason: ${{ steps.final.outputs.reason }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Step 1 — the cheap answer, from the diff alone. No toolchain, no
-      # network, no EXPO_TOKEN.
-      - id: want
+      - name: Require EXPO_TOKEN
         env:
-          INPUT_MODE: ${{ inputs.mode || 'auto' }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+        working-directory: mobile
+
+      - name: Confirm the token can actually see this project
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          # Fail in seconds rather than after a thirty-minute build.
+          # build:list is the cheapest call needing BOTH a valid token and
+          # read access to THIS project — the exact pair that was missing
+          # when a robot from another Expo account was wired in here.
+          if ! eas build:list --platform ios --limit 1 --non-interactive --json > /dev/null 2>&1; then
+            echo "::error::EXPO_TOKEN cannot read this project. It must belong to the Expo account named in app.config.js's 'owner'."
+            exit 1
+          fi
+          echo "Token resolves the project."
+
+      - id: native
+        name: Did a native input move?
+        env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if [ "$INPUT_MODE" != "auto" ]; then
-            echo "Forced by workflow_dispatch: $INPUT_MODE"
-            echo "want=$INPUT_MODE" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # First push to a branch, a force-push, or a shallow history leaves
-          # no usable base. Default to the safe-but-slow side: a native build
-          # ships the JS too, whereas a wrongly chosen OTA reaches nobody and
-          # says nothing about it.
-          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            echo "No usable base commit ($BEFORE) — assuming native."
-            echo "want=build" >> "$GITHUB_OUTPUT"
+          # A force-push, a first push, or a manual dispatch leaves no usable
+          # base. Treat that as native: skipping the OTA is always safe, and
+          # publishing a possibly-incompatible one is not.
+          if [ -z "${BEFORE:-}" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit — treating as native, OTA skipped."
+            echo "native=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -131,162 +145,15 @@ jobs:
 
           NATIVE_RE='^mobile/(app\.config\.js|package\.json|package-lock\.json|eas\.json|assets/)'
           if echo "$CHANGED" | grep -Eq "$NATIVE_RE"; then
-            echo "Native input touched -> full build."
-            echo "want=build" >> "$GITHUB_OUTPUT"
+            echo "Native input touched — OTA skipped, binary only."
+            echo "native=true" >> "$GITHUB_OUTPUT"
           else
-            echo "JS only -> over-the-air update, if anything can receive one."
-            echo "want=update" >> "$GITHUB_OUTPUT"
+            echo "JS only — safe to publish over the air as well."
+            echo "native=false" >> "$GITHUB_OUTPUT"
           fi
-
-      # Steps 2-5 run ONLY when the diff says OTA, because that is the only
-      # answer that can be wrong in a way nobody notices. `eas update` exits 0
-      # whether ten thousand devices are on this runtimeVersion or none are —
-      # so a repo that has never completed a native build can publish green
-      # updates forever while nothing reaches a phone. That is exactly the
-      # state this workflow was in after its first run failed on a missing
-      # EXPO_TOKEN. Before publishing, ask EAS whether a target exists.
-      - name: Require EXPO_TOKEN
-        if: steps.want.outputs.want == 'update'
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
-            exit 1
-          fi
-
-      - uses: actions/setup-node@v4
-        if: steps.want.outputs.want == 'update'
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - uses: expo/expo-github-action@v8
-        if: steps.want.outputs.want == 'update'
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - run: npm ci
-        if: steps.want.outputs.want == 'update'
-        working-directory: mobile
-
-      - id: target
-        name: Does a binary exist for this runtime?
-        if: steps.want.outputs.want == 'update'
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-
-          # runtimeVersion policy is `appVersion`, so the runtime IS the
-          # version string. Read it rather than restating it, and refuse to
-          # guess if the policy ever changes — a wrong runtime here would
-          # answer the question about the wrong set of builds.
-          POLICY=$(node -p "require('./app.config.js').expo.runtimeVersion.policy" 2>/dev/null || echo "")
-          if [ "$POLICY" != "appVersion" ]; then
-            echo "::warning::runtimeVersion policy is '$POLICY', not 'appVersion' — cannot resolve the runtime, assuming native."
-            echo "found=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          RT=$(node -p "require('./app.config.js').expo.version")
-          echo "runtimeVersion: $RT"
-          echo "runtime=$RT" >> "$GITHUB_OUTPUT"
-
-          # Counts builds that could still become a target, not just finished
-          # ones: a native build queued by an earlier merge is `--no-wait`, so
-          # it is still in the EAS queue while this run happens. Without that,
-          # two merges in half an hour would cut two binaries.
-          if ! RAW=$(eas build:list --platform ios --runtime-version "$RT" --limit 50 --json --non-interactive 2>/dev/null); then
-            echo "::warning::could not query EAS for existing builds — assuming native."
-            echo "found=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          COUNT=$(printf '%s' "$RAW" | node -e '
-            let s = "";
-            process.stdin.on("data", (d) => (s += d)).on("end", () => {
-              try {
-                const builds = JSON.parse(s);
-                if (!Array.isArray(builds)) return console.log("unknown");
-                const live = new Set(["finished", "new", "in-queue", "in-progress"]);
-                const n = builds.filter((b) =>
-                  live.has(String(b.status || "").toLowerCase().replace(/_/g, "-"))
-                ).length;
-                console.log(String(n));
-              } catch {
-                console.log("unknown");
-              }
-            });
-          ')
-
-          echo "builds at $RT that are finished or still building: $COUNT"
-          echo "found=$COUNT" >> "$GITHUB_OUTPUT"
-
-      - id: final
-        env:
-          WANT: ${{ steps.want.outputs.want }}
-          FOUND: ${{ steps.target.outputs.found }}
-          RT: ${{ steps.target.outputs.runtime }}
-        run: |
-          set -euo pipefail
-
-          if [ "$WANT" != "update" ]; then
-            echo "mode=build" >> "$GITHUB_OUTPUT"
-            echo "reason=a native input changed (or the build was forced)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          case "${FOUND:-unknown}" in
-            0)
-              echo "::notice::No iOS build exists at runtimeVersion ${RT:-?} — escalating to a native build so this change can actually reach a device."
-              echo "mode=build" >> "$GITHUB_OUTPUT"
-              echo "reason=no binary exists at runtimeVersion ${RT:-?}, so an OTA would reach nobody" >> "$GITHUB_OUTPUT"
-              ;;
-            unknown|"")
-              echo "::warning::Could not establish whether a binary exists — building rather than publishing into the void."
-              echo "mode=build" >> "$GITHUB_OUTPUT"
-              echo "reason=could not confirm a binary exists at this runtime" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "mode=update" >> "$GITHUB_OUTPUT"
-              echo "reason=${FOUND} build(s) at runtimeVersion ${RT:-?} can receive this update" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-
-  update:
-    name: OTA update
-    needs: decide
-    if: needs.decide.outputs.mode == 'update'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Require EXPO_TOKEN
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
-            exit 1
-          fi
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - run: npm ci
-        working-directory: mobile
 
       - name: Load the production env from eas.json
+        if: steps.native.outputs.native == 'false'
         working-directory: mobile
         # eas.json's build.production.env applies to BUILDS ONLY. `eas update`
         # bundles with whatever is in this shell, and EXPO_PUBLIC_* values are
@@ -302,87 +169,47 @@ jobs:
             for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
           ' | tee -a "$GITHUB_ENV"
 
-      - name: Publish
+      - name: Publish the OTA
+        if: steps.native.outputs.native == 'false'
         working-directory: mobile
         run: |
           set -euo pipefail
           MSG="$(git log -1 --pretty=%s)"
           eas update --channel production --non-interactive --message "${GITHUB_SHA:0:7} ${MSG}"
 
-      - name: Summary
-        env:
-          REASON: ${{ needs.decide.outputs.reason }}
-        run: |
-          {
-            echo "### Mobile: OTA update published"
-            echo
-            echo "Chosen because ${REASON}."
-            echo
-            echo "Channel \`production\`; runtimeVersion is the \`version\` in app.config.js."
-            echo "Testers pick it up on next app launch — no TestFlight build needed."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  build:
-    name: Native build
-    needs: decide
-    if: needs.decide.outputs.mode == 'build'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Require EXPO_TOKEN
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
-            exit 1
-          fi
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - run: npm ci
-        working-directory: mobile
-
-      - name: Queue the build
+      - name: Build and submit to TestFlight
         working-directory: mobile
         env:
-          AUTO_SUBMIT: ${{ vars.EAS_AUTO_SUBMIT }}
+          # We know this is not an Expo Go build; the warning is noise in logs
+          # someone only reads when something has already gone wrong.
+          EAS_BUILD_NO_EXPO_GO_WARNING: 'true'
         run: |
           set -euo pipefail
-          FLAGS=""
-          if [ "${AUTO_SUBMIT:-}" = "true" ]; then
-            FLAGS="--auto-submit"
-          else
-            echo "::notice::EAS_AUTO_SUBMIT is not 'true' — building only, no TestFlight upload."
-          fi
-          # buildNumber comes from EAS (appVersionSource: remote + autoIncrement),
-          # so nothing needs committing back to the repo.
-          eas build --platform ios --profile production --non-interactive --no-wait $FLAGS
+          eas build \
+            --platform ios \
+            --profile production \
+            --non-interactive \
+            --auto-submit
 
       - name: Summary
+        if: always()
         env:
-          AUTO_SUBMIT: ${{ vars.EAS_AUTO_SUBMIT }}
-          REASON: ${{ needs.decide.outputs.reason }}
+          STATUS: ${{ job.status }}
+          NATIVE: ${{ steps.native.outputs.native }}
         run: |
           {
-            echo "### Mobile: native build queued"
+            echo "### Mobile"
             echo
-            echo "Chosen because ${REASON}."
-            echo
-            echo "Green here means **queued**, not built. Track it at <https://expo.dev>."
-            if [ "${AUTO_SUBMIT:-}" = "true" ]; then
-              echo "Auto-submit is on — it uploads to TestFlight when the build finishes."
+            if [ "$NATIVE" = "false" ]; then
+              echo "- **OTA:** published to channel \`production\`. Testers get it on next launch."
             else
-              echo "Auto-submit is **off**: grab the .ipa from Expo and upload it, or set the \`EAS_AUTO_SUBMIT\` repo variable."
+              echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
             fi
+            if [ "$STATUS" = "success" ]; then
+              echo "- **TestFlight:** built and submitted. Visible once Apple finishes processing, usually 5-15 minutes."
+            else
+              echo "- **TestFlight:** **failed — nothing was submitted.** Check the step logs above."
+            fi
+            echo
+            echo "Builds: <https://expo.dev/accounts/samuelashirley/projects/feral-travels/builds>"
           } >> "$GITHUB_STEP_SUMMARY"
