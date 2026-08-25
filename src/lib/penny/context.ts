@@ -1,5 +1,5 @@
 import 'server-only';
-import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
+import { normalizeRangeKm, vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { getTripFull } from '@/server/repos/trips';
 import { getChatPage } from '@/server/repos/chat';
 import {
@@ -76,22 +76,13 @@ export interface PennyContext {
 }
 
 /**
- * Trimmed vehicle shape Penny plans against: user-stated refuel cadence +
- * drive limits + optional dump station cadence. `effective_range_km` aliases
- * `comfortable_range_km` for prompts and the fuel planner.
+ * Trimmed vehicle shape Penny plans against: the user-stated fuel range
+ * (`range_km`) — the single range number the planner uses.
  */
 export interface PennyVehicle {
   id: string;
   name: string;
-  comfortable_range_km: number | null;
-  /**
-   * Hard ceiling between fills (km) handed to Finn — never route a dry stretch
-   * past this, for any price. Defaults to comfortable_range_km when the driver
-   * gave no separate max.
-   */
-  hard_max_range_km: number | null;
-  /** Alias of comfortable_range_km — kept for prompt/system-side stability. */
-  effective_range_km: number | null;
+  range_km: number | null;
 }
 
 export interface PennyLeg {
@@ -165,23 +156,6 @@ export interface PennyLeg {
 }
 
 /**
- * Effective driving range between fuel stops, in kilometers.
- *
- * Migration 0007 collapsed the old fuel-economy / tank / real-world / 20% buffer
- * computation into a single user-stated `comfortable_range_km` ("I like to refuel
- * every ~X km"). This helper exists so callers don't reach into the vehicle row
- * directly — if we ever add range-shaping logic (terrain modifiers, towing
- * derate, etc.) it goes here in one place. Today it's the identity function on
- * a non-positive guard.
- */
-export function computeEffectiveRangeKm(
-  comfortableRangeKm: number | null
-): number | null {
-  if (comfortableRangeKm == null || comfortableRangeKm <= 0) return null;
-  return Math.round(comfortableRangeKm);
-}
-
-/**
  * Assemble everything Penny needs to plan or replan a trip: the trip skeleton,
  * the assigned vehicle (with derived range), each leg's routes / stops / tasks,
  * and the tail of the chat transcript so Penny has short-term memory.
@@ -211,11 +185,11 @@ export async function buildPennyContext(
     kinds: ['ai'],
   });
 
-  // Penny's only hard requirement for fuel planning is a comfortable range in
+  // Penny's only hard requirement for fuel planning is a fuel range in
   // the product band. (The old multi-field remediation gate is gone.)
   const vehicle_profile_blocked =
     vehicle == null ||
-    !vehicleMeetsFuelPlanningMinimum({ comfortable_range_km: vehicle.comfortable_range_km });
+    !vehicleMeetsFuelPlanningMinimum({ range_km: vehicle.range_km });
 
   const currentLeg = trip.current_leg_id
     ? trip.legs.find((l) => l.id === trip.current_leg_id) ?? null
@@ -271,15 +245,10 @@ async function resolveVehicle(trip: TripWithLegs, userId: string): Promise<Vehic
 }
 
 function projectVehicle(v: VehicleApi): PennyVehicle {
-  const range = computeEffectiveRangeKm(v.comfortable_range_km);
   return {
     id: v.id,
     name: v.name,
-    comfortable_range_km: v.comfortable_range_km,
-    // Hard ceiling handed to Finn — never route a dry stretch past this. Falls
-    // back to comfortable when unset (conservative; Finn simply never stretches).
-    hard_max_range_km: v.hard_max_range_km ?? v.comfortable_range_km,
-    effective_range_km: range,
+    range_km: normalizeRangeKm(v.range_km),
   };
 }
 

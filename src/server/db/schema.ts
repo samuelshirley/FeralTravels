@@ -205,19 +205,11 @@ export const vehicles = pgTable(
     name: text('name').notNull(),
     isDefault: boolean('is_default').default(false).notNull(),
     /**
-     * Comfortable driving range between fills (km) — how far the driver is
+     * Driving range between fills (km) — how far the driver is
      * *happy* to go before refuelling. The everyday planning target Finn aims
      * for. Null ⇒ planner skips until set (not-yet-onboarded only).
      */
-    comfortableRangeKm: integer('comfortable_range_km'),
-    /**
-     * Hard-max driving range between fills (km) — the absolute ceiling Finn must
-     * NEVER route a dry stretch past, for any price. Always ≥ comfortableRangeKm.
-     * When the driver gives no separate max, it defaults to comfortableRangeKm
-     * (the conservative direction — Finn simply never stretches). Null ⇒
-     * not-yet-onboarded only.
-     */
-    hardMaxRangeKm: integer('hard_max_range_km'),
+    rangeKm: integer('range_km'),
 
     /**
      * Vehicle fuel — 'diesel' | 'petrol'. Drives which per-fuel price Finn
@@ -226,7 +218,7 @@ export const vehicles = pgTable(
      */
     fuelType: text('fuel_type'),
 
-    // MVP vehicle profile is just name + comfortable/hard-max range. Travel
+    // MVP vehicle profile is just name + fuel range. Travel
     // style, driving-cadence (max_consecutive_drive_days / rest_days_after_driving)
     // and dump-station tracking were all removed in the onboarding teardown; the
     // planner caps each driving day at DEFAULT_MAX_DRIVE_HOURS_PER_DAY

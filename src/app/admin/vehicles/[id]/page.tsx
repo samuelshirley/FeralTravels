@@ -53,8 +53,8 @@ function rawValueForField(key: string, row: AdminVehicleRow): unknown {
   switch (key) {
     case 'name':
       return row.name;
-    case 'comfortable_range_km':
-      return row.comfortableRangeKm;
+    case 'range_km':
+      return row.rangeKm;
     default:
       return null;
   }
@@ -66,7 +66,7 @@ function rawValueForField(key: string, row: AdminVehicleRow): unknown {
  */
 function displayValueForQuestion(row: AdminVehicleRow, q: VehicleProfileQuestion, units: UnitsPref): unknown {
   const raw = rawValueForField(q.key, row);
-  if (q.key === 'comfortable_range_km' && raw != null && typeof raw === 'number') {
+  if (q.key === 'range_km' && raw != null && typeof raw === 'number') {
     if (units === 'imperial') {
       const mi = kmToMi(raw);
       return mi == null ? null : Math.round(mi);

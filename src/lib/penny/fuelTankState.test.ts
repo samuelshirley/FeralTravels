@@ -112,7 +112,7 @@ describe('kmBurnedSinceLastRefuel (continuous-drive model)', () => {
 
 describe('declared tank state (the declare_fuel_state tool)', () => {
   it('a declaration on a preceding leg is terminal: burn = declared baseline + everything since', () => {
-    // Trip d0b5741b shape: driver declares 150 km remaining (500 comfortable →
+    // Trip d0b5741b shape: driver declares 150 km remaining (500 km range →
     // 350 burned) at the start of yesterday's 296 km leg... then drives it.
     // Planning today's leg: 350 + 296 = 646 burned.
     const history: LegFuelHistory[] = [
@@ -149,14 +149,14 @@ describe('declared tank state (the declare_fuel_state tool)', () => {
     expect(kmBurnedSinceLastRefuel(history)).toBe(50);
   });
 
-  it('a full-tank declaration (declared ≥ comfortable → 0 burned) clamps cleanly', () => {
+  it('a full-tank declaration (declared ≥ range → 0 burned) clamps cleanly', () => {
     const history: LegFuelHistory[] = [
       { distanceKm: 120, latestFuelDistanceKm: null, declaredBurnedKmAtStart: 0 },
     ];
     expect(kmBurnedSinceLastRefuel(history)).toBe(120);
   });
 
-  it('a negative declared burn (declared > comfortable, defensive) clamps to 0', () => {
+  it('a negative declared burn (declared > range, defensive) clamps to 0', () => {
     const history: LegFuelHistory[] = [
       { distanceKm: 120, latestFuelDistanceKm: null, declaredBurnedKmAtStart: -40 },
     ];

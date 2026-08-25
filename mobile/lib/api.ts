@@ -261,8 +261,7 @@ export interface Vehicle extends Record<string, unknown> {
   id: string;
   name: string;
   is_default: boolean;
-  comfortable_range_km: number | null;
-  hard_max_range_km: number | null;
+  range_km: number | null;
 }
 
 export const listVehicles = () => apiFetch<Vehicle[]>("/api/vehicles");

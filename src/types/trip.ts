@@ -17,15 +17,13 @@ export type OnboardingState =
  * stashed on the trip until the question that owns each field comes up. Holds
  * only fields that are NOT applied immediately — the start date is persisted and
  * its question skipped at scan time, so it never lands here; the fuel-range
- * fields are safety numbers that must be confirmed on the vehicle step, so they
- * wait here as a prefill. All values are already validated/in-band when stored.
+ * field is a safety number that must be confirmed on the vehicle step, so it
+ * waits here as a prefill. All values are already validated/in-band when stored.
  * Cleared at onboarding handoff. Mirror of `pending_intent`.
  */
 export interface OnboardingScan {
-  /** Comfortable range (km), in-band, awaiting confirmation on the vehicle step. */
-  comfortable_range_km?: number | null;
-  /** Hard-max range (km), in-band, awaiting confirmation on the vehicle step. */
-  hard_max_range_km?: number | null;
+  /** Fuel range (km), in-band, awaiting confirmation on the vehicle step. */
+  range_km?: number | null;
 }
 
 // ── Nightly replan types ──────────────────────────────────────────────────

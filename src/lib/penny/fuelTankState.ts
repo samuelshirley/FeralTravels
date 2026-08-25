@@ -36,7 +36,7 @@ export interface LegFuelHistory {
   latestFuelDistanceKm: number | null;
   /**
    * Declared tank state anchored at this leg's START: the equivalent km of
-   * range ALREADY BURNED when the leg begins (comfortable_range − the driver's
+   * range ALREADY BURNED when the leg begins (range_km − the driver's
    * declared remaining km, clamped ≥ 0 by the caller). Set on at most one leg —
    * the `trips.declared_range_leg_id` anchor. The declaration is a baseline,
    * not a refuel: a real fuel stop on this same leg is LATER than its start

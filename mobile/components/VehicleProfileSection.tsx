@@ -44,16 +44,14 @@ import {
 /** Draft carries the typed profile fields plus room for config-added keys. */
 interface Draft extends Record<string, unknown> {
   name: string;
-  comfortable_range_km: number | null;
-  hard_max_range_km: number | null;
+  range_km: number | null;
   is_default?: boolean;
 }
 
 function emptyDraft(): Draft {
   return {
     name: "",
-    comfortable_range_km: null,
-    hard_max_range_km: null,
+    range_km: null,
   };
 }
 
@@ -61,8 +59,7 @@ function draftFromVehicle(v: Vehicle): Draft {
   return {
     ...v,
     name: v.name,
-    comfortable_range_km: v.comfortable_range_km,
-    hard_max_range_km: v.hard_max_range_km,
+    range_km: v.range_km,
     is_default: v.is_default,
   };
 }
@@ -142,8 +139,7 @@ export default function VehicleProfileSection() {
         {
           ...draft,
           name: draft.name ?? "",
-          comfortable_range_km: draft.comfortable_range_km ?? null,
-          hard_max_range_km: draft.hard_max_range_km ?? null,
+          range_km: draft.range_km ?? null,
           is_default: draft.is_default,
         },
         units
@@ -311,8 +307,7 @@ function VehicleCard({
     }
     return `~${km} km`;
   };
-  const refillLabel = fmtRange(vehicle.comfortable_range_km);
-  const hardMaxLabel = fmtRange(vehicle.hard_max_range_km);
+  const refillLabel = fmtRange(vehicle.range_km);
 
   return (
     <View style={styles.vehicleCard}>
@@ -337,9 +332,6 @@ function VehicleCard({
       </View>
       <View style={styles.statRow}>
         {refillLabel ? <Stat label="REFILL EVERY" value={refillLabel} /> : null}
-        {vehicle.hard_max_range_km != null && hardMaxLabel ? (
-          <Stat label="MAX STRETCH" value={hardMaxLabel} />
-        ) : null}
       </View>
     </View>
   );
