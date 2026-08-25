@@ -1,7 +1,7 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
 import { ONBOARDING_SCAN_MODEL } from '@/lib/models';
-import { validateComfortableKm } from '@/lib/vehicleProfile';
+import { validateRangeKm } from '@/lib/vehicleProfile';
 import { resolveStartDate, type ResolvedStartDate } from '@/server/parseStartDate';
 import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
 
@@ -19,7 +19,7 @@ import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
  * re-validates every field before anything is trusted, and onboarding skips (or
  * prefills) the questions that came back filled.
  *
- * Design mirrors `parseStartDate.ts` / `parseComfortableRange.ts`:
+ * Design mirrors `parseStartDate.ts` / `parseRangeEstimate.ts`:
  *   - forced tool call (the schema IS the contract; no prose to scrape),
  *   - every field nullable with "return null rather than guess" instructions,
  *   - strict server-side re-validation (a hallucinated value can't reach the DB),
@@ -51,7 +51,7 @@ const SCAN_TOOL: Anthropic.Tool = {
     'clearly stated. Do NOT guess.',
   input_schema: {
     type: 'object',
-    required: ['start_date_phrase', 'comfortable_range_km', 'hard_max_range_km'],
+    required: ['start_date_phrase', 'range_km'],
     properties: {
       start_date_phrase: {
         type: ['string', 'null'],
@@ -61,21 +61,14 @@ const SCAN_TOOL: Anthropic.Tool = {
           'Do NOT resolve it to a date — just extract the phrase. null when no start ' +
           'time is mentioned at all.',
       },
-      comfortable_range_km: {
+      range_km: {
         type: ['integer', 'null'],
         description:
-          'The driver’s COMFORTABLE driving range between refuels, in WHOLE ' +
+          'The driver’s usual driving range between refuels, in WHOLE ' +
           'kilometers, ONLY if they explicitly stated it (e.g. "about 400km on a tank", ' +
           '"I refuel every 300 km", "comfortable for 250 miles" → convert to ~402). ' +
           'Convert from miles when the driver used miles. null when no range/refuel ' +
           'distance is stated. Do NOT infer from vehicle make/model here.',
-      },
-      hard_max_range_km: {
-        type: ['integer', 'null'],
-        description:
-          'The absolute maximum distance the driver said they could push on a tank in ' +
-          'a pinch, in WHOLE kilometers, ONLY if explicitly stated separately from the ' +
-          'comfortable range. Convert from miles when needed. null otherwise.',
       },
     },
   },
@@ -85,10 +78,8 @@ const SCAN_TOOL: Anthropic.Tool = {
 export interface OnboardingScanResult {
   /** Resolved trip start date, or null when none was stated / it didn't resolve. */
   startDate: ResolvedStartDate | null;
-  /** Validated comfortable range (km), or null. */
-  comfortableRangeKm: number | null;
-  /** Validated hard-max range (km), or null. */
-  hardMaxRangeKm: number | null;
+  /** Validated fuel range (km), or null. */
+  rangeKm: number | null;
   /** The verbatim start-date phrase the model extracted (for the free-text column). */
   startDatePhrase: string | null;
 }
@@ -97,33 +88,20 @@ export interface OnboardingScanResult {
 function emptyResult(): OnboardingScanResult {
   return {
     startDate: null,
-    comfortableRangeKm: null,
-    hardMaxRangeKm: null,
+    rangeKm: null,
     startDatePhrase: null,
   };
 }
 
 /**
- * Validate the raw range pair the model returned. Each must be a whole number in
- * the product band (`validateComfortableKm`); an out-of-band value becomes null.
- * If both are present but the ceiling sits below the comfortable target, the
- * hard-max is dropped (it would violate the load-bearing range-order invariant —
- * see `repos/vehicles.assertRangeOrder`). Pure — exported for unit testing.
+ * Validate the raw range the model returned: a whole number in the product band
+ * (`validateRangeKm`); an out-of-band value becomes null. Pure — exported
+ * for unit testing.
  */
-export function validateScannedRange(
-  rawComfortable: unknown,
-  rawHardMax: unknown,
-): { comfortableRangeKm: number | null; hardMaxRangeKm: number | null } {
-  const comfortableRangeKm = validateComfortableKm(rawComfortable);
-  let hardMaxRangeKm = validateComfortableKm(rawHardMax);
-  if (
-    comfortableRangeKm != null &&
-    hardMaxRangeKm != null &&
-    hardMaxRangeKm < comfortableRangeKm
-  ) {
-    hardMaxRangeKm = null;
-  }
-  return { comfortableRangeKm, hardMaxRangeKm };
+export function validateScannedRange(rawRange: unknown): {
+  rangeKm: number | null;
+} {
+  return { rangeKm: validateRangeKm(rawRange) };
 }
 
 interface ScanOpts {
@@ -203,14 +181,10 @@ export async function scanFirstMessage(
   if (!toolUse) return emptyResult();
   const input = (toolUse.input ?? {}) as {
     start_date_phrase?: unknown;
-    comfortable_range_km?: unknown;
-    hard_max_range_km?: unknown;
+    range_km?: unknown;
   };
 
-  const { comfortableRangeKm, hardMaxRangeKm } = validateScannedRange(
-    input.comfortable_range_km,
-    input.hard_max_range_km,
-  );
+  const { rangeKm } = validateScannedRange(input.range_km);
 
   // Resolve the date phrase through the shared resolver — the scan model only
   // extracted the words; resolveStartDate (deterministic parse first, then its
@@ -228,5 +202,5 @@ export async function scanFirstMessage(
     if (!startDate) startDatePhrase = null;
   }
 
-  return { startDate, comfortableRangeKm, hardMaxRangeKm, startDatePhrase };
+  return { startDate, rangeKm, startDatePhrase };
 }

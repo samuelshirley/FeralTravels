@@ -18,7 +18,7 @@ export function validator(_ctx: PennyContext) {
 export const tool: Anthropic.Tool = {
   name: PLAN_FUEL_STOPS,
   description:
-    'Auto-place fuel stops along a leg at intervals matching the vehicle\'s effective_range_km (Google route geometry + Google Places gas_station search along the route). Prefer this over inventing fuel add_stop rows when you need real stations with lat/lng. The server inserts optional fuel stops on the leg — it does not emit add_stop tool calls for you.',
+    'Auto-place fuel stops along a leg within the vehicle\'s range_km (real route geometry + station search along the route). Prefer this over inventing fuel add_stop rows when you need real stations with lat/lng. The server inserts optional fuel stops on the leg — it does not emit add_stop tool calls for you.',
   input_schema: {
     type: 'object',
     required: ['leg_id'],

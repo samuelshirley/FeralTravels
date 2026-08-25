@@ -12,7 +12,7 @@ Reuse the exact pattern from `src/server/parseStartDate.ts` (forced-tool LLM →
 
 1. On `trip_intent` submit, run a **forced-tool extractor** (Haiku via a `DATE_PARSE_MODEL`-style cheap model). Tool schema returns ONLY declared fields, each nullable:
    - `start_date_phrase` (string|null) → feed into existing `resolveStartDate()` for the ISO + `assumed` flag. Do NOT let the model author the ISO directly — reuse the existing date resolver.
-   - `comfortable_range_km` / `hard_max_range_km` (int|null) — only if explicitly stated.
+   - `range_km` (int|null) — only if explicitly stated. *(Was a comfortable/hard-max pair; collapsed to one 2026-08-25.)*
    - (Optional, later) destination/waypoints if cheaply extractable; otherwise leave for Penny's existing post-onboarding `extractTripIntent`.
 2. **Server re-validates** every returned value (e.g. `validateISODateString`, range bounds, `assertRangeOrder`) before persisting. "Return null rather than guess" in the tool instructions.
 3. For each field that came back valid, **mark its onboarding step satisfied** and skip it. Surface a one-line confirmation note ("Got it — leaving tomorrow, Sat 27 Jun") so the user sees what was inferred and can correct.

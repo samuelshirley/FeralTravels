@@ -8,9 +8,9 @@ Live at [feraltravels.com](https://www.feraltravels.com) (web + PWA). A native i
 
 ## What it does (MVP scope)
 
-- **Chat-first planning.** Deterministic onboarding (vehicle name + comfortable / hard-max fuel range) runs *before* any LLM call. Then one sentence — "Girona to Lisbon, 3 days in Porto, 3 in Lisbon, 5 h driving max" — becomes a full multi-day plan in one turn.
+- **Chat-first planning.** Deterministic onboarding (vehicle name + fuel range) runs *before* any LLM call. Then one sentence — "Girona to Lisbon, 3 days in Porto, 3 in Lisbon, 5 h driving max" — becomes a full multi-day plan in one turn.
 - **Two stop types only.** `fuel` (found automatically by Finn) and `other` (a place the user adds by pasting a Google/Apple Maps link, an address, or a place name). Penny does not discover campgrounds, groceries, etc.
-- **Fuel that respects physics.** Finn never routes a dry stretch past `hard_max_range_km`, aims for `comfortable_range_km`, carries tank state across days, and attaches a one-line reason to every forced stop. Fuel is sourced lazily when a day is opened and cached 48 h.
+- **Fuel that respects physics.** Finn never routes a dry stretch past the vehicle's `range_km`, carries tank state across days, and attaches a one-line reason to every forced stop. Fuel is sourced lazily when a day is opened and cached 48 h.
 - **Adaptive on the road.** `report_position` re-anchors the trip to where the driver actually is; `declare_fuel_state` records "I only have 150 km in the tank"; the itinerary collapses days behind you.
 - **Admin dashboard** at `/admin` (hardcoded allowlist): users, trips, chat volume, per-request AI cost, Google usage.
 

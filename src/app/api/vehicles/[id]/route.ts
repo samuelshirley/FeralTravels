@@ -16,16 +16,10 @@ import { parseUUID } from '@/lib/validation';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// MVP vehicle profile: name + comfortable range (+ optional hard-max ceiling).
+// MVP vehicle profile: name + fuel range.
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  comfortable_range_km: z
-    .number()
-    .int()
-    .min(FUEL_STOP_SPACING_KM_MIN)
-    .max(FUEL_STOP_SPACING_KM_MAX)
-    .nullish(),
-  hard_max_range_km: z
+  range_km: z
     .number()
     .int()
     .min(FUEL_STOP_SPACING_KM_MIN)
@@ -72,28 +66,13 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     const merged = {
       ...before,
       ...(patch.name !== undefined && { name: patch.name }),
-      ...(patch.comfortable_range_km !== undefined && { comfortable_range_km: patch.comfortable_range_km }),
-      ...(patch.hard_max_range_km !== undefined && { hard_max_range_km: patch.hard_max_range_km }),
+      ...(patch.range_km !== undefined && { range_km: patch.range_km }),
     } as Record<string, unknown>;
 
     if (!vehicleMeetsFuelPlanningMinimum(merged)) {
       throw new HttpError(
         400,
-        `Comfortable range is required: set it between ${FUEL_STOP_SPACING_KM_MIN} and ${FUEL_STOP_SPACING_KM_MAX} km.`
-      );
-    }
-
-    // Hard ceiling must never sit below the comfortable range.
-    const mergedComfortable = merged.comfortable_range_km;
-    const mergedHardMax = merged.hard_max_range_km;
-    if (
-      typeof mergedComfortable === 'number' &&
-      typeof mergedHardMax === 'number' &&
-      mergedHardMax < mergedComfortable
-    ) {
-      throw new HttpError(
-        400,
-        'Hard-max range must be the same as or further than the comfortable range.'
+        `Fuel range is required: set it between ${FUEL_STOP_SPACING_KM_MIN} and ${FUEL_STOP_SPACING_KM_MAX} km.`
       );
     }
 

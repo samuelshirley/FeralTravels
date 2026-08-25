@@ -1304,7 +1304,7 @@ export default function ChatPanel({
           ) : null}
 
           {/* TODO(sam): the server can attach `help` to a question (units_pick,
-              comfortable_range_km, hard_max_range_km — see
+              range_km — see
               buildVehicleProfileQuestions in src/lib/vehicleProfile.ts), but the
               web ChatPanel declares the field and renders it nowhere, so there is
               no placement to copy. Confirm where it belongs before adding it. */}

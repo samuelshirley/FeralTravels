@@ -14,7 +14,7 @@ test.describe('Onboarding validation', () => {
     await login(page, email, `/trips/${tripId}`);
 
     const composer = page.getByTestId('trip-chat-composer');
-    await expect(page.getByText(/comfortable driving range/i)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/driving range/i)).toBeVisible({ timeout: 30_000 });
 
     await composer.fill('50');
     await composer.press('Enter');
@@ -22,6 +22,7 @@ test.describe('Onboarding validation', () => {
 
     await composer.fill('400');
     await composer.press('Enter');
-    await expect(page.getByText(/hard max fuel range/i)).toBeVisible({ timeout: 25_000 });
+    // Range accepted — the answer bubble echoes it back and onboarding moves on.
+    await expect(page.getByText(/400\s?km/i)).toBeVisible({ timeout: 25_000 });
   });
 });

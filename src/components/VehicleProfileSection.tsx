@@ -23,8 +23,7 @@ export interface Vehicle {
   user_id: string;
   name: string;
   is_default: boolean;
-  comfortable_range_km: number | null;
-  hard_max_range_km: number | null;
+  range_km: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,8 +33,7 @@ type Draft = Partial<Vehicle> & { name: string };
 function emptyDraft(): Draft {
   return {
     name: '',
-    comfortable_range_km: null,
-    hard_max_range_km: null,
+    range_km: null,
   };
 }
 
@@ -66,8 +64,7 @@ export default function VehicleProfileSection() {
       const validated = validateVehicleProfileDraftForSave(
         {
           name: draft.name ?? '',
-          comfortable_range_km: draft.comfortable_range_km ?? null,
-          hard_max_range_km: draft.hard_max_range_km ?? null,
+          range_km: draft.range_km ?? null,
           is_default: draft.is_default,
         },
         units
@@ -243,8 +240,7 @@ function VehicleCard({
     }
     return `~${km} km`;
   };
-  const refillLabel = fmtRange(vehicle.comfortable_range_km);
-  const hardMaxLabel = fmtRange(vehicle.hard_max_range_km);
+  const refillLabel = fmtRange(vehicle.range_km);
 
   return (
     <div
@@ -308,9 +304,6 @@ function VehicleCard({
         }}
       >
         {refillLabel && <Stat label="Refill every" value={refillLabel} />}
-        {vehicle.hard_max_range_km != null && hardMaxLabel && (
-          <Stat label="Max stretch" value={hardMaxLabel} />
-        )}
       </div>
     </div>
   );
@@ -373,16 +366,16 @@ function VehicleForm({
   }
 
   const refillDisplay = (() => {
-    if (d.comfortable_range_km == null) return '';
-    if (!isImperial) return String(d.comfortable_range_km);
-    const mi = kmToMi(d.comfortable_range_km);
+    if (d.range_km == null) return '';
+    if (!isImperial) return String(d.range_km);
+    const mi = kmToMi(d.range_km);
     return mi == null ? '' : String(Math.round(mi));
   })();
 
   function handleRefillChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value.trim();
     if (raw === '') {
-      setD((p) => ({ ...p, comfortable_range_km: null }));
+      setD((p) => ({ ...p, range_km: null }));
       return;
     }
     const val = Number(raw);
@@ -390,29 +383,7 @@ function VehicleForm({
     const km = isImperial ? miToKm(val) : val;
     setD((p) => ({
       ...p,
-      comfortable_range_km: km == null ? null : Math.round(km),
-    }));
-  }
-
-  const hardMaxDisplay = (() => {
-    if (d.hard_max_range_km == null) return '';
-    if (!isImperial) return String(d.hard_max_range_km);
-    const mi = kmToMi(d.hard_max_range_km);
-    return mi == null ? '' : String(Math.round(mi));
-  })();
-
-  function handleHardMaxChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value.trim();
-    if (raw === '') {
-      setD((p) => ({ ...p, hard_max_range_km: null }));
-      return;
-    }
-    const val = Number(raw);
-    if (!Number.isFinite(val) || val <= 0) return;
-    const km = isImperial ? miToKm(val) : val;
-    setD((p) => ({
-      ...p,
-      hard_max_range_km: km == null ? null : Math.round(km),
+      range_km: km == null ? null : Math.round(km),
     }));
   }
 
@@ -444,7 +415,7 @@ function VehicleForm({
                 </Field>
               );
             }
-            if (q.key === 'comfortable_range_km') {
+            if (q.key === 'range_km') {
               return (
                 <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
                   <input
@@ -455,23 +426,6 @@ function VehicleForm({
                     max={q.max}
                     value={refillDisplay}
                     onChange={handleRefillChange}
-                    placeholder={q.placeholder}
-                    style={inputStyle}
-                  />
-                </Field>
-              );
-            }
-            if (q.key === 'hard_max_range_km') {
-              return (
-                <Field key={q.key} label={q.label} required={!q.optional} wide hint={q.help}>
-                  <input
-                    data-testid="vehicle-hard-max-input"
-                    type="number"
-                    step="1"
-                    min={q.min}
-                    max={q.max}
-                    value={hardMaxDisplay}
-                    onChange={handleHardMaxChange}
                     placeholder={q.placeholder}
                     style={inputStyle}
                   />

@@ -13,7 +13,7 @@ import {
 import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
 import { extractDateFromText, formatDate, parseISODate, todayISO } from '@/lib/dates';
 import { resolveStartDate } from '@/server/parseStartDate';
-import { estimateComfortableRange } from '@/server/parseComfortableRange';
+import { estimateRange } from '@/server/parseRangeEstimate';
 import { scanFirstMessage } from '@/server/onboardingIntentScan';
 import { miToKm, kmToMi } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
@@ -113,9 +113,9 @@ export const TRIP_DATE_CLARIFY_QUESTION: Question = {
   placeholder: 'e.g. next summer, around Christmas, early autumn',
 };
 
-// Shown when the driver can't give a comfortable-range number on the
-// comfortable_range_km step. They describe what they DO know (vehicle, or tank +
-// economy); estimateComfortableRange proposes a number they then confirm. Same
+// Shown when the driver can't give a fuel-range number on the
+// range_km step. They describe what they DO know (vehicle, or tank +
+// economy); estimateRange proposes a number they then confirm. Same
 // `range_help` state both on entry and on a follow-up answer.
 export const RANGE_HELP_QUESTION: Question = {
   key: 'range_help',
@@ -123,7 +123,7 @@ export const RANGE_HELP_QUESTION: Question = {
   label:
     "No problem — tell me what you do know and I'll work it out. Your vehicle's " +
     'make, model and year (e.g. "2018 Toyota Hilux diesel"), or your tank size and ' +
-    'rough fuel economy. I\'ll suggest a comfortable range you can tweak.',
+    'rough fuel economy. I\'ll suggest a fuel range you can tweak.',
   placeholder: 'e.g. 2018 Toyota Hilux, or 80 L tank at ~11 km/L',
   multiline: true,
 };
@@ -171,7 +171,7 @@ async function resolvePostIntentState(userId: string): Promise<OnboardingState> 
 
 /**
  * When we're in `vehicle_new`, walk the vehicle-profile questions (name +
- * comfortable range + optional hard-max) in order. See `loadAskedLabels` for
+ * fuel range) in order. See `loadAskedLabels` for
  * optional-field / skip behavior.
  */
 function nextVehicleOnboardingQuestion(
@@ -245,9 +245,9 @@ async function completeOnboarding(
 }
 
 /**
- * "I don't know my comfortable range" helper. Takes whatever the driver knows
+ * "I don't know my fuel range" helper. Takes whatever the driver knows
  * (vehicle, or tank + economy), asks the estimator for a CONSERVATIVE number,
- * and routes them back to the normal comfortable_range_km step PREFILLED with
+ * and routes them back to the normal range_km step PREFILLED with
  * that estimate so they confirm or edit it — the estimate is never persisted
  * here (lockdown: the LLM proposes, the driver + the existing submit path own
  * the stored number).
@@ -267,7 +267,7 @@ async function runRangeHelp(
   const unit = isImperial ? 'mi' : 'km';
   await addChatMessage(tripId, 'user', text, null, 'form_answer');
 
-  const { km, basis } = await estimateComfortableRange(text, { userId, tripId });
+  const { km, basis } = await estimateRange(text, { userId, tripId });
 
   if (km != null) {
     await db
@@ -276,17 +276,17 @@ async function runRangeHelp(
       .where(eq(trips.id, tripId));
     const shown = isImperial ? Math.round(kmToMi(km)!) : km;
     const snap = await getOnboardingSnapshot(tripId, userId);
-    if (snap.question && snap.question.key === 'comfortable_range_km') {
+    if (snap.question && snap.question.key === 'range_km') {
       snap.question = {
         ...snap.question,
         defaultValue: String(shown),
         label:
-          `Going off ${basis || 'what you told me'}, I'd suggest a comfortable range of ` +
+          `Going off ${basis || 'what you told me'}, I'd suggest a fuel range of ` +
           `about ${shown} ${unit} — send to confirm, or type your own number.`,
       };
     }
     const note =
-      `Based on ${basis || 'that'}, about ${shown} ${unit} looks like a comfortable range. ` +
+      `Based on ${basis || 'that'}, about ${shown} ${unit} looks like a fuel range. ` +
       `Send to confirm, or change it if you know better.`;
     await addChatMessage(tripId, 'assistant', note, null, 'ai');
     return { next: snap, answerLabel: text, didHandoff: false, note };
@@ -339,32 +339,17 @@ function prefillRangeFromScan(
   const toShown = (km: number) => (isImperial ? Math.round(kmToMi(km)!) : km);
 
   if (
-    question.key === 'comfortable_range_km' &&
-    scan.comfortable_range_km != null &&
-    !(vehicle && vehicleHasProfileValue(vehicle, 'comfortable_range_km'))
+    question.key === 'range_km' &&
+    scan.range_km != null &&
+    !(vehicle && vehicleHasProfileValue(vehicle, 'range_km'))
   ) {
-    const shown = toShown(scan.comfortable_range_km);
+    const shown = toShown(scan.range_km);
     return {
       ...question,
       defaultValue: String(shown),
       label:
         `From your description it sounds like about ${shown} ${unit} on a tank — ` +
         `send to confirm, or type your own number.`,
-    };
-  }
-
-  if (
-    question.key === 'hard_max_range_km' &&
-    scan.hard_max_range_km != null &&
-    !(vehicle && vehicleHasProfileValue(vehicle, 'hard_max_range_km'))
-  ) {
-    const shown = toShown(scan.hard_max_range_km);
-    return {
-      ...question,
-      defaultValue: String(shown),
-      label:
-        `And it sounds like about ${shown} ${unit} is your absolute max in a pinch — ` +
-        `send to confirm, or type your own.`,
     };
   }
 
@@ -646,8 +631,7 @@ export async function submitAnswer(
     // driver confirms it on the vehicle step, so it waits in onboardingScan
     // rather than being committed here). See OnboardingScan.
     const scanStash: OnboardingScan = {};
-    if (scan.comfortableRangeKm != null) scanStash.comfortable_range_km = scan.comfortableRangeKm;
-    if (scan.hardMaxRangeKm != null) scanStash.hard_max_range_km = scan.hardMaxRangeKm;
+    if (scan.rangeKm != null) scanStash.range_km = scan.rangeKm;
 
     const patch: Record<string, unknown> = {
       pendingIntent: text,
@@ -835,11 +819,11 @@ export async function submitAnswer(
       ? await getVehicleForUser(userId, trip.vehicleId)
       : null;
 
-    // "I don't know" on the comfortable-range step → branch to the range helper
+    // "I don't know" on the fuel-range step → branch to the range helper
     // instead of erroring on non-numeric input. (Name is captured first, so a
     // vehicle row already exists by the time we reach this question.)
     if (
-      input.questionKey === 'comfortable_range_km' &&
+      input.questionKey === 'range_km' &&
       vehicle &&
       isNonNumericRangeAnswer(input.value)
     ) {
@@ -856,9 +840,6 @@ export async function submitAnswer(
 
     const parsed = coerceVehicleProfileValue(question, input.value);
 
-    // Deterministic acknowledgment for the safe hard-max default (set below).
-    let hardMaxNote: string | undefined;
-
     if (!vehicle) {
       if (question.key !== 'name') {
         throw new Error('Expected vehicle name before other fields');
@@ -872,58 +853,9 @@ export async function submitAnswer(
         .where(eq(trips.id, tripId));
     } else {
       const patch: Record<string, unknown> = {};
-      if (question.key === 'comfortable_range_km' && unitsPref === 'imperial') {
+      if (question.key === 'range_km' && unitsPref === 'imperial') {
         const km = parsed == null ? null : miToKm(parsed as number);
-        patch.comfortable_range_km = km == null ? null : Math.round(km);
-      } else if (question.key === 'hard_max_range_km') {
-        // Distance field — convert from miles for imperial users.
-        let hardMaxKm: number | null;
-        if (parsed == null) {
-          hardMaxKm = null;
-        } else if (unitsPref === 'imperial') {
-          const km = miToKm(parsed as number);
-          hardMaxKm = km == null ? null : Math.round(km);
-        } else {
-          hardMaxKm = parsed as number;
-        }
-        const comfortable = vehicle.comfortable_range_km;
-        if (hardMaxKm == null) {
-          // The one safe default: no separate ceiling → equals comfortable
-          // (conservative — Finn never stretches). Surface it, never silent.
-          hardMaxKm = comfortable ?? null;
-          if (typeof comfortable === 'number') {
-            const unit = unitsPref === 'imperial' ? 'mi' : 'km';
-            const shown = unitsPref === 'imperial' ? Math.round(kmToMi(comfortable)!) : comfortable;
-            hardMaxNote = `No worries — I'll never route you past your comfortable range of ${shown} ${unit}.`;
-          }
-        } else if (typeof comfortable === 'number' && hardMaxKm < comfortable) {
-          // Validation failure, NOT a server error: a thrown Error here escapes
-          // submitAnswer() and surfaces as a 500. Instead re-prompt inline —
-          // keep the step active, surface the reason as a note, and re-show the
-          // hard-max question (mirrors runRangeHelp's confirm/edit pattern).
-          const unit = unitsPref === 'imperial' ? 'mi' : 'km';
-          const shownComfortable =
-            unitsPref === 'imperial' ? Math.round(kmToMi(comfortable)!) : comfortable;
-          const msg =
-            `That's shorter than your comfortable range of ${shownComfortable} ${unit} — ` +
-            `the max should be the same distance or further. Try a larger number, or leave ` +
-            `it blank to use your comfortable range.`;
-          await addChatMessage(tripId, 'assistant', msg, null, 'ai');
-          // The hard-max question was already written to chat (it's optional, so
-          // the snapshot would otherwise treat it as "asked" and skip ahead);
-          // re-show it explicitly so the driver can correct their answer.
-          const repromptQuestion = buildVehicleProfileQuestions(unitsPref).find(
-            (q) => q.key === 'hard_max_range_km',
-          ) as Question;
-          const snap = await getOnboardingSnapshot(tripId, userId);
-          return {
-            next: { ...snap, state: 'vehicle_new', question: repromptQuestion },
-            answerLabel: humanizeVehicleProfileAnswer(question, parsed, unitsPref),
-            didHandoff: false,
-            note: msg,
-          };
-        }
-        patch.hard_max_range_km = hardMaxKm;
+        patch.range_km = km == null ? null : Math.round(km);
       } else {
         patch[question.key] = parsed;
       }
@@ -939,14 +871,10 @@ export async function submitAnswer(
     if (afterSnapshot.state === 'done') {
       return completeOnboarding(tripId);
     }
-    if (hardMaxNote) {
-      await addChatMessage(tripId, 'assistant', hardMaxNote, null, 'ai');
-    }
     return {
       next: afterSnapshot,
       answerLabel,
       didHandoff: false,
-      note: hardMaxNote,
     };
   }
 
