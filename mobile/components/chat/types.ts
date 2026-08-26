@@ -78,6 +78,25 @@ export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary"> {
    * persisted, so historical messages from a reload never show it.
    */
   truncated?: boolean;
+  /**
+   * UI-only marker for Penny's paywall message.
+   *
+   * The paywall is a message in the transcript, not a sheet thrown over the
+   * app: the user opens the trip, lands where they always land, and Penny tells
+   * them herself. So it is a message — but a SYNTHETIC one. It is never written
+   * to `chat_history`, because it is a statement about the account's billing at
+   * one moment, not something Penny said; persisting it would leave a stale
+   * "your trial is up" sitting in the transcript of a paying subscriber
+   * forever. It is appended on mount when `/api/me/entitlement` says the
+   * account is not entitled, and it replaces the pending assistant bubble in
+   * place when a 402 comes back mid-conversation.
+   *
+   * The flag carries no copy of its own. `content` is the server's
+   * `paywall.message` and the button label comes from the same payload, so the
+   * wording can change without shipping a new binary — which matters more here
+   * than on web, because a native copy fix is an App Store review away.
+   */
+  paywall?: boolean;
   /** True while the stream is still appending paragraphs. */
   streaming?: boolean;
   /** Delivery lifecycle for user messages. */

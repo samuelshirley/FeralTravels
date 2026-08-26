@@ -50,8 +50,22 @@ export type TurnStreamResult =
   | { outcome: "applied"; event: AppliedEvent }
   /** Server-sent `error` frame: the turn failed server-side, message is user-facing. */
   | { outcome: "stream-error"; message: string }
-  /** Non-2xx before any streaming (rate limit, validation, missing key). */
-  | { outcome: "http-error"; message: string; status: number }
+  /**
+   * Non-2xx before any streaming (rate limit, validation, missing key).
+   *
+   * `body` is the PARSED error JSON, not just its `error` string, because not
+   * every non-2xx is an error to show. A 402 carries a machine-readable `code`
+   * alongside the prose, and the caller has to branch on that code to turn the
+   * bubble into Penny's paywall instead of a red "Something went wrong". Giving
+   * the caller only `message` would force it to string-match copy that is
+   * explicitly meant to change. Null when the body was absent or not JSON.
+   */
+  | {
+      outcome: "http-error";
+      message: string;
+      status: number;
+      body: Record<string, unknown> | null;
+    }
   /** 200 but no SSE frames — queued turn / idempotent replay; poll the record. */
   | { outcome: "silent" }
   /** Connection died mid-turn. The server keeps going; heal from the record. */
@@ -190,13 +204,20 @@ export function startTurnStream(args: {
       // Pre-stream errors come back as plain JSON, same as the web's !res.ok
       // branch — the whole body is in `message` because XHR failed the request.
       let message = `Request failed (${event.xhrStatus})`;
+      let body: Record<string, unknown> | null = null;
       try {
-        const parsed = JSON.parse(event.message ?? "") as { error?: string };
-        if (parsed && typeof parsed.error === "string") message = parsed.error;
+        const parsed = JSON.parse(event.message ?? "") as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          body = parsed as Record<string, unknown>;
+          const err = (parsed as { error?: unknown }).error;
+          if (typeof err === "string") message = err;
+        }
       } catch {
-        // Non-JSON error body — keep the status-code message.
+        // Non-JSON error body — keep the status-code message, and leave `body`
+        // null so the caller can tell "no structured reason" apart from "a
+        // structured reason that happened to have no code".
       }
-      finish({ outcome: "http-error", message, status: event.xhrStatus });
+      finish({ outcome: "http-error", message, status: event.xhrStatus, body });
       return;
     }
     finish({ outcome: "dropped", detail: event.message });

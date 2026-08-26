@@ -18,6 +18,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
+import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
+
+export type { SubscriptionSource, SubscriptionStatus };
 
 // ── Shared JSONB types ──────────────────────────────────────────────────────
 
@@ -876,39 +879,10 @@ export const deletedUsers = pgTable(
 // ── Subscriptions ───────────────────────────────────────────────────────────
 
 /**
- * Entitlement status, mirroring what Apple/RevenueCat report rather than
- * inventing our own vocabulary.
- *
- * `trialing` is deliberately NOT here. The seven-day trial is derived from
- * `users.created_at`, not stored — a user in trial has no `subscriptions` row
- * at all, and `hasEntitlement` answers from the clock. Storing it would give
- * us two sources of truth for the same fact and a backfill to keep them
- * agreeing forever.
- */
-export type SubscriptionStatus =
-  | 'active'
-  | 'grace' // renewal failed, Apple retrying — entitled. See docs/design/subscriptions.md
-  | 'cancelled' // auto-renew off, still inside the paid period — ENTITLED until periodEnd
-  | 'expired'
-  | 'refunded' // Apple returned the money — revoked immediately, no grace
-  | 'revoked'; // admin break-glass
-
-/** Where the entitlement came from. `fake` never exists in production data. */
-export type SubscriptionSource = 'apple_iap' | 'promo' | 'admin' | 'fake';
-
-/**
- * One row per user — the server-side answer to "has this account paid?".
- *
- * Written ONLY by the webhook handler, the admin break-glass and the
- * allowlisted test-purchase path. Never by a client, and never from a
- * client-supplied receipt: the app can lie about a purchase, the webhook
- * cannot. See `src/server/payments/` — that module is the only importer.
- *
- * `status` alone does not decide access. `cancelled` is entitled until
- * `currentPeriodEnd` passes, because the user already paid for that time and
- * cancelling returns no money; blocking them early would be keeping the cash
- * and withholding the product. `hasEntitlement` owns that rule so no route
- * has to remember it.
+ * `SubscriptionStatus` and `SubscriptionSource` are defined in
+ * `src/types/entitlement.ts`, not here, because the Expo app needs the same
+ * vocabulary and `scripts/sync-shared.mjs` can only mirror `@/types`.
+ * Re-exported so existing `from '@/server/db/schema'` imports keep working.
  */
 export const subscriptions = pgTable(
   'subscriptions',

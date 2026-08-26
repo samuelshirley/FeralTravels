@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 export const SHARED_FILES = [
   ['src/types/trip.ts', 'mobile/shared/types/trip.ts'],
+  ['src/types/entitlement.ts', 'mobile/shared/types/entitlement.ts'],
   ['src/lib/units.ts', 'mobile/shared/lib/units.ts'],
   ['src/lib/maps.ts', 'mobile/shared/lib/maps.ts'],
   ['src/lib/coords.ts', 'mobile/shared/lib/coords.ts'],

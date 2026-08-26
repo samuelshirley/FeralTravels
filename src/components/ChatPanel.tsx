@@ -9,6 +9,10 @@ import { formatDate, parseISODate } from '@/lib/dates';
 import { deriveApplyOutcome } from '@/lib/penny/applyOutcome';
 import Spinner from '@/components/Spinner';
 import PennyPlanningVideo from '@/components/PennyPlanningVideo';
+import PurchaseSheet from '@/components/PurchaseSheet';
+import { SUPPORT_EMAIL } from '@/lib/paywallCopy';
+import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
+import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -64,6 +68,38 @@ function makeIdempotencyKey(): string {
 
 /** Caption Penny "sends" alongside the dog-fetch clip on the first full build. */
 const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fuel…';
+
+/**
+ * Stable id for the paywall bubble appended on mount, so a re-run of the
+ * entitlement effect replaces it rather than stacking a second copy.
+ */
+const PAYWALL_MESSAGE_ID = 'paywall-notice';
+
+/**
+ * Penny's paywall copy, as paragraphs.
+ *
+ * The bubble is already `white-space: pre-wrap`, so the `\n\n` in the server's
+ * message would technically render — as a bare blank line at the bubble's own
+ * line-height, which is what a stray newline in a streamed reply looks like.
+ * This is the one bubble whose text was written rather than streamed, and the
+ * one the user is being asked to read and act on, so it gets real paragraph
+ * spacing instead of an accident of whitespace.
+ */
+function PaywallText({ text }: { text: string }) {
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((para) => para.trim())
+    .filter(Boolean);
+  return (
+    <>
+      {paragraphs.map((para, i) => (
+        <div key={i} style={{ marginTop: i === 0 ? 0 : 10 }}>
+          {para}
+        </div>
+      ))}
+    </>
+  );
+}
 
 interface ChatPanelProps {
   tripId: string;
@@ -165,6 +201,24 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
    * so the user can scroll back to it while Penny builds the plan.
    */
   planningMedia?: boolean;
+  /**
+   * UI-only marker for Penny's paywall message.
+   *
+   * The paywall is a message in the transcript, not a sheet thrown over the
+   * app: the user opens the trip, lands where they always land, and Penny tells
+   * them herself. So it is a message — but a SYNTHETIC one. It is never written
+   * to `chat_history`, because it is a statement about the account's billing at
+   * one moment, not something Penny said; persisting it would leave a stale
+   * "your trial is up" sitting in the transcript of a paying subscriber
+   * forever. It is appended on mount when `/api/me/entitlement` says the
+   * account is not entitled, and it replaces the bubble in place when a 402
+   * comes back mid-conversation.
+   *
+   * The flag carries no copy of its own. `content` is the server's
+   * `paywall.message` and the button label comes from the same payload, so the
+   * wording can change without a build — see `src/server/payments/copy.ts`.
+   */
+  paywall?: boolean;
   /**
    * Idempotency key of the replan turn that produced this assistant bubble.
    * Lets the client re-attach to the durable `penny_turns` record and heal a
@@ -400,6 +454,156 @@ export default function ChatPanel({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  /* ── Paywall ────────────────────────────────────────────────────────────
+   * Penny's own message in the transcript, with the purchase button inside her
+   * bubble. Deliberately NOT a modal: the only modal in this flow is the
+   * purchase sheet itself, which stands in for Apple's StoreKit sheet.
+   *
+   * The component holds the whole entitlement payload rather than a boolean,
+   * because everything shown — the message, the button label, the prices,
+   * whether this browser can complete a purchase at all — is server-authored
+   * and arrives together. Nothing about the paywall is decided here.
+   */
+  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  const [purchaseSheetOpen, setPurchaseSheetOpen] = useState(false);
+  const [purchasingId, setPurchasingId] = useState<string | null>(null);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+
+  /** Null entitlement means "not asked yet / couldn't ask" — never a block. */
+  const paywalled = entitlement !== null && !entitlement.entitled;
+  /**
+   * Two of the four block reasons have nothing to sell. A capped account is our
+   * ceiling, not the user's fault, and a revoked one cannot be bought back — so
+   * the button is a mailto to a human, and the purchase sheet never opens.
+   */
+  const paywallSupportOnly =
+    entitlement?.blockReason === 'usage_cap' || entitlement?.blockReason === 'revoked';
+
+  const fetchEntitlement = useCallback(async (): Promise<EntitlementPayload | null> => {
+    try {
+      // Raw fetch rather than apiFetch: a failure here must not reach the
+      // global ErrorNotifier. Not knowing the entitlement is a silent no-op —
+      // every route that spends money gates itself and answers 402 — whereas a
+      // toast would put an error in front of someone who has done nothing.
+      const res = await fetch('/api/me/entitlement', { cache: 'no-store' });
+      if (!res.ok) return null;
+      return (await res.json()) as EntitlementPayload;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Ask once, on mount. A paywalled user reads Penny's message and finds the
+  // composer already closed, so the first thing they learn about their billing
+  // is never a red error bubble bounced back off a request they were allowed to
+  // make. Skipped in readonly (the demo trip), where the composer is replaced
+  // wholesale and there is nothing to gate.
+  useEffect(() => {
+    if (readonly) return;
+    let cancelled = false;
+    void (async () => {
+      const payload = await fetchEntitlement();
+      if (cancelled || !payload) return;
+      setEntitlement(payload);
+      const copy = payload.paywall;
+      if (payload.entitled || !copy) return;
+      setMessages((prev) =>
+        prev.some((m) => m.paywall)
+          ? prev
+          : [
+              ...prev,
+              {
+                id: PAYWALL_MESSAGE_ID,
+                trip_id: tripId,
+                role: 'assistant' as const,
+                content: copy.message,
+                kind: 'ai' as const,
+                changes_made: null,
+                created_at: new Date().toISOString(),
+                paywall: true,
+              },
+            ],
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readonly, tripId, fetchEntitlement]);
+
+  /**
+   * Turn a pending assistant bubble into the paywall bubble.
+   *
+   * This is the mid-conversation case: the trial can expire between page load
+   * and the next turn, so a send that was legal when the page rendered comes
+   * back 402. The 402 body carries the machine-readable reason but not the copy
+   * or the prices — those live on `/api/me/entitlement` so they can change
+   * without a deploy — so re-ask, then rewrite the bubble in place. If that
+   * second call fails too, the 402's own `error` string is still server-written
+   * copy and beats inventing our own.
+   */
+  const showPaywallOnBubble = useCallback(
+    async (assistantMsgId: string, body: Partial<PaywallErrorBody>) => {
+      const payload = await fetchEntitlement();
+      if (payload) setEntitlement(payload);
+      const text = payload?.paywall?.message ?? body.error ?? '';
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, content: text, streaming: false, applyError: null, paywall: true }
+            : m,
+        ),
+      );
+      // 'response', not 'error'. It is Penny answering, and the unread badge
+      // should behave the way it does for anything else she says.
+      onActivity?.('response');
+    },
+    [fetchEntitlement, onActivity],
+  );
+
+  /**
+   * The fake-purchase path, for allowlisted accounts only.
+   *
+   * It exists because StoreKit returns an EMPTY product list until the Paid
+   * Applications Agreement is active, so there is no real sheet to walk the
+   * flow against. `testPurchaseAllowed` comes from the server and the route
+   * re-checks the allowlist itself — this button existing proves nothing.
+   */
+  const runTestPurchase = useCallback(
+    async (productId: string) => {
+      setPurchasingId(productId);
+      setPurchaseError(null);
+      try {
+        const res = await fetch('/api/purchase/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productId }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error ?? `Purchase failed (${res.status})`);
+        }
+        // The grant is only real once the entitlement endpoint agrees. Believing
+        // the 200 would re-open the composer on our own say-so and hand the user
+        // a second 402 on their next message.
+        const fresh = await fetchEntitlement();
+        if (!fresh?.entitled) {
+          setPurchaseError(
+            'That went through, but your account still reads as unsubscribed. Give it a moment and reload.',
+          );
+          return;
+        }
+        setEntitlement(fresh);
+        setMessages((prev) => prev.filter((m) => !m.paywall));
+        setPurchaseSheetOpen(false);
+      } catch (e: unknown) {
+        setPurchaseError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPurchasingId(null);
+      }
+    },
+    [fetchEntitlement],
+  );
   const [input, setInput] = useState('');
   // When an onboarding question arrives with a prefilled answer (e.g. a start
   // date we extracted from the trip description), drop it into the composer once
@@ -1032,6 +1236,22 @@ export default function ChatPanel({
         // Pre-stream errors (rate limit, validation, missing key) come back
         // as plain JSON like before.
         const data = await res.json().catch(() => ({}));
+
+        // ...except 402, which is not a failure the user caused and must never
+        // render as "Something went wrong". The trial can lapse between page
+        // load and this turn, so a send that was legal when the composer
+        // rendered comes back paywalled — Penny says so herself, in the bubble
+        // that was about to hold her reply. Branch on the machine-readable
+        // `code`, never on the message: the message is copy and copy changes.
+        if (
+          res.status === 402 &&
+          (data as { code?: string }).code === PAYWALL_ERROR_CODE
+        ) {
+          setDeliveryStatus('responded');
+          await showPaywallOnBubble(assistantMsgId, data as Partial<PaywallErrorBody>);
+          return;
+        }
+
         const errMsg = (data as { error?: string }).error ?? `Request failed (${res.status})`;
         setDeliveryStatus('responded');
         failAssistant(`Error: ${errMsg}`);
@@ -1377,6 +1597,10 @@ export default function ChatPanel({
   // clears them, and delegates to the shared engine. Onboarding handoff
   // sidesteps this and calls sendChatMessage directly.
   const sendMessage = async () => {
+    // Belt to the composer's braces. The textarea and send button are already
+    // disabled behind the paywall; this catches a stray Enter on a focused
+    // field so we can never fire a request whose only possible answer is a 402.
+    if (paywalled) return;
     const trimmed = input.trim();
     const attachedImages = images;
     if (onboardingUiActive) {
@@ -1738,7 +1962,7 @@ export default function ChatPanel({
                 ))}
               </div>
             )}
-            {msg.content}
+            {msg.paywall ? <PaywallText text={msg.content} /> : msg.content}
             {msg.streaming && msg.content && (
               <span
                 aria-hidden
@@ -1850,6 +2074,59 @@ export default function ChatPanel({
                 >
                   Continue planning
                 </button>
+              </div>
+            )}
+            {/* The paywall's action, inside Penny's bubble — the same shape as
+                the truncated card's "Continue planning": her words, then the
+                one thing to do about them. The label is the server's, so the
+                button says "Renew" or "Email support" without this file
+                knowing which. It renders only once we hold the payload; if the
+                entitlement call failed we still show her message and simply
+                have no prices to offer. */}
+            {msg.paywall && entitlement?.paywall && (
+              <div style={{ marginTop: 10 }}>
+                {paywallSupportOnly ? (
+                  <a
+                    data-testid="paywall-support-link"
+                    href={`mailto:${SUPPORT_EMAIL}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '7px 14px',
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                      background: 'transparent',
+                      color: 'var(--tp-primary)',
+                      border: '1px solid var(--tp-border-strong)',
+                    }}
+                  >
+                    {entitlement.paywall.buttonLabel}
+                  </a>
+                ) : (
+                  <button
+                    data-testid="paywall-cta"
+                    onClick={() => {
+                      setPurchaseError(null);
+                      setPurchaseSheetOpen(true);
+                    }}
+                    style={{
+                      padding: '7px 14px',
+                      background: 'var(--tp-primary)',
+                      color: 'var(--tp-on-primary)',
+                      border: 'none',
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: '0.02em',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    {entitlement.paywall.buttonLabel}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -2153,13 +2430,18 @@ export default function ChatPanel({
               setTimeout(() => scrollToBottom(), 250);
             }}
             placeholder={
-              onboardingSelectStep
-                ? 'Tap an option above…'
-                : onboardingUiActive && onboardingQuestion
-                  ? onboardingQuestion.placeholder ?? 'Type your answer…'
-                  : 'Ask Penny…'
+              // Deliberately points AT Penny's message rather than restating
+              // it — there is exactly one authoritative wording for why this is
+              // closed, and it is in the bubble above, written by the server.
+              paywalled
+                ? "See Penny's message above"
+                : onboardingSelectStep
+                  ? 'Tap an option above…'
+                  : onboardingUiActive && onboardingQuestion
+                    ? onboardingQuestion.placeholder ?? 'Type your answer…'
+                    : 'Ask Penny…'
             }
-            disabled={onboardingComposerDisabled}
+            disabled={onboardingComposerDisabled || paywalled}
             rows={1}
             style={{
               flex: 1,
@@ -2188,7 +2470,8 @@ export default function ChatPanel({
             onClick={sendMessage}
             disabled={
               Boolean(
-                onboardingComposerBusy ||
+                paywalled ||
+                  onboardingComposerBusy ||
                   (!onboardingUiActive &&
                     !input.trim() &&
                     images.length === 0) ||
@@ -2212,7 +2495,8 @@ export default function ChatPanel({
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !onboardingComposerBusy
+                !onboardingComposerBusy &&
+                !paywalled
                   ? 'var(--tp-primary)'
                   : 'var(--tp-border)',
               border: 'none',
@@ -2224,7 +2508,8 @@ export default function ChatPanel({
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !onboardingComposerBusy
+                !onboardingComposerBusy &&
+                !paywalled
                   ? 'var(--tp-on-primary)'
                   : 'var(--tp-subtle)',
               cursor:
@@ -2234,7 +2519,8 @@ export default function ChatPanel({
                     onboardingQuestion &&
                     !onboardingSelectStep &&
                     input.trim())) &&
-                !onboardingComposerBusy
+                !onboardingComposerBusy &&
+                !paywalled
                   ? 'pointer'
                   : 'default',
               transition: 'background 0.15s, color 0.15s',
@@ -2253,6 +2539,20 @@ export default function ChatPanel({
             </>
           )}
         </>
+      )}
+
+      {/* The one modal in this flow, and only when there is something to sell.
+          A capped or revoked account never reaches it — that button is a
+          mailto. */}
+      {purchaseSheetOpen && entitlement && !paywallSupportOnly && (
+        <PurchaseSheet
+          products={entitlement.products}
+          testPurchaseAllowed={entitlement.testPurchaseAllowed}
+          purchasingId={purchasingId}
+          error={purchaseError}
+          onPurchase={(productId) => void runTestPurchase(productId)}
+          onClose={() => setPurchaseSheetOpen(false)}
+        />
       )}
     </div>
   );

@@ -16,40 +16,9 @@ import {
   TRIAL_DAYS,
   WATCH_MICROCENTS,
 } from './constants';
-import type { SubscriptionStatus } from '@/server/db/schema';
+import type { AccountState, BlockReason, SubscriptionStatus } from '@/types/entitlement';
 
-/**
- * The eleven states from the design doc, plus `revoked`.
- *
- * `revoked` is the break-glass admin action. The doc enumerates eleven states
- * and does not list it, because it describes what happens to users rather than
- * what we can do to them — but it produces a distinct blocked account that the
- * admin panel has to be able to show and explain, so it is a state here.
- */
-export type AccountState =
-  | 'trial'
-  | 'trial_spent'
-  | 'trial_expired'
-  | 'subscribed'
-  | 'subscribed_watch'
-  | 'subscribed_capped'
-  | 'cancelled_in_period'
-  | 'expired'
-  | 'billing_grace'
-  | 'refunded'
-  | 'revoked'
-  | 'comped';
-
-/** Why access was refused. Drives the copy, which is NOT the same in each case. */
-export type BlockReason =
-  /** Trial is over. This is a sales moment. */
-  | 'trial_over'
-  /** Paid period ended, or Apple stopped renewing. Also a sales moment. */
-  | 'subscription_over'
-  /** Over the usage cap. NOT the user's fault — points at support, never accuses. */
-  | 'usage_cap'
-  /** Refunded or revoked. Everything is closed, including existing trips. */
-  | 'revoked';
+export type { AccountState, BlockReason };
 
 export interface SubscriptionFacts {
   status: SubscriptionStatus;
