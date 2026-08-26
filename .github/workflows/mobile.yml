@@ -96,7 +96,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22 is a FLOOR, not a preference. eas-cli pulls in
+          # @oclif/plugin-autocomplete, which declares engines.node >=22.0.0,
+          # so installing the CLI on Node 20 dies at resolve time with
+          # "Found incompatible module" before a single Expo call is made.
+          # Every other workflow in this repo is already on 22; this file was
+          # the last one pinned to 20.
+          node-version: '22'
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
@@ -200,11 +206,19 @@ jobs:
           {
             echo "### Mobile"
             echo
-            if [ "$NATIVE" = "false" ]; then
-              echo "- **OTA:** published to channel \`production\`. Testers get it on next launch."
-            else
-              echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
-            fi
+            case "${NATIVE:-}" in
+              false)
+                echo "- **OTA:** published to channel \`production\`. Testers get it on next launch."
+                ;;
+              true)
+                echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                ;;
+              *)
+                # The native check never ran, so the job died in setup. Saying
+                # "skipped" here would blame a decision nothing had made yet.
+                echo "- **OTA:** not reached — the job failed before deciding."
+                ;;
+            esac
             if [ "$STATUS" = "success" ]; then
               echo "- **TestFlight:** built and submitted. Visible once Apple finishes processing, usually 5-15 minutes."
             else
