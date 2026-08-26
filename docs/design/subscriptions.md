@@ -228,7 +228,7 @@ Eleven states. Every one needs a test.
 | 6 | `subscribed_capped` | Active, >= $8.50/12mo | Soft block + support message | Soft block |
 | 7 | `cancelled_in_period` | Auto-renew off, before period end | **Full** | **Full** |
 | 8 | `expired` | Period ended, no renewal | Paywall | Soft block |
-| 9 | `billing_grace` | Payment failed, Apple retrying | Full + banner | Full |
+| 9 | `billing_grace` | Payment failed, Apple retrying — **off at launch** | Full + banner | Full |
 | 10 | `refunded` | Apple issued a refund | Blocked immediately | Blocked |
 | 11 | `comped` | Allowlist | Full, no cap | Full |
 
@@ -243,13 +243,29 @@ for access we then withheld.
   Someone who cancels on day 3 of an annual plan keeps the app for 362
   more days. Blocking them earns a refund request and a one-star review,
   and deserves both.
+
+  This is not a loss. **Cancelling returns no money** — it only stops the
+  next renewal, and we keep the full $19.99. Serving the year they paid
+  for is the transaction completing, and the marginal cost of doing so is
+  bounded by the $8.50 cap and realistically about thirty cents. Keeping
+  the money while withholding the product is the version that costs
+  something.
 - **Expire** — the paid period actually ended. *Now* they hit the paywall.
 - **Refund** — Apple returned the money. Revoke immediately, no grace.
 - **Billing grace period** — renewal payment failed and Apple is retrying.
-  Apple offers this as an App Store Connect setting and it should be
-  **on**: keep full access, show a "fix your payment method" banner. These
-  users want to pay; the card expired. Blocking them converts a billing
-  hiccup into a cancellation.
+  An App Store Connect **toggle**, not architecture: entitlement treats
+  grace as active either way, because that is what Apple and RevenueCat
+  report. Turn it off and state 9 simply never occurs, with no code
+  change. **Shipping with it off**, on the author's call; it can be turned
+  on later for free.
+
+  Recorded so the reasoning isn't relitigated: the fear was that a fake
+  card could buy access. It cannot. Grace applies only to an *existing*
+  subscriber whose *renewal* failed, and Apple validates payment at
+  initial purchase — there is no path into this state without having
+  successfully paid at least once. The real exposure is one renewal
+  period of access for someone whose card expired, which is why the
+  feature exists and why it is widely enabled.
 
 ### Refunds are Apple's decision, not ours
 
@@ -266,6 +282,29 @@ on an abusive request. It improves the odds. It does not decide them.
 So the policy becomes: **answer consumption requests with real numbers, and
 revoke on `REFUND`.** Anything stronger is a policy we would be unable to
 keep.
+
+The "only refund if they used less than 50%" rule survives — relocated.
+It is not a gate we operate; it is the *content* of the consumption
+answer. A user who burned $9 of Anthropic and then asks for their $19.99
+back gets that reported, and Apple is materially more likely to decline.
+
+### What the admin panel can and cannot have
+
+**No "issue refund" button.** The money is Apple's to return; there is no
+developer-initiated refund for IAP. A button implying otherwise would be
+a lie in the UI.
+
+What it gets instead:
+
+- **Revoke access** — our entitlement, entirely ours to control. Sets
+  state 11's inverse: blocked, regardless of what Apple says.
+- A log of `REFUND` and `CONSUMPTION_REQUEST` events per user.
+- Consumption requests answered automatically from `usage_events`, with
+  the reply recorded so a declined refund can be explained later.
+
+**Revoke on refund *granted*, not *requested*.** Apple declines refund
+requests routinely. Revoking on the request cuts off someone who is still
+a paying customer and whose money we still hold.
 
 ## Comped accounts
 
@@ -321,8 +360,9 @@ bypass anywhere in this codebase.
 | `sub-capped` | Active, $9 of usage | Soft block + support message. Existing trips still readable |
 | `sub-cancelled` | Auto-renew off, period ends in 30d | **Full access.** The regression this table exists to prevent |
 | `sub-expired` | Period ended yesterday | Paywall |
-| `sub-grace` | Billing retry state | Full access + banner |
-| `sub-refunded` | Refund notification processed | Blocked immediately, including existing trips |
+| `sub-grace` | Billing retry state | Full access + banner. *Deferred while the App Store Connect toggle is off — state 9 cannot occur* |
+| `sub-refunded` | `REFUND` notification processed | Blocked immediately, including existing trips |
+| `sub-refund-requested` | `CONSUMPTION_REQUEST` received, no `REFUND` | **Still full access.** Consumption answered from `usage_events`. Revoking here would cut off a customer whose refund Apple may decline |
 | `sub-comped` | Fixture/allowlist account | No paywall, no cap, `usage_events` still written |
 | `sub-web-signed-out` | No session | Landing page + App Store link. **Not** a bare wall |
 | `sub-web-unsubscribed` | Signed in, expired | "Continue on iPhone", trips readable |
