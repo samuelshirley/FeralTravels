@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { requireUserId, errorResponse, HttpError, ConflictError } from '@/server/auth/guards';
+import { requireUserId,
+  requireEntitledUser, errorResponse, HttpError, ConflictError } from '@/server/auth/guards';
 import { listTripsForUser, createTrip, generateDefaultTripName } from '@/server/repos/trips';
 import { getDefaultVehicleId, getVehicleForUser } from '@/server/repos/vehicles';
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
@@ -29,7 +30,11 @@ const createSchema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const userId = await requireUserId();
+    // Gated: a trip is the container every Penny turn happens inside, and
+    // creating one is the first thing a lapsed user tries. Blocking it here
+    // rather than only at /api/trip/replan means the paywall lands before the
+    // empty trip exists, not after.
+    const { id: userId } = await requireEntitledUser();
     const body = createSchema.parse(await req.json().catch(() => ({})));
     let vehicleId: string | null = body.vehicle_id ?? (await getDefaultVehicleId(userId));
 

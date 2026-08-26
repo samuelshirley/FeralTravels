@@ -176,6 +176,13 @@
       "when": 1787223251620,
       "tag": "0024_deleted_users",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787758027631,
+      "tag": "0025_subscriptions",
+      "breakpoints": true
     }
   ]
 }

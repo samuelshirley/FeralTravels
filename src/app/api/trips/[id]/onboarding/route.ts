@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   requireUserId,
+  requireEntitledUser,
   assertTripOwnedByUser,
   errorResponse,
 } from '@/server/auth/guards';
@@ -33,7 +34,11 @@ const answerSchema = z.object({
 
 export async function POST(req: Request, ctx: { params: { id: string } }) {
   try {
-    const userId = await requireUserId();
+    // The forgotten spender. `submitAnswer` runs the intent scan, the start-date
+    // parser and the comfortable-range estimator — three Anthropic calls that
+    // had no cap of any kind before this. The GET above stays ungated: reading
+    // the snapshot costs nothing and is how the paywall bubble gets drawn.
+    const { id: userId } = await requireEntitledUser();
     const tripId = parseUUID(ctx.params.id);
     if (!tripId) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     await assertTripOwnedByUser(tripId, userId);
