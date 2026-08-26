@@ -1,9 +1,9 @@
 # Mobile release — how a merge reaches a tester
 
-`ci.yml` and `promote.yml` are the **web** pipeline. They deploy Next.js to
-Vercel and know nothing about `mobile/`. The mobile half is
-`.github/workflows/mobile.yml`; read its header for the mechanics, this file is
-the setup and the traps.
+The web and mobile halves are one workflow now — `.github/workflows/pipeline.yml`
+— and the mobile jobs run `needs: deploy`, after the web deploy rather than
+racing it. Read that file's header for the mechanics; this file is the setup and
+the traps.
 
 ## What a merge to `main` does
 
@@ -19,27 +19,65 @@ paths:
 so they never appear in a diff — that's why the native list is the *inputs* to
 prebuild rather than its output.
 
-**Then it checks the OTA has somewhere to land.** An OTA only reaches builds on
-the same `runtimeVersion`, and `eas update` exits 0 whether that number is ten
-thousand or zero — so a repo with no completed native build can publish green
-updates forever while nothing reaches a phone. Before publishing, `decide` asks
-EAS whether any iOS build exists at this runtime (finished, or still queued
-from an earlier merge). None — or an answer it can't get — and the run cuts a
-native build instead.
+**Then it checks the OTA has somewhere to land — by fingerprint.** An OTA only
+runs on a binary built from the same native surface, and `runtimeVersion:
+appVersion` is a *promise* that the surface has not moved, kept by hand. PR #7
+broke that promise without touching `version`: it added a CFBundleURLScheme and
+the Apple Sign-in entitlement, so two pre-OAuth builds still looked like valid
+1.0.0 targets. Publishing to them would have switched both sign-in buttons ON in
+binaries that cannot complete either flow.
 
-That makes the pipeline self-starting: the first merge after a `version` bump
-builds a binary on its own, every JS merge after that is an OTA in seconds, and
-the choice never needs a human. The cost is about 40 seconds of `npm ci` on a
-JS-only merge, paid so that a green Mobile run always means the change went
-somewhere.
+So `decide` computes the native fingerprint (`expo-updates fingerprint:generate`
+— app.config.js, config plugins, native deps, eas.json) and asks EAS whether any
+build carries it, finished or still queued. None, or an answer it can't get, and
+the run cuts a native build instead.
+
+That makes the pipeline self-starting AND self-correcting: a change to the native
+surface builds a binary on its own even when `version` is untouched, every
+JS-only merge after that is an OTA in seconds, and the choice never needs a
+human. The cost is about 40 seconds of `npm ci` on a JS-only merge.
+
+**Worth knowing:** `runtimeVersion: { policy: 'fingerprint' }` would move this
+guarantee into update targeting itself, so a mismatched binary could never be a
+target even for a hand-run `eas update`. It changes what reaches installed
+builds, so it is deliberately not bundled with this check — do it as its own
+change, after a release, not before one.
 
 ## Setup
 
 ### 1. `EXPO_TOKEN` (required — nothing works without it)
 
-expo.dev → account settings → **Access tokens** → create one. Prefer a robot
-account under the `samuelashirley` org over a personal token, so revoking it
-doesn't log you out everywhere.
+expo.dev → account settings → **Access tokens** → create one.
+
+**It must belong to the account that owns the project** — `owner` in
+`app.config.js`, currently `samuelashirley`. This is the whole ballgame and it
+cost a day to learn. A token from any other Expo account fails every call with:
+
+```
+Entity not authorized: AppEntity[8228a0d9-...]
+(viewer = RobotViewerContext, action = READ)
+```
+
+Two runs died on exactly that. Prefer a **personal access token** under
+`samuelashirley` while you are the only developer. A robot user is the tidier
+answer for a team — it can be revoked without logging you out — but a freshly
+created robot has *no permissions at all* until you grant it a role, and a
+robot created under a different account or org can never be granted access to
+this project. If you use one, create it under `samuelashirley` and give it
+Admin.
+
+**Where things actually live**, because there are three Expo accounts and only
+one of them matters:
+
+| Account | What's in it |
+|---|---|
+| `samuelashirley` (personal) | **everything real** — the `feral-travels` project, all builds, the Apple cert, the ASC API key, the CI token |
+| `Feral Travels` (org) | an empty duplicate project, zero builds. Harmless; nothing points at it |
+| `sivale` (org) | unrelated |
+
+`app.config.js` names `owner: 'samuelashirley'` and projectId
+`8228a0d9-1f26-4a3a-bcf0-aa86d90c3886`. If either ever stops matching the
+personal account, everything below breaks at once.
 
 GitHub → repo Settings → Secrets and variables → Actions → **Secrets** → New
 repository secret, named `EXPO_TOKEN`.
@@ -100,7 +138,7 @@ social sign-in buttons for everyone.
 **A green Mobile job means "queued".** The build step is `--no-wait`. Track the
 real build on expo.dev.
 
-**The mobile gate is typecheck-only.** `ci.yml` has a `Mobile typecheck` job
+**The mobile gate is typecheck-only.** The pipeline has a `Mobile typecheck` job
 (`tsc --noEmit` in `mobile/`) and the unit project carries the mirror-drift
 guard, but `mobile/` still has no test suite of its own — no component specs,
 no Detox, nothing that exercises a screen. A change that compiles and drifts
