@@ -447,12 +447,18 @@ build.
   deliberately does not (`src/app/trips/page.tsx` says so) — a browser tab that
   silently creates a row is surprising; a single-purpose phone app is the
   opposite case. Guarded by a per-mount ref so it can't become a trip factory.
-- **`POST /api/purchase/test` grants a subscription without Apple**, restricted
-  to exact addresses in `SUBSCRIPTION_TEST_EMAILS` (empty by default — unset
-  grants nothing). It exists because StoreKit returns an EMPTY product list
-  until the Paid Applications Agreement is active, so there is no real sheet to
-  test against. Every grant writes `subscription_events` with `source: 'fake'`.
-  **Deleting this route is the last step of the RevenueCat migration** —
+- **`POST /api/purchase/test` grants a subscription without Apple.** TWO
+  conditions, both required: the address matches
+  `sam+trial-<tag>@feraltravels.com` — hardcoded in `payments/testPurchase.ts`
+  where no env var can widen it, same argument as `FIXTURE_EMAIL_PATTERN` — AND
+  `SUBSCRIPTION_TEST_PURCHASES=1`, which is off by default. A PATTERN rather
+  than a list because every test run wants a NEW account: reusing one address
+  tests an aged account, not a trial, and once it carries a subscription row
+  `created_at` decides nothing. `npm run trial-account new` prints a fresh
+  address; `age` and `reset` are dry-run by default. It exists because StoreKit
+  returns an EMPTY product list until the Paid Applications Agreement is active.
+  Every grant writes `subscription_events` with `source: 'fake'`. **Deleting
+  this route is the last step of the RevenueCat migration** —
   `docs/design/revenuecat-implementation.md`.
 - **`syncCompedFlagOnSignIn` must be called from BOTH sign-in paths** — the
   Auth.js `signIn`/`createUser` events AND `createSessionForEmail` in
