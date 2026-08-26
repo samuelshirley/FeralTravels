@@ -8,8 +8,7 @@ export type VehicleRow = typeof vehicles.$inferSelect;
 
 export interface VehicleInput {
   name: string;
-  comfortable_range_km?: number | null;
-  hard_max_range_km?: number | null;
+  range_km?: number | null;
   fuel_type?: 'diesel' | 'petrol' | null;
   is_default?: boolean;
 }
@@ -25,8 +24,7 @@ function vehicleApi(r: VehicleRow) {
     user_id: r.userId,
     name: r.name,
     is_default: r.isDefault,
-    comfortable_range_km: coerceOptionalInt(r.comfortableRangeKm),
-    hard_max_range_km: coerceOptionalInt(r.hardMaxRangeKm),
+    range_km: coerceOptionalInt(r.rangeKm),
     fuel_type: coerceFuelType(r.fuelType),
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
@@ -83,30 +81,12 @@ export async function getDefaultVehicleForUser(userId: string): Promise<VehicleA
 function inputToColumns(input: Partial<VehicleInput>): Record<string, unknown> {
   const map: Record<string, unknown> = {};
   if (input.name !== undefined) map.name = input.name;
-  if (input.comfortable_range_km !== undefined) map.comfortableRangeKm = input.comfortable_range_km;
-  if (input.hard_max_range_km !== undefined) map.hardMaxRangeKm = input.hard_max_range_km;
+  if (input.range_km !== undefined) map.rangeKm = input.range_km;
   if (input.fuel_type !== undefined) map.fuelType = input.fuel_type;
   return map;
 }
 
-/**
- * Load-bearing safety invariant: the hard ceiling can never sit below the
- * comfortable range, or Finn's "never route past" line would fall short of the
- * everyday target. Enforced here so EVERY write path (API, onboarding, Penny
- * tool, remediation) is covered — not just the request boundaries.
- */
-function assertRangeOrder(comfortable: unknown, hardMax: unknown): void {
-  if (
-    typeof comfortable === 'number' &&
-    typeof hardMax === 'number' &&
-    hardMax < comfortable
-  ) {
-    throw new Error('hard_max_range_km must be ≥ comfortable_range_km.');
-  }
-}
-
 export async function addVehicle(userId: string, input: VehicleInput): Promise<VehicleApi> {
-  assertRangeOrder(input.comfortable_range_km, input.hard_max_range_km);
   const existing = await db
     .select({ c: count() })
     .from(vehicles)
@@ -142,14 +122,6 @@ export async function updateVehicle(
 ): Promise<VehicleApi | null> {
   const owned = await getVehicleForUser(userId, vehicleId);
   if (!owned) return null;
-
-  // Check the post-patch ordering against whatever isn't being changed, so a
-  // partial update (e.g. raising comfortable past an existing ceiling) can't
-  // sneak comfortable above hard-max.
-  assertRangeOrder(
-    patch.comfortable_range_km !== undefined ? patch.comfortable_range_km : owned.comfortable_range_km,
-    patch.hard_max_range_km !== undefined ? patch.hard_max_range_km : owned.hard_max_range_km
-  );
 
   const updated = await db.transaction(async (tx) => {
     if (patch.is_default === true) {

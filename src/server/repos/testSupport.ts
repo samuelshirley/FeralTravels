@@ -131,8 +131,7 @@ export async function seedFixture(opts: {
 
   const vehicle = await addVehicle(userId, {
     name: opts.vehicleName,
-    comfortable_range_km: 400,
-    hard_max_range_km: 400,
+    range_km: 400,
     is_default: true,
   });
 
@@ -184,7 +183,7 @@ export async function createAdHocTrip(opts: {
     // validation path in the chat-composer onboarding.
     const [v] = await db
       .insert(vehicles)
-      .values({ userId, name: `${opts.name} vehicle`, isDefault: false, comfortableRangeKm: null })
+      .values({ userId, name: `${opts.name} vehicle`, isDefault: false, rangeKm: null })
       .returning({ id: vehicles.id });
     const trip = await createTrip({ userId, name: opts.name, vehicleId: v.id });
     await db.update(trips).set({ onboardingState: 'vehicle_new' }).where(eq(trips.id, trip.id));

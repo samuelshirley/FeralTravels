@@ -2,7 +2,7 @@
 
 Status: **not built.** The server half is done and deployed —
 `src/server/payments/`, the `subscriptions` / `subscription_events` tables
-(migration 0025), and `POST /api/webhooks/revenuecat`. Nothing on the Apple
+(migration 0026), and `POST /api/webhooks/revenuecat`. Nothing on the Apple
 side exists yet, and no line of StoreKit has ever run.
 
 `docs/design/subscriptions.md` is the WHY — the pricing, the eleven account

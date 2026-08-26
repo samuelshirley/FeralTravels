@@ -39,10 +39,10 @@ describe('coerceOptionalInt', () => {
 });
 
 describe('vehicle fuel-planning minimum after coercion helpers', () => {
-  it('rejects a stringly-typed comfortable range (wrong shape)', () => {
+  it('rejects a stringly-typed fuel range (wrong shape)', () => {
     const row = {
       name: 'Van',
-      comfortable_range_km: '400',
+      range_km: '400',
     } as unknown as Record<string, unknown>;
     expect(vehicleMeetsFuelPlanningMinimum(row)).toBe(false);
   });
@@ -50,7 +50,7 @@ describe('vehicle fuel-planning minimum after coercion helpers', () => {
   it('coercion makes a Postgres-string numeric fuel-plannable like a real JS number', () => {
     const row = {
       name: 'Van',
-      comfortable_range_km: coerceOptionalInt('450'),
+      range_km: coerceOptionalInt('450'),
     };
     expect(vehicleMeetsFuelPlanningMinimum(row)).toBe(true);
   });

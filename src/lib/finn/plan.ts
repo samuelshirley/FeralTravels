@@ -5,9 +5,8 @@
  * Model (continuous drive, from `fuelTankState.ts`): the tank is full only at
  * trip start and after an *actual* fuel stop. `B` (km burned since last refuel)
  * is carried into the leg. From each refuel anchor Finn may drive at most
- * `H − B` (hard ceiling, never crossed) and *prefers* to stop by `C − B`
- * (comfortable). It walks the leg placing the fewest safe stops, and at each
- * stop, minimising the number of stops.
+ * `R − B` (the vehicle's fuel range, never crossed). It walks the leg placing
+ * the fewest safe stops.
  *
  * Pure + dependency-light: no I/O, no LLM. The server layer (`server/fuel.ts`)
  * feeds it candidates already projected onto the route and filtered for
@@ -28,10 +27,8 @@ export interface PlacementCandidate {
 export interface PlacementInput {
   /** Total leg length along the route, km. */
   legLengthKm: number;
-  /** C — comfortable range, km. */
-  comfortableRangeKm: number;
-  /** H — hard-max range, km (≥ C). */
-  hardMaxRangeKm: number;
+  /** R — the vehicle's fuel range, km. */
+  rangeKm: number;
   /** B — km already burned since the last refuel when the leg starts. */
   kmBurnedAtStart: number;
   /** Eligible, route-projected candidates (any order). */
@@ -53,7 +50,7 @@ export interface PlacedStop {
 export interface PlacementResult {
   stops: PlacedStop[];
   /**
-   * True when the leg cannot be completed without running past H — a stranding
+   * True when the leg cannot be completed without running past R — a stranding
    * risk. The caller raises the honest `no_stations_found` / gap warning.
    */
   gap: boolean;
@@ -74,11 +71,11 @@ function choose(pool: PlacementCandidate[]): PlacementCandidate {
 
 /**
  * Plan the fuel stops for one leg. Greedy: from each refuel anchor, take the
- * best stop within comfort (or, if comfort is empty, within the C→H stretch
- * zone), refuel, and repeat until the leg end is reachable.
+ * farthest stop within range, refuel, and repeat until the leg end is
+ * reachable.
  */
 export function planLegFuelStops(input: PlacementInput): PlacementResult {
-  const { legLengthKm, comfortableRangeKm: C, hardMaxRangeKm: H } = input;
+  const { legLengthKm, rangeKm: R } = input;
 
   const sorted = input.candidates
     .filter((c) => c.alongKm > EPS && c.alongKm <= legLengthKm + EPS)
@@ -89,8 +86,7 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
   let burnAtAnchor = Math.max(0, input.kmBurnedAtStart);
 
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-    const reach = H - burnAtAnchor; // furthest drivable from the anchor
-    const comfort = C - burnAtAnchor;
+    const reach = R - burnAtAnchor; // furthest drivable from the anchor
     const distToEnd = legLengthKm - anchorKm;
 
     // End reachable on the current tank → done.
@@ -109,19 +105,15 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
       return { stops, gap: true, gapDetail };
     }
 
-    const comfortPool = safe.filter((c) => c.alongKm - anchorKm <= comfort + EPS);
-    const stretchStop = comfortPool.length === 0; // had to dip into the C→H zone
-    const pick = choose(comfortPool.length > 0 ? comfortPool : safe);
+    const pick = choose(safe);
 
     // Forced-stop reason: topping up because the next fuel (or, failing that, a
-    // long run) is far enough that skipping this station risks the ceiling.
+    // long run) is far enough that skipping this station risks running dry.
     const nextAfter = sorted.find((c) => c.alongKm > pick.alongKm + EPS);
     const gapAfterKm = (nextAfter ? nextAfter.alongKm : legLengthKm) - pick.alongKm;
     let reason: string | undefined;
-    if (nextAfter && gapAfterKm > C) {
+    if (nextAfter && gapAfterKm > R) {
       reason = `next fuel is ${Math.round(gapAfterKm)} km away`;
-    } else if (stretchStop) {
-      reason = `nearest fuel was ${Math.round(pick.alongKm - anchorKm)} km in — past your comfortable range`;
     }
 
     stops.push({

@@ -38,7 +38,7 @@ import {
  * `states.ts` and `oauthReplay.ts` are both built this way for the same reason.
  *
  * The one thing a fake cannot prove is that the ON CONFLICT target really is
- * the event id. That is asserted by the unique index in migration 0025 and by
+ * the event id. That is asserted by the unique index in migration 0026 and by
  * the shape of `defaultRecordEvent`.
  */
 

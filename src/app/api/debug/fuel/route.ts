@@ -7,7 +7,7 @@
  */
 import { requireUserId } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
-import { computeEffectiveRangeKm } from '@/lib/penny/context';
+import { normalizeRangeKm } from '@/lib/vehicleProfile';
 import { getDirections } from '@/lib/google/directions';
 import { encodePolyline, type LatLng } from '@/lib/polyline';
 import { searchFuelAlongRoute } from '@/lib/google/places';
@@ -21,18 +21,16 @@ export async function GET() {
     const userId = await requireUserId();
     const results: Record<string, unknown> = {};
 
-    // 1. Vehicle / range — Finn uses the stated comfortable + hard-max ranges.
+    // 1. Vehicle / range — Finn uses the stated fuel range.
     let range: number | null = null;
     try {
       const v = await getDefaultVehicleForUser(userId);
       if (!v) {
         results['vehicle'] = 'No default vehicle found for this user';
       } else {
-        range = computeEffectiveRangeKm(v.comfortable_range_km);
+        range = normalizeRangeKm(v.range_km);
         results['vehicle'] = {
-          comfortable_range_km: v.comfortable_range_km,
-          hard_max_range_km: v.hard_max_range_km,
-          effective_range_km: range,
+          range_km: v.range_km,
         };
       }
     } catch (e) {

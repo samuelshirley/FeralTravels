@@ -180,8 +180,15 @@
     {
       "idx": 25,
       "version": "7",
-      "when": 1787758027631,
-      "tag": "0025_subscriptions",
+      "when": 1787647090064,
+      "tag": "0025_single_fuel_range",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1787766648879,
+      "tag": "0026_subscriptions",
       "breakpoints": true
     }
   ]

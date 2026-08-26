@@ -993,8 +993,8 @@ async function dispatchAction(
       }
 
       // LOCKED DOWN (2026-07-02): the update_vehicle tool carries fuel_type
-      // ONLY. The range fields (comfortable_range_km / hard_max_range_km) are
-      // safety numbers writable only via onboarding + Settings — never chat.
+      // ONLY. The range field (range_km) is a
+      // safety number writable only via onboarding + Settings — never chat.
       // Build the patch explicitly (not a spread) so a widened tool schema
       // can never smuggle extra columns into the vehicle row.
       const vehiclePatch: Record<string, unknown> = {

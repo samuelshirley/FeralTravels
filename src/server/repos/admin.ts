@@ -85,7 +85,7 @@ export async function getAdminVehiclesOverview(limit = ADMIN_VEHICLES_LIST_LIMIT
       userUnitsPref: users.unitsPref,
       name: vehicles.name,
       isDefault: vehicles.isDefault,
-      comfortableRangeKm: vehicles.comfortableRangeKm,
+      rangeKm: vehicles.rangeKm,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })
@@ -107,7 +107,7 @@ export async function getAdminVehicleById(vehicleId: string) {
       userUnitsPref: users.unitsPref,
       name: vehicles.name,
       isDefault: vehicles.isDefault,
-      comfortableRangeKm: vehicles.comfortableRangeKm,
+      rangeKm: vehicles.rangeKm,
       createdAt: vehicles.createdAt,
       updatedAt: vehicles.updatedAt,
     })
