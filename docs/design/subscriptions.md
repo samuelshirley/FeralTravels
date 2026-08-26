@@ -296,8 +296,17 @@ a lie in the UI.
 
 What it gets instead:
 
-- **Revoke access** — our entitlement, entirely ours to control. Sets
-  state 11's inverse: blocked, regardless of what Apple says.
+- **Revoke access** — break-glass only, for genuine abuse or a missed
+  `REFUND` webhook. Everything routine is automatic: the cap blocks at
+  $8.50 on its own, and `REFUND` revokes on its own. If this button is
+  ever the normal way something happens, the automation is broken.
+
+  Because it can take away time somebody paid for, the UI has to argue
+  back. It requires a typed reason, records who clicked it and when, and
+  when the user has paid time remaining it says so in the confirmation:
+  *"This user has paid through 2027-03-14."* **Cancelling is not a reason
+  to press it** — a cancelled subscriber keeps the term they bought, and
+  the button existing must not quietly turn that policy into a habit.
 - A log of `REFUND` and `CONSUMPTION_REQUEST` events per user.
 - Consumption requests answered automatically from `usage_events`, with
   the reply recorded so a declined refund can be explained later.
