@@ -72,15 +72,15 @@ npm run db:studio    # drizzle-kit studio (DB browser)
 
 Deploy pipeline (**pull-request based** since 2026-08-13 — `main` is protected and only moves via PRs):
 
-1. **Open a PR into `main`** → GitHub Actions `CI` workflow (`.github/workflows/ci.yml`), re-run on every push to the PR:
+1. **Open a PR into `main`** → the `Pipeline` workflow (`.github/workflows/pipeline.yml`) — ONE file serving every trigger, so there is one entry in the Actions list and merging is the only button. Re-run on every push to the PR:
    - **Unit tests** — ONE job running `npm run test`, i.e. both vitest projects: `unit` (the 43 `*.test.ts` logic specs, `node` environment, no jsdom and no setup file) and `components` (the `*.test.tsx` specs under jsdom with Testing Library). The project split is a vitest concern, not a CI one — it was two jobs until 2026-08-18, but a box labelled "UI tests" read as though it drove a browser, and that ambiguity cost more than the ~20s of parallelism. Vitest still reports each project separately. Must pass before the preview deploys.
    - **Deploy tested preview** — creates an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write clone of PROD data, recreated from prod on every push), runs migrations on it, and deploys a Vercel preview pointed at it. The URL lands in a **sticky PR comment** and the run summary. It deploys *before* the tests so a red spec still leaves you a clickable preview (test bug vs app bug). Prod's DB is never touched; the migration run here is also the rehearsal for the prod migration.
    - **E2E tests** — the full Playwright suite against that exact preview URL (`E2E_BASE_URL`; playwright.config skips its local webServer), then `scripts/assert-e2e-ran.mjs` **fails the job if the suite mass-skipped** — the allowance is `E2E_MAX_SKIPPED=0`, so **no spec may skip**, `login-otp` included. Artifacts upload always (not just on failure) and the Playwright HTML report is published to a URL linked from a sticky PR comment.
    - **Mobile typecheck** — `tsc --noEmit` in `mobile/`. Runs alongside Unit tests and does NOT gate the preview (the preview is the web app, and a broken Expo type has nothing to say about it). It exists because the Mobile workflow publishes `mobile/` over the air on merge — without this job the first thing to catch a mobile type error is a tester's phone.
    These three are the **required checks** in branch protection; Mobile typecheck runs alongside them and deliberately does not gate.
-- **Mobile releases self-start.** `mobile.yml`'s `decide` job picks OTA vs native build from the diff, then — when the answer is OTA — asks EAS whether any iOS build exists at this `runtimeVersion` before publishing. `eas update` exits 0 with zero installed binaries, so without that check a repo whose first native build never completed publishes green updates that reach nobody (which is exactly what happened after PR #7's merge died on a missing EXPO_TOKEN). No target, or no answer, and the run escalates to a native build. So the first merge after a `version` bump cuts a binary on its own and every JS merge after that is an OTA.
-2. **Merge the PR — that IS the deploy.** `.github/workflows/deploy-production.yml` fires on the push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No button, no second step, no ship script. **Rollback** = merge a revert PR through the same gate, or re-promote the previous production deployment from the Vercel dashboard for an instant fix; neither undoes a migration.
-3. **PR closes** → `.github/workflows/pr-cleanup.yml` deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
+- **Mobile releases self-start, after the web deploy.** The `decide` job picks OTA vs native build from the diff, then — when the answer is OTA — computes the native FINGERPRINT and asks EAS whether any build carries it before publishing. `eas update` exits 0 with zero installed binaries, so without that check a repo whose first native build never completed publishes green updates that reach nobody (which is exactly what happened after PR #7's merge died on a missing EXPO_TOKEN). Fingerprint rather than `runtimeVersion` because `appVersion` is a hand-kept promise that the native surface hasn't moved — PR #7 broke it without touching `version`, leaving two pre-OAuth builds looking like valid 1.0.0 targets for an OTA that would switch on sign-in buttons their Info.plist cannot honour. No match, or no answer, and the run escalates to a native build. It runs `needs: deploy`, never beside it: the two used to be separate workflows racing on the same push, so an OTA could reach a phone before the API it expects had shipped. A merge that touches nothing under `mobile/` produces no mobile release at all.
+2. **Merge the PR — that IS the deploy.** The same workflow fires on the push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No button, no second step, no ship script. **Rollback** = merge a revert PR through the same gate, or re-promote the previous production deployment from the Vercel dashboard for an instant fix; neither undoes a migration.
+3. **PR closes** → the same workflow deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
 
 The deploy gate is enforced, not a convention. Because a squash/merge commit has a different SHA than anything CI tested, the gate resolves the PR the commit came from and requires the CI run for **that PR's head SHA** to be completed+green. A direct push to `main` has no CI run and is therefore **blocked** — push through a PR.
 
@@ -137,9 +137,12 @@ src/
     DeviceLocationContext.tsx  # THE client GPS pipeline (2026-07-12): owns the one on-load location prompt, a live watchPosition, and a Permissions-API onchange subscription (grant-after-mount activates consumers live). TripWorkspace's position report + useNextStop (smart nav) consume it; nothing else may call the Geolocation API.
     stops/            # StopCard, StopsSection, MoreStopsModal (with tests)
     AnnouncementModal.tsx  # One-time announcement popup
+    EntitlementNotice.tsx  # Web soft block. SERVER component (no fetch, no flash of a "+ New trip" button the account can't use) rendering the per-blockReason copy from `lib/paywallCopy`. The trips page decides separately whether the list below it still renders — `refunded`/`revoked` are the only states that close existing trips.
     (+ AppNavbar, BottomNav, MobileFooter, Spinner, StatusBadge, etc.)
   lib/
     api.ts            # Client-side API helper
+    paywallPaths.ts   # The two allowlists: `PUBLIC_PATH_PREFIXES` (no session — imported BY middleware.ts, single source of truth) and `PAYWALL_EXEMPT_PREFIXES` (signed in, not entitled: adds /settings, /api/me, support, analytics). /privacy /terms /support are explicit entries in both; `paywallPaths.test.ts` fails if they leave, which is the unit-level half of e2e/legal-pages.spec.ts
+    paywallCopy.ts    # The four web block messages, one per BlockReason, sharing no string. Trial/subscription-over are sales moments; usage_cap and revoked point at support and never accuse. `APP_STORE_URL` reads NEXT_PUBLIC_APP_STORE_URL (falls back to an Apple search URL — the numeric id only exists after first submission)
     models.ts         # Central registry of hardcoded Anthropic model IDs (PENNY_MODEL, DATE_PARSE_MODEL, RANGE_ESTIMATE_MODEL, ONBOARDING_SCAN_MODEL)
     coords.ts         # Coordinate parsing/formatting (sync; Google/Apple Maps URLs, lat/lng)
     coordsResolve.ts  # Server-side Maps URL resolution (short-link redirects; scans page body for !3d!4d/@lat,lng; extracts the embedded google.com/maps?q=<addr> link and geocodes it; og:title place name as a last resort); used by api/coords/parse and Penny chat enrichment. NOTE (2026-07-01): short links MUST be fetched with a CRAWLER User-Agent (`SHORT_LINK_USER_AGENT` = facebookexternalhit) — a browser UA gets maps.app.goo.gl's JS-only interstitial with no coords/name/og-tags (the "links won't resolve" bug); the crawler UA is what makes Google embed the destination `?q=<address>` link that `extractEmbeddedMapsQuery` reads. Do NOT switch to a browser-like UA.
@@ -221,24 +224,27 @@ api/directions            api/gpx                 api/gpx/[id]
 api/tasks                 api/tasks/[id]
 api/pois                  api/coords/parse
 api/me                    api/me/preferences      api/me/identity
-api/me/delete
+api/me/delete             api/me/entitlement
+api/purchase/test         api/webhooks/revenuecat
 api/mobile/otp/send       api/mobile/otp/verify
 api/mobile/oauth/exchange
 api/support               api/analytics/viewport-time
 api/analytics/client-error
 api/admin/test-error      api/admin/announcements
+api/admin/subscription/revoke
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
 api/test/seed             api/test/trip
 api/test/cleanup          api/test/announcement
 api/test/otp              api/test/deletion
+api/test/subscription
 ```
 
 **`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
 
-### Schema (26 tables in `src/server/db/schema.ts`)
+### Schema (29 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers
+users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts
 
 **Account deletion — BUILT (migration 0024, 2026-08-20):** users can permanently delete their own account from Settings on **both** web and native. Apple guideline 5.1.1(v) requires an app that creates accounts to delete them *from inside the app*, so the native screen is the requirement and the web page is the mirror — not the other way round. **Immediate and unrecoverable by design: no grace period, no soft-delete, no undo.**
 
@@ -401,3 +407,56 @@ actually a React hydration crash, visible in the browser console in ten seconds.
 Point it at the deployed preview (the URL is pinned at the top of the PR), not a
 local dev server — the bugs that matter here only appear on a cold production
 build.
+
+**Subscriptions / paywall (migration 0025, 2026-08-26):** seven days free from
+`users.created_at`, then $2/month or $20/year through Apple IAP. Designed in
+`docs/design/subscriptions.md`; the numbers there came out of
+`scripts/lifetime-spend.ts` against production, not out of a hat.
+
+- **`src/server/payments/` is a BOUNDED MODULE and `index.ts` is its only
+  public surface.** This is a deliberate amendment to the `repos/` convention:
+  a repo file is a shared surface anything may call, and the whole value here
+  is that the number of places able to decide "this user has paid" stays at
+  one. The single public question is `hasEntitlement(userId)`. Nothing outside
+  the module imports `./states`, `./entitlements`, or the `subscriptions`
+  table.
+- **`states.ts` is a pure function with the clock passed in.** All twelve
+  account states are unit-tested by describing a moment rather than by writing
+  rows (`states.test.ts`). Three rules that are NOT obvious at a call site, and
+  are why no route re-derives this: cancelling does not end access (they paid
+  through `current_period_end`, and cancelling returns no money); the trial
+  ends on SPEND as well as age ($1 of Anthropic); comped accounts skip the cap
+  but still write `usage_events`.
+- **Gated routes:** `api/trip/replan`, `api/trips` (create),
+  `api/trips/[id]/clone`, `api/trips/[id]/onboarding` — all via
+  `requireEntitledUser()` in `auth/guards.ts`. Reads are NOT gated: viewing an
+  itinerary makes no Anthropic calls, and account deletion must never be gated
+  (App Store 5.1.1(v)). `api/trips/[id]/onboarding` had no cap of any kind
+  before this and runs three Anthropic calls.
+- **402 carries `code`/`state`/`blockReason`** via `HttpError.details`. Until
+  this, the only structured field on any error body was the log correlation id,
+  so clients could only branch on status.
+- **The paywall is a MESSAGE FROM PENNY, not a modal** — a UI-only `paywall`
+  flag on the chat message, riding the same rail as `truncated` and
+  `planningMedia`, never persisted. Copy is server-authored
+  (`payments/copy.ts` → `GET /api/me/entitlement`) so it changes without a
+  TestFlight binary. `mobile/app/paywall.tsx` exists because chat is
+  trip-scoped (`chat_history.trip_id` is NOT NULL) and a lapsed trial that
+  never made a trip had nowhere to be told.
+- **iOS zero-trip users auto-create a trip and land in Penny's chat.** The web
+  deliberately does not (`src/app/trips/page.tsx` says so) — a browser tab that
+  silently creates a row is surprising; a single-purpose phone app is the
+  opposite case. Guarded by a per-mount ref so it can't become a trip factory.
+- **`POST /api/purchase/test` grants a subscription without Apple**, restricted
+  to exact addresses in `SUBSCRIPTION_TEST_EMAILS` (empty by default — unset
+  grants nothing). It exists because StoreKit returns an EMPTY product list
+  until the Paid Applications Agreement is active, so there is no real sheet to
+  test against. Every grant writes `subscription_events` with `source: 'fake'`.
+  **Deleting this route is the last step of the RevenueCat migration** —
+  `docs/design/revenuecat-implementation.md`.
+- **`syncCompedFlagOnSignIn` must be called from BOTH sign-in paths** — the
+  Auth.js `signIn`/`createUser` events AND `createSessionForEmail` in
+  `auth/otp.ts`, which is not an Auth.js sign-in and is what OTP and
+  `/api/mobile/oauth/exchange` actually use. Wiring only the events left every
+  native sign-in on the column default. `syncAdminFlagOnSignIn` has always had
+  a call in both places for exactly this reason.
