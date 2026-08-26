@@ -176,14 +176,23 @@ jobs:
           ' | tee -a "$GITHUB_ENV"
 
       - name: Publish the OTA
+        id: ota
         if: steps.native.outputs.native == 'false'
         working-directory: mobile
         run: |
           set -euo pipefail
           MSG="$(git log -1 --pretty=%s)"
-          eas update --channel production --non-interactive --message "${GITHUB_SHA:0:7} ${MSG}"
+          # --platform ios, NOT the default of "all". `eas update` runs
+          # `expo export` under the hood, and with no `platforms` key in
+          # app.config.js, Expo assumes web is in scope too. This project has
+          # no react-native-web (the web app is the Next.js one, not Expo), so
+          # an export for "all" dies on a missing dependency before it
+          # bundles anything. iOS is the only platform with a binary out
+          # there, so it is the only one worth publishing for.
+          eas update --platform ios --channel production --non-interactive --message "${GITHUB_SHA:0:7} ${MSG}"
 
       - name: Build and submit to TestFlight
+        id: build
         working-directory: mobile
         env:
           # We know this is not an Expo Go build; the warning is noise in logs
@@ -199,31 +208,47 @@ jobs:
 
       - name: Summary
         if: always()
+        # Report what each step ACTUALLY did, not what the workflow set out to
+        # do. An earlier version keyed the OTA line off the native check alone,
+        # so run #4 announced "OTA: published" in the same breath as failing to
+        # publish it. A summary that can lie is worse than no summary.
         env:
-          STATUS: ${{ job.status }}
+          OTA: ${{ steps.ota.outcome }}
+          BUILD: ${{ steps.build.outcome }}
           NATIVE: ${{ steps.native.outputs.native }}
         run: |
           {
             echo "### Mobile"
             echo
-            case "${NATIVE:-}" in
-              false)
-                echo "- **OTA:** published to channel \`production\`. Testers get it on next launch."
+            case "${OTA:-}" in
+              success)
+                echo "- **OTA:** published to channel \`production\` for iOS. Testers get it on next launch."
                 ;;
-              true)
-                echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+              failure)
+                echo "- **OTA:** **publish failed** — nothing went out over the air. See the step log."
+                ;;
+              skipped)
+                if [ "${NATIVE:-}" = "true" ]; then
+                  echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                else
+                  echo "- **OTA:** skipped."
+                fi
                 ;;
               *)
-                # The native check never ran, so the job died in setup. Saying
-                # "skipped" here would blame a decision nothing had made yet.
-                echo "- **OTA:** not reached — the job failed before deciding."
+                echo "- **OTA:** not reached — the job failed before publishing."
                 ;;
             esac
-            if [ "$STATUS" = "success" ]; then
-              echo "- **TestFlight:** built and submitted. Visible once Apple finishes processing, usually 5-15 minutes."
-            else
-              echo "- **TestFlight:** **failed — nothing was submitted.** Check the step logs above."
-            fi
+            case "${BUILD:-}" in
+              success)
+                echo "- **TestFlight:** built and submitted. Visible once Apple finishes processing, usually 5-15 minutes."
+                ;;
+              failure)
+                echo "- **TestFlight:** **build or submit failed** — nothing was submitted. See the step log."
+                ;;
+              *)
+                echo "- **TestFlight:** not reached — the job failed before building."
+                ;;
+            esac
             echo
             echo "Builds: <https://expo.dev/accounts/samuelashirley/projects/feral-travels/builds>"
           } >> "$GITHUB_STEP_SUMMARY"
