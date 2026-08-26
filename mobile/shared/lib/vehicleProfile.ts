@@ -21,15 +21,22 @@ export const FUEL_STOP_SPACING_KM_MAX = 1500;
  */
 export const DEFAULT_MAX_DRIVE_HOURS_PER_DAY = 8;
 
-/** @deprecated Use {@link FUEL_STOP_SPACING_KM_MAX} */
-export const REFILL_DISTANCE_KM_MAX = FUEL_STOP_SPACING_KM_MAX;
+/**
+ * Guard a stored range for planning use: null unless a positive number; rounded.
+ * (If range-shaping logic ever exists — terrain modifiers, towing derate — it
+ * goes here in one place.)
+ */
+export function normalizeRangeKm(rangeKm: number | null): number | null {
+  if (rangeKm == null || rangeKm <= 0) return null;
+  return Math.round(rangeKm);
+}
 
 /**
  * Vehicles attached to trips or used for fuel planning must have refuel spacing
  * within product bounds. Shared by onboarding gating and API validation.
  */
 export function vehicleMeetsFuelPlanningMinimum(vehicle: Record<string, unknown>): boolean {
-  const r = vehicle.comfortable_range_km;
+  const r = vehicle.range_km;
   return (
     typeof r === 'number' &&
     Number.isInteger(r) &&
@@ -39,12 +46,12 @@ export function vehicleMeetsFuelPlanningMinimum(vehicle: Record<string, unknown>
 }
 
 /**
- * Validate an estimated comfortable range (km): a whole number inside the
+ * Validate an estimated fuel range (km): a whole number inside the
  * product band. Pure — shared by the onboarding range-help estimator
- * (`parseComfortableRange.ts`) so a hallucinated/out-of-band value can't be
+ * (`parseRangeEstimate.ts`) so a hallucinated/out-of-band value can't be
  * proposed. Returns the number or null.
  */
-export function validateComfortableKm(raw: unknown): number | null {
+export function validateRangeKm(raw: unknown): number | null {
   if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) {
     return null;
   }
@@ -54,8 +61,7 @@ export function validateComfortableKm(raw: unknown): number | null {
 
 export const VEHICLE_PROFILE_KEYS = [
   'name',
-  'comfortable_range_km',
-  'hard_max_range_km',
+  'range_km',
 ] as const;
 
 export type VehicleProfileFieldKey = (typeof VEHICLE_PROFILE_KEYS)[number];
@@ -101,10 +107,10 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       placeholder: 'e.g. Duncan',
     },
     {
-      key: 'comfortable_range_km',
+      key: 'range_km',
       kind: 'integer',
       group: 'driving',
-      label: `What's your comfortable driving range on a tank, in ${distLabel}?`,
+      label: `What's your driving range on a tank, in ${distLabel}?`,
       placeholder: distPlaceholder,
       help:
         'How far you’re happy to drive before you’d want to refuel — not the absolute ' +
@@ -113,20 +119,6 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
         '(Not sure? I can help you work it out.)',
       min: distMin,
       max: distMax,
-    },
-    {
-      key: 'hard_max_range_km',
-      kind: 'integer',
-      group: 'driving',
-      label: `What's your hard max fuel range, in ${distLabel}? This is the absolute furthest I'll ever route you on one tank for my fuel calculations.`,
-      placeholder: distPlaceholder,
-      help:
-        'The hard line I should never route you past on a single tank, for any reason — I use it ' +
-        'as the ceiling for fuel planning. Leave this blank and I’ll simply never send you beyond ' +
-        'your comfortable range. Must be the same as or further than your comfortable range.',
-      min: distMin,
-      max: distMax,
-      optional: true,
     },
   ];
 }
@@ -137,7 +129,7 @@ const STATIC_UNIT_SUFFIX: Partial<Record<VehicleProfileFieldKey, string>> = {};
 
 /**
  * Validate and parse one answer in the same units the user sees (miles for
- * imperial comfortable_range_km; all other fields are unit-agnostic).
+ * imperial range_km; all other fields are unit-agnostic).
  */
 export function coerceVehicleProfileValue(
   q: VehicleProfileQuestion,
@@ -194,7 +186,7 @@ export function humanizeVehicleProfileAnswer(
     const opt = q.options.find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
+  if (q.key === 'range_km') {
     return `${value}${units === 'imperial' ? ' mi' : ' km'}`;
   }
   return `${value}${STATIC_UNIT_SUFFIX[q.key] ?? ''}`;
@@ -211,7 +203,7 @@ export function formatVehicleProfileFieldDisplay(
     const opt = q.options.find((o) => o.value === value);
     return opt?.label ?? String(value);
   }
-  if (q.key === 'comfortable_range_km' || q.key === 'hard_max_range_km') {
+  if (q.key === 'range_km') {
     return `${value} ${units === 'imperial' ? 'mi' : 'km'}`;
   }
   return `${value}${STATIC_UNIT_SUFFIX[q.key] ?? ''}`;
@@ -225,15 +217,14 @@ export function vehicleProfileFieldHasValue(
   return raw !== null && raw !== undefined && raw !== '';
 }
 
-/** Profile completion counts. Hard-max is optional (safe-defaults to comfortable). */
+/** Profile completion counts. */
 export function vehicleProfileRequiredCompletion(vehicle: Record<string, unknown>): {
   filled: number;
   total: number;
 } {
   const questions = buildVehicleProfileQuestions('metric');
-  const applicable = questions.filter((q) => q.key !== 'hard_max_range_km');
-  const filled = applicable.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
-  return { filled, total: applicable.length };
+  const filled = questions.filter((q) => vehicleProfileFieldHasValue(vehicle, q)).length;
+  return { filled, total: questions.length };
 }
 
 /**
@@ -257,16 +248,14 @@ export function vehicleProfileGroupTitle(group: VehicleProfileFieldGroup): strin
 
 export interface VehicleProfileDraftInput {
   name: string;
-  comfortable_range_km: number | null;
-  /** Hard ceiling (km). Null ⇒ defaults to comfortable_range_km on save. */
-  hard_max_range_km: number | null;
+  range_km: number | null;
   is_default?: boolean;
 }
 
 /**
  * Validate draft using the same rules as onboarding; returns API-ready body
  * (snake_case vehicle fields + optional `is_default`). MVP profile is just the
- * vehicle name + comfortable range (+ optional hard-max ceiling).
+ * vehicle name + fuel range.
  */
 export function validateVehicleProfileDraftForSave(
   draft: VehicleProfileDraftInput,
@@ -281,7 +270,7 @@ export function validateVehicleProfileDraftForSave(
       if (q.key === 'name') {
         raw = draft.name;
       } else {
-        // comfortable_range_km | hard_max_range_km — unit-aware coercion.
+        // range_km — unit-aware coercion.
         const v = draft[q.key];
         if (v == null) raw = null;
         else if (units === 'imperial') {
@@ -306,22 +295,6 @@ export function validateVehicleProfileDraftForSave(
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Invalid value.';
       return { ok: false, error: msg };
-    }
-  }
-
-  // Hard-max range: the one safe default in this flow. When the driver gives no
-  // separate ceiling, it equals the comfortable range (conservative — Finn just
-  // never stretches). When given, it must never sit below comfortable.
-  const comfortableKm = payload.comfortable_range_km;
-  if (typeof comfortableKm === 'number') {
-    const hardMaxKm = payload.hard_max_range_km;
-    if (hardMaxKm == null) {
-      payload.hard_max_range_km = comfortableKm;
-    } else if (typeof hardMaxKm === 'number' && hardMaxKm < comfortableKm) {
-      return {
-        ok: false,
-        error: 'Hard-max range must be the same as or further than your comfortable range.',
-      };
     }
   }
 

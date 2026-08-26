@@ -8,13 +8,13 @@ export const UPDATE_VEHICLE = 'update_vehicle' as const;
 /**
  * LOCKED DOWN (2026-07-02): fuel_type ONLY.
  *
- * comfortable_range_km / hard_max_range_km were REMOVED from this tool. The
- * range numbers are safety-critical (Finn's "never run dry" math) and are now
- * writable ONLY via onboarding and Settings → Vehicle profile — never from
+ * range_km was REMOVED from this tool. The range number is
+ * safety-critical (Finn's "never run dry" math) and is now writable ONLY via
+ * onboarding and Settings → Vehicle profile — never from
  * chat. The bug this closes: "I'll need to get fuel within 250km of
  * tomorrow's drive" is a fuel REQUEST (route to Finn via plan_fuel_stops),
  * but Penny pattern-matched it as a range preference and silently rewrote
- * comfortable_range_km. Do not re-add the range fields here.
+ * range_km. Do not re-add the range fields here.
  */
 const dataSchema = z.object({
   /** Fuel the vehicle burns — drives which price Finn fetches. diesel | petrol. */
@@ -43,9 +43,9 @@ export const tool: Anthropic.Tool = {
 Save the vehicle's fuel type to the database. Call this when the user states what fuel their
 vehicle burns, e.g. "it's a diesel" / "runs on petrol". Defaults to diesel if never set.
 
-This tool can NOT change the vehicle's fuel-range numbers (comfortable range / hard-max
-ceiling). Those are safety numbers set only in onboarding or Settings → Vehicle profile.
-If the user wants to change them, tell them to do it in Settings → Vehicle profile.
+This tool can NOT change the vehicle's fuel range. That is a safety number set only in
+onboarding or Settings → Vehicle profile.
+If the user wants to change it, tell them to do it in Settings → Vehicle profile.
 If the user is asking about GETTING FUEL (where/when to refuel), that is a fuel request —
 call plan_fuel_stops instead; never treat it as a preference change.
 `.trim(),

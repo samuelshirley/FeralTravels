@@ -11,15 +11,15 @@ export const DECLARE_FUEL_STATE = 'declare_fuel_state' as const;
  * drive". This is the third fuel category alongside range PREFERENCES
  * (Settings-only) and fuel REQUESTS (plan_fuel_stops):
  *
- *   - It does NOT touch the vehicle's saved comfortable/hard-max range — those
- *     are durable safety numbers about the vehicle. The declaration is about
+ *   - It does NOT touch the vehicle's saved fuel range — that is a
+ *     durable safety number about the vehicle. The declaration is about
  *     the fuel in the tank right now, on this trip.
  *   - Finn's tank math treats it as the remaining-range baseline at the anchor
  *     leg's start, overriding the default "full tank at trip start". A real
  *     fuel stop after the anchor supersedes it (refuelling resets the tank).
  *
  * Origin incident (trip d0b5741b, 2026-07-12): the driver said their truck
- * would run dry 150 km into the next day's leg; the saved comfortable range
+ * would run dry 150 km into the next day's leg; the saved fuel range
  * (500 km) put Finn's stop at 181 km — past empty — and no tool existed to
  * feed the real tank state in. Penny could only argue or point at Settings
  * (which would have corrupted the durable range to fix a one-day problem).
@@ -56,13 +56,13 @@ export function validator(ctx: PennyContext) {
           'Tank state anchors to a DRIVE leg (the declaration means "this much range when I start driving this leg"). Anchor it to the next drive leg instead of a rest day.',
       });
     }
-    const hardMax = ctx.vehicle?.hard_max_range_km ?? ctx.vehicle?.comfortable_range_km ?? null;
-    if (hardMax != null && input.remaining_range_km > hardMax) {
+    const rangeCeiling = ctx.vehicle?.range_km ?? null;
+    if (rangeCeiling != null && input.remaining_range_km > rangeCeiling) {
       refCtx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['remaining_range_km'],
         message:
-          `remaining_range_km (${input.remaining_range_km}) exceeds the vehicle's hard-max range (${hardMax} km) — a tank cannot hold more than the vehicle's ceiling. ` +
+          `remaining_range_km (${input.remaining_range_km}) exceeds the vehicle's fuel range (${rangeCeiling} km) — a tank cannot hold more than the vehicle's range. ` +
           'If the user is saying their vehicle can actually go further, that is a range PREFERENCE: point them to Settings → Vehicle profile (see <vehicle_preference_updates>).',
       });
     }
@@ -87,7 +87,7 @@ export const tool: Anthropic.Tool = {
         type: 'number',
         minimum: 1,
         description:
-          'How many km the driver says they can cover from the start of that leg before running out of fuel. Must not exceed the vehicle\'s hard-max range.',
+          'How many km the driver says they can cover from the start of that leg before running out of fuel. Must not exceed the vehicle\'s fuel range.',
       },
     },
   },

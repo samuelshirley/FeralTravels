@@ -9,7 +9,7 @@ import {
   polylineLengthKm,
   type LatLng,
 } from '@/lib/polyline';
-import { computeEffectiveRangeKm } from '@/lib/penny/context';
+import { normalizeRangeKm } from '@/lib/vehicleProfile';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
   kmBurnedSinceLastRefuel,
@@ -39,7 +39,7 @@ import {
  *   3. Drop truck stops (`stationFilter.ts`).
  *   4. Project each remaining station onto the route (along-km + detour proxy).
  *   5. Run the greedy multi-stop placer (`finn/plan.ts`): never route past the
- *      hard-max ceiling, prefer comfortable range, minimise stop count.
+ *      vehicle's fuel range, minimise stop count.
  *   6. Replace previous auto fuel stops (source='google', status='option').
  *      User-picked / user-authored stops are never touched.
  *
@@ -204,7 +204,7 @@ export async function planFuelStopsForLeg(
   if (!vehicle) {
     return failLeg(legId, leg.tripId, userId, 'No vehicle on file for user');
   }
-  const range = computeEffectiveRangeKm(vehicle.comfortable_range_km);
+  const range = normalizeRangeKm(vehicle.range_km);
   if (!range) {
     return failLeg(
       legId,
@@ -213,10 +213,6 @@ export async function planFuelStopsForLeg(
       'Vehicle is missing a refill distance. Open Settings → Vehicle profile and tell Penny how far you want to drive between fuel stops.'
     );
   }
-  // Hard ceiling — never route a dry stretch past this. Defaults to the
-  // comfortable range when the user gave no separate ceiling (the invariant
-  // hard_max ≥ comfortable is enforced at every write path).
-  const hardMax = Math.max(range, vehicle.hard_max_range_km ?? range);
   // 3. Route geometry to project stations onto. Prefer the leg's already-stored
   //    Google geometry — zero extra API calls, and the fuel plan then matches
   //    the exact route drawn on the map. Fall back to a fresh Directions call
@@ -296,8 +292,7 @@ export async function planFuelStopsForLeg(
   // 5. Deterministic greedy placement.
   const plan = planLegFuelStops({
     legLengthKm: totalKm,
-    comfortableRangeKm: range,
-    hardMaxRangeKm: hardMax,
+    rangeKm: range,
     kmBurnedAtStart: kmAlreadyBurned,
     candidates,
   });
@@ -486,8 +481,7 @@ async function resolveVehicleForTrip(
   tripId: string | null,
   userId: string
 ): Promise<{
-  comfortable_range_km: number | null;
-  hard_max_range_km: number | null;
+  range_km: number | null;
   fuel_type: 'diesel' | 'petrol' | null;
 } | null> {
   if (tripId != null) {
@@ -518,12 +512,12 @@ type DeclaredTankAnchor = { legId: string; burnedKm: number };
  * anchor is a plain uuid, no FK — a deleted leg leaves a stale pointer that is
  * deliberately ignored, same contract as `trips.current_leg_id`).
  *
- * burnedKm = comfortable range − declared remaining km, clamped ≥ 0 (a driver
- * declaring MORE than the comfortable range is treated as a full tank).
+ * burnedKm = fuel range − declared remaining km, clamped ≥ 0 (a driver
+ * declaring MORE than the vehicle's range is treated as a full tank).
  */
 async function resolveDeclaredTankAnchor(
   tripId: string,
-  comfortableRangeKm: number
+  rangeKm: number
 ): Promise<DeclaredTankAnchor | null> {
   const rows = await db
     .select({
@@ -545,7 +539,7 @@ async function resolveDeclaredTankAnchor(
 
   return {
     legId: t.declaredRangeLegId,
-    burnedKm: Math.max(0, comfortableRangeKm - t.declaredRangeKm),
+    burnedKm: Math.max(0, rangeKm - t.declaredRangeKm),
   };
 }
 

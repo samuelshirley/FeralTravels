@@ -6,13 +6,13 @@ Bug list + scope cuts from the last deploy, grouped into 6 work items. Findings 
 
 1. **Two separate cost guards got conflated.** The "Continue planning" button is the **16-iteration LLM tool-use cap** (`src/lib/claude.ts:77`) — it fires because Penny serializes ~2 iterations per leg. The eager **Google Places fuel calls** are a *different* client-triggered replenish that runs after her turn. Fixing lazy fuel will NOT fix truncation, and vice-versa. They're docs 04 and 06.
 2. **"Finn" isn't broken.** `planFuelStopsForLeg` works. It's being *called* eagerly. Doc 06 fixes the trigger, not the algorithm.
-3. **Three asks are already built:** Settings already has inputs for both comfortable + hard-max range (`VehicleProfileSection.tsx:277-304`); returning users were already backfilled `hard_max = comfortable` (`drizzle/0011`); the range question already says "miles"/"kilometers" per the user's unit. Doc 02 just verifies these render.
+3. *(Superseded 2026-08-25: the comfortable/hard-max pair was collapsed to the single `range_km` — migration 0025.)*
 4. **The lazy+cached fuel design in CLAUDE.md is aspirational — not built.** No caching exists anywhere. Doc 06 is net-new, not a regression fix.
 5. **Removing travel-style has a hidden dependency:** `max_drive_hours_per_day` (drives the day-split) is *derived* from it. Doc 01 bakes an 8h/day default to replace it.
 
 ## Decisions locked (Sam, 2026-06-26)
 
-- Hard-max range question: **keep it, reword** for clarity ("hard max fuel range for my calculations"), fix the 500. Don't drop it.
+- ~~Hard-max range question~~ *(removed 2026-08-25 — single range question only; migration 0025 dropped the column)*.
 - Day-split default after removing travel-style: **8h/day, don't ask.**
 - Truncation: **auto-continue + raise cap + loading UX.**
 - Loading UX: **real ~30s dog-fetch video** (Sam to upload).
@@ -22,7 +22,7 @@ Bug list + scope cuts from the last deploy, grouped into 6 work items. Findings 
 | # | Doc | Size | Depends on |
 |---|-----|------|-----------|
 | 01 | [Onboarding teardown](01-onboarding-teardown.md) | S | — |
-| 02 | [Range reword + onboarding 500](02-range-and-500.md) | S | — |
+| 02 | ~~Range reword + onboarding 500~~ (doc removed 2026-08-25 with the hard-max question itself) | S | — |
 | 03 | [First-message intent scan](03-first-message-intent-scan.md) | L | 01 |
 | 04 | [Penny capacity: auto-continue + limits](04-penny-capacity.md) | M | — |
 | 05 | [Planning loading UX + dog video](05-loading-ux-video.md) | S/M | 04 (shares the long-wait state) |

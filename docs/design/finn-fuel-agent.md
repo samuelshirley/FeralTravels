@@ -16,7 +16,7 @@
 **Deciders:** Sam
 **Replaces (delete + rebuild):** the Google-Places fuel logic in `src/server/fuel.ts` / `fuelPlaces.ts` is **torn out** and rebuilt under a single new module, `src/lib/finn/`. This is a clean teardown, not an incremental migration — the old sampler accreted weird states partly because fuel logic was spread across Penny + server. Good *pure* logic (`fuelTankState.ts`) is **relocated into Finn, not deleted**.
 **Source material:** `docs/fuel-stop-agent-brief.md` + the 2026-06-26 design conversation. Read the brief first; this doc resolves its five open questions and adds the engineering detail (selection algorithm, scoring, schema, phasing).
-**Pairs with:** `docs/design/penny-comfortable-range-task.md` — Penny produces the single number Finn trusts (the "comfortable range"); Finn never derives it.
+**Pairs with:** Penny's onboarding/Settings flow — Penny produces the single number Finn trusts (`range_km`); Finn never derives it.
 
 ---
 
@@ -41,7 +41,7 @@ Forces at play: legal (Google ToS forbids storing/deriving datasets from their p
 
 The single most important architectural line, and the fix for the "weird states":
 
-- **Penny owns the conversation and produces a *perfect number*** — the validated comfortable range (+ fuel type + tank state) — and then **gets out of fuel logic entirely**. See `penny-comfortable-range-task.md`.
+- **Penny owns the conversation and produces a *perfect number*** — the validated fuel range (+ fuel type + tank state) — and then **gets out of fuel logic entirely**.
 - **Finn owns *everything* downstream of that number** — stations, gap/safety math, pricing, ranking, caching, the exception supervisor. He **starts from a clean, trusted input** and never re-interprets free text or trip prose.
 
 Previously Penny was doing both, so fuel state leaked across the chat boundary and drifted. After this split, the only thing crossing from Penny to Finn is structured, validated data — never "smart" free-text the way the lockdown invariants forbid.
@@ -92,8 +92,7 @@ debug endpoint). Runs on the OSM corridor result before everything below.
 
 Entering-tank state comes from `fuelTankState.ts` (continuous-drive model: only the trip-start full tank and *actual selected fuel stops* refill; rest days/overnights do **not**). Finn works with the **two numbers Penny already captures** (verified in code — migrations 0007/0011):
 
-- `comfortable_range_km` (**C**) — the everyday target distance between fills. Finn *aims* to refuel by here.
-- `hard_max_range_km` (**H**) — the absolute dry-stretch ceiling. Finn **never** routes past it. (`H ≥ C` enforced in `repos/vehicles.ts`; defaults to `C` when the user gives no separate ceiling.)
+- `range_km` (**R**) — the vehicle's fuel range. Finn **never** routes past it. *(Single metric since 2026-08-25 — the old comfortable (C) / hard-max (H) pair and the C→H stretch zone are gone; migration 0025.)*
 
 Both already reach Finn via `projectVehicle`. For a candidate at along-route distance `d` from the current fuel position (`B = kmBurnedSinceLastRefuel`):
 
@@ -102,13 +101,13 @@ safe       = (B + d) ≤ H        // hard constraint — never cross the absolut
 inComfort  = (B + d) ≤ C        // soft preference — ideally stop by here
 ```
 
-**Nothing past `H` is ever recommended** — that's the conservative bias, plus the `no_stations_found` honest-warning path for genuinely remote legs. *(Correction from an earlier draft: there is no double-reserve to fix — `computeEffectiveRangeKm` is already the identity function and the comfortable number is used as-is. Safety lives in the `C → H` gap, not a hidden 20% haircut.)*
+**Nothing past `R` is ever recommended** — that's the conservative bias, plus the `no_stations_found` honest-warning path for genuinely remote legs. The user's number is used as-is (no hidden haircut); the driver is told to state a range that already includes their reserve.
 
 ### 3. Comfort band (soft preference) — replaces the "450–500 / 1% margin" idea
 
 > **Pushback, carried from the design chat:** a hard 450–505 km window with a 1% reserve is both brittle (if no station sits in that thin band you're stranded) and unnecessary (if you always fill to full, stopping at 60% vs 90% costs the *same* fuel — the only real cost of stopping early is *more stops*, i.e. time). Replace it with a soft band, not a hard window.
 
-Prefer stops in the **upper part of the comfortable range** — default band ~**60–100% of `C`** consumed since last refuel — so the driver isn't refilling half-full and isn't cutting it fine. The band is a *scoring preference*, not a filter: if it's empty, Finn extends into the **`C → H` stretch zone** (Sam's "comfortable to 500, fine to 550 even on empty") before ever failing — but **never past `H`**. **"Fill once a day"** is a further soft nudge (most rigs at ~500 km/day need one fill), always subordinate to the `H` guardrail.
+Prefer stops in the **upper part of the range** — default band ~**60–100% of `R`** consumed since last refuel — so the driver isn't refilling half-full and isn't cutting it fine. The band is a *scoring preference*, not a filter — but **never past `R`**. **"Fill once a day"** is a further soft nudge (most rigs at ~500 km/day need one fill), always subordinate to the `R` guardrail.
 
 ### 4. Scoring (the "two-part decision," made explicit)
 
@@ -171,7 +170,7 @@ Rules:
 
 Finn is "really, really in-depth" precisely *here* — a set of small, pure, independently-testable math units. Each takes structured input and returns structured facts; none calls an LLM.
 
-1. **Range / reachability** — `safe = (B + d) ≤ H`; `inComfort = (B + d) ≤ C`, where `C = comfortable_range_km`, `H = hard_max_range_km`, `B = kmBurnedSinceLastRefuel`. Both numbers already exist and are used as-is (`computeEffectiveRangeKm` is identity).
+1. **Range / reachability** — `safe = (B + d) ≤ R`, where `R = range_km`, `B = kmBurnedSinceLastRefuel`. The number is used as-is.
 2. **Burn / tank state** — *exists* (`fuelTankState.ts`): continuous-drive model, only the trip-start full tank and actual fuel stops refill.
 3. **Gap math (safety)** — largest fuel-free stretch ahead vs reachable distance → the "fill now / carry N liters" alarm. Deterministic, never the LLM (see next section).
 4. **Detour math** — perpendicular distance to the polyline (cheap, ranks everything) → real Directions detour distance+time for finalists only. Classifies on-motorway-services (≈0) vs off-ramp vs in-town.
@@ -220,7 +219,7 @@ Unchanged from the brief — reproduced here as the binding contract:
 
 **Two-tier cache — the key realization.** A fuel stop is two facts with very different lifetimes, so cache them separately:
 
-1. **Station + placement** (which OSM station, where on the route, detour) — depends only on route geometry + the comfortable-range number. Invalidated *only* by `fuel_plan_hash` (route/waypoint/vehicle change). Lives for weeks. Expensive (Overpass + detour).
+1. **Station + placement** (which OSM station, where on the route, detour) — depends only on route geometry + the range number. Invalidated *only* by `fuel_plan_hash` (route/waypoint/vehicle change). Lives for weeks. Expensive (Overpass + detour).
 2. **Price** at that station — time-sensitive but *cheap* to refresh. Stored on the fuel-stop row as `price` + `price_as_of`.
 
 So Finn never re-runs the expensive corridor search just because prices aged. → **A separate, lightweight price-refresh path** (`POST /api/legs/[id]/fuel-stops/refresh-prices`) that walks the *existing* stops and re-queries only their prices. Pennies, not a full replan.
@@ -267,7 +266,7 @@ New clients: `src/lib/osm/` (Overpass) and `src/lib/fuelPricing/` (a `PriceProvi
 
 Finn should be a **hard-walled module in the existing app and database**, not a separate deployable service and **not** a separate database.
 
-- **One database (Neon).** Finn's inputs — route geometry, tank state, the comfortable-range number, prior selected stops — already live here, and the `stops` table *is* his cache. A second DB turns every plan into a cross-database sync problem for zero current benefit. Any new fuel tables (OSM station cache, price snapshots) go in the same DB.
+- **One database (Neon).** Finn's inputs — route geometry, tank state, the range number, prior selected stops — already live here, and the `stops` table *is* his cache. A second DB turns every plan into a cross-database sync problem for zero current benefit. Any new fuel tables (OSM station cache, price snapshots) go in the same DB.
 - **A module, not a microservice.** `src/lib/finn/` (or `src/lib/fuel/`) behind one clean interface, with `src/lib/osm/` and `src/lib/fuelPricing/` as its data adapters. A separate deployable service buys independent scaling Finn doesn't need pre-revenue and costs latency, inter-service auth, and ops. **Design the seam so Finn *could* be extracted later** — don't pay for it now.
 - **The one real "service" concern is execution time, not topology.** Overpass + price-feed calls are slow and Vercel functions time out. Solve that by running planning as a **background job that writes the cache** (the "Find fuel stops" button kicks off async work + the UI polls), *not* by standing up a separate database or server.
 

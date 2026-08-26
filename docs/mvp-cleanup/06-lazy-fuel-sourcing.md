@@ -17,7 +17,7 @@
 1. **Build the skeleton eagerly, fuel lazily.** Initial plan creates legs/routes only. No fuel calls during the plan turn. Remove/guard both eager triggers above.
 2. **On day-open, fetch fuel for that leg.** When the user expands a day in the itinerary (`Itinerary.tsx` / `src/components/stops/StopsSection.tsx`), call `POST /api/legs/[id]/fuel-stops` for that leg only — no button (per CLAUDE.md).
 3. **Cache with a timestamp.** Persist fuel stops + a `fuel_stops_updated_at` per leg. On day-open: fresh cache → render; **stale** cache → cheap price/availability re-check rather than a full re-search; empty → full search. (No caching exists today — this is new. Pick the staleness window, e.g. 24–72h.)
-4. **Finn contract is ready:** `comfortable_range_km` + `hard_max_range_km` already projected via `projectVehicle` (`hard_max ?? comfortable`). Lazy call passes both; Finn treats hard_max as the never-exceed ceiling and attaches a forced-stop reason for geography-forced top-ups (per CLAUDE.md — out of scope to *build* here, but the interface must carry both numbers + the reason field).
+4. **Finn contract is ready:** the vehicle's range projected via `projectVehicle`. Finn treats it as the never-exceed ceiling and attaches a forced-stop reason for geography-forced top-ups (per CLAUDE.md — out of scope to *build* here, but the interface must carry the number + the reason field). *(Was a comfortable/hard-max pair; single `range_km` since 2026-08-25.)*
 
 ## Watch-outs
 - `report_position` / leg edits should invalidate only the **affected** leg's cache, not re-fan-out the whole trip.
