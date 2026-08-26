@@ -214,12 +214,142 @@ API, so the API must know subscription state.
   retry. Key on the transaction/event id.
 - Never trust a client-supplied receipt as proof of anything.
 
+## Account states
+
+Eleven states. Every one needs a test.
+
+| # | State | How you get there | App | Web |
+|---|---|---|---|---|
+| 1 | `trial` | < 7 days old, < $1 Anthropic | Full | Full |
+| 2 | `trial_spent` | < 7 days but >= $1 Anthropic | Paywall | Soft block |
+| 3 | `trial_expired` | >= 7 days, never subscribed | Paywall | Soft block |
+| 4 | `subscribed` | Active IAP, < $2/12mo | Full | Full |
+| 5 | `subscribed_watch` | Active, $2-$8.50/12mo | Full — user sees nothing, we get an email | Full |
+| 6 | `subscribed_capped` | Active, >= $8.50/12mo | Soft block + support message | Soft block |
+| 7 | `cancelled_in_period` | Auto-renew off, before period end | **Full** | **Full** |
+| 8 | `expired` | Period ended, no renewal | Paywall | Soft block |
+| 9 | `billing_grace` | Payment failed, Apple retrying | Full + banner | Full |
+| 10 | `refunded` | Apple issued a refund | Blocked immediately | Blocked |
+| 11 | `comped` | Allowlist | Full, no cap | Full |
+
+## Cancel, expire, refund and grace are four different things
+
+**This corrects the original plan**, which treated cancellation as an
+immediate block. It is not, and shipping it that way would be taking money
+for access we then withheld.
+
+- **Cancel** — the user turns off auto-renew. They have already paid
+  through `expires_date`. **Access continues unchanged until then.**
+  Someone who cancels on day 3 of an annual plan keeps the app for 362
+  more days. Blocking them earns a refund request and a one-star review,
+  and deserves both.
+- **Expire** — the paid period actually ended. *Now* they hit the paywall.
+- **Refund** — Apple returned the money. Revoke immediately, no grace.
+- **Billing grace period** — renewal payment failed and Apple is retrying.
+  Apple offers this as an App Store Connect setting and it should be
+  **on**: keep full access, show a "fix your payment method" banner. These
+  users want to pay; the card expired. Blocking them converts a billing
+  hiccup into a cancellation.
+
+### Refunds are Apple's decision, not ours
+
+"Refund only if they used less than 50%" is not a policy we can enforce.
+The user asks *Apple*; Apple decides; we find out afterwards via a `REFUND`
+notification. There is no API where we approve or deny.
+
+What we actually get is one advisory lever: when a refund is requested,
+Apple may send a `CONSUMPTION_REQUEST` notification asking for consumption
+data, which we answer through the App Store Server API. Supplying honest
+usage — trips planned, LLM calls, dollars consumed — is what informs Apple
+on an abusive request. It improves the odds. It does not decide them.
+
+So the policy becomes: **answer consumption requests with real numbers, and
+revoke on `REFUND`.** Anything stronger is a policy we would be unable to
+keep.
+
+## Comped accounts
+
+Two kinds, one mechanism:
+
+- `samuelashirley@gmail.com` — the author's account.
+- E2E fixture addresses — `playwright-*@e2e.feraltravels.com`.
+
+Follow the `users.isAdmin` precedent exactly, including its comment:
+*"Mirrors admin allowlist at sign-in; never infer admin from email alone."*
+A `comped` boolean on `users`, set from an allowlist at sign-in — never an
+email compared inside a paywall check. An entitlement test that does string
+matching on email is one typo away from comping `@gmail.com`.
+
+Comped accounts skip the paywall **and** the usage cap, but still write
+`usage_events`, or the author's own spend vanishes from the numbers this
+whole document is built on.
+
+## E2E coverage
+
+### The fixture endpoint
+
+A new `/api/test/subscription` following the existing guard in
+`src/server/auth/test-endpoints.ts` — no new pattern, no weakening:
+
+- 404 unless `areTestEndpointsEnabled()` — which is `false` on
+  `VERCEL_ENV === 'production'` with no override, ever.
+- `x-e2e-test-secret` when `E2E_TEST_ENDPOINTS_SECRET` is set.
+- **Refuses any address failing `FIXTURE_EMAIL_PATTERN`**, secret or not.
+
+That last rule is the whole safety argument. Without it this is an endpoint
+that grants free subscriptions, and the existing guard file already says
+why the address shape rather than a config flag is the boundary: *"a guard
+you can widen with an env var is not a guard."*
+
+It sets fixture state only: `users.created_at` (to age an account past day
+7 without waiting a week), subscription status and period end, and a
+synthetic `usage_events` total. It mints no sessions — sign-in stays real
+OTP or real OAuth, matching the existing rule that there is *no* sign-in
+bypass anywhere in this codebase.
+
+### The specs
+
+| Spec | Sets up | Asserts |
+|---|---|---|
+| `sub-trial-day0` | Fresh fixture user | No paywall. Can create a trip and talk to Penny |
+| `sub-trial-day6` | `created_at` = 6 days ago | Still no paywall |
+| `sub-trial-day7` | `created_at` = 7 days ago | Paywall modal on open. Both prices shown. App behind it |
+| `sub-trial-spend` | 3 days old, $1.20 of usage | Paywall fires on spend, not age |
+| `sub-purchase` | Day 7 + sandbox IAP | Purchase completes, modal dismisses, trip creation works |
+| `sub-flag-flip` | Subscription row set directly | Access granted without the app ever seeing a receipt — proves the server, not the client, is the authority |
+| `sub-watch` | Active, $3 of usage | User sees **nothing**. Alert email queued once |
+| `sub-capped` | Active, $9 of usage | Soft block + support message. Existing trips still readable |
+| `sub-cancelled` | Auto-renew off, period ends in 30d | **Full access.** The regression this table exists to prevent |
+| `sub-expired` | Period ended yesterday | Paywall |
+| `sub-grace` | Billing retry state | Full access + banner |
+| `sub-refunded` | Refund notification processed | Blocked immediately, including existing trips |
+| `sub-comped` | Fixture/allowlist account | No paywall, no cap, `usage_events` still written |
+| `sub-web-signed-out` | No session | Landing page + App Store link. **Not** a bare wall |
+| `sub-web-unsubscribed` | Signed in, expired | "Continue on iPhone", trips readable |
+| `sub-legal-still-public` | Paywall enabled | `/privacy`, `/terms`, `/support` return 200 signed out |
+
+`sub-legal-still-public` overlaps `e2e/legal-pages.spec.ts` on purpose. That
+spec exists because the pages were once unreachable signed-out, and a
+site-wide paywall is the most likely way to break them again.
+
+### Webhook tests
+
+Unit, not E2E — replay real RevenueCat/ASSN payloads against the handler:
+
+- Each notification type maps to the right state.
+- **Idempotent**: the same event id twice changes nothing. Both Apple and
+  RevenueCat retry, so this will happen in production.
+- Out-of-order delivery: a stale `DID_RENEW` arriving after `REFUND` must
+  not resurrect access.
+- An unknown notification type is logged and ignored, never fatal.
+
 ## Open questions
 
-- Which grandfathering, if any, for the 29 existing accounts? They predate
-  all of this and several are the author's.
-- Does the 40% of signups who never make a single LLM call (12 of 29)
-  represent an activation problem that matters more than any of this?
-  A 7-day paywall converts nobody who never reached value in week one.
-- Refunds and Apple's cancellation flow: what happens to a trip created
-  while subscribed, after a refund?
+- Refund edge case: a trip planned while subscribed, then refunded. State
+  10 blocks the account, so the data survives but is unreachable. Is that
+  right, or should refunded users keep read-only access to what they made?
+- Sandbox vs production StoreKit in CI: sandbox purchases need an Apple
+  sandbox tester account, which does not fit the fixture-email pattern.
+  `sub-purchase` may have to be a manual pre-release check rather than CI.
+- Does `subscribed_watch` need a user-visible signal at all, or is silence
+  right until the hard cap?
