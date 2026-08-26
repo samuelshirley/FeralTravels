@@ -268,6 +268,16 @@ export default async function AdminPage() {
           >
             signed in as {session.user.email}
           </div>
+          {/* Disposable paywall accounts. A plain link rather than a stat card:
+              it has no number worth a card, and it is the one admin page that
+              CREATES users rather than reporting on them. */}
+          <Link
+            href="/admin/test-users"
+            className={styles.seeAllLink}
+            style={{ marginLeft: 'auto' }}
+          >
+            Test users &rarr;
+          </Link>
         </div>
 
         <div className={styles.statsGrid}>

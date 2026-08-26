@@ -29,7 +29,7 @@ import 'server-only';
  *    plainly — *"a guard you can widen with an env var is not a guard"* — which
  *    is exactly why this half is in code.
  *
- * 2. `SUBSCRIPTION_TEST_PURCHASES=1`, which defaults to OFF.
+ * 2. `SUBSCRIPTION_TESTING=1`, which defaults to OFF.
  *
  *    The pattern says who could; this says whether anyone can right now. It is
  *    the switch to flip off the moment RevenueCat is live, without a deploy,
@@ -52,7 +52,7 @@ type EnvLike = Record<string, string | undefined>;
 
 /** The arming switch. Off unless explicitly set to `1`. */
 export function testPurchasesArmed(env: EnvLike = process.env): boolean {
-  return env.SUBSCRIPTION_TEST_PURCHASES === '1';
+  return env.SUBSCRIPTION_TESTING === '1';
 }
 
 export function isTestPurchaseAllowed(

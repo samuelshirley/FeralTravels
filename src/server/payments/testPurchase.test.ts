@@ -7,7 +7,7 @@ vi.mock('server-only', () => ({}));
 
 import { isTestPurchaseAllowed, isTestPurchaseAddress } from './testPurchase';
 
-const ON = { SUBSCRIPTION_TEST_PURCHASES: '1' };
+const ON = { SUBSCRIPTION_TESTING: '1' };
 const OFF = {};
 
 describe('test-purchase gate', () => {

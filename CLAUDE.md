@@ -232,6 +232,7 @@ api/support               api/analytics/viewport-time
 api/analytics/client-error
 api/admin/test-error      api/admin/announcements
 api/admin/subscription/revoke
+api/admin/test-users
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
 api/test/seed             api/test/trip
@@ -451,7 +452,7 @@ build.
   conditions, both required: the address matches
   `sam+trial-<tag>@feraltravels.com` — hardcoded in `payments/testPurchase.ts`
   where no env var can widen it, same argument as `FIXTURE_EMAIL_PATTERN` — AND
-  `SUBSCRIPTION_TEST_PURCHASES=1`, which is off by default. A PATTERN rather
+  `SUBSCRIPTION_TESTING=1`, which is off by default. A PATTERN rather
   than a list because every test run wants a NEW account: reusing one address
   tests an aged account, not a trial, and once it carries a subscription row
   `created_at` decides nothing. `npm run trial-account new` prints a fresh
@@ -460,6 +461,22 @@ build.
   Every grant writes `subscription_events` with `source: 'fake'`. **Deleting
   this route is the last step of the RevenueCat migration** —
   `docs/design/revenuecat-implementation.md`.
+- **`/admin/test-users` creates disposable paywall accounts** —
+  `payments/testAccounts.ts`, armed by `SUBSCRIPTION_TESTING=1`, every action
+  refusing any address outside `sam+trial-<tag>@feraltravels.com`. Nine
+  one-click presets, each producing a real account state. It hands back the
+  address, a REAL sign-in code, and a `/login/verify?email=…` link to paste
+  into an incognito window. **There is deliberately no "sign in as this user"
+  action** — the auth guard test in `src/lib/` fails the suite on anything
+  resembling one, and it caught the first draft of the comment explaining this.
+  What the page removes is the mailbox, not a step of authentication: the code
+  goes through the real verify form and the real verifier with its expiry and
+  attempt limits. Same trade `/api/test/otp` makes for E2E.
+  **The `resend` action is the sharp edge** — it reaches `sendOtpCode` directly
+  and returns the code, so the address assert sits in the ROUTE, before the
+  call. Without it an admin could be handed a working sign-in code for any
+  user's account. `testAccounts.test.ts` exists to make removing it loud.
+
 - **`syncCompedFlagOnSignIn` must be called from BOTH sign-in paths** — the
   Auth.js `signIn`/`createUser` events AND `createSessionForEmail` in
   `auth/otp.ts`, which is not an Auth.js sign-in and is what OTP and

@@ -38,3 +38,16 @@ export { applySubscriptionEvent, decideFromEvent, isKnownEventType } from './web
 export type { WebhookOutcome, WebhookResult, WebhookDeps, EventDecision } from './webhook';
 export { revenueCatWebhookSchema, normalizeWebhookEvent } from './schemas';
 export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schemas';
+export {
+  createTestAccount,
+  listTestAccounts,
+  readTestAccountOtp,
+  resetTestAccount,
+  ageTestAccount,
+  deleteTestAccount,
+  assertTestAddress,
+  generateTestEmail,
+  NotATestAccountError,
+} from './testAccounts';
+export type { TestAccountSummary, CreateTestAccountInput } from './testAccounts';
+export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
