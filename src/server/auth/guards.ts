@@ -4,6 +4,9 @@ import { headers } from 'next/headers';
 import { db } from '@/server/db/client';
 import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
+import { getAccountVerdict, maybeAlertThreshold } from '@/server/payments';
+import type { AccountVerdict } from '@/server/payments';
+import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
 
 // The error classes live in ./errors so modules that only throw them (e.g.
 // oauthIdentity.ts) can skip this file's Auth.js + DB import chain. Re-exported
@@ -14,8 +17,15 @@ export {
   ForbiddenError,
   NotFoundError,
   ConflictError,
+  PaymentRequiredError,
 } from './errors';
-import { HttpError, UnauthorizedError, ForbiddenError, NotFoundError } from './errors';
+import {
+  HttpError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  PaymentRequiredError,
+} from './errors';
 
 /**
  * Mobile auth: resolve a `Authorization: Bearer <token>` header against the
@@ -96,6 +106,72 @@ export async function requireUser(): Promise<{
     return { id: bearer.id, email: bearer.email, isAdmin: admin };
   }
   throw new UnauthorizedError();
+}
+
+/**
+ * `requireUser()` plus the paywall.
+ *
+ * Every route that can spend Anthropic money goes through this instead of
+ * `requireUserId()`. The rule it enforces is NOT re-derivable at the call
+ * site — cancellation does not end access, comped accounts skip the usage cap,
+ * the trial ends on spend as well as on age — so no route is allowed to
+ * reimplement it from a status column or a date. `src/server/payments` owns
+ * the question; this is the only place a route asks it.
+ *
+ * Returns the verdict alongside the user, because the callers that need to
+ * gate also tend to need the state (for the alert layer, for logging).
+ *
+ * NOT applied to reads. Viewing an existing itinerary makes no Anthropic
+ * calls, so leaving it readable costs nothing and avoids stranding somebody
+ * mid-road-trip with a plan they can no longer see. Account deletion must
+ * never be gated either — Apple requires it reachable in-app, and a paywall
+ * in front of "delete my account" is the version of this that gets the app
+ * rejected.
+ */
+export async function requireEntitledUser(): Promise<{
+  id: string;
+  email: string | null;
+  isAdmin: boolean;
+  verdict: AccountVerdict;
+}> {
+  const user = await requireUser();
+  const verdict = await getAccountVerdict(user.id);
+
+  // Crossing a threshold mails support once. Fired here rather than inside the
+  // resolver so the pure state machine stays free of side effects, and fired
+  // even when the user is still entitled — the $2 watch line exists precisely
+  // to warn us before anybody is blocked.
+  if (verdict.crossedWatch || verdict.crossedStop) {
+    void maybeAlertThreshold(user.id, verdict.spendMicrocents, {
+      watch: verdict.crossedWatch,
+      stop: verdict.crossedStop,
+    });
+  }
+
+  if (!verdict.entitled) {
+    throw new PaymentRequiredError(paywallMessage(verdict.blockReason), {
+      code: PAYWALL_ERROR_CODE,
+      state: verdict.state,
+      blockReason: verdict.blockReason,
+    });
+  }
+  return { ...user, verdict };
+}
+
+/**
+ * The 402 `error` string. Deliberately terse — the real copy is Penny's, and
+ * it comes from `/api/me/entitlement` so it can change without a new binary.
+ * This is what lands in a log line and in any client that ignores `code`.
+ */
+function paywallMessage(reason: AccountVerdict['blockReason']): string {
+  switch (reason) {
+    case 'usage_cap':
+      return 'Planning is paused on this account. Email support@feraltravels.com.';
+    case 'revoked':
+      return 'Access to this account is closed.';
+    default:
+      return 'Subscribe to keep planning.';
+  }
 }
 
 // Admin authorization lives in src/server/auth/admin.ts — hardcoded allowlist
@@ -229,7 +305,7 @@ export function errorResponse(err: unknown): Response {
     // 4xx errors: log at warn level (expected client errors)
     console.warn(`[${errorId}] HTTP ${err.status}: ${err.message}`);
     return Response.json(
-      { error: err.message, errorId },
+      { error: err.message, errorId, ...(err.details ?? {}) },
       { status: err.status },
     );
   }

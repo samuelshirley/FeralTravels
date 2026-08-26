@@ -7,6 +7,7 @@ import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { syncAdminFlagOnSignIn } from './admin';
+import { syncCompedFlagOnSignIn } from '@/server/payments';
 import { cookies } from 'next/headers';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -298,6 +299,16 @@ export async function createSessionForEmail(
   // create path (once in the branch, once after it), which was redundant —
   // it is idempotent and takes the same argument both times.
   await syncAdminFlagOnSignIn(normalized).catch(() => {});
+
+  // The comped flag needs the same treatment, and this path is the reason it
+  // needs saying twice. `createSessionForEmail` is NOT an Auth.js sign-in — it
+  // is the mint behind the OTP flow and behind /api/mobile/oauth/exchange, so
+  // the `signIn`/`createUser` events never fire for it. Wiring comped only
+  // into those events left every OTP and every native sign-in with the column
+  // default, which is the wrong answer for the author's own account and for
+  // every E2E fixture. The admin flag has always had a call here for exactly
+  // this reason; comped follows it.
+  await syncCompedFlagOnSignIn(normalized).catch(() => {});
 
   // 2. Create a database session.
   const sessionToken = crypto.randomUUID();

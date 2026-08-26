@@ -7,7 +7,7 @@ import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
 import { restLegBlockedFields, restLegEditRejectionMessage } from '@/lib/penny/tools/updateLeg';
 import {
-  requireUser,
+  requireEntitledUser,
   assertTripOwnedByUser,
   assertLegOwnedByUser,
   assertRouteOwnedByUser,
@@ -257,7 +257,11 @@ export async function POST(req: Request) {
   /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
   let userTurnSaved = false;
   try {
-    const { id: userId, isAdmin: isAdminUser } = await requireUser();
+    // requireEntitledUser, not requireUser: this is the route that spends
+    // Anthropic money, so it is the one the paywall exists for. It throws a
+    // 402 carrying `code`/`state`/`blockReason`, which both clients branch on
+    // to render Penny's paywall message instead of a red error bubble.
+    const { id: userId, isAdmin: isAdminUser } = await requireEntitledUser();
     userIdForLog = userId;
     const body = inputSchema.parse(await req.json());
     tripIdForLog = body.tripId;

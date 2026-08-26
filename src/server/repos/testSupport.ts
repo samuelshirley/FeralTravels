@@ -12,8 +12,22 @@ import {
   oauthTokenUses,
   verificationTokens,
   usageEvents,
+  usageAlerts,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
+/**
+ * Payments is imported through its ONE public surface, never by reaching into
+ * `./entitlements` or the `subscriptions` table — the whole value of that
+ * module is that the number of places able to write "this user has paid"
+ * stays at one, and a test helper is not an exception to that.
+ */
+import {
+  MICROCENTS_PER_DOLLAR,
+  STOP_MICROCENTS,
+  WATCH_MICROCENTS,
+  upsertSubscription,
+} from '@/server/payments';
+import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
 import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
 import { addVehicle, getDefaultVehicleId } from './vehicles';
 import { createTrip, addLeg } from './trips';
@@ -499,4 +513,194 @@ export async function deleteUsageByMarker(marker: string): Promise<{ deleted: nu
     .where(eq(usageEvents.provider, marker))
     .returning({ id: usageEvents.id });
   return { deleted: rows.length };
+}
+
+// ── Subscription fixture state ──────────────────────────────────────────────
+
+/**
+ * The `provider` on every synthetic spend row {@link setSubscriptionFixtureState}
+ * writes.
+ *
+ * Two constraints meet here and only one string satisfies both. It must start
+ * with `anthropic` or `anthropicMicrocentsInWindow` (`provider LIKE
+ * 'anthropic%'`) will not count it and the cap specs would assert against a
+ * total of zero — the green-but-empty failure mode. And it must be
+ * unmistakably synthetic to anyone reading `/admin/errors` or the spend
+ * numbers, because on a preview those rows sit in a copy-on-write clone of
+ * production data.
+ */
+const SUBSCRIPTION_FIXTURE_PROVIDER = 'anthropic:e2e-subscription-fixture';
+
+export interface SubscriptionFixtureInput {
+  email: string;
+  /**
+   * REQUIRED, and deliberately not defaulted.
+   *
+   * `isCompedEmail` matches the fixture pattern, so every
+   * `playwright-*@e2e.feraltravels.com` address is comped BY DESIGN — and a
+   * comped account can never be paywalled, which would turn every paywall
+   * assertion in the suite into an assertion about nothing. A default here is
+   * exactly how that silence would get introduced, so each caller has to say
+   * which side of the line its fixture user is on.
+   *
+   * (Today the web OTP path does not call `syncCompedFlagOnSignIn` at all —
+   * only the Auth.js events do — so a fixture user signed in by code lands
+   * with `comped = false` from the column default. That is an accident, not a
+   * guarantee, and the specs must not lean on it either way.)
+   */
+  comped: boolean;
+  /** Age the account. Resolved against the SERVER's clock, not the runner's. */
+  createdAtDaysAgo?: number | null;
+  /** Replaces the synthetic spend total for this user. 0 clears it. */
+  anthropicSpendUsd?: number | null;
+  /**
+   * Plant the `usage_alerts` claim rows for any threshold the synthetic spend
+   * crosses, so `maybeAlertThreshold` finds the row already taken and skips
+   * the send.
+   *
+   * Default true, because the alternative is that every CI run mails
+   * support@feraltravels.com two or three times about fake spend on an
+   * address that cannot receive mail. This is not a new suppression mechanism:
+   * it is the SAME row, with the same primary key, that stops a capped user
+   * mailing support a hundred times in an afternoon.
+   *
+   * The cost is that no spec can assert the alert fires. Nothing here could
+   * have: the send is fire-and-forget through Resend with no vantage point on
+   * this side. It is covered by the payments unit tests, not by Playwright.
+   */
+  suppressThresholdAlerts?: boolean;
+  /**
+   * Written through `upsertSubscription` — the module's single writer of that
+   * table — so a fixture row cannot be shaped in a way a real one could not.
+   *
+   * There is deliberately no way to REMOVE a row: a spec that needs an account
+   * with no subscription uses a fresh user, which has none.
+   */
+  subscription?: {
+    status: SubscriptionStatus;
+    source?: SubscriptionSource;
+    productId?: string | null;
+    autoRenew?: boolean;
+    /** Negative for a period that has already ended. Null means "no end date". */
+    currentPeriodEndDaysFromNow?: number | null;
+  } | null;
+}
+
+export interface SubscriptionFixtureState {
+  userId: string;
+  createdAt: string;
+  comped: boolean;
+  anthropicMicrocents: number;
+  subscriptionStatus: SubscriptionStatus | null;
+  currentPeriodEnd: string | null;
+}
+
+/**
+ * TEST-ONLY: put a fixture account into one of the eleven account states.
+ *
+ * Sets STATE, never entitlement: it writes the same four things a real account
+ * accumulates — its age, its comp flag, its Anthropic spend and its
+ * subscription row — and then lets `getAccountVerdict` reach whatever verdict
+ * those facts imply. Nothing here decides that a user is entitled, which is
+ * what makes the specs built on it worth running: they exercise the real
+ * resolver against real rows.
+ *
+ * The user must already exist. This does not create accounts, and it mints no
+ * session — sign-in stays the real OTP flow.
+ */
+export async function setSubscriptionFixtureState(
+  opts: SubscriptionFixtureInput,
+): Promise<SubscriptionFixtureState> {
+  assertEnabled();
+  const normalized = opts.email.trim().toLowerCase();
+  // Belt and braces: the route refuses a non-fixture address too. This is the
+  // check that survives someone adding a second caller.
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('setSubscriptionFixtureState: not a fixture address');
+  }
+
+  const found = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+  if (!found[0]) throw new Error('setSubscriptionFixtureState: no such user');
+  const userId = found[0].id;
+
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  const patch: { comped: boolean; createdAt?: Date } = { comped: opts.comped };
+  if (opts.createdAtDaysAgo != null) {
+    patch.createdAt = new Date(now.getTime() - opts.createdAtDaysAgo * dayMs);
+  }
+  await db.update(users).set(patch).where(eq(users.id, userId));
+
+  // Spend: one row, replaced wholesale, so calling this twice on one user is
+  // idempotent rather than cumulative.
+  await db
+    .delete(usageEvents)
+    .where(
+      and(eq(usageEvents.userId, userId), eq(usageEvents.provider, SUBSCRIPTION_FIXTURE_PROVIDER)),
+    );
+  const microcents =
+    opts.anthropicSpendUsd != null ? Math.round(opts.anthropicSpendUsd * MICROCENTS_PER_DOLLAR) : 0;
+  if (microcents > 0) {
+    await db.insert(usageEvents).values({
+      userId,
+      provider: SUBSCRIPTION_FIXTURE_PROVIDER,
+      requests: 1,
+      costMicrocents: microcents,
+      success: true,
+    });
+  }
+
+  // Alert claims. Cleared first so lowering the spend on a reused user does
+  // not leave a stale claim behind.
+  await db.delete(usageAlerts).where(eq(usageAlerts.userId, userId));
+  if (opts.suppressThresholdAlerts !== false) {
+    const crossed: Array<'watch' | 'stop'> = [];
+    if (microcents >= WATCH_MICROCENTS) crossed.push('watch');
+    if (microcents >= STOP_MICROCENTS) crossed.push('stop');
+    for (const threshold of crossed) {
+      await db
+        .insert(usageAlerts)
+        .values({ userId, threshold, microcentsAtFiring: microcents })
+        .onConflictDoNothing();
+    }
+  }
+
+  let currentPeriodEnd: Date | null = null;
+  if (opts.subscription) {
+    const sub = opts.subscription;
+    currentPeriodEnd =
+      sub.currentPeriodEndDaysFromNow == null
+        ? null
+        : new Date(now.getTime() + sub.currentPeriodEndDaysFromNow * dayMs);
+    await upsertSubscription({
+      userId,
+      status: sub.status,
+      // `fake` is the source that "never exists in production data" — the
+      // correct label for a subscription nobody paid for.
+      source: sub.source ?? 'fake',
+      productId: sub.productId ?? null,
+      currentPeriodEnd,
+      autoRenew: sub.autoRenew ?? true,
+    });
+  }
+
+  const [userRow] = await db
+    .select({ createdAt: users.createdAt, comped: users.comped })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  return {
+    userId,
+    createdAt: userRow.createdAt.toISOString(),
+    comped: userRow.comped,
+    anthropicMicrocents: microcents,
+    subscriptionStatus: opts.subscription?.status ?? null,
+    currentPeriodEnd: currentPeriodEnd?.toISOString() ?? null,
+  };
 }

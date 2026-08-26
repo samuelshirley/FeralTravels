@@ -18,6 +18,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
+import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
+
+export type { SubscriptionSource, SubscriptionStatus };
 
 // ── Shared JSONB types ──────────────────────────────────────────────────────
 
@@ -56,6 +59,16 @@ export const users = pgTable('users', {
   image: text('image'),
   /** Mirrors admin allowlist at sign-in; never infer admin from email alone. */
   isAdmin: boolean('is_admin').default(false).notNull(),
+  /**
+   * Free forever: the author's account and the E2E fixtures. Skips the paywall
+   * AND the usage cap, but still writes `usage_events` — comping the spend out
+   * of existence would falsify the very numbers the pricing was derived from.
+   *
+   * Set from an allowlist at sign-in, exactly like `isAdmin` above, and for the
+   * same reason: an entitlement check that string-matches an email is one typo
+   * away from comping every address at a domain.
+   */
+  comped: boolean('comped').default(false).notNull(),
   /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
   /**
@@ -852,5 +865,114 @@ export const deletedUsers = pgTable(
   (t) => ({
     hashIdx: index('deleted_users_email_hash_idx').on(t.emailHash),
     deletedAtIdx: index('deleted_users_deleted_at_idx').on(t.deletedAt),
+  })
+);
+
+// ── Subscriptions ───────────────────────────────────────────────────────────
+
+/**
+ * `SubscriptionStatus` and `SubscriptionSource` are defined in
+ * `src/types/entitlement.ts`, not here, because the Expo app needs the same
+ * vocabulary and `scripts/sync-shared.mjs` can only mirror `@/types`.
+ * Re-exported so existing `from '@/server/db/schema'` imports keep working.
+ */
+export const subscriptions = pgTable(
+  'subscriptions',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: text('status').$type<SubscriptionStatus>().notNull(),
+    source: text('source').$type<SubscriptionSource>().notNull(),
+    /** Store product id, e.g. `com.feraltravels.app.monthly`. Null for admin grants. */
+    productId: text('product_id'),
+    /**
+     * When paid access ends. Null means "no end" — an admin comp or a lifetime
+     * promo. A null here with an entitled status is unlimited access, so the
+     * admin UI must show it as such rather than as a blank cell.
+     */
+    currentPeriodEnd: timestamp('current_period_end'),
+    /** Apple's stable id for the subscription across renewals. The join key for ASSN. */
+    originalTransactionId: text('original_transaction_id'),
+    /** False once the user turns off auto-renew. Does NOT itself remove access. */
+    autoRenew: boolean('auto_renew').default(true).notNull(),
+    /** Set by the break-glass revoke. Both are required by the admin UI when it is used. */
+    revokedAt: timestamp('revoked_at'),
+    revokedBy: text('revoked_by'),
+    revokedReason: text('revoked_reason'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    statusIdx: index('subscriptions_status_idx').on(t.status),
+    originalTxIdx: index('subscriptions_original_tx_idx').on(t.originalTransactionId),
+  })
+);
+
+/**
+ * Every webhook event we have ever accepted, keyed on the store's own event id.
+ *
+ * This table IS the idempotency mechanism: the handler inserts here first with
+ * `onConflictDoNothing`, and a zero-row result means "already processed, stop".
+ * Apple and RevenueCat both retry, so a handler that is merely careful rather
+ * than idempotent will double-apply in production, not in theory.
+ *
+ * `eventTimeMs` is the store's timestamp, not ours, and it is what makes
+ * out-of-order delivery safe: a `DID_RENEW` that was delayed in flight and
+ * arrives after a `REFUND` carries an older `eventTimeMs`, so the handler can
+ * refuse to let it resurrect access.
+ */
+export const subscriptionEvents = pgTable(
+  'subscription_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    /** The store's event id. Unique — this is the whole point of the table. */
+    eventId: text('event_id').notNull(),
+    /** Null when the event names a user we do not have (logged, not fatal). */
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Raw notification type, e.g. `INITIAL_PURCHASE`, `REFUND`, `DID_RENEW`. */
+    type: text('type').notNull(),
+    /** The store's own event timestamp in epoch ms. Orders events; ours does not. */
+    eventTimeMs: bigint('event_time_ms', { mode: 'number' }),
+    /** The verbatim payload, so a mis-handled event can be re-read later. */
+    payload: jsonb('payload'),
+    /**
+     * `applied` | `ignored_duplicate` | `ignored_stale` | `ignored_unknown_type`
+     * | `ignored_unknown_user` | `error`.
+     *
+     * `ignored_unknown_user` is kept distinct from `ignored_unknown_type` on
+     * purpose: "the store sent a type we don't handle" is routine, and
+     * "somebody paid us and we cannot find their account" is not.
+     */
+    outcome: text('outcome').notNull(),
+    receivedAt: timestamp('received_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    eventIdUnique: uniqueIndex('subscription_events_event_id_idx').on(t.eventId),
+    userIdx: index('subscription_events_user_idx').on(t.userId),
+  })
+);
+
+/**
+ * One row per (user, threshold) the moment that threshold is first crossed.
+ *
+ * Exists purely so the alert email fires ONCE. Without it, every blocked
+ * request re-sends it, and a single capped user mails support a hundred times
+ * in an afternoon.
+ */
+export const usageAlerts = pgTable(
+  'usage_alerts',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** `watch` ($2/12mo, admin-only) or `stop` ($8.50/12mo, user is blocked). */
+    threshold: text('threshold').$type<'watch' | 'stop'>().notNull(),
+    /** The 12-month Anthropic total at the moment it fired, for the email and the audit. */
+    microcentsAtFiring: bigint('microcents_at_firing', { mode: 'number' }),
+    firedAt: timestamp('fired_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.threshold] }),
   })
 );

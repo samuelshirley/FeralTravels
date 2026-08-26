@@ -27,6 +27,7 @@ import {
   type Me,
 } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
+import { fetchEntitlement } from "@/lib/entitlement";
 import AccountButton from "@/components/AccountButton";
 import { useIdentity } from "@/lib/identity";
 import { theme, shadow } from "@/lib/theme";
@@ -47,10 +48,21 @@ import { font } from "@/lib/typography";
 type MeWithId = Me & { id?: string };
 
 /**
- * See `styles.headerAccount`: 14pt page gutter − 16pt UIKit nav-bar margin.
- * If the button still doesn't line up on a given device, this is the one knob.
+ * This screen draws its own header instead of using the native stack's.
+ *
+ * It used to render the account avatar as `headerRight` of the UIKit navigation
+ * bar. Built against the iOS 26 SDK, UIKit puts a 44pt Liquid Glass background
+ * behind every nav-bar button item — so the app's own 32pt circle sat floating
+ * inside a second, larger circle it never drew, and the 2pt nudge that used to
+ * live here (compensating for the 16pt UIKit layout margin against this page's
+ * 14pt gutter) pushed it visibly off that circle's centre. It read as a
+ * lopsided avatar; the avatar was fine.
+ *
+ * react-native-screens 4.16 exposes no way to suppress that background on a
+ * header item, and the same trap waits for any custom round control put there.
+ * TripHeader has always drawn its own bar and has always rendered this avatar
+ * correctly — so this screen now does the same, and the two headers agree.
  */
-const HEADER_ACCOUNT_EDGE_NUDGE = -2;
 
 type Row =
   | { key: string; kind: "empty" }
@@ -73,6 +85,22 @@ export default function TripsScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
 
+  /**
+   * One auto-create per mount, and only ever one.
+   *
+   * The web page deliberately does NOT do this — its comment says so, and for
+   * the web it is right: a browser tab that silently creates a row on load is
+   * surprising. On a phone it is the opposite. The app is a single-purpose
+   * thing you open to plan a drive, and an empty list with a button on it is a
+   * worse first screen than Penny already talking to you. That is the whole
+   * divergence, and it is intentional.
+   *
+   * The ref is what keeps it from becoming a trip factory: `load()` re-runs on
+   * every focus, so without it, deleting your only trip and navigating back
+   * would create another, and another.
+   */
+  const autoCreated = useRef(false);
+
   const handleAuthError = useCallback(
     (err: unknown): boolean => {
       if (!isAuthError(err)) return false;
@@ -84,10 +112,39 @@ export default function TripsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [tripsRes, meRes] = await Promise.all([listTrips(), getMe() as Promise<MeWithId>]);
+      const [tripsRes, meRes, entitlement] = await Promise.all([
+        listTrips(),
+        getMe() as Promise<MeWithId>,
+        fetchEntitlement(),
+      ]);
       setTrips(tripsRes);
       setMe(meRes);
       setMeId(meRes.id ?? null);
+
+      const mine = meRes.id
+        ? tripsRes.filter((t) => t.user_id === meRes.id)
+        : tripsRes.filter((t) => !t.is_template);
+
+      if (mine.length === 0) {
+        // Nothing to show and nothing to read. Where they go depends entirely
+        // on whether they can still plan.
+        //
+        // `entitlement === null` means the lookup failed, and it is treated as
+        // entitled on purpose: a phone in a tunnel must not paywall a paying
+        // subscriber. Every route that spends money gates itself server-side,
+        // so being wrong in this direction costs one rejected request and being
+        // wrong in the other locks a customer out of the app they paid for.
+        if (entitlement && !entitlement.entitled) {
+          router.replace("/paywall");
+          return;
+        }
+        if (!autoCreated.current) {
+          autoCreated.current = true;
+          const trip = await createTrip();
+          router.replace(`/trips/${trip.id}`);
+          return;
+        }
+      }
     } catch (err) {
       if (!handleAuthError(err)) {
         // Non-auth failures already surfaced through the global error notifier.
@@ -96,7 +153,7 @@ export default function TripsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [handleAuthError]);
+  }, [handleAuthError, router]);
 
   // Refetch on focus, not just on mount: the web page is a server component
   // that re-renders when the user navigates back from a trip workspace, so a
@@ -180,18 +237,19 @@ export default function TripsScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerRight: () => (
-            <AccountButton
-              email={displayEmail}
-              image={identity.image}
-              onPress={() => setMenuOpen(true)}
-              style={styles.headerAccount}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        {/* Spacer the same width as the avatar, so the title centres on the
+            screen rather than on the space the avatar leaves behind. */}
+        <View style={styles.headerSpacer} />
+        <Text style={styles.headerTitle}>Your trips</Text>
+        <AccountButton
+          email={displayEmail}
+          image={identity.image}
+          onPress={() => setMenuOpen(true)}
+        />
+      </View>
 
       <AnnouncementModal />
 
@@ -545,18 +603,29 @@ const styles = StyleSheet.create({
   },
   overlayText: { fontFamily: font.regular, fontSize: 14, color: theme.text },
   /**
-   * The account button hangs off the NATIVE navigation bar (`headerRight`),
-   * so UIKit — not this stylesheet — decides how far it sits from the screen
-   * edge: the standard iPhone nav-bar layout margin is 16pt. Everything below
-   * it on this screen lives inside `listContent`, whose gutter is 14pt
-   * (mirroring the web's `.page-main` padding). The button therefore lands 2pt
-   * further left than the "+ New trip" button and the trip cards it sits
-   * above, which is exactly the misalignment that reads as "not centred".
-   *
-   * Pull it back over those 2pt rather than widening the page gutter to 16 —
-   * the gutter is a mirrored web token and should keep matching the web.
+   * This screen's own header bar. The horizontal padding is 14 — the same
+   * `listContent` gutter the "+ New trip" button and the trip cards use — so
+   * the avatar now lines up with the column beneath it by construction, which
+   * is what the old -2pt nudge was reaching for against UIKit's 16pt margin.
    */
-  headerAccount: { marginRight: HEADER_ACCOUNT_EDGE_NUDGE },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    gap: 8,
+    backgroundColor: theme.bg,
+  },
+  /** Balances the 32pt avatar so `headerTitle` centres on the screen. */
+  headerSpacer: { width: 32 },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontFamily: font.semibold,
+    color: theme.text,
+  },
   // Native-only: the web account menu closes on outside-mousedown with no
   // visible scrim, so this tint has no web counterpart to copy.
   menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.2)" },

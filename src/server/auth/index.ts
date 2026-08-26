@@ -7,6 +7,12 @@ import { db } from '@/server/db/client';
 import { users, accounts, sessions, verificationTokens } from '@/server/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { syncAdminFlagOnSignIn } from './admin';
+// Comped follows the admin-flag precedent exactly: set from an allowlist at
+// sign-in, never inferred from an email inside a paywall check. Both run in the
+// same events so a new account is correct on its very first request — a comped
+// user who got one paywalled request before the flag landed would be a bug
+// nobody could reproduce.
+import { syncCompedFlagOnSignIn } from '@/server/payments';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
 
@@ -138,12 +144,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (!user.id) return;
       // Set admin flag on first creation if email is on the hardcoded allowlist.
       await syncAdminFlagOnSignIn(user.email).catch(() => {});
+      await syncCompedFlagOnSignIn(user.email).catch(() => {});
     },
     async signIn({ user, account, profile }) {
       // Re-sync silently on every sign-in: protects against a row being
       // tampered with manually, and ensures admin status is reflected even on
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
+      await syncCompedFlagOnSignIn(user?.email).catch(() => {});
 
       /**
        * Refresh the stored avatar on every Google sign-in.

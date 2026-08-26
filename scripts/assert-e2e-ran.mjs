@@ -106,7 +106,7 @@ if (reasons.size) {
 // allowance can't quietly become the permanent state of the pipeline.
 if (skipped > 0 && skipped <= MAX_SKIPPED) {
   summary(
-    `::warning::${skipped} of ${skipped + ran} E2E tests did not run. This build is green on ${ran} test(s). The skip allowance (E2E_MAX_SKIPPED=${MAX_SKIPPED}) is a temporary concession in .github/workflows/ci.yml — lower it back to 1 once e2e sign-in works.`,
+    `::warning::${skipped} of ${skipped + ran} E2E tests did not run. This build is green on ${ran} test(s). The skip allowance (E2E_MAX_SKIPPED=${MAX_SKIPPED}) is a temporary concession in .github/workflows/pipeline.yml — lower it back to 1 once e2e sign-in works.`,
   );
 }
 
@@ -119,7 +119,7 @@ if (ran === 0) {
 
 if (skipped > MAX_SKIPPED) {
   summary(
-    `::error::${skipped} E2E tests skipped (max ${MAX_SKIPPED}). Mass-skips make CI green while testing nothing — check the mailbox preflight output above. If the skips are intentional, raise E2E_MAX_SKIPPED in .github/workflows/ci.yml.`,
+    `::error::${skipped} E2E tests skipped (max ${MAX_SKIPPED}). Mass-skips make CI green while testing nothing — check the mailbox preflight output above. If the skips are intentional, raise E2E_MAX_SKIPPED in .github/workflows/pipeline.yml.`,
   );
   process.exit(1);
 }

@@ -11,6 +11,7 @@ import {
   userViewportTime,
   vehicles,
   deletedUsers,
+  subscriptionEvents,
 } from '@/server/db/schema';
 
 export async function getAdminOverview() {
@@ -608,4 +609,37 @@ export async function getChatForTrip(tripId: string) {
     .orderBy(asc(chatHistory.createdAt));
 
   return { trip, messages };
+}
+
+
+/**
+ * Every store event we have recorded for one user, newest first.
+ *
+ * This is an AUDIT LOG read, not an entitlement decision — `subscription_events`
+ * is history, and the answer to "has this account paid?" still comes only from
+ * `@/server/payments`. Nothing here is allowed to grow into a second opinion
+ * about access, and nothing here touches the `subscriptions` table, which that
+ * module owns outright.
+ *
+ * The admin panel needs it because a refund, a duplicate delivery or an event
+ * that arrived out of order is invisible in the current row: the row shows the
+ * outcome, and this shows how it got there. `outcome` is the interesting
+ * column — `ignored_stale` next to a `DID_RENEW` is the whole explanation for
+ * a subscription that "should" be active and is not.
+ *
+ * Capped: this page is read by one person doing forensics, not paginated.
+ */
+export async function getSubscriptionEventsForUser(userId: string, limit = 50) {
+  return db
+    .select({
+      id: subscriptionEvents.id,
+      type: subscriptionEvents.type,
+      outcome: subscriptionEvents.outcome,
+      receivedAt: subscriptionEvents.receivedAt,
+      eventTimeMs: subscriptionEvents.eventTimeMs,
+    })
+    .from(subscriptionEvents)
+    .where(eq(subscriptionEvents.userId, userId))
+    .orderBy(desc(subscriptionEvents.receivedAt))
+    .limit(limit);
 }

@@ -12,9 +12,20 @@
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * Extra machine-readable fields merged into the JSON body by `errorResponse`.
+   *
+   * Added for the paywall, and deliberately narrow. Until now the only
+   * structured field on any error body was `errorId`, which is a log
+   * correlation id — so every client branched on the HTTP status alone and a
+   * 402 could not be told apart from any other 402 we might ever add. The
+   * message text is not that discriminator: it is copy, and copy changes.
+   */
+  details?: Record<string, unknown>;
+  constructor(status: number, message: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -39,5 +50,19 @@ export class NotFoundError extends HttpError {
 export class ConflictError extends HttpError {
   constructor(message = 'Conflict') {
     super(409, message);
+  }
+}
+
+/**
+ * 402. The account is real and authenticated — it just is not entitled.
+ *
+ * Distinct from 403 on purpose: Forbidden means "not yours", and a client that
+ * conflates the two will show a paywall to someone poking at another user's
+ * trip. The body carries `code`, `state` and `blockReason` so the app can pick
+ * the right copy without parsing the message.
+ */
+export class PaymentRequiredError extends HttpError {
+  constructor(message: string, details: Record<string, unknown>) {
+    super(402, message, details);
   }
 }
