@@ -10,7 +10,6 @@ import { apiFetch, ApiError } from "@/lib/api";
  */
 import type { EntitlementPayload } from "../shared/types/entitlement";
 import { PAYWALL_ERROR_CODE } from "../shared/types/entitlement";
-import type { UIMessage } from "@/components/chat/types";
 
 export type { EntitlementPayload };
 export { PAYWALL_ERROR_CODE };
@@ -63,58 +62,16 @@ export function isPaywallError(err: unknown): err is ApiError {
 }
 
 /**
- * Stable id for Penny's paywall bubble. Constant, not generated, because the
- * bubble is derived fresh on every render — a new id each time would make React
- * throw the row away and rebuild it on every keystroke in the composer.
+ * The paywall bubble derivation now lives in `shared/lib/paywallNotice.ts` and
+ * is re-exported here so this module's surface is unchanged.
+ *
+ * It moved because the root vitest project could not test it where it was: the
+ * suite transforms whatever it imports, `mobile/tsconfig.json` extends
+ * `expo/tsconfig.base`, and CI's unit job never installs `mobile/node_modules`
+ * — so importing this file from a root test failed with "Tsconfig not found".
+ * Locally both trees are installed, which is exactly why it passed here and
+ * broke there. Shared logic goes in the mirror; the mirror-drift guard then
+ * keeps the two copies honest.
  */
-export const PAYWALL_MESSAGE_ID = "paywall-notice";
-
-/**
- * The transcript as it should be RENDERED for this account.
- *
- * DERIVED, never appended. The paywall bubble used to be pushed into chat state
- * by an effect on mount, which raced the effect that loads history: history
- * lands with `setMessages(data.messages)`, a wholesale replace, so whichever
- * request answered last decided whether the user saw the message at all. That
- * is why it survived one visit to the chat and vanished on the next — the same
- * two requests, resolving in the other order.
- *
- * Deriving it here means the bubble is a function of "is this account blocked",
- * which is the thing it is actually reporting. It cannot be lost by a state
- * replace and it cannot be appended twice, because it is not stored anywhere.
- *
- * Still SYNTHETIC: it is never written to `chat_history` (see the `paywall`
- * flag's note in components/chat/types.ts) — a statement about billing at one
- * moment must not sit in a paying subscriber's transcript forever.
- *
- * A transcript that ALREADY carries a paywall bubble is returned untouched:
- * that is the mid-conversation 402, where a real pending assistant bubble was
- * rewritten in place. One block per conversation, never two.
- */
-export function withPaywallNotice(
-  messages: UIMessage[],
-  entitlement: EntitlementPayload | null,
-  tripId: string
-): UIMessage[] {
-  // Null means "not asked yet / couldn't ask" and never blocks — same
-  // asymmetry as fetchEntitlement above.
-  if (!entitlement || entitlement.entitled) return messages;
-  // No server copy, nothing to say. The overlay carries its own fallback; a
-  // bubble with no words in it would just look like Penny failed.
-  const copy = entitlement.paywall;
-  if (!copy) return messages;
-  if (messages.some((m) => m.paywall)) return messages;
-  return [
-    ...messages,
-    {
-      id: PAYWALL_MESSAGE_ID,
-      trip_id: tripId,
-      role: "assistant",
-      content: copy.message,
-      kind: "ai",
-      changes_made: null,
-      created_at: new Date().toISOString(),
-      paywall: true,
-    },
-  ];
-}
+export { PAYWALL_MESSAGE_ID, withPaywallNotice } from "@/shared/lib/paywallNotice";
+export type { PaywallNoticeMessage } from "@/shared/lib/paywallNotice";

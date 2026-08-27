@@ -13,6 +13,9 @@ import PurchaseSheet from '@/components/PurchaseSheet';
 import { SUPPORT_EMAIL } from '@/lib/paywallCopy';
 import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
 import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
+// Imported, not restated: the native client derives its bubble with this same
+// id, and two hardcoded copies of it is how they quietly stop matching.
+import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -73,7 +76,6 @@ const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fu
  * Stable id for the paywall bubble appended on mount, so a re-run of the
  * entitlement effect replaces it rather than stacking a second copy.
  */
-const PAYWALL_MESSAGE_ID = 'paywall-notice';
 
 /**
  * Penny's paywall copy, as paragraphs.

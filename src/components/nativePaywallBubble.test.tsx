@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { useEffect, useState } from 'react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
+import { withPaywallNotice } from '@/lib/paywallNotice';
 
 /**
  * The native paywall bubble: present whenever the account is blocked and the
@@ -23,11 +24,15 @@ import { act, cleanup, render, screen } from '@testing-library/react';
  * that history replaces wholesale, entitlement arriving separately, and the
  * mount/unmount/remount the user actually did.
  *
- * The module is loaded by a NON-LITERAL specifier on purpose. A static import
- * of anything under `mobile/` would drag that file into the root tsconfig's
- * type graph — where `@/` means the WEB app's `src` — and break `next build`.
+ * IT NO LONGER REACHES INTO `mobile/`. It used to, through a non-literal
+ * specifier chosen to keep that file out of the root tsconfig's type graph.
+ * That dodged the type graph and not the BUILD graph: vitest still transformed
+ * the mobile file, `mobile/tsconfig.json` extends `expo/tsconfig.base`, and
+ * CI's unit job never installs `mobile/node_modules` — so the suite failed
+ * there with "Tsconfig not found" while passing on a machine that happens to
+ * have both trees installed. The derivation now lives in the shared mirror and
+ * is imported like any other module.
  */
-const MOBILE_ENTITLEMENT = '../../mobile/lib/entitlement';
 
 interface Msg {
   id: string;
@@ -45,26 +50,11 @@ interface Ent {
   paywall: { message: string; buttonLabel: string } | null;
 }
 
-type WithPaywallNotice = (
-  messages: Msg[],
-  entitlement: Ent | null,
-  tripId: string
-) => Msg[];
-
-let withPaywallNotice: WithPaywallNotice;
-
 // This project does not enable Vitest globals, so RTL's auto-cleanup never
 // registers — without this every render stays in the document and the counts
 // below become cumulative.
 afterEach(() => {
   cleanup();
-});
-
-beforeAll(async () => {
-  const mod = (await import(MOBILE_ENTITLEMENT)) as {
-    withPaywallNotice: WithPaywallNotice;
-  };
-  withPaywallNotice = mod.withPaywallNotice;
 });
 
 const BLOCKED: Ent = {
