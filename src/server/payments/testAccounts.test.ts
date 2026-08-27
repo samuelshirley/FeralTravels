@@ -4,6 +4,13 @@ vi.mock('server-only', () => ({}));
 // The module reaches the database at import time through the drizzle client;
 // none of these tests touch it, they exercise the address boundary only.
 vi.mock('@/server/db/client', () => ({ db: {} }));
+// The repo modules reach Auth.js, and next 14 ships no `./server` export map,
+// so an extensionless `next/server` import inside next-auth cannot resolve
+// under vitest. None of these tests call into the repos — they exercise the
+// address boundary — so the cheapest correct thing is to keep that chain out
+// of the graph entirely.
+vi.mock('@/server/repos/trips', () => ({ cloneTrip: vi.fn(), createTrip: vi.fn() }));
+vi.mock('@/server/repos/vehicles', () => ({ addVehicle: vi.fn() }));
 
 import { assertTestAddress, generateTestEmail, NotATestAccountError } from './testAccounts';
 

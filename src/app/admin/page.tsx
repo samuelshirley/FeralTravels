@@ -20,9 +20,11 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
+import { testPurchasesArmed } from '@/server/payments';
 
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
+import TestUserBlock from './TestUserBlock';
 import styles from './admin.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -717,6 +719,32 @@ export default async function AdminPage() {
               userName: e.userName,
             }))}
           />
+        </section>
+
+        {/*
+          Bottom of the page on purpose. It is a development affordance, not an
+          operations one — nothing here tells you anything about the running
+          system, and it is switched off entirely in an environment without
+          SUBSCRIPTION_TESTING.
+        */}
+        <section style={{ ...card, marginTop: 16 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 4 }}>
+            Test users
+          </h2>
+          <p
+            style={{
+              fontSize: 11,
+              color: 'var(--tp-subtle)',
+              margin: '0 0 12px',
+              lineHeight: 1.5,
+            }}
+          >
+            Disposable accounts for walking the paywall. Addresses are always{' '}
+            <code style={{ fontSize: 10 }}>sam+trial-…@feraltravels.com</code> — the pattern is
+            hardcoded where no environment variable can widen it, and every action refuses anything
+            outside it.
+          </p>
+          <TestUserBlock armed={testPurchasesArmed()} />
         </section>
       </main>
 

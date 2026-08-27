@@ -152,6 +152,7 @@ src/
     directions.ts     # Client directions logic
     gpx.ts            # GPX file parsing
     units.ts          # Unit conversion
+    tripCompletion.ts # Pure "is this trip over?" — a trip is completed when its LAST leg date is strictly before the user's today (derived, never stored: `trips.trip_status` is exactly that mistake). Today is always passed IN, resolved once via todayISOInZone/todayISO, so there is one notion of today. Mirrored to mobile. `lastDayFromLegDates` (detail views, which have leg dates) / `lastDayFromSchedule` (the trips list, which doesn't — same one-day-per-leg + progress-anchor rule getTripFull uses, surfaced as the derived `Trip.last_day_iso` on the listTripsForUser payload only). Both trip lists show a quiet "Completed" badge; both itineraries then put EVERY day behind the existing "behind you" disclosure ("Show past days") and render nothing ahead. Unit-tested.
     vehicleProfile.ts # Vehicle range/fuel calculations
     fuelCache.ts      # Lazy fuel-cache TTL (FUEL_CACHE_TTL_MS = 48h) + isFuelCacheFresh; shared by server/fuel.ts and LegCard day-open loader
     fuelPlanErrorSemantics.ts  # Fuel plan error handling
