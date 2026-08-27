@@ -271,6 +271,42 @@ describe('the whole-push decision', () => {
     ).toBe('native');
   });
 
+  it('a push that touches nothing under mobile/ is a release of NOTHING', () => {
+    // The workflow triggers on changes to ITSELF, so editing mobile.yml used
+    // to publish an OTA carrying a bundle byte for byte identical to the one
+    // already out there: a new update id, a download on every tester's phone,
+    // and nothing to show for it. Third outcome, not a flavour of js-only.
+    const result = decide({
+      changedFiles: [
+        '.github/workflows/mobile.yml',
+        'scripts/decide-mobile-release.mjs',
+        'src/lib/decideMobileRelease.test.ts',
+        'CLAUDE.md',
+      ],
+    });
+    expect(result.decision).toBe('none');
+    expect(result.reasons.join(' ')).toContain('mobile/');
+  });
+
+  it('an empty diff is a release of nothing', () => {
+    expect(decide({ changedFiles: [] }).decision).toBe('none');
+  });
+
+  it('one mobile file among many non-mobile ones is still a release', () => {
+    expect(
+      decide({ changedFiles: ['README.md', 'src/lib/units.ts', 'mobile/app/index.tsx'] }).decision
+    ).toBe('js-only');
+  });
+
+  it('"nothing changed under mobile/" never overrides a native signal', () => {
+    // Guards the ordering: the none-check runs first, so if it ever stopped
+    // requiring the absence of mobile/ files it would silently swallow every
+    // native input below it.
+    for (const file of ['mobile/package-lock.json', 'mobile/app.config.js', 'mobile/eas.json']) {
+      expect(decide({ changedFiles: ['CLAUDE.md', file] }).decision).toBe('native');
+    }
+  });
+
   it('keeps app.config.js, eas.json and assets file-level', () => {
     for (const file of [
       'mobile/app.config.js',
@@ -294,11 +330,16 @@ describe('the whole-push decision', () => {
     expect(result.decision).toBe('js-only');
   });
 
-  it('a file merely NAMED like a native input elsewhere in the repo is js-only', () => {
-    // The web app's own package.json has nothing to do with the binary.
-    expect(decide({ changedFiles: ['package.json', 'package-lock.json'] }).decision).toBe(
-      'js-only'
-    );
+  it('a file merely NAMED like a native input elsewhere in the repo is not native', () => {
+    // The web app's own package.json has nothing to do with the binary. On its
+    // own it is not even a release; alongside a real mobile change it must
+    // still not drag the decision to native.
+    expect(decide({ changedFiles: ['package.json', 'package-lock.json'] }).decision).toBe('none');
+    expect(
+      decide({
+        changedFiles: ['package.json', 'package-lock.json', 'mobile/app/index.tsx'],
+      }).decision
+    ).toBe('js-only');
   });
 
   it('no usable list of changed files is native', () => {
@@ -390,8 +431,8 @@ describe('.github/workflows/mobile.yml calls the classifier', () => {
 
     const window = lines.slice(step, step + 12).join('\n');
     expect(
-      /if:\s*steps\.native\.outputs\.native == 'true'/.test(window),
-      'the TestFlight build step is no longer gated on steps.native.outputs.native — ' +
+      /if:\s*steps\.native\.outputs\.decision == 'native'/.test(window),
+      'the TestFlight build step is no longer gated on the decision the classifier made — ' +
         'every mobile merge will spend a build credit again, JS-only ones included.'
     ).toBe(true);
   });
