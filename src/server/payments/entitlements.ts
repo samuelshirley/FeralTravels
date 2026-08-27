@@ -16,7 +16,7 @@ import { paywallEnabled } from './switch';
  * blocked before turning it on. Only the three fields that gate behaviour are
  * overridden.
  */
-function applySwitch(verdict: AccountVerdict): AccountVerdict {
+export function applySwitch(verdict: AccountVerdict): AccountVerdict {
   if (paywallEnabled()) return verdict;
   return {
     ...verdict,
