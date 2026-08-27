@@ -67,7 +67,21 @@ npm run db:studio    # drizzle-kit studio (DB browser)
 
 ## Workflow (current)
 
-**Production has real users.** Prod is live — do NOT run tests or seed fixtures against the prod database, and treat prod deploys as consequential.
+**Production has NO real users yet, and will not until Sam says the app is
+launched — in words.** Every row in the prod `users` table is his own address, a
+throwaway, or someone he handed it to on purpose; the Anthropic spend on those
+rows is his own testing. This line used to read "Production has real users",
+which was true of nothing and cost an afternoon: an assistant enumerated the 28
+prod accounts a paywall change would block and recommended waiting, when the
+whole point of having them is to find out what happens. **Never weigh
+"this would affect N production accounts" as a reason to slow down, ask for
+confirmation, or pick the cautious option.** An App Store build is not launch;
+TestFlight is not launch. `docs/design/launch-checklist.md` is the list we work
+off, and its Rule 0 is this.
+
+Prod is still LIVE infrastructure, and that part is unchanged: do NOT run tests
+or seed fixtures against the prod database, and treat a prod deploy as
+consequential — a broken deploy is a broken deploy whoever is watching.
 
 Deploy pipeline (**pull-request based** since 2026-08-13 — `main` is protected and only moves via PRs):
 
@@ -526,10 +540,16 @@ build.
   Every grant writes `subscription_events` with `source: 'fake'`. **Deleting
   this route is the last step of the RevenueCat migration** —
   `docs/design/revenuecat-implementation.md`.
-- **`/admin/test-users` creates disposable paywall accounts** —
-  `payments/testAccounts.ts`, armed by `SUBSCRIPTION_TESTING=1`, every action
-  refusing any address outside `sam+trial-<tag>@feraltravels.com`. Nine
-  one-click presets, each producing a real account state. It hands back the
+- **The Test users block at the bottom of `/admin` creates disposable paywall
+  accounts** — `payments/testAccounts.ts` behind `POST /api/admin/test-users`,
+  armed by `SUBSCRIPTION_TESTING=1`, every action refusing any address outside
+  `sam+trial-<tag>@feraltravels.com`. Two one-click presets, each producing a
+  real account state. (There is no `/admin/test-users` PAGE — it was folded into
+  the dashboard; a link to it survived the move and 404'd for two weeks.)
+  **The block warns when `PAYWALL_ENABLED` is unset**, because an account
+  generated in that state is `trial_expired` and still walks every surface
+  unblocked — `applySwitch` rewrites the verdict — which reads exactly like a
+  broken paywall and is not one. It hands back the
   address, a REAL sign-in code, and a `/login/verify?email=…` link to paste
   into an incognito window. **There is deliberately no "sign in as this user"
   action** — the auth guard test in `src/lib/` fails the suite on anything

@@ -54,7 +54,31 @@ interface Created {
   link: string;
 }
 
-export default function TestUserBlock({ armed }: { armed: boolean }) {
+export default function TestUserBlock({
+  armed,
+  paywallOn,
+}: {
+  armed: boolean;
+  /**
+   * `paywallEnabled()` on the server that rendered this page.
+   *
+   * Here because of the afternoon this block cost. A `day7-trip` account was
+   * generated in production, signed into, and walked end to end: no overlay on
+   * /trips, nothing locked on the trip, no bubble from Penny, and "+ New trip"
+   * still worked. Every one of those is `applySwitch` doing its job — with
+   * `PAYWALL_ENABLED` unset it rewrites every verdict to entitled, so the
+   * account WAS `trial_expired` the whole time and nothing was ever allowed to
+   * act on it. The state was right; the switch was off.
+   *
+   * No test could have caught it: `e2e/subscriptions.spec.ts` deploys its
+   * preview with `PAYWALL_ENABLED=1` precisely so the walls appear, so the
+   * suite is green and production is unenforced at the same time, correctly.
+   * The gap is not coverage, it is that the one screen whose entire purpose is
+   * to produce a blocked account never said whether blocking was switched on.
+   * It says so now, before you spend ten minutes proving the switch is off.
+   */
+  paywallOn: boolean;
+}) {
   const [preset, setPreset] = useState(PRESETS[0].id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +182,34 @@ export default function TestUserBlock({ armed }: { armed: boolean }) {
 
   return (
     <div>
+      {/*
+        First thing in the block, and deliberately not a footnote. An account
+        generated while this is off is not a paywall test — it is a normal
+        account with an old `created_at`, and it will walk every surface
+        without hitting anything.
+      */}
+      {!paywallOn && (
+        <p
+          data-testid="test-users-paywall-off"
+          style={{
+            margin: '0 0 12px',
+            padding: '8px 10px',
+            borderRadius: 8,
+            border: '1px solid var(--tp-border-strong)',
+            background: 'var(--tp-surface-2, transparent)',
+            fontSize: 12,
+            lineHeight: 1.55,
+            color: 'var(--tp-text)',
+          }}
+        >
+          <strong>The paywall is switched off in this environment.</strong> Accounts made here will
+          still be <code style={mono}>trial_expired</code> and the account page will still say so,
+          but <code style={mono}>applySwitch</code> hands every verdict full access, so nothing will
+          block: no overlay on <code style={mono}>/trips</code>, no lock on the trip, no bubble from
+          Penny. Set <code style={mono}>PAYWALL_ENABLED=1</code> on this deployment to walk a real
+          wall. It is an env change, not a deploy.
+        </p>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <select
           value={preset}

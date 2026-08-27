@@ -271,16 +271,36 @@ export default async function AdminPage() {
           >
             signed in as {session.user.email}
           </div>
-          {/* Disposable paywall accounts. A plain link rather than a stat card:
-              it has no number worth a card, and it is the one admin page that
-              CREATES users rather than reporting on them. */}
-          <Link
-            href="/admin/test-users"
-            className={styles.seeAllLink}
-            style={{ marginLeft: 'auto' }}
+          {/*
+            Enforcement state, in the header, always. `PAYWALL_ENABLED` is an
+            env var with no deploy attached and no other tell — the account
+            state machine keeps running truthfully with the switch off, so the
+            user page still reads `trial_expired` while every one of those
+            accounts walks the app unblocked. That gap cost an afternoon of
+            hunting a paywall bug that did not exist. The switch is a fact
+            about the running system, so it belongs where the other facts about
+            the running system are.
+          */}
+          <div
+            data-testid="admin-paywall-switch"
+            title={
+              paywallEnabled()
+                ? 'PAYWALL_ENABLED=1 — verdicts are enforced.'
+                : 'PAYWALL_ENABLED is unset — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
+            }
+            style={{
+              marginLeft: 'auto',
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              padding: '3px 8px',
+              borderRadius: 999,
+              border: '1px solid var(--tp-border-strong)',
+              color: paywallEnabled() ? 'var(--tp-text)' : 'var(--tp-subtle)',
+            }}
           >
-            Test users &rarr;
-          </Link>
+            PAYWALL {paywallEnabled() ? 'ON' : 'OFF'}
+          </div>
         </div>
 
         <div className={styles.statsGrid}>
@@ -745,7 +765,7 @@ export default async function AdminPage() {
             hardcoded where no environment variable can widen it, and every action refuses anything
             outside it.
           </p>
-          <TestUserBlock armed={testPurchasesArmed()} />
+          <TestUserBlock armed={testPurchasesArmed()} paywallOn={paywallEnabled()} />
         </section>
 
         {/*
