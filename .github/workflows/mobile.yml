@@ -160,28 +160,31 @@ jobs:
 
             const marker = '<!-- feraltravels-mobile-release -->';
 
-            const native = decision === 'native';
-            const headline = native
-              ? '### 📱 Merging this cuts a **native TestFlight build**'
-              : '### 📱 Merging this publishes an **over-the-air update**';
-            const cost = native
-              ? 'About 30 minutes on the free plan\'s low-priority queue, and one of 15 iOS build credits this month. **The OTA is skipped** — a bundle that expects a native module the installed binary does not carry crashes on launch, so the binary is the only safe delivery here.'
-              : 'Seconds, no queue, no build credit. Testers on an installed build get it on next launch. **No new TestFlight binary** — cut one by hand before an App Store submission (Actions → Mobile → Run workflow).';
+            // Length tracks how much there is for a human to DO. `none` and
+            // `js-only` need nothing from you, so they get one line and no
+            // expander. `native` costs half an hour and a build credit, and
+            // skips the OTA, so it says so and shows its reasoning.
+            const LINE = {
+              none: `📱 **No app release** — this PR touches nothing under \`mobile/\`, so nothing ships to phones.`,
+              'js-only': `📱 **Over-the-air update** — testers get it on next launch. Seconds, no queue, no build credit, nothing for you to do.`,
+            };
 
-            const body = [
-              marker,
-              headline,
-              '',
-              cost,
-              '',
-              '<details><summary>Why</summary>',
-              '',
-              ...reasons.map((r) => `- ${r}`),
-              '',
-              '</details>',
-              '',
-              `From \`${sha}\` · [run](${runUrl}) · rule: \`scripts/decide-mobile-release.mjs\``,
-            ].join('\n');
+            const body = LINE[decision]
+              ? [marker, LINE[decision]].join('\n')
+              : [
+                  marker,
+                  '### 📱 Merging this cuts a **native TestFlight build**',
+                  '',
+                  'About 30 minutes on the free plan\'s low-priority queue, and one of 15 iOS build credits this month. **The OTA is skipped** — a bundle that expects a native module the installed binary does not carry crashes on launch, so the binary is the only safe delivery here.',
+                  '',
+                  '<details><summary>Why</summary>',
+                  '',
+                  ...reasons.map((r) => `- ${r}`),
+                  '',
+                  '</details>',
+                  '',
+                  `From \`${sha}\` · [run](${runUrl}) · rule: \`scripts/decide-mobile-release.mjs\``,
+                ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo, issue_number: pr.number, per_page: 100,
@@ -280,22 +283,24 @@ jobs:
           fi
 
           case "$DECISION" in
+            none)
+              echo "Nothing under mobile/ changed — no OTA, no build."
+              ;;
             js-only)
-              echo "JS only — safe to publish over the air as well."
-              echo "native=false" >> "$GITHUB_OUTPUT"
+              echo "JS only — publishing over the air."
               ;;
             native)
               echo "Native input moved — OTA skipped, binary only."
-              echo "native=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "::warning::Unrecognised classifier output '$DECISION' — assuming native."
-              echo "native=true" >> "$GITHUB_OUTPUT"
+              DECISION=native
               ;;
           esac
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
 
       - name: Load the production env from eas.json
-        if: steps.native.outputs.native == 'false'
+        if: steps.native.outputs.decision == 'js-only'
         working-directory: mobile
         # eas.json's build.production.env applies to BUILDS ONLY. `eas update`
         # bundles with whatever is in this shell, and EXPO_PUBLIC_* values are
@@ -313,7 +318,7 @@ jobs:
 
       - name: Publish the OTA
         id: ota
-        if: steps.native.outputs.native == 'false'
+        if: steps.native.outputs.decision == 'js-only'
         working-directory: mobile
         run: |
           set -euo pipefail
@@ -334,7 +339,7 @@ jobs:
         # `native` is false only when the classifier could PROVE the change
         # cannot reach the binary; everything it cannot prove — and every way
         # it can fail — comes back true and builds.
-        if: steps.native.outputs.native == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.native.outputs.decision == 'native' || github.event_name == 'workflow_dispatch'
         working-directory: mobile
         env:
           # We know this is not an Expo Go build; the warning is noise in logs
@@ -357,7 +362,7 @@ jobs:
         env:
           OTA: ${{ steps.ota.outcome }}
           BUILD: ${{ steps.build.outcome }}
-          NATIVE: ${{ steps.native.outputs.native }}
+          DECISION: ${{ steps.native.outputs.decision }}
         run: |
           {
             echo "### Mobile"
@@ -370,11 +375,17 @@ jobs:
                 echo "- **OTA:** **publish failed** — nothing went out over the air. See the step log."
                 ;;
               skipped)
-                if [ "${NATIVE:-}" = "true" ]; then
-                  echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
-                else
-                  echo "- **OTA:** skipped."
-                fi
+                case "${DECISION:-}" in
+                  native)
+                    echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                    ;;
+                  none)
+                    echo "- **OTA:** skipped — nothing under \`mobile/\` changed, so the bundle would have been identical to the one already published."
+                    ;;
+                  *)
+                    echo "- **OTA:** skipped."
+                    ;;
+                esac
                 ;;
               *)
                 echo "- **OTA:** not reached — the job failed before publishing."
@@ -388,7 +399,11 @@ jobs:
                 echo "- **TestFlight:** **build or submit failed** — nothing was submitted. See the step log."
                 ;;
               skipped)
-                echo "- **TestFlight:** skipped — nothing that can reach the binary moved, so no build credit was spent. Existing testers get this over the air. Cut a binary by hand (Actions → Mobile → Run workflow) before an App Store submission."
+                if [ "${DECISION:-}" = "none" ]; then
+                  echo "- **TestFlight:** skipped — nothing under \`mobile/\` changed, so the binary on App Store Connect is already current."
+                else
+                  echo "- **TestFlight:** skipped — nothing that can reach the binary moved, so no build credit was spent. Existing testers get this over the air. Cut a binary by hand (Actions → Mobile → Run workflow) before an App Store submission."
+                fi
                 ;;
               *)
                 echo "- **TestFlight:** not reached — the job failed before building."
