@@ -1,0 +1,42 @@
+# Sign in, the way a person does: type the address, read the code, type the code.
+#
+# EMAIL and CODE are minted by scripts/ios-e2e-fixture.mjs against the same
+# preview this build points at. The address is a `playwright-*@e2e.feraltravels.com`
+# fixture — `e2e.` has no MX record, so it can never belong to a person.
+appId: ${APP_ID}
+---
+- launchApp:
+    # A fresh install every run. Without this the keychain still holds the
+    # previous run's session token and the app lands on /trips, so the sign-in
+    # flow silently asserts nothing.
+    clearState: true
+    permissions:
+      # Location is asked for on the trip screen. Left DENIED on purpose: the
+      # chat flow must not depend on a permission dialog it did not open, and a
+      # granted-location app pops the primer over the composer.
+      location: deny
+
+- assertVisible: 'Enter your email'
+
+- tapOn:
+    id: 'signin-email'
+- inputText: ${EMAIL}
+- hideKeyboard
+
+- tapOn: 'Email me a code'
+
+# The verify screen. The first box autofocuses and its maxLength is the full
+# code length, so iOS spreads a six-digit string across all six boxes — which
+# is the same path an SMS/keychain autofill takes.
+- assertVisible: 'Enter your code'
+- tapOn:
+    id: 'signin-code-0'
+- inputText: ${CODE}
+
+- tapOn: 'Verify code'
+
+# Landed. The seeded trip is the proof the session is real and the API answered
+# with this user's own data, not a cached shell.
+- assertVisible:
+    text: 'E2E Fixture Trip'
+    timeout: 30000

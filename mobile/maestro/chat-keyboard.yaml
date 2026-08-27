@@ -1,0 +1,66 @@
+# THE REGRESSION FLOW. Read the paragraph before changing anything here.
+#
+# Bug (iOS, TestFlight, 2026-08-27): tapping the chat composer raised the
+# keyboard and the composer disappeared entirely behind it. You could type, but
+# not see what you typed, and the send button was unreachable.
+#
+# Cause was not a race. `KeyboardAvoidingView` compares its own `onLayout`
+# frame — PARENT-relative — against the keyboard's SCREEN-relative `screenY`.
+# Those agree only at the window origin. ChatPanel's copy lived inside an
+# `absoluteFillObject` pane, so `frameBottom` computed a header-plus-nav ABOVE
+# the keyboard's top edge and `Math.max(frameBottom - keyboardY, 0)` clamped to
+# ZERO. It applied no padding at all. Fixed in d316cd6 by hoisting the view to
+# the screen root.
+#
+# WHY THE ASSERTIONS ARE SHAPED LIKE THIS: `assertVisible` alone is a weak gate
+# for occlusion, because an element covered by the keyboard's own window can
+# still report as present in the hierarchy. So the real gate is BEHAVIOURAL —
+# `tapOn` the send button while the keyboard is up. A tap only lands if the
+# element is actually hittable; with the bug present those coordinates belong to
+# a keyboard key, and the flow fails. Do not "simplify" this to an assertVisible.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+- tapOn:
+    text: 'E2E Fixture Trip'
+- assertVisible:
+    id: 'chat-composer'
+    timeout: 30000
+
+# ── Keyboard DOWN ──────────────────────────────────────────────────────────
+# The nav is mounted here, and it owns the bottom safe area. The composer used
+# to add `insets.bottom` as well, which counted the home indicator twice and
+# left a visible gap between the two.
+- assertVisible: 'CHAT'
+- assertVisible:
+    id: 'chat-composer-send'
+
+# ── Keyboard UP ────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+
+# The nav unmounts while the keyboard is up (deliberate — it would otherwise sit
+# between the composer and the keyboard). Its absence is how this flow knows the
+# keyboard actually opened, rather than passing because the tap did nothing.
+- assertNotVisible: 'CHAT'
+
+- inputText: 'keyboard visibility check'
+
+# Both halves matter. The text proves the field took input and is on screen;
+# the tap proves the send button is HITTABLE — the assertion the bug fails.
+- assertVisible: 'keyboard visibility check'
+- tapOn:
+    id: 'chat-composer-send'
+
+# Sent means the composer was operable. The bubble is the user's own message
+# echoed into the transcript; Penny's reply is not awaited, because this flow is
+# about layout and must not spend an Anthropic call or depend on her latency.
+- assertVisible:
+    text: 'keyboard visibility check'
+    timeout: 20000
+
+# And it survives the send: the composer is still on screen and still usable,
+# rather than having been pushed off by the transcript growing under it.
+- assertVisible:
+    id: 'chat-composer-input'

@@ -1621,7 +1621,7 @@ export default function ChatPanel({
             </View>
           ) : null}
 
-          <View style={styles.composerWrap}>
+          <View testID="chat-composer" style={styles.composerWrap}>
             {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
             <View style={styles.composer}>
               {attachImagesAllowed ? (
@@ -1636,6 +1636,7 @@ export default function ChatPanel({
                 </Pressable>
               ) : null}
               <TextInput
+                testID="chat-composer-input"
                 ref={inputRef}
                 value={input}
                 onChangeText={setInput}
@@ -1659,6 +1660,7 @@ export default function ChatPanel({
                 style={[styles.input, { height: inputHeight }]}
               />
               <Pressable
+                testID="chat-composer-send"
                 onPress={() => void sendMessage()}
                 disabled={!sendEnabled}
                 accessibilityLabel="Send"

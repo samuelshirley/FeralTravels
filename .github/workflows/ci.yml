@@ -457,3 +457,192 @@ jobs:
             } else {
               await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
             }
+
+  # ── iOS end-to-end, on a real simulator ────────────────────────────────────
+  #
+  # The web suite proves the API and the browser UI. NOTHING proved the Expo app
+  # until this job: `Mobile typecheck` compiles it, which catches a type error
+  # and no layout at all. The bug that earned this job (d316cd6) type-checked
+  # perfectly and hid the chat composer behind the keyboard on every iPhone.
+  #
+  # Not React Native Testing Library, deliberately: RNTL renders a component
+  # tree in JS with no layout engine and no keyboard, so it would find the
+  # composer, assert it exists, and go green while the app was unusable. That is
+  # the same green-but-empty shape `scripts/assert-e2e-ran.mjs` exists to catch,
+  # and buying it for less money is not a bargain.
+  #
+  # ── The cost, stated plainly, because it is the reason for every `if:` here ──
+  #
+  # A simulator needs macOS, and GitHub bills macOS runners at ~10x Linux. An
+  # unconditional cold run — prebuild, xcodebuild, boot, flows — is ~20 minutes
+  # of that on every push. So:
+  #
+  #   1. It runs ONLY when something under mobile/ changed. A web-only PR pays
+  #      nothing, which is most PRs.
+  #   2. The built .app is cached against the NATIVE fingerprint, reusing the
+  #      same distinction `scripts/decide-mobile-release.mjs` already draws for
+  #      OTA-vs-native. A JS-only change restores the binary and rebuilds the
+  #      bundle (~5 min) instead of compiling Xcode from scratch (~20 min).
+  #
+  # If this ever needs to run on a web-only PR, the honest fix is to widen the
+  # path filter deliberately — not to delete the filter.
+  ios-e2e:
+    name: iOS e2e (simulator)
+    needs: preview
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The fingerprint below diffs against the base, so a shallow clone
+          # would make every run look like a native change and rebuild.
+          fetch-depth: 0
+
+      # Cheap gate first, on the expensive runner, because a path filter in
+      # `if:` at job level cannot see the diff for a push event.
+      - name: Does this PR touch the app at all?
+        id: touched
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE" ] || ! git merge-base --is-ancestor "$BASE" "$HEAD" 2>/dev/null; then
+            echo "::notice::No usable merge base — running the flows rather than skipping them."
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only "$BASE" "$HEAD" | grep -qE '^(mobile/|scripts/ios-e2e-fixture\.mjs)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Nothing under mobile/ changed — skipping the simulator."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.touched.outputs.run == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install app dependencies
+        if: steps.touched.outputs.run == 'true'
+        run: npm ci
+        working-directory: mobile
+
+      # The same question mobile.yml asks before publishing an OTA: did anything
+      # that ends up in the BINARY move? If not, last run's .app still runs this
+      # JS, and compiling it again buys nothing.
+      - name: Fingerprint the native surface
+        if: steps.touched.outputs.run == 'true'
+        id: fingerprint
+        run: |
+          FP="$(cat mobile/package-lock.json mobile/app.config.js mobile/eas.json 2>/dev/null \
+                 | shasum -a 256 | cut -d' ' -f1)"
+          echo "value=$FP" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the simulator build
+        if: steps.touched.outputs.run == 'true'
+        id: appcache
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios-build
+          key: ios-sim-app-${{ steps.fingerprint.outputs.value }}
+
+      # Only the expensive half is skipped on a hit. The JS bundle is always
+      # rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle time and
+      # every PR has a different preview URL.
+      - name: Build the app for the simulator
+        if: steps.touched.outputs.run == 'true' && steps.appcache.outputs.cache-hit != 'true'
+        env:
+          EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean
+          # Derived, never hardcoded: `expo prebuild` names the workspace after
+          # app.config.js's `name`, so a rename would otherwise fail here with
+          # an xcodebuild error that says nothing about the cause.
+          WORKSPACE="$(ls -d ios/*.xcworkspace | head -1)"
+          SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
+          echo "Building scheme $SCHEME from $WORKSPACE"
+          # No xcpretty: it is not guaranteed on the runner image, and piping
+          # through a missing binary turns a green build into a confusing red.
+          # Raw xcodebuild output is verbose and is exactly what you want in the
+          # log on the day this breaks.
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO
+          mkdir -p ios-build
+          cp -R ios/build/Build/Products/Debug-iphonesimulator/*.app ios-build/
+
+      - name: Boot a simulator and install the app
+        if: steps.touched.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          # Whatever this runner image actually ships. Pinning a model name is
+          # how this job breaks silently the month GitHub rolls the image
+          # forward and "iPhone 16" stops existing.
+          UDID="$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; ds=json.load(sys.stdin)['devices']; print(next(d['udid'] for v in ds.values() for d in v if d['name'].startswith('iPhone')))")"
+          echo "Booting simulator $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" mobile/ios-build/*.app
+
+      - name: Install Maestro
+        if: steps.touched.outputs.run == 'true'
+        run: |
+          curl -Ls https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # Same derivation as the preview and e2e jobs — computed, never passed
+      # through job outputs, because GitHub drops outputs containing masked
+      # values. Uses run_id only: "re-run failed jobs" bumps the attempt without
+      # redeploying the preview, and including it would desync from the app.
+      - name: Derive per-run test-endpoint secret
+        if: steps.touched.outputs.run == 'true'
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      - name: Mint the fixture account
+        if: steps.touched.outputs.run == 'true'
+        id: fixture
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          node scripts/ios-e2e-fixture.mjs --base-url "${{ needs.preview.outputs.url }}" > fixture.env
+          # The code is a live sign-in credential for ten minutes. It is a
+          # fixture address on a subdomain with no MX, so nobody can receive
+          # mail there — but it still has no business in a public run log.
+          CODE="$(grep '^CODE=' fixture.env | cut -d= -f2-)"
+          echo "::add-mask::$CODE"
+          cat fixture.env >> "$GITHUB_ENV"
+
+      - name: Run the flows
+        if: steps.touched.outputs.run == 'true'
+        run: |
+          maestro test mobile/maestro \
+            -e APP_ID=com.feraltravels.app \
+            -e EMAIL="$EMAIL" \
+            -e CODE="$CODE" \
+            --format junit \
+            --output maestro-report.xml
+
+      # Always. A screenshot of the failing screen is the entire value of
+      # driving a real simulator, and it is as useful on a green run for seeing
+      # what the flows actually did.
+      - name: Upload the recordings
+        if: always() && steps.touched.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-ios
+          path: |
+            maestro-report.xml
+            ~/.maestro/tests/**
+          if-no-files-found: warn
