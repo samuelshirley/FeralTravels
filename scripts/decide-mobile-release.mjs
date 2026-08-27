@@ -50,6 +50,19 @@
  */
 import { execFileSync } from 'node:child_process';
 
+/**
+ * Everything the app is built from lives under this prefix — including
+ * mobile/shared, the mirror of src/lib that sync-shared.mjs maintains. If
+ * nothing here moved, there is no bundle to publish and no binary to cut, and
+ * the answer is `none` rather than a republish of identical JS.
+ *
+ * This matters because the workflow ALSO triggers on changes to itself. Editing
+ * .github/workflows/mobile.yml used to publish an OTA carrying a bundle byte
+ * for byte the same as the one already out there — a new update id, a download
+ * on every tester's phone, and nothing to show for it.
+ */
+export const MOBILE_PREFIX = 'mobile/';
+
 /** The manifest whose CONTENT decides; everything else here is file-level. */
 export const MANIFEST = 'mobile/package.json';
 
@@ -253,13 +266,23 @@ export function classifyPackageJsonChange(beforeText, afterText) {
  * @param {string[]} input.changedFiles repo-relative paths in this push
  * @param {string|null|undefined} input.packageJsonBefore raw text, base side
  * @param {string|null|undefined} input.packageJsonAfter  raw text, head side
- * @returns {{ decision: 'native'|'js-only', reasons: string[] }}
+ * @returns {{ decision: 'native'|'js-only'|'none', reasons: string[] }}
  */
 export function decideMobileRelease({ changedFiles, packageJsonBefore, packageJsonAfter }) {
   if (!Array.isArray(changedFiles)) {
     return { decision: 'native', reasons: ['no usable list of changed files'] };
   }
   const files = changedFiles.map((f) => String(f).trim()).filter(Boolean);
+
+  // Asked FIRST, and safe to ask first: this is not a shortcut past the
+  // native checks, it is the observation that all of them read files under
+  // mobile/. If none of those moved, none of them can fire.
+  if (!files.some((f) => f.startsWith(MOBILE_PREFIX))) {
+    return {
+      decision: 'none',
+      reasons: [`nothing under ${MOBILE_PREFIX} changed — there is no release to make`],
+    };
+  }
 
   // Kept apart on purpose. `native` is the only list that can flip the
   // decision; `notes` is explanation for the run log. Folding the two
