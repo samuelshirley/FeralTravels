@@ -43,6 +43,10 @@
  * stdout is exactly one line, `native` or `js-only`, for the workflow to
  * capture. The reasoning goes to stderr so a human reading the run can see
  * WHY. Any thrown error is caught and printed as `native`.
+ *
+ * Add `--json` and stdout becomes `{"decision":..., "reasons":[...]}` instead,
+ * for the step that turns this into a PR comment. Same decision, same
+ * fail-safe; only the shape changes.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -308,8 +312,11 @@ function gitShow(ref, filePath) {
 }
 
 function main(argv) {
+  // Pairwise, over the flags that TAKE a value. `--json` is a bare flag and
+  // is filtered out first, or it would be consumed as somebody's argument.
+  const positional = argv.filter((a) => a !== '--json');
   const args = new Map();
-  for (let i = 0; i < argv.length; i += 2) args.set(argv[i], argv[i + 1]);
+  for (let i = 0; i < positional.length; i += 2) args.set(positional[i], positional[i + 1]);
   const base = args.get('--base');
   const head = args.get('--head');
 
@@ -344,6 +351,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } catch (error) {
     result = { decision: 'native', reasons: [`classifier threw: ${error.message}`] };
   }
-  for (const reason of result.reasons) process.stderr.write(`${result.decision}: ${reason}\n`);
-  process.stdout.write(`${result.decision}\n`);
+  if (process.argv.includes('--json')) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    for (const reason of result.reasons) process.stderr.write(`${result.decision}: ${reason}\n`);
+    process.stdout.write(`${result.decision}\n`);
+  }
 }

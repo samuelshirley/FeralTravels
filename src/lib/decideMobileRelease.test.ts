@@ -351,21 +351,66 @@ describe('.github/workflows/mobile.yml calls the classifier', () => {
     'utf8'
   );
 
+  /**
+   * Comment lines dropped and shell line-continuations folded back together,
+   * so a `run:` command wrapped over two lines with a trailing `\\` is still
+   * one string to match against. Without the fold, the forecast's invocation
+   * reads as two half-commands and no assertion can see the whole call.
+   */
+  const commands = workflow
+    .replace(/\\\n\s*/g, ' ')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'));
+
   it('invokes scripts/decide-mobile-release.mjs', () => {
     // A RUN line, not a mention. The header comment names the script twice,
     // and an earlier version of this assertion was satisfied by those alone —
     // it stayed green through a mutation that reinstated the inline regex and
     // deleted the call. Comment lines are stripped before matching.
-    const invocations = workflow
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('#'))
-      .filter((line) => /node\s+scripts\/decide-mobile-release\.mjs/.test(line));
+    const invocations = commands.filter((line) =>
+      /node\s+scripts\/decide-mobile-release\.mjs/.test(line)
+    );
 
     expect(
       invocations.length,
       'mobile.yml no longer RUNS scripts/decide-mobile-release.mjs — the decision ' +
         'has moved back into YAML, where it cannot be tested. That is how the ' +
         'sync:shared build shipped.'
+    ).toBeGreaterThan(0);
+  });
+
+  it('gates the TestFlight build on the classifier', () => {
+    // The build step had NO `if:` at all: every mobile merge spent ~30 minutes
+    // of the free plan's low-priority queue and one of 15 monthly iOS credits,
+    // including merges that only moved JS. If this assertion fails, the gate
+    // was removed and the credits are going again.
+    const lines = workflow.split('\n');
+    const step = lines.findIndex((l) => l.includes('name: Build and submit to TestFlight'));
+    expect(step, 'the build step is gone from mobile.yml').toBeGreaterThan(-1);
+
+    const window = lines.slice(step, step + 12).join('\n');
+    expect(
+      /if:\s*steps\.native\.outputs\.native == 'true'/.test(window),
+      'the TestFlight build step is no longer gated on steps.native.outputs.native — ' +
+        'every mobile merge will spend a build credit again, JS-only ones included.'
+    ).toBe(true);
+  });
+
+  it('forecasts the decision on the PR before the merge', () => {
+    expect(
+      /^\s*pull_request:/m.test(workflow),
+      'mobile.yml no longer runs on pull_request, so nothing tells you whether ' +
+        'merging costs a build credit until after you have spent it.'
+    ).toBe(true);
+
+    const invocations = commands.filter(
+      (line) => /decide-mobile-release\.mjs/.test(line) && /--json/.test(line)
+    );
+
+    expect(
+      invocations.length,
+      'the PR forecast no longer asks the classifier for its reasons (--json), so ' +
+        'the comment cannot say WHY.'
     ).toBeGreaterThan(0);
   });
 
