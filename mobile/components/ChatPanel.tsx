@@ -3,11 +3,9 @@ import {
   AppState,
   Image,
   Keyboard,
-  KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +13,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
 import {
@@ -148,7 +145,6 @@ export default function ChatPanel({
 }: ChatPanelProps) {
   const { units } = useUnits();
   const { notify } = useErrors();
-  const insets = useSafeAreaInsets();
   const api = useMemo(() => tripApi(tripId), [tripId]);
 
   const isOnboarding = onboardingState !== "done" && !readonly;
@@ -1325,12 +1321,15 @@ export default function ChatPanel({
         : "Ask Penny…";
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      // iOS floats the keyboard over the app, so the composer needs padding
-      // pushed under it; Android's adjustResize already shrinks the window.
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    /*
+     * A plain View. The keyboard container lives at the SCREEN root, in
+     * app/trips/[tripId].tsx — see the long note there. It cannot work from
+     * inside this component: ChatPanel is rendered into an absolutely-
+     * positioned pane, and KeyboardAvoidingView measures a parent-relative
+     * frame against a screen-relative keyboard position, so from here the
+     * subtraction clamps to zero and no padding is ever applied.
+     */
+    <View style={styles.root}>
       {/* Header */}
       <View style={styles.header}>
         {/* The web paints this circle with a primary→success linear-gradient;
@@ -1579,13 +1578,13 @@ export default function ChatPanel({
       ) : null}
 
       {readonly ? (
-        <View style={[styles.readonlyBar, { paddingBottom: 12 + insets.bottom }]}>
+        <View style={styles.readonlyBar}>
           <Text style={styles.readonlyText}>
             Demo trip — clone it from the trips list to chat with Penny.
           </Text>
         </View>
       ) : onboardingBlockingLoad ? (
-        <View style={[styles.setupLoading, { paddingBottom: 12 + insets.bottom }]}>
+        <View style={styles.setupLoading}>
           <Spinner />
           <Text style={styles.setupLoadingText}>Loading setup…</Text>
         </View>
@@ -1622,7 +1621,7 @@ export default function ChatPanel({
             </View>
           ) : null}
 
-          <View style={[styles.composerWrap, { paddingBottom: 12 + insets.bottom }]}>
+          <View style={styles.composerWrap}>
             {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
             <View style={styles.composer}>
               {attachImagesAllowed ? (
@@ -1688,7 +1687,7 @@ export default function ChatPanel({
           onClose={() => setPurchaseSheetOpen(false)}
         />
       ) : null}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1876,16 +1875,34 @@ const styles = StyleSheet.create({
   },
   thumbRemoveText: { fontFamily: font.regular, color: theme.onPrimary, fontSize: 12, lineHeight: 14 },
 
+  /*
+   * paddingBottom is a flat 12 — this component never owns the bottom safe
+   * area. Its host does: BottomNav sits below it and already pads
+   * `insets.bottom`, so adding it here too counted the home indicator twice
+   * and left the visible gap between the composer and the nav. When the
+   * keyboard is up the nav unmounts, but the keyboard covers the home
+   * indicator itself, so 12 is still right. Both states, one number.
+   */
   readonlyBar: {
     paddingTop: 12,
+    paddingBottom: 12,
     paddingHorizontal: 16,
     borderTopWidth: 1,
     borderTopColor: theme.border,
   },
   readonlyText: { fontFamily: font.regular, color: theme.muted, fontSize: 12, textAlign: "center" },
 
+  /*
+   * paddingBottom is a flat 12 — this component never owns the bottom safe
+   * area. Its host does: BottomNav sits below it and already pads
+   * `insets.bottom`, so adding it here too counted the home indicator twice
+   * and left the visible gap between the composer and the nav. When the
+   * keyboard is up the nav unmounts, but the keyboard covers the home
+   * indicator itself, so 12 is still right. Both states, one number.
+   */
   setupLoading: {
     paddingTop: 12,
+    paddingBottom: 12,
     paddingHorizontal: 16,
     borderTopWidth: 1,
     borderTopColor: theme.border,
@@ -1925,8 +1942,17 @@ const styles = StyleSheet.create({
   optionChipOff: { opacity: 0.5 },
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
 
+  /*
+   * paddingBottom is a flat 12 — this component never owns the bottom safe
+   * area. Its host does: BottomNav sits below it and already pads
+   * `insets.bottom`, so adding it here too counted the home indicator twice
+   * and left the visible gap between the composer and the nav. When the
+   * keyboard is up the nav unmounts, but the keyboard covers the home
+   * indicator itself, so 12 is still right. Both states, one number.
+   */
   composerWrap: {
     paddingTop: 12,
+    paddingBottom: 12,
     paddingHorizontal: 16,
     borderTopWidth: 1,
     borderTopColor: theme.border,

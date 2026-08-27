@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Itinerary from "@/components/Itinerary";
 import TripMap from "@/components/TripMap";
@@ -279,7 +287,30 @@ function Workspace({
   }, []);
 
   return (
-    <View style={styles.screen}>
+    /**
+     * The keyboard container is HERE, at the screen root, and deliberately not
+     * inside ChatPanel where it used to live.
+     *
+     * `KeyboardAvoidingView` compares its own `onLayout` frame — which is
+     * PARENT-relative — against the keyboard's SCREEN-relative `screenY`. Those
+     * two only agree when the view is at the window origin. ChatPanel's copy was
+     * mounted inside `styles.pane`, an `absoluteFillObject` inside `panes`, so
+     * its frame read `y: 0, height: <panes height>`; add them together and the
+     * result sat roughly a header-plus-nav above the keyboard's top edge, so
+     * `Math.max(frameBottom - keyboardY, 0)` clamped to ZERO. It applied no
+     * padding at all, which is why the composer was not merely crowded by the
+     * keyboard but completely behind it (iOS, 2026-08-27).
+     *
+     * At the screen root the frame really is the window — `headerShown: false`
+     * for this route in `app/_layout.tsx`, so there is no native header offset
+     * to correct for either — and the arithmetic is the arithmetic RN assumes.
+     * Anything that re-parents this below the window origin brings the bug back
+     * and must pass `keyboardVerticalOffset` to compensate.
+     */
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <TripHeader
         tripName={trip.name}
         vehicleId={trip.vehicle_id ?? null}
@@ -369,7 +400,7 @@ function Workspace({
           unread={unread}
         />
       ) : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
