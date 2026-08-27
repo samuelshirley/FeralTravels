@@ -7,7 +7,9 @@ import ChatPanel from "@/components/ChatPanel";
 import BottomNav, { type MobileTab } from "@/components/BottomNav";
 import TripHeader from "@/components/TripHeader";
 import { Centered, Spinner } from "@/components/ui";
+import PlanRequiredOverlay from "@/components/PlanRequiredOverlay";
 import { getMe, isAuthError, reportPosition, tripApi, type Me } from "@/lib/api";
+import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
 import { DeviceLocationProvider, useDeviceLocation } from "@/lib/location";
 import { useKeyboardOpen } from "@/lib/useKeyboardOpen";
 import { theme } from "@/lib/theme";
@@ -20,12 +22,21 @@ import { font } from "@/lib/typography";
  * ever gets the single-pane + bottom-nav one, so that's all this screen is.
  */
 export default function TripWorkspaceScreen() {
-  const params = useLocalSearchParams<{ tripId?: string | string[]; replan?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    tripId?: string | string[];
+    replan?: string | string[];
+    chat?: string | string[];
+  }>();
   const tripId = Array.isArray(params.tripId) ? (params.tripId[0] ?? "") : (params.tripId ?? "");
   const replanParam = Array.isArray(params.replan) ? params.replan[0] : params.replan;
   // The off-route email deep link carries this; the web sends `replan=true`,
   // the native link `replan=1`. Accept either rather than silently ignoring one.
   const replanFromOffRoute = replanParam === "1" || replanParam === "true";
+  // "Open on the chat tab." The trips list sends a blocked account here rather
+  // than leaving them on a list, and landing on the itinerary would put them
+  // behind the overlay instead of in front of Penny.
+  const chatParam = Array.isArray(params.chat) ? params.chat[0] : params.chat;
+  const openOnChat = chatParam === "1" || chatParam === "true";
 
   const router = useRouter();
   // Memoized so a re-render doesn't hand loadTrip a fresh object identity and
@@ -135,6 +146,7 @@ export default function TripWorkspaceScreen() {
         readonly={readonly}
         fuelBusy={fuelBusy}
         replanFromOffRoute={replanFromOffRoute}
+        openOnChat={openOnChat}
         onTripUpdated={loadTrip}
       />
     </DeviceLocationProvider>
@@ -149,6 +161,7 @@ interface WorkspaceProps {
   readonly: boolean;
   fuelBusy: boolean;
   replanFromOffRoute: boolean;
+  openOnChat: boolean;
   onTripUpdated: () => void;
 }
 
@@ -160,6 +173,7 @@ function Workspace({
   readonly,
   fuelBusy,
   replanFromOffRoute,
+  openOnChat,
   onTripUpdated,
 }: WorkspaceProps) {
   const keyboardOpen = useKeyboardOpen();
@@ -172,11 +186,33 @@ function Workspace({
   // A lazy initializer (rather than an effect) gives us the web's "at most once
   // per mount" semantics with no flash of the list tab first.
   const [tab, setTab] = useState<MobileTab>(() =>
-    replanFromOffRoute || legs.length === 0 ? "chat" : "list"
+    openOnChat || replanFromOffRoute || legs.length === 0 ? "chat" : "list"
   );
   const [thinking, setThinking] = useState(false);
   const [unread, setUnread] = useState(0);
   const [selectedLegId, setSelectedLegId] = useState<string | null>(null);
+
+  /**
+   * Asked here as well as in ChatPanel, on purpose.
+   *
+   * The two need it for opposite things — she puts a message in the transcript,
+   * this decides whether the itinerary and the map are covered — and wiring one
+   * to the other would mean the overlay could only appear once chat had mounted
+   * and answered. It is a cached GET against a route that makes no Anthropic
+   * call, and the server is the authority either way.
+   */
+  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  useEffect(() => {
+    if (readonly) return;
+    let cancelled = false;
+    void (async () => {
+      const payload = await fetchEntitlement();
+      if (!cancelled && payload) setEntitlement(payload);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readonly]);
   // Drives "open this in the list view": set when the user taps a leg or stop
   // marker on the map. The nonce makes repeat taps on the same target re-fire
   // Itinerary's expand+scroll effect. stopId is null for a leg tap (open the
@@ -307,6 +343,21 @@ function Workspace({
             onActivity={handleChatActivity}
           />
         </View>
+
+        {/*
+          The list and the map get covered; the chat pane never does. Penny's
+          own bubble is the block on that tab, and covering her would leave a
+          blocked account with nowhere at all to read what happened or to buy
+          their way out of it. The bottom nav stays live underneath, so "Chat"
+          is always one tap away.
+        */}
+        {tab !== "chat" ? (
+          <PlanRequiredOverlay
+            entitlement={entitlement}
+            onBackToPenny={() => setTab("chat")}
+            onEntitled={setEntitlement}
+          />
+        ) : null}
       </View>
 
       {/* Hidden while the soft keyboard is up so the chat composer isn't crowded. */}

@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { chatHistory, trips } from '@/server/db/schema';
+import { chatHistory, trips, users } from '@/server/db/schema';
 import { addChatMessage } from '@/server/repos/chat';
 import {
   addVehicle,
@@ -228,6 +228,16 @@ async function completeOnboarding(
 ): Promise<SubmitAnswerResult> {
   const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   const pendingIntent = trip?.pendingIntent ?? '';
+
+  // Stamp the user-level flag the first time only. `onConflict`-free because
+  // this is the single place onboarding can complete, and `IS NULL` keeps a
+  // second trip's onboarding from rewriting when they actually finished.
+  if (trip?.userId) {
+    await db
+      .update(users)
+      .set({ onboardingCompletedAt: new Date() })
+      .where(and(eq(users.id, trip.userId), isNull(users.onboardingCompletedAt)));
+  }
   // Clear pendingIntent + scan stash now that we're handing off
   await db
     .update(trips)

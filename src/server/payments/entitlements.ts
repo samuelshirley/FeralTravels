@@ -5,6 +5,27 @@ import { subscriptions, users } from '@/server/db/schema';
 import type { SubscriptionSource, SubscriptionStatus } from '@/server/db/schema';
 import { anthropicMicrocentsInWindow } from './usage';
 import { resolveAccountState, trialDaysRemaining, type AccountVerdict } from './states';
+import { paywallEnabled } from './switch';
+
+/**
+ * Apply the master switch to a true verdict.
+ *
+ * The STATE is left exactly as the resolver found it — an account that is
+ * `trial_expired` still says so, and the admin panel still shows it — because
+ * a switch that rewrote history would make it impossible to see who WOULD be
+ * blocked before turning it on. Only the three fields that gate behaviour are
+ * overridden.
+ */
+function applySwitch(verdict: AccountVerdict): AccountVerdict {
+  if (paywallEnabled()) return verdict;
+  return {
+    ...verdict,
+    enforced: false,
+    entitled: true,
+    canViewExistingTrips: true,
+    blockReason: null,
+  };
+}
 
 /**
  * Fetch the facts, hand them to the pure resolver.
@@ -36,28 +57,32 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
   if (!user) {
     // The session outlived the row (deleted account mid-request). Refuse rather
     // than fabricating a trial for a user that does not exist.
-    return resolveAccountState({
-      now,
-      createdAt: new Date(0),
-      comped: false,
-      anthropicMicrocents12mo: 0,
-      subscription: null,
-    });
+    return applySwitch(
+      resolveAccountState({
+        now,
+        createdAt: new Date(0),
+        comped: false,
+        anthropicMicrocents12mo: 0,
+        subscription: null,
+      })
+    );
   }
 
-  return resolveAccountState({
-    now,
-    createdAt: user.createdAt,
-    comped: user.comped,
-    anthropicMicrocents12mo: spend,
-    subscription: subRows[0]
-      ? {
-          status: subRows[0].status,
-          currentPeriodEnd: subRows[0].currentPeriodEnd,
-          autoRenew: subRows[0].autoRenew,
-        }
-      : null,
-  });
+  return applySwitch(
+    resolveAccountState({
+      now,
+      createdAt: user.createdAt,
+      comped: user.comped,
+      anthropicMicrocents12mo: spend,
+      subscription: subRows[0]
+        ? {
+            status: subRows[0].status,
+            currentPeriodEnd: subRows[0].currentPeriodEnd,
+            autoRenew: subRows[0].autoRenew,
+          }
+        : null,
+    })
+  );
 }
 
 /**

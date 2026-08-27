@@ -102,6 +102,10 @@ export default function LegCard({
     endName: leg.end_name,
     selectedRoute,
     stops: leg.stops,
+    // distance + drive time tell a rest day (nothing to drive to) apart from a
+    // day-loop that returns to its own start (which still needs a button home).
+    distanceKm: leg.distance_km,
+    driveTimeMinutes: leg.drive_time_minutes,
   });
   // Fallback single URL for the syncing state (doesn't need segments)
   const directionsUrl = buildLegDirectionsUrl({ legCoords, selectedRoute, stops: leg.stops });

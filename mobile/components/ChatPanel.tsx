@@ -308,7 +308,7 @@ export default function ChatPanel({
       const fresh = await fetchEntitlement();
       if (!fresh?.entitled) {
         setPurchaseError(
-          "That went through, but your account still reads as unsubscribed. Give it a moment and reopen the trip."
+          "That went through, but your plan hasn't switched on yet. Give it a moment and reopen the trip."
         );
         return;
       }

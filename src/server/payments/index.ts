@@ -51,3 +51,4 @@ export {
 } from './testAccounts';
 export type { TestAccountSummary, CreateTestAccountInput } from './testAccounts';
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
+export { paywallEnabled } from './switch';

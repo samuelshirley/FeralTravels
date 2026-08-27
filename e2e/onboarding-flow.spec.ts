@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { uniqueEmail, login } from './fixtures/auth';
 import { createOnboardingTrip, seedCanonicalFixture } from './fixtures/test-trip';
+import { seededTripStartPhrase } from './fixtures/constants';
 
 /**
  * The onboarding wizard: intent -> start date -> units. The vehicle step is
@@ -25,7 +26,7 @@ test.describe('Onboarding wizard', () => {
     await expect(page.getByText(/What would you like to name this trip/)).toHaveCount(0);
 
     await expect(page.getByText(/When are you setting off/)).toBeVisible({ timeout: 20_000 });
-    await composer.fill('June 3 2026');
+    await composer.fill(seededTripStartPhrase());
     await composer.press('Enter');
 
     await expect(

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import Spinner from '@/components/Spinner';
-import { APP_STORE_URL } from '@/lib/paywallCopy';
+import { APP_STORE_CTA_LABEL, APP_STORE_URL } from '@/lib/paywallCopy';
 import type { PaywallProduct } from '@/types/entitlement';
 
 /**
@@ -16,11 +16,28 @@ import type { PaywallProduct } from '@/types/entitlement';
  * are the same flow, and the day StoreKit lands this component is deleted
  * rather than redesigned.
  *
+ * Sizing follows from that. StoreKit's sheet is a small card that names a
+ * price and gets out of the way; on a desktop viewport this one has to stay
+ * that size on purpose, because a purchase card that grows to fill the window
+ * stops reading as a sheet and starts reading as a pricing page — which is a
+ * different, pushier product than the one we are shipping. Hence the hard
+ * SHEET_MAX_WIDTH ceiling, the viewport-capped height, and the tight vertical
+ * rhythm below: every gap here is the smallest one that still separates.
+ *
  * It renders prices it was handed. It does not decide who can buy, what a
  * plan costs, or whether the fake-purchase path is available — all three come
  * from `GET /api/me/entitlement`, and the server refuses the purchase again on
  * its own authority regardless of what this sheet chose to show.
  */
+
+/**
+ * Roughly the width of Apple's own sheet, and narrow enough that the two price
+ * rows read as a short list rather than as full-bleed banners. Wider than this
+ * and the rows stretch, the prices drift away from their cadence labels, and
+ * the whole card loses the "one small decision" shape.
+ */
+const SHEET_MAX_WIDTH = 380;
+
 export default function PurchaseSheet({
   products,
   testPurchaseAllowed,
@@ -47,7 +64,7 @@ export default function PurchaseSheet({
 
   // Escape closes, like Apple's sheet and like every other overlay the user has
   // ever met. Skipped while a grant is in flight — dismissing mid-request would
-  // leave the account subscribed and the UI still paywalled until a reload.
+  // leave the account paid up and the UI still paywalled until a reload.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !busy) onClose();
@@ -84,37 +101,41 @@ export default function PurchaseSheet({
         style={{
           background: 'var(--tp-surface, #fff)',
           borderRadius: 'var(--tp-radius-md, 12px)',
-          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.18)',
+          border: '1px solid var(--tp-border, #E6DFD4)',
+          boxShadow: 'var(--tp-shadow-md, 0 4px 12px rgba(51, 51, 51, 0.08))',
           width: '100%',
-          maxWidth: 400,
-          overflow: 'hidden',
+          maxWidth: SHEET_MAX_WIDTH,
+          // A sheet never scrolls the page behind it, and never grows taller
+          // than the window: whatever it holds, it stays a card.
+          maxHeight: 'calc(100vh - 40px)',
+          overflowY: 'auto',
           position: 'relative',
         }}
       >
         <div
           style={{
-            height: 4,
+            height: 3,
             background:
               'linear-gradient(90deg, var(--tp-primary, #4E7AB0), var(--tp-accent-warm, #C97B63))',
           }}
         />
 
-        <div style={{ padding: '24px 24px 20px' }}>
+        <div style={{ padding: '18px 20px 20px' }}>
           <button
             onClick={onClose}
             disabled={busy}
             aria-label="Close"
             style={{
               position: 'absolute',
-              top: 14,
-              right: 12,
-              width: 28,
-              height: 28,
+              top: 10,
+              right: 10,
+              width: 26,
+              height: 26,
               border: 'none',
               background: 'transparent',
               color: 'var(--tp-subtle, #999)',
-              fontSize: 20,
-              lineHeight: '28px',
+              fontSize: 19,
+              lineHeight: '26px',
               padding: 0,
               cursor: busy ? 'default' : 'pointer',
             }}
@@ -122,27 +143,30 @@ export default function PurchaseSheet({
             ×
           </button>
 
+          {/* Title and subtitle are one block, not two — 2px apart, so they
+              read as a single heading and the prices start immediately. */}
           <h2
             style={{
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: 700,
               color: 'var(--tp-text, #333)',
-              margin: '0 0 4px',
+              margin: '0 0 2px',
+              paddingRight: 24,
             }}
           >
             Feral Travels
           </h2>
           <p
             style={{
-              fontSize: 13,
+              fontSize: 12.5,
               color: 'var(--tp-muted, #5C5C5C)',
-              margin: '0 0 18px',
+              margin: '0 0 14px',
             }}
           >
             Choose a plan
           </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {products.map((p) => (
               <PlanRow
                 key={p.id}
@@ -161,57 +185,61 @@ export default function PurchaseSheet({
             <div
               data-testid="purchase-sheet-test-notice"
               style={{
-                marginTop: 14,
-                padding: '8px 10px',
+                marginTop: 12,
+                padding: '7px 9px',
                 background: 'rgba(212, 160, 23, 0.12)',
                 border: '1px solid rgba(212, 160, 23, 0.35)',
                 borderRadius: 'var(--tp-radius-sm, 8px)',
-                fontSize: 11.5,
-                lineHeight: 1.5,
+                fontSize: 11,
+                lineHeight: 1.45,
                 color: 'var(--tp-text, #333)',
               }}
             >
-              {/* Loud on purpose. This path grants a real subscription with no
-                  payment, and the one place that must be unmistakable is a
-                  screenshot of the sheet that granted it. */}
+              {/* Loud on purpose. This path grants paid access with no payment,
+                  and the one place that must be unmistakable is a screenshot of
+                  the sheet that granted it. */}
               <strong>Test purchase — no payment.</strong> Your account is
               allowlisted, so picking a plan grants it directly and logs a{' '}
-              <code style={{ fontSize: 11 }}>FAKE_PURCHASE</code> event. No money
-              moves.
+              <code style={{ fontSize: 10.5 }}>FAKE_PURCHASE</code> event. No
+              money moves.
             </div>
           ) : (
-            <div
-              data-testid="purchase-sheet-iphone-notice"
-              style={{
-                marginTop: 14,
-                fontSize: 12.5,
-                lineHeight: 1.6,
-                color: 'var(--tp-muted, #5C5C5C)',
-              }}
-            >
-              Subscriptions are bought in the Feral Travels app on iPhone — the
-              web app isn&apos;t a purchase surface. Everything you plan there
-              shows up here.
-              <div style={{ marginTop: 10 }}>
-                <a
-                  href={APP_STORE_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    padding: '9px 16px',
-                    borderRadius: 'var(--tp-radius-sm, 8px)',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    textDecoration: 'none',
-                    background: 'var(--tp-primary, #4E7AB0)',
-                    color: 'var(--tp-on-primary, #fff)',
-                  }}
-                >
-                  Continue on iPhone
-                </a>
-              </div>
+            <div data-testid="purchase-sheet-iphone-notice" style={{ marginTop: 12 }}>
+              {/* Small and quiet, sitting under the prices: it explains the
+                  button, it is not the pitch. The pitch already happened in
+                  Penny's message or on the block notice that opened this. */}
+              <p
+                style={{
+                  margin: '0 0 10px',
+                  fontSize: 11.5,
+                  lineHeight: 1.5,
+                  color: 'var(--tp-muted, #5C5C5C)',
+                }}
+              >
+                Plans are bought in the Feral Travels app on iPhone. Everything
+                you plan there shows up here.
+              </p>
+              <a
+                data-testid="purchase-sheet-app-store-link"
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: 'var(--tp-radius-sm, 8px)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  background: 'var(--tp-primary, #4E7AB0)',
+                  color: 'var(--tp-on-primary, #fff)',
+                }}
+              >
+                {APP_STORE_CTA_LABEL}
+              </a>
             </div>
           )}
 
@@ -219,13 +247,13 @@ export default function PurchaseSheet({
             <div
               data-testid="purchase-sheet-error"
               style={{
-                marginTop: 12,
-                padding: '8px 10px',
+                marginTop: 10,
+                padding: '7px 9px',
                 background: 'var(--tp-danger-muted, rgba(198, 93, 74, 0.12))',
                 border: '1px solid rgba(198, 93, 74, 0.35)',
                 borderRadius: 'var(--tp-radius-sm, 8px)',
-                fontSize: 12,
-                lineHeight: 1.5,
+                fontSize: 11.5,
+                lineHeight: 1.45,
                 color: 'var(--tp-danger, #C65D4A)',
               }}
             >
@@ -255,10 +283,10 @@ function PlanRow({
   const inner = (
     <>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--tp-text, #333)' }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--tp-text, #333)' }}>
           {product.priceLabel}
         </span>
-        <span style={{ fontSize: 13, color: 'var(--tp-muted, #5C5C5C)' }}>
+        <span style={{ fontSize: 12, color: 'var(--tp-muted, #5C5C5C)' }}>
           {product.cadence}
         </span>
       </div>
@@ -266,11 +294,11 @@ function PlanRow({
         {product.note && (
           <span
             style={{
-              padding: '3px 8px',
+              padding: '2px 7px',
               borderRadius: 999,
               background: 'var(--tp-success-muted, rgba(74, 139, 122, 0.14))',
               color: 'var(--tp-success, #4A8B7A)',
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: 600,
               whiteSpace: 'nowrap',
             }}
@@ -278,7 +306,7 @@ function PlanRow({
             {product.note}
           </span>
         )}
-        {pending && <Spinner size={13} thickness={2} color="var(--tp-primary)" />}
+        {pending && <Spinner size={12} thickness={2} color="var(--tp-primary)" />}
       </div>
     </>
   );
@@ -290,10 +318,13 @@ function PlanRow({
     gap: 10,
     width: '100%',
     textAlign: 'left',
-    padding: '12px 14px',
+    // 10/12 rather than 12/14: two rows this size sit as a list, which is what
+    // a choice between two things should look like.
+    padding: '10px 12px',
     borderRadius: 'var(--tp-radius-sm, 8px)',
-    border: '1px solid var(--tp-border, rgba(127,127,127,0.25))',
-    background: 'var(--tp-surface, #fff)',
+    border: '1px solid var(--tp-border, #E6DFD4)',
+    // Tinted against the white card so a row reads as a target, not a divider.
+    background: 'var(--tp-surface-muted, #FBF8F3)',
     fontFamily: 'inherit',
   };
 
@@ -318,6 +349,7 @@ function PlanRow({
         ...frame,
         cursor: busy ? 'default' : 'pointer',
         opacity: busy && !pending ? 0.5 : 1,
+        transition: 'border-color 120ms ease, background 120ms ease',
       }}
     >
       {inner}

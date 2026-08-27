@@ -36,6 +36,7 @@ const bodySchema = z.discriminatedUnion('action', [
     periodEndsInDays: z.number().int().min(-3650).max(3650).optional(),
     autoRenew: z.boolean().optional(),
     spendUsd: z.number().min(0).max(1000).optional(),
+    withTrip: z.boolean().optional(),
   }),
   z.object({ action: z.literal('code'), email: z.string().email() }),
   z.object({ action: z.literal('resend'), email: z.string().email() }),

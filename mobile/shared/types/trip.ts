@@ -87,6 +87,14 @@ export interface Trip {
   user_id: string;
   vehicle_id: string | null;
   is_template: boolean;
+  /**
+   * The trip's last calendar day (ISO YYYY-MM-DD), derived from its legs —
+   * NOT a column. Present only on the trips-list payload (listTripsForUser),
+   * which is the one surface that needs to know a trip is over without
+   * loading its legs; null when the trip has no legs yet. See
+   * `lib/tripCompletion`, and `LegWithDetails.date_iso` for the day model.
+   */
+  last_day_iso?: string | null;
 }
 
 /**

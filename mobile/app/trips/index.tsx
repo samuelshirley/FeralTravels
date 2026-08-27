@@ -27,11 +27,14 @@ import {
   type Me,
 } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
-import { fetchEntitlement } from "@/lib/entitlement";
+import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
+import PlanRequiredOverlay from "@/components/PlanRequiredOverlay";
 import AccountButton from "@/components/AccountButton";
 import { useIdentity } from "@/lib/identity";
 import { theme, shadow } from "@/lib/theme";
 import type { Trip } from "@/shared/types/trip";
+import { todayISO } from "@/shared/lib/dates";
+import { isTripCompleted } from "@/shared/lib/tripCompletion";
 import { font } from "@/lib/typography";
 
 /**
@@ -64,6 +67,19 @@ type MeWithId = Me & { id?: string };
  * correctly — so this screen now does the same, and the two headers agree.
  */
 
+/**
+ * "Has this app session already put a blocked user in front of Penny?"
+ *
+ * Module scope, not a ref, and that is the whole point: `router.replace` into
+ * the trip UNMOUNTS this screen, so a ref would be back to `false` the moment
+ * they navigated to the trips list — and every attempt to reach the list would
+ * bounce straight back into the chat they just left. A module-level flag lives
+ * as long as the JS runtime does, which is the same span as "this app open".
+ *
+ * Reset on sign-out so the next account gets its own first-open redirect.
+ */
+let sentToPennyThisSession = false;
+
 type Row =
   | { key: string; kind: "empty" }
   | { key: string; kind: "templatesHeader" }
@@ -84,6 +100,12 @@ export default function TripsScreen() {
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
+  /**
+   * The server's verdict, held rather than acted on and forgotten, because the
+   * overlay below needs the prices and the copy that came with it. Null means
+   * "couldn't ask" and never blocks — see PlanRequiredOverlay.
+   */
+  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
 
   /**
    * One auto-create per mount, and only ever one.
@@ -112,7 +134,7 @@ export default function TripsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [tripsRes, meRes, entitlement] = await Promise.all([
+      const [tripsRes, meRes, verdict] = await Promise.all([
         listTrips(),
         getMe() as Promise<MeWithId>,
         fetchEntitlement(),
@@ -120,30 +142,45 @@ export default function TripsScreen() {
       setTrips(tripsRes);
       setMe(meRes);
       setMeId(meRes.id ?? null);
+      setEntitlement(verdict);
 
       const mine = meRes.id
         ? tripsRes.filter((t) => t.user_id === meRes.id)
         : tripsRes.filter((t) => !t.is_template);
 
-      if (mine.length === 0) {
-        // Nothing to show and nothing to read. Where they go depends entirely
-        // on whether they can still plan.
-        //
-        // `entitlement === null` means the lookup failed, and it is treated as
-        // entitled on purpose: a phone in a tunnel must not paywall a paying
-        // subscriber. Every route that spends money gates itself server-side,
-        // so being wrong in this direction costs one rejected request and being
-        // wrong in the other locks a customer out of the app they paid for.
-        if (entitlement && !entitlement.entitled) {
-          router.replace("/paywall");
+      // Past the wall: the user meets Penny, not a list. She has the whole
+      // story — the trial, the two prices, the button — and she has it in the
+      // transcript they already know, so the block reads as her telling them
+      // rather than as the app locking a door.
+      //
+      // A null verdict means the lookup failed, and it is treated as
+      // entitled on purpose: a phone in a tunnel must not paywall a paying
+      // customer. Every route that spends money gates itself server-side, so
+      // being wrong in this direction costs one rejected request and being
+      // wrong in the other locks someone out of the app they paid for.
+      if (verdict && !verdict.entitled) {
+        // Once per app open. `load()` re-runs on every focus, and a second
+        // redirect would mean the trips list could never be reached at all —
+        // they would be thrown back into the chat the instant they left it.
+        if (!sentToPennyThisSession) {
+          sentToPennyThisSession = true;
+          // `listTrips` comes back most-recently-active first (templates last),
+          // so the head of `mine` is the trip they were last in. An account
+          // that never made one has no chat to be told in — chat_history is
+          // trip-scoped — which is what /paywall exists for.
+          const latest = mine[0];
+          router.replace(latest ? `/trips/${latest.id}?chat=1` : "/paywall");
           return;
         }
-        if (!autoCreated.current) {
-          autoCreated.current = true;
-          const trip = await createTrip();
-          router.replace(`/trips/${trip.id}`);
-          return;
-        }
+        // They came back here deliberately. Draw the list and cover it.
+        return;
+      }
+
+      if (mine.length === 0 && !autoCreated.current) {
+        autoCreated.current = true;
+        const trip = await createTrip();
+        router.replace(`/trips/${trip.id}`);
+        return;
       }
     } catch (err) {
       if (!handleAuthError(err)) {
@@ -227,6 +264,9 @@ export default function TripsScreen() {
 
   async function handleSignOut() {
     setMenuOpen(false);
+    // The next account to sign in on this process gets its own first-open
+    // redirect rather than inheriting this one's.
+    sentToPennyThisSession = false;
     await clearToken();
     router.replace("/sign-in");
   }
@@ -332,6 +372,12 @@ export default function TripsScreen() {
                 startDate={trip.start_date}
                 endDate={trip.end_date}
                 isTemplate={isTemplate}
+                // On a phone the runtime zone IS the driver's zone (the web
+                // server runs in UTC and has to read the stored preference), so
+                // todayISO() is already their wall clock. Templates are dated in
+                // the past and are never "over" — they are something to clone,
+                // not a trip anyone drove.
+                completed={!isTemplate && isTripCompleted(trip.last_day_iso, todayISO())}
                 // The web only wires delete on template cards for admins
                 // (`canDeleteTemplates`). The app has no admin surface, so
                 // templates are never deletable here.
@@ -374,6 +420,17 @@ export default function TripsScreen() {
       />
 
       <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
+
+      {/* Last child, so it covers the header and the list without either being
+          unmounted — the trips stay on screen behind it. */}
+      <PlanRequiredOverlay
+        entitlement={entitlement}
+        onBackToPenny={() => {
+          const latest = myTrips[0];
+          router.replace(latest ? `/trips/${latest.id}?chat=1` : "/paywall");
+        }}
+        onEntitled={setEntitlement}
+      />
     </>
   );
 }

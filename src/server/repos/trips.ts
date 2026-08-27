@@ -10,6 +10,7 @@ import {
   todayISOInZone,
 } from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
+import { lastDayFromSchedule } from '@/lib/tripCompletion';
 import {
   materializeSchedule,
   computeStartFixes,
@@ -285,7 +286,38 @@ export async function listTripsForUser(userId: string) {
     .from(trips)
     .where(or(eq(trips.userId, userId), eq(trips.isTemplate, true)))
     .orderBy(asc(trips.isTemplate), desc(lastActivity), asc(trips.id));
-  return rows.map(tripRow);
+  const list = rows.map(tripRow);
+  if (list.length === 0) return list;
+
+  // Each trip's last calendar day, so the list can tell a finished trip from a
+  // live one without a getTripFull per card. Leg dates aren't stored — every
+  // leg is one calendar day counted from the effective start (see
+  // lastDayFromSchedule, the same rule getTripFull applies) — so all this query
+  // needs is the leg ids in sort order: their count is the trip's length, and
+  // the current leg's position in it is what a progress report re-anchors from.
+  const legRows = await db
+    .select({ tripId: legs.tripId, id: legs.id })
+    .from(legs)
+    .where(inArray(legs.tripId, list.map((t) => t.id)))
+    .orderBy(asc(legs.tripId), asc(legs.sortOrder));
+  const legIdsByTrip = new Map<string, string[]>();
+  for (const row of legRows) {
+    const arr = legIdsByTrip.get(row.tripId);
+    if (arr) arr.push(row.id);
+    else legIdsByTrip.set(row.tripId, [row.id]);
+  }
+  return list.map((trip) => {
+    const legIds = legIdsByTrip.get(trip.id) ?? [];
+    return {
+      ...trip,
+      last_day_iso: lastDayFromSchedule({
+        startDateISO: trip.start_date_parsed,
+        legCount: legIds.length,
+        currentLegRank: trip.current_leg_id ? legIds.indexOf(trip.current_leg_id) : -1,
+        progressAnchorISO: trip.progress_anchor_date,
+      }),
+    };
+  });
 }
 
 export async function getTripFull(tripId: string): Promise<TripWithLegs | null> {

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
 import { apiFetch } from '@/lib/api';
 import { formatDate, parseISODate, behindCutoffRank, todayISO } from '@/lib/dates';
+import { isTripCompleted, lastDayFromLegDates } from '@/lib/tripCompletion';
 import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
@@ -72,11 +73,22 @@ export default function Itinerary({
   const reportedRank = trip.current_leg_id
     ? allLegs.findIndex((l) => l.id === trip.current_leg_id)
     : -1;
-  const currentRank = behindCutoffRank({
-    reportedRank,
-    legDateISOs: allLegs.map((l) => l.date_iso),
-    todayISO: todayISO(),
-  });
+  // A trip whose last day has passed has nothing ahead of it. Every day goes
+  // behind the fold and the list above it renders empty — no "0 days left"
+  // summary, no prompt to do anything. behindCutoffRank deliberately keeps the
+  // final leg visible so a live trip's list is never empty; that guard is what
+  // we're overriding here, and only here.
+  const completed = isTripCompleted(
+    lastDayFromLegDates(allLegs.map((l) => l.date_iso)),
+    todayISO(),
+  );
+  const currentRank = completed
+    ? allLegs.length
+    : behindCutoffRank({
+        reportedRank,
+        legDateISOs: allLegs.map((l) => l.date_iso),
+        todayISO: todayISO(),
+      });
   const pastLegs = currentRank > 0 ? allLegs.slice(0, currentRank) : [];
   const legs = currentRank > 0 ? allLegs.slice(currentRank) : allLegs;
   const { units } = useUnits();
@@ -358,6 +370,9 @@ export default function Itinerary({
           }}
         >
           ROUTE PLAN
+          {completed && (
+            <span style={{ marginLeft: 8, color: 'var(--tp-muted)' }}>· COMPLETED</span>
+          )}
           {readonly && (
             <span style={{ marginLeft: 8, color: 'var(--tp-primary)' }}>
               · DEMO (read-only — clone to edit)
@@ -538,43 +553,47 @@ export default function Itinerary({
         </div>
       </div>
 
-      {/* Controls */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button
-          onClick={expandAll}
-          style={{
-            background: 'var(--tp-surface)',
-            border: '1px solid var(--tp-border)',
-            color: 'var(--tp-muted)',
-            padding: '5px 12px',
-            borderRadius: 4,
-            fontSize: 11,
-            cursor: 'pointer',
+      {/* Controls — they act on the days ahead, so a completed trip has none. */}
+      {!completed && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button
+            onClick={expandAll}
+            style={{
+              background: 'var(--tp-surface)',
+              border: '1px solid var(--tp-border)',
+              color: 'var(--tp-muted)',
+              padding: '5px 12px',
+              borderRadius: 4,
+              fontSize: 11,
+              cursor: 'pointer',
             
-          }}
-        >
-          Expand All
-        </button>
-        <button
-          onClick={collapseAll}
-          style={{
-            background: 'var(--tp-surface)',
-            border: '1px solid var(--tp-border)',
-            color: 'var(--tp-muted)',
-            padding: '5px 12px',
-            borderRadius: 4,
-            fontSize: 11,
-            cursor: 'pointer',
+            }}
+          >
+            Expand All
+          </button>
+          <button
+            onClick={collapseAll}
+            style={{
+              background: 'var(--tp-surface)',
+              border: '1px solid var(--tp-border)',
+              color: 'var(--tp-muted)',
+              padding: '5px 12px',
+              borderRadius: 4,
+              fontSize: 11,
+              cursor: 'pointer',
             
-          }}
-        >
-          Collapse All
-        </button>
-      </div>
+            }}
+          >
+            Collapse All
+          </button>
+        </div>
+      )}
 
-      {/* "Behind you" — earlier days, collapsed by default so the trip opens
-          at where the driver actually is. "Earlier" not "completed": the cutoff
-          is positional (calendar/report), not proof the driver finished them. */}
+      {/* Past days, collapsed by default so the trip opens at where the driver
+          actually is. On a live trip the header says "behind you" rather than
+          "completed": the cutoff is positional (calendar/report), not proof the
+          driver finished those days. On a completed trip it is the only thing
+          left on the page, so it reads as the disclosure it now is. */}
       {pastLegs.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <button
@@ -592,8 +611,14 @@ export default function Itinerary({
               cursor: 'pointer',
             }}
           >
-            {showPast ? '▾' : '▸'} Behind you — {pastLegs.length} earlier day
-            {pastLegs.length === 1 ? '' : 's'}
+            {showPast ? '▾' : '▸'}{' '}
+            {completed
+              ? `${showPast ? 'Hide' : 'Show'} past days — ${pastLegs.length} day${
+                  pastLegs.length === 1 ? '' : 's'
+                }`
+              : `Behind you — ${pastLegs.length} earlier day${
+                  pastLegs.length === 1 ? '' : 's'
+                }`}
           </button>
           {showPast && (
             <div

@@ -6,6 +6,7 @@
  * `dir_action=navigate` starts turn-by-turn immediately; multi-stop legs omit it
  * so Maps opens the full itinerary preview first (better for many waypoints).
  */
+import { haversineKm } from '@/lib/polyline';
 
 export interface LegCoords {
   start_lat?: number | null;
@@ -181,6 +182,54 @@ export function buildLegDirectionsUrl(input: {
 export type NavSegment = { label: string; url: string; stopType?: string };
 
 /**
+ * How close two points have to be before a driver would call them the same
+ * place. 1 km, the same number `add_stop` already uses to reject a stop sitting
+ * on top of a leg's end coords — one threshold for "you are already here"
+ * rather than two that drift apart.
+ */
+export const SAME_PLACE_KM = 1;
+
+/**
+ * True when a leg ends where it starts and no driving happens in between: a
+ * rest day, or any other day spent parked at one location.
+ *
+ * WHY THIS EXISTS (2026-08-27). A rest day is stored as a leg whose start and
+ * end are the SAME coordinates — `add_leg` insists on it ("use the same coords
+ * for start and end — the rest day is AT a location"). `buildSegmentedNavUrls`
+ * then appended a destination button for it exactly like any other leg, so a
+ * day titled "Porto (rest day)", with no distance and no duration, offered
+ * "Route to Destination — Porto". The URL carries no `origin`, so Google Maps
+ * takes the origin from device GPS — and on that day the driver IS in Porto.
+ * The button launched turn-by-turn navigation to where he was already standing.
+ *
+ * The coordinate check ALONE would be wrong. A genuine day-loop — out into the
+ * Douro valley and back to Porto — also starts and ends in the same place, and
+ * that driver does want a button home. So a leg is only stationary when it also
+ * carries no distance and no drive time, which is precisely how a rest day is
+ * written and precisely how a loop is not. Missing start coords means we cannot
+ * tell, and we keep the button: a redundant button beats a missing one.
+ *
+ * A stationary leg is the ONE case where a rendered nav list legitimately holds
+ * no destination button. Any invariant asserting "if the app renders navigation
+ * at all, one of those buttons reaches the end of the leg" needs this as its
+ * carve-out, because here there is no end to reach.
+ */
+export function isStationaryLeg(input: {
+  legCoords: LegCoords;
+  destination: { lat: number; lng: number };
+  distanceKm?: number | null;
+  driveTimeMinutes?: number | null;
+}): boolean {
+  const { legCoords, destination, distanceKm, driveTimeMinutes } = input;
+  if (legCoords.start_lat == null || legCoords.start_lng == null) return false;
+  if ((distanceKm ?? 0) >= SAME_PLACE_KM) return false;
+  if ((driveTimeMinutes ?? 0) > 0) return false;
+  return (
+    haversineKm({ lat: legCoords.start_lat, lng: legCoords.start_lng }, destination) < SAME_PLACE_KM
+  );
+}
+
+/**
  * Build a list of "navigate from current location → stop" buttons for a leg.
  *
  * Each URL omits `origin` so Google Maps defaults to the device's GPS
@@ -193,7 +242,15 @@ export type NavSegment = { label: string; url: string; stopType?: string };
  * followed by the leg's final destination. For a leg with zero stops this
  * returns a single-element array pointing at the destination.
  *
- * Returns `null` when destination coords are missing.
+ * EXCEPTION: a stationary leg (see `isStationaryLeg` — a rest day, where the
+ * driver ends the day where he started it) gets NO destination entry, because
+ * navigating to it means navigating to where he already is. Its added stops
+ * still get their own buttons: "drive me to the restaurant" is real work on a
+ * rest day; "drive me to Porto, from Porto" is not.
+ *
+ * Returns `null` when destination coords are missing, and for a stationary leg
+ * with no stops of its own — in both cases there is nothing to navigate to and
+ * the caller renders no nav block at all.
  */
 export function buildSegmentedNavUrls(input: {
   legCoords: LegCoords;
@@ -203,19 +260,33 @@ export function buildSegmentedNavUrls(input: {
     end_lng: number | null;
   } | null;
   stops?: LegDirectionsStopInput[] | null;
+  /** Leg headline distance — what separates a rest day from a day-loop. */
+  distanceKm?: number | null;
+  /** Leg headline drive time — same purpose as `distanceKm`. */
+  driveTimeMinutes?: number | null;
 }): NavSegment[] | null {
-  const { legCoords, endName, selectedRoute, stops } = input;
+  const { legCoords, endName, selectedRoute, stops, distanceKm, driveTimeMinutes } = input;
   const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
   const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
   if (destLat == null || destLng == null) return null;
 
   const resolved = resolveDirectionsStops(stops ?? []);
 
+  // A rest day has nowhere to drive to, so it is offered nothing to drive to.
+  const stationary = isStationaryLeg({
+    legCoords,
+    destination: { lat: destLat, lng: destLng },
+    distanceKm,
+    driveTimeMinutes,
+  });
+
   // Ordered destinations: intermediate stops, then final destination.
   type Dest = { lat: number; lng: number; name: string; stopType?: string };
   const destinations: Dest[] = [
     ...resolved,
-    { lat: destLat, lng: destLng, name: endName || 'Destination', stopType: 'destination' },
+    ...(stationary
+      ? []
+      : [{ lat: destLat, lng: destLng, name: endName || 'Destination', stopType: 'destination' }]),
   ];
 
   const segments: NavSegment[] = [];

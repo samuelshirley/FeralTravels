@@ -13,9 +13,30 @@ import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from '../src/server/db/schema';
 import { DEMO_TRIP, DEMO_LEGS } from '../src/data/demo-trip';
+import { seededTripStartISO } from '../src/app/api/test/seedDates';
+import { daysBetweenISO, legDateISO } from '../src/lib/dates';
 
 const DEMO_EMAIL = 'demo@trip-planner.local';
 const DEMO_NAME = 'Trip Planner Demo';
+
+/**
+ * The demo trip's machine dates are computed at seed time, not read from
+ * `DEMO_TRIP.start_date`. That literal ('2026-05-28') was future-dated when it
+ * was written and is now in the past, so every seeding of the template — and
+ * every clone a user makes of it — produced a trip whose days open folded into
+ * "behind you". Same rule as the E2E fixtures: fixed offset, computed now.
+ * See src/app/api/test/seedDates.ts.
+ *
+ * The trip's LENGTH is still the demo's own (end − start), so the itinerary
+ * keeps its shape. The per-leg `dates` prose in src/data/demo-trip.ts ("~May
+ * 28") is display text only — `getTripFull` derives each leg's real `date_iso`
+ * from the trip start — so it is left alone rather than machine-rewritten.
+ */
+function demoTripDates(): { startDate: string; endDate: string } {
+  const startDate = seededTripStartISO();
+  const durationDays = daysBetweenISO(DEMO_TRIP.start_date, DEMO_TRIP.end_date) ?? DEMO_LEGS.length;
+  return { startDate, endDate: legDateISO(startDate, Math.max(durationDays, 0)) };
+}
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -49,21 +70,22 @@ async function main() {
       console.log(`Deleted previous demo trip #${t.id}`);
     }
 
+    const { startDate, endDate } = demoTripDates();
     const [trip] = await db
       .insert(schema.trips)
       .values({
         userId: demoUser.id,
         name: DEMO_TRIP.name,
-        startDate: DEMO_TRIP.start_date,
-        // start_date_parsed is non-null; the demo's start_date is already ISO.
-        startDateParsed: DEMO_TRIP.start_date,
-        endDate: DEMO_TRIP.end_date,
-        endDateParsed: DEMO_TRIP.end_date,
+        startDate,
+        // start_date_parsed is non-null; these are already ISO.
+        startDateParsed: startDate,
+        endDate,
+        endDateParsed: endDate,
         status: DEMO_TRIP.status,
         isTemplate: true,
       })
       .returning();
-    console.log(`Created demo trip #${trip.id}: ${trip.name}`);
+    console.log(`Created demo trip #${trip.id}: ${trip.name} (${startDate} → ${endDate})`);
 
     for (const leg of DEMO_LEGS) {
       const [insertedLeg] = await db

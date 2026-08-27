@@ -16,6 +16,7 @@ export const SHARED_FILES = [
   ['src/lib/coords.ts', 'mobile/shared/lib/coords.ts'],
   ['src/lib/dates.ts', 'mobile/shared/lib/dates.ts'],
   ['src/lib/dayModel.ts', 'mobile/shared/lib/dayModel.ts'],
+  ['src/lib/tripCompletion.ts', 'mobile/shared/lib/tripCompletion.ts'],
   ['src/lib/legSegmentGrouping.ts', 'mobile/shared/lib/legSegmentGrouping.ts'],
   ['src/lib/fuelPlanErrorSemantics.ts', 'mobile/shared/lib/fuelPlanErrorSemantics.ts'],
   ['src/lib/vehicleProfile.ts', 'mobile/shared/lib/vehicleProfile.ts'],

@@ -5,6 +5,7 @@ import {
   users,
   vehicles,
   trips,
+  legs,
   announcements,
   announcementDismissals,
   emailOtpCodes,
@@ -29,7 +30,13 @@ import {
 } from '@/server/payments';
 import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
 import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
-import { addVehicle, getDefaultVehicleId } from './vehicles';
+import { seededLegDateISO, seededTripStartISO } from '@/app/api/test/seedDates';
+import {
+  HILUX_FIXTURE_VEHICLE,
+  impossibleFixtureTripReason,
+} from '@/app/api/test/fixtureVehicle';
+import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
+import { addVehicle, listVehiclesForUser } from './vehicles';
 import { createTrip, addLeg } from './trips';
 
 /**
@@ -52,7 +59,12 @@ function assertEnabled() {
   }
 }
 
-/** Two legs across France/Germany — the canonical seeded itinerary. */
+/**
+ * Two legs across France/Germany — the canonical seeded itinerary.
+ *
+ * No `dates` here on purpose: leg dates are derived from the seed-time trip
+ * start (see {@link seededLegDateISO}), never written as calendar strings.
+ */
 const CANONICAL_TWO_LEGS = [
   {
     sortOrder: 0,
@@ -64,7 +76,6 @@ const CANONICAL_TWO_LEGS = [
     startLng: 2.3522,
     endLat: 48.5734,
     endLng: 7.7521,
-    dates: '2026-06-01',
     distanceKm: 489,
     driveTimeMinutes: 295,
     terrain: 'Highway, mostly A-roads',
@@ -82,7 +93,6 @@ const CANONICAL_TWO_LEGS = [
     startLng: 7.7521,
     endLat: 48.7758,
     endLng: 9.1829,
-    dates: '2026-06-02',
     distanceKm: 156,
     driveTimeMinutes: 105,
     terrain: 'Autobahn',
@@ -111,6 +121,73 @@ async function ensureUserId(email: string, name?: string): Promise<string> {
 }
 
 /**
+ * Give `userId` a vehicle Finn can actually plan with, and hand back its id.
+ *
+ * Reuses one they already own when it passes the same bar the app enforces —
+ * two vehicles on a fixture account is a state no real user reaches through
+ * onboarding, and it would quietly change which one `getDefaultVehicleForUser`
+ * picks. Only when the account owns nothing usable does it create the Hilux.
+ *
+ * `name` carries the caller's `playwright-` prefix so cleanupPlaywright sweeps
+ * anything this creates; the Hilux's real NUMBERS are what the fixture is
+ * borrowing, not its nickname (existing-trip.spec.ts asserts the seeded
+ * vehicle's name on screen, so the name stays the caller's to choose).
+ */
+async function ensureFixtureVehicle(userId: string, name: string): Promise<string> {
+  const owned = await listVehiclesForUser(userId);
+  const usable = owned.find((v) => vehicleMeetsFuelPlanningMinimum(v as unknown as Record<string, unknown>));
+  if (usable) return usable.id;
+  const created = await addVehicle(userId, {
+    name,
+    range_km: HILUX_FIXTURE_VEHICLE.range_km,
+    fuel_type: HILUX_FIXTURE_VEHICLE.fuel_type,
+    is_default: true,
+  });
+  return created.id;
+}
+
+/**
+ * Read back what we just wrote and refuse to hand over a trip the app itself
+ * could never have produced.
+ *
+ * This is the guard, and it runs at SEED time on purpose. A fixture that seeds
+ * impossible data does not fail — it produces a test account that looks broken
+ * to whoever opens it, which is how a vehicle-less trip full of "Finish your
+ * vehicle profile" legs reached a human before any test did. Throwing here
+ * turns that into a 400 from `/api/test/seed` or `/api/test/trip`, i.e. a red
+ * spec at setup, on every e2e run, without a spec having to remember to look.
+ *
+ * It reads the rows rather than trusting the arguments so it also catches the
+ * case where the trip was fine and the VEHICLE was the thing that went missing.
+ */
+async function assertFixtureTripPossible(
+  tripId: string,
+  userId: string,
+  label: string,
+): Promise<void> {
+  const [tripRow] = await db
+    .select({ onboardingState: trips.onboardingState })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  if (!tripRow) throw new Error(`${label}: trip ${tripId} was not written`);
+
+  const legRows = await db.select({ id: legs.id }).from(legs).where(eq(legs.tripId, tripId)).limit(1);
+  const owned = await listVehiclesForUser(userId);
+  const ownerBestRangeKm = owned.reduce<number | null>(
+    (best, v) => (v.range_km != null && (best == null || v.range_km > best) ? v.range_km : best),
+    null,
+  );
+
+  const reason = impossibleFixtureTripReason({
+    onboardingState: tripRow.onboardingState,
+    hasLegs: legRows.length > 0,
+    ownerBestRangeKm,
+  });
+  if (reason) throw new Error(`${label}: ${reason}`);
+}
+
+/**
  * Reset the user's graph and recreate the canonical fixture: one default
  * vehicle + one trip (onboarding done) + two legs. Idempotent.
  */
@@ -129,28 +206,25 @@ export async function seedFixture(opts: {
   await db.delete(vehicles).where(eq(vehicles.userId, userId));
   await db.update(users).set({ unitsPref: null }).where(eq(users.id, userId));
 
+  // The Hilux's real numbers, not a made-up 400. See HILUX_FIXTURE_VEHICLE.
   const vehicle = await addVehicle(userId, {
     name: opts.vehicleName,
-    range_km: 400,
+    range_km: HILUX_FIXTURE_VEHICLE.range_km,
+    fuel_type: HILUX_FIXTURE_VEHICLE.fuel_type,
     is_default: true,
   });
 
-  // Anchor the fixture to "now" so the itinerary doesn't collapse the legs as
-  // "behind you" (past days) — that hides leg cards, points nav links at the
-  // wrong leg, and suppresses lazy fuel sourcing, all of which the
-  // existing-trip / lazy-fuel specs assert on. Hardcoded past dates broke them.
-  const isoPlus = (days: number) => {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
-  };
-  const legDates = [isoPlus(0), isoPlus(1)];
+  // Every seeded trip starts SEEDED_TRIP_START_OFFSET_DAYS out — see
+  // seedDates.ts for why a fixture must never carry a calendar date. The old
+  // version anchored day 1 to "today", which sat on the behind/ahead boundary
+  // the UTC-server-vs-driver-timezone split makes ambiguous.
+  const legDates = CANONICAL_TWO_LEGS.map((leg) => seededLegDateISO(leg.sortOrder));
 
   const trip = await createTrip({
     userId,
     name: opts.tripName,
     startDate: legDates[0],
-    endDate: legDates[1],
+    endDate: legDates[legDates.length - 1],
     vehicleId: vehicle.id,
   });
   await db
@@ -162,6 +236,7 @@ export async function seedFixture(opts: {
     await addLeg({ tripId: trip.id, ...leg, dates: legDates[leg.sortOrder] ?? legDates[0] });
   }
 
+  await assertFixtureTripPossible(trip.id, userId, 'seedFixture');
   return { userId, vehicleId: vehicle.id, tripId: trip.id };
 }
 
@@ -180,22 +255,43 @@ export async function createAdHocTrip(opts: {
 
   if (opts.kind === 'vehicle_new') {
     // Intentionally incomplete vehicle (no range) — exercises the numeric
-    // validation path in the chat-composer onboarding.
+    // validation path in the chat-composer onboarding. Legitimately violates
+    // nothing: the trip is parked IN onboarding, which is the state whose
+    // whole job is to collect the missing number.
     const [v] = await db
       .insert(vehicles)
       .values({ userId, name: `${opts.name} vehicle`, isDefault: false, rangeKm: null })
       .returning({ id: vehicles.id });
     const trip = await createTrip({ userId, name: opts.name, vehicleId: v.id });
     await db.update(trips).set({ onboardingState: 'vehicle_new' }).where(eq(trips.id, trip.id));
+    await assertFixtureTripPossible(trip.id, userId, "createAdHocTrip('vehicle_new')");
     return { tripId: trip.id, vehicleId: v.id };
   }
 
-  const vehicleId = opts.kind === 'blank' ? await getDefaultVehicleId(userId) : null;
-  const trip = await createTrip({ userId, name: opts.name, vehicleId });
+  // 'blank' is a trip that has already LEFT onboarding, so it must come with a
+  // vehicle — that is what leaving onboarding means. It used to take whatever
+  // `getDefaultVehicleId` returned, which is null for an account that has not
+  // been seeded, and produced the exact impossible pairing this file's guard
+  // now names: onboarding done, no vehicle anywhere, every day of the trip
+  // reporting "Finish your vehicle profile". 'onboarding' is the opposite
+  // case and deliberately gets nothing.
+  const vehicleId =
+    opts.kind === 'blank' ? await ensureFixtureVehicle(userId, `${opts.name} vehicle`) : null;
+  // 'blank' also gets the same future start every seeded trip gets.
+  // 'onboarding' deliberately does NOT: its whole point is that the wizard's
+  // trip_date step has not run yet, and pre-dating it would be seeding an
+  // answer to the question under test.
+  const trip = await createTrip({
+    userId,
+    name: opts.name,
+    vehicleId,
+    startDate: opts.kind === 'blank' ? seededTripStartISO() : null,
+  });
   await db
     .update(trips)
     .set({ onboardingState: opts.kind === 'blank' ? 'done' : 'not_started' })
     .where(eq(trips.id, trip.id));
+  await assertFixtureTripPossible(trip.id, userId, `createAdHocTrip('${opts.kind}')`);
   return { tripId: trip.id, vehicleId };
 }
 

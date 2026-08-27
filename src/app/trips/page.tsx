@@ -3,7 +3,9 @@ import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { getAccountVerdict } from '@/server/payments';
 import { listTripsForUser } from '@/server/repos/trips';
-import { getUnitsPref } from '@/server/repos/users';
+import { getUnitsPref, getUserTimezone } from '@/server/repos/users';
+import { todayISOInZone } from '@/lib/dates';
+import { isTripCompleted } from '@/lib/tripCompletion';
 import AppNavbar from '@/components/AppNavbar';
 
 import { UnitsProvider } from '@/components/UnitsContext';
@@ -19,10 +21,14 @@ export default async function TripsPage() {
   if (!session?.user) redirect('/login');
 
   const userId = session.user.id as string;
-  const [allTrips, admin, unitsPref, verdict] = await Promise.all([
+  const [allTrips, admin, unitsPref, timezone, verdict] = await Promise.all([
     listTripsForUser(userId),
     isAdmin(session.user.email),
     getUnitsPref(userId),
+    // "Today" for the completed check. The server runs in UTC, so it has to be
+    // the driver's zone or a trip ending today reads as finished from ~16:00
+    // west of Greenwich. One resolution, handed to every card.
+    getUserTimezone(userId),
     // The one entitlement question, asked once per render on the server. The
     // client is never the authority here — hiding the button is a courtesy,
     // and `POST /api/trips` refuses on its own regardless of what the page
@@ -30,6 +36,7 @@ export default async function TripsPage() {
     getAccountVerdict(userId),
   ]);
 
+  const today = todayISOInZone(timezone);
   const myTrips = allTrips.filter((t) => t.user_id === userId);
 
   // No auto-create when the user has zero trips. New users (and anyone who
@@ -67,7 +74,20 @@ export default async function TripsPage() {
             {verdict.entitled && <NewTripButton emphasizeWhenNoTrips={myTrips.length === 0} />}
           </div>
 
-          {verdict.blockReason && <EntitlementNotice blockReason={verdict.blockReason} />}
+          {/*
+            The block is an overlay now, not a card in the flow — it covers this
+            page rather than sitting above a still-usable list. `pennyHref`
+            points at the most recent trip's chat (the list arrives
+            most-recently-active first), which is where the same block is a
+            message from Penny that answers back. An account with no trip has no
+            chat to be sent to: chat_history is trip-scoped.
+          */}
+          {verdict.blockReason && (
+            <EntitlementNotice
+              blockReason={verdict.blockReason}
+              pennyHref={myTrips[0] ? `/trips/${myTrips[0].id}?chat=1` : null}
+            />
+          )}
 
           {/*
             `refunded` and `revoked` are the only states that close the trips
@@ -77,19 +97,25 @@ export default async function TripsPage() {
           */}
           {verdict.canViewExistingTrips && (
             <TripsList
-              myTrips={myTrips.map(({ id, name, start_date, end_date, status }) => ({
-                id,
-                name,
-                start_date,
-                end_date,
-                status,
-              }))}
+              myTrips={myTrips.map(
+                ({ id, name, start_date, end_date, status, last_day_iso }) => ({
+                  id,
+                  name,
+                  start_date,
+                  end_date,
+                  status,
+                  completed: isTripCompleted(last_day_iso, today),
+                }),
+              )}
               templates={templates.map(({ id, name, start_date, end_date, status }) => ({
                 id,
                 name,
                 start_date,
                 end_date,
                 status,
+                // Demo templates are dated in the past and are never "over" —
+                // they are something to clone, not a trip anyone drove.
+                completed: false,
               }))}
               canDeleteTemplates={admin}
             />

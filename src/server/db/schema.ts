@@ -69,6 +69,18 @@ export const users = pgTable('users', {
    * away from comping every address at a domain.
    */
   comped: boolean('comped').default(false).notNull(),
+  /**
+   * When this account first finished trip onboarding — vehicle supplied, range
+   * set, handed off to Penny. Null means they never have.
+   *
+   * `trips.onboarding_state` already tracks this PER TRIP, and that stays the
+   * thing the wizard reads. This is the USER-level fact, and it exists because
+   * seeding could not check the one that mattered: a fixture wrote a trip full
+   * of legs onto an account that owned no vehicle, which is a pairing the app
+   * itself cannot produce, so nothing in the app noticed. A seeded account can
+   * now be asked the same question a real one answers.
+   */
+  onboardingCompletedAt: timestamp('onboarding_completed_at'),
   /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
   /**
