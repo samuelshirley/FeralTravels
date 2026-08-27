@@ -237,6 +237,14 @@ jobs:
           SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
           echo "::add-mask::$SECRET"
           vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
+          # Fail HERE, before a build and a browser, if the preview environment
+          # is short a variable. Vercel scopes each one per-environment and the
+          # picker makes "Production" alone easy to choose by accident; the
+          # symptom is then a red spec somewhere unrelated on whichever PR is
+          # open, which reads as an app bug. `vercel pull` just wrote exactly
+          # what `vercel build` will compile against, so that file is the thing
+          # worth asserting on.
+          node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
           # PAYWALL_ENABLED is OFF by default, deliberately — merging the paywall
           # must not paywall anyone until there is something to buy. The tested
