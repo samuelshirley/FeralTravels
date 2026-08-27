@@ -226,6 +226,7 @@ api/pois                  api/coords/parse
 api/me                    api/me/preferences      api/me/identity
 api/me/delete             api/me/entitlement
 api/purchase/test         api/webhooks/revenuecat
+api/promo/redeem          api/admin/promo
 api/mobile/otp/send       api/mobile/otp/verify
 api/mobile/oauth/exchange
 api/support               api/analytics/viewport-time
@@ -238,14 +239,14 @@ api/debug/fuel
 api/test/seed             api/test/trip
 api/test/cleanup          api/test/announcement
 api/test/otp              api/test/deletion
-api/test/subscription
+api/test/subscription     api/test/promo
 ```
 
 **`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
 
-### Schema (29 tables in `src/server/db/schema.ts`)
+### Schema (30 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts
+users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes
 
 **Account deletion — BUILT (migration 0024, 2026-08-20):** users can permanently delete their own account from Settings on **both** web and native. Apple guideline 5.1.1(v) requires an app that creates accounts to delete them *from inside the app*, so the native screen is the requirement and the web page is the mirror — not the other way round. **Immediate and unrecoverable by design: no grace period, no soft-delete, no undo.**
 
@@ -502,6 +503,16 @@ build.
   deliberately does not (`src/app/trips/page.tsx` says so) — a browser tab that
   silently creates a row is surprising; a single-purpose phone app is the
   opposite case. Guarded by a per-mount ref so it can't become a trip factory.
+- **Promo codes — BUILT (migration 0028, 2026-08-27).** An admin mints a code for one email address; that person signs in and redeems it in the purchase sheet, and the paywall lets them through. Designed so the entitlement surface did not grow: **redeeming writes an ordinary `subscriptions` row with `source: 'promo'`**, and `hasEntitlement`, `resolveAccountState` and its twelve tested states needed **no change at all**. Nothing in the paywall path reads `promo_codes` — a second entitlement source would have been a second place able to decide someone has paid, which is exactly what the bounded-module rule exists to prevent. A promo user shows in the admin panel as a subscriber whose row says where it came from.
+  - **What it grants:** unlimited duration (`current_period_end = null`, which the admin UI already renders as unlimited) and the ORDINARY $8.50 rolling-twelve-month usage cap. Owner's call: a promo recipient should not have to think about a renewal date, but a promo account generates no revenue to offset spend, so the ceiling still applies. `auto_renew` is `true` — nothing renews a promo, but `false` resolves to `cancelled_in_period` and would tell the admin panel a story about a cancellation that never happened.
+  - **Codes are BOUND to one address and single-use.** `decidePromoRedemption` (`src/lib/promoCode.ts`, pure, unit-tested, mirrored to mobile) compares the code's email against the SESSION's — there is no `email` field in the request body, so nothing can redeem on another address's behalf. **`promo_wrong_account` is checked BEFORE spent and expired, deliberately:** somebody holding a forwarded code must not learn, by trying it, whether it has been used or when it lapsed, because both are facts about the real recipient's account.
+  - **The claim is atomic**, not a check-then-write: `UPDATE … WHERE id = ? AND redeemed_at IS NULL RETURNING`. Postgres picks the winner, so two requests landing together cannot both come back with a grant — the same lesson as `penny_turns_one_running_per_trip_idx`. The claim happens BEFORE the grant on purpose: the losing order leaves an unclaimed code that has already granted access, i.e. one that can be spent twice.
+  - **The alphabet omits `O/0`, `I/1/L`, `S/5` and `U`** — the pairs people misread off a phone — and generation uses rejection sampling, not `byte % 27`, which would bias the first four characters. `promoCode.test.ts` asserts that, because a biased code space is the kind of thing nobody goes back and checks.
+  - **Stored in plaintext, and the `deleted_users` HMAC reasoning does NOT carry over.** A code is not a bearer token: redeeming needs a session for the bound address, which needs a code delivered to it. What plaintext exposes is "an admin issued a code to alice@example.com", and a preview clone already exposes every address in `users` wholesale. What it buys is real — the admin can re-read a code they issued three weeks ago when the recipient loses it.
+  - **Surfaces:** the promo box is the third option in BOTH purchase sheets (`src/components/PurchaseSheet.tsx`, `mobile/components/PurchaseSheet.tsx`), under the two prices and a peer of them — not a "have a code?" disclosure, because hiding the one control a comped user was told to look for is a small cruelty. Both call `onRedeemed` only after re-reading `/api/me/entitlement`; a 200 from the redeem route is not entitlement. Admin: `PromoCodeBlock` on `/admin` (mint, copy, list), which warns when `PAYWALL_ENABLED` is unset for the same reason `TestUserBlock` does — with the switch off, redeeming looks like it did nothing. **No delete and no revoke:** an unspent code that should not have gone out is handled by not sending it, and a spent one is a subscription, ended through the existing break-glass revoke that demands a typed reason.
+  - Copy lives in `src/lib/promoCopy.ts` (mirrored), one message per refusal code, sharing no string — `promoCopy.test.ts` fails if they collapse or if one starts accusing the reader. Both clients render the server's message verbatim so there is one place to reword it.
+  - Tests: `src/lib/promoCode.test.ts`, `src/lib/promoCopy.test.ts`. `POST /api/test/promo` mints a code for a fixture address so an E2E spec can walk a redemption without an admin session (same three guards as the rest of `/api/test/*`).
+
 - **`POST /api/purchase/test` grants a subscription without Apple.** TWO
   conditions, both required: the address matches
   `sam+trial-<tag>@feraltravels.com` — hardcoded in `payments/testPurchase.ts`

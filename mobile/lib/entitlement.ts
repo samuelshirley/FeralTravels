@@ -50,6 +50,19 @@ export async function testPurchase(productId: string): Promise<void> {
 }
 
 /**
+ * Redeem a promo code for the signed-in account.
+ *
+ * Throws `ApiError` on refusal; the 400 body carries `error` (server-authored
+ * copy, already the useful sentence) and `code` (the machine-readable refusal —
+ * branch on THAT, never on the message). The account comes from the session
+ * server-side, so there is nothing here that could redeem on another address's
+ * behalf.
+ */
+export async function redeemPromoCode(code: string): Promise<void> {
+  await apiFetch("/api/promo/redeem", { method: "POST", body: { code } });
+}
+
+/**
  * True when a thrown ApiError is the paywall rather than any other 402.
  *
  * Branches on the machine-readable `code`, never on the message — the message

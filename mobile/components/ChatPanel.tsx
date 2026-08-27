@@ -1686,6 +1686,19 @@ export default function ChatPanel({
           purchasingId={purchasingId}
           error={purchaseError}
           onPurchase={(productId) => void runTestPurchase(productId)}
+          // The sheet has already confirmed entitlement with the server; this
+          // brings the transcript's own state in line — the same three updates
+          // the purchase path makes, and for the same reason. No navigation:
+          // the paywall is a message in this conversation, so getting past it
+          // should leave the conversation where it was.
+          onRedeemed={() => {
+            void (async () => {
+              const fresh = await fetchEntitlement();
+              if (fresh) setEntitlement(fresh);
+              setMessages((prev) => prev.filter((m) => !m.paywall));
+              setPurchaseSheetOpen(false);
+            })();
+          }}
           onClose={() => setPurchaseSheetOpen(false)}
         />
       ) : null}

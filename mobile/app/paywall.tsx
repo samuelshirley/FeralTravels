@@ -153,6 +153,12 @@ export default function PaywallScreen() {
           purchasingId={purchasingId}
           error={purchaseError}
           onPurchase={(id) => void runTestPurchase(id)}
+          // Same destination as a completed purchase: this screen exists only
+          // to sell, so the moment there is nothing left to sell, leave.
+          onRedeemed={() => {
+            setSheetOpen(false);
+            router.replace("/trips");
+          }}
           onClose={() => setSheetOpen(false)}
         />
       ) : null}

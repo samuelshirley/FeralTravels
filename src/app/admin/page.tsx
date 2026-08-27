@@ -20,11 +20,12 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
-import { testPurchasesArmed } from '@/server/payments';
+import { paywallEnabled, testPurchasesArmed } from '@/server/payments';
 
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
+import PromoCodeBlock from './PromoCodeBlock';
 import styles from './admin.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -745,6 +746,16 @@ export default async function AdminPage() {
             outside it.
           </p>
           <TestUserBlock armed={testPurchasesArmed()} />
+        </section>
+
+        {/*
+          Below the test accounts on purpose. Both hand out access without
+          money, but they are opposite tools: that one fabricates a throwaway
+          account to walk the paywall with, this one lets a REAL person past it.
+          Reading in that order, the second is obviously the consequential one.
+        */}
+        <section>
+          <PromoCodeBlock paywallOn={paywallEnabled()} />
         </section>
       </main>
 
