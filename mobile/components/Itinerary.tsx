@@ -420,7 +420,7 @@ export default function Itinerary({
       ? [
           { label: "TOTAL DAYS", value: `${allLegs.length}` as React.ReactNode },
           { label: "DRIVING", value: `${drivingDays}` as React.ReactNode },
-          { label: "REST", value: `${restDays}` as React.ReactNode },
+          { label: "BASE", value: `${restDays}` as React.ReactNode },
         ]
       : [{ label: "DAYS", value: `${allLegs.length}` as React.ReactNode }]),
   ];

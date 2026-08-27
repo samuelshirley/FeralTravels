@@ -35,7 +35,7 @@ import {
  *
  * Skips only when the inbox isn't configured (a fresh checkout, an outside
  * contributor's fork). A WRONG credential fails loudly instead — see the
- * 401/404 handling in fixtures/mailbox.ts. E2E_MAX_SKIPPED in ci.yml is the
+ * 401/404 handling in fixtures/mailbox.ts. E2E_MAX_SKIPPED in pipeline.yml is the
  * backstop: once E2E_INBOX_DOMAIN and the Resend key are set as repo secrets,
  * drop it to 0 so no spec may skip silently again.
  */

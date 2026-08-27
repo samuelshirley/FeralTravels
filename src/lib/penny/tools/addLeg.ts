@@ -128,7 +128,7 @@ export const tool: Anthropic.Tool = {
 
 DRIVING DAYS (leg_type: "drive" or omitted): Each driving leg represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
 
-REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Innsbruck (rest day)". Add notes about planned activities if the user mentions any.
+REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Innsbruck (base day)" — the leg_type value stays "rest", but the word the user reads is "base day". Add notes about planned activities if the user mentions any.
 
 TITLE FORMAT: Do NOT include "Day N:" prefixes in titles. The UI computes calendar dates automatically from the trip start date. Just use the route description: "Girona → Lyon" for driving days, "Innsbruck (rest day)" for rest days.
 

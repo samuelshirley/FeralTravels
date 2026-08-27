@@ -784,9 +784,14 @@ export async function deleteLeg(legId: string): Promise<void> {
   await db.delete(legs).where(eq(legs.id, legId));
 }
 
-/** Title for a server-generated rest-day leg at a named location. */
+/**
+ * Title for a server-generated non-driving leg at a named location.
+ *
+ * `leg_type` is still `'rest'` in the database; "base day" is what the user
+ * reads. See the note in src/components/LegCard.tsx for why the word changed.
+ */
 function restDayTitle(name: string | null): string {
-  return name ? `${name} (rest day)` : 'Rest day';
+  return name ? `${name} (base day)` : 'Base day';
 }
 
 /** Great-circle distance in km. Local copy to keep this module self-contained. */

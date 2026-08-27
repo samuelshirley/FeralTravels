@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
-import { buildLegDirectionsUrl, buildSegmentedNavUrls, legDirectionsWaypoints } from '@/lib/maps';
+import {
+  assertDestinationReachable,
+  buildLegDirectionsUrl,
+  buildSegmentedNavUrls,
+  isStationaryLeg,
+  legDirectionsWaypoints,
+  orderNavSegments,
+} from '@/lib/maps';
 import { useNextStop } from '@/lib/useNextStop';
 import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
@@ -119,8 +126,40 @@ export default function LegCard({
     legStart,
     expanded,
   );
-  // Show the smart single button when GPS is active and user is near the route.
-  const showSmartNav = gpsStatus === 'active' && isNearRoute && nextStop != null;
+  /**
+   * GPS may re-ORDER the nav buttons. It may never remove one.
+   *
+   * This used to be `showSmartNav`, which swapped the whole list for a single
+   * next-stop button whenever GPS was active and the device was near the route.
+   * "Near the route" includes standing at the leg's start — i.e. at home, weeks
+   * before departure, for anyone whose trips begin where they live. The card then
+   * offered one link to an unselected fuel stop and no way to reach the day's
+   * destination at all. See orderNavSegments.
+   */
+  const promoteNext = gpsStatus === 'active' && isNearRoute && nextStop != null;
+  const navButtons = useMemo(
+    () => orderNavSegments(allSegments, promoteNext ? nextStop : null),
+    [allSegments, promoteNext, nextStop],
+  );
+  // Fails loudly in dev and in tests; logs in production. The destination button
+  // is not allowed to go missing again, quietly or otherwise.
+  assertDestinationReachable(
+    navButtons,
+    `leg ${leg.id} (${leg.start_name} → ${leg.end_name})`,
+    // Same inputs buildSegmentedNavUrls used to decide whether to emit a
+    // destination at all, so the assertion and the builder cannot disagree.
+    {
+      stationary:
+        leg.end_lat != null &&
+        leg.end_lng != null &&
+        isStationaryLeg({
+          legCoords,
+          destination: { lat: leg.end_lat, lng: leg.end_lng },
+          distanceKm: leg.distance_km,
+          driveTimeMinutes: leg.drive_time_minutes,
+        }),
+    }
+  );
 
   // ── Lazy fuel sourcing on day-open ──────────────────────────────────────
   // Fuel stops are sourced when the user OPENS a day (no eager trip-wide
@@ -195,10 +234,22 @@ export default function LegCard({
     onChanged,
   ]);
 
-  // Rest day accent color — softer green vs driving day blue
-  const restDayColor = '#6BA368';
+  /*
+   * "Base day" is the user-facing name for `leg_type: 'rest'`.
+   *
+   * They were called rest days, and that was wrong often enough to matter: a
+   * non-driving day is usually a day you go DO the thing you drove here for.
+   * Calling it rest framed the point of the trip as the gap between drives.
+   * "Base" says what is actually true on every one of them — you have a base
+   * and you are working out of it — without promising an adventure on the days
+   * that are really laundry and a rained-out afternoon.
+   *
+   * The DB column keeps `'rest'`. Renaming an enum across the schema, Penny's
+   * tools and 148 references buys nothing the label does not.
+   */
+  const baseDayColor = '#6BA368';
   const driveColor = leg.color || '#4E7AB0';
-  const dotColor = isRestDay ? restDayColor : driveColor;
+  const dotColor = isRestDay ? baseDayColor : driveColor;
 
   return (
     <div
@@ -215,7 +266,7 @@ export default function LegCard({
         borderRadius: 8,
         overflow: 'hidden',
         transition: 'background 0.2s',
-        borderLeft: isRestDay ? `3px solid ${restDayColor}40` : 'none',
+        borderLeft: isRestDay ? `3px solid ${baseDayColor}40` : 'none',
       }}
     >
       <div
@@ -247,10 +298,10 @@ export default function LegCard({
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: '0.1em',
-                  color: restDayColor,
+                  color: baseDayColor,
                 }}
               >
-                REST
+                BASE
               </span>
             )}
             {dateLabel ? (
@@ -259,7 +310,7 @@ export default function LegCard({
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: '0.1em',
-                  color: isRestDay ? restDayColor : 'var(--tp-subtle)',
+                  color: isRestDay ? baseDayColor : 'var(--tp-subtle)',
                 }}
               >
                 {dateLabel.toUpperCase()}
@@ -297,7 +348,7 @@ export default function LegCard({
               </span>
             ) : null}
             {isRestDay && leg.end_name && (
-              <span style={{ fontSize: 12, color: restDayColor }}>
+              <span style={{ fontSize: 12, color: baseDayColor }}>
                 {leg.end_name}
               </span>
             )}
@@ -346,7 +397,7 @@ export default function LegCard({
               <div
                 style={{
                   fontSize: 10,
-                  color: restDayColor,
+                  color: baseDayColor,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
                   marginBottom: 2,
@@ -366,7 +417,7 @@ export default function LegCard({
               <div
                 style={{
                   fontSize: 10,
-                  color: restDayColor,
+                  color: baseDayColor,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
                   marginBottom: 6,
@@ -382,7 +433,7 @@ export default function LegCard({
                     color: 'var(--tp-muted)',
                     lineHeight: 1.5,
                     padding: '3px 0 3px 12px',
-                    borderLeft: `2px solid ${restDayColor}40`,
+                    borderLeft: `2px solid ${baseDayColor}40`,
                     marginBottom: 2,
                   }}
                 >
@@ -417,9 +468,9 @@ export default function LegCard({
                 fontSize: 12,
                 fontWeight: 600,
                 letterSpacing: '0.04em',
-                color: restDayColor,
-                background: `${restDayColor}12`,
-                border: `1px solid ${restDayColor}30`,
+                color: baseDayColor,
+                background: `${baseDayColor}12`,
+                border: `1px solid ${baseDayColor}30`,
                 padding: '7px 14px',
                 borderRadius: 6,
                 cursor: 'pointer',
@@ -486,35 +537,12 @@ export default function LegCard({
                   <Spinner size={12} thickness={2} color="var(--tp-gold)" />
                   <span>Updating route…</span>
                 </a>
-              ) : showSmartNav ? (
-                /* GPS-aware: single button to next stop */
-                <a
-                  href={nextStop!.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  data-testid="nav-next-stop"
-                  title={navButtonLabel(nextStop!)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    letterSpacing: '0.04em',
-                    color: '#000',
-                    background: 'var(--tp-primary)',
-                    padding: '7px 14px',
-                    borderRadius: 6,
-                    textDecoration: 'none',
-                    boxShadow: '0 2px 8px rgba(124,181,232,0.2)',
-                  }}
-                >
-                  <span>▶</span>
-                  {navButtonLabel(nextStop!)}
-                </a>
               ) : (
-                /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
+                /* ONE list, always.
+                   There is deliberately no "collapse to a single button" branch
+                   here any more. GPS decides the ORDER (`isNext` floats to the
+                   top); it never decides the CONTENTS. Whatever else is on
+                   screen, the driver can always see where the day ends. */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div
                     style={{
@@ -526,17 +554,19 @@ export default function LegCard({
                     }}
                   >
                     {gpsStatus === 'pending'
-                      ? 'FINDING YOUR LOCATION…'
-                      : `NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? '' : 'S'})`}
+                      ? 'FINDING YOUR LOCATION\u2026'
+                      : `NAVIGATE (${navButtons.length} STOP${navButtons.length === 1 ? '' : 'S'})`}
                   </div>
-                  {allSegments.map((seg, i) => (
+                  {navButtons.map((seg, i) => (
                     <a
-                      key={i}
+                      key={`${seg.stopType ?? 'stop'}-${seg.url}`}
                       href={seg.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       data-testid="nav-stop-link"
+                      data-nav-stop-type={seg.stopType ?? 'other'}
+                      data-nav-next={seg.isNext ? 'true' : undefined}
                       title={navButtonLabel(seg)}
                       style={{
                         display: 'inline-flex',
@@ -547,15 +577,32 @@ export default function LegCard({
                         letterSpacing: '0.04em',
                         color: '#000',
                         background: 'var(--tp-primary)',
-                        padding: '6px 12px',
+                        padding: seg.isNext ? '7px 14px' : '6px 12px',
                         borderRadius: 6,
                         textDecoration: 'none',
-                        boxShadow: '0 2px 8px rgba(124,181,232,0.15)',
+                        boxShadow: seg.isNext
+                          ? '0 2px 8px rgba(124,181,232,0.2)'
+                          : '0 2px 8px rgba(124,181,232,0.15)',
+                        opacity: !seg.isNext && i > 0 && navButtons[0].isNext ? 0.82 : 1,
                         width: 'fit-content',
                       }}
                     >
-                      <span>▶</span>
+                      <span>\u25b6</span>
                       {navButtonLabel(seg)}
+                      {seg.isNext ? (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 800,
+                            letterSpacing: '0.1em',
+                            background: 'rgba(0,0,0,0.18)',
+                            borderRadius: 3,
+                            padding: '1px 5px',
+                          }}
+                        >
+                          NEXT
+                        </span>
+                      ) : null}
                     </a>
                   ))}
                 </div>

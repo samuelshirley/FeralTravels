@@ -76,7 +76,8 @@ export default function RootLayout() {
           >
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-            <Stack.Screen name="trips/index" options={{ title: "Your trips", headerBackVisible: false }} />
+            {/* trips/index draws its own header — see the note at the top of that file. */}
+            <Stack.Screen name="trips/index" options={{ headerShown: false }} />
             <Stack.Screen name="trips/[tripId]" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ title: "Settings" }} />
           </Stack>

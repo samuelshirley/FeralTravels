@@ -39,7 +39,7 @@ export function playwrightName(label: string): string {
 /**
  * Headers every `/api/test/*` fixture call must carry. When
  * `E2E_TEST_ENDPOINTS_SECRET` is set on the target app (CI generates a random
- * one per run for the tested Vercel preview — see .github/workflows/ci.yml),
+ * one per run for the tested Vercel preview — see .github/workflows/pipeline.yml),
  * the endpoints require it echoed in `x-e2e-test-secret`; without the env this
  * is empty and local runs behave as before. Also carries the Vercel
  * deployment-protection bypass header when VERCEL_AUTOMATION_BYPASS_SECRET is set.
