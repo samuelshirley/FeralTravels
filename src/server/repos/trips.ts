@@ -1345,6 +1345,26 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
         .values({
           tripId: newTripId,
           sortOrder: l.sortOrder,
+          /**
+           * `legType` and `geometry` were both missing here, and each one
+           * produced a bug that looked like something else entirely.
+           *
+           * Without `legType`, every cloned rest day silently became a DRIVE
+           * leg — the column defaults to 'drive'. A day titled "Porto (rest
+           * day)" then rendered the full drive section, including a primary
+           * "Route to Destination — Porto" button offered to a driver already
+           * standing in Porto. It read as a broken button; it was a lost
+           * column.
+           *
+           * Without `geometry`, the clone had no road-following route at all.
+           * The web falls back to straight lines between leg endpoints so it
+           * looked merely approximate, but the native map draws only what
+           * geometry it is given, so a cloned trip showed scattered dots and
+           * no route. Re-deriving it would mean a Directions call per leg on
+           * every clone; the source already paid for it.
+           */
+          legType: l.legType,
+          geometry: l.geometry,
           title: l.title,
           label: l.label,
           startName: l.startName,

@@ -33,6 +33,7 @@ import { theme } from "@/lib/theme";
 import {
   fetchEntitlement,
   testPurchase,
+  withPaywallNotice,
   PAYWALL_ERROR_CODE,
   type EntitlementPayload,
 } from "@/lib/entitlement";
@@ -92,12 +93,6 @@ const CONTINUE_PROMPT =
  * moment" expectation, which is the part that matters during a 60s+ build.
  */
 const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
-
-/**
- * Stable id for the paywall bubble appended on mount, so a re-run of the
- * entitlement effect replaces it rather than stacking a second copy.
- */
-const PAYWALL_MESSAGE_ID = "paywall-notice";
 
 /**
  * One inbox, one human — the same address as /support and as the web's
@@ -213,11 +208,34 @@ export default function ChatPanel({
   }, [paywalled]);
 
   /**
-   * Ask once, on mount. A paywalled user reads Penny's message and finds the
-   * composer already closed, so the first thing they learn about their billing
-   * is never a red error bubble bounced back off a request they were allowed to
-   * make. Skipped in readonly (the demo trip), where the composer is replaced
-   * wholesale and there is nothing to gate.
+   * The transcript as rendered: the stored messages, plus Penny's paywall
+   * bubble whenever this account is blocked.
+   *
+   * Derived, not stored — see withPaywallNotice. `messages` stays exactly what
+   * the server sent plus what this session sent, which is what every other
+   * code path here (sending, queueing, the reconcile) reads.
+   */
+  const visibleMessages = useMemo(
+    () => withPaywallNotice(messages, entitlement, tripId),
+    [messages, entitlement, tripId]
+  );
+
+  /**
+   * Ask on mount, and store the answer — nothing more.
+   *
+   * This effect used to also PUSH Penny's paywall bubble into `messages`, which
+   * raced the history effect below: history lands with `setMessages(...)`, a
+   * wholesale replace, so the bubble survived only when the entitlement request
+   * happened to answer second. It was there on one visit to the chat and gone
+   * on the next. The bubble is now derived from this state at render time
+   * (`visibleMessages`), so the order these two requests resolve in no longer
+   * decides whether the user is told they are blocked.
+   *
+   * A paywalled user reads that message and finds the composer already closed,
+   * so the first thing they learn about their billing is never a red error
+   * bubble bounced back off a request they were allowed to make. Skipped in
+   * readonly (the demo trip), where the composer is replaced wholesale and
+   * there is nothing to gate.
    */
   useEffect(() => {
     if (readonly) return;
@@ -226,30 +244,11 @@ export default function ChatPanel({
       const payload = await fetchEntitlement();
       if (cancelled || !payload) return;
       setEntitlement(payload);
-      const copy = payload.paywall;
-      if (payload.entitled || !copy) return;
-      setMessages((prev) =>
-        prev.some((m) => m.paywall)
-          ? prev
-          : [
-              ...prev,
-              {
-                id: PAYWALL_MESSAGE_ID,
-                trip_id: tripId,
-                role: "assistant" as const,
-                content: copy.message,
-                kind: "ai" as const,
-                changes_made: null,
-                created_at: new Date().toISOString(),
-                paywall: true,
-              },
-            ]
-      );
     })();
     return () => {
       cancelled = true;
     };
-  }, [readonly, tripId]);
+  }, [readonly]);
 
   /**
    * Turn a pending assistant bubble into the paywall bubble.
@@ -313,6 +312,10 @@ export default function ChatPanel({
         return;
       }
       setEntitlement(fresh);
+      // The DERIVED bubble disappears on its own the moment `fresh` says
+      // entitled. This clears the other kind: a real pending bubble that a
+      // mid-turn 402 rewrote in place, which is a stored message and would
+      // otherwise sit in the transcript telling a paying user they are blocked.
       setMessages((prev) => prev.filter((m) => !m.paywall));
       setPurchaseSheetOpen(false);
     } catch (e: unknown) {
@@ -1376,7 +1379,7 @@ export default function ChatPanel({
           </View>
         ) : null}
 
-        {messages.map((msg, msgIdx) => {
+        {visibleMessages.map((msg, msgIdx) => {
           // Hide the empty assistant bubble while Penny is working but hasn't
           // emitted any text yet — the 3-dot indicator covers that state. The
           // web only checks `streaming`; we also drop a finished-but-empty
@@ -1399,13 +1402,13 @@ export default function ChatPanel({
             return null;
           }
 
-          const gp = getGroupPosition(messages, msgIdx);
+          const gp = getGroupPosition(visibleMessages, msgIdx);
           // Tight 2pt gap inside a group, 10pt between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
           const isUser = msg.role === "user";
           const isQueued = msg.deliveryStatus === "queued";
           const isLastUserMessage =
-            isUser && !messages.slice(msgIdx + 1).some((m) => m.role === "user");
+            isUser && !visibleMessages.slice(msgIdx + 1).some((m) => m.role === "user");
 
           return (
             <View

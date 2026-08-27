@@ -46,8 +46,14 @@ import { font } from "@/lib/typography";
  * edit-mode affordance, the pulsing "+ New trip" cue — is the web's.
  */
 
-/** `/api/me` returns the user row; lib/api's Me only declares the fields the
- *  settings screen needed, so widen it here instead of editing that client. */
+/**
+ * `/api/me` is deliberately narrow — it answers `{ units_pref, timezone }` and
+ * nothing else, so `UnitsProvider` can call it on every page load without
+ * pulling down PII. It does NOT carry a user id today, which is why `id` is
+ * optional here and why every split below has a working fallback: /api/trips
+ * returns the caller's own trips plus the shared demo templates and nothing
+ * else, so `is_template` separates the two without knowing who is asking.
+ */
 type MeWithId = Me & { id?: string };
 
 /**
@@ -66,19 +72,6 @@ type MeWithId = Me & { id?: string };
  * TripHeader has always drawn its own bar and has always rendered this avatar
  * correctly — so this screen now does the same, and the two headers agree.
  */
-
-/**
- * "Has this app session already put a blocked user in front of Penny?"
- *
- * Module scope, not a ref, and that is the whole point: `router.replace` into
- * the trip UNMOUNTS this screen, so a ref would be back to `false` the moment
- * they navigated to the trips list — and every attempt to reach the list would
- * bounce straight back into the chat they just left. A module-level flag lives
- * as long as the JS runtime does, which is the same span as "this app open".
- *
- * Reset on sign-out so the next account gets its own first-open redirect.
- */
-let sentToPennyThisSession = false;
 
 type Row =
   | { key: string; kind: "empty" }
@@ -148,33 +141,20 @@ export default function TripsScreen() {
         ? tripsRes.filter((t) => t.user_id === meRes.id)
         : tripsRes.filter((t) => !t.is_template);
 
-      // Past the wall: the user meets Penny, not a list. She has the whole
-      // story — the trial, the two prices, the button — and she has it in the
-      // transcript they already know, so the block reads as her telling them
-      // rather than as the app locking a door.
+      // "Send a blocked account to Penny instead of a list" is a decision about
+      // opening the app, and it is made where the app opens — app/index.tsx,
+      // which mounts exactly once per launch. It deliberately does NOT happen
+      // here: `load()` re-runs on every focus, so a redirect here would mean the
+      // trips list could never be reached at all — the user would be thrown back
+      // into the chat the instant they left it. Reaching this screen while
+      // blocked is a deliberate act; draw the list and let the overlay cover it.
       //
-      // A null verdict means the lookup failed, and it is treated as
-      // entitled on purpose: a phone in a tunnel must not paywall a paying
-      // customer. Every route that spends money gates itself server-side, so
-      // being wrong in this direction costs one rejected request and being
-      // wrong in the other locks someone out of the app they paid for.
-      if (verdict && !verdict.entitled) {
-        // Once per app open. `load()` re-runs on every focus, and a second
-        // redirect would mean the trips list could never be reached at all —
-        // they would be thrown back into the chat the instant they left it.
-        if (!sentToPennyThisSession) {
-          sentToPennyThisSession = true;
-          // `listTrips` comes back most-recently-active first (templates last),
-          // so the head of `mine` is the trip they were last in. An account
-          // that never made one has no chat to be told in — chat_history is
-          // trip-scoped — which is what /paywall exists for.
-          const latest = mine[0];
-          router.replace(latest ? `/trips/${latest.id}?chat=1` : "/paywall");
-          return;
-        }
-        // They came back here deliberately. Draw the list and cover it.
-        return;
-      }
+      // A null verdict means the lookup failed, and it is treated as entitled on
+      // purpose: a phone in a tunnel must not paywall a paying customer. Every
+      // route that spends money gates itself server-side, so being wrong in this
+      // direction costs one rejected request and being wrong in the other locks
+      // someone out of the app they paid for.
+      if (verdict && !verdict.entitled) return;
 
       if (mine.length === 0 && !autoCreated.current) {
         autoCreated.current = true;
@@ -202,9 +182,10 @@ export default function TripsScreen() {
   );
 
   const all = trips ?? [];
-  // Same predicates as the web page. If /api/me ever stops returning an id we
-  // fall back to "templates are the demo section, everything else is mine",
-  // which is how the payload is shaped anyway.
+  // Same predicates as the web page. `meId` is null in practice (see MeWithId),
+  // so what actually runs is "templates are the demo section, everything else is
+  // mine" — which is how the payload is shaped anyway. The id branch is kept for
+  // the day /api/me carries one.
   const myTrips = meId ? all.filter((t) => t.user_id === meId) : all.filter((t) => !t.is_template);
   const templates = meId
     ? all.filter((t) => t.is_template && t.user_id !== meId)
@@ -264,9 +245,6 @@ export default function TripsScreen() {
 
   async function handleSignOut() {
     setMenuOpen(false);
-    // The next account to sign in on this process gets its own first-open
-    // redirect rather than inheriting this one's.
-    sentToPennyThisSession = false;
     await clearToken();
     router.replace("/sign-in");
   }
