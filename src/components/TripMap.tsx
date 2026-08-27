@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import type { LegWithDetails, POI, Stop, StopType } from '@/types/trip';
 import { clusterPixels, type PixelPoint } from '@/lib/mapClustering';
+import { useUnits } from '@/components/UnitsContext';
+import { formatKmDual, type UnitsPref } from '@/lib/units';
 
 let optionsConfigured = false;
 
@@ -101,6 +103,16 @@ function legKey(leg: LegWithDetails): string {
   return `${leg.id}:${leg.start_lat},${leg.start_lng}->${leg.end_lat},${leg.end_lng}`;
 }
 
+/**
+ * "62 km (38 mi) from start", or just "62 km" for a metric user — the same
+ * primary-plus-secondary shape the `Distance` component renders in React,
+ * flattened to a string because an info window takes HTML, not JSX.
+ */
+function stopDistanceLabel(km: number, units: UnitsPref): string {
+  const { primary, secondary } = formatKmDual(km, units);
+  return secondary ? `${primary} ${secondary}` : primary;
+}
+
 export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStopSelect, trailsVersion = 0, tripId }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -148,6 +160,24 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
   useEffect(() => {
     onStopSelectRef.current = onStopSelect;
   }, [onStopSelect]);
+
+  /**
+   * The units preference, in a ref, for the same reason the two callbacks above
+   * are: the marker info window is a raw HTML STRING built inside the marker
+   * effect, so it cannot read context at render time, and adding `units` to
+   * that effect's deps would tear down and rebuild every marker on the map the
+   * moment somebody flips the toggle. A ref keeps the next tooltip correct
+   * without touching the markers already drawn.
+   *
+   * Before this the string was a hardcoded `${km} km` — the map tooltip and
+   * StopCard were the only two distances in the app that ignored the
+   * preference outright.
+   */
+  const { units } = useUnits();
+  const unitsRef = useRef(units);
+  useEffect(() => {
+    unitsRef.current = units;
+  }, [units]);
 
   // Hover tooltips only make sense on devices with a real pointer; touch falls
   // back to tap-to-open. Computed once — the device class doesn't change.
@@ -531,7 +561,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           <div style="min-width: 160px; font-family: var(--tp-font-sans);">
             <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#6b6b6b'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
             <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(p.name)}</div>
-            ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${Math.round(p.distanceKm)} km from start</div>` : ''}
+            ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${stopDistanceLabel(p.distanceKm, unitsRef.current)} from start</div>` : ''}
             <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Click to open in list</div>
           </div>`;
         marker.addListener('mouseover', () => {

@@ -1390,6 +1390,41 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
           // the same shape (flat vs. grouped) as the source template.
           segmentIndex: l.segmentIndex,
           segmentName: l.segmentName,
+          /**
+           * The fuel CACHE STATE, and it is the third column in this list whose
+           * absence looked like a different bug entirely.
+           *
+           * The stops below are copied, fuel rows included — a cloned day
+           * arrives with real stations on it. But `fuelStatus` defaults to
+           * 'none' and `fuelStopsUpdatedAt` is nullable, so without these two
+           * lines every cloned leg landed looking NEVER SOURCED while visibly
+           * holding sourced stops. `LegCard`'s lazy effect reads exactly that
+           * pair (`fuel_status === 'none'` → fetch), so opening any day of a
+           * cloned trip fired POST /api/legs/<id>/fuel-stops, and the server —
+           * seeing 'none' rather than a fresh terminal success — ran the whole
+           * search again: OSRM geometry, an Overpass corridor query, and the
+           * pricing coordinator on top. Every day, every clone, for stops that
+           * were already there.
+           *
+           * That is the entire point of the lazy design defeated by two missing
+           * assignments, and it is invisible from the UI: the stops that come
+           * back look like the stops that were already on screen.
+           *
+           * Copying the ORIGINAL timestamp rather than stamping now is
+           * deliberate — it is a cache entry, not a birthday. A clone of a leg
+           * sourced three days ago is correctly stale under FUEL_CACHE_TTL_MS
+           * and re-checks on first open; a clone of one sourced this morning is
+           * correctly a cache hit. Re-stamping would silently extend a stale
+           * price by the age of the clone.
+           */
+          fuelStatus: l.fuelStatus,
+          fuelStopsUpdatedAt: l.fuelStopsUpdatedAt,
+          // Carried for coherence with fuelStatus: a leg cloned in the 'failed'
+          // state should say why, not show a bare failure with no reason.
+          fuelPlanError: l.fuelPlanError,
+          // Derived from the geometry, which IS copied above — recomputing it
+          // would be work to reach the same answer.
+          continuityWarning: l.continuityWarning,
         })
         .returning({ id: legs.id });
       legIdMap.set(l.id, nl.id);
@@ -1498,6 +1533,19 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
           fuelAmountL: s.fuelAmountL,
           source: s.source,
           sourceUrl: s.sourceUrl,
+          /**
+           * The columns that make a cloned stop NAVIGABLE.
+           *
+           * `StopCard` builds its "open in Maps" link from `googleMapsUri` when
+           * there is one and falls back to lat/lng otherwise, so dropping these
+           * did not break the button — it quietly downgraded every cloned stop
+           * to a coordinate pin, losing the place Google actually resolved.
+           * `alternatives` is the other option set the user can swap to; a
+           * clone without it silently offers less than the trip it came from.
+           */
+          alternatives: s.alternatives,
+          placeId: s.placeId,
+          googleMapsUri: s.googleMapsUri,
         });
       }
 

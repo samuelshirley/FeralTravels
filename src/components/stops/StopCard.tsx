@@ -1,6 +1,7 @@
 'use client';
 
 import type { StopType } from '@/types/trip';
+import Distance from '@/components/Distance';
 
 export interface StopCardProps {
   stopType: StopType;
@@ -120,7 +121,14 @@ export default function StopCard({
             <div
               style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 1 }}
             >
-              {Math.round(distanceFromStartKm)} km from start
+              {/*
+                Was a hardcoded `${Math.round(km)} km`, which made this the one
+                distance on the trip screen that ignored the units preference
+                entirely — an imperial user got kilometres here and nowhere
+                else, with no miles at all. Every other distance goes through
+                `Distance`; this one was written before it and never caught up.
+              */}
+              <Distance km={distanceFromStartKm} layout="inline" /> from start
             </div>
           )}
         </div>
