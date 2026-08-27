@@ -27,10 +27,25 @@
 #
 #   app.config.js      plugins, Info.plist, entitlements, bundle id, and
 #                      `version`, which IS the runtimeVersion.
-#   package.json       a new or removed native module changes the binary.
-#   package-lock.json  same, transitively.
+#   package.json       a new or removed native module changes the binary —
+#                      but a scripts-only edit does not, so this one is
+#                      judged by its CONTENT, not by its name. See
+#                      scripts/decide-mobile-release.mjs.
+#   package-lock.json  same, transitively. Unconditional on its own: it is
+#                      the strongest evidence the dependency graph moved.
 #   eas.json           build profile, channel, env baked into the bundle.
 #   assets/**          icon and splash art are compiled in at prebuild.
+#
+# THE DECISION LIVES IN A SCRIPT, not in a regex in a `run:` block below.
+# It used to match on file name alone, and a merge whose only change to
+# mobile/package.json was a `scripts` entry (`sync:shared`, with the lockfile
+# untouched — proof no dependency moved) was classified native: ~30 minutes of
+# EAS queue, a build credit, and fifteen genuinely-JS files reaching nobody
+# because this path deliberately skips the OTA. A regex in YAML cannot be
+# tested, which is how it shipped. The rule is now
+# scripts/decide-mobile-release.mjs and the spec is
+# src/lib/decideMobileRelease.test.ts, which also fails if this file stops
+# calling it.
 #
 # THIS JOB WAITS for the build and the submission — no --no-wait. A green
 # run means the binary really is on App Store Connect, not merely queued.
@@ -145,18 +160,29 @@ jobs:
             exit 0
           fi
 
-          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
-          echo "Changed files:"
-          echo "$CHANGED" | sed 's/^/  /'
-
-          NATIVE_RE='^mobile/(app\.config\.js|package\.json|package-lock\.json|eas\.json|assets/)'
-          if echo "$CHANGED" | grep -Eq "$NATIVE_RE"; then
-            echo "Native input touched — OTA skipped, binary only."
-            echo "native=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "JS only — safe to publish over the air as well."
-            echo "native=false" >> "$GITHUB_OUTPUT"
+          # The classifier prints one word on stdout and its reasoning on
+          # stderr, which lands in this log. Every failure path inside it
+          # already returns native; if it cannot run AT ALL, assume native
+          # here too rather than letting an unset variable decide.
+          if ! DECISION="$(node scripts/decide-mobile-release.mjs --base "$BEFORE" --head "$AFTER")"; then
+            echo "::warning::decide-mobile-release.mjs failed to run — assuming native."
+            DECISION=native
           fi
+
+          case "$DECISION" in
+            js-only)
+              echo "JS only — safe to publish over the air as well."
+              echo "native=false" >> "$GITHUB_OUTPUT"
+              ;;
+            native)
+              echo "Native input moved — OTA skipped, binary only."
+              echo "native=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning::Unrecognised classifier output '$DECISION' — assuming native."
+              echo "native=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       - name: Load the production env from eas.json
         if: steps.native.outputs.native == 'false'
