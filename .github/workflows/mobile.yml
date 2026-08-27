@@ -1,25 +1,37 @@
 # Mobile release pipeline.
 #
-# EVERY merge to main that touches mobile/ does BOTH:
+# A merge to main that touches mobile/ does exactly ONE of these:
 #
 #   1. `eas update`  — publishes the JS bundle over the air. Testers on an
 #                      installed build get it on next launch, in seconds.
-#   2. `eas build`   — cuts a native binary and submits it to TestFlight, so
-#      + submit        TestFlight always holds the newest code and is ready
-#                      to promote to the App Store.
+#                      Free, instant, no queue.
+#   2. `eas build`   — cuts a native binary and submits it to TestFlight.
+#      + submit        ~30 minutes on the free plan's low-priority queue and
+#                      one of 15 iOS build credits a month.
 #
-# These are not alternatives. The OTA is how a fix reaches a phone today;
-# the binary is what Apple reviews and what ships. An earlier version of
-# this file treated them as an either/or and picked the OTA for JS-only
-# merges — which meant TestFlight silently went stale for a week while two
-# PRs' worth of fixes existed only as bundles.
+# WHICH ONE, and why it is an either/or again (2026-08-27).
 #
-# THE ONE EXCEPTION, and it is a safety property rather than an
-# optimisation. If a NATIVE input moved in this push, the OTA is SKIPPED.
-# A bundle that expects a native module the installed binary does not carry
-# crashes on launch, and runtimeVersion only protects against that when
-# `version` is also bumped. On those merges the binary is the only safe
-# delivery, so we build and say nothing went out over the air.
+# It was BOTH on every merge for two days, because before that a broken
+# classifier picked the OTA for merges that had genuinely moved the native
+# surface, and TestFlight silently went stale for a week. Building every
+# time was the blunt fix for a rule that could not be trusted.
+#
+# The rule can be trusted now: it is a tested script rather than a regex,
+# and it defaults to native on every failure path. So the build is back to
+# being conditional, and a JS-only merge costs nothing.
+#
+# WHAT THE STALENESS RISK IS NOW, stated plainly rather than assumed away:
+# an EXISTING tester is never stale — the OTA reaches their installed
+# binary in seconds. A NEW tester installing fresh from TestFlight gets the
+# binary's bundled JS until the app fetches the update on first launch, and
+# an App Store submission always needs a current build. Before submitting,
+# cut one by hand: Actions -> Mobile -> Run workflow.
+#
+# THE SAFETY PROPERTY, unchanged and the whole reason the classifier is
+# careful. If a NATIVE input moved, the OTA is SKIPPED and only the binary
+# ships. A bundle that expects a native module the installed binary does
+# not carry crashes on launch, and runtimeVersion only protects against
+# that when `version` is also bumped.
 #
 # WHAT COUNTS AS NATIVE. mobile/ios and mobile/android are gitignored (CNG —
 # EAS regenerates them at build time), so they can never appear in a diff.
@@ -27,10 +39,25 @@
 #
 #   app.config.js      plugins, Info.plist, entitlements, bundle id, and
 #                      `version`, which IS the runtimeVersion.
-#   package.json       a new or removed native module changes the binary.
-#   package-lock.json  same, transitively.
+#   package.json       a new or removed native module changes the binary —
+#                      but a scripts-only edit does not, so this one is
+#                      judged by its CONTENT, not by its name. See
+#                      scripts/decide-mobile-release.mjs.
+#   package-lock.json  same, transitively. Unconditional on its own: it is
+#                      the strongest evidence the dependency graph moved.
 #   eas.json           build profile, channel, env baked into the bundle.
 #   assets/**          icon and splash art are compiled in at prebuild.
+#
+# THE DECISION LIVES IN A SCRIPT, not in a regex in a `run:` block below.
+# It used to match on file name alone, and a merge whose only change to
+# mobile/package.json was a `scripts` entry (`sync:shared`, with the lockfile
+# untouched — proof no dependency moved) was classified native: ~30 minutes of
+# EAS queue, a build credit, and fifteen genuinely-JS files reaching nobody
+# because this path deliberately skips the OTA. A regex in YAML cannot be
+# tested, which is how it shipped. The rule is now
+# scripts/decide-mobile-release.mjs and the spec is
+# src/lib/decideMobileRelease.test.ts, which also fails if this file stops
+# calling it.
 #
 # THIS JOB WAITS for the build and the submission — no --no-wait. A green
 # run means the binary really is on App Store Connect, not merely queued.
@@ -67,19 +94,117 @@ on:
     paths:
       - 'mobile/**'
       - '.github/workflows/mobile.yml'
+  # Same decision, run early and reported on the PR, so the cost of merging
+  # is visible BEFORE the merge rather than in a run log afterwards.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile.yml'
   workflow_dispatch:
 
-concurrency:
-  # Serialised rather than cancel-in-progress: a cancelled run can leave a
-  # build running on EAS that nothing is tracking any more.
-  group: mobile-release
-  cancel-in-progress: false
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
+  # ------------------------------------------------------------------ PR
+  # Read-only. No EXPO_TOKEN, no eas-cli, no network beyond GitHub — it runs
+  # the same classifier the merge will run and says what it found.
+  forecast:
+    name: What merging this will ship
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: mobile-forecast-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # MERGE-BASE, not base.sha. base.sha is the base branch's tip at
+          # event time, so diffing against it attributes every commit main
+          # gained since this PR branched to the PR itself — which would
+          # forecast a native build for somebody else's dependency bump.
+          if ! MERGE_BASE="$(git merge-base "$BASE" "$HEAD")"; then
+            echo "::warning::No merge base — assuming native."
+            MERGE_BASE="$BASE"
+          fi
+
+          if ! node scripts/decide-mobile-release.mjs \
+                 --base "$MERGE_BASE" --head "$HEAD" --json > forecast.json; then
+            echo "::warning::decide-mobile-release.mjs failed to run — assuming native."
+            echo '{"decision":"native","reasons":["the classifier could not run, so this defaults to a native build"]}' > forecast.json
+          fi
+          cat forecast.json
+
+      - name: Say so on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = context.payload.pull_request;
+            const { decision, reasons } = JSON.parse(fs.readFileSync('forecast.json', 'utf8'));
+            const sha = pr.head.sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const marker = '<!-- feraltravels-mobile-release -->';
+
+            const native = decision === 'native';
+            const headline = native
+              ? '### 📱 Merging this cuts a **native TestFlight build**'
+              : '### 📱 Merging this publishes an **over-the-air update**';
+            const cost = native
+              ? 'About 30 minutes on the free plan\'s low-priority queue, and one of 15 iOS build credits this month. **The OTA is skipped** — a bundle that expects a native module the installed binary does not carry crashes on launch, so the binary is the only safe delivery here.'
+              : 'Seconds, no queue, no build credit. Testers on an installed build get it on next launch. **No new TestFlight binary** — cut one by hand before an App Store submission (Actions → Mobile → Run workflow).';
+
+            const body = [
+              marker,
+              headline,
+              '',
+              cost,
+              '',
+              '<details><summary>Why</summary>',
+              '',
+              ...reasons.map((r) => `- ${r}`),
+              '',
+              '</details>',
+              '',
+              `From \`${sha}\` · [run](${runUrl}) · rule: \`scripts/decide-mobile-release.mjs\``,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
+
+  # --------------------------------------------------------------- MERGE
   ship:
-    name: OTA now, TestFlight build behind it
+    name: OTA, or a TestFlight build when the native surface moved
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    concurrency:
+      # Serialised rather than cancel-in-progress: a cancelled run can leave a
+      # build running on EAS that nothing is tracking any more. Job-level so a
+      # PR forecast never queues behind a thirty-minute release.
+      group: mobile-release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,18 +270,29 @@ jobs:
             exit 0
           fi
 
-          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
-          echo "Changed files:"
-          echo "$CHANGED" | sed 's/^/  /'
-
-          NATIVE_RE='^mobile/(app\.config\.js|package\.json|package-lock\.json|eas\.json|assets/)'
-          if echo "$CHANGED" | grep -Eq "$NATIVE_RE"; then
-            echo "Native input touched — OTA skipped, binary only."
-            echo "native=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "JS only — safe to publish over the air as well."
-            echo "native=false" >> "$GITHUB_OUTPUT"
+          # The classifier prints one word on stdout and its reasoning on
+          # stderr, which lands in this log. Every failure path inside it
+          # already returns native; if it cannot run AT ALL, assume native
+          # here too rather than letting an unset variable decide.
+          if ! DECISION="$(node scripts/decide-mobile-release.mjs --base "$BEFORE" --head "$AFTER")"; then
+            echo "::warning::decide-mobile-release.mjs failed to run — assuming native."
+            DECISION=native
           fi
+
+          case "$DECISION" in
+            js-only)
+              echo "JS only — safe to publish over the air as well."
+              echo "native=false" >> "$GITHUB_OUTPUT"
+              ;;
+            native)
+              echo "Native input moved — OTA skipped, binary only."
+              echo "native=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning::Unrecognised classifier output '$DECISION' — assuming native."
+              echo "native=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       - name: Load the production env from eas.json
         if: steps.native.outputs.native == 'false'
@@ -193,6 +329,12 @@ jobs:
 
       - name: Build and submit to TestFlight
         id: build
+        # THE GATE. Without this every mobile merge spends ~30 minutes and one
+        # of 15 monthly iOS credits, including merges that only moved JS.
+        # `native` is false only when the classifier could PROVE the change
+        # cannot reach the binary; everything it cannot prove — and every way
+        # it can fail — comes back true and builds.
+        if: steps.native.outputs.native == 'true' || github.event_name == 'workflow_dispatch'
         working-directory: mobile
         env:
           # We know this is not an Expo Go build; the warning is noise in logs
@@ -244,6 +386,9 @@ jobs:
                 ;;
               failure)
                 echo "- **TestFlight:** **build or submit failed** — nothing was submitted. See the step log."
+                ;;
+              skipped)
+                echo "- **TestFlight:** skipped — nothing that can reach the binary moved, so no build credit was spent. Existing testers get this over the air. Cut a binary by hand (Actions → Mobile → Run workflow) before an App Store submission."
                 ;;
               *)
                 echo "- **TestFlight:** not reached — the job failed before building."
