@@ -1,0 +1,903 @@
+# THE pipeline. One file, because there is one pipeline.
+#
+# This replaces ci.yml, deploy-production.yml, mobile.yml and pr-cleanup.yml —
+# four workflows that were four entries in the Actions sidebar and, worse, two
+# of them raced. `deploy-production` and `mobile` both fired on push to main
+# with nothing sequencing them, so a mobile OTA could reach a phone before the
+# API it expects had deployed.
+#
+# You merge a PR. Everything else is this file's problem.
+#
+# THE ONE THING THAT CANNOT BE COLLAPSED: tests run BEFORE the merge, not
+# after. That is what makes merging safe to be automatic — if the suite ran on
+# main, a broken change would already be migrating the production database
+# before anything caught it. So there are two moments, gated by the merge
+# button, and three triggers to serve them:
+#
+#   pull_request           → unit, mobile typecheck, preview, e2e   (the gate)
+#   push: main             → migrate + deploy prod, then mobile     (the ship)
+#   pull_request: closed   → delete the PR's Neon branch            (the sweep)
+#   workflow_dispatch      → force a mobile OTA or native build by hand
+#
+# Jobs that do not belong to the current trigger are `if:`-skipped, so a PR run
+# shows the deploy jobs greyed out and vice versa. That is the cost of one file
+# and it is deliberate.
+#
+# BRANCH PROTECTION: require "Unit tests", "Deploy tested preview" and
+# "E2E tests (against preview)". Those job NAMES are unchanged from ci.yml, so
+# existing protection rules keep working. "Mobile typecheck" runs alongside and
+# deliberately does not gate.
+#
+# THE OTHER COST, stated plainly: four files failed independently. One file
+# fails all at once — a YAML mistake here takes down the gate AND the deploy.
+# Validate before pushing.
+#
+# The long-form reasoning for each section is kept where it was written, inline
+# with the jobs below.
+
+name: Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'mobile: auto = decide from the diff, update = force OTA, build = force native build'
+        type: choice
+        options: [auto, update, build]
+        default: auto
+
+# PR runs cancel their predecessor; a deploy never does — cancelling one
+# mid-migration is how prod ends up with a schema ahead of its code.
+concurrency:
+  group: pipeline-${{ github.event_name == 'push' && 'main' || format('pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+env:
+  NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
+
+jobs:
+  # ONE job for both vitest projects, because both ARE unit tests. The
+  # project split (`unit` in node, `components` in jsdom) still exists — it
+  # keeps logic specs from paying for a DOM they never touch — but it is a
+  # vitest concern, not a CI one. Two boxes labelled "Unit tests" and "UI
+  # tests" read as though one of them drove a browser; only the E2E job
+  # does, and that ambiguity cost more than the ~20s of parallelism it
+  # bought against a five-minute pipeline. Vitest still reports each
+  # project separately, so a red component spec is no harder to spot.
+  unit:
+    name: Unit tests
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  # The mobile half of the gate. Deliberately typecheck-only for now: mobile/
+  # has no test suite of its own, and the shared domain logic it depends on is
+  # already covered by the unit project (including the mirror-drift guard in
+  # src/lib/sharedMirror.test.ts). Type errors are the failure mode this
+  # actually needs to stop, because an OTA update ships whatever compiles.
+  mobile_typecheck:
+    name: Mobile typecheck
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          # mobile/ has its own lockfile — the root one would cache the wrong
+          # tree and reinstall from scratch every run.
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+        working-directory: mobile
+      - run: npx tsc --noEmit
+        working-directory: mobile
+
+  # THE preview — tested by e2e below, clickable by humans from the PR comment.
+  preview:
+    name: Deploy tested preview
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      # Recreate this PR's branch from prod on every push: drop the old one
+      # (ignore if absent — first push), then re-create it so the preview shows
+      # CURRENT prod data and none of the previous run's fixture junk. E2E seeds
+      # its users into this branch over HTTP; prod is untouched.
+      - name: Delete previous Neon branch for this PR
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: ${{ env.NEON_BRANCH }}
+      - name: Create fresh Neon branch from prod
+        id: neon
+        uses: neondatabase/create-branch-action@v5
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: ${{ env.NEON_BRANCH }}
+      # This is also the migration rehearsal: a migration that fails here never
+      # reaches the prod DB, because deploy-production.yml only runs after a
+      # green CI.
+      - name: Apply migrations to the PR branch
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+        run: npm run db:migrate
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      # Deploy as a preview (no --prod). Build-time env (NEXT_PUBLIC_*) comes
+      # from the project's preview environment via `vercel pull`; runtime env
+      # is overridden per-deployment: DATABASE_URL → this PR's Neon branch,
+      # plus the guarded fixture-data endpoints so E2E seeding works.
+      - name: Deploy preview + print URL
+        id: deploy
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
+          # jobs" increments the attempt without redeploying the preview, so
+          # including it would desync the runner from the deployed app.
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
+            -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
+            -e E2E_TEST_ENDPOINTS="1" \
+            -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview: $URL"
+
+      # Publish the preview URL in TWO places, because one of them is never
+      # where you're looking:
+      #
+      #   1. A sticky comment (created once, edited in place on later pushes,
+      #      so the thread doesn't collect one per commit). Editing has a cost
+      #      though — an edited comment keeps its ORIGINAL position in the
+      #      timeline, so after six more commits the link is buried up-thread
+      #      and looks stale even when it isn't.
+      #   2. A pinned block at the TOP OF THE PR DESCRIPTION, which is always
+      #      on screen no matter how long the conversation gets. Only the text
+      #      between our two markers is touched; anything you wrote in the
+      #      description is left alone.
+      - name: Publish the preview URL on the PR
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          NEON_BRANCH: ${{ env.NEON_BRANCH }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const url = process.env.PREVIEW_URL;
+            const branch = process.env.NEON_BRANCH;
+            const sha = pr.head.sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const marker = '<!-- feraltravels-preview -->';
+            const endMarker = '<!-- /feraltravels-preview -->';
+
+            const body = [
+              marker,
+              '### 🔍 Preview for this PR',
+              '',
+              `**${url}**`,
+              '',
+              `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
+              '',
+              `Built from \`${sha}\` · [CI run](${runUrl})`,
+              endMarker,
+            ].join('\n');
+
+            // 1. Sticky comment.
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
+
+            // 2. Pinned block at the top of the PR description. Replace only
+            // our own marked region; never rewrite the author's prose.
+            const pinned = [
+              marker,
+              `> **🔍 Preview:** ${url}`,
+              `> Built from \`${sha}\` · Neon branch \`${branch}\` · [CI run](${runUrl})`,
+              endMarker,
+            ].join('\n');
+            const current = pr.body || '';
+            const region = new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n*`);
+            const updated = region.test(current)
+              ? current.replace(region, `${pinned}\n\n`)
+              : `${pinned}\n\n${current}`;
+            if (updated !== current) {
+              await github.rest.pulls.update({ ...context.repo, pull_number: pr.number, body: updated });
+            }
+
+  e2e:
+    name: E2E tests (against preview)
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    needs: preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: npx playwright install --with-deps chromium
+
+      # Same derivation as the preview job → same secret, nothing passed
+      # through job outputs (GitHub drops outputs containing masked values).
+      - name: Derive per-run test-endpoint secret
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          # NOTE: derived from run_id ONLY (no run_attempt) — "re-run failed
+          # jobs" increments the attempt without redeploying the preview, so
+          # including it would desync the runner from the deployed app.
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      # E2E_BASE_URL → playwright.config skips its local webServer and the
+      # whole suite (fixtures included) targets the deployed preview.
+      - name: Run Playwright against the preview
+        env:
+          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          # Runner-side gate only (the app's own key comes from Vercel preview
+          # env): presence makes the Penny spec run instead of skip.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The real inbox for login-otp.spec.ts — the only spec that sends an
+          # actual email and reads it back. Resend Inbound, so it's the account
+          # and key we already have. Absent, the spec skips (see
+          # E2E_MAX_SKIPPED below); wrong, it fails loudly.
+          AUTH_RESEND_KEY: ${{ secrets.AUTH_RESEND_KEY }}
+          E2E_INBOX_DOMAIN: ${{ secrets.E2E_INBOX_DOMAIN }}
+          # Only needed if Vercel Deployment Protection is enabled.
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e
+
+      # A skipped spec is not a passing spec, and the allowance is now ZERO:
+      # every spec must run, including login-otp, which proves the app can
+      # actually send a sign-in email. That became possible once AUTH_RESEND_KEY
+      # and E2E_INBOX_DOMAIN landed as repo secrets — if either goes missing,
+      # login-otp skips and this step reds the build, which is the point.
+      #
+      # It was briefly 11 while the suite depended on a third-party inbox that
+      # got switched off, and a suite testing nothing shipped green for two
+      # weeks. If you find yourself raising it, the question to answer first is
+      # what the suite has started depending on that it doesn't control.
+      - name: Assert the suite actually ran
+        if: always()
+        env:
+          E2E_MAX_SKIPPED: '0'
+        run: node scripts/assert-e2e-ran.mjs
+
+      # Always, not just on failure: the report is how you see what the specs
+      # actually DID, and that's as useful on a green run as a red one.
+      - name: Upload Playwright report
+        id: report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            playwright-results.json
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Publish the Playwright HTML report so it is ONE CLICK from the PR —
+      # the real report: every step, screenshots, video, and the trace viewer.
+      #
+      # Deployed via the Build Output API (.vercel/output) so Vercel uploads a
+      # FINISHED static site and never tries to detect a framework or run a
+      # build — the app project's Next.js preset would otherwise attempt to
+      # build a folder of static HTML. That also means it needs no project of
+      # its own: it goes to the existing project as an ordinary preview
+      # deployment, so there is nothing to create and nothing to configure.
+      #
+      # The previous version shelled out to `vercel deploy <dir> --yes` hoping
+      # it would auto-create a project. It didn't — no such project exists —
+      # and because the failure happened inside $(...) with no exit check, the
+      # step went green while producing no URL. Hence the explicit exit code
+      # check and the unconditional echo of the CLI output below: this can fail
+      # again, but it can no longer fail SILENTLY.
+      - name: Publish the HTML report
+        id: publish
+        if: always()
+        continue-on-error: true
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ ! -f playwright-report/index.html ]; then
+            echo "::warning::No HTML report to publish — the suite didn't get that far."
+            exit 0
+          fi
+          npm i -g vercel@latest
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -R playwright-report/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          set +e
+          OUT="$(vercel deploy --prebuilt --archive=tgz --token="${{ secrets.VERCEL_TOKEN }}" 2>&1)"
+          CODE=$?
+          set -e
+          echo "--- vercel output ---"
+          echo "$OUT"
+          echo "---------------------"
+          if [ "$CODE" -ne 0 ]; then
+            echo "::warning::Publishing the report failed (exit $CODE). The PR comment will link the downloadable artifact instead."
+            exit 0
+          fi
+          URL="$(printf '%s' "$OUT" | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | tail -n1)"
+          if [ -z "$URL" ]; then
+            echo "::warning::Deploy succeeded but no URL was found in the output above."
+            exit 0
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🎭 Playwright report" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Report: $URL"
+
+      # Per-spec results + a link to the report, as a sticky PR comment.
+      #
+      # The HTML report is a directory, so it can't be inlined, and it is
+      # deliberately NOT published to a URL: its screenshots and videos are of
+      # a preview backed by a CLONE OF PRODUCTION DATA. The artifact link is
+      # behind repo auth; a Pages or Vercel deploy of it would not be.
+      - name: Comment E2E results on the PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_URL: ${{ steps.report.outputs.artifact-url }}
+          REPORT_URL: ${{ steps.publish.outputs.url }}
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const marker = '<!-- feraltravels-e2e-results -->';
+            let table;
+            try {
+              table = execFileSync('node', ['scripts/e2e-pr-summary.mjs'], {
+                encoding: 'utf8',
+                env: {
+                  ...process.env,
+                  ARTIFACT_URL: process.env.ARTIFACT_URL,
+                  REPORT_URL: process.env.REPORT_URL,
+                },
+              });
+            } catch (err) {
+              table = `### 🎭 E2E results\n\nCould not build the summary: ${err.message}`;
+            }
+            const pr = context.payload.pull_request;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              table,
+              `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
+
+  delete-neon-branch:
+    name: Delete the PR's Neon branch
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # continue-on-error: a PR closed before CI ever ran has no branch to
+      # delete, and that shouldn't show up as a failed run.
+      - name: Delete preview/pr-${{ github.event.pull_request.number }}
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: preview/pr-${{ github.event.pull_request.number }}
+
+  deploy:
+    name: Migrate prod + deploy to production
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # HARD GATE: refuse to deploy code that CI hasn't proven green.
+      #
+      # CI runs on pull_request, so its runs are keyed to the PR's HEAD sha,
+      # not to the merge/squash commit sitting on main. Resolve the PR that
+      # produced this commit, take its head sha, and require the latest CI run
+      # for THAT sha to be completed + successful. If the commit has its own CI
+      # run (e.g. deploying a PR head directly), that counts too.
+      #
+      # In-progress counts as not green (wait for it). No run at all counts as
+      # not green (open a PR).
+      - name: Require green CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "Deploying commit: $SHA"
+
+          ci_state() {
+            gh run list -R "$GITHUB_REPOSITORY" --workflow 'Pipeline' --commit "$1" \
+              --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end'
+          }
+
+          # 1. Did this exact commit get a CI run? (unusual on main, but honour it)
+          TESTED_SHA="$SHA"
+          STATE="$(ci_state "$SHA")"
+
+          # 2. Otherwise walk back to the PR this commit came from.
+          if [ "$STATE" = "none" ]; then
+            PR_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
+              --jq '[.[] | select(.state == "closed" or .state == "open")][0].head.sha // empty' 2>/dev/null || true)"
+            if [ -n "$PR_HEAD" ]; then
+              TESTED_SHA="$PR_HEAD"
+              STATE="$(ci_state "$PR_HEAD")"
+              echo "Commit came from PR head: $PR_HEAD"
+            fi
+          fi
+
+          echo "Latest CI run for $TESTED_SHA: $STATE"
+          if [ "$STATE" != "completed/success" ]; then
+            echo "::error::CI is not green for $TESTED_SHA (state: $STATE). Production was NOT updated. Merge through a pull request with green CI checks, or wait for the run to finish."
+            exit 1
+          fi
+          echo "CI green for $TESTED_SHA — deploying." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      # Apply pending migrations to PROD before the new code serves. Idempotent;
+      # run-migrations advances the journal so already-applied ones are skipped.
+      # These exact migrations already ran against a clone of this database in
+      # the PR's CI run.
+      - name: Apply migrations to production DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run db:migrate
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      # Pull production project settings + env, build against them, deploy to prod.
+      - name: Build + deploy to production
+        run: |
+          set -euo pipefail
+          vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          URL="$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")"
+          echo "## 🚀 Deployed to production" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+      # Prod schema is now ahead of prod code — the exact failure mode from the
+      # earlier outage. Make it loud instead of silent.
+      - name: Warn if the deploy failed after migrating
+        if: failure()
+        run: |
+          echo "::error::Deploy failed. If 'Apply migrations to production DB' succeeded and the deploy did not, PRODUCTION IS RUNNING OLD CODE AGAINST A NEW SCHEMA. Re-run this workflow, or merge a revert PR immediately."
+
+  decide:
+    name: Decide OTA vs native
+    needs: [deploy]
+    # Runs after the web deploy, never beside it: an OTA that expects a new API
+    # must not reach a phone before that API is live. `always()` is what lets a
+    # manual dispatch through, where `deploy` is skipped rather than green.
+    if: |
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && needs.deploy.result == 'success')
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.final.outputs.mode }}
+      reason: ${{ steps.final.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Step 1 — the cheap answer, from the diff alone. No toolchain, no
+      # network, no EXPO_TOKEN.
+      - id: want
+        env:
+          INPUT_MODE: ${{ inputs.mode || 'auto' }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # `on:` used to carry `paths: mobile/**`, which cannot work now that
+          # one workflow serves every trigger — so the same question is asked
+          # here. A web-only merge produces no mobile release at all: no build
+          # credits, no TestFlight build in front of testers for work the app
+          # does not run. Note mobile/shared/ counts as mobile, so a change to
+          # the mirrored domain logic still ships.
+          if [ "$INPUT_MODE" = "auto" ] && [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
+            if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              if ! git diff --name-only "$BEFORE" "$AFTER" | grep -q '^mobile/'; then
+                echo "Nothing under mobile/ changed — no mobile release."
+                echo "want=none" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
+
+          if [ "$INPUT_MODE" != "auto" ]; then
+            echo "Forced by workflow_dispatch: $INPUT_MODE"
+            echo "want=$INPUT_MODE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # First push to a branch, a force-push, or a shallow history leaves
+          # no usable base. Default to the safe-but-slow side: a native build
+          # ships the JS too, whereas a wrongly chosen OTA reaches nobody and
+          # says nothing about it.
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit ($BEFORE) — assuming native."
+            echo "want=build" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          NATIVE_RE='^mobile/(app\.config\.js|package\.json|package-lock\.json|eas\.json|assets/)'
+          if echo "$CHANGED" | grep -Eq "$NATIVE_RE"; then
+            echo "Native input touched -> full build."
+            echo "want=build" >> "$GITHUB_OUTPUT"
+          else
+            echo "JS only -> over-the-air update, if anything can receive one."
+            echo "want=update" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Steps 2-5 run ONLY when the diff says OTA, because that is the only
+      # answer that can be wrong in a way nobody notices. `eas update` exits 0
+      # whether ten thousand devices are on this runtimeVersion or none are —
+      # so a repo that has never completed a native build can publish green
+      # updates forever while nothing reaches a phone. That is exactly the
+      # state this workflow was in after its first run failed on a missing
+      # EXPO_TOKEN. Before publishing, ask EAS whether a target exists.
+      - name: Require EXPO_TOKEN
+        if: steps.want.outputs.want == 'update'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.want.outputs.want == 'update'
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        if: steps.want.outputs.want == 'update'
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+        if: steps.want.outputs.want == 'update'
+        working-directory: mobile
+
+      - id: target
+        name: Does a binary exist that this JS can run on?
+        if: steps.want.outputs.want == 'update'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+
+          # FINGERPRINT, not runtimeVersion — and the difference is the whole
+          # point of this step.
+          #
+          # runtimeVersion policy is `appVersion`, which is a PROMISE that the
+          # native surface has not moved, maintained by hand. PR #7 broke that
+          # promise without touching `version`: it added the reversed Google
+          # client id (a CFBundleURLScheme) and the Apple Sign-in entitlement,
+          # both compiled into the binary. Asking "is there a build at 1.0.0"
+          # answered yes — and the two builds it found predated the OAuth work
+          # entirely, so the OTA would have switched ON two sign-in buttons in
+          # binaries that physically cannot complete either flow.
+          #
+          # The fingerprint is computed from the things that actually end up in
+          # the binary — app.config.js, the config plugins, native deps, and
+          # eas.json — so a build whose fingerprint matches is a build this JS
+          # can genuinely run on. EAS records one per build, which is what
+          # makes this comparable.
+          if ! FP_JSON=$(npx expo-updates fingerprint:generate --platform ios 2>/dev/null); then
+            echo "::warning::could not compute the native fingerprint — assuming native."
+            echo "found=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FP=$(printf '%s' "$FP_JSON" | node -e '
+            let s = "";
+            process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              try {
+                const h = JSON.parse(s).hash;
+                console.log(typeof h === "string" && h ? h : "");
+              } catch {
+                console.log("");
+              }
+            });
+          ')
+
+          if [ -z "$FP" ]; then
+            echo "::warning::fingerprint came back empty — assuming native."
+            echo "found=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "native fingerprint: $FP"
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
+
+          # Counts builds that could still become a target, not just finished
+          # ones: a native build queued by an earlier merge is `--no-wait`, so
+          # it is still in the EAS queue while this run happens. Without that,
+          # two merges in half an hour would cut two binaries.
+          if ! RAW=$(eas build:list --platform ios --fingerprint-hash "$FP" --limit 50 --json --non-interactive 2>/dev/null); then
+            echo "::warning::could not query EAS for existing builds — assuming native."
+            echo "found=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COUNT=$(printf '%s' "$RAW" | node -e '
+            let s = "";
+            process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              try {
+                const builds = JSON.parse(s);
+                if (!Array.isArray(builds)) return console.log("unknown");
+                const live = new Set(["finished", "new", "in-queue", "in-progress"]);
+                const n = builds.filter((b) =>
+                  live.has(String(b.status || "").toLowerCase().replace(/_/g, "-"))
+                ).length;
+                console.log(String(n));
+              } catch {
+                console.log("unknown");
+              }
+            });
+          ')
+
+          echo "builds matching that fingerprint, finished or still building: $COUNT"
+          echo "found=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - id: final
+        env:
+          WANT: ${{ steps.want.outputs.want }}
+          FOUND: ${{ steps.target.outputs.found }}
+          FP: ${{ steps.target.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+
+          if [ "$WANT" = "none" ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            echo "reason=nothing under mobile/ changed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$WANT" != "update" ]; then
+            echo "mode=build" >> "$GITHUB_OUTPUT"
+            echo "reason=a native input changed (or the build was forced)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "${FOUND:-unknown}" in
+            0)
+              echo "::notice::No iOS build matches native fingerprint ${FP:-?} — escalating, because an OTA would land on a binary built from a different native surface."
+              echo "mode=build" >> "$GITHUB_OUTPUT"
+              echo "reason=no binary matches the current native fingerprint, so an OTA would reach nobody who could run it" >> "$GITHUB_OUTPUT"
+              ;;
+            unknown|"")
+              echo "::warning::Could not establish whether a binary exists — building rather than publishing into the void."
+              echo "mode=build" >> "$GITHUB_OUTPUT"
+              echo "reason=could not confirm a binary exists at this runtime" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "mode=update" >> "$GITHUB_OUTPUT"
+              echo "reason=${FOUND} build(s) share the current native fingerprint and can run this update" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  update:
+    name: OTA update
+    needs: decide
+    if: needs.decide.outputs.mode == 'update'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require EXPO_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+        working-directory: mobile
+
+      - name: Load the production env from eas.json
+        working-directory: mobile
+        # eas.json's build.production.env applies to BUILDS ONLY. `eas update`
+        # bundles with whatever is in this shell, and EXPO_PUBLIC_* values are
+        # inlined at bundle time — so without this step the update ships
+        # lib/config.ts's fallbacks. API_BASE_URL survives (it defaults to
+        # prod), but GOOGLE_IOS_CLIENT_ID collapses to null and
+        # APPLE_SIGNIN_ENABLED to false: an OTA that silently deletes both
+        # social sign-in buttons for every tester. Read out of eas.json rather
+        # than restated here, so the two cannot drift.
+        run: |
+          node -e '
+            const env = require("./eas.json").build.production.env || {};
+            for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
+          ' | tee -a "$GITHUB_ENV"
+
+      - name: Publish
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          MSG="$(git log -1 --pretty=%s)"
+          eas update --channel production --non-interactive --message "${GITHUB_SHA:0:7} ${MSG}"
+
+      - name: Summary
+        env:
+          REASON: ${{ needs.decide.outputs.reason }}
+        run: |
+          {
+            echo "### Mobile: OTA update published"
+            echo
+            echo "Chosen because ${REASON}."
+            echo
+            echo "Channel \`production\`; runtimeVersion is the \`version\` in app.config.js."
+            echo "Testers pick it up on next app launch — no TestFlight build needed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Native build
+    needs: decide
+    if: needs.decide.outputs.mode == 'build'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require EXPO_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN repo secret is not set. See the header of this workflow."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+        working-directory: mobile
+
+      - name: Queue the build
+        working-directory: mobile
+        env:
+          AUTO_SUBMIT: ${{ vars.EAS_AUTO_SUBMIT }}
+        run: |
+          set -euo pipefail
+          FLAGS=""
+          if [ "${AUTO_SUBMIT:-}" = "true" ]; then
+            FLAGS="--auto-submit"
+          else
+            echo "::notice::EAS_AUTO_SUBMIT is not 'true' — building only, no TestFlight upload."
+          fi
+          # buildNumber comes from EAS (appVersionSource: remote + autoIncrement),
+          # so nothing needs committing back to the repo.
+          eas build --platform ios --profile production --non-interactive --no-wait $FLAGS
+
+      - name: Summary
+        env:
+          AUTO_SUBMIT: ${{ vars.EAS_AUTO_SUBMIT }}
+          REASON: ${{ needs.decide.outputs.reason }}
+        run: |
+          {
+            echo "### Mobile: native build queued"
+            echo
+            echo "Chosen because ${REASON}."
+            echo
+            echo "Green here means **queued**, not built. Track it at <https://expo.dev>."
+            if [ "${AUTO_SUBMIT:-}" = "true" ]; then
+              echo "Auto-submit is on — it uploads to TestFlight when the build finishes."
+            else
+              echo "Auto-submit is **off**: grab the .ipa from Expo and upload it, or set the \`EAS_AUTO_SUBMIT\` repo variable."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
