@@ -36,8 +36,6 @@
     "/tmp/trip-planner-next/types/**/*.ts"
   ],
   "exclude": [
-    "_graveyard",
-    "_to_delete",
     "mobile",
     "node_modules"
   ]

@@ -13,6 +13,12 @@ interface Props {
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
+   * The trip's last day is behind the user — the card says so and goes quiet.
+   * Derived by the caller (lib/tripCompletion) so "today" is resolved once, in
+   * the user's own timezone, rather than per card off the server's UTC clock.
+   */
+  completed?: boolean;
+  /**
    * When true, the card reveals a persistent × delete button in the corner.
    * Driven by the parent's Edit-trips toggle.
    */
@@ -35,6 +41,7 @@ export default function TripCard({
   startDate,
   endDate,
   isTemplate = false,
+  completed = false,
   editMode = false,
   showClone = false,
   onCloneClick,
@@ -80,7 +87,14 @@ export default function TripCard({
           style={{
             display: 'block',
             padding: 16,
-            background: isTemplate ? 'var(--tp-primary-muted)' : 'var(--tp-surface)',
+            background: isTemplate
+              ? 'var(--tp-primary-muted)'
+              : completed
+                ? 'var(--tp-surface-muted)'
+                : 'var(--tp-surface)',
+            // Same dimming the itinerary's "behind you" section uses, so a
+            // finished trip reads as past on both surfaces.
+            opacity: completed ? 0.75 : 1,
             border: isTemplate
               ? '1px solid rgba(78, 122, 176, 0.28)'
               : editMode
@@ -93,7 +107,13 @@ export default function TripCard({
             boxShadow: 'var(--tp-shadow-sm)',
           }}
         >
-          <div style={{ fontSize: 16, fontWeight: 600, paddingRight: editMode ? 40 : 28 }}>
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 600,
+              paddingRight: editMode ? 40 : completed ? 96 : 28,
+            }}
+          >
             {name}
           </div>
           <div
@@ -154,6 +174,28 @@ export default function TripCard({
             </div>
           )}
         </Link>
+
+        {completed && !editMode && (
+          <span
+            data-testid="trip-completed-badge"
+            style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--tp-muted)',
+              background: 'var(--tp-surface)',
+              border: '1px solid var(--tp-border)',
+              borderRadius: 999,
+              padding: '3px 8px',
+            }}
+          >
+            Completed
+          </span>
+        )}
 
         {editMode && (
           <button

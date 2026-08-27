@@ -144,58 +144,89 @@ it near the bottom of the range.
 
 ---
 
-## 6. Blocked — cannot submit until these exist
+## 6. Blocked — cannot submit until these are true
 
-**Account deletion.** Guideline 5.1.1(v) requires an account-based app to offer
-account deletion from inside the app. There is no endpoint and no UI. This is a
-rejection, not a warning.
+Rewritten 2026-08-20. The previous version of this section listed account
+deletion and native OAuth as blockers; both shipped in PR #7 and PR #9. Reading
+a stale blocker list is how a submission gets delayed by work that is already
+done, so this section states what is checkable today.
 
-**App Review sign-in.** Guideline 2.1(a): "If your app includes account-based
-features, provide either an active demo account or fully-featured demo mode."
-The app is gated behind an emailed OTP and the test OTP endpoint is hard-off in
-production, so a reviewer left on the OTP path waits forever for a code they
-cannot read.
+### Done
 
-**Sign in with Apple is the answer, and it is already built** — the reviewer
-uses their own Apple ID and gets a real, fully functional account. No demo
-credentials, no fixed code, no backdoor. What remains is delivery, not code:
+- **Account deletion** (guideline 5.1.1(v)) — in-app on web and native,
+  `POST /api/me/delete`, migration 0024, admin view at `/admin/deleted`. Covered
+  by `e2e/account-deletion.spec.ts`.
+- **Sign in with Apple**, native and web — `POST /api/mobile/oauth/exchange`,
+  merged and in production.
+- **Legal URLs** — `/privacy`, `/terms`, `/support` are live and anonymous on
+  `www.feraltravels.com`, guarded by `e2e/legal-pages.spec.ts`.
+- **Export compliance** — `ITSAppUsesNonExemptEncryption: false` in
+  `app.config.js`, so App Store Connect stops asking per upload.
+- **App Store Connect API key** on EAS, distribution certificate and
+  provisioning profile both valid to Aug 2027.
 
-1. **Merge and promote `feat/native-oauth`.** `POST /api/mobile/oauth/exchange`
-   is 12 commits ahead of `main` and is NOT in production. Ship a build that
-   offers Apple sign-in against today's prod and every tap 404s.
-2. **Cut a fresh native build.** `usesAppleSignIn` is an entitlement, so OTA
-   cannot add it — and `appleAvailable()` returns false without it, which means
-   the button silently does not render. eas.json gained
-   `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1` in 0099bf9, AFTER build 3 was cut, so
-   build 3 almost certainly has no Apple button. Rebuild:
-   `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1 npx expo prebuild --clean` then a
-   production EAS build, uploaded as a new build.
-3. **Verify on a real device via TestFlight.** Apple sign-in cannot be exercised
-   on the simulator. Include a Hide My Email run — the relay address path
-   (`@privaterelay.appleid.com`) is handled in `oauthIdentity.ts` but untested
-   against the live provider.
-4. **App Review Information → Notes**, something like:
+### Actually outstanding
 
-   > This app is passwordless. Tap "Sign in with Apple" on the sign-in screen
-   > and use your own Apple ID (Hide My Email works) — that creates a full
-   > account with no demo credentials needed. The email + 6-digit code option is
-   > for users who prefer email; it sends a real code to a real inbox, so please
-   > use Sign in with Apple.
+1. **A TestFlight build that contains the OAuth work.** Builds 2 and 3 predate
+   PR #7 — their native fingerprint is `f407a3a…` against today's `ad7c05a…`.
+   Neither has the reversed-client-id URL scheme or the `usesAppleSignIn`
+   entitlement, so in those binaries the Apple button does not render and the
+   Google one dead-ends. An OTA cannot fix either: both are compiled in.
+   **Cut a native build from current `main`** — Actions → Mobile → Run workflow
+   → mode `build` — and let auto-submit carry it to TestFlight.
 
-   Leave the demo username/password fields empty.
+2. **Verify Sign in with Apple on a real device.** It cannot be exercised on the
+   simulator. Include a Hide My Email run: the relay path
+   (`@privaterelay.appleid.com`) is unit-tested in `emailVerification.test.ts`
+   but has never met the live provider.
+
+3. **`AUTH_GOOGLE_IOS_CLIENT_ID` in the Vercel PRODUCTION environment.** CI
+   proves it is set on *preview* (`e2e/oauth-exchange.spec.ts` fails with 503
+   otherwise), and preview is not production. The app points at
+   `www.feraltravels.com`, so production is the one that decides whether Google
+   sign-in works on a phone. Check it by hand.
+
+4. **Screenshots** (§3) — still the largest piece of manual work.
+
+5. **App Privacy label** (§4) and **age rating** (§5) — fillable today, nothing
+   blocks them.
+
+6. **Free Apps agreement Active** — App Store Connect → Business.
+
+### App Review Information → Notes
+
+Sign in with Apple is the answer to guideline 2.1(a): the reviewer uses their
+own Apple ID and gets a real, fully functional account — no demo credentials,
+no fixed code, no backdoor. Leave the demo username/password fields empty and
+paste:
+
+> This app is passwordless. Tap "Sign in with Apple" on the sign-in screen and
+> use your own Apple ID (Hide My Email works) — that creates a full account with
+> no demo credentials needed. The email + 6-digit code option is for users who
+> prefer email; it sends a real code to a real inbox, so please use Sign in with
+> Apple.
 
 **Fallback, only if a reviewer rejects on 2.1(a) anyway:** an env-gated fixed
 code for one designated review address. Do NOT build this pre-emptively — it is
 backdoor-shaped, it sits directly next to `noBackdoorGuard.test.ts`, and it
 contradicts the no-bypass rule the rest of the auth surface is built on.
 
-**Agreements.** App Store Connect → Business → the Free Apps agreement must show
-Active before the version can be submitted.
-
 ---
 
-## 7. What you can do right now
+## 7. Order of operations
 
-Everything in §1, §2 and §3 can be filled in and saved today. §4 can be completed
-today. §5 can be completed today. Only §6 blocks the actual "Submit for Review"
-button.
+Everything in §1–§5 can be completed in App Store Connect today; none of it
+depends on a build.
+
+The build is the long pole, and it is the one thing that has to happen before
+"Submit for Review" means anything:
+
+1. Cut the native build (§6.1) and wait for it to reach TestFlight — roughly
+   30 minutes of build plus 5–15 of App Store Connect processing.
+2. Install it and work through the P1 device checklist in
+   `pr7-review-and-test-plan.md` — Google sign-in, Apple sign-in, the location
+   primer on a fresh install, account deletion from the app.
+3. Fix whatever that surfaces, merge, and let the pipeline decide: a JS fix goes
+   out as an OTA in seconds; a native one cuts another build on its own.
+4. Attach the build to the version, answer §4 and §5, paste the review notes,
+   confirm the Free Apps agreement, submit.

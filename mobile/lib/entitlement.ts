@@ -1,6 +1,15 @@
 import { apiFetch, ApiError } from "@/lib/api";
-import type { EntitlementPayload } from "@/shared/types/entitlement";
-import { PAYWALL_ERROR_CODE } from "@/shared/types/entitlement";
+/**
+ * Relative rather than `@/shared/types/entitlement`, unlike its neighbours.
+ *
+ * `withPaywallNotice` below is the one piece of the native paywall the unit
+ * suite can actually execute — there is no React Native test runner in this
+ * repo — and the root Vitest config aliases `@` to the WEB app's `src`, where
+ * `shared/` does not exist. A relative specifier resolves identically for Expo
+ * and for the test runner, which is what makes that function testable at all.
+ */
+import type { EntitlementPayload } from "../shared/types/entitlement";
+import { PAYWALL_ERROR_CODE } from "../shared/types/entitlement";
 
 export type { EntitlementPayload };
 export { PAYWALL_ERROR_CODE };
@@ -51,3 +60,18 @@ export function isPaywallError(err: unknown): err is ApiError {
   const payload = err.payload as { code?: string } | null;
   return payload?.code === PAYWALL_ERROR_CODE;
 }
+
+/**
+ * The paywall bubble derivation now lives in `shared/lib/paywallNotice.ts` and
+ * is re-exported here so this module's surface is unchanged.
+ *
+ * It moved because the root vitest project could not test it where it was: the
+ * suite transforms whatever it imports, `mobile/tsconfig.json` extends
+ * `expo/tsconfig.base`, and CI's unit job never installs `mobile/node_modules`
+ * — so importing this file from a root test failed with "Tsconfig not found".
+ * Locally both trees are installed, which is exactly why it passed here and
+ * broke there. Shared logic goes in the mirror; the mirror-drift guard then
+ * keeps the two copies honest.
+ */
+export { PAYWALL_MESSAGE_ID, withPaywallNotice } from "@/shared/lib/paywallNotice";
+export type { PaywallNoticeMessage } from "@/shared/lib/paywallNotice";

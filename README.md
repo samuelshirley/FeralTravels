@@ -105,14 +105,14 @@ Every chat turn is a durable `penny_turns` row with an idempotency key. A partia
 
 **Merging is deploying.** `main` is protected and only moves via pull requests; a merged PR is live on production a few minutes later. There is no ship script and no button to press.
 
-1. **Open a PR into `main`** → GitHub Actions `CI` (`.github/workflows/ci.yml`), re-run on every push to the PR:
+1. **Open a PR into `main`** → the `Pipeline` workflow (`.github/workflows/pipeline.yml`), re-run on every push to the PR:
    - **Unit tests** — the full Vitest suite (logic specs in node, component specs under jsdom).
    - **Deploy tested preview** — creates an ephemeral Neon branch `preview/pr-<N>` (copy-on-write clone of prod data), migrates it, and deploys a Vercel preview pointed at it. The URL is posted as a sticky PR comment and pinned to the top of the PR description. Prod's DB is never touched, and this run is the rehearsal for the prod migration.
    - **E2E tests** — the full Playwright suite against that exact preview URL, plus a guard that fails the job if the suite mass-skipped. No auth bypass exists: specs sign in through the real OTP flow, and one spec sends a real email and reads it back. `/api/test/*` fixture endpoints are data-only, hard-off on production, and locked with a per-run HMAC secret.
 
    Those three are the **required checks** in branch protection. Also turn on *"require branches to be up to date before merging"* — without it, a PR tested against a stale `main` can ship on merge.
-2. **Merge the PR** → `.github/workflows/deploy-production.yml` fires automatically on the push to `main`: it re-checks that the PR behind the merge commit had a green CI run, applies pending migrations to the prod DB, then builds and deploys that commit. Vercel's own git auto-deploy is disabled in `vercel.json`, so this workflow is the only path to prod.
-3. **PR closes** → `.github/workflows/pr-cleanup.yml` deletes the PR's Neon branch, so a clone of real user data isn't left behind a public URL.
+2. **Merge the PR** → the same workflow fires on the push to `main`: it re-checks that the PR behind the merge commit had a green CI run, applies pending migrations to the prod DB, then builds and deploys that commit. Vercel's own git auto-deploy is disabled in `vercel.json`, so this workflow is the only path to prod.
+3. **PR closes** → the same workflow deletes the PR's Neon branch, so a clone of real user data isn't left behind a public URL.
 
 A direct push to `main` has no CI run behind it, so the deploy refuses it — push through a PR.
 

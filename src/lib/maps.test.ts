@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertDestinationReachable,
   buildNavUrl,
   buildSegmentedNavUrls,
   buildLegDirectionsUrl,
+  hasDestinationSegment,
   legDirectionsWaypoints,
+  orderNavSegments,
   type LegDirectionsStopInput,
   type NavSegment,
 } from './maps';
@@ -256,5 +259,126 @@ describe('buildLegDirectionsUrl', () => {
     const u = new URL(url);
     expect(u.searchParams.has('waypoints')).toBe(false);
     expect(u.searchParams.get('dir_action')).toBe('navigate');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// orderNavSegments / assertDestinationReachable
+//
+// Regression guard for 2026-08-26: the leg card collapsed its whole button list
+// to a single "next stop" button whenever GPS put the device near the route.
+// Standing at your own front door counts as "near the route" when your trip
+// starts from home, so a planning-stage leg rendered one link to an unselected
+// fuel stop 398 km out and NOTHING that would route to the end of the day.
+//
+// The invariant these tests defend is deliberately blunt: nothing between
+// `buildSegmentedNavUrls` and the rendered list is allowed to shorten it.
+// ---------------------------------------------------------------------------
+describe('orderNavSegments', () => {
+  const GIRONA_BURGOS = {
+    legCoords: { start_lat: 41.9794, start_lng: 2.8214, end_lat: 42.34386, end_lng: -3.6969 },
+    endName: 'Burgos',
+    stops: [
+      {
+        lat: 41.7616363,
+        lng: -1.1494891,
+        status: 'option',
+        stop_type: 'fuel',
+        name: 'Estación de Servicio Repsol',
+        source: 'google_places',
+        distance_from_start_km: 398,
+        sort_order: 0,
+      },
+    ],
+  };
+
+  it('keeps every segment when no next stop is known', () => {
+    const segs = buildSegmentedNavUrls(GIRONA_BURGOS)!;
+    const ordered = orderNavSegments(segs, null);
+    expect(ordered).toHaveLength(segs.length);
+    expect(ordered.map((s) => s.stopType)).toEqual(['fuel', 'destination']);
+    expect(ordered.every((s) => !s.isNext)).toBe(true);
+  });
+
+  it('keeps every segment when the fuel stop is the next stop', () => {
+    // This is EXACTLY the reported bug's state: parked at the leg start, the
+    // fuel stop unreached. It used to render one button. It must render two.
+    const segs = buildSegmentedNavUrls(GIRONA_BURGOS)!;
+    const ordered = orderNavSegments(segs, segs[0]);
+    expect(ordered).toHaveLength(2);
+    expect(hasDestinationSegment(ordered)).toBe(true);
+    expect(ordered.find((s) => s.stopType === 'destination')!.label).toBe('Burgos');
+  });
+
+  it('promotes the next stop to the front and flags exactly one', () => {
+    const segs = buildSegmentedNavUrls(GIRONA_BURGOS)!;
+    const ordered = orderNavSegments(segs, segs[1]); // destination is next
+    expect(ordered[0].stopType).toBe('destination');
+    expect(ordered[0].isNext).toBe(true);
+    expect(ordered.filter((s) => s.isNext)).toHaveLength(1);
+    // Reordered, not filtered.
+    expect(new Set(ordered.map((s) => s.url))).toEqual(new Set(segs.map((s) => s.url)));
+  });
+
+  it('never changes length, for any next-stop choice', () => {
+    const segs = buildSegmentedNavUrls(GIRONA_BURGOS)!;
+    for (const candidate of [...segs, null, { label: 'ghost', url: 'https://example.com' }]) {
+      expect(orderNavSegments(segs, candidate)).toHaveLength(segs.length);
+    }
+  });
+
+  it('a leg with no stops still gets a destination button', () => {
+    const segs = buildSegmentedNavUrls({
+      legCoords: { start_lat: 42.34386, start_lng: -3.6969, end_lat: 40.9701, end_lng: -5.66354 },
+      endName: 'Salamanca',
+      stops: [],
+    })!;
+    const ordered = orderNavSegments(segs, segs[0]);
+    expect(ordered).toHaveLength(1);
+    expect(hasDestinationSegment(ordered)).toBe(true);
+  });
+});
+
+describe('assertDestinationReachable', () => {
+  it('passes an empty list — no end coords means nothing renders', () => {
+    expect(() => assertDestinationReachable([], 'leg x')).not.toThrow();
+  });
+
+  it('passes a list that ends at the destination', () => {
+    expect(() =>
+      assertDestinationReachable([{ stopType: 'fuel' }, { stopType: 'destination' }], 'leg x')
+    ).not.toThrow();
+  });
+
+  it('throws when buttons exist but none reach the destination', () => {
+    expect(() => assertDestinationReachable([{ stopType: 'fuel' }], 'leg x')).toThrow(
+      /Route to Destination/
+    );
+  });
+});
+
+describe('assertDestinationReachable on a stationary leg', () => {
+  /**
+   * The regression these pin is a collision, not a bug in either part: the
+   * "every leg must reach its end" invariant and the "do not offer to drive
+   * me to where I already am" rest-day fix were each written correctly and
+   * against each other. The carve-out has to be narrow enough that the
+   * invariant still catches the thing it was written for.
+   */
+  it('allows a stationary leg to carry stops with no destination', () => {
+    expect(() =>
+      assertDestinationReachable([{ stopType: 'fuel' }], 'leg rest', { stationary: true })
+    ).not.toThrow();
+  });
+
+  it('STILL throws for a moving leg — the carve-out must not swallow the invariant', () => {
+    expect(() =>
+      assertDestinationReachable([{ stopType: 'fuel' }], 'leg drive', { stationary: false })
+    ).toThrow(/Route to Destination/);
+    // Omitting the option entirely must behave like a moving leg, so a caller
+    // that forgets it fails loudly rather than silently opting out.
+    expect(() => assertDestinationReachable([{ stopType: 'fuel' }], 'leg drive')).toThrow(
+      /Route to Destination/
+    );
   });
 });

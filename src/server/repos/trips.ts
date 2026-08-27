@@ -10,6 +10,7 @@ import {
   todayISOInZone,
 } from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
+import { lastDayFromSchedule } from '@/lib/tripCompletion';
 import {
   materializeSchedule,
   computeStartFixes,
@@ -285,7 +286,38 @@ export async function listTripsForUser(userId: string) {
     .from(trips)
     .where(or(eq(trips.userId, userId), eq(trips.isTemplate, true)))
     .orderBy(asc(trips.isTemplate), desc(lastActivity), asc(trips.id));
-  return rows.map(tripRow);
+  const list = rows.map(tripRow);
+  if (list.length === 0) return list;
+
+  // Each trip's last calendar day, so the list can tell a finished trip from a
+  // live one without a getTripFull per card. Leg dates aren't stored — every
+  // leg is one calendar day counted from the effective start (see
+  // lastDayFromSchedule, the same rule getTripFull applies) — so all this query
+  // needs is the leg ids in sort order: their count is the trip's length, and
+  // the current leg's position in it is what a progress report re-anchors from.
+  const legRows = await db
+    .select({ tripId: legs.tripId, id: legs.id })
+    .from(legs)
+    .where(inArray(legs.tripId, list.map((t) => t.id)))
+    .orderBy(asc(legs.tripId), asc(legs.sortOrder));
+  const legIdsByTrip = new Map<string, string[]>();
+  for (const row of legRows) {
+    const arr = legIdsByTrip.get(row.tripId);
+    if (arr) arr.push(row.id);
+    else legIdsByTrip.set(row.tripId, [row.id]);
+  }
+  return list.map((trip) => {
+    const legIds = legIdsByTrip.get(trip.id) ?? [];
+    return {
+      ...trip,
+      last_day_iso: lastDayFromSchedule({
+        startDateISO: trip.start_date_parsed,
+        legCount: legIds.length,
+        currentLegRank: trip.current_leg_id ? legIds.indexOf(trip.current_leg_id) : -1,
+        progressAnchorISO: trip.progress_anchor_date,
+      }),
+    };
+  });
 }
 
 export async function getTripFull(tripId: string): Promise<TripWithLegs | null> {
@@ -752,9 +784,14 @@ export async function deleteLeg(legId: string): Promise<void> {
   await db.delete(legs).where(eq(legs.id, legId));
 }
 
-/** Title for a server-generated rest-day leg at a named location. */
+/**
+ * Title for a server-generated non-driving leg at a named location.
+ *
+ * `leg_type` is still `'rest'` in the database; "base day" is what the user
+ * reads. See the note in src/components/LegCard.tsx for why the word changed.
+ */
 function restDayTitle(name: string | null): string {
-  return name ? `${name} (rest day)` : 'Rest day';
+  return name ? `${name} (base day)` : 'Base day';
 }
 
 /** Great-circle distance in km. Local copy to keep this module self-contained. */
@@ -1313,6 +1350,26 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
         .values({
           tripId: newTripId,
           sortOrder: l.sortOrder,
+          /**
+           * `legType` and `geometry` were both missing here, and each one
+           * produced a bug that looked like something else entirely.
+           *
+           * Without `legType`, every cloned rest day silently became a DRIVE
+           * leg — the column defaults to 'drive'. A day titled "Porto (rest
+           * day)" then rendered the full drive section, including a primary
+           * "Route to Destination — Porto" button offered to a driver already
+           * standing in Porto. It read as a broken button; it was a lost
+           * column.
+           *
+           * Without `geometry`, the clone had no road-following route at all.
+           * The web falls back to straight lines between leg endpoints so it
+           * looked merely approximate, but the native map draws only what
+           * geometry it is given, so a cloned trip showed scattered dots and
+           * no route. Re-deriving it would mean a Directions call per leg on
+           * every clone; the source already paid for it.
+           */
+          legType: l.legType,
+          geometry: l.geometry,
           title: l.title,
           label: l.label,
           startName: l.startName,

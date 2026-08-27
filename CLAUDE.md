@@ -152,6 +152,7 @@ src/
     directions.ts     # Client directions logic
     gpx.ts            # GPX file parsing
     units.ts          # Unit conversion
+    tripCompletion.ts # Pure "is this trip over?" — a trip is completed when its LAST leg date is strictly before the user's today (derived, never stored: `trips.trip_status` is exactly that mistake). Today is always passed IN, resolved once via todayISOInZone/todayISO, so there is one notion of today. Mirrored to mobile. `lastDayFromLegDates` (detail views, which have leg dates) / `lastDayFromSchedule` (the trips list, which doesn't — same one-day-per-leg + progress-anchor rule getTripFull uses, surfaced as the derived `Trip.last_day_iso` on the listTripsForUser payload only). Both trip lists show a quiet "Completed" badge; both itineraries then put EVERY day behind the existing "behind you" disclosure ("Show past days") and render nothing ahead. Unit-tested.
     vehicleProfile.ts # Vehicle range/fuel calculations
     fuelCache.ts      # Lazy fuel-cache TTL (FUEL_CACHE_TTL_MS = 48h) + isFuelCacheFresh; shared by server/fuel.ts and LegCard day-open loader
     fuelPlanErrorSemantics.ts  # Fuel plan error handling
@@ -392,6 +393,45 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Changed the stack (new dependency, swapped service)** → update the Stack section
 
 Don't wait until the end — update CLAUDE.md as part of the same commit as the structural change.
+
+## Reproduce, never guess
+
+Before naming a cause, make the failure happen. Not from a code comment, not
+from a commit message, not from a plausible theory, and never from "I expect
+this is fine". If it cannot be reproduced, say so plainly instead of offering a
+confident explanation. The Playwright rule below is one instance of this; the
+rule is general.
+
+Two misses that earned this section, both in one session:
+
+- The `mobile.yml` header says a wrong-account `EXPO_TOKEN` broke Mobile #1 and
+  #2. That is a **postmortem of a fixed problem**, and it got restated as a live
+  action item — telling Sam to change a token that was already correct, on a
+  pipeline he had churned repeatedly. Read tense before quoting a comment as a
+  cause.
+- Two test files were failing locally and called "expect them green in CI"
+  without checking. `next@14.2.35` ships no `./server` entry in its export map,
+  so they would have failed the PR.
+
+How to reproduce the things that actually differ:
+
+- **CI-only failures.** `git worktree add --detach /tmp/x origin/<branch>`, symlink
+  the root `node_modules`, run the suite there. That tree has **no
+  `mobile/node_modules`** — exactly what CI's unit job has, since it runs
+  `npm ci` at the root only. This reproduced PR #17's failure on the first try.
+  Anything under `src/` that imports from `mobile/` passes locally and dies
+  there; `src/lib/noMobileImportGuard.test.ts` blocks that class now.
+- **Clock and timezone.** `TZ=UTC npx vitest run` rules it in or out in one
+  command. Better: don't read the ambient clock at all — pass `now` in, the way
+  `payments/states.ts` and `lib/paywallNotice.ts` do. A test that has to freeze
+  time will differ between a laptop and a CI box for reasons unrelated to the
+  code.
+- **Production data questions.** Build a `postgres` client the way
+  `scripts/lifetime-spend.ts` does. Do NOT import `src/server/db/client.ts` —
+  it is `server-only` and throws under `tsx`. Read-only unless the task is
+  explicitly a write.
+- **New guard tests.** Mutation-check them: reintroduce the exact bug, watch the
+  guard fail, restore. An unverified guard is decoration.
 
 ## Playwright MCP — use it FIRST
 

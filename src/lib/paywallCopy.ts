@@ -11,10 +11,26 @@ import type { BlockReason } from '@/types/entitlement';
  * sales moment and two of them are an apology, and a single "your access has
  * ended" sentence stretched across all four would be wrong in at least three
  * ways at once.
+ *
+ * Length is a deliberate constraint here, not an accident of drafting. Each
+ * notice is a paragraph the user reads while being told no; the friendliness
+ * is the point, but every extra clause restating what the previous one already
+ * said makes it read as an excuse. Two short paragraphs, one fact each. If a
+ * rewrite grows one back to four lines, cut it again.
  */
 
 /**
- * Where "Continue on iPhone" goes.
+ * A word this file never says: "subscribe", "subscription", "subscriber".
+ *
+ * Not a style preference — the owner's call, and `paywallCopy.test.ts` fails
+ * the suite if one comes back. The user reads "plan": pick a plan, your plan,
+ * keep planning. The identifiers, the table and the types keep the old names,
+ * because renaming those would only make the code harder to follow for no
+ * reader's benefit.
+ */
+
+/**
+ * Where the App Store button goes.
  *
  * The numeric id is minted by App Store Connect at first submission, so it is
  * an env var rather than a hardcoded guess — a wrong id is a 404 in front of
@@ -24,6 +40,17 @@ import type { BlockReason } from '@/types/entitlement';
  */
 export const APP_STORE_URL =
   process.env.NEXT_PUBLIC_APP_STORE_URL || 'https://apps.apple.com/search?term=Feral%20Travels';
+
+/**
+ * The label on the one web button that leaves the web.
+ *
+ * Lives here rather than inline in `PurchaseSheet` so there is a single place
+ * to reword it and a single string for the banned-word sweep in
+ * `paywallCopy.test.ts` to see. It says where the tap lands — the iPhone app —
+ * because "Continue" alone reads as "continue in this browser", which is the
+ * one thing the web cannot do with a purchase.
+ */
+export const APP_STORE_CTA_LABEL = 'Continue to the iPhone app';
 
 /** One inbox, one human. Same address as `/support`. */
 export const SUPPORT_EMAIL = 'support@feraltravels.com';
@@ -47,21 +74,26 @@ const TRIAL_OVER: BlockNotice = {
   eyebrow: 'TRIAL ENDED',
   heading: 'Your free trial is over',
   body: [
-    'Everything you have already planned is still here and still readable — the trip list, every day, every fuel stop. What is paused is new trips and talking to Penny.',
-    'Subscriptions are handled through the App Store, so the way back in is the iPhone app: $2 a month, or $20 a year. Subscribe there and the web picks up exactly where you left off.',
+    'Everything you have planned is still here — nothing has been deleted. What is paused is new trips and talking to Penny.',
+    'It is $2 a month or $20 a year, from the iPhone app. Pick one and the web carries on where you left off.',
   ],
-  action: { label: 'Continue on iPhone', href: APP_STORE_URL },
+  // The label has to work twice: as the button that opens the purchase sheet,
+  // and as the plain App Store link it degrades to when the entitlement call
+  // fails and there are no prices to put in a sheet. It is NOT the App Store
+  // button's own label — that one is APP_STORE_CTA_LABEL, and it says where it
+  // goes because that tap really does leave the browser.
+  action: { label: 'Pick a plan', href: APP_STORE_URL },
   tone: 'sell',
 };
 
 const SUBSCRIPTION_OVER: BlockNotice = {
-  eyebrow: 'SUBSCRIPTION ENDED',
-  heading: 'Your subscription has run out',
+  eyebrow: 'PLAN ENDED',
+  heading: 'Your plan has run out',
   body: [
-    'The paid period on this account has ended, so new trips and Penny are paused. Nothing has been deleted — your trips stay readable here for as long as you want them.',
-    'Renewing happens in the iPhone app, the same place it started. It takes a tap, and planning switches straight back on.',
+    'New trips and Penny are paused. Nothing has been deleted — your trips stay here for as long as you want them.',
+    'Renewing is a tap in the iPhone app, and planning switches straight back on.',
   ],
-  action: { label: 'Renew on iPhone', href: APP_STORE_URL },
+  action: { label: 'Renew your plan', href: APP_STORE_URL },
   tone: 'sell',
 };
 
@@ -79,8 +111,8 @@ const USAGE_CAP: BlockNotice = {
   eyebrow: 'PLANNING PAUSED',
   heading: 'We have paused planning on this account',
   body: [
-    'This is a ceiling on our own costs, not a judgement about how you have used the app — you have not done anything wrong, and nothing you have planned has been touched. Your trips stay readable.',
-    'Email us and we will sort it out. A real person reads that inbox and will reply — this is exactly the kind of message we want to get.',
+    'This is a ceiling on our own costs, not a judgement about you. Nothing you have planned has been touched, and your trips stay readable.',
+    'Email us and we will sort it out — a real person reads that inbox, and this is exactly the kind of message we want to get.',
   ],
   action: { label: `Email ${SUPPORT_EMAIL}`, href: `mailto:${SUPPORT_EMAIL}` },
   tone: 'apologise',
@@ -98,7 +130,7 @@ const REVOKED: BlockNotice = {
   eyebrow: 'ACCESS CLOSED',
   heading: 'Access to this account is closed',
   body: [
-    'Planning and your saved trips are both unavailable on this account. If a refund went through on the App Store, this is what follows it — the purchase was returned, so the access it bought ended with it.',
+    'Planning and your saved trips are both unavailable here. If a refund went through on the App Store, this is what follows it.',
     'If that looks wrong to you, email us. A real person reads it, and getting this wrong is very much a thing we would want to fix.',
   ],
   action: { label: `Email ${SUPPORT_EMAIL}`, href: `mailto:${SUPPORT_EMAIL}` },

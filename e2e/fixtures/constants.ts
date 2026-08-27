@@ -10,6 +10,7 @@
  * - Mid-suite ad-hoc rows use `RUN_ID` + `playwrightName()`; specs scrub their
  *   own user's `playwright-`-prefixed rows via `/api/test/cleanup`.
  */
+import { seededTripStartISO } from '../../src/app/api/test/seedDates';
 
 /** Display name seeded onto each fresh test user's row. */
 export const FIXTURE_USER_NAME = 'E2E Fixture User';
@@ -38,7 +39,7 @@ export function playwrightName(label: string): string {
 /**
  * Headers every `/api/test/*` fixture call must carry. When
  * `E2E_TEST_ENDPOINTS_SECRET` is set on the target app (CI generates a random
- * one per run for the tested Vercel preview — see .github/workflows/ci.yml),
+ * one per run for the tested Vercel preview — see .github/workflows/pipeline.yml),
  * the endpoints require it echoed in `x-e2e-test-secret`; without the env this
  * is empty and local runs behave as before. Also carries the Vercel
  * deployment-protection bypass header when VERCEL_AUTOMATION_BYPASS_SECRET is set.
@@ -50,4 +51,25 @@ export function testEndpointHeaders(): Record<string, string> {
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
   if (bypass) headers['x-vercel-protection-bypass'] = bypass;
   return headers;
+}
+
+/**
+ * The date a spec types into the onboarding `trip_date` step, as a human
+ * phrase ("3 June 2027") — the free-text shape a real driver types, which is
+ * the input that step exists to parse.
+ *
+ * Derived from the same offset every seeded trip uses rather than written out,
+ * because this spec used to type a literal `'June 3 2026'`. That was months
+ * ahead when it was written and is now in the PAST, so the wizard it is
+ * walking was quietly building a trip whose every day is already behind the
+ * driver — the state that folds the itinerary shut. See
+ * src/app/api/test/seedDates.ts.
+ */
+export function seededTripStartPhrase(): string {
+  const [y, m, d] = seededTripStartISO().split('-').map(Number);
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(Date.UTC(y, m - 1, d)));
 }

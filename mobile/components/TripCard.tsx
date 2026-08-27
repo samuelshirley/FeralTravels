@@ -26,6 +26,12 @@ interface Props {
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
+   * The trip's last day is behind the user — the card says so and goes quiet.
+   * Derived by the list (lib/tripCompletion) so "today" is resolved once, in
+   * the device's timezone.
+   */
+  completed?: boolean;
+  /**
    * When true, the card reveals a persistent × delete button in the corner.
    * Driven by the parent's Edit-trips toggle.
    */
@@ -48,6 +54,7 @@ export default function TripCard({
   startDate,
   endDate,
   isTemplate = false,
+  completed = false,
   editMode = false,
   showClone = false,
   onCloneClick,
@@ -86,8 +93,22 @@ export default function TripCard({
         onPress={() => router.push(`/trips/${id}`)}
       >
         {/* Template accent wins over the edit-mode border, exactly as on web. */}
-        <Card style={isTemplate ? styles.cardTemplate : editMode ? styles.cardEditing : undefined}>
-          <Text style={[styles.name, { paddingRight: editMode ? 40 : 28 }]}>{name}</Text>
+        <Card
+          style={
+            isTemplate
+              ? styles.cardTemplate
+              : editMode
+                ? styles.cardEditing
+                : completed
+                  ? styles.cardCompleted
+                  : undefined
+          }
+        >
+          <Text
+            style={[styles.name, { paddingRight: editMode ? 40 : completed ? 96 : 28 }]}
+          >
+            {name}
+          </Text>
           <Text style={styles.dates}>{dates}</Text>
 
           {showClone && !editMode ? (
@@ -110,6 +131,14 @@ export default function TripCard({
           ) : null}
         </Card>
       </Pressable>
+
+      {/* Outside the Card so the card's dimming doesn't reach the badge, and
+          skipped in edit mode where the × owns that corner — same as web. */}
+      {completed && !editMode ? (
+        <View style={styles.completedBadge}>
+          <Text style={styles.completedBadgeText}>COMPLETED</Text>
+        </View>
+      ) : null}
 
       {editMode ? (
         <Pressable
@@ -178,6 +207,26 @@ const styles = StyleSheet.create({
   },
   // src/app/trips/TripCard.tsx:87
   cardEditing: { borderColor: "rgba(201, 123, 99, 0.45)" },
+  // Same dimming the itinerary's "behind you" section uses, so a finished trip
+  // reads as past wherever it appears.
+  cardCompleted: { backgroundColor: theme.surfaceMuted, opacity: 0.75 },
+  completedBadge: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  },
+  completedBadgeText: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: theme.muted,
+  },
   name: { fontSize: 16, fontFamily: font.semibold, color: theme.text },
   dates: { fontFamily: font.regular, fontSize: 12, color: theme.muted, marginTop: 4 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },

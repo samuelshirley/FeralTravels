@@ -38,18 +38,53 @@ test.describe('Opening an existing trip', () => {
     await expect(firstDay).toBeVisible({ timeout: 15_000 });
     await firstDay.click();
 
-    // Headless has no GPS, so the smart "Navigate to next stop" button doesn't
-    // appear and we get the plain stop list. Seeded legs have no intermediate
-    // stops, so there is exactly one link: the destination.
+    // Seeded legs have no intermediate stops, so there is exactly one link: the
+    // destination. Note the count is asserted, not the GPS state — the card no
+    // longer has a branch that renders fewer buttons when GPS is available.
     const navLink = firstDay.getByTestId('nav-stop-link');
     await expect(navLink).toHaveCount(1);
     await expect(navLink).toContainText('Strasbourg');
     await expect(navLink).toHaveAttribute('target', '_blank');
+
+    // The invariant, asserted through the DOM: a day that offers navigation at
+    // all must offer a way to the END of the day. Regression guard for
+    // 2026-08-26, when a live trip rendered a single button to a fuel stop
+    // 398 km out and nothing at all that routed to the destination.
+    await expect(firstDay.locator('[data-nav-stop-type="destination"]')).toHaveCount(1);
 
     const href = new URL((await navLink.getAttribute('href'))!);
     expect(href.hostname).toContain('google.com');
     expect(href.pathname).toBe('/maps/dir/');
     expect(href.searchParams.get('dir_action')).toBe('navigate');
     expect(href.searchParams.get('destination')).toBeTruthy();
+  });
+
+  test('every driving day can be navigated to its destination', async ({ page }) => {
+    await signInAsNewUser(page);
+    await openTrip(page);
+
+    const days = page.getByTestId('leg-card');
+    await expect(days.first()).toBeVisible({ timeout: 15_000 });
+
+    const count = await days.count();
+    expect(count).toBeGreaterThan(0);
+
+    for (let i = 0; i < count; i++) {
+      const day = days.nth(i);
+      await day.click();
+
+      // Base days (leg_type 'rest') sit at one place and render no nav list;
+      // every driving day must render exactly one destination button.
+      const navLinks = day.getByTestId('nav-stop-link');
+      const total = await navLinks.count();
+      if (total === 0) continue;
+
+      await expect(
+        day.locator('[data-nav-stop-type="destination"]'),
+        `day ${i + 1} shows ${total} nav button(s) but none route to its destination`
+      ).toHaveCount(1);
+
+      await day.click();
+    }
   });
 });

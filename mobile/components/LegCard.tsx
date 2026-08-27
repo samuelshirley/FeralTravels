@@ -3,9 +3,12 @@ import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-nati
 import type { LegWithDetails } from "@/shared/types/trip";
 import { tripApi } from "@/lib/api";
 import {
+  assertDestinationReachable,
   buildLegDirectionsUrl,
   buildSegmentedNavUrls,
+  isStationaryLeg,
   legDirectionsWaypoints,
+  orderNavSegments,
 } from "@/shared/lib/maps";
 import { useNextStop } from "@/shared/lib/useNextStop";
 import { useDeviceLocation } from "@/lib/location";
@@ -115,6 +118,10 @@ export default function LegCard({
     endName: leg.end_name,
     selectedRoute,
     stops: leg.stops,
+    // distance + drive time tell a rest day (nothing to drive to) apart from a
+    // day-loop that returns to its own start (which still needs a button home).
+    distanceKm: leg.distance_km,
+    driveTimeMinutes: leg.drive_time_minutes,
   });
   // Fallback single URL for the syncing state (doesn't need segments)
   const directionsUrl = buildLegDirectionsUrl({ legCoords, selectedRoute, stops: leg.stops });
@@ -132,8 +139,40 @@ export default function LegCard({
   // Only for the "location is off" affordance below — useNextStop reads the
   // same context for position and status.
   const { request: requestLocation, enablePath } = useDeviceLocation();
-  // Show the smart single button when GPS is active and user is near the route.
-  const showSmartNav = gpsStatus === "active" && isNearRoute && nextStop != null;
+  /**
+   * GPS may re-ORDER the nav buttons. It may never remove one.
+   *
+   * This used to be `showSmartNav`, which swapped the whole list for a single
+   * next-stop button whenever GPS was active and the device was near the route.
+   * "Near the route" includes standing at the leg's start — i.e. at home, weeks
+   * before departure, for anyone whose trips begin where they live. The card then
+   * offered one link to an unselected fuel stop and no way to reach the day's
+   * destination at all. See orderNavSegments.
+   */
+  const promoteNext = gpsStatus === "active" && isNearRoute && nextStop != null;
+  const navButtons = useMemo(
+    () => orderNavSegments(allSegments, promoteNext ? nextStop : null),
+    [allSegments, promoteNext, nextStop]
+  );
+  // Fails loudly in Expo dev and in tests; logs in production. The destination
+  // button is not allowed to go missing again, quietly or otherwise.
+  assertDestinationReachable(
+    navButtons,
+    `leg ${leg.id} (${leg.start_name} → ${leg.end_name})`,
+    // Same inputs buildSegmentedNavUrls used to decide whether to emit a
+    // destination at all, so the assertion and the builder cannot disagree.
+    {
+      stationary:
+        leg.end_lat != null &&
+        leg.end_lng != null &&
+        isStationaryLeg({
+          legCoords,
+          destination: { lat: leg.end_lat, lng: leg.end_lng },
+          distanceKm: leg.distance_km,
+          driveTimeMinutes: leg.drive_time_minutes,
+        }),
+    }
+  );
 
   // ── Lazy fuel sourcing on day-open ──────────────────────────────────────
   // Fuel stops are sourced when the user OPENS a day (no eager trip-wide
@@ -206,7 +245,8 @@ export default function LegCard({
     onChanged,
   ]);
 
-  // Rest day accent color — softer green vs driving day blue
+  // Base-day accent colour — softer green vs driving-day blue. "Base day" is
+  // the user-facing name for `leg_type: 'rest'`; see src/components/LegCard.tsx.
   // src/components/LegCard.tsx:195
   const restDayColor = "#6BA368";
   // src/components/LegCard.tsx:196 — falls back to the --tp-primary literal.
@@ -250,7 +290,7 @@ export default function LegCard({
         />
         <View style={styles.headerBody}>
           <View style={styles.titleLine}>
-            {isRestDay ? <Text style={[styles.kicker, { color: restDayColor }]}>REST</Text> : null}
+            {isRestDay ? <Text style={[styles.kicker, { color: restDayColor }]}>BASE</Text> : null}
             {dateLabel ? (
               <Text style={[styles.kicker, { color: isRestDay ? restDayColor : theme.subtle }]}>
                 {dateLabel.toUpperCase()}
@@ -362,14 +402,12 @@ export default function LegCard({
                   <Spinner />
                   <Text style={styles.syncingText}>Updating route…</Text>
                 </Pressable>
-              ) : showSmartNav ? (
-                /* GPS-aware: single button to next stop */
-                <Pressable onPress={() => openUrl(nextStop!.url)} style={styles.navButton}>
-                  <Text style={styles.navButtonText}>▶</Text>
-                  <Text style={styles.navButtonText}>{navButtonLabel(nextStop!)}</Text>
-                </Pressable>
               ) : (
-                /* Fallback: full list of stop buttons (no GPS / far from route / planning) */
+                /* ONE list, always.
+                   There is deliberately no "collapse to a single button" branch
+                   here any more. GPS decides the ORDER (`isNext` floats to the
+                   top); it never decides the CONTENTS. Whatever else is on
+                   screen, the driver can always see where the day ends. */
                 <View style={styles.navList}>
                   {gpsStatus === "pending" ? (
                     <Text style={styles.navListLabel}>FINDING YOUR LOCATION…</Text>
@@ -395,13 +433,27 @@ export default function LegCard({
                     </Pressable>
                   ) : (
                     <Text style={styles.navListLabel}>
-                      {`NAVIGATE (${allSegments.length} STOP${allSegments.length === 1 ? "" : "S"})`}
+                      {`NAVIGATE (${navButtons.length} STOP${navButtons.length === 1 ? "" : "S"})`}
                     </Text>
                   )}
-                  {allSegments.map((seg, i) => (
-                    <Pressable key={i} onPress={() => openUrl(seg.url)} style={styles.navButton}>
+                  {navButtons.map((seg, i) => (
+                    <Pressable
+                      key={`${seg.stopType ?? "stop"}-${seg.url}`}
+                      onPress={() => openUrl(seg.url)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        seg.isNext ? `${navButtonLabel(seg)} — next stop` : navButtonLabel(seg)
+                      }
+                      testID={seg.isNext ? "nav-stop-link-next" : "nav-stop-link"}
+                      style={[
+                        styles.navButton,
+                        seg.isNext && styles.navButtonNext,
+                        !seg.isNext && i > 0 && navButtons[0].isNext && styles.navButtonSecondary,
+                      ]}
+                    >
                       <Text style={styles.navButtonText}>▶</Text>
                       <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
+                      {seg.isNext ? <Text style={styles.navNextChip}>NEXT</Text> : null}
                     </Pressable>
                   ))}
                 </View>
@@ -545,6 +597,21 @@ const styles = StyleSheet.create({
     backgroundColor: theme.primary,
   },
   navButtonText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5, color: theme.onPrimary },
+  /** The GPS-promoted button. Sits first and reads a shade heavier. */
+  navButtonNext: { paddingVertical: 9 },
+  /** Everything after a promoted button — still fully tappable, just quieter. */
+  navButtonSecondary: { opacity: 0.82 },
+  navNextChip: {
+    fontSize: 9,
+    fontFamily: font.extrabold,
+    letterSpacing: 1,
+    color: theme.onPrimary,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: "hidden",
+  },
   caveat: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 8, maxWidth: 460, lineHeight: 16 },
   costsBlock: {
     marginTop: 12,

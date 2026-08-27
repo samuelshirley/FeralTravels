@@ -76,9 +76,16 @@ async function createTripFor(
 }
 
 /**
- * Empty trip with `onboarding_state='done'` and the user's default vehicle —
- * lets the Penny submit test skip onboarding and type straight into the chat.
- * Seed the canonical fixture for `email` first (it creates the vehicle).
+ * Empty trip with `onboarding_state='done'` and a vehicle — lets the Penny
+ * submit test skip onboarding and type straight into the chat.
+ *
+ * The vehicle is now GUARANTEED, not inherited: this used to take whatever
+ * `getDefaultVehicleId` returned, so calling it for an account that had not
+ * been seeded produced a trip that had left onboarding with no vehicle
+ * anywhere — a state the app cannot reach, and one whose every day renders
+ * "Finish your vehicle profile". The fixture layer creates the Hilux when the
+ * account owns nothing usable, and refuses to hand back an impossible trip.
+ * Seeding the canonical fixture first is still fine; it is no longer required.
  */
 export async function createBlankPlanningTrip(
   email: string,

@@ -1,5 +1,14 @@
 # PR #7 — `feat/native-oauth` — what merged, what to verify, what to test next
 
+> **Status (2026-08-20):** Parts 1-3 are a record of what PR #7 shipped and what
+> it left uncovered — still accurate. **Part 4 is largely DONE:** Tier 1 and
+> Tier 2 landed in PR #9 (`oauthReplay` unit tests, the error-copy guard,
+> `legal-pages` and `oauth-exchange` e2e specs, the deletion read-back endpoint
+> and its five specs, and the `cleanupPlaywright` fixture-address fix). Tiers 3
+> to 5 are open: the `/admin/deleted` spec, mobile component or Maestro tests,
+> and the CI guards. Read Part 4 as a backlog with the top two crossed off, not
+> as untouched work.
+
 Merge commit `7601751`, 12 commits, **76 files, +11,435 / −489**. Merged into `main` 2026-08-20.
 Diff range used throughout: `git diff 5820cdf 7601751`.
 

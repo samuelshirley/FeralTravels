@@ -68,7 +68,7 @@ export default function PurchaseSheet({
   const busy = purchasingId !== null;
 
   // Backdrop taps and the Android back button both dismiss — except while a
-  // grant is in flight, where dismissing would leave the account subscribed and
+  // grant is in flight, where dismissing would leave the account paid up and
   // the UI still paywalled until the next launch.
   const dismiss = () => {
     if (!busy) onClose();
@@ -122,7 +122,7 @@ export default function PurchaseSheet({
 
             {testPurchaseAllowed ? (
               <View style={styles.testNotice}>
-                {/* Loud on purpose. This path grants a real subscription with
+                {/* Loud on purpose. This path grants real paid access with
                     no payment, and the one place that must be unmistakable is a
                     screenshot of the sheet that granted it. */}
                 <Text style={styles.testNoticeText}>

@@ -8,7 +8,7 @@
     "ios": "expo run:ios",
     "doctor": "npx expo-doctor",
     "typecheck": "tsc --noEmit",
-    "sync:shared": "node ../scripts/sync-shared.mjs",
+    "sync:shared": "cd .. && node scripts/sync-shared.mjs",
     "android": "expo run:android"
   },
   "dependencies": {

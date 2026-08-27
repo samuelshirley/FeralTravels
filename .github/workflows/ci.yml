@@ -191,9 +191,19 @@ jobs:
           echo "::add-mask::$SECRET"
           vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          # PAYWALL_ENABLED is OFF by default, deliberately — merging the paywall
+          # must not paywall anyone until there is something to buy. The tested
+          # preview is the one place that default is wrong: e2e/subscriptions.spec.ts
+          # sets up an account's age, spend and subscription row and asserts the
+          # wall appears, and with the switch off `applySwitch` hands every one of
+          # them full access. Six specs failed on exactly that, and the five that
+          # assert the ABSENCE of a wall passed for no reason at all — which is
+          # the worse half, since they would have kept passing with the paywall
+          # entirely broken.
           URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
+            -e PAYWALL_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"

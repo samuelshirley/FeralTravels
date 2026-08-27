@@ -1,8 +1,21 @@
 import 'server-only';
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { emailOtpCodes, subscriptions, usageAlerts, usageEvents, users } from '@/server/db/schema';
+import {
+  chatHistory,
+  emailOtpCodes,
+  subscriptions,
+  trips,
+  usageAlerts,
+  usageEvents,
+  users,
+} from '@/server/db/schema';
+import { addVehicle } from '@/server/repos/vehicles';
+import { HILUX_FIXTURE_VEHICLE } from '@/app/api/test/fixtureVehicle';
+import { cloneTrip, createTrip } from '@/server/repos/trips';
+import { seededTripStartISO } from '@/app/api/test/seedDates';
+import { legDateISO } from '@/lib/dates';
 import type { SubscriptionStatus } from '@/types/entitlement';
 import { TEST_PURCHASE_EMAIL_PATTERN, testPurchasesArmed } from './testPurchase';
 import { TRIAL_DAYS } from './constants';
@@ -88,6 +101,14 @@ export interface CreateTestAccountInput {
   autoRenew?: boolean;
   /** Synthetic Anthropic spend in whole dollars, for the trial ceiling and cap states. */
   spendUsd?: number;
+  /**
+   * Give the account a real, populated trip.
+   *
+   * A paywalled account with NO trips and one with a trip are different
+   * screens — the first lands on Penny with nothing behind her, the second has
+   * an itinerary to be blocked out of — so both need to be one click away.
+   */
+  withTrip?: boolean;
 }
 
 export interface TestAccountSummary {
@@ -156,6 +177,8 @@ export async function createTestAccount(input: CreateTestAccountInput): Promise<
     });
   }
 
+  if (input.withTrip) await seedRealisticAccountData(row.id);
+
   return {
     id: row.id,
     email,
@@ -164,6 +187,121 @@ export async function createTestAccount(input: CreateTestAccountInput): Promise<
     spendMicrocents,
   };
 }
+
+/**
+ * Make the account look like one a person could actually have.
+ *
+ * The first version of this cloned a trip and stopped, and the result was data
+ * the app itself cannot produce: `cloneTrip` hardcodes `vehicleId: null` and
+ * leaves the clone at `onboarding_state: 'not_started'`, so a brand-new
+ * account got a trip full of legs while owning no vehicle and never having
+ * onboarded. Signed into, it showed Penny's "Hi, I'm Penny, let's plan a trip"
+ * greeting above a finished twelve-day itinerary, and every day read "Finish
+ * your vehicle profile — no vehicle on file for user".
+ *
+ * None of that was a bug in the paywall, the chat or Finn. All three were
+ * behaving correctly for a state that had no business existing. A fixture that
+ * writes rows directly is the only thing that can build it, which is exactly
+ * why nothing else caught it.
+ *
+ * So this seeds all four facts a real account holds together, in order:
+ *   1. a vehicle, and one that can actually fuel-plan (the Hilux numbers)
+ *   2. the trip, cloned so the legs and stops are real, re-dated forward
+ *   3. that trip pointed at that vehicle, and marked onboarded
+ *   4. the user-level onboarding stamp, so a seed can be ASKED whether it
+ *      built something coherent
+ *
+ * It re-dates the clone forward for the reason `seedDates.ts` spells out: a
+ * past-dated trip is a different product state, and a tester who wanted the
+ * planning flow would get the archive instead.
+ */
+async function seedRealisticAccountData(userId: string): Promise<void> {
+  const startISO = seededTripStartISO();
+
+  // 1. The vehicle FIRST. Everything downstream — the trip's vehicle_id, the
+  //    onboarding stamp, Finn's first check — is a lie without it.
+  const vehicle = await addVehicle(userId, {
+    name: HILUX_FIXTURE_VEHICLE.name,
+    range_km: HILUX_FIXTURE_VEHICLE.range_km,
+    fuel_type: HILUX_FIXTURE_VEHICLE.fuel_type,
+    is_default: true,
+  });
+
+  const [source] = await db
+    .select({ id: trips.id, start: trips.startDateParsed, end: trips.endDateParsed })
+    .from(trips)
+    .innerJoin(users, eq(users.id, trips.userId))
+    .where(and(eq(users.isAdmin, true), isNotNull(trips.startDateParsed)))
+    .orderBy(desc(trips.createdAt))
+    .limit(1);
+
+  let tripId: string;
+  let endISO: string | null = null;
+
+  if (source) {
+    tripId = await cloneTrip(source.id, userId);
+    // Preserve the source's DURATION while moving its start, so the clone
+    // still resembles the trip it came from.
+    const days =
+      source.start && source.end
+        ? Math.max(
+            0,
+            Math.round(
+              (new Date(source.end).getTime() - new Date(source.start).getTime()) / 86_400_000
+            )
+          )
+        : null;
+    endISO = days === null ? null : legDateISO(startISO, days);
+
+    // Bring the chat across too. A finished itinerary with an empty transcript
+    // is the other half of the same tell — Penny plans in conversation, so a
+    // trip she supposedly planned has one.
+    const history = await db
+      .select()
+      .from(chatHistory)
+      .where(eq(chatHistory.tripId, source.id))
+      .orderBy(chatHistory.seq);
+    if (history.length > 0) {
+      await db.insert(chatHistory).values(
+        history.map((m) => ({
+          tripId,
+          role: m.role,
+          content: m.content,
+          changesMade: m.changesMade,
+          planSummary: m.planSummary,
+          kind: m.kind,
+        }))
+      );
+    }
+  } else {
+    const created = await createTrip({ userId, name: 'Test trip', startDate: startISO });
+    tripId = created.id;
+  }
+
+  // 3 + 4. The trip points at the vehicle and is past onboarding; the account
+  //        is stamped as having onboarded. `cloneTrip` does neither, and its
+  //        not doing so is correct for the user-facing clone button — this is
+  //        the fixture layer's job to finish.
+  await db
+    .update(trips)
+    .set({
+      name: 'Test trip',
+      tripNameCiKey: 'test trip',
+      vehicleId: vehicle.id,
+      onboardingState: 'done',
+      startDate: startISO,
+      startDateParsed: startISO,
+      endDate: endISO,
+      endDateParsed: endISO,
+    })
+    .where(eq(trips.id, tripId));
+
+  await db
+    .update(users)
+    .set({ onboardingCompletedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
 
 /** Every test account, newest first. Only ever addresses matching the pattern. */
 export async function listTestAccounts(): Promise<TestAccountSummary[]> {

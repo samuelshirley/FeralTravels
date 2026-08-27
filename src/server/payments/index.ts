@@ -38,16 +38,20 @@ export { applySubscriptionEvent, decideFromEvent, isKnownEventType } from './web
 export type { WebhookOutcome, WebhookResult, WebhookDeps, EventDecision } from './webhook';
 export { revenueCatWebhookSchema, normalizeWebhookEvent } from './schemas';
 export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schemas';
-export {
-  createTestAccount,
-  listTestAccounts,
-  readTestAccountOtp,
-  resetTestAccount,
-  ageTestAccount,
-  deleteTestAccount,
-  assertTestAddress,
-  generateTestEmail,
-  NotATestAccountError,
-} from './testAccounts';
-export type { TestAccountSummary, CreateTestAccountInput } from './testAccounts';
+/**
+ * `./testAccounts` is deliberately NOT re-exported here.
+ *
+ * It reaches `repos/trips` and `repos/vehicles` to build a realistic account,
+ * and those pull Auth.js in behind them. Re-exporting it put next-auth on the
+ * import path of everything that touches this module — including the
+ * RevenueCat webhook route, whose tests then died at collection on
+ * `Cannot find module 'next/server'` (next 14 ships no `./server` export map,
+ * so an extensionless ESM import of it cannot resolve anywhere, CI included).
+ *
+ * The single-public-surface rule exists so that ONE place decides whether a
+ * user has paid. Fixture tooling is not that decision, and importing
+ * `@/server/payments/testAccounts` directly — as `/api/admin/test-users` does
+ * — keeps the entitlement surface cheap to import.
+ */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
+export { paywallEnabled } from './switch';

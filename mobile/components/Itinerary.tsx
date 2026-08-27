@@ -15,6 +15,7 @@ import { useUnits } from "@/lib/units";
 import { theme, shadow } from "@/lib/theme";
 import { PencilRenameIcon } from "@/components/icons";
 import { behindCutoffRank, formatDate, parseISODate, todayISOInZone } from "@/shared/lib/dates";
+import { isTripCompleted, lastDayFromLegDates } from "@/shared/lib/tripCompletion";
 import { effectiveLegSegment } from "@/shared/lib/legSegmentGrouping";
 import type { LegWithDetails, Trip } from "@/shared/types/trip";
 import { font } from "@/lib/typography";
@@ -108,11 +109,22 @@ export default function Itinerary({
   const reportedRank = trip.current_leg_id
     ? allLegs.findIndex((l) => l.id === trip.current_leg_id)
     : -1;
-  const currentRank = behindCutoffRank({
-    reportedRank,
-    legDateISOs: allLegs.map((l) => l.date_iso),
-    todayISO: todayISOInZone(DEVICE_TIME_ZONE),
-  });
+  // A trip whose last day has passed has nothing ahead of it. Every day goes
+  // behind the fold and the list above it renders empty — no "0 days left"
+  // summary, no prompt to do anything. behindCutoffRank deliberately keeps the
+  // final leg visible so a live trip's list is never empty; that guard is what
+  // we're overriding here, and only here.
+  const completed = isTripCompleted(
+    lastDayFromLegDates(allLegs.map((l) => l.date_iso)),
+    todayISOInZone(DEVICE_TIME_ZONE)
+  );
+  const currentRank = completed
+    ? allLegs.length
+    : behindCutoffRank({
+        reportedRank,
+        legDateISOs: allLegs.map((l) => l.date_iso),
+        todayISO: todayISOInZone(DEVICE_TIME_ZONE),
+      });
   // Memoized so the row builder below (and its useMemo) don't see a fresh array
   // identity on every render — `allLegs` only changes when the trip reloads.
   const pastLegs = useMemo(
@@ -408,7 +420,7 @@ export default function Itinerary({
       ? [
           { label: "TOTAL DAYS", value: `${allLegs.length}` as React.ReactNode },
           { label: "DRIVING", value: `${drivingDays}` as React.ReactNode },
-          { label: "REST", value: `${restDays}` as React.ReactNode },
+          { label: "BASE", value: `${restDays}` as React.ReactNode },
         ]
       : [{ label: "DAYS", value: `${allLegs.length}` as React.ReactNode }]),
   ];
@@ -438,6 +450,7 @@ export default function Itinerary({
       <View style={styles.headerBlock}>
         <Text style={styles.eyebrow}>
           ROUTE PLAN
+          {completed ? <Text style={styles.eyebrowCompleted}> · COMPLETED</Text> : null}
           {readonly ? (
             <Text style={styles.eyebrowDemo}> · DEMO (read-only — clone to edit)</Text>
           ) : null}
@@ -509,25 +522,35 @@ export default function Itinerary({
         </View>
       </View>
 
-      {/* Controls */}
-      <View style={styles.controls}>
-        <Pressable onPress={expandAll} style={styles.controlButton}>
-          <Text style={styles.controlText}>Expand All</Text>
-        </Pressable>
-        <Pressable onPress={collapseAll} style={styles.controlButton}>
-          <Text style={styles.controlText}>Collapse All</Text>
-        </Pressable>
-      </View>
+      {/* Controls — they act on the days ahead, so a completed trip has none. */}
+      {completed ? null : (
+        <View style={styles.controls}>
+          <Pressable onPress={expandAll} style={styles.controlButton}>
+            <Text style={styles.controlText}>Expand All</Text>
+          </Pressable>
+          <Pressable onPress={collapseAll} style={styles.controlButton}>
+            <Text style={styles.controlText}>Collapse All</Text>
+          </Pressable>
+        </View>
+      )}
 
-      {/* "Behind you" — earlier days, collapsed by default so the trip opens
-          at where the driver actually is. "Earlier" not "completed": the cutoff
-          is positional (calendar/report), not proof the driver finished them. */}
+      {/* Past days, collapsed by default so the trip opens at where the driver
+          actually is. On a live trip the header says "behind you" rather than
+          "completed": the cutoff is positional (calendar/report), not proof the
+          driver finished those days. On a completed trip it is the only thing
+          left on the screen, so it reads as the disclosure it now is. */}
       {pastLegs.length > 0 ? (
         <View style={styles.pastBlock}>
           <Pressable onPress={() => setShowPast((v) => !v)} style={styles.pastToggle}>
             <Text style={styles.pastToggleText}>
-              {showPast ? "▾" : "▸"} Behind you — {pastLegs.length} earlier day
-              {pastLegs.length === 1 ? "" : "s"}
+              {showPast ? "▾" : "▸"}{" "}
+              {completed
+                ? `${showPast ? "Hide" : "Show"} past days — ${pastLegs.length} day${
+                    pastLegs.length === 1 ? "" : "s"
+                  }`
+                : `Behind you — ${pastLegs.length} earlier day${
+                    pastLegs.length === 1 ? "" : "s"
+                  }`}
             </Text>
           </Pressable>
           {showPast ? (
@@ -647,6 +670,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   eyebrowDemo: { color: theme.primary },
+  eyebrowCompleted: { color: theme.muted },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   tripName: { flex: 1, fontSize: 24, fontFamily: font.bold, lineHeight: 29, color: theme.text },
   pencilButton: { padding: 4 },

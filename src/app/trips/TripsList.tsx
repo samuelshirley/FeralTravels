@@ -13,6 +13,12 @@ interface TripSummary {
   start_date: string | null;
   end_date: string | null;
   status: string;
+  /**
+   * Resolved on the server (page.tsx) against the user's own timezone. Not
+   * derived here: this is a client component, so its clock is whatever the
+   * browser says, and two notions of "today" is how the day-drift bug happened.
+   */
+  completed: boolean;
 }
 
 interface Props {
@@ -129,6 +135,7 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             name={trip.name}
             startDate={trip.start_date}
             endDate={trip.end_date}
+            completed={trip.completed}
             editMode={editMode}
             onDeleted={handleTripDeleted}
           />

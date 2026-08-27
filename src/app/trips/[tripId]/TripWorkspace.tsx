@@ -10,6 +10,8 @@ import Spinner from '@/components/Spinner';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
+import PaneLock from '@/components/PaneLock';
+import { useTripPaywallLock } from '@/components/TripPaywallLock';
 import { useViewport } from '@/lib/useMediaQuery';
 import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
@@ -19,6 +21,7 @@ import {
   useDeviceLocation,
 } from '@/components/DeviceLocationContext';
 import type { TripWithLegs, POI, ChatMessage, OnboardingState } from '@/types/trip';
+import type { BlockReason } from '@/types/entitlement';
 
 const TripMap = dynamic(() => import('@/components/TripMap'), { ssr: false });
 
@@ -36,6 +39,20 @@ interface Props {
   serverOnboardingState?: OnboardingState;
   /** When true, auto-opens chat with a Penny replan prompt (from off-route email deep link). */
   replanFromOffRoute?: boolean;
+  /**
+   * Open on the chat tab (mobile viewport only — chat is always visible above
+   * it). Set by `?chat=1`, which is how the paywall overlay hands someone over
+   * to Penny.
+   */
+  openChatOnMount?: boolean;
+  /**
+   * Why this account is refused, or null when it is entitled (or the paywall
+   * is switched off). Resolved on the SERVER and handed down rather than
+   * fetched here: a pane that looks usable for one paint and then goes dark
+   * invites the click it is about to refuse, and the itinerary is the one
+   * surface where that click costs the user a lazily-sourced fuel search.
+   */
+  blockReason?: BlockReason | null;
 }
 
 // Reserve room for the fixed bottom nav on mobile so the inner pane scrolls
@@ -128,6 +145,8 @@ function TripWorkspaceInner({
   initialChat,
   serverOnboardingState,
   replanFromOffRoute = false,
+  openChatOnMount = false,
+  blockReason = null,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -151,7 +170,9 @@ function TripWorkspaceInner({
   const [loading, setLoading] = useState(true);
   const [trailsVersion, setTrailsVersion] = useState(0);
 
-  const [mobileTab, setMobileTab] = useState<MobileTab>('list');
+  // Lazy initial value rather than an effect, so an arrival aimed at chat never
+  // flashes the itinerary first.
+  const [mobileTab, setMobileTab] = useState<MobileTab>(openChatOnMount ? 'chat' : 'list');
   const [thinking, setThinking] = useState(false);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
@@ -162,6 +183,31 @@ function TripWorkspaceInner({
   // the pull gesture only engages when the itinerary tab is actually at
   // scrollTop=0 (vs the window, which is pinned on mobile).
   const [mobileListEl, setMobileListEl] = useState<HTMLDivElement | null>(null);
+
+  // ───────── The paywall lock ─────────
+  //
+  // An unentitled account keeps its trip on screen and loses the ability to
+  // operate it: the map and the itinerary are covered by a scrim and made
+  // inert (see PaneLock), and the CHAT stays completely untouched. That
+  // asymmetry is the whole design. Penny has already said what happened, in
+  // her own message in the transcript, and she is the only person who can
+  // answer "what does this mean for my trip" — so she has to stay reachable
+  // from every layout. A block that also silences the one thing that explains
+  // it is how support tickets are made.
+  //
+  // Readonly (the shared demo template) is never locked: it is not this
+  // viewer's trip, ChatPanel skips its own paywall message there for the same
+  // reason, and a scrim over somebody else's example trip would be explaining
+  // a bill that is not owed on it.
+  //
+  // The hook is called here, above every early return, because that is where
+  // hooks go; the notice it hands back is placed pane by pane in the three
+  // layouts below, and `paywallSheet` is mounted exactly once per layout.
+  const {
+    locked: paywallLocked,
+    notice: paywallNotice,
+    sheet: paywallSheet,
+  } = useTripPaywallLock(readonly ? null : blockReason);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -503,44 +549,71 @@ function TripWorkspaceInner({
             which left the chat textarea rendered behind the nav and
             unreachable on mobile.
           */}
-          <div
+          {/*
+            Both non-chat tabs carry the notice, not just the itinerary. On a
+            phone the panes are tabs, so only one is ever on screen — the
+            "don't say it twice" rule that keeps the desktop map bare does not
+            apply here, and a user who taps Map would otherwise land on a
+            dimmed screen with no explanation on it at all. The bottom nav is
+            outside the lock, so the chat tab is always one tap away. Only the
+            tab currently on screen draws the notice: the other pane is
+            display:none rather than unmounted, and two copies of the same card
+            sitting in the DOM is the kind of thing a strict locator trips over
+            long before a human ever sees it.
+
+            The pane's absolute positioning moves onto PaneLock itself: the
+            scrim is positioned against its root, so the root has to be the box
+            that is exactly the size of the tab. `height: 'auto'` undoes
+            PaneLock's default 100%, which with both top and bottom set would
+            over-constrain the box and let it run under the fixed nav.
+          */}
+          <PaneLock
+            locked={paywallLocked}
+            notice={mobileTab === 'map' ? paywallNotice : null}
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               right: 0,
               bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+              height: 'auto',
               display: mobileTab === 'map' ? 'block' : 'none',
             }}
           >
             {mapPane}
-          </div>
-          <ItineraryListScroller
-            ref={setMobileListEl}
-            padding={ITINERARY_LIST_PADDING_MOBILE}
+          </PaneLock>
+          <PaneLock
+            locked={paywallLocked}
+            notice={mobileTab === 'list' ? paywallNotice : null}
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               right: 0,
               bottom: `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom))`,
+              height: 'auto',
               display: mobileTab === 'list' ? 'block' : 'none',
             }}
           >
-            {/*
-              PullToRefresh attaches its listeners to the mobile list
-              scroller (not window). `disabled` when we're not on the
-              list tab so pulls inside the chat or map pane don't
-              trigger a refresh.
-            */}
-            <PullToRefresh
-              scrollContainer={mobileListEl}
-              onRefresh={refreshFromPull}
-              disabled={mobileTab !== 'list'}
-            >
-              {itineraryPane}
-            </PullToRefresh>
-          </ItineraryListScroller>
+            <ItineraryListScroller ref={setMobileListEl} padding={ITINERARY_LIST_PADDING_MOBILE}>
+              {/*
+                PullToRefresh attaches its listeners to the mobile list
+                scroller (not window). `disabled` when we're not on the
+                list tab so pulls inside the chat or map pane don't
+                trigger a refresh. Locked adds a second reason: the scrim is
+                the scroller's SIBLING, so a pull that starts on the scrim
+                never reaches these listeners anyway, and a refresh that
+                repaints an inert pane is work nobody asked for.
+              */}
+              <PullToRefresh
+                scrollContainer={mobileListEl}
+                onRefresh={refreshFromPull}
+                disabled={mobileTab !== 'list' || paywallLocked}
+              >
+                {itineraryPane}
+              </PullToRefresh>
+            </ItineraryListScroller>
+          </PaneLock>
           <div
             style={{
               position: 'absolute',
@@ -567,6 +640,7 @@ function TripWorkspaceInner({
           unread={unread}
         />
         )}
+        {paywallSheet}
       </div>
       </>
     );
@@ -591,13 +665,26 @@ function TripWorkspaceInner({
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <PanelGroup direction="vertical" autoSaveId={`trip-${tripId}-tablet-v2`}>
             <Panel defaultSize={62} minSize={30} order={1}>
+              {/*
+                Locked side by side, and only the itinerary explains itself —
+                see the desktop block below for why the map is left bare. The
+                two panes are locked separately because a single scrim over
+                both would have to live outside the PanelGroup, and react-
+                resizable-panels needs Panel as its direct child; the drag
+                handle between them stays live, which costs nothing and lets
+                someone widen the plan they are reading through the wash.
+              */}
               <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-tablet-top`}>
                 <Panel defaultSize={45} minSize={25} order={1}>
-                  <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+                  <PaneLock locked={paywallLocked}>
+                    <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+                  </PaneLock>
                 </Panel>
                 <ResizeHandle />
                 <Panel defaultSize={55} minSize={30} order={2}>
-                  <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
+                  <PaneLock locked={paywallLocked} notice={paywallNotice}>
+                    <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
+                  </PaneLock>
                 </Panel>
               </PanelGroup>
             </Panel>
@@ -617,6 +704,7 @@ function TripWorkspaceInner({
             </Panel>
           </PanelGroup>
         </div>
+        {paywallSheet}
       </div>
       </>
     );
@@ -636,15 +724,32 @@ function TripWorkspaceInner({
       />
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/*
+          Two of the three columns go behind the scrim and the third does not.
+          The map and the itinerary are covered and inert — no opening a day,
+          no panning, no Expand All, no fuel buttons, and nothing in either
+          column is reachable with Tab. The chat column is left entirely alone,
+          because it is where Penny's own message about this already is and it
+          is the only way out that is not a purchase.
+
+          The notice is drawn on the itinerary only. The map sits right beside
+          it under the same wash, so the state is unmistakable there too, and
+          printing the same card twice a few inches apart on one screen reads
+          as a rendering bug rather than emphasis.
+        */}
         <PanelGroup direction="horizontal" autoSaveId={`trip-${tripId}-panes-3`}>
           <Panel defaultSize={30} minSize={15} order={1}>
-            <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+            <PaneLock locked={paywallLocked}>
+              <div style={{ height: '100%', width: '100%' }}>{mapPane}</div>
+            </PaneLock>
           </Panel>
 
           <ResizeHandle />
 
           <Panel defaultSize={40} minSize={20} order={2}>
-            <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
+            <PaneLock locked={paywallLocked} notice={paywallNotice}>
+              <ItineraryListScroller>{itineraryPane}</ItineraryListScroller>
+            </PaneLock>
           </Panel>
 
           <ResizeHandle />
@@ -663,6 +768,7 @@ function TripWorkspaceInner({
           </Panel>
         </PanelGroup>
       </div>
+      {paywallSheet}
     </div>
     </>
   );

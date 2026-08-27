@@ -62,6 +62,20 @@ export default async function TripPage({ params, searchParams }: Props) {
         initialChat={initialChat}
         serverOnboardingState={trip.onboarding_state}
         replanFromOffRoute={searchParams.replan === 'true'}
+        // `?chat=1` — the paywall overlay's "Talk to Penny" link. On a phone
+        // this page opens on the itinerary tab, which is not where someone who
+        // just clicked her name wants to land.
+        openChatOnMount={searchParams.chat === '1'}
+        // The same verdict that decided the redirect above, handed to the
+        // workspace so the map and the itinerary render already covered. This
+        // is the `EntitlementNotice` argument applied to the trip page: a
+        // client that fetched its own entitlement would paint a working
+        // itinerary first and take it away a moment later, which briefly lies
+        // about what the account can do — and on this page the lie is
+        // clickable. Null on a template someone else owns: it is not their
+        // bill, and ChatPanel skips its paywall message there for the same
+        // reason.
+        blockReason={isOwner ? verdict.blockReason : null}
       />
     </UnitsProvider>
   );

@@ -49,6 +49,12 @@ export interface AccountVerdict {
   crossedWatch: boolean;
   crossedStop: boolean;
   /**
+   * Whether the paywall is switched ON in this environment. False means the
+   * state below is real and simply not being enforced — `entitled` will be
+   * true regardless. See `switch.ts`.
+   */
+  enforced: boolean;
+  /**
    * The 12-month Anthropic figure the verdict was decided on, passed straight
    * back out. The alert email reports it, and a caller that re-queried for it
    * could report a number the decision was never made on.
@@ -88,6 +94,10 @@ export function resolveAccountState(facts: AccountFacts): AccountVerdict {
     crossedWatch,
     crossedStop,
     spendMicrocents: spend,
+    // The pure resolver always reports the true, enforced verdict. The switch
+    // is applied one layer up, in `entitlements.ts`, so these tests keep
+    // describing what the rules SAY rather than what an env var permits.
+    enforced: true,
   });
 
   // Comped wins over everything, INCLUDING the usage cap. The author's account

@@ -6,6 +6,7 @@
  * `dir_action=navigate` starts turn-by-turn immediately; multi-stop legs omit it
  * so Maps opens the full itinerary preview first (better for many waypoints).
  */
+import { haversineKm } from '../lib/polyline';
 
 export interface LegCoords {
   start_lat?: number | null;
@@ -181,6 +182,54 @@ export function buildLegDirectionsUrl(input: {
 export type NavSegment = { label: string; url: string; stopType?: string };
 
 /**
+ * How close two points have to be before a driver would call them the same
+ * place. 1 km, the same number `add_stop` already uses to reject a stop sitting
+ * on top of a leg's end coords — one threshold for "you are already here"
+ * rather than two that drift apart.
+ */
+export const SAME_PLACE_KM = 1;
+
+/**
+ * True when a leg ends where it starts and no driving happens in between: a
+ * rest day, or any other day spent parked at one location.
+ *
+ * WHY THIS EXISTS (2026-08-27). A rest day is stored as a leg whose start and
+ * end are the SAME coordinates — `add_leg` insists on it ("use the same coords
+ * for start and end — the rest day is AT a location"). `buildSegmentedNavUrls`
+ * then appended a destination button for it exactly like any other leg, so a
+ * day titled "Porto (rest day)", with no distance and no duration, offered
+ * "Route to Destination — Porto". The URL carries no `origin`, so Google Maps
+ * takes the origin from device GPS — and on that day the driver IS in Porto.
+ * The button launched turn-by-turn navigation to where he was already standing.
+ *
+ * The coordinate check ALONE would be wrong. A genuine day-loop — out into the
+ * Douro valley and back to Porto — also starts and ends in the same place, and
+ * that driver does want a button home. So a leg is only stationary when it also
+ * carries no distance and no drive time, which is precisely how a rest day is
+ * written and precisely how a loop is not. Missing start coords means we cannot
+ * tell, and we keep the button: a redundant button beats a missing one.
+ *
+ * A stationary leg is the ONE case where a rendered nav list legitimately holds
+ * no destination button. Any invariant asserting "if the app renders navigation
+ * at all, one of those buttons reaches the end of the leg" needs this as its
+ * carve-out, because here there is no end to reach.
+ */
+export function isStationaryLeg(input: {
+  legCoords: LegCoords;
+  destination: { lat: number; lng: number };
+  distanceKm?: number | null;
+  driveTimeMinutes?: number | null;
+}): boolean {
+  const { legCoords, destination, distanceKm, driveTimeMinutes } = input;
+  if (legCoords.start_lat == null || legCoords.start_lng == null) return false;
+  if ((distanceKm ?? 0) >= SAME_PLACE_KM) return false;
+  if ((driveTimeMinutes ?? 0) > 0) return false;
+  return (
+    haversineKm({ lat: legCoords.start_lat, lng: legCoords.start_lng }, destination) < SAME_PLACE_KM
+  );
+}
+
+/**
  * Build a list of "navigate from current location → stop" buttons for a leg.
  *
  * Each URL omits `origin` so Google Maps defaults to the device's GPS
@@ -193,7 +242,15 @@ export type NavSegment = { label: string; url: string; stopType?: string };
  * followed by the leg's final destination. For a leg with zero stops this
  * returns a single-element array pointing at the destination.
  *
- * Returns `null` when destination coords are missing.
+ * EXCEPTION: a stationary leg (see `isStationaryLeg` — a rest day, where the
+ * driver ends the day where he started it) gets NO destination entry, because
+ * navigating to it means navigating to where he already is. Its added stops
+ * still get their own buttons: "drive me to the restaurant" is real work on a
+ * rest day; "drive me to Porto, from Porto" is not.
+ *
+ * Returns `null` when destination coords are missing, and for a stationary leg
+ * with no stops of its own — in both cases there is nothing to navigate to and
+ * the caller renders no nav block at all.
  */
 export function buildSegmentedNavUrls(input: {
   legCoords: LegCoords;
@@ -203,19 +260,33 @@ export function buildSegmentedNavUrls(input: {
     end_lng: number | null;
   } | null;
   stops?: LegDirectionsStopInput[] | null;
+  /** Leg headline distance — what separates a rest day from a day-loop. */
+  distanceKm?: number | null;
+  /** Leg headline drive time — same purpose as `distanceKm`. */
+  driveTimeMinutes?: number | null;
 }): NavSegment[] | null {
-  const { legCoords, endName, selectedRoute, stops } = input;
+  const { legCoords, endName, selectedRoute, stops, distanceKm, driveTimeMinutes } = input;
   const destLat = selectedRoute?.end_lat ?? legCoords.end_lat ?? null;
   const destLng = selectedRoute?.end_lng ?? legCoords.end_lng ?? null;
   if (destLat == null || destLng == null) return null;
 
   const resolved = resolveDirectionsStops(stops ?? []);
 
+  // A rest day has nowhere to drive to, so it is offered nothing to drive to.
+  const stationary = isStationaryLeg({
+    legCoords,
+    destination: { lat: destLat, lng: destLng },
+    distanceKm,
+    driveTimeMinutes,
+  });
+
   // Ordered destinations: intermediate stops, then final destination.
   type Dest = { lat: number; lng: number; name: string; stopType?: string };
   const destinations: Dest[] = [
     ...resolved,
-    { lat: destLat, lng: destLng, name: endName || 'Destination', stopType: 'destination' },
+    ...(stationary
+      ? []
+      : [{ lat: destLat, lng: destLng, name: endName || 'Destination', stopType: 'destination' }]),
   ];
 
   const segments: NavSegment[] = [];
@@ -290,4 +361,103 @@ export function rewriteMapsUrlForNav(originalUrl: string, coords: LegCoords): st
     // Not a parseable URL — fall back to coords-only nav URL if available.
     return buildNavUrl(coords) ?? originalUrl;
   }
+}
+
+/** A nav button ready to render: a segment plus whether it is the next one up. */
+export type OrderedNavSegment = NavSegment & { isNext: boolean };
+
+/**
+ * Order the nav buttons for rendering.
+ *
+ * This exists because of a real bug (2026-08-26). LegCard used to branch on GPS:
+ * active + near the route → render ONE button for the next unreached stop;
+ * otherwise → render the full list. The single-button branch dropped every other
+ * segment, the destination included, and offered no way back to the list.
+ *
+ * A driver parked at his own front door — which is also his trip's leg-0 start —
+ * saw exactly one button, pointing at an unselected fuel station 398 km away, and
+ * nothing anywhere on the screen that would route him to where the day actually
+ * ended. Fill up, then what? It read as lost data. The data was never touched.
+ *
+ * So: never branch on the count. This ALWAYS returns every segment it was given.
+ * The only thing GPS may change is the ORDER, and which one is flagged `isNext`.
+ * The destination is unremovable here because nothing here can remove anything —
+ * `orderNavSegments(xs, y).length === xs.length` is the whole point of the
+ * function, not an incidental property of it.
+ */
+export function orderNavSegments(
+  segments: NavSegment[],
+  nextStop: NavSegment | null | undefined
+): OrderedNavSegment[] {
+  const ordered: OrderedNavSegment[] = segments.map((s) => ({ ...s, isNext: false }));
+  if (!nextStop) return ordered;
+  const i = ordered.findIndex((s) => s.url === nextStop.url && s.label === nextStop.label);
+  if (i < 0) return ordered;
+  ordered[i].isNext = true;
+  const [next] = ordered.splice(i, 1);
+  return [next, ...ordered];
+}
+
+/**
+ * True when a button list can actually get the driver to the end of the leg.
+ *
+ * `buildSegmentedNavUrls` always appends the destination and `orderNavSegments`
+ * never drops one, so this is true for every drive leg that has end coords. It is
+ * not a question the app needs to ask itself — it is the assertion that keeps the
+ * answer yes.
+ */
+export function hasDestinationSegment(segments: Array<{ stopType?: string }>): boolean {
+  return segments.some((s) => s.stopType === 'destination');
+}
+
+/**
+ * Invariant: if a leg renders navigation at all, one of those buttons goes to the
+ * destination. A fuel stop with no onward link is worse than no buttons — it looks
+ * like the app answered the question.
+ *
+ * Empty is a legitimate state (no end coords → `buildSegmentedNavUrls` returns
+ * null → nothing renders), so it passes. A NON-empty list without a destination is
+ * always a bug.
+ *
+ * Throws outside production so it fails in `next dev`, in Expo, and in the test
+ * suite — where regressions are actually introduced. In production it logs instead:
+ * a missing button is bad, a crashed screen in a driver's hand on a mountain pass
+ * is worse.
+ */
+export function assertDestinationReachable(
+  segments: Array<{ stopType?: string }>,
+  context: string,
+  opts: { stationary?: boolean } = {}
+): void {
+  /**
+   * A STATIONARY leg is the one shape where "no destination button" is
+   * correct rather than broken, and this carve-out is why the parameter
+   * exists.
+   *
+   * The invariant above and the rest-day fix were written against each other
+   * without knowing it. The invariant says every navigable leg must be
+   * navigable to its end — written because a driver lost the destination
+   * button entirely. The rest-day fix says a day that starts and ends in
+   * Porto must not offer to route you to Porto — written because that button
+   * did nothing when pressed. Both are right. They only collide because a
+   * stationary leg has no end to be navigable TO: its end IS its start.
+   *
+   * So the invariant narrows rather than bends — "every leg with a real
+   * destination must reach it" — and the caller, which already knows the
+   * distance and drive time, says which kind of leg this is. Added stops on
+   * that day still get their own buttons and are still covered: an empty
+   * `segments` list is unaffected, and a stationary leg carrying a fuel stop
+   * with no destination is exactly what we now allow on purpose.
+   */
+  if (opts.stationary) return;
+  if (segments.length === 0 || hasDestinationSegment(segments)) return;
+  const message =
+    `Nav buttons for ${context} contain no "Route to Destination" button ` +
+    `(${segments.length} button(s): ${segments.map((s) => s.stopType ?? 'unknown').join(', ')}). ` +
+    `Every leg the app can navigate must be navigable to its end. See orderNavSegments.`;
+  if (process.env.NODE_ENV === 'production') {
+    console.error(message);
+    return;
+  }
+  throw new Error(message);
 }

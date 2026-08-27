@@ -91,9 +91,22 @@ async function signedInWithState(page: Page, fixture: SubscriptionFixture): Prom
   return email;
 }
 
-/** The soft-block notice on /trips. Absent means the account was not blocked. */
+/** The block overlay on /trips. Absent means the account was not blocked. */
 function notice(page: Page) {
   return page.locator('[data-block-reason]');
+}
+
+/**
+ * Open the user's trip the only way a blocked account still can.
+ *
+ * `openTrip` clicks the card, and the card is now UNDER the overlay — that is
+ * the block working, not a bug to route around. The overlay's own link to
+ * Penny is the sanctioned way through, so exercising it here is also the test
+ * that it exists at all.
+ */
+async function openTripFromOverlay(page: Page) {
+  await notice(page).getByTestId('entitlement-overlay-penny').click();
+  await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 20_000 });
 }
 
 /** The button only an entitled account gets. Its absence is a courtesy, not the gate. */
@@ -185,7 +198,7 @@ test.describe('Subscriptions — trial', () => {
 
     // And in the workspace, Penny says it herself — a message in the
     // transcript, not a sheet thrown over the app.
-    await openTrip(page);
+    await openTripFromOverlay(page);
     const cta = page.getByTestId('paywall-cta');
     await expect(cta).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('trip-chat-composer')).toBeDisabled();
@@ -332,11 +345,11 @@ test.describe('Subscriptions — subscribed', () => {
     expect(created.status).toBe(402);
     expect(created.body.blockReason).toBe('usage_cap');
 
-    // Existing trips still readable: the card is there, and the workspace
-    // opens instead of bouncing back to /trips.
+    // Existing trips still rendered: the card is there behind the overlay, and
+    // the workspace opens instead of bouncing back to /trips.
     expect(entitlement.canViewExistingTrips).toBe(true);
     await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    await openTrip(page);
+    await openTripFromOverlay(page);
     await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}/);
     await expect(page.getByTestId('leg-card')).toHaveCount(2);
 
@@ -420,14 +433,19 @@ test.describe('Subscriptions — subscribed', () => {
     expect(created.status).toBe(402);
     expect(created.body.state).toBe('expired');
 
-    // The web soft block for a lapsed subscriber: "Continue on iPhone", and
-    // the trips they already made still there to read.
+    // The block covers the page rather than sitting above it, and the trips
+    // they already made are still rendered underneath — covered, not deleted.
     expect(entitlement.canViewExistingTrips).toBe(true);
     await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    // The action, by its label rather than its href: NEXT_PUBLIC_APP_STORE_URL
-    // is an env var (the numeric app id is minted at first submission), so the
-    // URL is not something a spec can assert on. The label is ours.
-    await expect(notice(page).getByRole('link', { name: /on iPhone/i })).toBeVisible();
+    // The overlay's action is the purchase sheet, the same one Penny's bubble
+    // opens. "Continue on iPhone" lives inside it, because the web cannot take
+    // money. Asserted by label rather than href: NEXT_PUBLIC_APP_STORE_URL is
+    // an env var (the numeric app id is minted at first submission), so the URL
+    // is not something a spec can assert on. The label is ours.
+    await notice(page).getByTestId('entitlement-overlay-cta').click();
+    await expect(
+      page.getByTestId('purchase-sheet').getByTestId('purchase-sheet-app-store-link'),
+    ).toBeVisible();
   });
 
   test('refunded: closed completely, including the trips already made', async ({ page }) => {
