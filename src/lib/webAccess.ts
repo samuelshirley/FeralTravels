@@ -1,5 +1,12 @@
 /**
- * The web app's master switch. Pages OFF unless `WEB_APP_ENABLED=1`.
+ * The web app's master switch. Pages ON unless `WEB_APP_ENABLED=0`.
+ *
+ * Read that sentence twice — it is the opposite of `PAYWALL_ENABLED`, and this
+ * line said the opposite of the code until 2026-08-28. The wrong version cost a
+ * real detour: it reads as "merging this blocks the web", which sent someone
+ * looking for a way to split the block out of a shared PR when the actual lever
+ * was one Vercel variable. The switch is inverted ON PURPOSE (see `webAppEnabled`
+ * below); a doc comment that inverts it back is worse than no comment.
  *
  * 2026-08-28: the product is an iOS app. The web came first and most users will
  * never know it exists, so rather than maintain two front ends and test both,
