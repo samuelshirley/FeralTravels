@@ -83,22 +83,36 @@ env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
-  # The E2E results comment is STICKY: it is edited in place, and GitHub keeps
-  # an edited comment at its ORIGINAL position in the timeline. So the previous
-  # commit's green table stays put while newer commits scroll past underneath
-  # it, and reads as though it covers them. The `Built from <sha>` footer is
-  # the only thing that says otherwise, in small text, under a wall of ticks.
-  #
-  # This job runs first and depends on nothing, so the old table is stamped
-  # stale within seconds of a push — including in the case that matters most,
-  # where the pipeline never reaches the E2E job at all (a failed preview
-  # deploy, a cancelled run) and the stale green table would otherwise stand
-  # unchallenged until someone pushed again.
-  stale:
-    name: Mark previous E2E results stale
+  # ONE job for both vitest projects, because both ARE unit tests. The
+  # project split (`unit` in node, `components` in jsdom) still exists — it
+  # keeps logic specs from paying for a DOM they never touch — but it is a
+  # vitest concern, not a CI one. Two boxes labelled "Unit tests" and "UI
+  # tests" read as though one of them drove a browser; only the E2E job
+  # does, and that ambiguity cost more than the ~20s of parallelism it
+  # bought against a five-minute pipeline. Vitest still reports each
+  # project separately, so a red component spec is no harder to spot.
+  unit:
+    name: Unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Stamp the sticky E2E comment
+      # FIRST, before checkout: stamp the PREVIOUS E2E results comment as
+      # superseded. That comment is sticky — edited in place — and GitHub keeps
+      # an edited comment at its ORIGINAL position in the timeline, so last
+      # commit's green table stays put while newer commits scroll past beneath
+      # it, reading as though it covers them.
+      #
+      # This is a STEP and not a job on purpose. A job is a row in the PR checks
+      # list, and that list is a dashboard you read at a glance — is this an OTA
+      # or a native build, did the simulator pass. A row reporting on a COMMENT
+      # says nothing about the code and would sit there on every PR forever.
+      #
+      # `unit` hosts it because it has no `needs:`, so it starts within seconds
+      # of a push. That covers the case that matters: the pipeline never
+      # reaching the E2E job at all (failed preview deploy, a run cancelled by
+      # cancel-in-progress), where the `if: always()` results step never runs
+      # and the stale green table would otherwise stand unchallenged.
+      - name: Mark the previous E2E results superseded
         uses: actions/github-script@v7
         with:
           script: |
@@ -130,19 +144,6 @@ jobs:
               body: stripped.replace(marker, `${marker}\n${banner}`),
             });
 
-  # ONE job for both vitest projects, because both ARE unit tests. The
-  # project split (`unit` in node, `components` in jsdom) still exists — it
-  # keeps logic specs from paying for a DOM they never touch — but it is a
-  # vitest concern, not a CI one. Two boxes labelled "Unit tests" and "UI
-  # tests" read as though one of them drove a browser; only the E2E job
-  # does, and that ambiguity cost more than the ~20s of parallelism it
-  # bought against a five-minute pipeline. Vitest still reports each
-  # project separately, so a red component spec is no harder to spot.
-  unit:
-    name: Unit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
