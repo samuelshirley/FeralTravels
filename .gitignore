@@ -1,3 +1,10 @@
+# Both spellings, deliberately. `node_modules/` with the trailing slash matches
+# a DIRECTORY only, and git does not treat a symlink as a directory — so a
+# worktree created inside this mount with `ln -s ../node_modules` produced an
+# untracked, UNIGNORED symlink that `git add -A` then committed as mode 120000
+# pointing at a sandbox path (d1307a9). Anyone who checked that branch out got a
+# node_modules pointing nowhere and an npm ci that could not run.
+node_modules
 node_modules/
 .next/
 out/
