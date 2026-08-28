@@ -153,7 +153,7 @@ is. Everything else stays at 0, because a retry on a real bug is a hidden bug.
 | 14 | Maps links render and route correctly | `trip-detail.spec.ts` | EXTEND — `existing-trip` covers the destination button, not stop links |
 | 15 | Metric vs imperial | `trip-detail.spec.ts` | NEW — see the note below |
 | 16 | A cached day does not re-search fuel | `lazy-fuel-sourcing.spec.ts` | EXTEND — see the note below |
-| 17 | Day-7 paywall blocks every screen | `subscriptions.spec.ts` | EXTEND — 13 tests cover the states; "every screen" is not asserted |
+| 17 | Day-7 paywall blocks every screen | `paywall-screens.spec.ts` | NEW — see below; writing it found a hole |
 
 ### Note on 15 — this is a product decision, not only a bug
 
@@ -174,6 +174,77 @@ the full OSRM + Overpass + pricing search. Fixed, with a structural guard
 `CANONICAL_TRIP` to carry a fresh cache stamp — the current spec asserts a fetch
 DOES fire, which is the never-sourced case and only half the contract.
 
+
+### Note on 17 — "every screen" is not true today, and the allowlist that would make it true is dead code
+
+The ask: a seeded seven-day-old user hits the wall, the app is soft-blocked and
+unusable **on all screens** with a message saying it needs a subscription; iOS
+can buy, desktop and mobile web show a link to the App Store listing.
+
+Three things came out of taking that literally.
+
+**a) The paywall has no central gate.** `middleware.ts` imports only
+`isPublicPath`. `PAYWALL_EXEMPT_PREFIXES` and `isPaywallExempt`
+(`src/lib/paywallPaths.ts:75`, `:93`) are defined, documented at length,
+covered by eleven unit tests — and **called by nothing at runtime**. Enforcement
+is instead hand-written into eight files that each remembered to ask
+`getAccountVerdict`. A route added tomorrow gets no gate by default, and nothing
+fails when it doesn't.
+
+**b) `/vehicle-setup` is one of the routes that forgot.** It contains zero
+entitlement checks (`grep -c 'getAccountVerdict\|hasEntitlement'` → 0), so a
+fully blocked account can still reach it and edit vehicles. Found by enumerating
+the screens for this spec rather than by using the app.
+
+**c) "All screens" would be an App Store rejection if taken literally.**
+`/settings` must stay reachable — it holds sign-out and account deletion, and
+guideline 5.1.1(v) requires in-app deletion; a paywall in front of it fails
+review. `/privacy`, `/terms` and `/support` must stay anonymously fetchable for
+App Review and Google brand verification. Both facts are already argued in
+`paywallPaths.ts`; the spec has to encode the **partition**, not a blanket.
+
+So the spec is a table over every route, with nothing unclassified:
+
+| Screen | Blocked? |
+|---|---|
+| `/` | inherits — redirects to `/trips` |
+| `/trips` | **blocked** — overlay, no "+ New trip" |
+| `/trips/[tripId]` | **blocked** — panes locked, composer disabled, `paywall-cta` |
+| `/vehicle-setup` | **should be blocked — currently is not** |
+| `/settings` | exempt, deliberately (sign-out, deletion) |
+| `/login`, `/login/verify` | public |
+| `/privacy`, `/terms`, `/support` | public, anonymously |
+| `/admin/**` | admin-only; a blocked non-admin gets nothing either way |
+| iOS `/trips`, `/trips/[id]`, `/index` | **blocked** → `/paywall` |
+| iOS `/settings`, `/sign-in` | exempt |
+
+And the API side, which is the half a UI test cannot see: `POST /api/trips`,
+`/api/trips/[id]/clone`, `/api/trips/[id]/onboarding` and `/api/trip/replan` all
+return 402 with `code === PAYWALL_ERROR_CODE`; `/api/me/**` and `/api/support`
+stay 200.
+
+**The fix this implies** is not more per-route checks — it is wiring the
+allowlist that already exists. `getAccountVerdict` needs a database, so it
+cannot run in edge middleware; the shape that fits is a shared
+`requireEntitledPage()` helper plus a structural guard in the unit suite —
+every route under `src/app` either calls it or appears in
+`PAYWALL_EXEMPT_PREFIXES`, checked by parsing the route tree the same way
+`cloneTripColumns.test.ts` parses the schema. That turns "we remembered" into
+"it cannot be forgotten", and it is what makes spec 17 a test of a rule rather
+than a snapshot of eight files.
+
+**The buttons.** Web cannot take money, so the CTA is a link out:
+`APP_STORE_URL` (`src/lib/paywallCopy.ts`) reads `NEXT_PUBLIC_APP_STORE_URL` and
+falls back to `https://apps.apple.com/search?term=Feral%20Travels` — the listing
+id does not exist yet, and the search URL is a real working Apple page rather
+than a dead link. The spec asserts the CTA points at an `apps.apple.com` URL,
+not at the literal fallback, so setting the real id later does not red it. On
+iOS the same block renders `PurchaseSheet` with the two products; with an empty
+product list (StoreKit before the Paid Applications Agreement) it says to buy in
+the app instead. Both surfaces show the same copy, from the same
+`paywallCopy` module, which is the thing worth asserting — that they cannot
+drift into offering different things.
+
 ## Order of work
 
 1. `CANONICAL_TRIP` + wire both consumers. Nothing else can start.
@@ -182,5 +253,7 @@ DOES fire, which is the never-sourced case and only half the contract.
 4. Specs 14, 15, 16 (`trip-detail`, `fuel`) — the fixture's stops earn their keep.
 5. Specs 2, 3 (`vehicles`), 9, 10 (`account`), 11 extension.
 6. Spec 5 (`trip-edit`) — hardest of the deterministic ones.
-7. Spec 17 (paywall, every screen).
+7. Spec 17 (paywall) — preceded by wiring `PAYWALL_EXEMPT_PREFIXES` into a
+   `requireEntitledPage()` helper and closing `/vehicle-setup`, since the spec
+   is otherwise a snapshot of which routes happened to remember.
 8. Spec 7 (Penny) last, once the invariant helpers from 5 exist to reuse.
