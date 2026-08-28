@@ -190,11 +190,24 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
+            /*
+             * Delete and REPOST, rather than edit in place.
+             *
+             * An edited comment stays where it was first written — often pages
+             * up a long PR — and GitHub gives no notification that it changed.
+             * So the most recent results were the single easiest thing to miss,
+             * at exactly the moment they matter: the last look before merging.
+             * The stale banner helped and did not fix it, because you still had
+             * to go and find the thing to see it was stale.
+             *
+             * Reposting keeps ONE comment — the old one is removed, so twenty
+             * commits do not leave twenty tables — and always puts it at the
+             * bottom of the thread, newest, where you are already reading.
+             */
             if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
   # --------------------------------------------------------------- MERGE
   ship:

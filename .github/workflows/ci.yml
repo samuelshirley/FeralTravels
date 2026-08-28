@@ -334,11 +334,24 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
+            /*
+             * Delete and REPOST, rather than edit in place.
+             *
+             * An edited comment stays where it was first written — often pages
+             * up a long PR — and GitHub gives no notification that it changed.
+             * So the most recent results were the single easiest thing to miss,
+             * at exactly the moment they matter: the last look before merging.
+             * The stale banner helped and did not fix it, because you still had
+             * to go and find the thing to see it was stale.
+             *
+             * Reposting keeps ONE comment — the old one is removed, so twenty
+             * commits do not leave twenty tables — and always puts it at the
+             * bottom of the thread, newest, where you are already reading.
+             */
             if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
             // 2. Pinned block at the top of the PR description. Replace only
             // our own marked region; never rewrite the author's prose.
@@ -537,11 +550,24 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
+            /*
+             * Delete and REPOST, rather than edit in place.
+             *
+             * An edited comment stays where it was first written — often pages
+             * up a long PR — and GitHub gives no notification that it changed.
+             * So the most recent results were the single easiest thing to miss,
+             * at exactly the moment they matter: the last look before merging.
+             * The stale banner helped and did not fix it, because you still had
+             * to go and find the thing to see it was stale.
+             *
+             * Reposting keeps ONE comment — the old one is removed, so twenty
+             * commits do not leave twenty tables — and always puts it at the
+             * bottom of the thread, newest, where you are already reading.
+             */
             if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
   # ── iOS end-to-end, on a real simulator ────────────────────────────────────
   #
@@ -698,6 +724,7 @@ jobs:
           cat fixture.env >> "$GITHUB_ENV"
 
       - name: Run the flows
+        id: flows
         run: |
           # The FILE, not the directory. sign-in.yaml is a subflow that
           # chat-keyboard.yaml runs itself; pointing Maestro at the directory
@@ -715,6 +742,7 @@ jobs:
       # driving a real simulator, and it is as useful on a green run for seeing
       # what the flows actually did.
       - name: Upload the recordings
+        id: recordings
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -723,3 +751,54 @@ jobs:
             maestro-report.xml
             ~/.maestro/tests/**
           if-no-files-found: warn
+
+      # The whole value of driving a real simulator is the screenshot of the
+      # screen it died on, and that is worth nothing sitting in an artifact
+      # nobody is told about. The web suite has reported to the PR since day
+      # one; this job reported nothing, so "did iOS pass?" meant opening the
+      # Actions tab and knowing which job to look for — at exactly the moment
+      # you are deciding whether to merge.
+      - name: Comment iOS results on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.flows.outcome }}
+          ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
+        with:
+          script: |
+            const marker = '<!-- feraltravels-ios-e2e -->';
+            const pr = context.payload.pull_request;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const outcome = process.env.OUTCOME || 'skipped';
+            const artifact = process.env.ARTIFACT_URL;
+
+            const lines = ['### 📱 iOS e2e (simulator)', ''];
+            if (outcome === 'success') {
+              lines.push(
+                '**Passed.** Real OTP sign-in and the chat-keyboard regression, driven on a',
+                "booted simulator against this PR's own preview deployment.",
+              );
+            } else if (outcome === 'skipped' || outcome === '') {
+              lines.push(
+                '**Did not run.** The flows step never started, so the app is untested on',
+                'this commit — check the job for which earlier step stopped it.',
+              );
+            } else {
+              lines.push(
+                '**Failed.** The recordings artifact holds a screenshot of the screen it died',
+                'on; that is the fastest way in, faster than reading the log.',
+              );
+            }
+            if (artifact) lines.push('', `[Recordings](${artifact})`);
+            lines.push('', `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`);
+
+            const body = [marker, ...lines].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            // Delete and repost — same reasoning as the E2E table above.
+            if (existing) {
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
+            }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
