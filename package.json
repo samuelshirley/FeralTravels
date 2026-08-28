@@ -23,6 +23,7 @@
     "e2e:report": "playwright show-report",
     "sync-shared": "node scripts/sync-shared.mjs",
     "prune-branches": "bash scripts/prune-branches.sh",
+    "extract-canonical-trip": "tsx --tsconfig tsconfig.scripts.json scripts/extract-canonical-trip.ts",
     "check-preview-env": "node scripts/check-preview-env.mjs",
     "check:shared": "vitest run --project unit src/lib/sharedMirror.test.ts",
     "test": "vitest run",

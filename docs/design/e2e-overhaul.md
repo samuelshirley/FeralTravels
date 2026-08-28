@@ -35,11 +35,25 @@ Three consequences, and they are the reason this document exists:
 3. **Nothing tests the cache.** You cannot assert "a day with fuel stops does not
    re-search" without a fixture that has fuel stops and a fresh cache stamp.
 
-### The fix: `CANONICAL_TRIP` in code
+### The fix: `CANONICAL_TRIP` in code — BUILT
 
-One fixture, defined in `src/server/fixtures/canonicalTrip.ts`, consumed by
-both `testSupport.seedFixture` and `payments/testAccounts.seedRealisticAccountData`.
-It must carry:
+Built 2026-08-28 in `src/server/fixtures/canonicalTrip.ts`, extracted from the
+owner's "August Portugal Trip" (`30df628c-cdb7-479b-9edd-e4ddbeb494d8`) — a trip
+a person actually planned, which is the only way to get real road geometry and
+real Google places into a fixture. Twelve days, six driving and six base, two
+countries, segment grouping, geometry on every leg, three real fuel stops, and
+all three fuel cache states in one seed. Still to wire into
+`testSupport.seedFixture` and `payments/testAccounts.seedRealisticAccountData`.
+
+No calendar date is written down: `startISO` defaults to `seededTripStartISO()`
+(today + 14) and every leg date derives from it, so the trip is in the future
+whenever it is seeded — asserted out to 2031 in `canonicalTrip.test.ts`. The
+fuel cache is stored as an AGE IN HOURS rather than a timestamp for the same
+reason: a stored date would start fresh and quietly go stale, and the test
+asserting "a cached day is not re-searched" would pass, then fail, for reasons
+unrelated to the code.
+
+What it carries:
 
 | Piece | Why a test needs it |
 |---|---|
@@ -63,42 +77,47 @@ of the same change.
 
 ## Decisions needed before the specs are written
 
-### 1. Penny cannot be asserted verbatim, and should not be
+### 1. Penny — RESOLVED, and the first answer here was wrong
 
-The ask was: *"it needs to make sure penny always builds the same trip and
-responds the same with the same information."*
+The first draft of this document said an LLM cannot be asserted verbatim and
+proposed tolerances. The owner pushed back: *"if I tell her I want to go from
+Girona to Porto over five days, she should always come up with the same route
+and stops... two plus two is not going to equal three magically one day."*
 
-She will not. Same prompt, same model, different tool-call ordering and different
-prose — that is what a sampled model is. A spec that asserts her exact words
-fails on a week where nothing changed, and a spec that fails for no reason gets
-muted, which leaves the most important flow in the app untested. The ask is
-right; the assertion is the wrong instrument.
+He is substantially right, and there is a concrete reason it has been varying.
 
-What IS deterministic, and is a **stronger** test than string equality:
+**Penny's planning loop sets no temperature.** `src/lib/claude.ts:749` calls
+`client.messages.create({ model, max_tokens, system, tools, messages })` — no
+`temperature`, so it runs at the API default of 1.0, maximum sampling variance,
+on the single most important call in the app. The three small parsing calls all
+set `temperature: 0` deliberately (`onboardingIntentScan.ts:145`,
+`parseRangeEstimate.ts:117`, `parseStartDate.ts:159`). The one that picks the
+route does not. Nobody told her to be consistent.
 
-- **Shape** — leg count, first leg starts at the named origin, last ends at the
-  named destination, cities named in the prompt all appear as leg endpoints.
-- **Continuity** — every leg starts within 50 km of where the previous ended.
-  This is the invariant `computeStartFixes` and `contiguityGate` exist to hold,
-  and the "scrambled trip" incident is what happens when it breaks.
-- **`planSummary`** — day counts, depart/arrive dates and totals are computed by
-  `computePlanSummary` from the rows, not by the model. Given the same legs these
-  are exactly equal, every run. Assert them.
-- **Physics** — no leg over `DEFAULT_MAX_DRIVE_HOURS_PER_DAY`; rest days have
-  start == end; every fuel stop inside `range_km` of the one before it.
-- **Hygiene** — her prose contains no `<invoke>`/`<parameter>` markup
-  (`sanitize.ts`), and states none of the numbers the UI renders from
-  `planSummary`.
-- **Idempotence of the deterministic layer** — run the same prompt twice against
-  two fresh users and assert the two `planSummary` objects agree on day count and
-  date range, even where the routes differ.
+**Action: set `temperature: 0` on the planning loop.** It is choosing waypoints,
+not writing prose that benefits from variety.
 
-That last one is the closest honest form of "always builds the same trip", and
-it catches real regressions: a prompt change that makes her split days
-differently moves it immediately.
+With that done, the honest split is:
 
-**Decision required:** accept invariant-based assertions for spec 7, or insist on
-verbatim and accept a spec that will be muted within a month.
+| Layer | Varies? | Assert |
+|---|---|---|
+| Route + overnight choices | should not, at temperature 0 | **exactly** — a golden trip |
+| `planSummary` (day counts, dates, totals) | no — computed from rows by `computePlanSummary` | **exactly** |
+| Leg distances | ±1% — the routing provider is deterministic | exact to 1% |
+| Drive durations | traffic and roadworks move these | ±15% |
+| Penny's prose | yes, and should | shape only: no tool markup, no numbers |
+| Model version | changes outright when Anthropic ships | this is what fails the test, on purpose |
+
+So: **a golden-trip snapshot.** Girona → Porto over five days produces one
+recorded answer; the spec asserts it; if the route changes the test goes red and
+a human decides whether the new route is better. That is the instrument the
+owner actually wants — variance becomes a signal instead of a tolerance — and it
+is the thing that catches a prompt regression the day it lands.
+
+Two caveats worth stating rather than discovering later. Temperature 0 is
+*near*-deterministic, not guaranteed: provider-side batching can still produce
+rare divergence. And a model version bump WILL move the golden file — that is
+correct behaviour for this test, and it is a review, not a flake.
 
 ### 2. Preview database: clone of prod, or empty?
 
@@ -107,8 +126,8 @@ testing". Every spec seeds its own user and its own trip; nothing reads a row it
 did not write. The clone buys nothing and costs the one genuinely risky property
 in the pipeline.
 
-**Blocked on `CANONICAL_TRIP` above** — the admin generator reads a prod trip
-today, so removing the clone before the fixture exists breaks it.
+**RESOLVED: yes, empty.** Unblocked — `CANONICAL_TRIP` now exists
+(`src/server/fixtures/canonicalTrip.ts`), so nothing needs a prod row any more.
 
 ### 3. `SUBSCRIPTION_TESTING` on preview
 
@@ -127,9 +146,10 @@ opposite and moves to the required list in the same change.
 `playwright.config.ts` sets no `retries`, so it is 0 everywhere, and
 `E2E_MAX_SKIPPED=0` means nothing may skip. With a 2-minute Anthropic spec in the
 suite, one transient 529 from the API reds the deploy gate on a PR that changed a
-CSS file. Recommendation: `retries: 1` **in CI only, for the Anthropic project
-only** — split it into its own Playwright project the way `announcement` already
-is. Everything else stays at 0, because a retry on a real bug is a hidden bug.
+CSS file. **RESOLVED: `retries: 2`, everything in parallel.** Note the consequence, so it
+is a choice and not a surprise: a retry turns a real intermittent bug into a
+green build. If a spec starts passing only on attempt 2, that is a finding — the
+HTML report records the retry, and it is worth looking at rather than enjoying.
 
 ## The seventeen, mapped
 
@@ -247,7 +267,9 @@ drift into offering different things.
 
 ## Order of work
 
-1. `CANONICAL_TRIP` + wire both consumers. Nothing else can start.
+1. ~~`CANONICAL_TRIP`~~ DONE. Wire both consumers — `testSupport.seedFixture`
+   and `seedRealisticAccountData` — then delete `CANONICAL_TWO_LEGS`.
+   Set `temperature: 0` on the planning loop in the same pass.
 2. Preview DB → empty; `SUBSCRIPTION_TESTING` → preview.
 3. Specs 4, 6, 12, 13 (`trip-list`) — cheapest, and they exercise the fixture.
 4. Specs 14, 15, 16 (`trip-detail`, `fuel`) — the fixture's stops earn their keep.
