@@ -246,6 +246,14 @@ jobs:
           # worth asserting on.
           node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          # WEB_APP_ENABLED=0 matches PRODUCTION. The product went iOS-first on
+          # 2026-08-28 and the browser serves one download screen, so a preview
+          # with the web app ON would be testing a configuration nothing runs.
+          # It is what makes `web-blocked.spec.ts` meaningful and it is why the
+          # `web-ui` Playwright project is paused — those specs would each be
+          # redirected to /get-the-app before their first assertion. Re-enabling
+          # them means dropping this line AND setting E2E_WEB_UI=1.
+          #
           # PAYWALL_ENABLED is OFF by default, deliberately — merging the paywall
           # must not paywall anyone until there is something to buy. The tested
           # preview is the one place that default is wrong: e2e/subscriptions.spec.ts
@@ -259,6 +267,7 @@ jobs:
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
             -e PAYWALL_ENABLED="1" \
+            -e WEB_APP_ENABLED="0" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"

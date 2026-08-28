@@ -55,16 +55,22 @@ const REQUIRED = [
  * project — DATABASE_URL especially, which must point at the PR's ephemeral
  * Neon branch and never at the project default.
  */
-const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET', 'PAYWALL_ENABLED'];
+const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET', 'PAYWALL_ENABLED', 'WEB_APP_ENABLED'];
 
 /**
- * Must NOT reach preview. A preview is a public URL serving a copy-on-write
- * clone of production data; `SUBSCRIPTION_TESTING` arms the fake-purchase route
- * and the admin test-account generator, and neither belongs there.
+ * Nothing is forbidden on preview any more.
+ *
+ * `SUBSCRIPTION_TESTING` used to be, on the grounds that a preview is a public
+ * URL serving a copy-on-write clone of production data. Both halves of that
+ * changed: the preview database is being moved to empty-plus-migrations now
+ * that `CANONICAL_TRIP` removes the need for prod rows, and the owner's point
+ * stands that the switch exists precisely so automated tests can walk the
+ * subscription states. The route it arms is still locked to the hardcoded
+ * `sam+trial-<tag>@feraltravels.com` pattern and the admin generator behind it
+ * still needs the cookie-only admin guard, the one-address allowlist, a
+ * verified email and an `is_admin` row.
  */
-const FORBIDDEN = [
-  ['SUBSCRIPTION_TESTING', 'arms POST /api/purchase/test and the admin test-account generator on a public URL holding a clone of prod data'],
-];
+const FORBIDDEN = [];
 
 function parseEnvFile(text) {
   const found = new Set();
