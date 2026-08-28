@@ -562,33 +562,27 @@ jobs:
           # would make every run look like a native change and rebuild.
           fetch-depth: 0
 
-      # Cheap gate first, on the expensive runner, because a path filter in
-      # `if:` at job level cannot see the diff for a push event.
-      - name: Does this PR touch the app at all?
-        id: touched
-        run: |
-          BASE="${{ github.event.pull_request.base.sha }}"
-          HEAD="${{ github.event.pull_request.head.sha }}"
-          if [ -z "$BASE" ] || ! git merge-base --is-ancestor "$BASE" "$HEAD" 2>/dev/null; then
-            echo "::notice::No usable merge base — running the flows rather than skipping them."
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if git diff --name-only "$BASE" "$HEAD" | grep -qE '^(mobile/|scripts/ios-e2e-fixture\.mjs)'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::Nothing under mobile/ changed — skipping the simulator."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
+      # NO DIFF GATE. This job used to skip unless something under `mobile/`
+      # changed, because macOS runners bill about ten times a Linux one.
+      #
+      # Both halves of that reasoning expired on 2026-08-28. The repository is
+      # public, so Actions minutes — macOS included — are free. And the app is
+      # now the ONLY client: the web front end serves a download screen and its
+      # Playwright specs are paused. So a change to `src/app/api/trips/route.ts`
+      # touches no file under `mobile/`, would have skipped the simulator, and
+      # is exactly the change most likely to break the trips screen. Nothing
+      # else would have caught it — the first report would have been a phone.
+      #
+      # The BUILD is still cached against the native fingerprint below, which is
+      # where the real time went: a JS-only PR reuses the .app and skips ~15
+      # minutes of Xcode while testing the same binary.
       - uses: actions/setup-node@v4
-        if: steps.touched.outputs.run == 'true'
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
       - name: Install app dependencies
-        if: steps.touched.outputs.run == 'true'
         run: npm ci
         working-directory: mobile
 
@@ -596,7 +590,6 @@ jobs:
       # that ends up in the BINARY move? If not, last run's .app still runs this
       # JS, and compiling it again buys nothing.
       - name: Fingerprint the native surface
-        if: steps.touched.outputs.run == 'true'
         id: fingerprint
         run: |
           FP="$(cat mobile/package-lock.json mobile/app.config.js mobile/eas.json 2>/dev/null \
@@ -604,7 +597,6 @@ jobs:
           echo "value=$FP" >> "$GITHUB_OUTPUT"
 
       - name: Restore the simulator build
-        if: steps.touched.outputs.run == 'true'
         id: appcache
         uses: actions/cache@v4
         with:
@@ -615,7 +607,7 @@ jobs:
       # rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle time and
       # every PR has a different preview URL.
       - name: Build the app for the simulator
-        if: steps.touched.outputs.run == 'true' && steps.appcache.outputs.cache-hit != 'true'
+        if: steps.appcache.outputs.cache-hit != 'true'
         env:
           EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
         working-directory: mobile
@@ -642,7 +634,6 @@ jobs:
           cp -R ios/build/Build/Products/Debug-iphonesimulator/*.app ios-build/
 
       - name: Boot a simulator and install the app
-        if: steps.touched.outputs.run == 'true'
         run: |
           set -euo pipefail
           # Whatever this runner image actually ships. Pinning a model name is
@@ -656,7 +647,6 @@ jobs:
           xcrun simctl install "$UDID" mobile/ios-build/*.app
 
       - name: Install Maestro
-        if: steps.touched.outputs.run == 'true'
         run: |
           curl -Ls https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
@@ -666,7 +656,6 @@ jobs:
       # values. Uses run_id only: "re-run failed jobs" bumps the attempt without
       # redeploying the preview, and including it would desync from the app.
       - name: Derive per-run test-endpoint secret
-        if: steps.touched.outputs.run == 'true'
         env:
           HMAC_KEY: ${{ secrets.AUTH_SECRET }}
         run: |
@@ -675,7 +664,6 @@ jobs:
           echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
 
       - name: Mint the fixture account
-        if: steps.touched.outputs.run == 'true'
         id: fixture
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
@@ -689,7 +677,6 @@ jobs:
           cat fixture.env >> "$GITHUB_ENV"
 
       - name: Run the flows
-        if: steps.touched.outputs.run == 'true'
         run: |
           # The FILE, not the directory. sign-in.yaml is a subflow that
           # chat-keyboard.yaml runs itself; pointing Maestro at the directory
@@ -707,7 +694,7 @@ jobs:
       # driving a real simulator, and it is as useful on a green run for seeing
       # what the flows actually did.
       - name: Upload the recordings
-        if: always() && steps.touched.outputs.run == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: maestro-ios
