@@ -627,7 +627,12 @@ jobs:
       - name: Run the flows
         if: steps.touched.outputs.run == 'true'
         run: |
-          maestro test mobile/maestro \
+          # The FILE, not the directory. sign-in.yaml is a subflow that
+          # chat-keyboard.yaml runs itself; pointing Maestro at the directory
+          # runs it standalone as well, and the OTP code is single-use — the
+          # first sign-in spends it and the second fails on a code the server
+          # has already deleted.
+          maestro test mobile/maestro/chat-keyboard.yaml \
             -e APP_ID=com.feraltravels.app \
             -e EMAIL="$EMAIL" \
             -e CODE="$CODE" \

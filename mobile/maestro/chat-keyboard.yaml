@@ -24,8 +24,12 @@ appId: ${APP_ID}
 
 - tapOn:
     text: 'E2E Fixture Trip'
-- assertVisible:
-    id: 'chat-composer'
+
+- tapOn: 'CHAT'
+
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
     timeout: 30000
 
 # ── Keyboard DOWN ──────────────────────────────────────────────────────────
@@ -43,7 +47,9 @@ appId: ${APP_ID}
 # The nav unmounts while the keyboard is up (deliberate — it would otherwise sit
 # between the composer and the keyboard). Its absence is how this flow knows the
 # keyboard actually opened, rather than passing because the tap did nothing.
-- assertNotVisible: 'CHAT'
+- extendedWaitUntil:
+    notVisible: 'CHAT'
+    timeout: 8000
 
 - inputText: 'keyboard visibility check'
 
@@ -53,11 +59,18 @@ appId: ${APP_ID}
 - tapOn:
     id: 'chat-composer-send'
 
-# Sent means the composer was operable. The bubble is the user's own message
-# echoed into the transcript; Penny's reply is not awaited, because this flow is
-# about layout and must not spend an Anthropic call or depend on her latency.
-- assertVisible:
-    text: 'keyboard visibility check'
+# Sent means the composer was operable. This DOES start a Penny turn and spend
+# one Anthropic call — the Playwright suite already spends several, and a real
+# send is the only honest proof the button was hittable. Her reply is not
+# awaited: this flow is about layout, not about her latency.
+#
+# Note the weakness, so nobody mistakes it for strength: the text below matches
+# either the sent bubble or the input still holding it, so it does not by itself
+# prove the send landed. The tapOn above is the gate. If you want the stronger
+# assertion, wait on Penny's typing indicator instead and accept the latency.
+- extendedWaitUntil:
+    visible:
+      text: 'keyboard visibility check'
     timeout: 20000
 
 # And it survives the send: the composer is still on screen and still usable,
