@@ -108,6 +108,62 @@ export const CANONICAL_ALT_VEHICLE = {
 
 export const CANONICAL_TRIP_NAME = 'August Portugal Trip';
 
+/**
+ * The trip row's own columns — everything about the trip that is not a leg.
+ *
+ * These were missing from the first cut of this fixture, which is worth writing
+ * down because it is the same mistake `cloneTrip` made three times: the
+ * interesting data is in the child rows, so the parent's columns get forgotten,
+ * and the seed produces a trip in a state the app would not have put it in.
+ * `onboardingState` is the sharp one — a trip with twelve legs and
+ * `not_started` shows Penny's "let's plan a trip" greeting above a finished
+ * itinerary, which is exactly the incoherent fixture
+ * `assertFixtureTripPossible` exists to refuse.
+ */
+export const CANONICAL_TRIP_META = {
+  /** Legs exist and the vehicle is attached, so onboarding is behind it. */
+  onboardingState: 'done',
+  /** Planned, not driven. `tripStatus: 'draft'` is the user-facing lifecycle. */
+  status: 'planning',
+  tripStatus: 'draft',
+  preferAvoidHighways: false,
+  isTemplate: false,
+} as const;
+
+/**
+ * DELIBERATELY NOT CARRIED, and each for its own reason:
+ *
+ *   - `id`, `userId`, `vehicleId`, and every child row id — a seed makes new ones.
+ *   - `createdAt` / `updatedAt` — the seed happened now, not last August.
+ *   - `tripNameCiKey` — derived from the name by the repo layer; deriving it
+ *     twice is how the two get to disagree.
+ *   - `startDateParsed` / `endDateParsed` — derived from the ISO dates, same
+ *     argument.
+ *   - `lastKnownLat/Lng`, `positionUpdatedAt`, `currentLegId`, `currentLat/Lng`,
+ *     `progressAnchorDate`, `progressUpdatedAt` — the source trip carries a live
+ *     GPS position, because it belongs to somebody who was standing in Girona
+ *     when it was extracted. A fixture must not ship a person's coordinates,
+ *     and a freshly seeded account has not reported a position anyway. A test
+ *     that needs mid-trip progress sets it explicitly, which is also the only
+ *     way that test says what it is testing.
+ *   - `declaredRangeKm` / `declaredRangeLegId` / `declaredRangeAt` — a
+ *     conversational override from one particular day.
+ *   - The chat transcript — generated per-seed by `seedTranscript` instead. The
+ *     real one is a conversation about real calendar days ("leaving on
+ *     September 15th") and cloning it verbatim is the bug fixed in 732eda4.
+ *   - `pendingIntent`, `onboardingScan` — mid-flight onboarding state, and this
+ *     trip is past onboarding.
+ */
+export const CANONICAL_TRIP_NOT_CARRIED = [
+  'id', 'userId', 'vehicleId', 'createdAt', 'updatedAt',
+  'tripNameCiKey', 'startDateParsed', 'endDateParsed',
+  'lastKnownLat', 'lastKnownLng', 'lastKnownPlace', 'positionUpdatedAt',
+  'currentLegId', 'currentLat', 'currentLng', 'progressAnchorDate', 'progressUpdatedAt',
+  'declaredRangeKm', 'declaredRangeLegId', 'declaredRangeAt',
+  'pendingIntent', 'onboardingScan',
+  'startDate', 'endDate',
+] as const;
+
 /** The twelve legs, in order. Geometry lives in the generated sibling module. */
 export const CANONICAL_LEGS: readonly CanonicalLeg[] = [
   {
@@ -277,6 +333,7 @@ export interface ResolvedCanonicalTrip {
   startISO: string;
   endISO: string;
   legs: ResolvedCanonicalLeg[];
+  meta: typeof CANONICAL_TRIP_META;
 }
 
 /**
@@ -302,6 +359,7 @@ export function resolveCanonicalTrip(
 
   return {
     name: CANONICAL_TRIP_NAME,
+    meta: CANONICAL_TRIP_META,
     startISO,
     // The last leg's date, not start + 12: the trip ends on the day the driver
     // gets home, and `legDateISO` is the one place that arithmetic lives.

@@ -265,6 +265,68 @@ the app instead. Both surfaces show the same copy, from the same
 `paywallCopy` module, which is the thing worth asserting — that they cannot
 drift into offering different things.
 
+## Keeping the fixture from going stale
+
+The owner's question: *"let's say I do an update, a new feature, it adds some new
+table to the database that would make this previous clone old data."*
+
+That is the real failure mode of every extracted fixture, and it is silent by
+construction. A migration adds `legs.weather_note`; the seeder does not set it;
+every seeded leg gets NULL; the specs stay green because they were written
+before the column existed — and the fixture now describes a trip the app can no
+longer produce. Nothing breaks. It stops being a test of the current app, and
+nobody finds out until a user hits the path.
+
+Three mechanisms, in order of how much they cost to keep:
+
+**1. `fixtureDrift.test.ts` — free, and it already earned its place.** Every
+column on `trips`, `legs` and `stops` must be set by the fixture, defaulted on
+purpose, or listed as not-carried WITH a reason. Adding a column reds the unit
+suite with the column's name in the message. Mutation-checked against a fake
+`legs.weather_note`.
+
+For **new tables** the rule is mechanical rather than a list: any table with a
+foreign key to `trips.id` or `legs.id` is trip content by definition, so the
+schema itself says what a complete trip is. On its first run this found four
+tables nobody had considered — `legConstraints`, `gpxTrails`, `pennyTurns`, and
+one false positive (`appMeta`) caused by a bug in the guard's own block scanner,
+now fixed and regression-tested. `pennyTurns` was a genuine gap: the source trip
+has three rows the fixture says nothing about.
+
+**2. Re-extraction, on demand.** `npm run extract-canonical-trip <tripId>` —
+dry-run by default. When the drift guard reds, the usual answer is to improve
+the source trip in the app and re-extract, not to hand-edit generated data.
+
+**3. What is deliberately NOT automated: a live diff against production.** A
+scheduled job comparing the fixture to the source trip would drift-detect
+continuously, and it would also mean CI holding production credentials and a
+test suite whose result depends on a row somebody could edit from their phone.
+The fixture is a snapshot on purpose. Mechanism 1 catches the case that actually
+bites — the schema moving underneath it — without that trade.
+
+### And the list view's dates ARE user-visible, and get asserted
+
+To correct something stated ambiguously earlier: "no calendar date appears in
+the fixture" means no date is WRITTEN INTO THE SOURCE. Dates absolutely appear
+on screen — `TUE 15 SEP`, `WED 16 SEP` down the itinerary — and they are among
+the most important things in the app to validate, because both of the
+date-related incidents on record (the scrambled trip and the overwritten past
+day) showed up first as wrong day labels.
+
+Since the fixture starts at today + 14 and advances one calendar day per leg,
+every label is computable, so the spec asserts them **exactly** rather than
+checking that something date-shaped rendered:
+
+- all twelve day labels, in order, matching `legDateISO(start, i)`;
+- the header range matching the first and last;
+- weekday names agreeing with the dates (a formatter bug that keeps the number
+  and loses the day is exactly the kind of thing that survives a loose check);
+- every day ahead of today, none in the collapsed "behind you" section;
+- and after spec 5 extends the third base day, the labels on every leg AFTER it
+  shift by exactly the number of days added — which is the real assertion, since
+  re-anchoring downstream dates is what `getTripFull` does and what the
+  overwritten-past-day incident got wrong.
+
 ## Order of work
 
 1. ~~`CANONICAL_TRIP`~~ DONE. Wire both consumers — `testSupport.seedFixture`
