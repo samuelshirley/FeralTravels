@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// `test-endpoints.ts` carries `server-only`, and the assertions at the bottom of
+// this file need its real pattern rather than a copy that could drift from it.
+vi.mock('server-only', () => ({}));
 import { isBlockedWebPath, webAppEnabled, WEB_ALWAYS_ALLOWED } from './webAccess';
 import { PUBLIC_PATH_PREFIXES } from './paywallPaths';
 
@@ -94,5 +98,36 @@ describe('isBlockedWebPath', () => {
 
   it('the allowed list has no entry that is not a real prefix', () => {
     for (const p of WEB_ALWAYS_ALLOWED) expect(p.startsWith('/')).toBe(true);
+  });
+});
+
+/**
+ * The fixture-account escape hatch, asserted at the boundary it depends on.
+ *
+ * `requireWebAccess` lets a `playwright-*@e2e.feraltravels.com` session keep web
+ * access when the test endpoints are armed, so the specs that drive /settings
+ * and /trips survive the web being switched off. That is only safe because the
+ * pattern cannot match a real address and the gate cannot open in production.
+ */
+describe('fixture addresses cannot be a real person or reach production', () => {
+  it('only matches the no-MX e2e subdomain', async () => {
+    const { isFixtureEmail } = await import('@/server/auth/test-endpoints');
+    expect(isFixtureEmail('playwright-123-abc@e2e.feraltravels.com')).toBe(true);
+    for (const impostor of [
+      'samuelashirley@gmail.com',
+      'playwright-1@feraltravels.com',
+      'playwright-1@e2e.feraltravels.com.evil.com',
+      'notplaywright-1@e2e.feraltravels.com',
+      'sam+trial-260827-de78@feraltravels.com',
+    ]) {
+      expect(isFixtureEmail(impostor), `${impostor} must not pass as a fixture address`).toBe(false);
+    }
+  });
+
+  it('the endpoint gate is hard-off in production, whatever else is set', async () => {
+    const { areTestEndpointsEnabled } = await import('@/server/auth/test-endpoints');
+    expect(areTestEndpointsEnabled({ VERCEL_ENV: 'production', E2E_TEST_ENDPOINTS: '1' })).toBe(false);
+    expect(areTestEndpointsEnabled({ E2E_TEST_ENDPOINTS: '1' })).toBe(true);
+    expect(areTestEndpointsEnabled({})).toBe(false);
   });
 });
