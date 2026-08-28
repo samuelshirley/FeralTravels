@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, request as playwrightRequest, type APIRequestContext } from '@playwright/test';
 import { testEndpointHeaders } from './fixtures/constants';
 
 /**
@@ -37,12 +37,89 @@ import { testEndpointHeaders } from './fixtures/constants';
  * `E2E_BASE_URL` in ci.yml, by the same step that decides the deploy flag, so
  * the two cannot drift apart silently.
  */
-const WEB_ON = process.env.E2E_WEB_UI === '1';
+/**
+ * What the deployment ACTUALLY does, discovered by asking it.
+ *
+ * The first version keyed off `E2E_WEB_UI`, which is a Playwright PROJECT
+ * switch — a different variable, on a different machine, kept in step with
+ * `WEB_APP_ENABLED` by hand. Two names for one fact is the drift this whole
+ * spec exists to catch, so it now probes the running app instead: send an
+ * anonymous request to a gated page and read where it is sent.
+ *
+ *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED=0
+ *   → /login        ordinary auth redirect    → the gate is off
+ *
+ * `E2E_EXPECT_WEB_BLOCKED` is what CI INTENDED, derived in ci.yml from the same
+ * value it passes to `vercel deploy`. Observed and intended are then compared,
+ * and a mismatch is the most valuable failure this file can produce: it means
+ * the env var did not take, which is exactly how a paywall shipped unenforced
+ * for a fortnight while the admin panel cheerfully reported the right state.
+ */
+type WebState = 'blocked' | 'open';
+
+async function observeWebState(request: APIRequestContext): Promise<WebState> {
+  const res = await request.get('/trips', { ...anon, maxRedirects: 0 });
+  const location = res.headers()['location'] ?? '';
+  if (location.includes('/get-the-app')) return 'blocked';
+  if (location.includes('/login')) return 'open';
+  throw new Error(
+    `Could not tell which state the web app is in. GET /trips answered ${res.status()} ` +
+      `-> "${location}", which is neither the gate (/get-the-app) nor the auth redirect (/login).`
+  );
+}
+
+/**
+ * Probed once PER WORKER, not once per run.
+ *
+ * `fullyParallel` is on, so these tests are spread across four workers in
+ * separate processes. A value set inside one test is invisible to the others —
+ * the first draft of this file did exactly that and every worker but one would
+ * have asserted against the default. `beforeAll` runs in each worker, so each
+ * pays one extra request and every test reads the truth.
+ */
+let observed: WebState;
+let WEB_ON = true;
+
+test.beforeAll(async () => {
+  const ctx = await playwrightRequest.newContext({
+    baseURL: process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`,
+    extraHTTPHeaders: testEndpointHeaders(),
+  });
+  try {
+    observed = await observeWebState(ctx);
+    WEB_ON = observed === 'open';
+  } finally {
+    await ctx.dispose();
+  }
+});
 
 /** No cookie, no bearer token — exactly what a stranger's browser sends. */
 const anon = { headers: testEndpointHeaders() };
 
 test.describe('web app off', () => {
+  /**
+   * FIRST, and everything else depends on it. Establishes which state the
+   * deployment is in and — when CI said which state it meant — proves the
+   * variable actually took effect.
+   */
+  test('the web switch is in the state this deployment intended', async () => {
+    const intended = process.env.E2E_EXPECT_WEB_BLOCKED;
+    if (intended === undefined) {
+      // Local runs against a hand-started server. Report, do not fail.
+      console.log(`[web-blocked] no E2E_EXPECT_WEB_BLOCKED set; observed state: ${observed}`);
+      return;
+    }
+
+    const expected: WebState = intended === '1' ? 'blocked' : 'open';
+    expect(
+      observed,
+      `CI deployed this preview expecting the web app to be ${expected} ` +
+        `(E2E_EXPECT_WEB_BLOCKED=${intended}), but it is ${observed}. The WEB_APP_ENABLED ` +
+        `value passed to \`vercel deploy\` did not take effect. Everything below is now ` +
+        `asserting the wrong contract, so fix this before reading any other failure.`
+    ).toBe(expected);
+  });
+
   /**
    * THE one that takes the product down. A 401 here means the route ran and its
    * own guard refused — correct. A 307 to /get-the-app means the edge ate it,
@@ -104,22 +181,26 @@ test.describe('web app off', () => {
    * moment this branch merges.
    */
   for (const path of ['/', '/trips', '/settings', '/vehicle-setup', '/admin']) {
-    test(`${path} is gated for a stranger, by ${WEB_ON ? 'auth' : 'the web gate'}`, async ({
-      request,
-    }) => {
-      const res = await request.get(path, { ...anon, maxRedirects: 0 });
-      expect(res.status(), `${path} should redirect`).toBeGreaterThanOrEqual(300);
-      expect(res.status()).toBeLessThan(400);
-      const location = res.headers()['location'] ?? '';
+    test(`${path} never renders for a stranger`, async ({ request }) => {
+      // FOLLOWING the redirects, not asserting the first hop.
+      //
+      // `/vehicle-setup` is why. It is a legacy stub whose entire body is
+      // `redirect('/trips')` — remediation moved into the chat composer long
+      // ago, but Penny's prompt and StopsSection still link to it. So an
+      // anonymous request there answers 307 -> /trips and only THEN -> /login:
+      // two hops to the same place every other path reaches in one. Asserting
+      // the first hop failed this spec on a route that was behaving correctly.
+      //
+      // The contract worth holding is the user-visible one: a stranger ends up
+      // signing in, or being told to get the app. Never inside.
+      const res = await request.get(path, { ...anon });
+      const final = new URL(res.url()).pathname;
 
+      expect(final, `${path} must not render for a stranger`).not.toBe(path);
       if (WEB_ON) {
-        expect(location, `${path} must fall through to sign-in`).toContain('/login');
-        expect(
-          location,
-          `${path} hit the web gate on a deployment that never set WEB_APP_ENABLED=0`
-        ).not.toContain('/get-the-app');
+        expect(final, `${path} should end at sign-in while the web app is on`).toBe('/login');
       } else {
-        expect(location, `${path} should land on the download screen`).toContain('/get-the-app');
+        expect(final, `${path} should end at the download screen`).toBe('/get-the-app');
       }
     });
   }

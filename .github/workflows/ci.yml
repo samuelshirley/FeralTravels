@@ -183,6 +183,9 @@ jobs:
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
+      # The same build, deployed a second time with WEB_APP_ENABLED=0, so the
+      # configuration production actually runs gets tested too.
+      blocked_url: ${{ steps.deploy.outputs.blocked_url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -285,6 +288,32 @@ jobs:
             -e PAYWALL_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          # A SECOND deployment of the same prebuilt artifact, with the web app
+          # switched OFF.
+          #
+          # One deployment can only be in one state, so a suite running against
+          # one of them can only ever prove half of a switch. The half it does
+          # not prove is the half that ships: production runs with
+          # WEB_APP_ENABLED=0, and until this existed nothing had ever executed
+          # that configuration — the block was argued from unit tests and a
+          # local reading of middleware.
+          #
+          # Cheap, because everything expensive is already done. Same prebuilt
+          # bundle, same Neon branch, same secret; only the env differs. It adds
+          # one `vercel deploy` and a handful of assertions, and it is the only
+          # thing that can catch a gate that swallows /api or a legal page —
+          # the two failures that would take the product down or fail App
+          # Review, and neither of which is visible from the open side.
+          BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
+            -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
+            -e E2E_TEST_ENDPOINTS="1" \
+            -e PAYWALL_ENABLED="1" \
+            -e WEB_APP_ENABLED="0" \
+            -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
+          echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
+          echo "Preview (web blocked): $BLOCKED_URL"
+
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
@@ -412,6 +441,12 @@ jobs:
           # web-blocked.spec.ts asserts the gate is NOT engaged rather than that
           # it is. Both must move together with the deploy flag above.
           E2E_WEB_UI: '1'
+          # What this run EXPECTS the deployment to be. web-blocked.spec.ts
+          # probes the running app and fails if the two disagree — that
+          # mismatch is the whole point: it is how you find out an env var
+          # passed to `vercel deploy` never took effect, rather than reading a
+          # green suite that asserted the wrong contract.
+          E2E_EXPECT_WEB_BLOCKED: '0'
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -435,6 +470,31 @@ jobs:
       # got switched off, and a suite testing nothing shipped green for two
       # weeks. If you find yourself raising it, the question to answer first is
       # what the suite has started depending on that it doesn't control.
+      # THE OTHER HALF OF THE SWITCH.
+      #
+      # Everything above ran against a preview with the web app ON, because that
+      # is where the browser suite lives. This runs one spec against the second
+      # deployment, where WEB_APP_ENABLED=0 — the configuration production
+      # actually serves.
+      #
+      # It is the only place the blocked contract is ever executed. The two
+      # failures it exists to catch are invisible from the open side and both
+      # are severe: a gate that swallows `/api/**` takes every phone offline at
+      # once, and a gate that swallows `/privacy` is an App Store rejection on a
+      # URL already typed into App Store Connect.
+      #
+      # `if: always()` so a red browser suite does not hide a broken gate —
+      # those are independent questions and the answer to the second one is the
+      # one that ships.
+      - name: Run the blocked-web contract against the second preview
+        if: always()
+        env:
+          E2E_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
+          E2E_EXPECT_WEB_BLOCKED: '1'
+          E2E_TEST_ENDPOINTS_SECRET: ${{ env.E2E_TEST_ENDPOINTS_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npx playwright test e2e/web-blocked.spec.ts --project=api --reporter=list
+
       - name: Assert the suite actually ran
         if: always()
         env:
