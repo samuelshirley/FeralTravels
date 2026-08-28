@@ -15,9 +15,29 @@ import { testEndpointHeaders } from './fixtures/constants';
  *   1. something under /api gets swept up  → the product is down
  *   2. a legal page gets swept up          → App Store rejection
  *
- * Runs in the `api` project, unauthenticated, against the deployed preview
- * (which sets WEB_APP_ENABLED=0 to match production).
+ * Runs in the `api` project, unauthenticated, against the deployed preview.
+ *
+ * WHICH SIDE OF THE SWITCH IT IS ON. `WEB_APP_ENABLED` is fixed for the life of
+ * a deployment, so one preview cannot exercise both states. Rather than skip
+ * half this file on the side it is not on — a skip reds the build, because
+ * E2E_MAX_SKIPPED is 0, and a suite that quietly tests nothing is the failure
+ * this repo has already had once — every test below asserts the CORRECT
+ * behaviour for the configuration it finds, keyed on `E2E_WEB_UI`.
+ *
+ * Most of it does not care either way: /api, the legal pages and /login are
+ * never gated in either configuration, and those are the assertions that stop
+ * this becoming an outage or an App Store rejection. Only the five page paths
+ * at the bottom differ, and there they are the more useful assertion in the
+ * web-ON case: they prove the gate ships INERT, which is exactly the
+ * configuration going to production with the flag unset.
  */
+
+/**
+ * True when the preview deployed with the web app ON. Set beside
+ * `E2E_BASE_URL` in ci.yml, by the same step that decides the deploy flag, so
+ * the two cannot drift apart silently.
+ */
+const WEB_ON = process.env.E2E_WEB_UI === '1';
 
 /** No cookie, no bearer token — exactly what a stranger's browser sends. */
 const anon = { headers: testEndpointHeaders() };
@@ -72,15 +92,35 @@ test.describe('web app off', () => {
     expect(res.status()).toBe(200);
   });
 
-  /** And the part that IS supposed to be blocked, actually is. */
+  /**
+   * The pages that the gate is actually about — asserted from whichever side
+   * this deployment is on.
+   *
+   * Both branches expect a redirect: a stranger never reaches these either way.
+   * What differs is WHERE, and that is the whole question. With the flag unset
+   * they must fall through to the ordinary auth redirect, and landing on
+   * /get-the-app instead would mean the gate engaged when nobody asked it to —
+   * the exact regression that would take the web app down for everyone the
+   * moment this branch merges.
+   */
   for (const path of ['/', '/trips', '/settings', '/vehicle-setup', '/admin']) {
-    test(`${path} shows the download screen to a stranger`, async ({ request }) => {
+    test(`${path} is gated for a stranger, by ${WEB_ON ? 'auth' : 'the web gate'}`, async ({
+      request,
+    }) => {
       const res = await request.get(path, { ...anon, maxRedirects: 0 });
       expect(res.status(), `${path} should redirect`).toBeGreaterThanOrEqual(300);
       expect(res.status()).toBeLessThan(400);
-      expect(res.headers()['location'] ?? '', `${path} should land on the download screen`).toContain(
-        '/get-the-app'
-      );
+      const location = res.headers()['location'] ?? '';
+
+      if (WEB_ON) {
+        expect(location, `${path} must fall through to sign-in`).toContain('/login');
+        expect(
+          location,
+          `${path} hit the web gate on a deployment that never set WEB_APP_ENABLED=0`
+        ).not.toContain('/get-the-app');
+      } else {
+        expect(location, `${path} should land on the download screen`).toContain('/get-the-app');
+      }
     });
   }
 

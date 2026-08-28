@@ -152,17 +152,24 @@ export default defineConfig({
      * demo, and a spec that took a year to get right is much cheaper to keep
      * than to rewrite from memory.
      *
-     * They are ALSO currently unrunnable as written: the CI preview deploys
-     * with `WEB_APP_ENABLED=0` to match production, so every one of them would
-     * be redirected to /get-the-app before its first assertion. Re-enabling
-     * means two switches, not one — set E2E_WEB_UI=1 here AND drop the
-     * `-e WEB_APP_ENABLED="0"` from the preview deploy in ci.yml.
+     * RE-ENABLED 2026-08-28. The preview no longer deploys with
+     * `WEB_APP_ENABLED=0`, and ci.yml sets `E2E_WEB_UI=1` beside `E2E_BASE_URL`
+     * — the two move together by construction, in the same job, because either
+     * one alone is a suite that fails for a configuration reason.
      *
-     * COVERAGE GAP, stated plainly rather than discovered later: pausing these
-     * removes the only automated proof that Penny plans a trip, that fuel
-     * sources lazily, that the paywall blocks, and that vehicles can be
-     * managed. Nothing covers those until the Maestro flows replace them, and
-     * `penny-plan-trip` should be the first one written for exactly that reason.
+     * The coverage this restores is the reason it was worth doing: these specs
+     * are the only automated proof that Penny plans a trip, that fuel sources
+     * lazily, that the paywall blocks and that vehicles can be managed. They
+     * were paused for a day and nothing covered any of it.
+     *
+     * WHAT IT COSTS, since the flag is fixed per deployment and one preview
+     * cannot be on both sides: no browser test now exercises the web app in its
+     * switched-OFF state. `web-blocked.spec.ts` still runs and still proves the
+     * things that would be an outage or an App Store rejection — /api, the legal
+     * pages and /login are ungated in EITHER configuration — and the gate's own
+     * logic is unit-tested in `src/lib/webAccess.test.ts` and
+     * `webAccessCoverage.test.ts`. To go back, restore the deploy flag in ci.yml
+     * and drop `E2E_WEB_UI`; the spec follows automatically.
      */
     ...(process.env.E2E_WEB_UI === '1'
       ? [
