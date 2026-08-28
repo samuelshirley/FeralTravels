@@ -4,6 +4,7 @@ import { isAdmin } from '@/server/auth/guards';
 import { listDeletedAccounts } from '@/server/repos/accountDeletion';
 import { isEmailEncryptionConfigured } from '@/server/deletedUserCrypto';
 import AppNavbar from '@/components/AppNavbar';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -60,6 +61,11 @@ function tenureDays(created: Date | null, deleted: Date): string {
 }
 
 export default async function AdminDeletedAccountsPage() {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');

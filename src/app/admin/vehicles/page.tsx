@@ -9,6 +9,7 @@ import {
   vehicleProfileRequiredCompletion,
 } from '@/lib/vehicleProfile';
 import { kmToMi, asUnitsPref, type UnitsPref } from '@/lib/units';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -79,6 +80,11 @@ const labelStyle: React.CSSProperties = {
 };
 
 export default async function AdminVehiclesPage() {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');

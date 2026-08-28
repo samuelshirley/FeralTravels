@@ -27,6 +27,7 @@ import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
 import styles from './admin.module.css';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -79,6 +80,11 @@ const thStyle: React.CSSProperties = {
 };
 
 export default async function AdminPage() {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   // Silent redirect — no error page, no info leak that /admin even exists.
