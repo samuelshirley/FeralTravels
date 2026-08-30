@@ -22,7 +22,7 @@ import { testEndpointHeaders } from './fixtures/constants';
  * half this file on the side it is not on — a skip reds the build, because
  * E2E_MAX_SKIPPED is 0, and a suite that quietly tests nothing is the failure
  * this repo has already had once — every test below asserts the CORRECT
- * behaviour for the configuration it finds, keyed on `E2E_WEB_UI`.
+ * behaviour for the configuration it finds, keyed on the Playwright PROJECT.
  *
  * Most of it does not care either way: /api, the legal pages and /login are
  * never gated in either configuration, and those are the assertions that stop
@@ -49,11 +49,15 @@ import { testEndpointHeaders } from './fixtures/constants';
  *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED=0
  *   → /login        ordinary auth redirect    → the gate is off
  *
- * `E2E_EXPECT_WEB_BLOCKED` is what CI INTENDED, derived in ci.yml from the same
- * value it passes to `vercel deploy`. Observed and intended are then compared,
- * and a mismatch is the most valuable failure this file can produce: it means
- * the env var did not take, which is exactly how a paywall shipped unenforced
- * for a fortnight while the admin panel cheerfully reported the right state.
+ * INTENT comes from the project name. ci.yml runs this spec twice: once in the
+ * `api` project against the ordinary preview, and once in `web-blocked` against
+ * a second deployment of the same build carrying WEB_APP_ENABLED=0. So project
+ * -> deployment -> flag is one chain with nothing to keep in step by hand.
+ *
+ * Observed and intended are then compared, and a mismatch is the most valuable
+ * failure this file can produce: it means the env var did not take, which is
+ * exactly how a paywall shipped unenforced for a fortnight while the admin
+ * panel cheerfully reported the right state.
  */
 type WebState = 'blocked' | 'open';
 
@@ -80,9 +84,16 @@ async function observeWebState(request: APIRequestContext): Promise<WebState> {
 let observed: WebState;
 let WEB_ON = true;
 
-test.beforeAll(async () => {
+test.beforeAll(async ({}, testInfo) => {
+  // The project's OWN baseURL, not the ambient env var. The `web-blocked`
+  // project points at a second deployment of the same build with
+  // WEB_APP_ENABLED=0; reading E2E_BASE_URL here would have probed the open one
+  // and then asserted the blocked contract against it.
   const ctx = await playwrightRequest.newContext({
-    baseURL: process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`,
+    baseURL:
+      (testInfo.project.use.baseURL as string | undefined) ||
+      process.env.E2E_BASE_URL ||
+      `http://localhost:${process.env.E2E_PORT || 4444}`,
     extraHTTPHeaders: testEndpointHeaders(),
   });
   try {
@@ -102,21 +113,19 @@ test.describe('web app off', () => {
    * deployment is in and — when CI said which state it meant — proves the
    * variable actually took effect.
    */
-  test('the web switch is in the state this deployment intended', async () => {
-    const intended = process.env.E2E_EXPECT_WEB_BLOCKED;
-    if (intended === undefined) {
-      // Local runs against a hand-started server. Report, do not fail.
-      console.log(`[web-blocked] no E2E_EXPECT_WEB_BLOCKED set; observed state: ${observed}`);
-      return;
-    }
-
-    const expected: WebState = intended === '1' ? 'blocked' : 'open';
+  test('the web switch is in the state this deployment intended', async ({}, testInfo) => {
+    // Intent comes from the PROJECT, and the project comes from which
+    // deployment ci.yml aimed it at — which came from the WEB_APP_ENABLED value
+    // it passed to `vercel deploy`. One chain, no second variable to keep in
+    // step by hand. The earlier version read E2E_WEB_UI, a Playwright switch on
+    // a different machine, which is the drift this file exists to catch.
+    const expected: WebState = testInfo.project.name === 'web-blocked' ? 'blocked' : 'open';
     expect(
       observed,
-      `CI deployed this preview expecting the web app to be ${expected} ` +
-        `(E2E_EXPECT_WEB_BLOCKED=${intended}), but it is ${observed}. The WEB_APP_ENABLED ` +
-        `value passed to \`vercel deploy\` did not take effect. Everything below is now ` +
-        `asserting the wrong contract, so fix this before reading any other failure.`
+      `Project "${testInfo.project.name}" targets a deployment that should be ${expected}, ` +
+        `but it is ${observed}. The WEB_APP_ENABLED value ci.yml passed to \`vercel deploy\` ` +
+        `did not take effect. Every assertion below is now checking the wrong contract, so ` +
+        `fix this before reading any other failure in this file.`
     ).toBe(expected);
   });
 

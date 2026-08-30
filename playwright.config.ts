@@ -143,6 +143,35 @@ export default defineConfig({
     },
 
     /**
+     * THE OTHER SIDE OF THE SWITCH — the same spec, against a second deployment
+     * of the same build with WEB_APP_ENABLED=0.
+     *
+     * A project rather than a second `playwright test` invocation, and that is
+     * the whole point of the shape. The separate-command version broke twice in
+     * one run: it launched a browser without `PLAYWRIGHT_BROWSERS_PATH=0`, so
+     * Playwright looked in ~/.cache while `npm run e2e` had installed into
+     * node_modules; and it wrote no `playwright-results.json`, so the PR comment
+     * cheerfully reported the FIRST run's 78 passes while the job was red. One
+     * invocation means one browser resolution, one JSON, one comment, one
+     * skip-guard — none of which can drift from the other.
+     *
+     * `baseURL` per project is the mechanism: same specs, different deployment.
+     * Only added when ci.yml supplies the URL, so a local run is unaffected.
+     */
+    ...(process.env.E2E_BLOCKED_BASE_URL
+      ? [
+          {
+            name: 'web-blocked',
+            use: {
+              ...devices['Desktop Chrome'],
+              baseURL: process.env.E2E_BLOCKED_BASE_URL,
+            },
+            testMatch: /web-blocked\.spec\.ts/,
+          },
+        ]
+      : []),
+
+    /**
      * WEB UI — PAUSED, not deleted. 2026-08-28.
      *
      * The product went iOS-first and the browser now serves one download

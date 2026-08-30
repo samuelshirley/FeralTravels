@@ -441,12 +441,18 @@ jobs:
           # web-blocked.spec.ts asserts the gate is NOT engaged rather than that
           # it is. Both must move together with the deploy flag above.
           E2E_WEB_UI: '1'
-          # What this run EXPECTS the deployment to be. web-blocked.spec.ts
-          # probes the running app and fails if the two disagree — that
-          # mismatch is the whole point: it is how you find out an env var
-          # passed to `vercel deploy` never took effect, rather than reading a
-          # green suite that asserted the wrong contract.
-          E2E_EXPECT_WEB_BLOCKED: '0'
+          # The second deployment — same build, WEB_APP_ENABLED=0. Its presence
+          # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
+          # covers both sides of the switch: one browser resolution, one
+          # playwright-results.json, one PR comment, one skip-guard.
+          #
+          # It was a separate `npx playwright test` first, and that broke twice
+          # in a single run. It launched without PLAYWRIGHT_BROWSERS_PATH=0, so
+          # Playwright hunted ~/.cache while the install step had put chromium
+          # in node_modules; and `--reporter=list` meant it wrote no JSON, so
+          # the PR comment reported the FIRST run's 78 passes while the job was
+          # red. Both are structural consequences of running the suite twice.
+          E2E_BLOCKED_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -470,31 +476,6 @@ jobs:
       # got switched off, and a suite testing nothing shipped green for two
       # weeks. If you find yourself raising it, the question to answer first is
       # what the suite has started depending on that it doesn't control.
-      # THE OTHER HALF OF THE SWITCH.
-      #
-      # Everything above ran against a preview with the web app ON, because that
-      # is where the browser suite lives. This runs one spec against the second
-      # deployment, where WEB_APP_ENABLED=0 — the configuration production
-      # actually serves.
-      #
-      # It is the only place the blocked contract is ever executed. The two
-      # failures it exists to catch are invisible from the open side and both
-      # are severe: a gate that swallows `/api/**` takes every phone offline at
-      # once, and a gate that swallows `/privacy` is an App Store rejection on a
-      # URL already typed into App Store Connect.
-      #
-      # `if: always()` so a red browser suite does not hide a broken gate —
-      # those are independent questions and the answer to the second one is the
-      # one that ships.
-      - name: Run the blocked-web contract against the second preview
-        if: always()
-        env:
-          E2E_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
-          E2E_EXPECT_WEB_BLOCKED: '1'
-          E2E_TEST_ENDPOINTS_SECRET: ${{ env.E2E_TEST_ENDPOINTS_SECRET }}
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-        run: npx playwright test e2e/web-blocked.spec.ts --project=api --reporter=list
-
       - name: Assert the suite actually ran
         if: always()
         env:
@@ -696,25 +677,24 @@ jobs:
       # The same question mobile.yml asks before publishing an OTA: did anything
       # that ends up in the BINARY move? If not, last run's .app still runs this
       # JS, and compiling it again buys nothing.
-      - name: Fingerprint the native surface
-        id: fingerprint
-        run: |
-          FP="$(cat mobile/package-lock.json mobile/app.config.js mobile/eas.json 2>/dev/null \
-                 | shasum -a 256 | cut -d' ' -f1)"
-          echo "value=$FP" >> "$GITHUB_OUTPUT"
-
-      - name: Restore the simulator build
-        id: appcache
-        uses: actions/cache@v4
-        with:
-          path: mobile/ios-build
-          key: ios-sim-app-${{ steps.fingerprint.outputs.value }}
-
-      # Only the expensive half is skipped on a hit. The JS bundle is always
-      # rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle time and
-      # every PR has a different preview URL.
+      # NO BUILD CACHE, deliberately, and this is a correction rather than a
+      # preference.
+      #
+      # There was one, keyed on a "native fingerprint" (package-lock +
+      # app.config + eas.json), with a comment promising "the JS bundle is
+      # always rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle
+      # time and every PR has a different preview URL." There was no such step.
+      # On a cache HIT the whole build was skipped, bundle included — so the
+      # simulator would have launched an app pointed at a PREVIOUS PR's preview,
+      # a URL torn down when that PR closed. Sign-in would fail against a dead
+      # host and the flow would look like a broken app.
+      #
+      # It has not bitten yet only because the fingerprint has changed on every
+      # run so far. The first time it does not, the failure is a mystery.
+      #
+      # Rebuilding always removes the hazard outright, and it costs nothing that
+      # matters: the repository is public, so macOS Actions minutes are free.
       - name: Build the app for the simulator
-        if: steps.appcache.outputs.cache-hit != 'true'
         env:
           EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
         working-directory: mobile
@@ -727,10 +707,7 @@ jobs:
           WORKSPACE="$(ls -d ios/*.xcworkspace | head -1)"
           SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
           echo "Building scheme $SCHEME from $WORKSPACE"
-          # No xcpretty: it is not guaranteed on the runner image, and piping
-          # through a missing binary turns a green build into a confusing red.
-          # Raw xcodebuild output is verbose and is exactly what you want in the
-          # log on the day this breaks.
+          echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
           xcodebuild -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Debug \
@@ -796,11 +773,31 @@ jobs:
             -e EMAIL="$EMAIL" \
             -e CODE="$CODE" \
             --format junit \
-            --output maestro-report.xml
+            --output maestro-report.xml \
+            --debug-output maestro-debug
 
       # Always. A screenshot of the failing screen is the entire value of
       # driving a real simulator, and it is as useful on a green run for seeing
       # what the flows actually did.
+      # WHICH STEP FAILED, in the log, without downloading anything.
+      #
+      # The first failing run said exactly "[Failed] chat-keyboard (28s)" and
+      # nothing else. The step that died was in the artifact — behind a login,
+      # a download and an unzip, which is three obstacles between a red build
+      # and the one line that explains it. The JUnit XML already names it; this
+      # just prints it.
+      - name: Say where the flow died
+        if: failure()
+        run: |
+          echo "::group::maestro-report.xml"
+          cat maestro-report.xml 2>/dev/null || echo "(no report produced)"
+          echo "::endgroup::"
+          echo "::group::maestro debug output"
+          find maestro-debug -name '*.txt' -o -name '*.log' 2>/dev/null | head -20 | while read -r f; do
+            echo "--- $f"; tail -60 "$f"
+          done || echo "(no debug output)"
+          echo "::endgroup::"
+
       - name: Upload the recordings
         id: recordings
         if: always()
@@ -809,6 +806,7 @@ jobs:
           name: maestro-ios
           path: |
             maestro-report.xml
+            maestro-debug/**
             ~/.maestro/tests/**
           if-no-files-found: warn
 
