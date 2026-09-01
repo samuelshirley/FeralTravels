@@ -717,23 +717,69 @@ jobs:
           mkdir -p ios-build
           cp -R ios/build/Build/Products/Debug-iphonesimulator/*.app ios-build/
 
+      # ── The toolchain Maestro's driver needs, and why it is selected HERE ──
+      #
+      # Maestro does not compile its iOS driver on the runner. It ships a
+      # PREBUILT `maestro-driver-iosUITests-Runner.app` and the `.xctestrun`
+      # that goes with it, and starts them with `xcodebuild
+      # test-without-building`. Those products are built in Maestro's own CI on
+      # macos-26 with Xcode 26.2 — see `rebuild-ios-drivers.yaml` in
+      # mobile-dev-inc/maestro, which is titled "Rebuild iOS Driver (Xcode
+      # 26.2)" and does nothing else.
+      #
+      # The DEFAULT Xcode on the macos-15 image is 16.4, and 16.4 cannot run a
+      # 26.2 xctestrun. `xcodebuild` returns instantly, nothing ever listens on
+      # port 7001, and Maestro waits out its startup budget and reports "iOS
+      # driver not ready in time, consider increasing timeout" — a message that
+      # names a timeout and says nothing about a toolchain, which is how this
+      # job burned a run looking like a slow simulator. Raising
+      # MAESTRO_DRIVER_STARTUP_TIMEOUT cannot help: nothing is on its way.
+      #
+      # AFTER the app build, deliberately. The app compiles against the default
+      # Xcode 16.4 and the iOS 18.5 SDK, which is the build that has been
+      # shipping and is not worth disturbing to fix a test harness. An app built
+      # against 18.5 installs and runs on a 26.2 simulator perfectly well.
+      - name: Select the Xcode that Maestro's driver was built with
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+
       - name: Boot a simulator and install the app
         run: |
           set -euo pipefail
-          # Whatever this runner image actually ships. Pinning a model name is
-          # how this job breaks silently the month GitHub rolls the image
-          # forward and "iPhone 16" stops existing.
-          UDID="$(xcrun simctl list devices available -j \
-            | python3 -c "import json,sys; ds=json.load(sys.stdin)['devices']; print(next(d['udid'] for v in ds.values() for d in v if d['name'].startswith('iPhone')))")"
-          echo "Booting simulator $UDID"
-          xcrun simctl boot "$UDID" || true
+          # Nothing else booted. Maestro finds its device by looking for a
+          # BOOTED simulator, so a stray one left up by the image is a device
+          # this job never installed the app onto.
+          xcrun simctl shutdown all || true
+          # The NEWEST iOS runtime on the image, not the first iPhone `simctl`
+          # happens to name — which on this image is an iOS 18.5 one, a second
+          # way to hand a driver built by Xcode 26.2 a runtime it was never
+          # built against. `scripts/pick-ios-simulator.mjs` has the reasoning
+          # and the reason neither the model nor the runtime is hardcoded; node
+          # is already set up above for the Expo build.
+          read -r UDID LABEL <<<"$(node scripts/pick-ios-simulator.mjs)"
+          echo "Booting $LABEL ($UDID)"
+          xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" mobile/ios-build/*.app
+          # Passed to Maestro explicitly below rather than left to discovery.
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 
+      # PINNED. Unpinned, this step installs whatever Maestro released most
+      # recently, and the iOS driver inside it is built against whatever Xcode
+      # Maestro was using that week — so the Xcode selected above and the driver
+      # it has to run are a pair that would otherwise drift apart without a
+      # single line of this repository changing. When bumping it, check which
+      # Xcode that release's `rebuild-ios-drivers.yaml` used and move both.
       - name: Install Maestro
+        env:
+          MAESTRO_VERSION: 2.10.0
         run: |
+          set -euo pipefail
           curl -Ls https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
 
       # Same derivation as the preview and e2e jobs — computed, never passed
       # through job outputs, because GitHub drops outputs containing masked
@@ -762,13 +808,21 @@ jobs:
 
       - name: Run the flows
         id: flows
+        env:
+          # 240s, the same budget Maestro uses in its own iOS e2e workflow. The
+          # default is 120s. This is NOT the fix for the driver failing to start
+          # — that is the Xcode selection above — it is headroom for a cold
+          # runner installing and launching the runner app for the first time.
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: 240000
         run: |
           # The FILE, not the directory. sign-in.yaml is a subflow that
           # chat-keyboard.yaml runs itself; pointing Maestro at the directory
           # runs it standalone as well, and the OTP code is single-use — the
           # first sign-in spends it and the second fails on a code the server
           # has already deleted.
-          maestro test mobile/maestro/chat-keyboard.yaml \
+          # --device, so the flows run on the simulator this job booted and
+          # installed onto, rather than on whichever one Maestro finds booted.
+          maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
             -e APP_ID=com.feraltravels.app \
             -e EMAIL="$EMAIL" \
             -e CODE="$CODE" \
@@ -796,6 +850,18 @@ jobs:
           find maestro-debug -name '*.txt' -o -name '*.log' 2>/dev/null | head -20 | while read -r f; do
             echo "--- $f"; tail -60 "$f"
           done || echo "(no debug output)"
+          echo "::endgroup::"
+          # The XCTest runner's own log, which is where a driver that never
+          # comes up says why. It lives outside the working directory, and
+          # reading it meant downloading the artifact — three obstacles between
+          # a red build and the one line that explains it, which is the whole
+          # reason this step exists.
+          echo "::group::XCTest driver log and simulator state"
+          xcodebuild -version || true
+          xcrun simctl list devices booted || true
+          find "$HOME/.maestro/tests" -name '*.log' -mmin -60 2>/dev/null | tail -3 | while read -r f; do
+            echo "--- $f"; tail -80 "$f"
+          done || echo "(no driver log)"
           echo "::endgroup::"
 
       - name: Upload the recordings
