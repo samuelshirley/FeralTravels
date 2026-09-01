@@ -48,6 +48,7 @@ Overland trip planner. Next.js 14 app with an AI chat assistant ("Penny") that h
 - **AI:** Anthropic SDK — chat agent with tool-use in `src/lib/penny/`. Model IDs are hardcoded in one registry (`src/lib/models.ts`) — no per-request fallback chains; update there when a model is sunset.
 - **Email:** Resend
 - **Maps:** Google Maps (client JS API + server Directions API for routes + Places `fuelOptions` as a per-station price fallback in `lib/fuelPricing/providers/google.ts` + **Places API (New) `places:searchText`** for name→coords resolution in `lib/google/geocode.ts`). NOTE (2026-07-01): `geocode.ts` uses **Places API (New) only** — the legacy `place/textsearch/json` endpoint and the `geocode/json` Geocoding-API fallback were removed. The legacy endpoint required the deprecated "Places API" SKU (not enabled on the one key) and caused a 100% `REQUEST_DENIED` outage; there is now a single `searchText` call and no cross-product fallback (a miss returns `not_found`/`unavailable`, and the caller asks for a Maps link). **Fuel stations are NOT from Google** — Finn sources them from OSM Overpass; route geometry for fuel planning is OSRM (`lib/directions.ts`, free, no key). NOTE (2026-07-01): the Overpass client (`lib/osm/overpass.ts`) MUST send an identifying `User-Agent` (`OVERPASS_USER_AGENT`) — overpass-api.de rejects UA-less requests with HTTP 406 (this was the `finn:fuel-plan` prod outage). NOTE (2026-07-02): Overpass can also SOFT-fail — HTTP 200 with a `remark` ("runtime error: Query timed out") and empty/truncated `elements`; the client now throws on any `remark`, and `server/fuel.ts` treats a needed-stop-but-zero-candidates gap as retryable `failed`, never the 48h-cached `no_stations_found` warning (reserved for "stations exist but none reachable before the hard ceiling"). The Place Photos / Street View "stop photos" feature was **removed 2026-06-30** (see teardown note below).
+- **Payments:** Apple IAP through **RevenueCat** (`react-native-purchases` in `mobile/`, no config plugin — it autolinks). The app's only jobs are `Purchases.logIn(users.id)`, rendering the store's Offerings and calling `purchasePackage`; `POST /api/webhooks/revenuecat` is the ONLY thing that may grant access. Setup: `docs/design/iap-setup.md`.
 - **Tests:** Vitest (unit), Playwright (web e2e), **Maestro (iOS e2e on a real simulator, `mobile/maestro/`)**
 - **Language:** TypeScript throughout, Zod for validation
 
@@ -363,7 +364,7 @@ run-migrations.ts, seed-demo-trip.ts, smoke-api.ts, db-reset.ts, seed-migration-
 
 **`decide-mobile-release.mjs`** (2026-08-27) owns the OTA-vs-native-build call that `.github/workflows/mobile.yml` used to make with a regex in a `run:` block. `node scripts/decide-mobile-release.mjs --base <ref> --head <ref>` prints one word on stdout (`native` / `js-only`) and its reasoning on stderr. It exists because file-level matching classified a merge whose ONLY change to `mobile/package.json` was a `scripts` entry (`sync:shared`) as native — the lockfile was untouched, proving no dependency moved — costing ~30 min of EAS queue, a build credit, and the OTA for fifteen JS files, which that path deliberately skips. `mobile/package.json` is now judged by CONTENT against an **allowlist of provably-inert top-level keys** (`name`, `version`, `private`, `description`, plus `scripts` EXCEPT npm/EAS lifecycle hooks — a `postinstall` can patch native source). Everything else, including a key invented tomorrow, defaults to native; so does every failure path (unreadable file, unparseable JSON either side, `git show` error, no usable base). `mobile/package-lock.json` remains an unconditional native signal on its own. `app.config.js`, `eas.json` and `assets/**` stay file-level. **`version` in `mobile/package.json` is inert only because `app.config.js` hardcodes its own `version: '1.0.0'`** — if that ever starts reading package.json, drop `version` from the allowlist in the same commit. `--json` swaps stdout for `{decision, reasons}`, which is what the PR-comment step renders. Guarded by `src/lib/decideMobileRelease.test.ts` (30 tests), which also fails if `mobile.yml` stops RUNNING the script, reinstates an inline `package.json` regex, **loses the `if:` gate on the TestFlight build**, or stops forecasting on `pull_request`.
 
-**`ios-e2e-local.sh`** runs the Maestro flows on a developer's own Mac, against a local server (`next dev` on 4310) and a **throwaway local Postgres on port 55432** — never the production database in `.env`, which is what `/api/test/seed` would otherwise write fixture users into. Docker (`docker-compose.e2e.yml`) is the default; a Homebrew `postgresql@16` is the fallback, because Docker Desktop is a GUI install with a licence prompt and a Mac without it should still be able to run these flows. **An EMPTY database is bootstrapped with `drizzle-kit push` + `seed-migration-journal.ts`, not by replaying `drizzle/*.sql`** — the SQL chain cannot run from empty and never could (`0005_mute_meltdown` and `0006_nightly_replan` both create the `trip_status` type and column, the second unguarded; `0002_magical_joystick` calls `setval(seq, 0)` on an empty `chat_history`). Nothing noticed because production was itself bootstrapped with push and CI's preview is a copy-on-write clone of it, so both only ever apply the newest file. A database that already has tables still takes the normal `db:migrate`. It exists because the flows in `mobile/maestro/` were merged **having never once been executed**, and their only feedback channel was an 18-minute macOS CI job that reported all three of its failure layers with the same line and uploaded an empty artifact. `all` runs `doctor → up → build → launch → sign-in → chat-keyboard` and stops at the first failure, so the output names the LAYER; `run <flow>` re-runs one in about a minute. Everything a run produces goes to `mobile/maestro/.local-run/` (gitignored): the JUnit report, Maestro's `commands-*.json` (the only file that says which yaml step died — the JUnit says `Unknown error`), `maestro.log`, screenshots, and the server log. `hierarchy` dumps the live view tree so a selector is fixed from what the app renders rather than from what the source suggests. `doctor` refuses to continue on an Xcode below 26 and prints the `xcode-select` line, because that specific mismatch presents as a timeout.
+**`ios-e2e-local.sh`** runs the Maestro flows on a developer's own Mac, against a local server (`next dev` on 4310) and a **throwaway local Postgres on port 55432** — never the production database in `.env`, which is what `/api/test/seed` would otherwise write fixture users into. Docker (`docker-compose.e2e.yml`) is the default; a Homebrew `postgresql@16` is the fallback, because Docker Desktop is a GUI install with a licence prompt and a Mac without it should still be able to run these flows. **An EMPTY database is bootstrapped with `drizzle-kit push` + `seed-migration-journal.ts`, not by replaying `drizzle/*.sql`** — the SQL chain cannot run from empty and never could (`0005_mute_meltdown` and `0006_nightly_replan` both create the `trip_status` type and column, the second unguarded; `0002_magical_joystick` calls `setval(seq, 0)` on an empty `chat_history`). Nothing noticed because production was itself bootstrapped with push and CI's preview is a copy-on-write clone of it, so both only ever apply the newest file. A database that already has tables still takes the normal `db:migrate`. It exists because the flows in `mobile/maestro/` were merged **having never once been executed**, and their only feedback channel was an 18-minute macOS CI job that reported all three of its failure layers with the same line and uploaded an empty artifact. `all` runs `doctor → up → build → launch → sign-in → chat-keyboard` and stops at the first failure, so the output names the LAYER; `run <flow>` re-runs one in about a minute. Everything a run produces goes to `mobile/maestro/.local-run/` (gitignored): the JUnit report, Maestro's `commands-*.json` (the only file that says which yaml step died — the JUnit says `Unknown error`), `maestro.log`, screenshots, and the server log. `hierarchy` dumps the live view tree so a selector is fixed from what the app renders rather than from what the source suggests. `doctor` refuses to continue on an Xcode below 26 and prints the `xcode-select` line, because that specific mismatch presents as a timeout. **`storekit` and `xcode` (2026-09-01)** are the in-app-purchase half of the same loop: `storekit` copies `mobile/storekit/FeralTravels.storekit` beside the generated `.xcodeproj` and writes a `StoreKitConfigurationFileReference` into the scheme's Launch AND Test actions (idempotent; `build` calls it, because `expo prebuild --clean` rewrites the scheme every time), and `xcode` opens the workspace so a purchase can be driven by hand. Maestro cannot drive one — the configuration is activated by the scheme's launch action and Maestro installs the `.app` and launches it outside any scheme, and there is no `simctl storekit` subcommand as of Xcode 26.6 (checked with `simctl help`, not assumed).
 
 **`pick-ios-simulator.mjs`** chooses the simulator both CI and the local script boot: the newest iOS runtime on the machine, discovered rather than pinned. Neither the device model nor the runtime is hardcoded anywhere — a named model is how the job breaks silently the month the runner image drops it, and taking whatever `simctl` lists first picked an iOS 18.5 device for a driver built against 26.2.
 
@@ -429,7 +430,7 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **Units:** User preference (metric/imperial) stored in DB, propagated via `UnitsContext`.
 - **Schema:** Single file at `src/server/db/schema.ts`. Drizzle manages all migrations.
 - **Auth middleware:** Edge-safe cookie check in root `middleware.ts`; real auth via `auth()` in server code.
-- **Mobile auth (2026-07-31, `feature/ios-app`):** the Expo app (`mobile/`) signs in via `POST /api/mobile/otp/send` + `/verify` — the SAME OTP machinery as web (`signInWithOtpCore` in `auth/otp.ts`, extracted from `signInWithOtp`), but the session token is returned in the body instead of a Set-Cookie. The app stores it in the iOS keychain and sends `Authorization: Bearer <token>`; `requireUserId`/`requireUser` (guards.ts) resolve bearer tokens against the same `sessions` table as the cookie path. NOT a parallel auth system, NOT a bypass — no token exists without a completed OTP sign-in. Admin guards deliberately stay cookie-only. **Identity for the account UI comes from `GET /api/me/identity`** (`{email, name, image}`, caller's own row only) — deliberately NOT folded into `GET /api/me`, which `UnitsProvider` hits on every page load and stays units_pref + timezone. `mobile/lib/identity.ts`'s `useIdentity()` shows the keychain address instantly and lets the server answer fill in the name/photo, so a failed fetch degrades to "address, no photo" rather than a blank menu.
+- **Mobile auth (2026-07-31, `feature/ios-app`):** the Expo app (`mobile/`) signs in via `POST /api/mobile/otp/send` + `/verify` — the SAME OTP machinery as web (`signInWithOtpCore` in `auth/otp.ts`, extracted from `signInWithOtp`), but the session token is returned in the body instead of a Set-Cookie. The app stores it in the iOS keychain and sends `Authorization: Bearer <token>`; `requireUserId`/`requireUser` (guards.ts) resolve bearer tokens against the same `sessions` table as the cookie path. NOT a parallel auth system, NOT a bypass — no token exists without a completed OTP sign-in. Admin guards deliberately stay cookie-only. **Identity for the account UI comes from `GET /api/me/identity`** (`{id, email, name, image}`, caller's own row only — `id` is there for RevenueCat's `app_user_id`, see the IAP note below) — deliberately NOT folded into `GET /api/me`, which `UnitsProvider` hits on every page load and stays units_pref + timezone. `mobile/lib/identity.ts`'s `useIdentity()` shows the keychain address instantly and lets the server answer fill in the name/photo, so a failed fetch degrades to "address, no photo" rather than a blank menu.
 
 ## Conventions
 
@@ -563,6 +564,70 @@ build.
   deliberately does not (`src/app/trips/page.tsx` says so) — a browser tab that
   silently creates a row is surprising; a single-purpose phone app is the
   opposite case. Guarded by a per-mount ref so it can't become a trip factory.
+- **In-app purchases — CLIENT BUILT (2026-09-01), CONFIGURATION PENDING.**
+  `react-native-purchases` is in `mobile/` (no Expo config plugin — the package
+  ships none and autolinks; do not add one to `app.config.js` or prebuild
+  fails). **Nothing on the server changed**: the webhook was always the
+  authority, it cannot tell a real purchase from a fake one, and there is still
+  exactly one grant path. What Apple and RevenueCat still need clicking, in
+  dependency order, is `docs/design/iap-setup.md`.
+  - **`mobile/lib/purchases.ts` is the ONLY module that imports the SDK** —
+    same bounded-module rule as `src/server/payments/`. Screens use
+    `usePurchaseFlow` (`mobile/lib/purchaseFlow.ts`); the three surfaces that
+    sell (Penny's bubble in `ChatPanel`, `PlanRequiredOverlay`, `app/paywall.tsx`)
+    each used to carry their own copy of purchase-then-refetch, and the hard
+    part of that flow is what happens when the refetch says no.
+  - **`app_user_id` is `users.id`, confirmed with the server before every
+    purchase.** `configurePurchases()` subscribes to `onTokenChange` so every
+    sign-in `logIn`s and every sign-out `logOut`s (including `apiFetch`'s 401
+    `clearToken`), and `requirePurchaserId()` REFUSES to buy if it cannot
+    confirm the id — buying anonymously produces `ignored_unknown_user`, i.e. a
+    real charge and no access, undetectable from inside the app. The id comes
+    from `GET /api/me/identity` (which gained an `id` field for this) rather
+    than from the sign-in response, because a restored keychain session has no
+    sign-in response.
+  - **A purchase is not an entitlement.** `purchasePackage` resolving means
+    Apple charged the card; the app then POLLS `GET /api/me/entitlement` on the
+    schedule in `src/lib/entitlementPolling.ts` (front-loaded, then 5s, giving
+    up at 60s) showing "Payment received — switching your plan on…". Giving up
+    is NOT an error — the money is real and the webhook retries for hours — so
+    the copy leads on the charge having gone through and points at Restore.
+  - **Prices come from the store's Offerings, not `constants.ts`.**
+    `usePurchaseFlow` merges the server's plan list (order, cadence, note — all
+    still server-authored and reword-able without a build) with the store's
+    `product.priceString`. `priceLabel` in `constants.ts` is the fallback for an
+    unreachable store, as its own comment always said; "$2" in front of somebody
+    charged €2,49 is a 3.1.2 disclosure problem. A server plan with no matching
+    store package is DROPPED — so ONE price where there should be two means a
+    product id typo, not an agreement problem.
+  - **Restore purchases** (Guideline 3.1.1, and the only recovery when the poll
+    gives up) and a **Manage subscription** link to
+    `itms-apps://apps.apple.com/account/subscriptions` are on the purchase sheet
+    AND in Settings (`mobile/components/SubscriptionSection.tsx`) — the sheet's
+    copies are for someone being sold to, Settings' are for someone who already
+    paid and therefore never sees a paywall.
+  - **Two message channels, not one.** `error` is red; `notice` is not. Ask to
+    Buy arrives as RevenueCat's `PAYMENT_PENDING_ERROR` — an *error* code for a
+    state working exactly as designed — and a cancelled purchase is the user
+    closing a sheet they opened. Neither may be painted as a failure.
+  - The `PURCHASES_ERROR_CODE` mapping lives in `mobile/lib/purchases.ts` beside
+    the import so `tsc --noEmit` in `mobile/` checks the member names; the
+    vocabulary and copy live in `src/lib/purchaseOutcome.ts` (mirrored) so the
+    root vitest project can test them — `mobile/` has no test runner and CI's
+    unit job installs no `mobile/node_modules`.
+  - **Simulator loop:** `mobile/storekit/FeralTravels.storekit` is a local fake
+    App Store; `scripts/ios-e2e-local.sh storekit` injects it into the generated
+    scheme (run automatically by `build`) and `… xcode` opens the workspace to
+    drive a purchase. It removes App Store Connect from the loop, NOT RevenueCat.
+    It cannot be driven by Maestro — the config is activated by the scheme's
+    launch action and Maestro launches outside any scheme; there is no
+    `simctl storekit` subcommand as of Xcode 26.6 (checked). No flow attempts a
+    purchase.
+  - **Known gap, deliberately not fixed:** `TRANSFER` is absent from `TYPE_MAP`,
+    so a restore onto a DIFFERENT app account with the same Apple ID records
+    `ignored_unknown_type` and does not entitle. The ordinary reinstall case is
+    unaffected (same `users.id`, the row already exists). Fixing it is a policy
+    question about who keeps access after a transfer — see iap-setup.md.
 - **Promo codes — BUILT (migration 0028, 2026-08-27).** An admin mints a code for one email address; that person signs in and redeems it in the purchase sheet, and the paywall lets them through. Designed so the entitlement surface did not grow: **redeeming writes an ordinary `subscriptions` row with `source: 'promo'`**, and `hasEntitlement`, `resolveAccountState` and its twelve tested states needed **no change at all**. Nothing in the paywall path reads `promo_codes` — a second entitlement source would have been a second place able to decide someone has paid, which is exactly what the bounded-module rule exists to prevent. A promo user shows in the admin panel as a subscriber whose row says where it came from.
   - **What it grants:** unlimited duration (`current_period_end = null`, which the admin UI already renders as unlimited) and the ORDINARY $8.50 rolling-twelve-month usage cap. Owner's call: a promo recipient should not have to think about a renewal date, but a promo account generates no revenue to offset spend, so the ceiling still applies. `auto_renew` is `true` — nothing renews a promo, but `false` resolves to `cancelled_in_period` and would tell the admin panel a story about a cancellation that never happened.
   - **Codes are BOUND to one address and single-use.** `decidePromoRedemption` (`src/lib/promoCode.ts`, pure, unit-tested, mirrored to mobile) compares the code's email against the SESSION's — there is no `email` field in the request body, so nothing can redeem on another address's behalf. **`promo_wrong_account` is checked BEFORE spent and expired, deliberately:** somebody holding a forwarded code must not learn, by trying it, whether it has been used or when it lapsed, because both are facts about the real recipient's account.
@@ -583,9 +648,13 @@ build.
   `created_at` decides nothing. `npm run trial-account new` prints a fresh
   address; `age` and `reset` are dry-run by default. It exists because StoreKit
   returns an EMPTY product list until the Paid Applications Agreement is active.
-  Every grant writes `subscription_events` with `source: 'fake'`. **Deleting
-  this route is the last step of the RevenueCat migration** —
-  `docs/design/revenuecat-implementation.md`.
+  Every grant writes `subscription_events` with `source: 'fake'`. **It is NOT
+  deleted now that StoreKit is wired up, and should not be** — the Playwright
+  subscription specs run on it, and a sandbox purchase cannot replace them
+  (StoreKit's sheet is system UI behind a sandbox Apple ID login). In the app
+  `testPurchaseAllowed` deliberately WINS over the real store: an allowlisted
+  address exists to walk the paywall without Apple. Retiring the path is
+  `SUBSCRIPTION_TESTING` unset — no deploy.
 - **The Test users block at the bottom of `/admin` creates disposable paywall
   accounts** — `payments/testAccounts.ts` behind `POST /api/admin/test-users`,
   armed by `SUBSCRIPTION_TESTING=1`, every action refusing any address outside

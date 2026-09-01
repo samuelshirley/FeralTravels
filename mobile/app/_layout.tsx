@@ -14,6 +14,7 @@ import {
 } from "@expo-google-fonts/onest";
 import { UnitsProvider } from "@/lib/units";
 import { ErrorProvider } from "@/lib/errors";
+import { configurePurchases } from "@/lib/purchases";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -22,6 +23,21 @@ import { font } from "@/lib/typography";
 // the launch screen hands straight over to a real screen. Failures are ignored
 // on purpose — this call must never be able to strand the app on the splash.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+/**
+ * Configure RevenueCat once, at module scope, before the first render.
+ *
+ * Module scope rather than an effect because `Purchases.configure` is
+ * synchronous, idempotent behind its own guard, and must have happened before
+ * anything can call `getOfferings` — and a user can reach the paywall on the
+ * very first screen. It does not block the splash: the async part (resolving
+ * `users.id` and calling `logIn`) is fired and forgotten inside, and the actual
+ * gate on a purchase is `requirePurchaserId` at the moment of buying.
+ *
+ * A build with no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` no-ops here and the app
+ * behaves exactly as it did before StoreKit existed.
+ */
+configurePurchases();
 
 /**
  * Root shell. Mirrors the providers the web mounts around every signed-in

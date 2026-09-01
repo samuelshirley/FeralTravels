@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { API_BASE_URL } from "@/lib/config";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 import type { PaywallProduct } from "@/shared/types/entitlement";
@@ -19,6 +21,7 @@ import {
   PROMO_PROMPT,
 } from "@/shared/lib/promoCopy";
 import { fetchEntitlement, redeemPromoCode } from "@/lib/entitlement";
+import type { PurchaseFlow } from "@/lib/purchaseFlow";
 
 /**
  * Native mirror of src/components/PurchaseSheet.tsx — the purchase sheet, and
@@ -26,51 +29,36 @@ import { fetchEntitlement, redeemPromoCode } from "@/lib/entitlement";
  *
  * Penny's paywall lives in the transcript as a message, deliberately: a sheet
  * thrown over the app on launch is the thing we are not doing. But a purchase
- * IS a modal everywhere else on this platform — on iPhone this component is
- * replaced wholesale by Apple's StoreKit sheet, which is modal, dismissible and
- * stops the world. Matching that shape here means the flow we ship today and
- * the flow StoreKit gives us are the same flow, and the day StoreKit lands this
- * component is deleted rather than redesigned.
+ * IS a modal everywhere else on this platform — this sheet sits directly under
+ * Apple's StoreKit sheet, which is modal, dismissible and stops the world, so
+ * matching that shape means the two read as one flow rather than two.
  *
- * It renders prices it was handed. It does not decide who can buy, what a plan
- * costs, or whether the fake-purchase path is available — all three come from
- * `GET /api/me/entitlement`, and the server refuses the purchase again on its
- * own authority regardless of what this sheet chose to show.
+ * It renders what it is handed. It does not decide who can buy, what a plan
+ * costs, or whether this build can take money at all: the plans and their copy
+ * come from `GET /api/me/entitlement`, the PRICES come from Apple, and the
+ * server refuses the purchase again on its own authority regardless of what
+ * this sheet chose to show.
  *
  * Divergences from the web sheet, and why:
  *
  *  1. It rises from the BOTTOM edge rather than sitting centred in a dimmed
  *     page. StoreKit's sheet is a bottom sheet; a centred card would train the
- *     user on a shape that changes under them the week Apple takes over.
+ *     user on a shape that changes under them the moment they tap.
  *  2. No gradient hairline. The web paints a primary→accent linear-gradient
  *     across the top of the card; RN has no gradient without another native
  *     dependency (same call already made for the chat header avatar), so it is
  *     a flat primary rule.
- *  3. `testPurchaseAllowed === false` says purchasing is not wired up yet,
- *     where the web sends the reader to the App Store. There is nowhere to send
- *     them from here — this IS the iPhone app — so the honest answer is that
- *     the button does not exist yet.
+ *  3. Restore purchases and Manage subscription have no web counterpart at all.
+ *     Both are App Store obligations (Guideline 3.1.1 for restore, 3.1.2 for
+ *     the management link) and both are meaningless in a browser.
  */
 export default function PurchaseSheet({
-  products,
-  testPurchaseAllowed,
-  purchasingId,
-  error,
-  onPurchase,
+  flow,
   onClose,
   onRedeemed,
 }: {
-  products: PaywallProduct[];
-  /**
-   * The server's answer, never the client's guess. False means this build
-   * cannot complete a purchase at all — the sheet then shows the prices and
-   * says so, because a button that cannot take money is worse than no button.
-   */
-  testPurchaseAllowed: boolean;
-  /** Product id currently in flight, or null. */
-  purchasingId: string | null;
-  error: string | null;
-  onPurchase: (productId: string) => void;
+  /** The whole purchase flow — see `usePurchaseFlow`. */
+  flow: PurchaseFlow;
   onClose: () => void;
   /**
    * Fired only after the server has CONFIRMED entitlement, never on the 200
@@ -79,14 +67,18 @@ export default function PurchaseSheet({
   onRedeemed?: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const busy = purchasingId !== null;
+  const { busy, phase, mode, plans, plansLoading, error, notice } = flow;
 
-  // Backdrop taps and the Android back button both dismiss — except while a
-  // grant is in flight, where dismissing would leave the account paid up and
-  // the UI still paywalled until the next launch.
+  // Backdrop taps and the Android back button both dismiss — except while
+  // anything is in flight, where dismissing would leave the account paid up and
+  // the UI still paywalled until the next launch. That includes the CONFIRMING
+  // phase, which is the important one: the charge has already happened and the
+  // sheet is the only thing on screen that knows it.
   const dismiss = () => {
     if (!busy) onClose();
   };
+
+  const purchasingId = phase.kind === "purchasing" ? phase.productId : null;
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={dismiss}>
@@ -120,23 +112,50 @@ export default function PurchaseSheet({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.plans}>
-              {products.map((p) => (
-                <PlanRow
-                  key={p.id}
-                  product={p}
-                  // Only an allowlisted account gets a pressable row.
-                  actionable={testPurchaseAllowed}
-                  busy={busy}
-                  pending={purchasingId === p.id}
-                  onSelect={() => onPurchase(p.id)}
-                />
-              ))}
-            </View>
+            {/*
+              The spinner wins over the fallback prices while the store is being
+              asked, even though `plans` already holds the server's list. Showing
+              "$2" for a second and then swapping it for "€2,49" is worse than
+              waiting: the first number is wrong for that reader, and a price
+              that changes under them is the one thing a purchase sheet must
+              never do.
+            */}
+            {plansLoading ? (
+              <View style={styles.plansLoading}>
+                <ActivityIndicator size="small" color={theme.primary} />
+                <Text style={styles.plansLoadingText}>Getting prices from the App Store…</Text>
+              </View>
+            ) : (
+              <View style={styles.plans}>
+                {plans.map((p) => (
+                  <PlanRow
+                    key={p.id}
+                    product={p}
+                    actionable={mode !== "unavailable"}
+                    busy={busy}
+                    pending={purchasingId === p.id}
+                    onSelect={() => flow.buy(p.id)}
+                  />
+                ))}
+              </View>
+            )}
+
+            {/*
+              Guideline 3.1.2 wants the subscription's length and price next to
+              the thing that buys it, plus reachable Terms and Privacy. The
+              length is on each row as the cadence; this is the renewal
+              sentence, which a price alone does not say.
+            */}
+            {mode === "store" ? (
+              <Text style={styles.renewalNote}>
+                Plans renew automatically until cancelled. Manage or cancel any time in your
+                Apple Account.
+              </Text>
+            ) : null}
 
             {onRedeemed ? <PromoRedeemer onRedeemed={onRedeemed} /> : null}
 
-            {testPurchaseAllowed ? (
+            {mode === "test" ? (
               <View style={styles.testNotice}>
                 {/* Loud on purpose. This path grants real paid access with
                     no payment, and the one place that must be unmistakable is a
@@ -144,16 +163,71 @@ export default function PurchaseSheet({
                 <Text style={styles.testNoticeText}>
                   <Text style={styles.testNoticeStrong}>Test purchase — no payment.</Text> Your
                   account is allowlisted, so picking a plan grants it directly and logs a
-                  FAKE_PURCHASE event. No money moves.
+                  FAKE_PURCHASE event. No money moves, and the App Store is not involved.
                 </Text>
               </View>
-            ) : (
+            ) : null}
+
+            {mode === "unavailable" ? (
               <Text style={styles.notWiredText}>
-                Purchasing isn&apos;t wired up yet — these are the prices, not a checkout. Apple
-                returns an empty product list until the Paid Applications Agreement is active, so
-                there is nothing here to tap.
+                The App Store isn&apos;t offering these plans on this build yet — these are the
+                prices, not a checkout. If you already have a plan, Restore purchases below will
+                still find it.
               </Text>
-            )}
+            ) : null}
+
+            {/*
+              Restore is REQUIRED for an auto-renewable subscription (Guideline
+              3.1.1), and it is also the only recovery when the entitlement wait
+              gives up — so it is shown in every mode, including the one where
+              buying is impossible. That is precisely the mode where a user who
+              already paid needs it.
+            */}
+            <View style={styles.secondaryRow}>
+              <Pressable
+                testID="restore-purchases"
+                accessibilityRole="button"
+                onPress={flow.restorePurchases}
+                disabled={busy}
+                style={styles.secondary}
+              >
+                {phase.kind === "restoring" ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <Text style={[styles.secondaryText, busy ? styles.secondaryTextOff : null]}>
+                    Restore purchases
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={flow.manageSubscription}
+                style={styles.secondary}
+              >
+                <Text style={styles.secondaryText}>Manage subscription</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.legalRow}>
+              <LegalLink label="Terms" path="/terms" />
+              <Text style={styles.legalDot}>·</Text>
+              <LegalLink label="Privacy" path="/privacy" />
+            </View>
+
+            {/*
+              Two channels, not one. `notice` is "this happened and nothing is
+              wrong" — Ask to Buy waiting on a parent, a restore that found
+              nothing, and above all the wait after a real charge. Painting any
+              of those red tells somebody who has just paid that it failed.
+            */}
+            {notice ? (
+              <View style={styles.noticeBox}>
+                {phase.kind === "confirming" ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : null}
+                <Text style={styles.noticeText}>{notice}</Text>
+              </View>
+            ) : null}
 
             {error ? (
               <View style={styles.errorBox}>
@@ -164,6 +238,24 @@ export default function PurchaseSheet({
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+/**
+ * The legal pages live on the web and are deliberately public — no `auth()`
+ * call anywhere in the `(legal)` route group, because App Review and Google's
+ * brand verification both fetch them anonymously. Opening them in the system
+ * browser rather than porting them is the same call the support page makes.
+ */
+function LegalLink({ label, path }: { label: string; path: string }) {
+  return (
+    <Pressable
+      accessibilityRole="link"
+      onPress={() => void Linking.openURL(`${API_BASE_URL}${path}`).catch(() => {})}
+      hitSlop={8}
+    >
+      <Text style={styles.legalLink}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -207,6 +299,7 @@ function PlanRow({
 
   return (
     <Pressable
+      testID={`purchase-${product.id}`}
       accessibilityRole="button"
       accessibilityLabel={`${product.priceLabel} ${product.cadence}`}
       onPress={onSelect}
@@ -352,6 +445,8 @@ const styles = StyleSheet.create({
   scroll: { marginTop: 18 },
   scrollContent: { paddingBottom: 4 },
   plans: { gap: 8 },
+  plansLoading: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 14 },
+  plansLoadingText: { fontFamily: font.regular, fontSize: 13, color: theme.muted },
   planRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -376,6 +471,29 @@ const styles = StyleSheet.create({
     backgroundColor: theme.successMuted,
   },
   planNoteText: { fontFamily: font.semibold, fontSize: 11, color: theme.success },
+
+  renewalNote: {
+    marginTop: 10,
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: theme.subtle,
+  },
+
+  secondaryRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    columnGap: 18,
+  },
+  secondary: { paddingVertical: 8, alignItems: "center", minHeight: 34, justifyContent: "center" },
+  secondaryText: { fontFamily: font.semibold, fontSize: 13, color: theme.primary },
+  secondaryTextOff: { opacity: 0.45 },
+
+  legalRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  legalLink: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
+  legalDot: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
 
   testNotice: {
     marginTop: 14,
@@ -434,6 +552,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: theme.muted,
   },
+
+  /* Deliberately NOT the danger palette — see the two-channels note above. */
+  noticeBox: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: theme.surfaceMuted,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: theme.radiusSm,
+  },
+  noticeText: { flex: 1, fontFamily: font.regular, fontSize: 12, lineHeight: 18, color: theme.text },
 
   errorBox: {
     marginTop: 12,

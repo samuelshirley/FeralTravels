@@ -29,11 +29,11 @@ import { onPennyPrefill } from "@/lib/pennyPrefill";
 import { theme } from "@/lib/theme";
 import {
   fetchEntitlement,
-  testPurchase,
   withPaywallNotice,
   PAYWALL_ERROR_CODE,
   type EntitlementPayload,
 } from "@/lib/entitlement";
+import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import PurchaseSheet from "@/components/PurchaseSheet";
 import { PaperclipIcon, SendArrowIcon } from "@/components/icons";
 import { Spinner } from "@/components/ui";
@@ -169,8 +169,6 @@ export default function ChatPanel({
    */
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
   const [purchaseSheetOpen, setPurchaseSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
 
   /**
    * Null entitlement means "not asked yet / couldn't ask" — never a block. A
@@ -285,41 +283,25 @@ export default function ChatPanel({
   );
 
   /**
-   * The fake-purchase path, for allowlisted accounts only.
+   * The purchase, the wait for the webhook and the restore, all in one hook
+   * shared with the overlay and the no-trips paywall screen.
    *
-   * It exists because StoreKit returns an EMPTY product list until the Paid
-   * Applications Agreement is active, so there is no real sheet to walk the
-   * flow against. `testPurchaseAllowed` comes from the server and the route
-   * re-checks the allowlist itself — this button existing proves nothing.
+   * What is left here is the only part that is this screen's business: putting
+   * the transcript back the way it was. A purchase does not navigate — the
+   * paywall is a message in this conversation, so getting past it should leave
+   * the conversation exactly where it was.
    */
-  const runTestPurchase = useCallback(async (productId: string) => {
-    setPurchasingId(productId);
-    setPurchaseError(null);
-    try {
-      await testPurchase(productId);
-      // The grant is only real once the entitlement endpoint agrees. Believing
-      // the 200 would re-open the composer on our own say-so and hand the user
-      // a second 402 on their next message.
-      const fresh = await fetchEntitlement();
-      if (!fresh?.entitled) {
-        setPurchaseError(
-          "That went through, but your plan hasn't switched on yet. Give it a moment and reopen the trip."
-        );
-        return;
-      }
-      setEntitlement(fresh);
-      // The DERIVED bubble disappears on its own the moment `fresh` says
-      // entitled. This clears the other kind: a real pending bubble that a
-      // mid-turn 402 rewrote in place, which is a stored message and would
-      // otherwise sit in the transcript telling a paying user they are blocked.
-      setMessages((prev) => prev.filter((m) => !m.paywall));
-      setPurchaseSheetOpen(false);
-    } catch (e: unknown) {
-      setPurchaseError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPurchasingId(null);
-    }
+  const onEntitled = useCallback((fresh: EntitlementPayload) => {
+    setEntitlement(fresh);
+    // The DERIVED bubble disappears on its own the moment `fresh` says
+    // entitled. This clears the other kind: a real pending bubble that a
+    // mid-turn 402 rewrote in place, which is a stored message and would
+    // otherwise sit in the transcript telling a paying user they are blocked.
+    setMessages((prev) => prev.filter((m) => !m.paywall));
+    setPurchaseSheetOpen(false);
   }, []);
+
+  const purchaseFlow = usePurchaseFlow({ entitlement, onEntitled });
 
   const [historyLoading, setHistoryLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
@@ -1507,7 +1489,7 @@ export default function ChatPanel({
                         void Linking.openURL(`mailto:${SUPPORT_EMAIL}`);
                         return;
                       }
-                      setPurchaseError(null);
+                      purchaseFlow.clearMessages();
                       setPurchaseSheetOpen(true);
                     }}
                     style={[
@@ -1681,22 +1663,14 @@ export default function ChatPanel({
           mailto. */}
       {purchaseSheetOpen && entitlement && !paywallSupportOnly ? (
         <PurchaseSheet
-          products={entitlement.products}
-          testPurchaseAllowed={entitlement.testPurchaseAllowed}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(productId) => void runTestPurchase(productId)}
+          flow={purchaseFlow}
           // The sheet has already confirmed entitlement with the server; this
-          // brings the transcript's own state in line — the same three updates
-          // the purchase path makes, and for the same reason. No navigation:
-          // the paywall is a message in this conversation, so getting past it
-          // should leave the conversation where it was.
+          // brings the transcript's own state in line — the same updates the
+          // purchase path makes, and for the same reason.
           onRedeemed={() => {
             void (async () => {
               const fresh = await fetchEntitlement();
-              if (fresh) setEntitlement(fresh);
-              setMessages((prev) => prev.filter((m) => !m.paywall));
-              setPurchaseSheetOpen(false);
+              if (fresh) onEntitled(fresh);
             })();
           }}
           onClose={() => setPurchaseSheetOpen(false)}

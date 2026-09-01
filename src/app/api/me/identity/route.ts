@@ -20,6 +20,11 @@ export const dynamic = 'force-dynamic';
  * There is no id parameter: it returns the caller's own row and nothing else.
  * `image` is re-validated against the avatar host allowlist on the way out,
  * so a URL written before that rule existed cannot be served now.
+ *
+ * It also carries `id` — the caller's `users.id` — because that is the string
+ * the iOS app must hand RevenueCat as its `app_user_id`. The webhook joins on
+ * that column directly, so getting it wrong takes the money and entitles
+ * nobody. See the comment on `getUserIdentity`.
  */
 export async function GET() {
   try {

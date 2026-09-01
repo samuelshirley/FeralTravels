@@ -41,6 +41,8 @@
 #   scripts/ios-e2e-local.sh all           # doctor, up, build-if-needed, 1→2→3
 #   scripts/ios-e2e-local.sh hierarchy     # dump the current screen's view tree
 #   scripts/ios-e2e-local.sh studio        # Maestro Studio against this device
+#   scripts/ios-e2e-local.sh storekit      # point the scheme at the local store
+#   scripts/ios-e2e-local.sh xcode         # open the workspace to drive a purchase
 #   scripts/ios-e2e-local.sh down          # stop the server and the database
 #   scripts/ios-e2e-local.sh reset         # down, and delete the database volume
 #
@@ -66,6 +68,16 @@ MAESTRO_PIN="2.10.0"
 # "iOS driver not ready in time", which sounds like a slow machine. Kept in step
 # with the same constant in .github/workflows/ci.yml.
 XCODE_APP="${E2E_XCODE_APP:-/Applications/Xcode_26.2.app}"
+
+# The local StoreKit store — a fake App Store in a JSON file, so a purchase can
+# be exercised in the simulator with no App Store Connect round trip and no
+# sandbox Apple Account. See mobile/storekit/README.md for what it does and does
+# NOT remove (RevenueCat's dashboard is still required).
+#
+# TRACKED, and it has to be: mobile/ios/ is gitignored CNG output that
+# `expo prebuild --clean` deletes wholesale, so a .storekit kept in there would
+# survive exactly one build.
+STOREKIT_FILE="mobile/storekit/FeralTravels.storekit"
 
 mkdir -p "$OUT"
 
@@ -406,7 +418,102 @@ build() {
     cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
   ) >"$OUT/build.log" 2>&1 || { tail -40 "$OUT/build.log"; die "Build failed — see $OUT/build.log"; }
   ok "built $(ls -d mobile/ios-build/*.app | head -1)"
+  # After the compile, not before: `expo prebuild --clean` above rewrites the
+  # scheme from scratch, so the reference has to be put back every time. It
+  # changes nothing about the binary just built — the scheme is Xcode's, and the
+  # Maestro flows launch outside it — so it is free and it means `xcode` works
+  # without a second command.
+  storekit
   install_app
+}
+
+# ───────────────────────────────────────────────────────────────────────────
+# storekit — point the generated scheme at the local store
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Idempotent, and run as part of `build` because `expo prebuild --clean` writes
+# a fresh scheme every time and the reference has to be put back afterwards.
+#
+# WHAT IT BUYS: prices, Apple's confirmation dialog, cancel, Ask to Buy and
+# accelerated renewals in the simulator with no App Store Connect round trip and
+# no sandbox Apple Account. What it does NOT remove is RevenueCat — the app asks
+# RevenueCat for an Offering and RevenueCat looks the products up through
+# StoreKit, so this satisfies the second step and not the first.
+# mobile/storekit/README.md has the table.
+#
+# WHAT IT DOES NOT COVER, stated rather than implied: the Maestro flows. The
+# configuration is activated by the SCHEME's launch action, and Maestro installs
+# the .app with `simctl install` and launches it outside any scheme. There is no
+# `simctl storekit` subcommand as of Xcode 26.6 (checked with `simctl help`, not
+# assumed), so a purchase has to be driven from Xcode's Run — hence `xcode`
+# below. This is why no flow in mobile/maestro/ attempts one.
+#
+# The identifier is a path RELATIVE TO THE .xcodeproj, which is why it climbs
+# out of ios/ before descending into storekit/.
+storekit() {
+  local proj_dir="mobile/ios"
+  local scheme_file="$proj_dir/FeralTravels.xcodeproj/xcshareddata/xcschemes/FeralTravels.xcscheme"
+  [ -f "$STOREKIT_FILE" ] || die "No $STOREKIT_FILE"
+  if [ ! -f "$scheme_file" ]; then
+    warn "No generated scheme yet — run \`build\` first."
+    return 0
+  fi
+
+  # Copied BESIDE the .xcodeproj rather than referenced across the tree. The
+  # scheme's `identifier` is a path relative to the .xcodeproj bundle, so
+  # "../FeralTravels.storekit" resolving to a file sitting next to it is the
+  # exact layout Xcode itself writes when you add a configuration file to a
+  # normal project — the shape least likely to be wrong. mobile/ios/ is
+  # gitignored CNG output, so this copy is disposable and the tracked original
+  # in mobile/storekit/ stays the source of truth.
+  cp "$STOREKIT_FILE" "$proj_dir/FeralTravels.storekit"
+
+  if grep -q "StoreKitConfigurationFileReference" "$scheme_file"; then
+    ok "scheme already points at the local store"
+    return 0
+  fi
+
+  # Both actions: LaunchAction is Xcode's Run button, TestAction is
+  # `xcodebuild test`. Pointing only one of them at it is the kind of thing that
+  # works until the day you use the other.
+  python3 - "$scheme_file" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+src = open(path).read()
+ref = (
+    '      <StoreKitConfigurationFileReference\n'
+    '         identifier = "../FeralTravels.storekit">\n'
+    '      </StoreKitConfigurationFileReference>\n'
+)
+for action in ("LaunchAction", "TestAction"):
+    # Match the closing tag WITH its own indentation, so the inserted element
+    # lands on its own line rather than splicing in front of the tag.
+    src = re.sub(rf"^([ \t]*)</{action}>", ref + rf"\1</{action}>", src, count=1, flags=re.M)
+open(path, "w").write(src)
+PYEOF
+  grep -q "StoreKitConfigurationFileReference" "$scheme_file" \
+    || die "Could not write the StoreKit reference into $scheme_file"
+  ok "scheme points at the local store"
+  warn "If Xcode's scheme editor shows StoreKit Configuration: None, pick"
+  warn "  $proj_dir/FeralTravels.storekit there once — the path above is the"
+  warn "  standard layout but has not been proven by a launch on this machine."
+}
+
+# ───────────────────────────────────────────────────────────────────────────
+# xcode — the only way to actually complete a purchase on this machine
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Maestro cannot do this (see the note on `storekit`), so driving the purchase
+# sheet is a human job: open the workspace, press Run, sign in, tap a price.
+# Apple's transaction inspector is Debug -> StoreKit -> Manage Transactions,
+# which is where you cancel, refund and expire the test subscription.
+xcode() {
+  storekit
+  say "Opening the workspace"
+  printf '  Press Run. The local store is already selected in the scheme.\n'
+  printf '  Prices still need a RevenueCat offering and an appl_ key in the build\n'
+  printf '  — see docs/design/iap-setup.md section 5.\n'
+  open mobile/ios/FeralTravels.xcworkspace
 }
 
 install_app() {
@@ -539,6 +646,8 @@ case "${1:-all}" in
   run)       run_flow "${2:-chat-keyboard}" ;;
   hierarchy) hierarchy ;;
   studio)    maestro --device "$(device_id)" studio ;;
+  storekit)  storekit ;;
+  xcode)     xcode ;;
   down)      down ;;
   reset)
     down

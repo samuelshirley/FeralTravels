@@ -5,6 +5,7 @@ import BottomNav from "@/components/BottomNav";
 import UnitsToggle from "@/components/UnitsToggle";
 import VehicleProfileSection from "@/components/VehicleProfileSection";
 import DeleteAccountSection from "@/components/DeleteAccountSection";
+import SubscriptionSection from "@/components/SubscriptionSection";
 import { Card, Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
 import { useSignedInEmail } from "@/lib/identity";
@@ -93,6 +94,15 @@ export default function SettingsScreen() {
           </Text>
           <VehicleProfileSection />
         </Card>
+
+        {/*
+          Between the vehicle profile and the danger zone: a subscriber looking
+          for "restore" or "how do I cancel" scrolls here, and neither belongs
+          next to the button that deletes their account. Has no web counterpart
+          — both are App Store obligations and both are meaningless in a
+          browser.
+        */}
+        <SubscriptionSection />
 
         {/*
           Last thing on the screen, same as the web. Apple 5.1.1(v) requires

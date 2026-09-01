@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { fetchEntitlement, testPurchase, type EntitlementPayload } from "@/lib/entitlement";
+import type { EntitlementPayload } from "@/lib/entitlement";
+import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -51,8 +52,17 @@ export default function PlanRequiredOverlay({
 }) {
   const router = useRouter();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+
+  // Above the early return, and it has to be: this component returns null for
+  // an entitled account, and a hook called after that would run on some renders
+  // and not others.
+  const flow = usePurchaseFlow({
+    entitlement,
+    onEntitled: (fresh) => {
+      setSheetOpen(false);
+      onEntitled(fresh);
+    },
+  });
 
   if (!entitlement || entitlement.entitled) return null;
 
@@ -64,28 +74,6 @@ export default function PlanRequiredOverlay({
   const paragraphs = (entitlement.paywall?.message ?? FALLBACK).split(/\n{2,}/);
   const buttonLabel =
     entitlement.paywall?.buttonLabel ?? (sellable ? "Keep planning" : "Email support");
-
-  async function runTestPurchase(productId: string) {
-    setPurchasingId(productId);
-    setPurchaseError(null);
-    try {
-      await testPurchase(productId);
-      // Re-ask rather than believe the 200. The server is the authority on
-      // entitlement, and this is the one moment where trusting the client would
-      // let a failed grant look like a successful one.
-      const fresh = await fetchEntitlement();
-      if (fresh?.entitled) {
-        setSheetOpen(false);
-        onEntitled(fresh);
-        return;
-      }
-      setPurchaseError("That went through, but your plan hasn't switched on yet.");
-    } catch (err) {
-      setPurchaseError(err instanceof Error ? err.message : "Purchase failed");
-    } finally {
-      setPurchasingId(null);
-    }
-  }
 
   return (
     <View style={styles.root}>
@@ -111,6 +99,7 @@ export default function PlanRequiredOverlay({
           accessibilityRole="button"
           onPress={() => {
             if (sellable) {
+              flow.clearMessages();
               setSheetOpen(true);
               return;
             }
@@ -137,16 +126,7 @@ export default function PlanRequiredOverlay({
         </View>
       </View>
 
-      {sheetOpen ? (
-        <PurchaseSheet
-          products={entitlement.products}
-          testPurchaseAllowed={entitlement.testPurchaseAllowed}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(id) => void runTestPurchase(id)}
-          onClose={() => setSheetOpen(false)}
-        />
-      ) : null}
+      {sheetOpen ? <PurchaseSheet flow={flow} onClose={() => setSheetOpen(false)} /> : null}
     </View>
   );
 }

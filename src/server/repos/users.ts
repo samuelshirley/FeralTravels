@@ -87,14 +87,33 @@ export async function setUserTimezone(
  */
 export async function getUserIdentity(
   userId: string
-): Promise<{ email: string | null; name: string | null; image: string | null }> {
+): Promise<{ id: string | null; email: string | null; name: string | null; image: string | null }> {
   const [row] = await db
-    .select({ email: users.email, name: users.name, image: users.image })
+    .select({ id: users.id, email: users.email, name: users.name, image: users.image })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  if (!row) return { email: null, name: null, image: null };
+  if (!row) return { id: null, email: null, name: null, image: null };
   return {
+    /**
+     * The caller's own `users.id`, added for RevenueCat.
+     *
+     * `src/server/payments/webhook.ts` resolves a purchase's `app_user_id` with
+     * a direct equality join against this primary key, so the iOS app must call
+     * `Purchases.logIn(<this value>)` before it can buy anything. Anything else
+     * — an email, an anonymous `$RCAnonymousID:`, the session token — lands
+     * every webhook as `ignored_unknown_user`: the money is taken and nobody is
+     * entitled.
+     *
+     * It comes from here rather than being remembered from the sign-in response
+     * because a RESTORED keychain session has no sign-in response to remember,
+     * and that is the state the app is in on every launch after the first. It
+     * is not a secret (the app already holds a session token for this row) and
+     * it is still only ever the caller's own id — the route takes no parameter.
+     * `GET /api/me` stays out of it: `UnitsProvider` calls that on every page
+     * load, and this is not something every screen needs.
+     */
+    id: row.id,
     email: row.email ?? null,
     name: row.name ?? null,
     /**
