@@ -22,8 +22,11 @@ appId: ${APP_ID}
 ---
 - runFlow: sign-in.yaml
 
+# Regex: the card is one accessibility element carrying the name AND the dates
+# ("E2E Fixture Trip, 2026-09-15 → 2026-09-16"), and Maestro matches the whole
+# label. See the same note in sign-in.yaml.
 - tapOn:
-    text: 'E2E Fixture Trip'
+    text: '.*E2E Fixture Trip.*'
 
 - tapOn: 'CHAT'
 

@@ -11,6 +11,16 @@
 # this directory. One account, one code, one sign-in.
 appId: ${APP_ID}
 ---
+# THE KEYCHAIN IS NOT APP DATA, and `clearState` does not touch it. On iOS a
+# keychain item outlives the app that wrote it — uninstall included — so once
+# the build was signed well enough to actually store a session token, every
+# subsequent run launched straight into /trips and this flow asserted on a
+# sign-in screen that was never going to appear.
+#
+# It only looked fine while the app was built with CODE_SIGNING_ALLOWED=NO,
+# because nothing could be written in the first place. Fixing the build is what
+# exposed this, which is the usual shape: one broken thing hiding another.
+- clearKeychain
 - launchApp:
     # A fresh install every run. Without this the keychain still holds the
     # previous run's session token and the app lands on /trips, so the sign-in
@@ -20,7 +30,13 @@ appId: ${APP_ID}
       # Location is asked for on the trip screen. Left DENIED on purpose: the
       # chat flow must not depend on a permission dialog it did not open, and a
       # granted-location app pops the primer over the composer.
-      location: deny
+      # `never`, not `deny`. Maestro validates this per-permission, and
+      # `location` is the special case: it takes always/inuse/never/
+      # location-always, while allow/deny/unset belong to 'all'. `deny`
+      # here is not ignored — it aborts the flow on its FIRST command
+      # with `wrong argument value`, which is what made layer 1 red
+      # before the app was even asked to render anything.
+      location: never
 
 - extendedWaitUntil:
     visible:
@@ -30,25 +46,81 @@ appId: ${APP_ID}
 - tapOn:
     id: 'signin-email'
 - inputText: ${EMAIL}
-- hideKeyboard
 
+# NO `hideKeyboard` HERE, and it is not an omission.
+#
+# It was the step that made this flow red, and it could never have worked: on
+# iOS Maestro dismisses the keyboard by finding a standard return/done action,
+# and this field is `returnKeyType="send"`, so there is none — the command fails
+# with "Couldn't hide the keyboard. This can happen if the app uses a custom
+# input or doesn't expose a standard dismiss action."
+#
+# It was also unnecessary. On an iPhone 17 Pro the button's bounds are
+# [41,463][361,505] and the keyboard's inputView starts at y=566, so it is
+# fully clear of it and the tap below lands on the button. Read off the live
+# hierarchy, not assumed. If a smaller device ever puts the two in contact the
+# fix is to scroll the button into view, not to reinstate this.
 - tapOn: 'Email me a code'
 
-# The verify screen. The first box autofocuses and its maxLength is the full
-# code length, so iOS spreads a six-digit string across all six boxes — which
-# is the same path an SMS/keychain autofill takes.
+# The verify screen.
+#
+# ONE DIGIT PER BOX, each box focused deliberately. The original single
+# `inputText: ${CODE}` into box 0 assumed iOS would deliver the whole string at
+# once and hit the app's paste/autofill branch, which spreads it across all six.
+# Maestro does not paste — XCTest TYPES, character by character — so it went
+# down the per-character path instead and lost a digit every run, landing five
+# in six boxes (observed: 8 0 8 8 8 _).
+#
+# The loss is a race the app cannot see: each keystroke sets a box and calls
+# `focus()` on the next one ASYNCHRONOUSLY, while every box carries
+# `selectTextOnFocus`. A character arriving before that focus lands hits the
+# previous box with its text still selected and REPLACES it rather than
+# appending, so the digit vanishes with no error anywhere. A person types far
+# too slowly to reach it, and a real paste or an iOS one-time-code autofill goes
+# down the spread branch and is unaffected — which is why this is fixed here
+# rather than in the app.
 - extendedWaitUntil:
     visible: 'Enter your code'
     timeout: 30000
 - tapOn:
     id: 'signin-code-0'
-- inputText: ${CODE}
+- inputText: ${CODE.charAt(0)}
+- tapOn:
+    id: 'signin-code-1'
+- inputText: ${CODE.charAt(1)}
+- tapOn:
+    id: 'signin-code-2'
+- inputText: ${CODE.charAt(2)}
+- tapOn:
+    id: 'signin-code-3'
+- inputText: ${CODE.charAt(3)}
+- tapOn:
+    id: 'signin-code-4'
+- inputText: ${CODE.charAt(4)}
+- tapOn:
+    id: 'signin-code-5'
+- inputText: ${CODE.charAt(5)}
 
-- tapOn: 'Verify code'
+# NO `tapOn: 'Verify code'`, and its absence is the app's behaviour, not a gap.
+#
+# The screen submits itself the instant the sixth digit lands — the same path an
+# autofill takes, where the user never touches the button — and the label
+# becomes "Verifying…" while it does. So there is no reachable moment when a
+# complete code and a button reading "Verify code" exist together; tapping it
+# used to "work" only because a digit was missing, which left the form
+# incomplete and the button inert. The assertion below is what proves the
+# submit happened.
 
 # Landed. The seeded trip is the proof the session is real and the API answered
 # with this user's own data, not a cached shell.
+#
+# A REGEX, because Maestro matches a text selector against the WHOLE label and
+# the card is a single accessibility element reading
+# "E2E Fixture Trip, 2026-09-15 → 2026-09-16" — the name, the dates and the
+# separator merged by TripCard. The bare name matched nothing, which is how a
+# completed, working sign-in still reported as a failure. The dates come from
+# the fixture seed and would make this brittle if they were spelled out here.
 - extendedWaitUntil:
     visible:
-      text: 'E2E Fixture Trip'
+      text: '.*E2E Fixture Trip.*'
     timeout: 30000
