@@ -101,17 +101,40 @@ doctor() {
     warn "'iOS driver not ready in time', which reads like a slow simulator and is not."
     printf '\n  Installed Xcodes:\n'
     ls -d /Applications/Xcode*.app 2>/dev/null | sed 's/^/    /'
-    printf '\n  Fix:\n    sudo xcode-select -s %s/Contents/Developer\n\n' "$XCODE_APP"
+    local suggest
+    suggest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+    printf '\n  Fix:\n    sudo xcode-select -s %s/Contents/Developer\n\n' "${suggest:-$XCODE_APP}"
     die "Wrong Xcode selected."
   fi
   ok "Xcode $xver ($(xcode-select -p))"
 
-  command -v java >/dev/null || die "No java. Maestro needs a JRE: brew install --cask zulu@17"
-  ok "java $(java -version 2>&1 | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+  # NOT `command -v java`. macOS ships a stub at /usr/bin/java that exists on
+  # every machine and whose entire job is to print "Unable to locate a Java
+  # Runtime" — so the presence check passes on a Mac with no JDK at all, and
+  # this doctor cheerfully reported `✓ java The operation couldn't be
+  # completed`. Run it and read the exit code instead.
+  local jver
+  if ! jver="$(java -version 2>&1)" || printf '%s' "$jver" | grep -qi 'unable to locate a java runtime'; then
+    printf '\n  Maestro is a JVM program and needs a real JDK 17 — the one its own\n'
+    printf '  CI uses. macOS has a stub at /usr/bin/java that is not one.\n'
+    printf '\n  Fix:\n    brew install --cask zulu@17\n\n'
+    die "No Java runtime."
+  fi
+  local jmajor
+  jmajor="$(printf '%s' "$jver" | head -1 | sed -E 's/.*"([0-9]+).*/\1/')"
+  if [ -n "$jmajor" ] && [ "$jmajor" -lt 17 ] 2>/dev/null; then
+    warn "Java $jmajor; Maestro's own CI builds and runs on 17. Upgrade if the driver misbehaves."
+  fi
+  ok "java $(printf '%s' "$jver" | head -1 | sed -E 's/.*"([^\"]*)".*/\1/')"
 
   if ! command -v maestro >/dev/null; then
-    printf '\n  Fix:\n    export MAESTRO_VERSION=%s; curl -Ls https://get.maestro.mobile.dev | bash\n\n' "$MAESTRO_PIN"
-    die "No maestro on PATH (try: export PATH=\"\$HOME/.maestro/bin:\$PATH\")"
+    printf '\n  Fix — install it, then make the PATH stick:\n'
+    printf '    export MAESTRO_VERSION=%s\n' "$MAESTRO_PIN"
+    printf '    curl -Ls https://get.maestro.mobile.dev | bash\n'
+    printf '    echo '"'"'export PATH="$HOME/.maestro/bin:$PATH"'"'"' >> ~/.zshrc\n'
+    printf '    source ~/.zshrc\n\n'
+    printf '  The installer needs Java to already be there, so do Java first.\n\n'
+    die "No maestro on PATH."
   fi
   local mver
   mver="$(maestro --version 2>/dev/null | tail -1 | tr -d '[:space:]')"
