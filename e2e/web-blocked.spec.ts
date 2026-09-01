@@ -149,12 +149,32 @@ test.describe('web app off', () => {
     }
   });
 
-  test('the native sign-in routes are reachable with no session at all', async ({ request }) => {
+  test('the native sign-in routes are reachable with no session at all', async ({
+    request,
+  }, testInfo) => {
     // Requesting a code IS the start of signing in — there is no session yet by
     // definition. A redirect here means nobody can sign in on a fresh install.
+    //
+    // THE ADDRESS IS DERIVED, NOT A CONSTANT, and both halves of it are load
+    // bearing.
+    //
+    // UNIQUE, because this spec now runs in two projects against two
+    // deployments that share ONE database, and `sendOtpCode` enforces a
+    // 60-second resend cooldown keyed on the address. With one constant address
+    // the `api` project sent the code and `web-blocked` got the 429 it earned —
+    // a red build with nothing whatsoever wrong with the app. The timestamp
+    // covers retries too: all three attempts fell inside the same minute.
+    //
+    // `playwright-` PREFIXED, because anything that does not match
+    // FIXTURE_EMAIL_PATTERN falls through to a real Resend send, and
+    // e2e.feraltravels.com has no MX — so every run was hard-bouncing off the
+    // same domain the live sign-in emails go out from. The route still runs end
+    // to end: the code is generated and stored before the transport is skipped,
+    // and this test only ever cared that the request was not redirected.
+    const email = `playwright-webgate-${testInfo.project.name}-${Date.now()}@e2e.feraltravels.com`;
     const res = await request.post('/api/mobile/otp/send', {
       ...anon,
-      data: { email: 'nobody@e2e.feraltravels.com' },
+      data: { email },
       maxRedirects: 0,
     });
     expect(res.status(), 'POST /api/mobile/otp/send must not be redirected').toBeLessThan(400);
