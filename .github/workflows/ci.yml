@@ -694,6 +694,20 @@ jobs:
       #
       # Rebuilding always removes the hazard outright, and it costs nothing that
       # matters: the repository is public, so macOS Actions minutes are free.
+      # RELEASE, not Debug, and this is a correction rather than a preference.
+      #
+      # A Debug build contains NO JavaScript. React Native's Debug path fetches
+      # its bundle from a Metro packager on localhost:8081 at launch, and this
+      # job has never run one — so the installed app came up on the red box
+      # "No script URL provided. Make sure the packager is running", every
+      # single time. `launch.yaml` could not have passed here under any
+      # selector: it waits 30s for `signin-email` on a screen the app was never
+      # going to draw. Proven locally on 2026-09-01, from the view hierarchy of
+      # a Debug build on a booted simulator.
+      #
+      # Release runs the bundling phase at build time, so the .app is
+      # self-contained. It is also the configuration whose behaviour the flows
+      # claim to be testing — `__DEV__` off, the JS that ships.
       - name: Build the app for the simulator
         env:
           EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
@@ -710,12 +724,20 @@ jobs:
           echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
           xcodebuild -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphonesimulator \
-            -derivedDataPath ios/build \
-            CODE_SIGNING_ALLOWED=NO
+            -derivedDataPath ios/build
+          # CODE_SIGNING_ALLOWED=NO was here. It has to go, and this is not a
+          # preference. `expo-secure-store` is where the session token lives, and
+          # the keychain refuses an app with no entitlements: sign-in completed,
+          # `POST /api/mobile/otp/verify` returned 200, and the app then died on
+          # "Calling the 'setValueWithKeyAsync' function has failed → Caused by: A
+          # required entitlement isn't present", stranded on the code screen holding
+          # a session it could not store. `setToken` does not catch that on purpose.
+          # A simulator build signs ad hoc and needs no team, account or profile, so
+          # dropping the flag costs nothing.
           mkdir -p ios-build
-          cp -R ios/build/Build/Products/Debug-iphonesimulator/*.app ios-build/
+          cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
 
       # ── The toolchain Maestro's driver needs, and why it is selected HERE ──
       #
@@ -752,6 +774,18 @@ jobs:
           # BOOTED simulator, so a stray one left up by the image is a device
           # this job never installed the app onto.
           xcrun simctl shutdown all || true
+          # ── The software keyboard has to actually exist ─────────────────
+          #
+          # A simulator defaults to "Connect Hardware Keyboard": focusing a text
+          # field raises NO on-screen keyboard. The field still focuses and text
+          # still types, so nothing reads as broken — but `chat-keyboard.yaml`
+          # then fails on the single thing it exists to prove. With no keyboard
+          # there is no `keyboardWillShow`, the bottom nav never unmounts, and
+          # the flow's gate ("the nav is gone, so the keyboard is up") is false.
+          #
+          # BEFORE the boot. A device reads this as it comes up; setting it on an
+          # already-booted simulator does nothing at all.
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
           # The NEWEST iOS runtime on the image, not the first iPhone `simctl`
           # happens to name — which on this image is an iOS 18.5 one, a second
           # way to hand a driver built by Xcode 26.2 a runtime it was never

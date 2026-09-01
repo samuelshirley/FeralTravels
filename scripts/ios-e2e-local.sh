@@ -69,6 +69,26 @@ XCODE_APP="${E2E_XCODE_APP:-/Applications/Xcode_26.2.app}"
 
 mkdir -p "$OUT"
 
+# ── Where the throwaway database comes from ────────────────────────────────
+#
+# Docker is the documented path and stays the default. The fallback is an
+# ordinary Homebrew postgres on the SAME port, because Docker Desktop is a GUI
+# install with a licence prompt and a Mac without it should not be a Mac that
+# cannot run these flows. Both produce the identical $DB_URL; the only thing
+# that actually matters is that neither is the production Neon endpoint in .env.
+PG_LOCAL_DATA="${E2E_PG_DATA:-$HOME/.feraltravels-e2e-pg}"
+PG_LOCAL_BIN="${E2E_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
+
+db_mode() {
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    echo docker
+  elif [ -x "$PG_LOCAL_BIN/pg_ctl" ]; then
+    echo local
+  else
+    echo none
+  fi
+}
+
 # Each helper prints AND appends to the run report. Deliberately not a
 # `{ ... } | tee` around the whole function: a pipeline puts the body in a
 # subshell, where `die`'s `exit 1` ends the subshell and the script sails on to
@@ -92,7 +112,11 @@ doctor() {
 
   command -v xcodebuild >/dev/null || die "No xcodebuild. Install Xcode from the App Store."
   local xver
-  xver="$(xcodebuild -version | head -1 | awk '{print $2}')"
+  # `| head -1` closes the pipe on a process that is still writing, and
+  # `set -o pipefail` then reports the SIGPIPE (141) as the pipeline's status,
+  # which `set -e` turns into an exit with NO message at all — the doctor
+  # printed the macOS line and vanished. awk reads to EOF, so it cannot race.
+  xver="$(xcodebuild -version | awk 'NR==1 {print $2}')"
   local xmajor="${xver%%.*}"
   if [ "$xmajor" -lt 26 ]; then
     printf '\n'
@@ -145,9 +169,17 @@ doctor() {
     ok "maestro $mver (matches CI)"
   fi
 
-  command -v docker >/dev/null || die "No docker. Install Docker Desktop; the local database runs in it."
-  docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start Docker Desktop."
-  ok "docker running"
+  case "$(db_mode)" in
+    docker) ok "docker running (database in a container)" ;;
+    local)  ok "postgres at $PG_LOCAL_BIN (no docker; cluster in $PG_LOCAL_DATA)" ;;
+    *)
+      printf '\n  The flows call /api/test/seed, and the only DATABASE_URL in .env is\n'
+      printf '  PRODUCTION. So this needs a throwaway database on port 55432. Either:\n'
+      printf '\n    Docker Desktop, then start it        (docker compose -f docker-compose.e2e.yml)\n'
+      printf '    brew install postgresql@16           (no GUI, no licence prompt)\n\n'
+      die "No database available."
+      ;;
+  esac
 
   command -v node >/dev/null || die "No node."
   ok "node $(node -v)"
@@ -167,18 +199,75 @@ doctor() {
   say "Everything the run needs is present"
 }
 
+start_db() {
+  case "$(db_mode)" in
+    docker)
+      say "Starting the local database (docker)"
+      docker compose -f docker-compose.e2e.yml up -d --wait
+      ok "postgres on 55432 (container)"
+      ;;
+    local)
+      say "Starting the local database (postgres on this machine)"
+      if ! "$PG_LOCAL_BIN/pg_isready" -h 127.0.0.1 -p 55432 -q 2>/dev/null; then
+        # trust auth on a loopback-only cluster: the password in $DB_URL is then
+        # ignored, which is why the URL does not have to be kept in step here.
+        [ -d "$PG_LOCAL_DATA" ] || "$PG_LOCAL_BIN/initdb" -D "$PG_LOCAL_DATA" \
+          -U feral --auth-local=trust --auth-host=trust -E UTF8 >"$OUT/db.log" 2>&1 \
+          || { tail -20 "$OUT/db.log"; die "initdb failed — see $OUT/db.log"; }
+        "$PG_LOCAL_BIN/pg_ctl" -D "$PG_LOCAL_DATA" -l "$PG_LOCAL_DATA/server.log" \
+          -o "-p 55432 -k /tmp" -w start >>"$OUT/db.log" 2>&1 \
+          || { tail -20 "$PG_LOCAL_DATA/server.log"; die "postgres would not start"; }
+      fi
+      "$PG_LOCAL_BIN/psql" -h 127.0.0.1 -p 55432 -U feral -d postgres -tAc \
+        "select 1 from pg_database where datname='feraltravels_e2e'" 2>/dev/null | grep -q 1 \
+        || "$PG_LOCAL_BIN/createdb" -h 127.0.0.1 -p 55432 -U feral feraltravels_e2e
+      ok "postgres on 55432 (local cluster)"
+      ;;
+    *) die "No database available — run doctor." ;;
+  esac
+}
+
 # ───────────────────────────────────────────────────────────────────────────
 # up — database + schema + server, warmed
 # ───────────────────────────────────────────────────────────────────────────
 up() {
-  say "Starting the local database"
-  docker compose -f docker-compose.e2e.yml up -d --wait
-  ok "postgres on 55432"
+  start_db
 
-  say "Applying migrations"
-  DATABASE_URL="$DB_URL" npm run db:migrate >"$OUT/migrate.log" 2>&1 \
-    || { tail -30 "$OUT/migrate.log"; die "Migrations failed — see $OUT/migrate.log"; }
-  ok "schema is current"
+  # ── Schema ────────────────────────────────────────────────────────────────
+  #
+  # An EMPTY database is bootstrapped with `drizzle-kit push` and then has its
+  # journal seeded, rather than being brought up by replaying drizzle/*.sql.
+  # That is not a shortcut: THE SQL CHAIN CANNOT RUN FROM EMPTY, and never
+  # could. `0005_mute_meltdown` and `0006_nightly_replan` both `CREATE TYPE
+  # "trip_status"` and both `ADD COLUMN trips.trip_status`, the second without
+  # a guard, so a fresh run dies on `42710 type already exists`. Behind it,
+  # `0002_magical_joystick` calls `setval(seq, 0)` on an empty chat_history,
+  # which is out of range for a serial and aborts with `22003`.
+  #
+  # Nothing noticed because nothing has ever needed it: production was itself
+  # bootstrapped with push (see the header of scripts/seed-migration-journal.ts)
+  # and CI's preview branch is a copy-on-write CLONE of production, so both
+  # start from a database that already has the schema and only ever apply the
+  # newest file. This path is the one the repo already documents for that case.
+  #
+  # A database that already has tables takes the normal `db:migrate`, so a new
+  # migration is still exercised here exactly as it will be against prod.
+  local tables
+  tables="$("$PG_LOCAL_BIN/psql" -h 127.0.0.1 -p 55432 -U feral -d feraltravels_e2e \
+    -tAc "select count(*) from information_schema.tables where table_schema='public'" 2>/dev/null || echo 0)"
+  if [ "${tables:-0}" -lt 2 ]; then
+    say "Bootstrapping an empty database (push + journal seed)"
+    DATABASE_URL="$DB_URL" npx drizzle-kit push --force >"$OUT/migrate.log" 2>&1 \
+      || { tail -30 "$OUT/migrate.log"; die "Schema push failed — see $OUT/migrate.log"; }
+    DATABASE_URL="$DB_URL" npx tsx scripts/seed-migration-journal.ts >>"$OUT/migrate.log" 2>&1 \
+      || { tail -30 "$OUT/migrate.log"; die "Journal seed failed — see $OUT/migrate.log"; }
+    ok "schema created from schema.ts"
+  else
+    say "Applying migrations"
+    DATABASE_URL="$DB_URL" npm run db:migrate >"$OUT/migrate.log" 2>&1 \
+      || { tail -30 "$OUT/migrate.log"; die "Migrations failed — see $OUT/migrate.log"; }
+    ok "schema is current"
+  fi
 
   if curl -fsS "$API_URL/login" >/dev/null 2>&1; then
     ok "server already answering on $API_URL"
@@ -226,20 +315,47 @@ build() {
   say "Building the app for the simulator (this is the slow one, ~10 min cold)"
   (
     cd mobile
-    EXPO_PUBLIC_API_URL="$API_URL" npx expo prebuild --platform ios --clean
+    # EXPORTED, not a one-command prefix. In Release the JS bundle is built by
+    # xcodebuild's "Bundle React Native code and images" phase, which is where
+    # EXPO_PUBLIC_API_URL is inlined — so it has to be in the environment for
+    # xcodebuild too, not only for prebuild.
+    export EXPO_PUBLIC_API_URL="$API_URL"
+    npx expo prebuild --platform ios --clean
     local workspace scheme
     workspace="$(ls -d ios/*.xcworkspace | head -1)"
     scheme="$(basename "$workspace" .xcworkspace)"
-    echo "API base baked into this build: $API_URL"
+    echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
+    # RELEASE, and this is the whole reason layer 1 could never have passed.
+    #
+    # A Debug build contains NO JavaScript. React Native's Debug path fetches
+    # the bundle from a Metro packager on localhost:8081 at launch, and nothing
+    # here runs one — so the app came up showing the red box "No script URL
+    # provided. Make sure the packager is running", which has no `signin-email`
+    # in it and never would. The 30s wait then timed out on an assertion about
+    # a screen the app was never going to draw.
+    #
+    # Release runs the bundling phase at build time, so the .app is
+    # self-contained: no packager, no port, and the JS under test is the same
+    # shape that ships. It also means EXPO_PUBLIC_API_URL is baked in here
+    # rather than read at runtime, which is what makes a build point at one
+    # specific server.
+    # CODE_SIGNING_ALLOWED=NO was here. It has to go, and this is not a
+    # preference. `expo-secure-store` is where the session token lives, and
+    # the keychain refuses an app with no entitlements: sign-in completed,
+    # `POST /api/mobile/otp/verify` returned 200, and the app then died on
+    # "Calling the 'setValueWithKeyAsync' function has failed → Caused by: A
+    # required entitlement isn't present", stranded on the code screen holding
+    # a session it could not store. `setToken` does not catch that on purpose.
+    # A simulator build signs ad hoc and needs no team, account or profile, so
+    # dropping the flag costs nothing.
     xcodebuild -workspace "$workspace" \
       -scheme "$scheme" \
-      -configuration Debug \
+      -configuration Release \
       -sdk iphonesimulator \
-      -derivedDataPath ios/build \
-      CODE_SIGNING_ALLOWED=NO
+      -derivedDataPath ios/build
     mkdir -p ios-build
     rm -rf ios-build/*.app
-    cp -R ios/build/Build/Products/Debug-iphonesimulator/*.app ios-build/
+    cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
   ) >"$OUT/build.log" 2>&1 || { tail -40 "$OUT/build.log"; die "Build failed — see $OUT/build.log"; }
   ok "built $(ls -d mobile/ios-build/*.app | head -1)"
   install_app
@@ -250,6 +366,25 @@ install_app() {
   read -r udid label < <(node scripts/pick-ios-simulator.mjs)
   say "Booting $label"
   xcrun simctl shutdown all >/dev/null 2>&1 || true
+
+  # ── The software keyboard has to actually exist ─────────────────────────
+  #
+  # A simulator defaults to "Connect Hardware Keyboard", which means focusing a
+  # text field raises NO on-screen keyboard — the Mac's keyboard stands in for
+  # it. The field still focuses and text still types, so nothing looks wrong,
+  # and `chat-keyboard.yaml` fails on the one thing it exists to check: with no
+  # keyboard there is no `keyboardWillShow`, the bottom nav never unmounts, and
+  # the flow's "the nav is gone, so the keyboard opened" gate is false. The
+  # screenshot shows a composer with a blinking caret and no keyboard under it.
+  #
+  # BEFORE the boot, both globally and per-device. The device reads this when it
+  # comes up: setting it on an already-booted simulator changes nothing, which
+  # is a confusing half hour if you do it in that order.
+  defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false 2>/dev/null || true
+  local simplist="$HOME/Library/Preferences/com.apple.iphonesimulator.plist"
+  /usr/libexec/PlistBuddy -c "Add :DevicePreferences:$udid:ConnectHardwareKeyboard bool false" "$simplist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :DevicePreferences:$udid:ConnectHardwareKeyboard false" "$simplist" 2>/dev/null || true
+
   xcrun simctl boot "$udid" >/dev/null 2>&1 || true
   xcrun simctl bootstatus "$udid" -b
   open -a Simulator --args -CurrentDeviceUDID "$udid" || true
@@ -336,7 +471,10 @@ hierarchy() {
 
 down() {
   if [ -f "$OUT/server.pid" ]; then kill "$(cat "$OUT/server.pid")" 2>/dev/null || true; rm -f "$OUT/server.pid"; fi
-  docker compose -f docker-compose.e2e.yml down
+  case "$(db_mode)" in
+    docker) docker compose -f docker-compose.e2e.yml down ;;
+    local)  "$PG_LOCAL_BIN/pg_ctl" -D "$PG_LOCAL_DATA" -w stop >/dev/null 2>&1 || true ;;
+  esac
   ok "server and database stopped"
 }
 
@@ -349,7 +487,12 @@ case "${1:-all}" in
   hierarchy) hierarchy ;;
   studio)    maestro --device "$(device_id)" studio ;;
   down)      down ;;
-  reset)     down; docker volume rm feraltravels-e2e-pgdata 2>/dev/null || true; ok "volume dropped" ;;
+  reset)
+    down
+    docker volume rm feraltravels-e2e-pgdata 2>/dev/null || true
+    [ -d "$PG_LOCAL_DATA" ] && rm -rf "$PG_LOCAL_DATA"
+    ok "database dropped"
+    ;;
   all)
     doctor
     up
