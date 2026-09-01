@@ -3,8 +3,10 @@
 **Status: 2026-09-01. All three flows pass, locally, on a real simulator.**
 That replaces the line this document opened with for its first day of life —
 "no Maestro flow has ever passed, anywhere" — which was true and was the point.
-Nine separate things were wrong between a written flow and a green run, and not
-one of them was a typo in a selector. They are listed below because every one of
+Eleven separate things were wrong between a written flow and a green run, and
+not one of them was a typo in a selector. Two of the eleven were found *after*
+all three flows were green, by reading the server log of the run that passed —
+which is the argument for reading it. They are listed below because every one of
 them was invisible to the CI job that was supposed to find them.
 
 Still true, and worth keeping in mind: **nothing here has passed in CI yet.**
@@ -70,6 +72,28 @@ failures — they showed up as one, nine times.
    the flow's "the keyboard is up" gate is false. It must be set BEFORE the
    device boots; setting it on a booted one does nothing.
 
+Two more, found only because the run that "passed" was read rather than trusted:
+
+10. **The server had no `ANTHROPIC_API_KEY`, and every send answered 503.**
+    Next loads `.env.local` ahead of `.env`, and the Vercel CLI had written a
+    `.env.local` listing every key with an EMPTY value — so a repo with a good
+    key in `.env` ran a server with none. The same mechanism emptied
+    `AUTH_SECRET`, which is where the `MissingSecret` noise in the log came
+    from. The doctor had declared both present, because it grepped `.env` for a
+    line rather than resolving what the server would see. Both are now passed
+    explicitly into the server's process environment, which outranks every
+    file, and the doctor checks the resolved value.
+11. **`chat-keyboard.yaml`'s final assertion could not fail.**
+    `visible: 'keyboard visibility check'` matched either the sent bubble or the
+    same text still sitting unsent in the input — true in the working case and
+    the broken one — so the flow went green with "AI service is temporarily
+    unavailable" on screen. It now asserts the COMPOSER CLEARED: the placeholder
+    is back and the send button is disabled, both of which flip on the tap alone
+    (`setInput("")` runs before any network call) and neither of which waits on
+    Penny. Mutation-checked by deleting the `setInput("")`: red, then restored.
+    Deliberately still says nothing about the reply or the error bubble — this
+    is a layout guard, and a dead AI service must not red it.
+
 Two more, outside the flows, found on the way:
 
 - **The migration chain cannot run from empty**, and never could:
@@ -94,7 +118,9 @@ Two more, outside the flows, found on the way:
   rests on the button clearing the keyboard, which is a claim about a screen
   size.
 - **The send is not awaited.** `chat-keyboard.yaml` proves the button was
-  hittable, not that Penny replied.
+  hittable and that the composer cleared, not that Penny replied. That is on
+  purpose — see item 11 — but it does mean this suite would not notice Penny
+  answering with nonsense, only her never being asked.
 
 ## The loop to use
 
@@ -120,9 +146,11 @@ above, it is not proof of what the node's LABEL says either.
 `sign-in.yaml` (wiring: the app can reach the API) →
 `chat-keyboard.yaml` (behaviour: the thing under test).
 
-The bring-up above is the argument for the split, in nine parts. Items 1 and 2
-are layer 1, items 3–8 are layer 2, item 9 is layer 3, and before the split all
-of them arrived as one line reading `[Failed] chat-keyboard`.
+The bring-up above is the argument for the split. Items 1 and 2 are layer 1,
+items 3–8 are layer 2, items 9 and 11 are layer 3, and before the split all of
+them arrived as one line reading `[Failed] chat-keyboard`. Item 10 is the
+reminder that the split does not help with a flow that asserts the wrong thing:
+green named no layer either.
 
 ## Traps, each of which has already cost a run
 

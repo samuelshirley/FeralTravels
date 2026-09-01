@@ -67,16 +67,38 @@ appId: ${APP_ID}
 # send is the only honest proof the button was hittable. Her reply is not
 # awaited: this flow is about layout, not about her latency.
 #
-# Note the weakness, so nobody mistakes it for strength: the text below matches
-# either the sent bubble or the input still holding it, so it does not by itself
-# prove the send landed. The tapOn above is the gate. If you want the stronger
-# assertion, wait on Penny's typing indicator instead and accept the latency.
+# THE COMPOSER CLEARED. That is what proves the send landed, and it replaces an
+# assertion that could not fail: `visible: 'keyboard visibility check'` matched
+# either the sent bubble OR the same text still sitting unsent in the input, so
+# it was true in both the working and the broken case. It passed for a week
+# against a server answering 503 to every replan, with "AI service is
+# temporarily unavailable" on screen.
+#
+# `sendMessage` does `setInput("")` (ChatPanel.tsx:1273) before any network call
+# and `sendEnabled` is `hasComposerText`, so BOTH of these flip on the tap alone
+# and neither waits on Penny. Read off the live hierarchy, where an empty input
+# carries the placeholder as its label and holds the typed string when full:
+#
+#   empty:  input label "Ask Penny…", send enabled=false
+#   typed:  input text "keyboard visibility check", send enabled=true
+#
+# DELIBERATELY NOT an assertion about the reply, or about the error bubble. This
+# is a layout guard. A dead Anthropic key is a real problem — the doctor now
+# catches it — but it is not this flow's problem, and reddening here for it
+# would make the guard fail for a reason that has nothing to do with the
+# keyboard.
 - extendedWaitUntil:
     visible:
-      text: 'keyboard visibility check'
-    timeout: 20000
+      id: 'chat-composer-input'
+      text: 'Ask Penny…'
+    timeout: 10000
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
 
 # And it survives the send: the composer is still on screen and still usable,
-# rather than having been pushed off by the transcript growing under it.
+# rather than having been pushed off by the transcript growing under it. A
+# second look, after the assertions above have already settled — the transcript
+# grows on Penny's reply, which lands later than they do.
 - assertVisible:
     id: 'chat-composer-input'

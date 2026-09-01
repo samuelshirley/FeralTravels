@@ -89,6 +89,42 @@ db_mode() {
   fi
 }
 
+# ── The value the SERVER will actually see ─────────────────────────────────
+#
+# NOT `grep '^KEY=' .env`. Next loads `.env.local` AHEAD of `.env`, and the
+# Vercel CLI writes a `.env.local` listing every key with an EMPTY value — so a
+# repo with a perfectly good ANTHROPIC_API_KEY in `.env` runs a server that has
+# none. That is not hypothetical: it is why `/api/trip/replan` answered 503 to
+# every send while chat-keyboard.yaml went green, and why the log filled with
+# `MissingSecret` from an AUTH_SECRET that the doctor had just declared present.
+#
+# So resolve it the way Next does — an exported value first, then `.env.local`,
+# then `.env` — but skip EMPTY assignments, which is the entire point. The
+# doctor checks this, and `up` passes the result explicitly into the server's
+# environment, where it outranks every file.
+env_value() {
+  local key="$1" v f
+  v="$(printenv "$key" 2>/dev/null || true)"
+  if [ -n "$v" ]; then printf '%s' "$v"; return; fi
+  for f in .env.local .env; do
+    [ -f "$f" ] || continue
+    # Last assignment in the file wins, matching dotenv. Strips one layer of
+    # surrounding quotes and an `export ` prefix.
+    v="$(awk -v k="$key" '
+      { line = $0; sub(/^[[:space:]]*export[[:space:]]+/, "", line) }
+      index(line, k "=") == 1 {
+        val = substr(line, length(k) + 2)
+        sub(/^"/, "", val); sub(/"$/, "", val)
+        sub(/^'"'"'/, "", val); sub(/'"'"'$/, "", val)
+        out = val
+      }
+      END { print out }
+    ' "$f")"
+    if [ -n "$v" ]; then printf '%s' "$v"; return; fi
+  done
+  printf ''
+}
+
 # Each helper prints AND appends to the run report. Deliberately not a
 # `{ ... } | tee` around the whole function: a pipeline puts the body in a
 # subshell, where `die`'s `exit 1` ends the subshell and the script sails on to
@@ -185,9 +221,25 @@ doctor() {
   ok "node $(node -v)"
 
   [ -f .env ] || die "No .env — the local server still needs ANTHROPIC_API_KEY and AUTH_SECRET from it."
-  grep -q '^ANTHROPIC_API_KEY=.' .env || warn "ANTHROPIC_API_KEY looks empty in .env; chat-keyboard sends a real message."
-  grep -q '^AUTH_SECRET=.' .env       || die "AUTH_SECRET is empty in .env; sign-in cannot mint a session."
-  ok ".env has the keys the server needs"
+  # The EFFECTIVE value, not a line in a file. See env_value above: the old
+  # check grepped `.env`, passed, and the server started with an empty key
+  # anyway because `.env.local` shadowed it.
+  local anthropic auth_secret
+  anthropic="$(env_value ANTHROPIC_API_KEY)"
+  auth_secret="$(env_value AUTH_SECRET)"
+  if [ -z "$auth_secret" ]; then
+    printf '\n  Checked the process env, .env.local and .env, in that order.\n'
+    printf '  A key present-but-EMPTY does not count — and a .env.local written by\n'
+    printf '  the Vercel CLI lists every key with an empty value.\n\n'
+    die "AUTH_SECRET resolves to nothing; sign-in cannot mint a session."
+  fi
+  if [ -z "$anthropic" ]; then
+    warn "ANTHROPIC_API_KEY resolves to nothing (checked process env, .env.local, .env)."
+    warn "  chat-keyboard sends a real message: /api/trip/replan will answer 503."
+    warn "  The flow asserts on the composer clearing, so it stays green — but the"
+    warn "  screen will read 'AI service is temporarily unavailable'."
+  fi
+  ok "env resolves the keys the server needs"
 
   local udid label
   if ! read -r udid label < <(node scripts/pick-ios-simulator.mjs); then
@@ -281,7 +333,14 @@ up() {
     # E2E_TEST_ENDPOINTS=1 arms /api/test/* — the same switch CI sets, hard-off
     # on VERCEL_ENV=production with no override, so it cannot leak anywhere.
     # No E2E_TEST_ENDPOINTS_SECRET: locally there is nothing to lock out.
+    # ANTHROPIC_API_KEY and AUTH_SECRET are passed the same way DATABASE_URL is,
+    # and for the same reason: the process environment outranks every .env file,
+    # so this is the only way to beat the empty-valued `.env.local` that Next
+    # would otherwise load ahead of `.env`. Without it the server runs with no
+    # Anthropic key and answers 503 to every replan.
     DATABASE_URL="$DB_URL" \
+    ANTHROPIC_API_KEY="$(env_value ANTHROPIC_API_KEY)" \
+    AUTH_SECRET="$(env_value AUTH_SECRET)" \
     AUTH_URL="$API_URL" \
     NEXTAUTH_URL="$API_URL" \
     E2E_TEST_ENDPOINTS=1 \

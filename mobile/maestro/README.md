@@ -85,11 +85,17 @@ and it refuses any address outside `FIXTURE_EMAIL_PATTERN`.
 
 ## What it took to make these pass
 
-They had never been run when they were merged, and getting to green took nine
+They had never been run when they were merged, and getting to green took eleven
 fixes, each of which hid the next — a Debug build with no JavaScript in it, an
 unsigned build that could not use the keychain, a keychain that survived
 `clearState`, a simulator with no software keyboard, and five wrong assumptions
 about what the app renders. Not one was a typo in a selector.
+
+Two of the eleven were found after all three were already green, by reading the
+server log of the passing run: the local server had no `ANTHROPIC_API_KEY`
+(Next loads `.env.local`, full of empty values, ahead of `.env`) and this flow's
+final assertion could not fail. Both are fixed; the second is now
+mutation-checked.
 
 `docs/design/ios-e2e-bringup.md` lists all of them in the order they had to be
 fixed. Read it before changing anything here: several of these flows' stranger
