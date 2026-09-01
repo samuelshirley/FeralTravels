@@ -3,6 +3,11 @@ import Link from 'next/link';
 /**
  * Shared shell for the public legal pages.
  *
+ * STANDALONE. No header, no app navigation, nothing that routes into the
+ * product — see the wordmark comment below. Nobody reads these; they exist
+ * because Apple and Google require them, and the only job of this shell is to
+ * present the document to a reviewer without offering them a way to get lost.
+ *
  * A route group, so the URLs stay /privacy and /terms — those exact paths go
  * in the Google OAuth consent screen and in App Store Connect, and they are a
  * pain to change once submitted.
@@ -21,17 +26,28 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
       }}
     >
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <Link
-          href="/"
+        {/*
+          A wordmark, NOT a link. These pages are standalone on purpose.
+
+          It used to be `← Feral Travels` pointing at `/`, which was fine when
+          the web was the product. It is not now: `/` redirects to the download
+          screen, so the only navigation a reviewer was offered led out of the
+          document they were sent to read and into a prompt to install an app
+          they are in the middle of reviewing.
+
+          Nothing here routes into the app. The three legal pages cross-link to
+          each other — Apple and Google both expect to get between them — and
+          /support carries a mailto. That is the whole navigation surface.
+        */}
+        <div
           style={{
-            color: 'var(--tp-primary)',
+            color: 'var(--tp-muted)',
             fontSize: 13,
             fontWeight: 600,
-            textDecoration: 'none',
           }}
         >
-          ← Feral Travels
-        </Link>
+          Feral Travels
+        </div>
 
         <article className="legal-doc">{children}</article>
 

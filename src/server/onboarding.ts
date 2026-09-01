@@ -82,7 +82,7 @@ export interface Question {
 export const TRIP_INTENT_QUESTION: Question = {
   key: 'trip_intent',
   kind: 'handoff',
-  label: "Hi, I'm Penny. Let's plan a trip together! Tell me where you want to go — the more details the better. Feel free to drop in names of locations, Google Maps links, or addresses, and I'll put together a daily drive plan with gas stops based on your range and try to find the cheapest fuel along the way.\n\nAfter you give me a summary, I'll ask some clarifying questions to make sure I'm planning as best I can.",
+  label: "Hi, I'm Penny. Let's plan a trip together! Tell me where you want to go — the more details the better. Feel free to drop in names of locations, Google Maps links, or addresses, and I'll put together a daily drive plan with gas stops based on your range.\n\nAfter you give me a summary, I'll ask some clarifying questions to make sure I'm planning as best I can.",
   placeholder: "Tell Penny about your trip…",
   multiline: true,
 };

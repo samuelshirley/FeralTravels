@@ -65,6 +65,13 @@ export default defineConfig({
   // one exception is the announcement, which is global to the app; it runs in
   // its own project after everything else (see `projects` below).
   fullyParallel: true,
+  /**
+   * Two, at the owner's instruction. Note the consequence so it stays a choice:
+   * a retry turns a REAL intermittent bug into a green build. If a spec starts
+   * passing only on attempt 2, that is a finding — the HTML report records the
+   * retry, and it is worth opening rather than enjoying.
+   */
+  retries: 2,
   workers: process.env.CI ? 4 : undefined,
   reporter: [
     ['list'],
@@ -117,24 +124,104 @@ export default defineConfig({
     },
   },
   projects: [
-    // Everything except the announcement. Fully parallel: one fresh user per
-    // test, one fresh fixture graph per test, nothing shared.
+    /**
+     * SERVER CONTRACTS. These keep running, and they are the reason the suite
+     * still exists at all now that the product is an iOS app.
+     *
+     * Every spec here asserts something the PHONE depends on: how the native
+     * OAuth exchange refuses a forged token, that a real OTP email is delivered
+     * and passes SPF/DMARC, that account deletion actually deletes (Apple
+     * guideline 5.1.1(v)), that the legal URLs submitted to App Store Connect
+     * answer 200 anonymously, and that the web block does not take the API with
+     * it. The browser is incidental to most of them — `oauth-exchange` never
+     * opens a page at all.
+     */
     {
-      name: 'chromium',
+      name: 'api',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /announcement\.spec\.ts/,
+      testMatch: /(oauth-exchange|login-otp|legal-pages|account-deletion|web-blocked)\.spec\.ts/,
     },
-    // The announcement is GLOBAL app state — an active announcement pops a
-    // modal over every signed-in user's /trips, which would block clicks in
-    // any spec running beside it. So it runs on its own, after the rest.
-    {
-      name: 'announcement',
-      use: { ...devices['Desktop Chrome'] },
-      testMatch: /announcement\.spec\.ts/,
-      dependencies: ['chromium'],
-    },
+
+    /**
+     * THE OTHER SIDE OF THE SWITCH — the same spec, against a second deployment
+     * of the same build with WEB_APP_ENABLED=0.
+     *
+     * A project rather than a second `playwright test` invocation, and that is
+     * the whole point of the shape. The separate-command version broke twice in
+     * one run: it launched a browser without `PLAYWRIGHT_BROWSERS_PATH=0`, so
+     * Playwright looked in ~/.cache while `npm run e2e` had installed into
+     * node_modules; and it wrote no `playwright-results.json`, so the PR comment
+     * cheerfully reported the FIRST run's 78 passes while the job was red. One
+     * invocation means one browser resolution, one JSON, one comment, one
+     * skip-guard — none of which can drift from the other.
+     *
+     * `baseURL` per project is the mechanism: same specs, different deployment.
+     * Only added when ci.yml supplies the URL, so a local run is unaffected.
+     */
+    ...(process.env.E2E_BLOCKED_BASE_URL
+      ? [
+          {
+            name: 'web-blocked',
+            use: {
+              ...devices['Desktop Chrome'],
+              baseURL: process.env.E2E_BLOCKED_BASE_URL,
+            },
+            testMatch: /web-blocked\.spec\.ts/,
+          },
+        ]
+      : []),
+
+    /**
+     * WEB UI — PAUSED, not deleted. 2026-08-28.
+     *
+     * The product went iOS-first and the browser now serves one download
+     * screen, so these specs assert a front end no user reaches. Pausing rather
+     * than deleting is deliberate: the pages still exist behind
+     * `WEB_APP_ENABLED`, the owner may yet want a landing page or an isolated
+     * demo, and a spec that took a year to get right is much cheaper to keep
+     * than to rewrite from memory.
+     *
+     * RE-ENABLED 2026-08-28. The preview no longer deploys with
+     * `WEB_APP_ENABLED=0`, and ci.yml sets `E2E_WEB_UI=1` beside `E2E_BASE_URL`
+     * — the two move together by construction, in the same job, because either
+     * one alone is a suite that fails for a configuration reason.
+     *
+     * The coverage this restores is the reason it was worth doing: these specs
+     * are the only automated proof that Penny plans a trip, that fuel sources
+     * lazily, that the paywall blocks and that vehicles can be managed. They
+     * were paused for a day and nothing covered any of it.
+     *
+     * WHAT IT COSTS, since the flag is fixed per deployment and one preview
+     * cannot be on both sides: no browser test now exercises the web app in its
+     * switched-OFF state. `web-blocked.spec.ts` still runs and still proves the
+     * things that would be an outage or an App Store rejection — /api, the legal
+     * pages and /login are ungated in EITHER configuration — and the gate's own
+     * logic is unit-tested in `src/lib/webAccess.test.ts` and
+     * `webAccessCoverage.test.ts`. To go back, restore the deploy flag in ci.yml
+     * and drop `E2E_WEB_UI`; the spec follows automatically.
+     */
+    ...(process.env.E2E_WEB_UI === '1'
+      ? [
+          {
+            name: 'web-ui',
+            use: { ...devices['Desktop Chrome'] },
+            testMatch:
+              /(existing-trip|onboarding-flow|onboarding-validation|penny-plan-trip|lazy-fuel-sourcing|vehicle-crud|subscriptions)\.spec\.ts/,
+          },
+          // The announcement is GLOBAL app state — an active announcement pops
+          // a modal over every signed-in user's /trips, which would block
+          // clicks in any spec running beside it. So it runs on its own, after
+          // the rest.
+          {
+            name: 'announcement',
+            use: { ...devices['Desktop Chrome'] },
+            testMatch: /announcement\.spec\.ts/,
+            dependencies: ['web-ui'],
+          },
+        ]
+      : []),
   ],
-  ...(useExternalServer
+ ...(useExternalServer
     ? {}
     : {
         webServer: {

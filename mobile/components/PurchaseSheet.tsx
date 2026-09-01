@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -5,12 +6,19 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 import type { PaywallProduct } from "@/shared/types/entitlement";
+import {
+  PROMO_CTA_LABEL,
+  PROMO_PLACEHOLDER,
+  PROMO_PROMPT,
+} from "@/shared/lib/promoCopy";
+import { fetchEntitlement, redeemPromoCode } from "@/lib/entitlement";
 
 /**
  * Native mirror of src/components/PurchaseSheet.tsx — the purchase sheet, and
@@ -50,6 +58,7 @@ export default function PurchaseSheet({
   error,
   onPurchase,
   onClose,
+  onRedeemed,
 }: {
   products: PaywallProduct[];
   /**
@@ -63,6 +72,11 @@ export default function PurchaseSheet({
   error: string | null;
   onPurchase: (productId: string) => void;
   onClose: () => void;
+  /**
+   * Fired only after the server has CONFIRMED entitlement, never on the 200
+   * from the redeem call. Optional, so a sheet with no promo path renders none.
+   */
+  onRedeemed?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const busy = purchasingId !== null;
@@ -119,6 +133,8 @@ export default function PurchaseSheet({
                 />
               ))}
             </View>
+
+            {onRedeemed ? <PromoRedeemer onRedeemed={onRedeemed} /> : null}
 
             {testPurchaseAllowed ? (
               <View style={styles.testNotice}>
@@ -202,6 +218,101 @@ function PlanRow({
   );
 }
 
+/**
+ * The third way through this sheet: a code, instead of a price.
+ *
+ * Native mirror of the web `PromoRedeemer`. It sits under the two plans because
+ * it is the minority path, but it is a peer of them rather than a footnote —
+ * hence a real field and a real button, not a "have a code?" link that has to be
+ * opened first. Hiding the one control a comped user was told to look for
+ * behind a disclosure is a small cruelty.
+ *
+ * `keyboardShouldPersistTaps="handled"` is already set on the ScrollView above,
+ * which is what lets the Redeem button take a tap while the keyboard is up
+ * instead of the first tap merely dismissing it.
+ */
+function PromoRedeemer({ onRedeemed }: { onRedeemed: () => void }) {
+  const [code, setCode] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const disabled = pending || code.trim().length === 0;
+
+  async function submit() {
+    if (disabled) return;
+    setPending(true);
+    setError(null);
+    try {
+      await redeemPromoCode(code);
+      // The 200 says a row was written. Entitlement is a different question and
+      // the server is the one that answers it — believing the first would
+      // unblock the app on our own say-so.
+      const fresh = await fetchEntitlement();
+      if (!fresh?.entitled) {
+        setError("That worked, but your plan hasn't switched on yet. Give it a moment.");
+        return;
+      }
+      onRedeemed();
+    } catch (err) {
+      // The server sends copy per refusal code, and it already says the useful
+      // thing — which address, or that the code is spent. Rendered verbatim
+      // rather than re-worded here, so there is one place to change it.
+      setError(err instanceof Error ? err.message : "Could not redeem that code");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <View testID="promo-redeemer" style={styles.promoWrap}>
+      <View style={styles.promoDivider}>
+        <View style={styles.promoRule} />
+        <Text style={styles.promoLabel}>{PROMO_PROMPT.toUpperCase()}</Text>
+        <View style={styles.promoRule} />
+      </View>
+
+      <View style={styles.promoRow}>
+        <TextInput
+          testID="promo-input"
+          value={code}
+          onChangeText={setCode}
+          placeholder={PROMO_PLACEHOLDER}
+          placeholderTextColor={theme.subtle}
+          // No autocapitalize fight and no autocorrect: the server normalizes,
+          // and a keyboard "helpfully" rewriting a random string is how a valid
+          // code arrives mangled.
+          autoCapitalize="characters"
+          autoCorrect={false}
+          editable={!pending}
+          returnKeyType="go"
+          onSubmitEditing={() => void submit()}
+          style={styles.promoInput}
+        />
+        <Pressable
+          testID="promo-submit"
+          accessibilityRole="button"
+          onPress={() => void submit()}
+          disabled={disabled}
+          style={[styles.promoButton, disabled ? styles.promoButtonOff : null]}
+        >
+          {pending ? (
+            <ActivityIndicator size="small" color={theme.onPrimary} />
+          ) : (
+            <Text style={[styles.promoButtonText, disabled ? styles.promoButtonTextOff : null]}>
+              {PROMO_CTA_LABEL}
+            </Text>
+          )}
+        </Pressable>
+      </View>
+
+      {error ? (
+        <Text testID="promo-error" style={styles.promoError}>
+          {error}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
@@ -277,6 +388,44 @@ const styles = StyleSheet.create({
   },
   testNoticeText: { fontFamily: font.regular, fontSize: 12, lineHeight: 18, color: theme.text },
   testNoticeStrong: { fontFamily: font.bold },
+
+  promoWrap: { marginTop: 14 },
+  promoDivider: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  promoRule: { flex: 1, height: 1, backgroundColor: theme.border },
+  promoLabel: { fontFamily: font.regular, fontSize: 10.5, letterSpacing: 0.8, color: theme.subtle },
+  promoRow: { flexDirection: "row", gap: 6 },
+  promoInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surfaceMuted,
+    color: theme.text,
+    fontFamily: font.regular,
+    fontSize: 13,
+  },
+  promoButton: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 82,
+  },
+  promoButtonOff: { backgroundColor: theme.border },
+  promoButtonText: { fontFamily: font.semibold, fontSize: 13, color: theme.onPrimary },
+  promoButtonTextOff: { color: theme.subtle },
+  promoError: {
+    marginTop: 8,
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: theme.danger,
+  },
 
   notWiredText: {
     marginTop: 14,

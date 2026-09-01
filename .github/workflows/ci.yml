@@ -96,6 +96,54 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # FIRST, before checkout: stamp the PREVIOUS E2E results comment as
+      # superseded. That comment is sticky — edited in place — and GitHub keeps
+      # an edited comment at its ORIGINAL position in the timeline, so last
+      # commit's green table stays put while newer commits scroll past beneath
+      # it, reading as though it covers them.
+      #
+      # This is a STEP and not a job on purpose. A job is a row in the PR checks
+      # list, and that list is a dashboard you read at a glance — is this an OTA
+      # or a native build, did the simulator pass. A row reporting on a COMMENT
+      # says nothing about the code and would sit there on every PR forever.
+      #
+      # `unit` hosts it because it has no `needs:`, so it starts within seconds
+      # of a push. That covers the case that matters: the pipeline never
+      # reaching the E2E job at all (failed preview deploy, a run cancelled by
+      # cancel-in-progress), where the `if: always()` results step never runs
+      # and the stale green table would otherwise stand unchallenged.
+      - name: Mark the previous E2E results superseded
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- feraltravels-e2e-results -->';
+            const open = '<!-- stale-banner:start -->';
+            const close = '<!-- stale-banner:end -->';
+            const pr = context.payload.pull_request;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (!existing) return; // nothing to stale on the first run
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            // Idempotent: strip any banner a previous run left before adding ours.
+            const stripped = existing.body.replace(
+              new RegExp(`${open}[\\s\\S]*?${close}\\n*`), ''
+            );
+            const banner = [
+              open,
+              '> [!WARNING]',
+              '> **Superseded — the table below is NOT for the latest commit.**',
+              `> \`${pr.head.sha.slice(0, 7)}\` is [running now](${runUrl}). This comment is`,
+              '> rewritten with its real results when that run finishes.',
+              close,
+            ].join('\n');
+            await github.rest.issues.updateComment({
+              ...context.repo,
+              comment_id: existing.id,
+              body: stripped.replace(marker, `${marker}\n${banner}`),
+            });
+
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -135,6 +183,9 @@ jobs:
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
+      # The same build, deployed a second time with WEB_APP_ENABLED=0, so the
+      # configuration production actually runs gets tested too.
+      blocked_url: ${{ steps.deploy.outputs.blocked_url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -190,7 +241,38 @@ jobs:
           SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
           echo "::add-mask::$SECRET"
           vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
+          # Fail HERE, before a build and a browser, if the preview environment
+          # is short a variable. Vercel scopes each one per-environment and the
+          # picker makes "Production" alone easy to choose by accident; the
+          # symptom is then a red spec somewhere unrelated on whichever PR is
+          # open, which reads as an app bug. `vercel pull` just wrote exactly
+          # what `vercel build` will compile against, so that file is the thing
+          # worth asserting on.
+          node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
+          # WEB_APP_ENABLED is deliberately NOT passed here, so the preview runs
+          # with the web app ON.
+          #
+          # It was `0` for a day, to match where production is heading. The cost
+          # was the whole web UI suite: `existing-trip`, `onboarding-flow`,
+          # `penny-plan-trip`, `lazy-fuel-sourcing`, `vehicle-crud` and
+          # `subscriptions` were all paused, because each would be redirected to
+          # /get-the-app before its first assertion. That is the only automated
+          # proof that Penny plans a trip, that fuel sources lazily, that the
+          # paywall blocks and that vehicles can be managed — traded for one
+          # spec's worth of edge-redirect coverage.
+          #
+          # The flag is fixed per deployment, so ONE preview cannot test both
+          # states. This is the side worth having: the web app is what is
+          # deployed today, `WEB_APP_ENABLED` is unset in Vercel, and the block's
+          # own logic is unit-tested (webAccess.test.ts covers /api, the legal
+          # pages and /login; webAccessCoverage.test.ts fails if a new page
+          # forgets the guard). web-blocked.spec.ts now asserts the correct
+          # behaviour for WHICHEVER side E2E_WEB_UI names, so nothing skips.
+          #
+          # To test the blocked state instead: restore `-e WEB_APP_ENABLED="0"`
+          # below AND drop E2E_WEB_UI from the e2e job.
+          #
           # PAYWALL_ENABLED is OFF by default, deliberately — merging the paywall
           # must not paywall anyone until there is something to buy. The tested
           # preview is the one place that default is wrong: e2e/subscriptions.spec.ts
@@ -206,6 +288,32 @@ jobs:
             -e PAYWALL_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          # A SECOND deployment of the same prebuilt artifact, with the web app
+          # switched OFF.
+          #
+          # One deployment can only be in one state, so a suite running against
+          # one of them can only ever prove half of a switch. The half it does
+          # not prove is the half that ships: production runs with
+          # WEB_APP_ENABLED=0, and until this existed nothing had ever executed
+          # that configuration — the block was argued from unit tests and a
+          # local reading of middleware.
+          #
+          # Cheap, because everything expensive is already done. Same prebuilt
+          # bundle, same Neon branch, same secret; only the env differs. It adds
+          # one `vercel deploy` and a handful of assertions, and it is the only
+          # thing that can catch a gate that swallows /api or a legal page —
+          # the two failures that would take the product down or fail App
+          # Review, and neither of which is visible from the open side.
+          BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
+            -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
+            -e E2E_TEST_ENDPOINTS="1" \
+            -e PAYWALL_ENABLED="1" \
+            -e WEB_APP_ENABLED="0" \
+            -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
+          echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
+          echo "Preview (web blocked): $BLOCKED_URL"
+
           echo "## 🔍 Preview (E2E runs against this exact deployment)" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
@@ -255,11 +363,24 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
+            /*
+             * Delete and REPOST, rather than edit in place.
+             *
+             * An edited comment stays where it was first written — often pages
+             * up a long PR — and GitHub gives no notification that it changed.
+             * So the most recent results were the single easiest thing to miss,
+             * at exactly the moment they matter: the last look before merging.
+             * The stale banner helped and did not fix it, because you still had
+             * to go and find the thing to see it was stale.
+             *
+             * Reposting keeps ONE comment — the old one is removed, so twenty
+             * commits do not leave twenty tables — and always puts it at the
+             * bottom of the thread, newest, where you are already reading.
+             */
             if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
             // 2. Pinned block at the top of the PR description. Replace only
             // our own marked region; never rewrite the author's prose.
@@ -314,6 +435,24 @@ jobs:
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          # The preview deploys with the web app ON (see the deploy step), so the
+          # browser specs can run again. This one variable drives both halves:
+          # playwright.config.ts adds the `web-ui` project, and
+          # web-blocked.spec.ts asserts the gate is NOT engaged rather than that
+          # it is. Both must move together with the deploy flag above.
+          E2E_WEB_UI: '1'
+          # The second deployment — same build, WEB_APP_ENABLED=0. Its presence
+          # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
+          # covers both sides of the switch: one browser resolution, one
+          # playwright-results.json, one PR comment, one skip-guard.
+          #
+          # It was a separate `npx playwright test` first, and that broke twice
+          # in a single run. It launched without PLAYWRIGHT_BROWSERS_PATH=0, so
+          # Playwright hunted ~/.cache while the install step had put chromium
+          # in node_modules; and `--reporter=list` meant it wrote no JSON, so
+          # the PR comment reported the FIRST run's 78 passes while the job was
+          # red. Both are structural consequences of running the suite twice.
+          E2E_BLOCKED_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
           # Runner-side gate only (the app's own key comes from Vercel preview
           # env): presence makes the Penny spec run instead of skip.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -452,8 +591,425 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
+            /*
+             * Delete and REPOST, rather than edit in place.
+             *
+             * An edited comment stays where it was first written — often pages
+             * up a long PR — and GitHub gives no notification that it changed.
+             * So the most recent results were the single easiest thing to miss,
+             * at exactly the moment they matter: the last look before merging.
+             * The stale banner helped and did not fix it, because you still had
+             * to go and find the thing to see it was stale.
+             *
+             * Reposting keeps ONE comment — the old one is removed, so twenty
+             * commits do not leave twenty tables — and always puts it at the
+             * bottom of the thread, newest, where you are already reading.
+             */
             if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+
+  # ── iOS end-to-end, on a real simulator ────────────────────────────────────
+  #
+  # The web suite proves the API and the browser UI. NOTHING proved the Expo app
+  # until this job: `Mobile typecheck` compiles it, which catches a type error
+  # and no layout at all. The bug that earned this job (d316cd6) type-checked
+  # perfectly and hid the chat composer behind the keyboard on every iPhone.
+  #
+  # Not React Native Testing Library, deliberately: RNTL renders a component
+  # tree in JS with no layout engine and no keyboard, so it would find the
+  # composer, assert it exists, and go green while the app was unusable. That is
+  # the same green-but-empty shape `scripts/assert-e2e-ran.mjs` exists to catch,
+  # and buying it for less money is not a bargain.
+  #
+  # ── The cost, stated plainly, because it is the reason for every `if:` here ──
+  #
+  # A simulator needs macOS, and GitHub bills macOS runners at ~10x Linux. An
+  # unconditional cold run — prebuild, xcodebuild, boot, flows — is ~20 minutes
+  # of that on every push. So:
+  #
+  #   1. It runs ONLY when something under mobile/ changed. A web-only PR pays
+  #      nothing, which is most PRs.
+  #   2. The built .app is cached against the NATIVE fingerprint, reusing the
+  #      same distinction `scripts/decide-mobile-release.mjs` already draws for
+  #      OTA-vs-native. A JS-only change restores the binary and rebuilds the
+  #      bundle (~5 min) instead of compiling Xcode from scratch (~20 min).
+  #
+  # If this ever needs to run on a web-only PR, the honest fix is to widen the
+  # path filter deliberately — not to delete the filter.
+  ios-e2e:
+    name: iOS e2e (simulator)
+    needs: preview
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The fingerprint below diffs against the base, so a shallow clone
+          # would make every run look like a native change and rebuild.
+          fetch-depth: 0
+
+      # NO DIFF GATE. This job used to skip unless something under `mobile/`
+      # changed, because macOS runners bill about ten times a Linux one.
+      #
+      # Both halves of that reasoning expired on 2026-08-28. The repository is
+      # public, so Actions minutes — macOS included — are free. And the app is
+      # now the ONLY client: the web front end serves a download screen and its
+      # Playwright specs are paused. So a change to `src/app/api/trips/route.ts`
+      # touches no file under `mobile/`, would have skipped the simulator, and
+      # is exactly the change most likely to break the trips screen. Nothing
+      # else would have caught it — the first report would have been a phone.
+      #
+      # The BUILD is still cached against the native fingerprint below, which is
+      # where the real time went: a JS-only PR reuses the .app and skips ~15
+      # minutes of Xcode while testing the same binary.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+        working-directory: mobile
+
+      # The same question mobile.yml asks before publishing an OTA: did anything
+      # that ends up in the BINARY move? If not, last run's .app still runs this
+      # JS, and compiling it again buys nothing.
+      # NO BUILD CACHE, deliberately, and this is a correction rather than a
+      # preference.
+      #
+      # There was one, keyed on a "native fingerprint" (package-lock +
+      # app.config + eas.json), with a comment promising "the JS bundle is
+      # always rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle
+      # time and every PR has a different preview URL." There was no such step.
+      # On a cache HIT the whole build was skipped, bundle included — so the
+      # simulator would have launched an app pointed at a PREVIOUS PR's preview,
+      # a URL torn down when that PR closed. Sign-in would fail against a dead
+      # host and the flow would look like a broken app.
+      #
+      # It has not bitten yet only because the fingerprint has changed on every
+      # run so far. The first time it does not, the failure is a mystery.
+      #
+      # Rebuilding always removes the hazard outright, and it costs nothing that
+      # matters: the repository is public, so macOS Actions minutes are free.
+      # RELEASE, not Debug, and this is a correction rather than a preference.
+      #
+      # A Debug build contains NO JavaScript. React Native's Debug path fetches
+      # its bundle from a Metro packager on localhost:8081 at launch, and this
+      # job has never run one — so the installed app came up on the red box
+      # "No script URL provided. Make sure the packager is running", every
+      # single time. `launch.yaml` could not have passed here under any
+      # selector: it waits 30s for `signin-email` on a screen the app was never
+      # going to draw. Proven locally on 2026-09-01, from the view hierarchy of
+      # a Debug build on a booted simulator.
+      #
+      # Release runs the bundling phase at build time, so the .app is
+      # self-contained. It is also the configuration whose behaviour the flows
+      # claim to be testing — `__DEV__` off, the JS that ships.
+      - name: Build the app for the simulator
+        env:
+          EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean
+          # Derived, never hardcoded: `expo prebuild` names the workspace after
+          # app.config.js's `name`, so a rename would otherwise fail here with
+          # an xcodebuild error that says nothing about the cause.
+          WORKSPACE="$(ls -d ios/*.xcworkspace | head -1)"
+          SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
+          echo "Building scheme $SCHEME from $WORKSPACE"
+          echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath ios/build
+          # CODE_SIGNING_ALLOWED=NO was here. It has to go, and this is not a
+          # preference. `expo-secure-store` is where the session token lives, and
+          # the keychain refuses an app with no entitlements: sign-in completed,
+          # `POST /api/mobile/otp/verify` returned 200, and the app then died on
+          # "Calling the 'setValueWithKeyAsync' function has failed → Caused by: A
+          # required entitlement isn't present", stranded on the code screen holding
+          # a session it could not store. `setToken` does not catch that on purpose.
+          # A simulator build signs ad hoc and needs no team, account or profile, so
+          # dropping the flag costs nothing.
+          mkdir -p ios-build
+          cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
+
+      # ── The toolchain Maestro's driver needs, and why it is selected HERE ──
+      #
+      # Maestro does not compile its iOS driver on the runner. It ships a
+      # PREBUILT `maestro-driver-iosUITests-Runner.app` and the `.xctestrun`
+      # that goes with it, and starts them with `xcodebuild
+      # test-without-building`. Those products are built in Maestro's own CI on
+      # macos-26 with Xcode 26.2 — see `rebuild-ios-drivers.yaml` in
+      # mobile-dev-inc/maestro, which is titled "Rebuild iOS Driver (Xcode
+      # 26.2)" and does nothing else.
+      #
+      # The DEFAULT Xcode on the macos-15 image is 16.4, and 16.4 cannot run a
+      # 26.2 xctestrun. `xcodebuild` returns instantly, nothing ever listens on
+      # port 7001, and Maestro waits out its startup budget and reports "iOS
+      # driver not ready in time, consider increasing timeout" — a message that
+      # names a timeout and says nothing about a toolchain, which is how this
+      # job burned a run looking like a slow simulator. Raising
+      # MAESTRO_DRIVER_STARTUP_TIMEOUT cannot help: nothing is on its way.
+      #
+      # AFTER the app build, deliberately. The app compiles against the default
+      # Xcode 16.4 and the iOS 18.5 SDK, which is the build that has been
+      # shipping and is not worth disturbing to fix a test harness. An app built
+      # against 18.5 installs and runs on a 26.2 simulator perfectly well.
+      - name: Select the Xcode that Maestro's driver was built with
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Boot a simulator and install the app
+        run: |
+          set -euo pipefail
+          # Nothing else booted. Maestro finds its device by looking for a
+          # BOOTED simulator, so a stray one left up by the image is a device
+          # this job never installed the app onto.
+          xcrun simctl shutdown all || true
+          # ── The software keyboard has to actually exist ─────────────────
+          #
+          # A simulator defaults to "Connect Hardware Keyboard": focusing a text
+          # field raises NO on-screen keyboard. The field still focuses and text
+          # still types, so nothing reads as broken — but `chat-keyboard.yaml`
+          # then fails on the single thing it exists to prove. With no keyboard
+          # there is no `keyboardWillShow`, the bottom nav never unmounts, and
+          # the flow's gate ("the nav is gone, so the keyboard is up") is false.
+          #
+          # BEFORE the boot. A device reads this as it comes up; setting it on an
+          # already-booted simulator does nothing at all.
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+          # The NEWEST iOS runtime on the image, not the first iPhone `simctl`
+          # happens to name — which on this image is an iOS 18.5 one, a second
+          # way to hand a driver built by Xcode 26.2 a runtime it was never
+          # built against. `scripts/pick-ios-simulator.mjs` has the reasoning
+          # and the reason neither the model nor the runtime is hardcoded; node
+          # is already set up above for the Expo build.
+          read -r UDID LABEL <<<"$(node scripts/pick-ios-simulator.mjs)"
+          echo "Booting $LABEL ($UDID)"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" mobile/ios-build/*.app
+          # Passed to Maestro explicitly below rather than left to discovery.
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+
+      # PINNED. Unpinned, this step installs whatever Maestro released most
+      # recently, and the iOS driver inside it is built against whatever Xcode
+      # Maestro was using that week — so the Xcode selected above and the driver
+      # it has to run are a pair that would otherwise drift apart without a
+      # single line of this repository changing. When bumping it, check which
+      # Xcode that release's `rebuild-ios-drivers.yaml` used and move both.
+      - name: Install Maestro
+        env:
+          MAESTRO_VERSION: 2.10.0
+        run: |
+          set -euo pipefail
+          curl -Ls https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
+
+      # Same derivation as the preview and e2e jobs — computed, never passed
+      # through job outputs, because GitHub drops outputs containing masked
+      # values. Uses run_id only: "re-run failed jobs" bumps the attempt without
+      # redeploying the preview, and including it would desync from the app.
+      - name: Derive per-run test-endpoint secret
+        env:
+          HMAC_KEY: ${{ secrets.AUTH_SECRET }}
+        run: |
+          SECRET="$(printf 'test-endpoints-%s' "${{ github.run_id }}" | openssl dgst -sha256 -hmac "$HMAC_KEY" -r | cut -d' ' -f1)"
+          echo "::add-mask::$SECRET"
+          echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      - name: Mint the fixture account
+        id: fixture
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          # Seeds the account and proves the send path works before a simulator
+          # is involved. It deliberately does NOT hand over a code any more:
+          # one minted here is deleted by the app's own send as soon as the 60s
+          # resend cooldown has lapsed, and launch.yaml alone takes 53 seconds.
+          # read-otp.js reads the live one from inside the flow instead.
+          node scripts/ios-e2e-fixture.mjs --base-url "${{ needs.preview.outputs.url }}" > fixture.env
+          cat fixture.env >> "$GITHUB_ENV"
+
+      - name: Run the flows
+        id: flows
+        env:
+          # read-otp.js fetches the sign-in code from this deployment itself.
+          # Named here rather than reused from the e2e job's E2E_BASE_URL, which
+          # is that job's env and not visible in this one.
+          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          # 240s, the same budget Maestro uses in its own iOS e2e workflow. The
+          # default is 120s. This is NOT the fix for the driver failing to start
+          # — that is the Xcode selection above — it is headroom for a cold
+          # runner installing and launching the runner app for the first time.
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: 240000
+        run: |
+          # The FILE, not the directory. sign-in.yaml is a subflow that
+          # chat-keyboard.yaml runs itself; pointing Maestro at the directory
+          # runs it standalone as well, and the OTP code is single-use — the
+          # first sign-in spends it and the second fails on a code the server
+          # has already deleted.
+          # --device, so the flows run on the simulator this job booted and
+          # installed onto, rather than on whichever one Maestro finds booted.
+          # LAYER 1 FIRST. `launch.yaml` needs no network and no fixture account:
+          # it proves the driver came up, the build installed, and the app renders
+          # its first screen. When it fails the problem is the harness, and nothing
+          # below it is worth reading — a distinction this job could not make while
+          # one invocation reported on all three layers at once. Same split locally,
+          # for the same reason: scripts/ios-e2e-local.sh.
+          maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
+            -e APP_ID=com.feraltravels.app \
+            --format junit \
+            --output maestro-report-launch.xml \
+            --debug-output maestro-debug
+
+          # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the
+          # sign-in code ITSELF instead of trusting one minted before the run.
+          # A pre-minted code is a race with the 60s resend cooldown, and this
+          # job loses it: launch.yaml above takes 53 seconds, so by the time the
+          # flow taps "Email me a code" the cooldown has lapsed, the send
+          # succeeds, and storeOtpCode deletes the minted code and replaces it.
+          # That was "Invalid or expired code" on the simulator, surfacing two
+          # steps later as an assertion about the trips list. A laptop could not
+          # reproduce it until the local database was pinned to UTC — see
+          # mobile/maestro/read-otp.js for why, and note the underlying
+          # `timestamp`-without-time-zone defect it describes.
+          maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
+            -e APP_ID=com.feraltravels.app \
+            -e EMAIL="$EMAIL" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report.xml \
+            --debug-output maestro-debug
+
+      # Always. A screenshot of the failing screen is the entire value of
+      # driving a real simulator, and it is as useful on a green run for seeing
+      # what the flows actually did.
+      # WHICH STEP FAILED, in the log, without downloading anything.
+      #
+      # The first failing run said exactly "[Failed] chat-keyboard (28s)" and
+      # nothing else. The step that died was in the artifact — behind a login,
+      # a download and an unzip, which is three obstacles between a red build
+      # and the one line that explains it. The JUnit XML already names it; this
+      # just prints it.
+      - name: Say where the flow died
+        if: failure()
+        run: |
+          echo "::group::maestro-report.xml"
+          cat maestro-report*.xml 2>/dev/null || echo "(no report produced)"
+          echo "::endgroup::"
+          # WHICH LINE OF THE YAML. `commands-*.json` records every step and its
+          # status, and it is the only file that answers that question — the
+          # JUnit's `<failure>Unknown error</failure>` does not. Named
+          # explicitly rather than swept up by a glob: the first version of this
+          # step matched `*.log` and printed `device-xctest.log`, which is the
+          # DRIVER's own unit tests passing. A page of green about something
+          # nobody asked about, while the actual step failure sat unread.
+          echo "::group::which step failed"
+          find maestro-debug -name 'commands-*.json' 2>/dev/null | while read -r f; do
+            echo "--- $f"; cat "$f"
+          done || echo "(no command log)"
+          echo "::endgroup::"
+          echo "::group::maestro.log"
+          find maestro-debug -name 'maestro.log' 2>/dev/null | while read -r f; do
+            echo "--- $f"; tail -120 "$f"
+          done || echo "(no maestro.log)"
+          echo "::endgroup::"
+          echo "::group::screenshots captured"
+          find maestro-debug -name '*.png' 2>/dev/null | sed 's/^/  /' || true
+          echo "  (download the maestro-ios artifact to view them)"
+          echo "::endgroup::"
+          # The XCTest runner's own log, which is where a driver that never
+          # comes up says why. It lives outside the working directory, and
+          # reading it meant downloading the artifact — three obstacles between
+          # a red build and the one line that explains it, which is the whole
+          # reason this step exists.
+          echo "::group::XCTest driver log and simulator state"
+          xcodebuild -version || true
+          xcrun simctl list devices booted || true
+          find "$HOME/.maestro/tests" -name '*.log' -mmin -60 2>/dev/null | tail -3 | while read -r f; do
+            echo "--- $f"; tail -80 "$f"
+          done || echo "(no driver log)"
+          echo "::endgroup::"
+
+      # `include-hidden-files` is the whole reason run 119's artifact came back
+      # 502 BYTES holding one file. Maestro writes its debug output to
+      # `<--debug-output>/.maestro/tests/<timestamp>/` — a DOTTED directory — and
+      # upload-artifact has skipped hidden files by default since v4.4. So the
+      # screenshots, the per-command JSON and maestro.log were all silently
+      # dropped, and the PR comment cheerfully pointed at an artifact holding
+      # only the JUnit XML that says "Unknown error". Maestro's own workflow sets
+      # this flag, for exactly this reason.
+      - name: Upload the recordings
+        id: recordings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-ios
+          path: |
+            maestro-report*.xml
+            maestro-debug/**
+            ~/.maestro/tests/**
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      # The whole value of driving a real simulator is the screenshot of the
+      # screen it died on, and that is worth nothing sitting in an artifact
+      # nobody is told about. The web suite has reported to the PR since day
+      # one; this job reported nothing, so "did iOS pass?" meant opening the
+      # Actions tab and knowing which job to look for — at exactly the moment
+      # you are deciding whether to merge.
+      - name: Comment iOS results on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.flows.outcome }}
+          ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
+        with:
+          script: |
+            const marker = '<!-- feraltravels-ios-e2e -->';
+            const pr = context.payload.pull_request;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const outcome = process.env.OUTCOME || 'skipped';
+            const artifact = process.env.ARTIFACT_URL;
+
+            const lines = ['### 📱 iOS e2e (simulator)', ''];
+            if (outcome === 'success') {
+              lines.push(
+                '**Passed.** Real OTP sign-in and the chat-keyboard regression, driven on a',
+                "booted simulator against this PR's own preview deployment.",
+              );
+            } else if (outcome === 'skipped' || outcome === '') {
+              lines.push(
+                '**Did not run.** The flows step never started, so the app is untested on',
+                'this commit — check the job for which earlier step stopped it.',
+              );
+            } else {
+              lines.push(
+                '**Failed.** The recordings artifact holds a screenshot of the screen it died',
+                'on; that is the fastest way in, faster than reading the log.',
+              );
+            }
+            if (artifact) lines.push('', `[Recordings](${artifact})`);
+            lines.push('', `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`);
+
+            const body = [marker, ...lines].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            // Delete and repost — same reasoning as the E2E table above.
+            if (existing) {
+              await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
+            }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });

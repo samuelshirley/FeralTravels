@@ -6,6 +6,7 @@ import { listErrors, listErrorProviders } from '@/server/repos/admin';
 import AppNavbar from '@/components/AppNavbar';
 import AdminErrorLog from '../AdminErrorLog';
 import styles from '../admin.module.css';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -51,6 +52,11 @@ function parseSince(s: string | undefined): Date | null {
 }
 
 export default async function AdminErrorsPage({ searchParams }: PageProps) {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');

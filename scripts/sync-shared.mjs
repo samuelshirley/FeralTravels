@@ -29,6 +29,13 @@ export const SHARED_FILES = [
   ['src/lib/sillyErrors.ts', 'mobile/shared/lib/sillyErrors.ts'],
   ['src/lib/models.ts', 'mobile/shared/lib/models.ts'],
   ['src/lib/accountDeletion.ts', 'mobile/shared/lib/accountDeletion.ts'],
+  // Both halves of the promo flow. The app must normalize a typed code exactly
+  // as the server does — if the two disagreed, a user would type something the
+  // app accepts and the server rejects, and the error would read as a bad code
+  // rather than a bug. The copy travels for the reason nativeErrorCopyGuard
+  // exists: an error code with no copy in a client shows "Something went wrong".
+  ['src/lib/promoCode.ts', 'mobile/shared/lib/promoCode.ts'],
+  ['src/lib/promoCopy.ts', 'mobile/shared/lib/promoCopy.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

@@ -1,0 +1,104 @@
+# THE REGRESSION FLOW. Read the paragraph before changing anything here.
+#
+# Bug (iOS, TestFlight, 2026-08-27): tapping the chat composer raised the
+# keyboard and the composer disappeared entirely behind it. You could type, but
+# not see what you typed, and the send button was unreachable.
+#
+# Cause was not a race. `KeyboardAvoidingView` compares its own `onLayout`
+# frame — PARENT-relative — against the keyboard's SCREEN-relative `screenY`.
+# Those agree only at the window origin. ChatPanel's copy lived inside an
+# `absoluteFillObject` pane, so `frameBottom` computed a header-plus-nav ABOVE
+# the keyboard's top edge and `Math.max(frameBottom - keyboardY, 0)` clamped to
+# ZERO. It applied no padding at all. Fixed in d316cd6 by hoisting the view to
+# the screen root.
+#
+# WHY THE ASSERTIONS ARE SHAPED LIKE THIS: `assertVisible` alone is a weak gate
+# for occlusion, because an element covered by the keyboard's own window can
+# still report as present in the hierarchy. So the real gate is BEHAVIOURAL —
+# `tapOn` the send button while the keyboard is up. A tap only lands if the
+# element is actually hittable; with the bug present those coordinates belong to
+# a keyboard key, and the flow fails. Do not "simplify" this to an assertVisible.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# Regex: the card is one accessibility element carrying the name AND the dates
+# ("E2E Fixture Trip, 2026-09-15 → 2026-09-16"), and Maestro matches the whole
+# label. See the same note in sign-in.yaml.
+- tapOn:
+    text: '.*E2E Fixture Trip.*'
+
+- tapOn: 'CHAT'
+
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# ── Keyboard DOWN ──────────────────────────────────────────────────────────
+# The nav is mounted here, and it owns the bottom safe area. The composer used
+# to add `insets.bottom` as well, which counted the home indicator twice and
+# left a visible gap between the two.
+- assertVisible: 'CHAT'
+- assertVisible:
+    id: 'chat-composer-send'
+
+# ── Keyboard UP ────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+
+# The nav unmounts while the keyboard is up (deliberate — it would otherwise sit
+# between the composer and the keyboard). Its absence is how this flow knows the
+# keyboard actually opened, rather than passing because the tap did nothing.
+- extendedWaitUntil:
+    notVisible: 'CHAT'
+    timeout: 8000
+
+- inputText: 'keyboard visibility check'
+
+# Both halves matter. The text proves the field took input and is on screen;
+# the tap proves the send button is HITTABLE — the assertion the bug fails.
+- assertVisible: 'keyboard visibility check'
+- tapOn:
+    id: 'chat-composer-send'
+
+# Sent means the composer was operable. This DOES start a Penny turn and spend
+# one Anthropic call — the Playwright suite already spends several, and a real
+# send is the only honest proof the button was hittable. Her reply is not
+# awaited: this flow is about layout, not about her latency.
+#
+# THE COMPOSER CLEARED. That is what proves the send landed, and it replaces an
+# assertion that could not fail: `visible: 'keyboard visibility check'` matched
+# either the sent bubble OR the same text still sitting unsent in the input, so
+# it was true in both the working and the broken case. It passed for a week
+# against a server answering 503 to every replan, with "AI service is
+# temporarily unavailable" on screen.
+#
+# `sendMessage` does `setInput("")` (ChatPanel.tsx:1273) before any network call
+# and `sendEnabled` is `hasComposerText`, so BOTH of these flip on the tap alone
+# and neither waits on Penny. Read off the live hierarchy, where an empty input
+# carries the placeholder as its label and holds the typed string when full:
+#
+#   empty:  input label "Ask Penny…", send enabled=false
+#   typed:  input text "keyboard visibility check", send enabled=true
+#
+# DELIBERATELY NOT an assertion about the reply, or about the error bubble. This
+# is a layout guard. A dead Anthropic key is a real problem — the doctor now
+# catches it — but it is not this flow's problem, and reddening here for it
+# would make the guard fail for a reason that has nothing to do with the
+# keyboard.
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer-input'
+      text: 'Ask Penny…'
+    timeout: 10000
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+
+# And it survives the send: the composer is still on screen and still usable,
+# rather than having been pushed off by the transcript growing under it. A
+# second look, after the assertions above have already settled — the transcript
+# grows on Penny's reply, which lands later than they do.
+- assertVisible:
+    id: 'chat-composer-input'

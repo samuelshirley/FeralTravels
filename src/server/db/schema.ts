@@ -880,6 +880,92 @@ export const deletedUsers = pgTable(
   })
 );
 
+// ── Promo codes ─────────────────────────────────────────────────────────────
+
+/**
+ * One row per code handed out by an admin. Redeeming writes a `subscriptions`
+ * row with `source: 'promo'` — this table does NOT answer "is this account
+ * entitled", and nothing in the paywall path reads it.
+ *
+ * That separation is the whole design. `hasEntitlement` stays the one question
+ * with one answer, `resolveAccountState` needs no new branch, and a promo user
+ * is visible in the admin panel as what they are: a subscriber whose row says
+ * where it came from. A second entitlement source would have meant a second
+ * place able to decide someone has paid, which is exactly what
+ * `src/server/payments/index.ts` exists to prevent.
+ *
+ * ── Why the code is stored in plaintext ──
+ *
+ * `deleted_users` HMACs its email column because CI puts a clone of production
+ * behind a PUBLIC preview URL and a bare digest of an enumerable value could be
+ * attacked offline from a dump. The reasoning does not carry over here, and it
+ * is worth saying why rather than cargo-culting it.
+ *
+ * A code is useless without the account it is bound to. Redemption requires a
+ * signed-in session whose email matches `email` on this row, and signing in as
+ * that address requires receiving a code at it. So a leaked code grants nothing
+ * to the person who leaked it — it is not a bearer token. What plaintext does
+ * expose is "an admin issued a code to alice@example.com", and a preview clone
+ * already exposes every address in `users` wholesale, so this adds no class of
+ * disclosure that is not already there.
+ *
+ * The thing plaintext buys is real: the admin can re-read a code they issued
+ * three weeks ago when the recipient says they lost the email. A hashed column
+ * makes that impossible and the support answer becomes "here is a new code",
+ * which is worse for a mechanism whose entire job is hand-holding early users.
+ */
+export const promoCodes = pgTable(
+  'promo_codes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    /**
+     * Normalized on the way in: uppercase, no separators. `FERAL-4KQP-8XZM`
+     * and `feral4kqp8xzm` are the same code, because the recipient is typing
+     * this off a message on a phone.
+     */
+    code: text('code').notNull(),
+    /**
+     * The address this code was minted FOR, lowercased. Redemption compares the
+     * session's own email against it and refuses a mismatch — a code is not
+     * transferable, which is what stops one being forwarded around a group
+     * chat.
+     */
+    email: text('email').notNull(),
+    /** Free text for the admin's own memory: who this is, why they got it. */
+    note: text('note'),
+    /** Admin address that minted it. Never null — every grant has an author. */
+    createdBy: text('created_by').notNull(),
+    /**
+     * Deadline to REDEEM, not an end date for the access it grants. Null means
+     * the code never goes stale. What it grants is separately unlimited: a
+     * promo subscription has `current_period_end = null`.
+     */
+    expiresAt: timestamp('expires_at'),
+    /** Set once, by the atomic claim. Non-null means spent — codes are single-use. */
+    redeemedAt: timestamp('redeemed_at'),
+    /**
+     * `set null`, not `cascade`: if the user later deletes their account, the
+     * record that a code was issued and spent must survive them. Deleting the
+     * evidence would make a spent code look mintable again.
+     */
+    redeemedByUserId: text('redeemed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    /**
+     * UNIQUE, and it is load-bearing rather than tidiness: it is what makes the
+     * generator's collision check unnecessary and what stops two rows ever
+     * answering to the same string.
+     */
+    codeUnique: uniqueIndex('promo_codes_code_idx').on(t.code),
+    emailIdx: index('promo_codes_email_idx').on(t.email),
+    /** The admin list is ordered by this, and it is the only sort it offers. */
+    createdAtIdx: index('promo_codes_created_at_idx').on(t.createdAt),
+  })
+);
+
 // ── Subscriptions ───────────────────────────────────────────────────────────
 
 /**

@@ -91,9 +91,26 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
           width: '100%',
           maxWidth: 460,
           overflow: 'hidden',
+          /*
+            The panel never grows past the viewport, so the centring above can
+            never push anything off the top.
+            A flex container with `align-items: center` does not scroll to
+            reveal an over-tall child: the overflow goes off BOTH ends and the
+            top half is unreachable — no scrollbar, nothing to drag. That is
+            what a short viewport did here (browser zoom, or a laptop with the
+            announcement bar and full chrome): the "How can we help?" label and
+            the whole header went above the screen edge while Cancel and Send
+            stayed visible, so the dialog looked merely cropped rather than
+            broken. iOS never showed it because the native sheet lays itself out.
+            Capping the height moves the overflow INSIDE the body, where it has
+            a scrollbar.
+          */
+          maxHeight: '100%',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        {/* Header */}
+        {/* Header — fixed; it holds the close button and must not scroll away. */}
         <div
           style={{
             display: 'flex',
@@ -101,6 +118,7 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
             justifyContent: 'space-between',
             padding: '14px 18px',
             borderBottom: '1px solid var(--tp-border, #e5e5e5)',
+            flexShrink: 0,
           }}
         >
           <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text, #111)' }}>
@@ -124,8 +142,10 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
           </button>
         </div>
 
-        {/* Body */}
-        <div style={{ padding: '16px 18px' }}>
+        {/* Body — the part that scrolls. `minHeight: 0` because a flex child
+            defaults to `min-height: auto`, which refuses to shrink below its
+            content and would defeat the cap above. */}
+        <div style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
           {status === 'sent' ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--tp-text, #111)', margin: '0 0 6px' }}>

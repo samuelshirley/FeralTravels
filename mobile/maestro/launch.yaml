@@ -1,0 +1,51 @@
+# LAYER 1 — the harness, and nothing else.
+#
+# This flow exists to answer one question, on its own, before any other flow
+# gets to confuse the answer: does the XCTest driver come up, does the app that
+# was just built install, and does it render its first screen?
+#
+# It is the flow to look at first when the iOS job is red. Every other failure
+# mode in this directory — a wrong selector, a slow API, an expired code — is
+# downstream of these three things working, and until this one is green a
+# failure anywhere else says nothing about the code under test.
+#
+# DELIBERATELY NO NETWORK. `sign-in.yaml` is where the app first talks to the
+# server; keeping that out of here is what makes a red layer 1 mean "the
+# simulator, the build or the driver" and never "the backend". The runner
+# script skips minting a fixture account for this flow for the same reason.
+appId: ${APP_ID}
+---
+# THE KEYCHAIN IS NOT APP DATA, and `clearState` does not touch it. On iOS a
+# keychain item outlives the app that wrote it — uninstall included — so once
+# the build was signed well enough to actually store a session token, every
+# subsequent run launched straight into /trips and this flow asserted on a
+# sign-in screen that was never going to appear.
+#
+# It only looked fine while the app was built with CODE_SIGNING_ALLOWED=NO,
+# because nothing could be written in the first place. Fixing the build is what
+# exposed this, which is the usual shape: one broken thing hiding another.
+- clearKeychain
+- launchApp:
+    # Same clean slate the real flows use: a keychain still holding a session
+    # token lands the app on /trips, and then this asserts nothing at all.
+    clearState: true
+    permissions:
+      # `never`, not `deny`. Maestro validates this per-permission, and
+      # `location` is the special case: it takes always/inuse/never/
+      # location-always, while allow/deny/unset belong to 'all'. `deny`
+      # here is not ignored — it aborts the flow on its FIRST command
+      # with `wrong argument value`, which is what made layer 1 red
+      # before the app was even asked to render anything.
+      location: never
+
+# The sign-in screen is the app's first render and needs no server to draw.
+# If this times out, the app crashed on launch or never installed — check
+# `xcrun simctl diagnose` and the build log, not the flows.
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+
+# Both halves of the screen, so a partial render is a failure rather than a
+# pass on one lucky node.
+- assertVisible: 'Email me a code'

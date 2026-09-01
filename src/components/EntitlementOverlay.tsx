@@ -253,6 +253,10 @@ export default function EntitlementOverlay({
           purchasingId={purchasingId}
           error={purchaseError}
           onPurchase={(id) => void runTestPurchase(id)}
+          // Same reload as a completed purchase, for the same reason: this
+          // page's verdict was resolved on the server for this render, so there
+          // is no client state that could unblock it.
+          onRedeemed={() => window.location.reload()}
           onClose={() => setSheetOpen(false)}
         />
       )}

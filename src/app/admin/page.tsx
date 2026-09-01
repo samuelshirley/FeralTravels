@@ -20,12 +20,14 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
-import { testPurchasesArmed } from '@/server/payments';
+import { paywallEnabled, testPurchasesArmed } from '@/server/payments';
 
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
+import PromoCodeBlock from './PromoCodeBlock';
 import styles from './admin.module.css';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -78,6 +80,11 @@ const thStyle: React.CSSProperties = {
 };
 
 export default async function AdminPage() {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   // Silent redirect — no error page, no info leak that /admin even exists.
@@ -270,16 +277,36 @@ export default async function AdminPage() {
           >
             signed in as {session.user.email}
           </div>
-          {/* Disposable paywall accounts. A plain link rather than a stat card:
-              it has no number worth a card, and it is the one admin page that
-              CREATES users rather than reporting on them. */}
-          <Link
-            href="/admin/test-users"
-            className={styles.seeAllLink}
-            style={{ marginLeft: 'auto' }}
+          {/*
+            Enforcement state, in the header, always. `PAYWALL_ENABLED` is an
+            env var with no deploy attached and no other tell — the account
+            state machine keeps running truthfully with the switch off, so the
+            user page still reads `trial_expired` while every one of those
+            accounts walks the app unblocked. That gap cost an afternoon of
+            hunting a paywall bug that did not exist. The switch is a fact
+            about the running system, so it belongs where the other facts about
+            the running system are.
+          */}
+          <div
+            data-testid="admin-paywall-switch"
+            title={
+              paywallEnabled()
+                ? 'PAYWALL_ENABLED=1 — verdicts are enforced.'
+                : 'PAYWALL_ENABLED is unset — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
+            }
+            style={{
+              marginLeft: 'auto',
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              padding: '3px 8px',
+              borderRadius: 999,
+              border: '1px solid var(--tp-border-strong)',
+              color: paywallEnabled() ? 'var(--tp-text)' : 'var(--tp-subtle)',
+            }}
           >
-            Test users &rarr;
-          </Link>
+            PAYWALL {paywallEnabled() ? 'ON' : 'OFF'}
+          </div>
         </div>
 
         <div className={styles.statsGrid}>
@@ -744,7 +771,17 @@ export default async function AdminPage() {
             hardcoded where no environment variable can widen it, and every action refuses anything
             outside it.
           </p>
-          <TestUserBlock armed={testPurchasesArmed()} />
+          <TestUserBlock armed={testPurchasesArmed()} paywallOn={paywallEnabled()} />
+        </section>
+
+        {/*
+          Below the test accounts on purpose. Both hand out access without
+          money, but they are opposite tools: that one fabricates a throwaway
+          account to walk the paywall with, this one lets a REAL person past it.
+          Reading in that order, the second is obviously the consequential one.
+        */}
+        <section>
+          <PromoCodeBlock paywallOn={paywallEnabled()} />
         </section>
       </main>
 

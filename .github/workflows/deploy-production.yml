@@ -37,6 +37,20 @@ name: Deploy to production
 on:
   push:
     branches: [main]
+  # Ship the CURRENT main again, on demand, with no code change.
+  #
+  # Needed because production deploys are PREBUILT (`vercel build --prod` then
+  # `vercel deploy --prebuilt --prod`), and Vercel refuses to redeploy a
+  # prebuilt deployment from the dashboard — correctly: the bundle was compiled
+  # against the environment as it stood at build time, so redeploying it would
+  # quietly ship stale values. Which means changing an environment variable in
+  # Vercel does NOTHING to production until something builds again. Without this
+  # trigger the only way to apply one was to push a commit to main, so turning
+  # `PAYWALL_ENABLED` on required inventing a change to make.
+  #
+  # Actions → Deploy to production → Run workflow. Same gate as a merge: it
+  # re-verifies CI was green for the commit before it migrates or deploys.
+  workflow_dispatch:
 
 # Never two deploys at once, and never cancel one mid-migration.
 concurrency:

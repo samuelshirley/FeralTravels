@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import StopCard from './StopCard';
+import { UnitsProvider } from '@/components/UnitsContext';
 import type { StopCardProps } from './StopCard';
 
 afterEach(cleanup);
@@ -23,9 +24,54 @@ describe('StopCard', () => {
     expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
   });
 
-  it('renders distance from start', () => {
-    render(<StopCard {...baseProps} />);
-    expect(screen.getByText('62 km from start')).toBeInTheDocument();
+  /**
+   * The caption is now assembled from the shared `Distance` component plus the
+   * literal " from start", so it spans two elements and a plain string match no
+   * longer finds it. Matching on the container's textContent is the point of
+   * the change, not a workaround for it: what used to be one hardcoded
+   * `${km} km` is now a units-aware render, and these two tests are what say so.
+   */
+  it('renders distance from start in km for a metric user', () => {
+    render(
+      <UnitsProvider initialUnits="metric">
+        <StopCard {...baseProps} />
+      </UnitsProvider>
+    );
+    expect(screen.getByText(/from start/).textContent).toBe('62 km from start');
+  });
+
+  /**
+   * The regression. This caption and the map's marker tooltip were the only two
+   * distances in the app that ignored `units_pref` outright — an imperial user
+   * got kilometres here and nowhere else, with no miles at all, while every
+   * neighbouring distance went through `Distance`.
+   *
+   * Note what "imperial" means here and why the assertion looks like this: the
+   * app deliberately keeps km as the PRIMARY label for everyone and adds miles
+   * as a secondary (see the header of src/lib/units.ts — "we've decided to
+   * teach metric"). So the fix is that miles APPEAR, not that km disappears. If
+   * that product decision is ever reversed, this test is one of the places that
+   * has to change, on purpose.
+   */
+  it('adds the miles equivalent for an imperial user', () => {
+    render(
+      <UnitsProvider initialUnits="imperial">
+        <StopCard {...baseProps} />
+      </UnitsProvider>
+    );
+    const text = screen.getByText(/from start/).textContent ?? '';
+    expect(text).toContain('62 km');
+    expect(text).toContain('39 mi'); // 62 km × 0.621371 = 38.5 → 39
+    expect(text).toMatch(/from start$/);
+  });
+
+  it('renders nothing unit-shaped when there is no distance', () => {
+    render(
+      <UnitsProvider initialUnits="imperial">
+        <StopCard {...baseProps} distanceFromStartKm={null} />
+      </UnitsProvider>
+    );
+    expect(screen.queryByText(/from start/)).not.toBeInTheDocument();
   });
 
   it('opens Google Maps in new tab when clicked', () => {

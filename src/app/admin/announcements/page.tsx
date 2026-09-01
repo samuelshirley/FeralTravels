@@ -6,11 +6,17 @@ import { listAnnouncements } from '@/server/repos/announcements';
 import AppNavbar from '@/components/AppNavbar';
 import AnnouncementsClient from './AnnouncementsClient';
 import styles from '../admin.module.css';
+import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export default async function AdminAnnouncementsPage() {
+  // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
+  // Middleware turns away browsers with no session; this is the half that
+  // needs a database to tell whose session it is. Guarded by
+  // webAccessCoverage.test.ts — a new page without this line fails the suite.
+  await requireWebAccess();
   const session = await auth();
   if (!session?.user) redirect('/login');
   if (!(await isAdmin(session.user.email))) redirect('/trips');

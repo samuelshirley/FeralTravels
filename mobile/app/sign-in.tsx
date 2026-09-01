@@ -450,6 +450,7 @@ export default function SignInScreen() {
               </View>
 
               <TextInput
+                testID="signin-email"
                 value={email}
                 onChangeText={setEmail}
                 placeholder="you@example.com"
@@ -487,6 +488,7 @@ export default function SignInScreen() {
                 {code.map((digit, i) => (
                   <TextInput
                     key={i}
+                    testID={`signin-code-${i}`}
                     ref={(el) => {
                       boxes.current[i] = el;
                     }}

@@ -101,9 +101,25 @@ test.describe('Email OTP login — real delivery', () => {
     // --- 3. Sign in with the code that arrived by mail ---------------------
     // Shared with the cheap path on purpose: entering the code is the same UI
     // dance either way, and the hydration race it works around bit both.
-    await submitOtpCode(page, code, /\/trips(\?|$)/);
+    // Where sign-in LANDS depends on a deployment switch, so it is not the
+    // assertion. This address is `playwright-<tag>@<E2E_INBOX_DOMAIN>` — a real
+    // receiving domain, because the whole point of this spec is that mail is
+    // genuinely delivered — so it does not match the `@e2e.feraltravels.com`
+    // fixture pattern that keeps web access open with the web app switched off.
+    // It therefore lands on /get-the-app rather than /trips, and pinning /trips
+    // failed this spec three times over a redirect that proves nothing.
+    await submitOtpCode(page, code, /\/(trips|get-the-app)/);
 
-    await expect(page).toHaveURL(/\/trips/);
-    await expect(page.locator('h1')).toHaveText(/Trips/i);
+    // What the test is actually about: a code that arrived BY EMAIL produced a
+    // working session. Asserted against the API rather than a page, because
+    // that is the claim — and because the API is what the iOS app uses, which
+    // is now the only client that matters.
+    await expect(page).not.toHaveURL(/\/login/);
+
+    const me = await page.request.get('/api/me');
+    expect(me.status(), 'the emailed code should have produced a live session').toBe(200);
+
+    const trips = await page.request.get('/api/trips');
+    expect(trips.status(), 'that session should authorise the user\u2019s own data').toBe(200);
   });
 });

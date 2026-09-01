@@ -1,0 +1,36 @@
+# The database the LOCAL iOS e2e loop seeds into.
+#
+# It exists because the only DATABASE_URL in this repo's .env points at the
+# production Neon endpoint, and CLAUDE.md's rule is that fixtures never go near
+# it. The iOS flows call /api/test/seed, which creates users and trips — run
+# that against prod once and you have `playwright-*` accounts in the real users
+# table and a cleanup endpoint pointed at real rows.
+#
+# Deliberately NOT a Neon branch: this needs no account, no network and no
+# quota, so it works on a plane and cannot be broken by someone else's Neon
+# limits. It is empty rather than a clone of prod, which is the right shape —
+# every flow seeds exactly the graph it asserts on, so a fixture that depends on
+# pre-existing data is a fixture that was going to rot anyway.
+#
+# Port 55432, not 5432, so it cannot collide with a Postgres already running on
+# this machine. Data lives in a named volume; `ios-e2e-local.sh --reset` drops it.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: feraltravels-e2e-db
+    environment:
+      POSTGRES_USER: feral
+      POSTGRES_PASSWORD: feral
+      POSTGRES_DB: feraltravels_e2e
+    ports:
+      - '55432:5432'
+    volumes:
+      - feraltravels-e2e-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U feral -d feraltravels_e2e']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  feraltravels-e2e-pgdata:

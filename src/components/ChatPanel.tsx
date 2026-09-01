@@ -2553,6 +2553,20 @@ export default function ChatPanel({
           purchasingId={purchasingId}
           error={purchaseError}
           onPurchase={(productId) => void runTestPurchase(productId)}
+          // The sheet has already confirmed entitlement with the server before
+          // calling this; what is left is to bring THIS component's state in
+          // line — same three updates the purchase path makes. No reload: the
+          // transcript is client state and an in-flight stream would die with
+          // it, which is the whole reason the paywall is a message and not a
+          // page-level block.
+          onRedeemed={() => {
+            void (async () => {
+              const fresh = await fetchEntitlement();
+              if (fresh) setEntitlement(fresh);
+              setMessages((prev) => prev.filter((m) => !m.paywall));
+              setPurchaseSheetOpen(false);
+            })();
+          }}
           onClose={() => setPurchaseSheetOpen(false)}
         />
       )}

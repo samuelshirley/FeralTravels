@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { isPublicPath } from '@/lib/paywallPaths';
+import { GET_THE_APP_PATH, isBlockedWebPath, webAppEnabled } from '@/lib/webAccess';
 
 // Edge-safe cookie-only session check. Real auth happens in server pages /
 // API routes via `auth()` (which talks to Postgres on the Node runtime).
@@ -27,6 +28,35 @@ export default function middleware(req: NextRequest) {
   }
 
   const hasSession = SESSION_COOKIE_NAMES.some((name) => req.cookies.get(name)?.value);
+
+  /**
+   * The web app is off (2026-08-28, iOS-first). A browser with no session gets
+   * the download screen instead of a sign-in form.
+   *
+   * BELOW `isPublicPath`, never above it — the comment at the top of this file
+   * says any gate landing here goes below, and this is the gate it was written
+   * about. `/privacy`, `/terms` and `/support` are typed into App Store Connect
+   * and the Google consent screen, and a reviewer who gets a download prompt
+   * instead of a privacy policy files a rejection.
+   *
+   * `isBlockedWebPath` returns false for everything under `/api`, which is what
+   * keeps the iOS app alive: it is nothing but calls to those routes, and it
+   * authenticates with `Authorization: Bearer`, which nothing at the edge can
+   * see. Verified against production before this shipped — `/api/trips`
+   * unauthenticated answers 401 from its own guard, and must keep doing so.
+   *
+   * A request that DOES carry a session cookie is let through to the page,
+   * where `requireWebAccess()` asks the database whether it belongs to the
+   * admin. The edge cannot answer that question; it can only see that somebody
+   * holds a cookie.
+   */
+  if (!webAppEnabled() && !hasSession && isBlockedWebPath(pathname)) {
+    const url = req.nextUrl.clone();
+    url.pathname = GET_THE_APP_PATH;
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
   if (hasSession) return NextResponse.next();
 
   const url = req.nextUrl.clone();

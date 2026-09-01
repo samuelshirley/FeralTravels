@@ -55,3 +55,17 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
 export { paywallEnabled } from './switch';
+/**
+ * Promo codes belong on this surface, unlike `./testAccounts`: redeeming one
+ * writes an ordinary `subscriptions` row through `upsertSubscription`, so it is
+ * a way of BECOMING entitled and the module that owns that decision should be
+ * the one that exposes it. It pulls in nothing beyond what `./entitlements`
+ * already imports.
+ */
+export {
+  createPromoCode,
+  redeemPromoCode,
+  listPromoCodes,
+  countOutstandingPromoCodes,
+} from './promo';
+export type { CreatePromoCodeInput, PromoCodeRow, RedeemResult } from './promo';
