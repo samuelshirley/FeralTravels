@@ -832,17 +832,21 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
+          # Seeds the account and proves the send path works before a simulator
+          # is involved. It deliberately does NOT hand over a code any more:
+          # one minted here is deleted by the app's own send as soon as the 60s
+          # resend cooldown has lapsed, and launch.yaml alone takes 53 seconds.
+          # read-otp.js reads the live one from inside the flow instead.
           node scripts/ios-e2e-fixture.mjs --base-url "${{ needs.preview.outputs.url }}" > fixture.env
-          # The code is a live sign-in credential for ten minutes. It is a
-          # fixture address on a subdomain with no MX, so nobody can receive
-          # mail there — but it still has no business in a public run log.
-          CODE="$(grep '^CODE=' fixture.env | cut -d= -f2-)"
-          echo "::add-mask::$CODE"
           cat fixture.env >> "$GITHUB_ENV"
 
       - name: Run the flows
         id: flows
         env:
+          # read-otp.js fetches the sign-in code from this deployment itself.
+          # Named here rather than reused from the e2e job's E2E_BASE_URL, which
+          # is that job's env and not visible in this one.
+          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
           # 240s, the same budget Maestro uses in its own iOS e2e workflow. The
           # default is 120s. This is NOT the fix for the driver failing to start
           # — that is the Xcode selection above — it is headroom for a cold
@@ -868,10 +872,22 @@ jobs:
             --output maestro-report-launch.xml \
             --debug-output maestro-debug
 
+          # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the
+          # sign-in code ITSELF instead of trusting one minted before the run.
+          # A pre-minted code is a race with the 60s resend cooldown, and this
+          # job loses it: launch.yaml above takes 53 seconds, so by the time the
+          # flow taps "Email me a code" the cooldown has lapsed, the send
+          # succeeds, and storeOtpCode deletes the minted code and replaces it.
+          # That was "Invalid or expired code" on the simulator, surfacing two
+          # steps later as an assertion about the trips list. A laptop could not
+          # reproduce it until the local database was pinned to UTC — see
+          # mobile/maestro/read-otp.js for why, and note the underlying
+          # `timestamp`-without-time-zone defect it describes.
           maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
             -e APP_ID=com.feraltravels.app \
             -e EMAIL="$EMAIL" \
-            -e CODE="$CODE" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
             --format junit \
             --output maestro-report.xml \
             --debug-output maestro-debug

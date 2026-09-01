@@ -1,8 +1,13 @@
 # Sign in, the way a person does: type the address, read the code, type the code.
 #
-# EMAIL and CODE are minted by scripts/ios-e2e-fixture.mjs against the same
-# preview this build points at. The address is a `playwright-*@e2e.feraltravels.com`
+# EMAIL is minted by scripts/ios-e2e-fixture.mjs against the same deployment
+# this build points at. The address is a `playwright-*@e2e.feraltravels.com`
 # fixture — `e2e.` has no MX record, so it can never belong to a person.
+#
+# The CODE is NOT passed in. It is read by read-otp.js after the app's own send,
+# because a code minted before the run is deleted by that send once the 60s
+# resend cooldown has lapsed — which is exactly what happened in CI, where
+# launch.yaml runs first and takes 53 seconds.
 # SUBFLOW. Not a standalone flow, and running it as one alongside
 # chat-keyboard.yaml BREAKS BOTH: `verifyOtpCode` deletes the row on success
 # (src/server/auth/otp.ts:103), so the code is spent by whichever runs first and
@@ -82,24 +87,32 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Enter your code'
     timeout: 30000
+
+# Read the code NOW, not before the run. The app only reaches this screen once
+# its own send has resolved, and that send may well have REPLACED the code a
+# fixture minted earlier — `storeOtpCode` keeps exactly one code per address and
+# the 60s resend cooldown decides which one survives. read-otp.js has the full
+# story; it is the fix for the only failure CI had left.
+- runScript: read-otp.js
+
 - tapOn:
     id: 'signin-code-0'
-- inputText: ${CODE.charAt(0)}
+- inputText: ${output.code.charAt(0)}
 - tapOn:
     id: 'signin-code-1'
-- inputText: ${CODE.charAt(1)}
+- inputText: ${output.code.charAt(1)}
 - tapOn:
     id: 'signin-code-2'
-- inputText: ${CODE.charAt(2)}
+- inputText: ${output.code.charAt(2)}
 - tapOn:
     id: 'signin-code-3'
-- inputText: ${CODE.charAt(3)}
+- inputText: ${output.code.charAt(3)}
 - tapOn:
     id: 'signin-code-4'
-- inputText: ${CODE.charAt(4)}
+- inputText: ${output.code.charAt(4)}
 - tapOn:
     id: 'signin-code-5'
-- inputText: ${CODE.charAt(5)}
+- inputText: ${output.code.charAt(5)}
 
 # NO `tapOn: 'Verify code'`, and its absence is the app's behaviour, not a gap.
 #

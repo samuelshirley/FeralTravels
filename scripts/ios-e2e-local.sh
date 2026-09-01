@@ -252,7 +252,17 @@ start_db() {
       "$PG_LOCAL_BIN/psql" -h 127.0.0.1 -p 55432 -U feral -d postgres -tAc \
         "select 1 from pg_database where datname='feraltravels_e2e'" 2>/dev/null | grep -q 1 \
         || "$PG_LOCAL_BIN/createdb" -h 127.0.0.1 -p 55432 -U feral feraltravels_e2e
-      ok "postgres on 55432 (local cluster)"
+      # UTC, like Neon — and NOT cosmetic. `email_otp_codes.created_at` is a
+      # `timestamp` WITHOUT time zone, so Postgres stores the server's local
+      # wall clock while drizzle reads it back as UTC. On a cluster in any other
+      # zone those disagree, the OTP resend cooldown computes a NEGATIVE age and
+      # therefore never expires, and every resend is a 429 forever. That made
+      # the iOS sign-in flow unable to fail locally while it failed on every CI
+      # run — a second bug perfectly hiding the first. Pinning this is what lets
+      # a local pass mean something.
+      "$PG_LOCAL_BIN/psql" -h 127.0.0.1 -p 55432 -U feral -d feraltravels_e2e \
+        -c "alter database feraltravels_e2e set timezone to 'UTC'" >/dev/null 2>&1 || true
+      ok "postgres on 55432 (local cluster, UTC)"
       ;;
     *) die "No database available — run doctor." ;;
   esac
@@ -448,7 +458,7 @@ run_flow() {
   # `launch` is the HARNESS check and must not need the server to be healthy —
   # otherwise a broken backend reds layer 1 and the first line of output blames
   # the simulator. It signs in as nobody and asserts only that the app renders.
-  EMAIL="" ; CODE=""
+  EMAIL=""
   if [ "${flow%.yaml}" != "launch" ]; then
     say "Minting a fixture account"
     E2E_BASE_URL="$API_URL" node scripts/ios-e2e-fixture.mjs --base-url "$API_URL" >"$OUT/fixture.env" \
@@ -463,10 +473,15 @@ run_flow() {
   say "Running $flow on $udid"
   set +e
   MAESTRO_DRIVER_STARTUP_TIMEOUT=240000 \
+  # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the sign-in
+  # code itself rather than trusting one minted before the run. TEST_SECRET is
+  # empty locally — there is nothing to lock out — and the script omits the
+  # header when it is.
   maestro --device "$udid" test "$file" \
     -e APP_ID="$APP_ID" \
     -e EMAIL="$EMAIL" \
-    -e CODE="$CODE" \
+    -e BASE_URL="$API_URL" \
+    -e TEST_SECRET="${E2E_TEST_ENDPOINTS_SECRET:-}" \
     --format junit \
     --output "$OUT/report.xml" \
     --debug-output "$OUT/maestro" \

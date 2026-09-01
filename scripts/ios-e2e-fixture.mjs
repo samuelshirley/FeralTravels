@@ -2,9 +2,24 @@
 /**
  * Mint the account the iOS Maestro flows sign in as, against a deployed app.
  *
- * Prints `EMAIL=…` and `CODE=…` on stdout (and appends them to $GITHUB_OUTPUT
- * when CI sets it). Everything else goes to stderr, so the caller can eval the
- * stdout safely.
+ * Prints `EMAIL=…` on stdout (and appends it to $GITHUB_OUTPUT when CI sets
+ * it). Everything else goes to stderr, so the caller can eval the stdout safely.
+ *
+ * IT DELIBERATELY DOES NOT HAND OVER A CODE, and that is the fix for the only
+ * failure CI had left. `sendOtpCode` enforces a 60s resend cooldown and
+ * `storeOtpCode` keeps exactly one code per address, so a code minted here is
+ * DELETED by the app's own "Email me a code" tap the moment that cooldown has
+ * lapsed. In CI launch.yaml runs first and takes 53 seconds, so the send
+ * succeeded, the code was replaced, and the app typed six digits that no longer
+ * existed — "Invalid or expired code" on the simulator, reported as an
+ * assertion about the trips list. It could never fail on a laptop, because a
+ * non-UTC local Postgres made the cooldown permanent (see read-otp.js), so the
+ * minted code always survived.
+ *
+ * mobile/maestro/read-otp.js now reads the live code from inside the flow,
+ * after the app's own send has resolved. This script still SENDS, because doing
+ * so proves /api/mobile/otp/send works in a named CI step rather than inside a
+ * simulator — it just no longer pretends the code it saw will still be valid.
  *
  * WHY THIS EXISTS AT ALL: the flows must not depend on a mailbox. This suite
  * has been switched off by a third-party inbox twice already — MailSlurp's
@@ -101,7 +116,10 @@ async function main() {
   const sent = await post('/api/mobile/otp/send', { email });
   if (!sent.ok) throw new Error(`otp send failed (${sent.status}): ${sent.text}`);
 
-  // Poll: the send resolving does not guarantee the row has landed.
+  // Read it back once — NOT to pass on, but to prove /api/test/otp answers and
+  // is reachable with this secret. A 404 here is the endpoint being off or the
+  // secret not matching, and finding that out now beats finding it out as a
+  // thrown error inside a Maestro script two minutes later.
   const deadline = Date.now() + 20_000;
   let last = '';
   while (Date.now() < deadline) {
@@ -109,7 +127,7 @@ async function main() {
     if (res.ok) {
       const body = JSON.parse(res.text || '{}');
       if (body.code) {
-        emit(email, body.code);
+        emit(email);
         return;
       }
       last = 'code not written yet';
@@ -122,11 +140,12 @@ async function main() {
   throw new Error(`no OTP for ${email} (${last})`);
 }
 
-function emit(email, code) {
+function emit(email) {
   process.stderr.write(`[ios-e2e] fixture ready: ${email}\n`);
-  process.stdout.write(`EMAIL=${email}\nCODE=${code}\n`);
+  process.stderr.write('[ios-e2e] code NOT emitted — read-otp.js reads the live one in-flow\n');
+  process.stdout.write(`EMAIL=${email}\n`);
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `email=${email}\ncode=${code}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `email=${email}\n`);
   }
 }
 
