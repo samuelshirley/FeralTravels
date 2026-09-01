@@ -53,3 +53,7 @@ playwright/.auth/
 # Local one-off push/deploy helpers. They tend to accumulate credentials and
 # branch names that mean nothing to anyone else.
 push-*.sh
+
+# Local iOS e2e runs (scripts/ios-e2e-local.sh) — logs, JUnit, Maestro's debug
+# output and screenshots. Regenerated on every run and often large.
+mobile/maestro/.local-run/

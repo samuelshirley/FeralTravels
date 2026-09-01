@@ -1,0 +1,35 @@
+# LAYER 1 — the harness, and nothing else.
+#
+# This flow exists to answer one question, on its own, before any other flow
+# gets to confuse the answer: does the XCTest driver come up, does the app that
+# was just built install, and does it render its first screen?
+#
+# It is the flow to look at first when the iOS job is red. Every other failure
+# mode in this directory — a wrong selector, a slow API, an expired code — is
+# downstream of these three things working, and until this one is green a
+# failure anywhere else says nothing about the code under test.
+#
+# DELIBERATELY NO NETWORK. `sign-in.yaml` is where the app first talks to the
+# server; keeping that out of here is what makes a red layer 1 mean "the
+# simulator, the build or the driver" and never "the backend". The runner
+# script skips minting a fixture account for this flow for the same reason.
+appId: ${APP_ID}
+---
+- launchApp:
+    # Same clean slate the real flows use: a keychain still holding a session
+    # token lands the app on /trips, and then this asserts nothing at all.
+    clearState: true
+    permissions:
+      location: deny
+
+# The sign-in screen is the app's first render and needs no server to draw.
+# If this times out, the app crashed on launch or never installed — check
+# `xcrun simctl diagnose` and the build log, not the flows.
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+
+# Both halves of the screen, so a partial render is a failure rather than a
+# pass on one lucky node.
+- assertVisible: 'Email me a code'

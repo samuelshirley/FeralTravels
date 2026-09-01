@@ -9,10 +9,18 @@ prove you can see it while typing, which is exactly the bug that shipped
 
 ## What they cover
 
-| Flow | Asserts |
-|---|---|
-| `sign-in.yaml` | The real OTP sign-in, end to end, against the preview API. |
-| `chat-keyboard.yaml` | The regression: composer reachable and operable **while the keyboard is up**. |
+| Flow | Layer | Asserts |
+|---|---|---|
+| `launch.yaml` | harness | The driver came up, the build installed, the app renders its first screen. No network. |
+| `sign-in.yaml` | wiring | The real OTP sign-in, end to end, against the API. |
+| `chat-keyboard.yaml` | behaviour | The regression: composer reachable and operable **while the keyboard is up**. |
+
+**Read that table top to bottom when a run is red.** The three layers fail with
+very different causes and, until this split existed, with the same message: an
+Xcode/driver mismatch, a backend the app cannot reach, and a wrong selector all
+arrived as one line saying `[Failed] chat-keyboard`. `launch.yaml` needs no
+server and no fixture account, so when it is red the problem is the harness and
+nothing below it is worth reading.
 
 `chat-keyboard.yaml` is a guard test, so it is held to the repo's standard for
 one — see *"New guard tests: mutation-check them"* in CLAUDE.md. Reintroduce the
@@ -21,16 +29,39 @@ red, restore. **A guard nobody has watched fail is decoration.**
 
 ## Running locally
 
-Needs macOS with Xcode and a booted simulator; Maestro cannot run on Linux.
+**Use the script.** One command, on macOS, against a local server and a
+throwaway local database:
 
 ```bash
-brew install maestro                      # or: curl -Ls https://get.maestro.mobile.dev | bash
-node scripts/ios-e2e-fixture.mjs --base-url https://<preview>   # prints EMAIL/CODE
-maestro test mobile/maestro \
-  -e APP_ID=com.feraltravels.app \
-  -e EMAIL=<from the script> \
-  -e CODE=<from the script>
+scripts/ios-e2e-local.sh all          # doctor → db → server → build → all three flows
+scripts/ios-e2e-local.sh run sign-in  # re-run one flow: ~60 seconds
+scripts/ios-e2e-local.sh hierarchy    # dump what the app ACTUALLY renders
+scripts/ios-e2e-local.sh down
 ```
+
+Everything a run learns lands in `mobile/maestro/.local-run/` (gitignored):
+the JUnit report, Maestro's debug output, the per-command JSON that names the
+failing step, screenshots, and the server log.
+
+Three things the script does that a hand-rolled invocation gets wrong, and the
+reason the previous version of this section was itself a trap:
+
+- **It names the FILE, never the directory.** `maestro test mobile/maestro`
+  runs `sign-in.yaml` standalone as well as through `chat-keyboard.yaml`, and
+  the OTP code is single-use — the first sign-in spends it and the second fails
+  on a code the server has already deleted.
+- **It points at a local server, not a preview.** `/api/test/*` on a deployed
+  preview is locked by a per-run HMAC that CI derives from `AUTH_SECRET` and the
+  run id. You cannot reproduce it from a laptop, so minting a fixture against a
+  preview fails with a 404 that looks like a missing route.
+- **It uses a local database.** The only `DATABASE_URL` in `.env` is
+  **production**, and these flows call `/api/test/seed`. See
+  `docker-compose.e2e.yml`.
+
+It also checks that the selected Xcode is 26.x before doing anything slow.
+Maestro ships a *prebuilt* XCTest driver built with Xcode 26.2; an older
+`xcodebuild` cannot run its `.xctestrun`, and the only symptom is a two-minute
+`iOS driver not ready in time`, which reads like a slow machine and is not.
 
 ## Why the fixture user is minted outside the app
 

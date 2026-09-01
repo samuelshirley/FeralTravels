@@ -822,6 +822,18 @@ jobs:
           # has already deleted.
           # --device, so the flows run on the simulator this job booted and
           # installed onto, rather than on whichever one Maestro finds booted.
+          # LAYER 1 FIRST. `launch.yaml` needs no network and no fixture account:
+          # it proves the driver came up, the build installed, and the app renders
+          # its first screen. When it fails the problem is the harness, and nothing
+          # below it is worth reading — a distinction this job could not make while
+          # one invocation reported on all three layers at once. Same split locally,
+          # for the same reason: scripts/ios-e2e-local.sh.
+          maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
+            -e APP_ID=com.feraltravels.app \
+            --format junit \
+            --output maestro-report-launch.xml \
+            --debug-output maestro-debug
+
           maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
             -e APP_ID=com.feraltravels.app \
             -e EMAIL="$EMAIL" \
@@ -844,12 +856,28 @@ jobs:
         if: failure()
         run: |
           echo "::group::maestro-report.xml"
-          cat maestro-report.xml 2>/dev/null || echo "(no report produced)"
+          cat maestro-report*.xml 2>/dev/null || echo "(no report produced)"
           echo "::endgroup::"
-          echo "::group::maestro debug output"
-          find maestro-debug -name '*.txt' -o -name '*.log' 2>/dev/null | head -20 | while read -r f; do
-            echo "--- $f"; tail -60 "$f"
-          done || echo "(no debug output)"
+          # WHICH LINE OF THE YAML. `commands-*.json` records every step and its
+          # status, and it is the only file that answers that question — the
+          # JUnit's `<failure>Unknown error</failure>` does not. Named
+          # explicitly rather than swept up by a glob: the first version of this
+          # step matched `*.log` and printed `device-xctest.log`, which is the
+          # DRIVER's own unit tests passing. A page of green about something
+          # nobody asked about, while the actual step failure sat unread.
+          echo "::group::which step failed"
+          find maestro-debug -name 'commands-*.json' 2>/dev/null | while read -r f; do
+            echo "--- $f"; cat "$f"
+          done || echo "(no command log)"
+          echo "::endgroup::"
+          echo "::group::maestro.log"
+          find maestro-debug -name 'maestro.log' 2>/dev/null | while read -r f; do
+            echo "--- $f"; tail -120 "$f"
+          done || echo "(no maestro.log)"
+          echo "::endgroup::"
+          echo "::group::screenshots captured"
+          find maestro-debug -name '*.png' 2>/dev/null | sed 's/^/  /' || true
+          echo "  (download the maestro-ios artifact to view them)"
           echo "::endgroup::"
           # The XCTest runner's own log, which is where a driver that never
           # comes up says why. It lives outside the working directory, and
@@ -864,6 +892,14 @@ jobs:
           done || echo "(no driver log)"
           echo "::endgroup::"
 
+      # `include-hidden-files` is the whole reason run 119's artifact came back
+      # 502 BYTES holding one file. Maestro writes its debug output to
+      # `<--debug-output>/.maestro/tests/<timestamp>/` — a DOTTED directory — and
+      # upload-artifact has skipped hidden files by default since v4.4. So the
+      # screenshots, the per-command JSON and maestro.log were all silently
+      # dropped, and the PR comment cheerfully pointed at an artifact holding
+      # only the JUnit XML that says "Unknown error". Maestro's own workflow sets
+      # this flag, for exactly this reason.
       - name: Upload the recordings
         id: recordings
         if: always()
@@ -871,9 +907,10 @@ jobs:
         with:
           name: maestro-ios
           path: |
-            maestro-report.xml
+            maestro-report*.xml
             maestro-debug/**
             ~/.maestro/tests/**
+          include-hidden-files: true
           if-no-files-found: warn
 
       # The whole value of driving a real simulator is the screenshot of the
