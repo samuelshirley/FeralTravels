@@ -91,39 +91,18 @@ db_mode() {
 
 # ── The value the SERVER will actually see ─────────────────────────────────
 #
-# NOT `grep '^KEY=' .env`. Next loads `.env.local` AHEAD of `.env`, and the
-# Vercel CLI writes a `.env.local` listing every key with an EMPTY value — so a
-# repo with a perfectly good ANTHROPIC_API_KEY in `.env` runs a server that has
-# none. That is not hypothetical: it is why `/api/trip/replan` answered 503 to
-# every send while chat-keyboard.yaml went green, and why the log filled with
-# `MissingSecret` from an AUTH_SECRET that the doctor had just declared present.
+# `env_value` resolves a key the way dotenv does — process env, then
+# `.env.local`, then `.env` — but skips EMPTY declarations, which is what makes
+# it useful here: `up` passes the result explicitly into the server's
+# environment, where it outranks every file, so a shadowing empty value in
+# `.env.local` cannot reach the server.
 #
-# So resolve it the way Next does — an exported value first, then `.env.local`,
-# then `.env` — but skip EMPTY assignments, which is the entire point. The
-# doctor checks this, and `up` passes the result explicitly into the server's
-# environment, where it outranks every file.
-env_value() {
-  local key="$1" v f
-  v="$(printenv "$key" 2>/dev/null || true)"
-  if [ -n "$v" ]; then printf '%s' "$v"; return; fi
-  for f in .env.local .env; do
-    [ -f "$f" ] || continue
-    # Last assignment in the file wins, matching dotenv. Strips one layer of
-    # surrounding quotes and an `export ` prefix.
-    v="$(awk -v k="$key" '
-      { line = $0; sub(/^[[:space:]]*export[[:space:]]+/, "", line) }
-      index(line, k "=") == 1 {
-        val = substr(line, length(k) + 2)
-        sub(/^"/, "", val); sub(/"$/, "", val)
-        sub(/^'"'"'/, "", val); sub(/'"'"'$/, "", val)
-        out = val
-      }
-      END { print out }
-    ' "$f")"
-    if [ -n "$v" ]; then printf '%s' "$v"; return; fi
-  done
-  printf ''
-}
+# SHARED with scripts/check-env.sh, the predev guard, rather than reimplemented.
+# The two ask slightly different questions of the same precedence rules and the
+# rules are the part that would rot in duplicate. The long version of why any of
+# this exists is in the header of the lib.
+# shellcheck source=scripts/lib/env-value.sh
+. "$REPO_ROOT/scripts/lib/env-value.sh"
 
 # Each helper prints AND appends to the run report. Deliberately not a
 # `{ ... } | tee` around the whole function: a pipeline puts the body in a
