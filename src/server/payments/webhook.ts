@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { subscriptionEvents, subscriptions, users } from '@/server/db/schema';
 import type { SubscriptionStatus } from '@/server/db/schema';
@@ -56,6 +56,8 @@ export type IgnoredReason = Extract<
 
 export type EventDecision =
   | { action: 'apply'; status: SubscriptionStatus; autoRenew: boolean; periodEnd: Date | null }
+  /** A move between two accounts. See `applyTransfer`. */
+  | { action: 'transfer' }
   | { ignored: IgnoredReason };
 
 /**
@@ -84,6 +86,9 @@ export type EventDecision =
  * that would silently change what CANCELLATION means, so it stays a documented
  * follow-up — the admin break-glass revoke covers it in the meantime, and the
  * raw payload with `cancel_reason` is on the event row to find it by.
+ *
+ * `TRANSFER` is not in this table either, but it IS handled — see
+ * `applyTransfer`. It maps to no single status because it concerns two users.
  */
 const TYPE_MAP: Readonly<Record<string, { status: SubscriptionStatus; autoRenew: boolean }>> = {
   INITIAL_PURCHASE: { status: 'active', autoRenew: true },
@@ -96,9 +101,18 @@ const TYPE_MAP: Readonly<Record<string, { status: SubscriptionStatus; autoRenew:
   REFUND: { status: 'refunded', autoRenew: false },
 };
 
+/**
+ * `TRANSFER` is handled, but NOT through `TYPE_MAP`.
+ *
+ * Every other type maps to a status for ONE user. A transfer is a move between
+ * two, and it carries no status of its own — so it has its own branch below and
+ * is listed here only so it stops being logged as an unhandled type.
+ */
+export const TRANSFER = 'TRANSFER';
+
 /** Types RevenueCat sends that we knowingly do nothing with. */
 export function isKnownEventType(type: string): boolean {
-  return type in TYPE_MAP;
+  return type in TYPE_MAP || type === TRANSFER;
 }
 
 /**
@@ -111,6 +125,16 @@ export function decideFromEvent(
   event: NormalizedSubscriptionEvent,
   lastAppliedEventTimeMs: number | null
 ): EventDecision {
+  // A transfer is decided in `applyTransfer`, not here: it maps to no single
+  // status and concerns two users. It still has to pass the staleness check
+  // below, so it is short-circuited rather than dropped.
+  if (event.type === TRANSFER) {
+    if (lastAppliedEventTimeMs !== null && event.eventTimeMs < lastAppliedEventTimeMs) {
+      return { ignored: 'ignored_stale' };
+    }
+    return { action: 'transfer' };
+  }
+
   const mapped = TYPE_MAP[event.type];
 
   // Type first: an event we do not understand tells us nothing about ordering
@@ -163,6 +187,20 @@ export interface WebhookDeps {
     outcome: WebhookOutcome;
   }) => Promise<boolean>;
   writeSubscription?: (input: UpsertSubscriptionInput) => Promise<void>;
+  /**
+   * Move a subscription between accounts, ATOMICALLY.
+   *
+   * One dep rather than an expire + an upsert, because the two must not be
+   * separable: a crash between them either funds two accounts from one purchase
+   * or leaves nobody entitled, and both are worse than the event failing and
+   * being retried. The default runs a real transaction; the test substitutes a
+   * fake that can assert the pair moved together.
+   */
+  transferSubscription?: (input: {
+    fromUserIds: string[];
+    toUserId: string;
+    at: Date;
+  }) => Promise<{ movedFrom: string[] }>;
 }
 
 const defaultFindUserId: NonNullable<WebhookDeps['findUserId']> = async (appUserId) => {
@@ -191,6 +229,91 @@ const defaultLoadExisting: NonNullable<WebhookDeps['loadExisting']> = async (use
     .where(eq(subscriptions.userId, userId))
     .limit(1);
   return rows[0] ?? null;
+};
+
+/**
+ * The move, in one transaction.
+ *
+ * WHAT IT CARRIES ACROSS, and why it is read from our own row rather than the
+ * payload: a `TRANSFER` event carries `transferred_from` / `transferred_to` and
+ * nothing else. No `product_id`, no `expiration_at_ms`, no
+ * `original_transaction_id` — RevenueCat's field reference lists those under
+ * the subscription-lifecycle events only. So the destination's row is built
+ * from the ORIGIN's row, which is the one place those facts exist. Taking the
+ * event at face value would hand the destination `currentPeriodEnd: null`,
+ * which `resolveAccountState` reads as "no end" — an unlimited subscription,
+ * granted by a transfer.
+ *
+ * The origin is EXPIRED rather than deleted: `subscriptions.userId` is the
+ * primary key, one row per user, and the row is the only record that account
+ * ever had access. `expired` is also exactly what the resolver needs to stop
+ * entitling them, with no special case.
+ */
+const defaultTransferSubscription: NonNullable<WebhookDeps['transferSubscription']> = async ({
+  fromUserIds,
+  toUserId,
+  at,
+}) => {
+  return db.transaction(async (tx) => {
+    // Read the origin rows first: they hold the product, the period end and the
+    // original transaction id that the event does not carry.
+    const origins = fromUserIds.length
+      ? await tx
+          .select({
+            userId: subscriptions.userId,
+            status: subscriptions.status,
+            productId: subscriptions.productId,
+            currentPeriodEnd: subscriptions.currentPeriodEnd,
+            originalTransactionId: subscriptions.originalTransactionId,
+          })
+          .from(subscriptions)
+          .where(inArray(subscriptions.userId, fromUserIds))
+      : [];
+
+    // The best origin to inherit from: one that is actually live. A user who
+    // was already expired tells us nothing useful about the term being moved.
+    const source =
+      origins.find((o) => o.status === 'active' || o.status === 'grace') ?? origins[0] ?? null;
+
+    if (fromUserIds.length) {
+      await tx
+        .update(subscriptions)
+        .set({ status: 'expired', autoRenew: false, updatedAt: at })
+        .where(inArray(subscriptions.userId, fromUserIds));
+    }
+
+    await tx
+      .insert(subscriptions)
+      .values({
+        userId: toUserId,
+        status: 'active',
+        source: 'apple_iap',
+        productId: source?.productId ?? null,
+        currentPeriodEnd: source?.currentPeriodEnd ?? null,
+        originalTransactionId: source?.originalTransactionId ?? null,
+        autoRenew: true,
+        updatedAt: at,
+      })
+      .onConflictDoUpdate({
+        target: subscriptions.userId,
+        set: {
+          status: 'active',
+          source: 'apple_iap',
+          productId: source?.productId ?? null,
+          currentPeriodEnd: source?.currentPeriodEnd ?? null,
+          originalTransactionId: source?.originalTransactionId ?? null,
+          autoRenew: true,
+          // A transfer INTO a previously revoked account clears the revocation,
+          // same reasoning as a new purchase: they hold the subscription now.
+          revokedAt: null,
+          revokedBy: null,
+          revokedReason: null,
+          updatedAt: at,
+        },
+      });
+
+    return { movedFrom: origins.map((o) => o.userId) };
+  });
 };
 
 const defaultRecordEvent: NonNullable<WebhookDeps['recordEvent']> = async (row) => {
@@ -234,7 +357,26 @@ export async function applySubscriptionEvent(
 
   const base = { eventId: event.eventId, type: event.type, eventTimeMs: event.eventTimeMs, payload: event.payload };
 
-  const userId = await findUserId(event.appUserId);
+  /**
+   * A transfer is resolved from `transferred_to`, never from `app_user_id`.
+   *
+   * That field is absent on this event — RevenueCat's reference lists only
+   * `transferred_from` / `transferred_to` for it — and the docs' line about the
+   * webhook being "sent for the destination user" describes delivery, not a
+   * field to read. Assuming otherwise is how a transfer gets applied to the
+   * account that just LOST the subscription.
+   */
+  if (event.type === TRANSFER) {
+    return applyTransfer(event, base, {
+      findUserId,
+      lastApplied,
+      recordEvent,
+      transferSubscription: deps.transferSubscription ?? defaultTransferSubscription,
+    });
+  }
+
+  // Non-transfer events always carry one; the schema refuses them otherwise.
+  const userId = event.appUserId ? await findUserId(event.appUserId) : null;
 
   if (!userId) {
     // Recorded rather than dropped: if somebody's purchase is landing here
@@ -274,6 +416,12 @@ export async function applySubscriptionEvent(
     };
   }
 
+  // `transfer` cannot reach here — it returned above — but the union makes the
+  // compiler ask, and answering it beats a cast.
+  if (decision.action !== 'apply') {
+    return { outcome: 'ignored_unknown_type', eventId: event.eventId, userId, status: null };
+  }
+
   const recorded = await recordEvent({ ...base, userId, outcome: 'applied' });
   if (!recorded) {
     return { outcome: 'ignored_duplicate', eventId: event.eventId, userId, status: null };
@@ -296,4 +444,111 @@ export async function applySubscriptionEvent(
   });
 
   return { outcome: 'applied', eventId: event.eventId, userId, status: decision.status };
+}
+
+/**
+ * A subscription moving from one account to another.
+ *
+ * THE RULE, decided by the owner: the subscription follows the Apple ID. The
+ * account that just restored it holds it, and the previous account loses access
+ * immediately. There is one `subscriptions` row per user and one payment behind
+ * it, so leaving the origin entitled would fund two accounts from one purchase.
+ *
+ * KNOWN CONSEQUENCE, ACCEPTED: the losing account is told nothing. Its next
+ * gated request 402s with the ordinary "subscription ended" copy, which is close
+ * enough to true, and this event is rare.
+ *
+ * ── Why the destination is resolved before anything is written ──
+ *
+ * If we cannot find the destination user, NOTHING changes — not even the
+ * origin's row. The alternative reads well ("the subscription has gone, expire
+ * them") and is wrong: an unknown destination means the purchase left our system
+ * entirely, most likely onto an anonymous RevenueCat id, and expiring the origin
+ * would strand somebody who is still paying with nobody to hand their access to.
+ * The event is recorded as `ignored_unknown_user`, which is the outcome that
+ * exists to be findable in the admin log.
+ *
+ * ── Two event rows ──
+ *
+ * `subscription_events.event_id` is UNIQUE, so the origin's row is written under
+ * a suffixed id. Both carry the verbatim payload, so the move is reconstructable
+ * afterwards from either side — which matters precisely because the losing user
+ * is never told, and a support question about it arrives with no other trail.
+ */
+async function applyTransfer(
+  event: NormalizedSubscriptionEvent,
+  base: { eventId: string; type: string; eventTimeMs: number; payload: unknown },
+  deps: {
+    findUserId: NonNullable<WebhookDeps['findUserId']>;
+    lastApplied: NonNullable<WebhookDeps['lastAppliedEventTimeMs']>;
+    recordEvent: NonNullable<WebhookDeps['recordEvent']>;
+    transferSubscription: NonNullable<WebhookDeps['transferSubscription']>;
+  }
+): Promise<WebhookResult> {
+  // Destination first. `transferred_to` is an array because one Apple ID's
+  // purchases can land on more than one app user id; the first we recognise is
+  // the one that gets it, and any others are not accounts we have.
+  const toIds = await Promise.all(event.transferredTo.map((id) => deps.findUserId(id)));
+  const toUserId = toIds.find((id): id is string => id !== null) ?? null;
+
+  if (!toUserId) {
+    console.warn('[payments/webhook] TRANSFER to an unknown destination', {
+      eventId: event.eventId,
+      transferredTo: event.transferredTo,
+    });
+    const recorded = await deps.recordEvent({ ...base, userId: null, outcome: 'ignored_unknown_user' });
+    return {
+      outcome: recorded ? 'ignored_unknown_user' : 'ignored_duplicate',
+      eventId: event.eventId,
+      userId: null,
+      status: null,
+    };
+  }
+
+  const decision = decideFromEvent(event, await deps.lastApplied(toUserId));
+  if ('ignored' in decision) {
+    const recorded = await deps.recordEvent({ ...base, userId: toUserId, outcome: decision.ignored });
+    return {
+      outcome: recorded ? decision.ignored : 'ignored_duplicate',
+      eventId: event.eventId,
+      userId: toUserId,
+      status: null,
+    };
+  }
+
+  // Record BEFORE writing, the same order the rest of this handler keeps: the
+  // insert conflicts on the event id, so a retry loses the race and changes
+  // nothing rather than moving a subscription twice.
+  const recorded = await deps.recordEvent({ ...base, userId: toUserId, outcome: 'applied' });
+  if (!recorded) {
+    return { outcome: 'ignored_duplicate', eventId: event.eventId, userId: toUserId, status: null };
+  }
+
+  const fromIds = await Promise.all(event.transferredFrom.map((id) => deps.findUserId(id)));
+  const fromUserIds = fromIds.filter(
+    (id): id is string => id !== null && id !== toUserId
+  );
+
+  const { movedFrom } = await deps.transferSubscription({
+    fromUserIds,
+    toUserId,
+    at: new Date(),
+  });
+
+  // The origin's own row in the ledger. Suffixed because the event id is unique
+  // and the destination already used it; `onConflictDoNothing` keeps a retry
+  // harmless. Best-effort: the subscriptions have already moved correctly, and
+  // failing the whole event to retry a log line would re-run the move.
+  for (const fromUserId of movedFrom) {
+    await deps
+      .recordEvent({
+        ...base,
+        eventId: `${event.eventId}:from:${fromUserId}`,
+        userId: fromUserId,
+        outcome: 'applied',
+      })
+      .catch(() => false);
+  }
+
+  return { outcome: 'applied', eventId: event.eventId, userId: toUserId, status: 'active' };
 }

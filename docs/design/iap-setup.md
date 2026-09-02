@@ -357,21 +357,21 @@ step blocks anybody; this step blocks everybody it applies to.
 
 ## Known gaps, stated rather than discovered later
 
-**`TRANSFER` is not in `TYPE_MAP`.** When an Apple ID's subscription moves to a
-*different* app account — somebody restores on a second account — RevenueCat
-sends `TRANSFER`, and `webhook.ts` records it as `ignored_unknown_type`. The
-common restore case is unaffected (a reinstall keeps the same `users.id`, the
-`subscriptions` row already exists, and the first poll returns entitled), and the
-app's restore flow handles the store side correctly either way. But the
-cross-account restore ends with the new account not entitled.
+**`TRANSFER` is handled as of 2026-09-02.** It used to be absent from
+`TYPE_MAP`, so a restore onto a different app account with the same Apple ID
+recorded `ignored_unknown_type` and entitled nobody. The owner's rule is that
+the subscription follows the Apple ID: the account that just restored it holds
+it, and the previous one is expired in the same transaction. The losing account
+is not notified — its next gated request 402s with the ordinary
+"subscription ended" copy.
 
-Left alone on purpose: deciding what a transfer *means* for us — does the old
-account lose access the moment the new one gains it? — is a policy question about
-the one table that decides who has paid, and the server half of this system was
-signed off as built. It is a one-line addition to `TYPE_MAP` once that question
-is answered. Until then it shows up in `/admin/errors`-adjacent event rows as
-`ignored_unknown_type`, which is legible, and the break-glass admin grant covers
-the person who hits it.
+Worth knowing before you touch it: a TRANSFER payload carries **no
+`app_user_id`, no `product_id`, no `expiration_at_ms` and no
+`original_transaction_id`** — only `transferred_from` and `transferred_to`. The
+destination's row is therefore built from the origin's existing row, and the
+Zod schema had to be taught that this one event has no `app_user_id` or it would
+have rejected every real transfer at the boundary. See `applyTransfer` in
+`webhook.ts` and the TRANSFER block in `webhook.test.ts`.
 
 **The test-purchase path is untouched and stays.** `/api/purchase/test`,
 `isTestPurchaseAllowed`, the `sam+trial-<tag>@feraltravels.com` pattern and

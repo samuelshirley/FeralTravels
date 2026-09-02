@@ -661,11 +661,41 @@ build.
     gained the button and a `planStatusLine` status line; `docs/design/ios-review-notes.md`
     is the text a reviewer reads and the ordered list of what must be true in
     App Store Connect before it is honest.
-  - **Known gap, deliberately not fixed:** `TRANSFER` is absent from `TYPE_MAP`,
-    so a restore onto a DIFFERENT app account with the same Apple ID records
-    `ignored_unknown_type` and does not entitle. The ordinary reinstall case is
-    unaffected (same `users.id`, the row already exists). Fixing it is a policy
-    question about who keeps access after a transfer — see iap-setup.md.
+  - **`TRANSFER` is handled (2026-09-02), and NOT through `TYPE_MAP`** — it maps
+    to no single status because it concerns two users. **The rule, decided by
+    the owner: the subscription follows the Apple ID.** The account that just
+    restored it holds it; the previous account is expired immediately. One
+    `subscriptions` row per user and one payment behind it, so leaving the
+    origin entitled would fund two accounts from one purchase. **Accepted
+    consequence: the losing account is told nothing** — its next gated request
+    402s with the ordinary "subscription ended" copy, which is close enough to
+    true, and the event is rare.
+  - **Three things about the TRANSFER payload make it unlike every other event**,
+    and all three were verified against RevenueCat's field reference rather than
+    assumed. (1) It carries **no `app_user_id`** — so `app_user_id:
+    z.string().min(1)` would have 400'd every real transfer at the boundary and
+    RevenueCat would have retried each one for as long as its backoff allowed;
+    the field is now nullish with a `superRefine` that keeps it required for
+    every other type. (2) The destination is `transferred_to`, the origin
+    `transferred_from`, both ARRAYS — never infer either from `app_user_id`,
+    which is the trap: using it would grant the subscription to the account that
+    just LOST it, silently. (3) It carries **no `product_id`, no
+    `expiration_at_ms` and no `original_transaction_id`**, so the destination's
+    row is built from the ORIGIN's row — the only place those facts exist.
+    Taking the event at face value would write `currentPeriodEnd: null`, which
+    `resolveAccountState` reads as "no end": an unlimited subscription granted
+    by a transfer.
+  - **Both sides get a `subscription_events` row**, the origin's under a
+    suffixed id (`event_id` is UNIQUE), both carrying the verbatim payload — so
+    the move is reconstructable afterwards, which matters precisely because the
+    losing user is never told and a support question arrives with no other
+    trail. The move itself is ONE transaction behind the `transferSubscription`
+    dep: separable expire-then-upsert either funds two accounts from one
+    purchase or leaves nobody entitled. **An unknown destination changes
+    NOTHING**, not even the origin's row — that reads as "the subscription has
+    gone, expire them" and is wrong, because an unknown destination means the
+    purchase left our system and expiring the origin would strand somebody still
+    paying with nobody to hand access to.
 - **Promo codes — BUILT (migrations 0028 + 0029, 2026-08-27, reworked 2026-09-02).** An admin mints a code for one email address; that person signs in and **the code claims itself**, and the paywall lets them through. Designed so the entitlement surface did not grow: **redeeming writes an ordinary `subscriptions` row with `source: 'promo'`**, and `hasEntitlement`, `resolveAccountState` and its twelve tested states needed **no change at all**. Nothing in the paywall path reads `promo_codes` — a second entitlement source would have been a second place able to decide someone has paid, which is exactly what the bounded-module rule exists to prevent. A promo user shows in the admin panel as a subscriber whose row says where it came from.
   - **What it grants: a FIXED TERM (migration 0029, 2026-09-02).** `promo_codes.grant_months` is 6 or 12 — a select in the admin form, validated in the Zod schema on `POST /api/admin/promo`, NOT free text (an admin typing 600 into a months box is a mistake nobody notices for fifty years). It used to be unlimited. The ORDINARY $8.50 rolling-twelve-month usage cap still applies: a promo account generates no revenue to offset spend. `auto_renew` stays `true` — nothing renews a promo, but `false` resolves to `cancelled_in_period` and would tell the admin panel a story about a cancellation that never happened; the term ends on its date whatever `auto_renew` says.
   - **THE CLOCK STARTS AT REDEMPTION, not at minting.** Minting is when an admin types an address into a form; redemption is when the recipient actually has the app. A six-month code minted today and redeemed in three weeks would otherwise be five months and a week of a gift meant as six, with nothing telling anybody. `expires_at` is the separate control for "use it or lose it" and is the right one for that job — hence the admin labels, "code expires in (days)" against "access: 6/12 months".
