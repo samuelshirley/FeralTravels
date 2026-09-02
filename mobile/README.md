@@ -43,10 +43,11 @@ new Apple developer account. The old id is permanently unusable: uploading a
 TestFlight build binds a bundle id to the account that uploaded it, forever
 (confirmed with Apple DTS). Nothing had shipped, so it was a pure rename.
 
-**`mobile/eas.json` still carries one stale value: `ascAppId`.** It is the old
-account's app record, and it now disagrees with `appleTeamId` (`TJX3F3832H`,
-correct since 2026-09-02) — so `eas submit` fails rather than uploading to the
-wrong place. It clears when the new record exists.
+**`mobile/eas.json` carries no stale values.** `appleTeamId` is `TJX3F3832H`
+and `ascAppId` was removed rather than updated — it held the old team's app
+record, which no longer exists. With it absent, EAS resolves the submit target
+from the bundle id and the team, or prompts; it gets set from the new record's
+Apple ID number once that record exists.
 
 `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` needed no change at all: the Google iOS OAuth
 client was edited in place to point at the new bundle id rather than replaced,

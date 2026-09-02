@@ -26,12 +26,12 @@ with nothing in any log to tell you why.
 > team. The app has never been released and has no users, so this is a pure
 > rename with nothing to migrate.
 >
-> Every id in this repo is already renamed. **`ascAppId` is the only value still
-> outstanding** — everything else below is either done or a check:
+> Every id in this repo is already renamed, and nothing here is now *wrong* —
+> `ascAppId` is absent rather than stale. What remains is work on Apple's side:
 >
 > | Value | Where | Status |
 > |---|---|---|
-> | `ascAppId: "6802705582"` | `mobile/eas.json` | **The new app record's id — still outstanding, and now MISMATCHED.** `appleTeamId` is the new team and this is the old team's app. `eas submit` will fail rather than upload to the wrong place, which is the safe failure, but it is a failure: create the record (SKU `feraltravels-ios`), take its Apple ID number, and put it here. |
+> | `ascAppId` | `mobile/eas.json` | **ABSENT 2026-09-02 — removed, not updated.** It held `6802705582`, the app record on the old US team, which no longer exists; leaving it would have pointed `eas submit` at a dead record. Absent is safe: with no `ascAppId`, EAS resolves the target from the bundle id and `appleTeamId`, or prompts. It will be set from whatever Apple ID number the NEW app record turns out to have — nothing to guess, and nothing to do until that record exists. |
 > | ~~`appleTeamId`~~ | `mobile/eas.json` | **DONE 2026-09-02 — `TJX3F3832H`.** |
 > | ~~`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`~~ | `mobile/eas.json`, both profiles | **DONE 2026-09-02, and it needed NO edit.** See below. |
 > | ~~`AUTH_GOOGLE_IOS_CLIENT_ID`~~ | Vercel (production + preview) | **DONE — no edit.** Same reason. |

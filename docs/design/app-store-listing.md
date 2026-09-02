@@ -6,8 +6,9 @@ ASC App ID **— none yet** · bundle `com.feraltravels.ios` · version **1.0.0*
 > App ID `6802705582` and bundle `com.feraltravels.app` belong to a record on
 > the previous team and are dead — a TestFlight upload binds a bundle id to its
 > account permanently. A NEW app record has to be created on the new team before
-> any of §1's fields can be filled in, and `mobile/eas.json` still carries the
-> old `ascAppId` and `appleTeamId` until it exists. See the table at the top of
+> any of §1's fields can be filled in. `mobile/eas.json` now carries the new
+> `appleTeamId` (`TJX3F3832H`) and NO `ascAppId` — it was removed rather than
+> left pointing at the dead record. See the table at the top of
 > `docs/design/iap-setup.md`.
 (no TestFlight build on the new account. Build 7 of 2026-08-27 was the last on
 the OLD one and is unreachable — it predated the in-app-purchase client, the
