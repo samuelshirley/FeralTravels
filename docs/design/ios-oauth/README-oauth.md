@@ -53,12 +53,19 @@ dead-ends is worse than no button. Set the var, rebuild, and it appears.
 Console → APIs & Services → Credentials → Create credentials → OAuth client ID
 → **iOS**, bundle id `com.feraltravels.ios`.
 
-> **A NEW client is required as of 2026-09-02.** iOS OAuth clients are bound to
-> a bundle id, so the existing `205269478779-…` one — registered against
-> `com.feraltravels.app` — cannot authorise the renamed app. It does not fail at
-> build time: the button renders, opens, and dies at the redirect with an
-> unregistered-client error. Update BOTH `eas.json` build profiles and BOTH
-> Vercel environments (`AUTH_GOOGLE_IOS_CLIENT_ID`) once it exists.
+> **The bundle id changed on 2026-09-02, and this client was EDITED IN PLACE**
+> to match — same client id (`205269478779-…`), rebound from
+> `com.feraltravels.app` to `com.feraltravels.ios`. So there is nothing to
+> create and nothing to re-paste: `eas.json` and both Vercel environments were
+> already carrying the right value.
+>
+> **Do not delete that client.** It is not a leftover from the old bundle id; it
+> is the live one.
+>
+> **Changes take five minutes to a few hours to propagate** (Google's own
+> guidance). A sign-in attempted right after an edit can still be rejected
+> against the previous binding, with an error naming a bundle id the client no
+> longer has. Wait and retry before reaching for the table below.
 
 **This is a second, separate client from the web one in `AUTH_GOOGLE_ID`.** Not
 a setting on it — a different credential. Google refuses the native PKCE flow

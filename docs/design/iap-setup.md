@@ -26,35 +26,46 @@ with nothing in any log to tell you why.
 > team. The app has never been released and has no users, so this is a pure
 > rename with nothing to migrate.
 >
-> Every id in this repo is already renamed. What is NOT, because it does not
-> exist yet, is everything bound to the *account*:
+> Every id in this repo is already renamed. **`ascAppId` is the only value still
+> outstanding** — everything else below is either done or a check:
 >
-> | Still on the old account | Where | What it needs |
+> | Value | Where | Status |
 > |---|---|---|
 > | `ascAppId: "6802705582"` | `mobile/eas.json` | **The new app record's id — still outstanding, and now MISMATCHED.** `appleTeamId` is the new team and this is the old team's app. `eas submit` will fail rather than upload to the wrong place, which is the safe failure, but it is a failure: create the record (SKU `feraltravels-ios`), take its Apple ID number, and put it here. |
 > | ~~`appleTeamId`~~ | `mobile/eas.json` | **DONE 2026-09-02 — `TJX3F3832H`.** |
-> | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | `mobile/eas.json`, both profiles | **A NEW Google Cloud OAuth client.** iOS clients are bound to a bundle id, so the existing `205269478779-…` one cannot authorise `com.feraltravels.ios`. See below. |
-> | `AUTH_GOOGLE_IOS_CLIENT_ID` | Vercel (production + preview) | The same new client id, server side — it is the audience `oauthIdentity.ts` checks Google tokens against. |
+> | ~~`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`~~ | `mobile/eas.json`, both profiles | **DONE 2026-09-02, and it needed NO edit.** See below. |
+> | ~~`AUTH_GOOGLE_IOS_CLIENT_ID`~~ | Vercel (production + preview) | **DONE — no edit.** Same reason. |
 > | `APPLE_APP_BUNDLE_ID` | Vercel, **if it is set** | The Apple ID-token audience. The code default is already `com.feraltravels.ios`; an env var still holding the old value would silently override it and fail every Apple sign-in. Check, and delete it rather than update it — the fallback is correct now. |
 > | App Store Connect record, agreements, products, sandbox testers, In-App Purchase Key | Apple + RevenueCat | All of §1–§7 below, from scratch, on the new account. |
 >
-> **The Google OAuth client is the one most likely to be forgotten**, because
-> nothing fails at build time. An iOS OAuth client in Google Cloud is registered
-> against a specific bundle id; point the app at `com.feraltravels.ios` while the
-> client still says `com.feraltravels.app` and the button renders, opens, and
-> dies at the redirect with an unregistered-client error. Create a new client
-> (Google Cloud → Credentials → Create credentials → OAuth client ID → iOS,
-> bundle id `com.feraltravels.ios`), then update **both** `eas.json` profiles and
-> **both** Vercel environments. `app.config.js` derives the reversed URL scheme
-> from that value automatically, so nothing else changes.
+> ### The Google OAuth client: edited, not replaced
 >
-> Leaving the old client id in `eas.json` is worse than emptying it: an empty
-> string collapses to null and the button HIDES itself (`mobile/lib/config.ts`),
-> while a wrong-but-present value shows a button that dead-ends. If a build has
-> to be cut before the new client exists, empty it.
+> An iOS OAuth client in Google Cloud is registered against a specific bundle
+> id, so the rename had to reach it. It was handled by **editing the existing
+> client in place** — same client id, rebound from `com.feraltravels.app` to
+> `com.feraltravels.ios` — rather than by creating a new one.
 >
-> `docs/design/ios-oauth/README-oauth.md` is the full OAuth walkthrough and still
-> names the old team; read it for the steps, not the values.
+> That is why both rows above are struck through. The id did not change, so
+> `mobile/eas.json` and both Vercel environments were already correct and
+> nothing in this repo or in Vercel needed touching. **Do not delete the
+> `205269478779-…` client**: it is not the old client, it is the live one.
+>
+> **Expect a propagation delay.** Google's own guidance is that changes to an
+> OAuth client can take **five minutes to a few hours** to take effect. A native
+> Google sign-in attempted straight after the edit can still be rejected against
+> the OLD binding, with a redirect error naming a bundle id that is no longer in
+> the client. **That is not a misconfiguration and there is nothing to fix** — it
+> is the change not having landed yet. Wait and retry before debugging anything;
+> `docs/design/ios-oauth/README-oauth.md` has the failure table for when it is
+> genuinely wrong.
+>
+> Had a new client been created instead, three values would have had to move
+> together — `eas.json` twice and Vercel twice — and a build cut in between would
+> have shipped a button that dead-ends at the redirect rather than hiding itself
+> the way an empty value does (`mobile/lib/config.ts`). Editing in place avoided
+> all of that, which is worth knowing if the id ever does have to change.
+>
+> `docs/design/ios-oauth/README-oauth.md` is the full OAuth walkthrough.
 
 | # | Step | Blocks | Who can do it |
 |---|---|---|---|

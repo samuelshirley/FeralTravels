@@ -43,12 +43,15 @@ new Apple developer account. The old id is permanently unusable: uploading a
 TestFlight build binds a bundle id to the account that uploaded it, forever
 (confirmed with Apple DTS). Nothing had shipped, so it was a pure rename.
 
-**`mobile/eas.json` still points at the OLD account** and will until the new app
-record exists — `ascAppId`, `appleTeamId`, and `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`
-on both build profiles. The Google one is the quiet one: iOS OAuth clients are
-bound to a bundle id, so the existing client cannot authorise the new one and
-the sign-in button will dead-end rather than fail loudly. The table in
-`docs/design/iap-setup.md` lists all of them and what each needs.
+**`mobile/eas.json` still carries one stale value: `ascAppId`.** It is the old
+account's app record, and it now disagrees with `appleTeamId` (`TJX3F3832H`,
+correct since 2026-09-02) — so `eas submit` fails rather than uploading to the
+wrong place. It clears when the new record exists.
+
+`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` needed no change at all: the Google iOS OAuth
+client was edited in place to point at the new bundle id rather than replaced,
+so the id is the same one. Do not delete that client — it is the live one. The
+table in `docs/design/iap-setup.md` is the full list.
 
 Android is deliberately still `com.feraltravels.app` — the binding is Apple's
 and Play has never seen this id.
