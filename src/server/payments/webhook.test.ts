@@ -44,7 +44,7 @@ import {
  */
 
 const USER_ID = 'usr_7f3c1a90';
-const MONTHLY = 'com.feraltravels.app.monthly';
+const MONTHLY = 'com.feraltravels.ios.monthly';
 
 /** A real RevenueCat body, trimmed of the fields we never read but left messy. */
 function rcBody(over: Record<string, unknown> = {}) {

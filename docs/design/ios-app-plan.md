@@ -24,7 +24,7 @@
   (based on `refactor/google-only-datasources` HEAD per "pending
   commits are master").
 - Apple Developer (individual, enrolled ✓), Xcode ✓, Expo account ✓.
-  Bundle ID: **`com.feraltravels.app`**.
+  Bundle ID: **`com.feraltravels.ios`**.
 - **One subscription: $10.00/year, even number.** No $9.99. Set even
   price points manually per storefront (€10, £8, …) — do NOT let Apple
   auto-convert (it produces .49/.99 endings). Note: US storefronts add

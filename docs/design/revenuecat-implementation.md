@@ -86,8 +86,8 @@ Then two auto-renewable subscriptions in it:
 
 | Product ID | Duration | Price | Source of truth |
 |---|---|---|---|
-| `com.feraltravels.app.monthly` | 1 month | **$2.00** | `PRODUCTS` in `src/server/payments/constants.ts` |
-| `com.feraltravels.app.annual` | 1 year | **$20.00** | same |
+| `com.feraltravels.ios.monthly` | 1 month | **$2.00** | `PRODUCTS` in `src/server/payments/constants.ts` |
+| `com.feraltravels.ios.annual` | 1 year | **$20.00** | same |
 
 The ids must match `constants.ts` **exactly**, character for character. A
 mismatch is the second most common cause of an empty offering.
@@ -191,7 +191,7 @@ EAS build plus 5–15 minutes of App Store Connect processing, then tell them.
 ### 5a. Project and app
 
 RevenueCat dashboard → new **project** ("Feral Travels") → add an **App Store**
-app. Bundle ID: `com.feraltravels.app`, exactly, correctly capitalised.
+app. Bundle ID: `com.feraltravels.ios`, exactly, correctly capitalised.
 
 Grab the **public SDK key** for Apple (`appl_…`). It is public by design — it
 goes in the client bundle. Put it in `mobile/eas.json` under

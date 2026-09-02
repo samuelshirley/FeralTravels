@@ -43,7 +43,7 @@ module.exports = {
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
     ios: {
-      bundleIdentifier: 'com.feraltravels.app',
+      bundleIdentifier: 'com.feraltravels.ios',
       supportsTablet: false,
       // Guideline 4.8: offering Google sign-in obliges us to offer Sign in
       // with Apple as well. But the entitlement this flag adds requires a
@@ -287,6 +287,19 @@ module.exports = {
       },
     },
     android: {
+      /**
+       * DELIBERATELY STILL `.app`, while iOS moved to `.ios` (2026-09-02).
+       *
+       * The rename was forced by Apple and applies only to Apple: uploading a
+       * TestFlight build binds a bundle id to the developer account that
+       * uploaded it, permanently, so `com.feraltravels.app` cannot be used
+       * again on the new team. Nothing about that touches Google Play, where
+       * this id has never been published and is not bound to anything.
+       *
+       * Changing it here would be a second rename with no reason behind it. If
+       * the two should match for tidiness that is a decision to make on
+       * purpose, not a side effect of Apple's rule.
+       */
       package: 'com.feraltravels.app',
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',

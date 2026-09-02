@@ -1,9 +1,19 @@
 # App Store listing — Feral Travels
 
-ASC App ID **6802705582** · bundle `com.feraltravels.app` · version **1.0.0**
-(latest TestFlight build **7**, 2026-08-27 — which predates the in-app-purchase
-client, the Settings "View plans" control and the privacy manifest, and cannot
-receive any of the three over the air)
+ASC App ID **— none yet** · bundle `com.feraltravels.ios` · version **1.0.0**
+
+> **The app moved to a new Apple developer account on 2026-09-02.** The old ASC
+> App ID `6802705582` and bundle `com.feraltravels.app` belong to a record on
+> the previous team and are dead — a TestFlight upload binds a bundle id to its
+> account permanently. A NEW app record has to be created on the new team before
+> any of §1's fields can be filled in, and `mobile/eas.json` still carries the
+> old `ascAppId` and `appleTeamId` until it exists. See the table at the top of
+> `docs/design/iap-setup.md`.
+(no TestFlight build on the new account. Build 7 of 2026-08-27 was the last on
+the OLD one and is unreachable — it predated the in-app-purchase client, the
+Settings "View plans" control and the privacy manifest anyway, and could not
+have received any of the three over the air. The first build on the new team
+starts from 1.)
 
 Everything below is ready to paste. Character limits are Apple's, enforced by
 the form, and were measured rather than eyeballed — see §2. What is still

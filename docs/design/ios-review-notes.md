@@ -119,7 +119,7 @@ dependency order in `docs/design/iap-setup.md`.
       checkout, step 5 above is impossible, and nothing in any log says why.
       This is why it is section 1 of the setup doc.
 - [ ] **Both products created and in the "Ready to Submit" state** —
-      `com.feraltravels.app.monthly`, `com.feraltravels.app.annual`. The ids must
+      `com.feraltravels.ios.monthly`, `com.feraltravels.ios.annual`. The ids must
       match `PRODUCTS` in `src/server/payments/constants.ts` character for
       character; a typo drops that plan silently from the sheet, so **one price
       where there should be two is a product-id problem, not an agreement one**.

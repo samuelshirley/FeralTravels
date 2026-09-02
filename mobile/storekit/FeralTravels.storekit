@@ -85,7 +85,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.feraltravels.app.monthly",
+          "productID" : "com.feraltravels.ios.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Feral Travels monthly",
           "subscriptionGroupID" : "21520000",
@@ -110,7 +110,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.feraltravels.app.annual",
+          "productID" : "com.feraltravels.ios.annual",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Feral Travels annual",
           "subscriptionGroupID" : "21520000",

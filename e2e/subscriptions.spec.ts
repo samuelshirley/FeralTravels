@@ -128,8 +128,8 @@ test.describe('Subscriptions — trial', () => {
     // purchase; a payload with no prices would render an empty sheet.
     expect(entitlement.paywall).toBeNull();
     expect(entitlement.products.map((p) => p.id).sort()).toEqual([
-      'com.feraltravels.app.annual',
-      'com.feraltravels.app.monthly',
+      'com.feraltravels.ios.annual',
+      'com.feraltravels.ios.monthly',
     ]);
 
     await expect(notice(page)).toHaveCount(0);
@@ -183,8 +183,8 @@ test.describe('Subscriptions — trial', () => {
     // The constants file is the authority — assert what ships.
     const productIds = entitlement.products.map((p) => p.id).sort();
     expect(productIds).toEqual([
-      'com.feraltravels.app.annual',
-      'com.feraltravels.app.monthly',
+      'com.feraltravels.ios.annual',
+      'com.feraltravels.ios.monthly',
     ]);
     expect(entitlement.products.map((p) => p.priceLabel).sort()).toEqual(['$2', '$20']);
 
@@ -214,10 +214,10 @@ test.describe('Subscriptions — trial', () => {
     const plans = page.getByTestId('purchase-sheet-plan');
     await expect(plans).toHaveCount(2);
     await expect(
-      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.app.monthly"]'),
+      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.ios.monthly"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.app.annual"]'),
+      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.ios.annual"]'),
     ).toBeVisible();
   });
 
@@ -264,7 +264,7 @@ test.describe('Subscriptions — subscribed', () => {
       subscription: {
         status: 'active',
         source: 'fake',
-        productId: 'com.feraltravels.app.monthly',
+        productId: 'com.feraltravels.ios.monthly',
         autoRenew: true,
         currentPeriodEndDaysFromNow: 30,
       },
@@ -310,8 +310,8 @@ test.describe('Subscriptions — subscribed', () => {
     // a subscriber switching monthly to annual.
     expect(entitlement.paywall).toBeNull();
     expect(entitlement.products.map((p) => p.id).sort()).toEqual([
-      'com.feraltravels.app.annual',
-      'com.feraltravels.app.monthly',
+      'com.feraltravels.ios.annual',
+      'com.feraltravels.ios.monthly',
     ]);
 
     await expect(notice(page)).toHaveCount(0);
@@ -389,7 +389,7 @@ test.describe('Subscriptions — subscribed', () => {
       subscription: {
         status: 'cancelled',
         autoRenew: false,
-        productId: 'com.feraltravels.app.annual',
+        productId: 'com.feraltravels.ios.annual',
         currentPeriodEndDaysFromNow: 30,
       },
     });
@@ -427,7 +427,7 @@ test.describe('Subscriptions — subscribed', () => {
       subscription: {
         status: 'active',
         autoRenew: true,
-        productId: 'com.feraltravels.app.monthly',
+        productId: 'com.feraltravels.ios.monthly',
         currentPeriodEndDaysFromNow: -1,
       },
     });
@@ -469,7 +469,7 @@ test.describe('Subscriptions — subscribed', () => {
       anthropicSpendUsd: 0,
       subscription: {
         status: 'refunded',
-        productId: 'com.feraltravels.app.annual',
+        productId: 'com.feraltravels.ios.annual',
         currentPeriodEndDaysFromNow: 200,
       },
     });

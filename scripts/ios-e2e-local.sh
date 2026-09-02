@@ -64,7 +64,7 @@ API_URL="http://localhost:${PORT}"
 # some Docker setups only bind the v4 address, so `localhost` can resolve to ::1
 # and time out with a message about the database being unreachable.
 DB_URL="postgres://feral:feral@127.0.0.1:55432/feraltravels_e2e"
-APP_ID="com.feraltravels.app"
+APP_ID="com.feraltravels.ios"
 MAESTRO_PIN="2.10.0"
 # The toolchain Maestro's PREBUILT iOS driver was built with. Not a preference:
 # an older xcodebuild cannot run its .xctestrun, and the only symptom is

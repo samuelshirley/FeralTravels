@@ -867,7 +867,7 @@ jobs:
           # one invocation reported on all three layers at once. Same split locally,
           # for the same reason: scripts/ios-e2e-local.sh.
           maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
-            -e APP_ID=com.feraltravels.app \
+            -e APP_ID=com.feraltravels.ios \
             --format junit \
             --output maestro-report-launch.xml \
             --debug-output maestro-debug
@@ -884,7 +884,7 @@ jobs:
           # mobile/maestro/read-otp.js for why, and note the underlying
           # `timestamp`-without-time-zone defect it describes.
           maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
-            -e APP_ID=com.feraltravels.app \
+            -e APP_ID=com.feraltravels.ios \
             -e EMAIL="$EMAIL" \
             -e BASE_URL="$E2E_BASE_URL" \
             -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \

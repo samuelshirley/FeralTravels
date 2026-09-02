@@ -44,7 +44,7 @@ export interface SubscriptionFacts {
    */
   source?: SubscriptionSource | null;
   /**
-   * The store product id, e.g. `com.feraltravels.app.annual`.
+   * The store product id, e.g. `com.feraltravels.ios.annual`.
    *
    * Optional because nothing about ENTITLEMENT depends on it — the resolver
    * below never reads it, and it must not start to. It is carried so Settings

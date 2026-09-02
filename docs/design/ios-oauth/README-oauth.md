@@ -8,7 +8,8 @@ console tasks and four env vars.
 
 - iOS OAuth client created in the `feral-travels` project:
   `205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com`
-  (bundle id `com.feraltravels.app`, team `4CG2UE2L49`). Written into
+  (bundle id `com.feraltravels.ios`, team `4CG2UE2L49` — **STALE: that is the
+  old team, see the note at the top of `docs/design/iap-setup.md`**). Written into
   `mobile/.env` and both EAS profiles; `AUTH_GOOGLE_IOS_CLIENT_ID` is set in
   Vercel and GitHub Actions.
 - **Consent screen published to "In production."** It had been sitting on
@@ -51,7 +52,14 @@ dead-ends is worse than no button. Set the var, rebuild, and it appears.
 ## 1. Google Cloud: an **iOS** OAuth client ID
 
 Console → APIs & Services → Credentials → Create credentials → OAuth client ID
-→ **iOS**, bundle id `com.feraltravels.app`.
+→ **iOS**, bundle id `com.feraltravels.ios`.
+
+> **A NEW client is required as of 2026-09-02.** iOS OAuth clients are bound to
+> a bundle id, so the existing `205269478779-…` one — registered against
+> `com.feraltravels.app` — cannot authorise the renamed app. It does not fail at
+> build time: the button renders, opens, and dies at the redirect with an
+> unregistered-client error. Update BOTH `eas.json` build profiles and BOTH
+> Vercel environments (`AUTH_GOOGLE_IOS_CLIENT_ID`) once it exists.
 
 **This is a second, separate client from the web one in `AUTH_GOOGLE_ID`.** Not
 a setting on it — a different credential. Google refuses the native PKCE flow
@@ -94,7 +102,7 @@ npx expo run:ios          # or: eas build --profile preview --platform ios
 Guideline 4.8 rejects an app offering Google sign-in without Sign in with
 Apple. Not needed for internal TestFlight, but do it before submission:
 
-- Apple Developer → Identifiers → `com.feraltravels.app` → enable
+- Apple Developer → Identifiers → `com.feraltravels.ios` → enable
   **Sign in with Apple**, then regenerate the provisioning profile
   (`eas credentials`).
 - Build with `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1` — that one flag drives both

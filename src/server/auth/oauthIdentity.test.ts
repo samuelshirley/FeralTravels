@@ -24,7 +24,7 @@ import { HttpError } from './errors';
 
 const IOS_CLIENT = '111-ios.apps.googleusercontent.com';
 const WEB_CLIENT = '222-web.apps.googleusercontent.com';
-const APPLE_AUDIENCE = 'com.feraltravels.app';
+const APPLE_AUDIENCE = 'com.feraltravels.ios';
 
 /** Far-future, fixed, so `expiresAt` assertions do not depend on the clock. */
 const EXP = 1893456000; // 2030-01-01T00:00:00Z

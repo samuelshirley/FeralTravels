@@ -26,7 +26,7 @@ import { SignJWT, generateKeyPair } from 'jose';
 
 const EXCHANGE = '/api/mobile/oauth/exchange';
 const APPLE_ISSUER = 'https://appleid.apple.com';
-const APPLE_AUDIENCE = 'com.feraltravels.app';
+const APPLE_AUDIENCE = 'com.feraltravels.ios';
 
 /** A JWT nobody but this test process has ever signed. */
 async function forgeToken(claims: Record<string, unknown>, expiresIn: string | null = '1h') {

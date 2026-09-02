@@ -55,7 +55,7 @@ build your testers have goes dead and they cannot reinstall it.
 
 **The app record already exists.** `mobile/eas.json` pins
 `ascAppId: "6802705582"` and `appleTeamId: "4CG2UE2L49"`, so there is an App
-Store Connect app called Feral Travels with bundle id `com.feraltravels.app`
+Store Connect app called Feral Travels with bundle id `com.feraltravels.ios`
 sitting there waiting for a build. You are not starting from zero.
 
 ---
@@ -260,8 +260,8 @@ at all · **(c)** needed only for App Store release.
    of the fiscal month in which it is approved. Every price and threshold in
    `subscriptions.md` and `src/server/payments/constants.ts` assumes it.
 7. **(b)** App Store Connect → the app → **Monetization** → **Subscriptions** →
-   create one subscription group, then `com.feraltravels.app.monthly` ($2.00 /
-   month) and `com.feraltravels.app.annual` ($20.00 / year). Fill in
+   create one subscription group, then `com.feraltravels.ios.monthly` ($2.00 /
+   month) and `com.feraltravels.ios.annual` ($20.00 / year). Fill in
    localizations, prices and a review screenshot until each product leaves
    **Missing Metadata** and reads **Ready to Submit** — a product in Missing
    Metadata is invisible to StoreKit.

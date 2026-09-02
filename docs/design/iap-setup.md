@@ -15,6 +15,47 @@ when you have not done them.
 doing them out of order is how you end up staring at an empty purchase sheet
 with nothing in any log to tell you why.
 
+> ## ⚠ The app moved to a new Apple developer account (2026-09-02)
+>
+> **New bundle id: `com.feraltravels.ios`. New products:
+> `com.feraltravels.ios.monthly`, `com.feraltravels.ios.annual`.**
+>
+> The old `com.feraltravels.app` is **permanently unusable**. Uploading a
+> TestFlight build binds a bundle id to the developer account that uploaded it,
+> forever — confirmed with Apple DTS — and one was uploaded under the old US
+> team. The app has never been released and has no users, so this is a pure
+> rename with nothing to migrate.
+>
+> Every id in this repo is already renamed. What is NOT, because it does not
+> exist yet, is everything bound to the *account*:
+>
+> | Still on the old account | Where | What it needs |
+> |---|---|---|
+> | `ascAppId: "6802705582"` | `mobile/eas.json` | The new app record's id. `eas submit` targets the OLD app until this changes. |
+> | `appleTeamId: "4CG2UE2L49"` | `mobile/eas.json` | The new team id. |
+> | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | `mobile/eas.json`, both profiles | **A NEW Google Cloud OAuth client.** iOS clients are bound to a bundle id, so the existing `205269478779-…` one cannot authorise `com.feraltravels.ios`. See below. |
+> | `AUTH_GOOGLE_IOS_CLIENT_ID` | Vercel (production + preview) | The same new client id, server side — it is the audience `oauthIdentity.ts` checks Google tokens against. |
+> | `APPLE_APP_BUNDLE_ID` | Vercel, **if it is set** | The Apple ID-token audience. The code default is already `com.feraltravels.ios`; an env var still holding the old value would silently override it and fail every Apple sign-in. Check, and delete it rather than update it — the fallback is correct now. |
+> | App Store Connect record, agreements, products, sandbox testers, In-App Purchase Key | Apple + RevenueCat | All of §1–§7 below, from scratch, on the new account. |
+>
+> **The Google OAuth client is the one most likely to be forgotten**, because
+> nothing fails at build time. An iOS OAuth client in Google Cloud is registered
+> against a specific bundle id; point the app at `com.feraltravels.ios` while the
+> client still says `com.feraltravels.app` and the button renders, opens, and
+> dies at the redirect with an unregistered-client error. Create a new client
+> (Google Cloud → Credentials → Create credentials → OAuth client ID → iOS,
+> bundle id `com.feraltravels.ios`), then update **both** `eas.json` profiles and
+> **both** Vercel environments. `app.config.js` derives the reversed URL scheme
+> from that value automatically, so nothing else changes.
+>
+> Leaving the old client id in `eas.json` is worse than emptying it: an empty
+> string collapses to null and the button HIDES itself (`mobile/lib/config.ts`),
+> while a wrong-but-present value shows a button that dead-ends. If a build has
+> to be cut before the new client exists, empty it.
+>
+> `docs/design/ios-oauth/README-oauth.md` is the full OAuth walkthrough and still
+> names the old team; read it for the steps, not the values.
+
 | # | Step | Blocks | Who can do it |
 |---|---|---|---|
 | 0 | Nothing — try it in the simulator first | — | you, in 10 minutes |
@@ -106,8 +147,8 @@ sees in Manage Subscriptions, so make it "Feral Travels".
 
 | Product ID | Duration | Price | Source of truth |
 |---|---|---|---|
-| `com.feraltravels.app.monthly` | 1 month | **$2.00** | `PRODUCTS` in `src/server/payments/constants.ts` |
-| `com.feraltravels.app.annual` | 1 year | **$20.00** | same |
+| `com.feraltravels.ios.monthly` | 1 month | **$2.00** | `PRODUCTS` in `src/server/payments/constants.ts` |
+| `com.feraltravels.ios.annual` | 1 year | **$20.00** | same |
 
 The ids must match `constants.ts` **character for character**. This is the
 second commonest cause of an empty offering, and in this app it has a distinct
@@ -155,7 +196,7 @@ No deadline, no cost. Apply the same day you sign the agreement.
 ### 4a. Project and app
 
 Dashboard → new **project** ("Feral Travels") → add an **App Store** app. Bundle
-ID `com.feraltravels.app`, exactly, correctly capitalised.
+ID `com.feraltravels.ios`, exactly, correctly capitalised.
 
 ### 4b. The In-App Purchase Key — not the shared secret
 

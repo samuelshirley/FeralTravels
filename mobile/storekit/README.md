@@ -38,6 +38,11 @@ mismatch here does not fail — it produces the same empty offering a real
 mismatch produces, which is the failure this file is supposed to help diagnose
 rather than imitate.
 
+Which is why the 2026-09-02 rename to `com.feraltravels.ios.*` — the move to a
+new Apple developer account — had to change this file and `constants.ts` in the
+same commit. A half-done rename here looks exactly like the thing you would
+come to this file to debug.
+
 `_timeRate` is `oneRenewalEveryTwoMinutes`, so a monthly subscription renews
 every two minutes and the whole lifecycle — renew, cancel, expire — happens
 inside one sitting. That is the point of testing here rather than in sandbox.

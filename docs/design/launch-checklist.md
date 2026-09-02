@@ -46,8 +46,8 @@ anything real to buy behind it, not after.
 
 - [ ] Paid Applications Agreement active (StoreKit returns an EMPTY product
       list until it is — that is why `POST /api/purchase/test` exists).
-- [ ] Products created in App Store Connect: `com.feraltravels.app.monthly`,
-      `com.feraltravels.app.annual`.
+- [ ] Products created in App Store Connect: `com.feraltravels.ios.monthly`,
+      `com.feraltravels.ios.annual`.
 - [ ] `NEXT_PUBLIC_APP_STORE_URL` set to the real numeric listing id. Until it
       is, every "Continue to the iPhone app" button lands on an App Store
       search page.

@@ -1001,7 +1001,7 @@ export const subscriptions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     status: text('status').$type<SubscriptionStatus>().notNull(),
     source: text('source').$type<SubscriptionSource>().notNull(),
-    /** Store product id, e.g. `com.feraltravels.app.monthly`. Null for admin grants. */
+    /** Store product id, e.g. `com.feraltravels.ios.monthly`. Null for admin grants. */
     productId: text('product_id'),
     /**
      * When paid access ends. Null means "no end" — an admin comp or a lifetime

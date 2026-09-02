@@ -63,14 +63,14 @@ export const CAP_WINDOW_DAYS = 365;
  */
 export const PRODUCTS = [
   {
-    id: 'com.feraltravels.app.monthly',
+    id: 'com.feraltravels.ios.monthly',
     period: 'month',
     priceUsd: 2,
     priceLabel: '$2',
     cadence: 'per month',
   },
   {
-    id: 'com.feraltravels.app.annual',
+    id: 'com.feraltravels.ios.annual',
     period: 'year',
     priceUsd: 20,
     priceLabel: '$20',
