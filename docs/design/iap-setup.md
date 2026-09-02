@@ -31,8 +31,8 @@ with nothing in any log to tell you why.
 >
 > | Still on the old account | Where | What it needs |
 > |---|---|---|
-> | `ascAppId: "6802705582"` | `mobile/eas.json` | The new app record's id. `eas submit` targets the OLD app until this changes. |
-> | `appleTeamId: "4CG2UE2L49"` | `mobile/eas.json` | The new team id. |
+> | `ascAppId: "6802705582"` | `mobile/eas.json` | **The new app record's id — still outstanding, and now MISMATCHED.** `appleTeamId` is the new team and this is the old team's app. `eas submit` will fail rather than upload to the wrong place, which is the safe failure, but it is a failure: create the record (SKU `feraltravels-ios`), take its Apple ID number, and put it here. |
+> | ~~`appleTeamId`~~ | `mobile/eas.json` | **DONE 2026-09-02 — `TJX3F3832H`.** |
 > | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | `mobile/eas.json`, both profiles | **A NEW Google Cloud OAuth client.** iOS clients are bound to a bundle id, so the existing `205269478779-…` one cannot authorise `com.feraltravels.ios`. See below. |
 > | `AUTH_GOOGLE_IOS_CLIENT_ID` | Vercel (production + preview) | The same new client id, server side — it is the audience `oauthIdentity.ts` checks Google tokens against. |
 > | `APPLE_APP_BUNDLE_ID` | Vercel, **if it is set** | The Apple ID-token audience. The code default is already `com.feraltravels.ios`; an env var still holding the old value would silently override it and fail every Apple sign-in. Check, and delete it rather than update it — the fallback is correct now. |

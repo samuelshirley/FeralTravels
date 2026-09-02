@@ -8,8 +8,7 @@ console tasks and four env vars.
 
 - iOS OAuth client created in the `feral-travels` project:
   `205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com`
-  (bundle id `com.feraltravels.ios`, team `4CG2UE2L49` — **STALE: that is the
-  old team, see the note at the top of `docs/design/iap-setup.md`**). Written into
+  (bundle id `com.feraltravels.ios`, team `TJX3F3832H`). Written into
   `mobile/.env` and both EAS profiles; `AUTH_GOOGLE_IOS_CLIENT_ID` is set in
   Vercel and GitHub Actions.
 - **Consent screen published to "In production."** It had been sitting on

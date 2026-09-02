@@ -54,7 +54,9 @@ build your testers have goes dead and they cannot reinstall it.
   time Apple looks at the app at all.
 
 **The app record already exists.** `mobile/eas.json` pins
-`ascAppId: "6802705582"` and `appleTeamId: "4CG2UE2L49"`, so there is an App
+`appleTeamId: "TJX3F3832H"` and `ascAppId: "6802705582"` — the second of which
+is the OLD account's app record and is outstanding (see the top of
+`docs/design/iap-setup.md`), so there is an App
 Store Connect app called Feral Travels with bundle id `com.feraltravels.ios`
 sitting there waiting for a build. You are not starting from zero.
 
