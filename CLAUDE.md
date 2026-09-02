@@ -439,6 +439,16 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 
 ## Conventions
 
+- **Copy rule.** Every string on screen must tell the user something they cannot
+  already see. No explanatory paragraphs under a control whose label already
+  explains it, no reassurance filler ("Restoring never charges you again"), no
+  restating a button in a sentence. If a control needs a paragraph to be
+  understood, the control is wrong — fix the control. Status lines state a fact
+  (what plan, which date, what happens next); they do not sell, apologise or
+  reassure. The exception is a DESTRUCTIVE action, where enumerating what is
+  destroyed is information rather than filler — the "Delete account" paragraph
+  stays. Applied to the Settings screen 2026-09-02; the rest of the app is
+  unswept, so expect to find more.
 - No `any` types. Use Zod schemas for API input validation.
 - CSS Modules for component-scoped styles (e.g., `admin.module.css`).
 - Server components by default; `"use client"` only when needed.

@@ -82,6 +82,27 @@ export interface EntitlementPayload {
    * does not exist, and the endpoint refuses it anyway.
    */
   testPurchaseAllowed: boolean;
+  /**
+   * Which plan is on the subscription row, or null when there is no row (a
+   * trial) or the row carries no product (an admin comp, a promo).
+   *
+   * Derived SERVER-SIDE from `PRODUCTS` via `productById`. The bundle id never
+   * crosses the wire for the client to parse: a client that pattern-matched
+   * `…app.annual` would be a second place that decides what a product is, and
+   * it would go wrong quietly the first time a product id changes.
+   */
+  plan: 'monthly' | 'annual' | null;
+  /**
+   * ISO8601. When the current paid period ends — a renewal date while
+   * `autoRenew` is true, an expiry date once it is false.
+   *
+   * NULL MEANS NO END, not "unknown": an admin comp or a lifetime promo. Any
+   * copy built from this has to handle null without rendering the word "null"
+   * at somebody, which is asserted in `planStatusLine.test.ts`.
+   */
+  currentPeriodEnd: string | null;
+  /** False once auto-renew is off. Does NOT itself mean access has ended. */
+  autoRenew: boolean;
 }
 
 export interface PaywallProduct {

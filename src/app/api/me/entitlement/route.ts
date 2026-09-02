@@ -1,5 +1,5 @@
 import { requireUser, errorResponse } from '@/server/auth/guards';
-import { getAccountVerdict, PRODUCTS } from '@/server/payments';
+import { getAccountVerdict, isProductId, productById, PRODUCTS } from '@/server/payments';
 import { paywallCopy } from '@/server/payments/copy';
 import { isTestPurchaseAllowed } from '@/server/payments/testPurchase';
 import type { EntitlementPayload } from '@/types/entitlement';
@@ -65,6 +65,20 @@ export async function GET() {
         note: p.period === 'year' ? 'Save $4 a year' : undefined,
       })),
       testPurchaseAllowed: !verdict.entitled && isTestPurchaseAllowed(user.email),
+      /**
+       * Which plan, and until when — the two facts a subscriber opens Settings
+       * to check, and neither of which used to be on the wire. Both were on the
+       * `subscriptions` row the whole time; `getAccountVerdict` simply did not
+       * select the product and `AccountVerdict` dropped all three.
+       *
+       * `plan` is derived HERE, from `PRODUCTS`, so the bundle id never crosses
+       * the wire. A client matching on `…app.annual` would be a second place
+       * that decides what a product is, and it would go wrong quietly the first
+       * time a product id changed.
+       */
+      plan: planFor(verdict.productId),
+      currentPeriodEnd: verdict.currentPeriodEnd?.toISOString() ?? null,
+      autoRenew: verdict.autoRenew,
     };
 
     return Response.json(payload, {
@@ -75,6 +89,18 @@ export async function GET() {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+/**
+ * Store product id -> the word the client renders.
+ *
+ * Null for anything unrecognised as well as for null, deliberately: an admin
+ * grant and a promo both carry no product, and a product id we have retired
+ * should degrade to "Subscribed" rather than to a guess.
+ */
+function planFor(productId: string | null): 'monthly' | 'annual' | null {
+  if (!productId || !isProductId(productId)) return null;
+  return productById(productId).period === 'year' ? 'annual' : 'monthly';
 }
 
 /** Whole days left, rounded up, floored at 0. Penny's greeting says "seven". */

@@ -48,6 +48,25 @@ import { font } from "@/lib/typography";
  * deletion and sign-out live here and neither may sit behind a paywall), so all
  * of this is reachable in every account state — which is exactly what a blocked
  * user needs when the thing that unblocks them is a restore.
+ *
+ * ── Showing Restore only to accounts we think have bought: considered, rejected
+ *
+ * The idea is to hide Restore unless our records show a prior subscription for
+ * this email. Two reasons it does not work, both fatal:
+ *
+ *  1. **We cannot know.** The purchase lives on the APPLE ID, not on our
+ *     account. New phone, reinstall, or a different email on our side with the
+ *     same Apple ID — those are precisely the cases Restore exists for, and in
+ *     every one of them our records say nothing. Gating on them makes the
+ *     control invisible to exactly the person who needs it. The only way to
+ *     find out whether an Apple ID has a prior purchase is to run a restore.
+ *  2. **Guideline 3.1.1** expects a restore mechanism to be available for
+ *     auto-renewable purchases. Hiding it behind a condition we cannot evaluate
+ *     is a review risk for no user benefit.
+ *
+ * What IS fair, and what this file does: demote it. "View plans" is the primary
+ * button; Restore and Manage are quiet text links beneath. Do not delete this
+ * block — it is load-bearing for the next person who has the same instinct.
  */
 export default function SubscriptionSection() {
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
@@ -77,7 +96,19 @@ export default function SubscriptionSection() {
   });
 
   const status = entitlement
-    ? planStatusLine(entitlement.state, entitlement.trialDaysRemaining)
+    ? planStatusLine(
+        {
+          state: entitlement.state,
+          trialDaysRemaining: entitlement.trialDaysRemaining,
+          trialEndsAt: entitlement.trialEndsAt,
+          plan: entitlement.plan,
+          currentPeriodEnd: entitlement.currentPeriodEnd,
+          autoRenew: entitlement.autoRenew,
+        },
+        // The one thing the clock decides is whether a date carries its year.
+        // Passed in rather than read inside, so the boundary is testable.
+        new Date()
+      )
     : null;
 
   return (
@@ -92,12 +123,6 @@ export default function SubscriptionSection() {
           does not need the payload to work.
         */}
         {status ? <Text style={styles.status}>{status}</Text> : null}
-
-        <Text style={styles.blurb}>
-          See the prices and subscribe, or — if you bought a plan on this Apple ID, on
-          another device or before reinstalling — put it back on this account with Restore.
-          Restoring never charges you again.
-        </Text>
 
         <View style={styles.row}>
           {/*
@@ -118,6 +143,11 @@ export default function SubscriptionSection() {
           </Pressable>
         </View>
 
+        {/*
+          Secondary, and visually quieter than "View plans" — but always
+          present. See the note at the top of this file for why neither is
+          conditional.
+        */}
         <View style={styles.row}>
           <Pressable
             testID="settings-restore-purchases"
@@ -173,14 +203,7 @@ export default function SubscriptionSection() {
 const styles = StyleSheet.create({
   section: { padding: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontFamily: font.bold, color: theme.text, marginBottom: 6 },
-  status: { fontFamily: font.semibold, fontSize: 14, color: theme.text, marginBottom: 8 },
-  blurb: {
-    fontFamily: font.regular,
-    fontSize: 13,
-    color: theme.muted,
-    lineHeight: 20,
-    marginBottom: 14,
-  },
+  status: { fontFamily: font.semibold, fontSize: 14, color: theme.text, marginBottom: 14 },
   row: { flexDirection: "row", flexWrap: "wrap", columnGap: 18, rowGap: 4, alignItems: "center" },
   primaryButton: {
     paddingVertical: 10,
@@ -194,7 +217,9 @@ const styles = StyleSheet.create({
   primaryButtonText: { fontFamily: font.semibold, fontSize: 14, color: theme.onPrimary },
   button: { paddingVertical: 8, minHeight: 34, justifyContent: "center" },
   buttonOff: { opacity: 0.45 },
-  buttonText: { fontFamily: font.semibold, fontSize: 14, color: theme.primary },
+  // 13, not 14: Restore and Manage are the quiet pair under "View plans".
+  // Demoting them is fair; hiding them is not.
+  buttonText: { fontFamily: font.medium, fontSize: 13, color: theme.primary },
   notice: {
     marginTop: 10,
     fontFamily: font.regular,

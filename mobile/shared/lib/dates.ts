@@ -458,6 +458,35 @@ export function formatDate(date: Date, units: UnitsPref): string {
   return `${weekday} ${day} ${month}`;
 }
 
+/**
+ * A date the way a plan status line says it: "9 Sep", or "3 Sep 2027".
+ *
+ * Beside `formatDate` rather than in `planStatusLine.ts` because this file is
+ * where date formatting lives — a second formatter somewhere else is how two
+ * screens end up disagreeing about what a date looks like. It is a separate
+ * function rather than a flag on `formatDate` because the two want different
+ * things and neither is a special case of the other: `formatDate` always shows
+ * a weekday and never a year (it labels a driving day, where "Wed" is the
+ * useful part), and this never shows a weekday because "renews Wed 3 Oct" is
+ * noise on a billing date nobody plans around.
+ *
+ * `now` is passed IN, never read here. The year appears only when it differs
+ * from the current one — "renews 3 Oct" reads better than "renews 3 Oct 2026"
+ * eleven months of the year, and an annual plan bought in September genuinely
+ * needs the 2027. A function that read the clock itself could not be tested
+ * for that boundary without waiting for New Year.
+ */
+export function formatPlanDate(date: Date, now: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'short',
+  }).formatToParts(date);
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const base = `${day} ${month}`;
+  return date.getFullYear() === now.getFullYear() ? base : `${base} ${date.getFullYear()}`;
+}
+
 // ---------------------------------------------------------------------------
 // Domain logic: calendar-date assignment + constraint scheduling.
 //

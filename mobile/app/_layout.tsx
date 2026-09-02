@@ -90,12 +90,45 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: theme.bg },
             }}
           >
+            {/*
+              EVERY ROUTE IS DECLARED HERE, and every one either hides its header
+              or gives it a human `title`. A native-stack header with neither
+              falls back to the ROUTE NAME, and Expo Router route names are file
+              patterns — so the UI renders `trips/[tripId]`, brackets and all.
+
+              That is not hypothetical: it was the Settings back button, visible
+              in the App Store screenshot set. The back button takes its label
+              from the PREVIOUS screen's title, `trips/[tripId]` declared none,
+              and the raw pattern leaked into a control the user reads. It was
+              also far wider than any other back affordance in the app, which is
+              what made it obvious in a screenshot and invisible in review.
+
+              `src/lib/routeLabels.test.ts` fails if a route is added without an
+              answer here.
+            */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
             {/* trips/index draws its own header — see the note at the top of that file. */}
             <Stack.Screen name="trips/index" options={{ headerShown: false }} />
             <Stack.Screen name="trips/[tripId]" options={{ headerShown: false }} />
-            <Stack.Screen name="settings" options={{ title: "Settings" }} />
+            {/*
+              Was missing entirely, which is the same bug one step further along:
+              undeclared, so it took the default options, so it drew a native
+              header titled "paywall" ON TOP of the Penny header the screen
+              already draws for itself. Found by auditing this list rather than
+              by anybody seeing it.
+            */}
+            <Stack.Screen name="paywall" options={{ headerShown: false }} />
+            {/*
+              "Back", not "Trip". Settings is pushed from BottomNav, TripHeader,
+              StopsSection, trips/index and PlanRequiredOverlay — so it is
+              reached from the trips LIST as often as from inside a trip, and
+              "Back to trip" would be a lie on half of those paths.
+            */}
+            <Stack.Screen
+              name="settings"
+              options={{ title: "Settings", headerBackTitle: "Back" }}
+            />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

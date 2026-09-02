@@ -147,10 +147,14 @@ export default async function SettingsPage() {
             <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>
               Vehicle profile
             </h2>
+            {/*
+              One line. The old four promised "daily/weekly drive caps" and a
+              "water refill / dump cadence", neither of which has been collected
+              since migrations 0014/0015 — see the copy rule in CLAUDE.md. Keep
+              in step with mobile/app/settings.tsx.
+            */}
             <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: 'var(--tp-muted)', lineHeight: 1.5 }}>
-              Penny uses these constraints to keep your plan realistic — how far you like to
-              drive between fuel stops, your daily/weekly drive caps, and your water refill /
-              dump cadence.
+              Penny plans fuel stops around this range.
             </p>
             <VehicleProfileSection />
           </section>

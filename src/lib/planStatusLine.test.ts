@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { planStatusLine } from './planStatusLine';
+import { planStatusLine, type PlanStatus } from './planStatusLine';
 import type { AccountState } from '@/types/entitlement';
 
 /**
  * The twelve states, each asserted once. The value of this file is not the
  * strings — it is that adding a state to `AccountState` without deciding what
  * Settings says about it fails here as well as in `tsc`.
+ *
+ * Every case fixes `now`, the way `states.test.ts` does and for the same
+ * reason: the only thing the clock decides here is whether a date carries its
+ * year, and that boundary is untestable against the real calendar.
  */
 const ALL_STATES: AccountState[] = [
   'trial',
@@ -22,54 +26,133 @@ const ALL_STATES: AccountState[] = [
   'comped',
 ];
 
+const NOW = new Date('2026-09-02T12:00:00.000Z');
+/** Same calendar year as NOW. */
+const THIS_YEAR = '2026-10-03T12:00:00.000Z';
+/** A year on — what an annual plan bought today actually renews. */
+const NEXT_YEAR = '2027-09-03T12:00:00.000Z';
+
+function status(overrides: Partial<PlanStatus> = {}): PlanStatus {
+  return {
+    state: 'subscribed',
+    trialDaysRemaining: 0,
+    trialEndsAt: null,
+    plan: 'monthly',
+    currentPeriodEnd: THIS_YEAR,
+    autoRenew: true,
+    ...overrides,
+  };
+}
+
+const line = (o: Partial<PlanStatus> = {}) => planStatusLine(status(o), NOW);
+
 describe('planStatusLine', () => {
-  it('counts the trial down in whole days', () => {
-    expect(planStatusLine('trial', 7)).toBe('Free trial — 7 days left');
-    expect(planStatusLine('trial', 2)).toBe('Free trial — 2 days left');
+  it('counts the trial down AND says the date it ends', () => {
+    // Two different questions — "how long have I got" and "when do I decide
+    // by" — and the card has room for both.
+    expect(line({ state: 'trial', trialDaysRemaining: 5, trialEndsAt: '2026-09-09T00:00:00Z' })).toBe(
+      'Free trial — 5 days left, ends 9 Sep'
+    );
   });
 
   it('says "today" for the last day rather than "1 day left"', () => {
     // `daysUntil` in the entitlement route rounds UP and floors at 0, so 1 is
     // any part of a day and 0 only happens in the moment the state flips.
     // Neither is a full day; promising one would be a lie the user can catch.
-    expect(planStatusLine('trial', 1)).toBe('Free trial — ends today');
-    expect(planStatusLine('trial', 0)).toBe('Free trial — ends today');
+    const trial = { state: 'trial' as const, trialEndsAt: '2026-09-03T00:00:00Z' };
+    expect(line({ ...trial, trialDaysRemaining: 1 })).toBe('Free trial — ends today');
+    expect(line({ ...trial, trialDaysRemaining: 0 })).toBe('Free trial — ends today');
   });
 
-  it('never renders a bare number for a non-trial state', () => {
-    // `trialDaysRemaining` is 0 for every state past the trial. A template that
-    // leaked it would read "Subscribed — 0 days left".
-    for (const state of ALL_STATES.filter((s) => s !== 'trial')) {
-      expect(planStatusLine(state, 0)).not.toMatch(/\d/);
+  it('falls back to the day count when the trial has no end date', () => {
+    expect(line({ state: 'trial', trialDaysRemaining: 5, trialEndsAt: null })).toBe(
+      'Free trial — 5 days left'
+    );
+  });
+
+  it('names the plan and the renewal date', () => {
+    expect(line({ plan: 'monthly' })).toBe('Monthly plan — renews 3 Oct');
+    expect(line({ plan: 'annual', currentPeriodEnd: NEXT_YEAR })).toBe(
+      'Annual plan — renews 3 Sep 2027'
+    );
+  });
+
+  it('shows the year only when it is not the current one', () => {
+    // "renews 3 Oct 2026" is noise eleven months of the year; "renews 3 Sep"
+    // on an annual plan bought today is actively wrong.
+    expect(line({ currentPeriodEnd: THIS_YEAR })).toContain('3 Oct');
+    expect(line({ currentPeriodEnd: THIS_YEAR })).not.toContain('2026');
+    expect(line({ currentPeriodEnd: NEXT_YEAR })).toContain('2027');
+  });
+
+  it('says a cancelled plan ENDS on a date, and leads with the date', () => {
+    // Someone inside the period they paid for must not read this and conclude
+    // the app has already stopped working. The date comes first for that
+    // reason; the renewal fact is the tail.
+    expect(line({ state: 'cancelled_in_period', autoRenew: false })).toBe(
+      "Monthly plan — ends 3 Oct, won't renew"
+    );
+  });
+
+  it('NEVER renders a null date at anybody', () => {
+    /**
+     * The specific failure: a comped or promo account is entitled with a
+     * `subscriptions` row carrying no `currentPeriodEnd`, because null means
+     * "no end" rather than "unknown". Every branch that wants a date has to be
+     * able to drop it.
+     */
+    for (const state of ALL_STATES) {
+      const l = planStatusLine(
+        status({ state, currentPeriodEnd: null, trialEndsAt: null }),
+        NOW
+      );
+      expect(l, state).not.toMatch(/null|undefined|NaN|Invalid/);
+      expect(l.trim(), state).not.toMatch(/(renews|ends)$/);
     }
+    expect(line({ state: 'subscribed', currentPeriodEnd: null })).toBe('Monthly plan');
+  });
+
+  it('survives an unparseable date rather than printing "Invalid Date"', () => {
+    expect(line({ currentPeriodEnd: 'not-a-date' })).toBe('Monthly plan');
+  });
+
+  it('calls an entitled account with no product "Subscribed", not a made-up plan', () => {
+    // An admin comp or a redeemed promo has no product id. "Monthly plan"
+    // would be a plain lie about a row that says no such thing.
+    expect(line({ plan: null })).toBe('Subscribed — renews 3 Oct');
   });
 
   it('reads subscribed_watch exactly like subscribed', () => {
     // It is an admin alert threshold. A user seeing anything different would be
     // reading about our costs, which is not their business and not actionable.
-    expect(planStatusLine('subscribed_watch', 0)).toBe(planStatusLine('subscribed', 0));
+    expect(line({ state: 'subscribed_watch' })).toBe(line({ state: 'subscribed' }));
   });
 
   it('does not tell a lapsed trial WHY it lapsed', () => {
     // trial_spent is the $1 Anthropic ceiling and trial_expired is day seven.
     // The difference matters to us and to nobody else; surfacing it invites an
     // argument about a number the user cannot see.
-    expect(planStatusLine('trial_spent', 0)).toBe(planStatusLine('trial_expired', 0));
+    expect(line({ state: 'trial_spent' })).toBe(line({ state: 'trial_expired' }));
   });
 
-  it('keeps access-still-live states reading as subscribed', () => {
-    // The failure this guards: someone inside the period they paid for reading
-    // "cancelled" and concluding the app has already stopped working.
+  it('never leaks the trial day count into a non-trial state', () => {
+    // A template that leaked it would read "Monthly plan — 0 days left".
+    for (const state of ALL_STATES.filter((s) => s !== 'trial')) {
+      expect(line({ state, trialDaysRemaining: 7 }), state).not.toContain('days left');
+    }
+  });
+
+  it('keeps access-still-live states naming the plan rather than a failure', () => {
     for (const state of ['cancelled_in_period', 'billing_grace'] as AccountState[]) {
-      expect(planStatusLine(state, 0)).toMatch(/^Subscribed/);
+      expect(line({ state }), state).toMatch(/^Monthly plan/);
     }
   });
 
   it('gives every state a non-empty line', () => {
     for (const state of ALL_STATES) {
-      const line = planStatusLine(state, 3);
-      expect(line.length, state).toBeGreaterThan(0);
-      expect(line, state).not.toContain('undefined');
+      const l = line({ state, trialDaysRemaining: 3, trialEndsAt: THIS_YEAR });
+      expect(l.length, state).toBeGreaterThan(0);
+      expect(l, state).not.toContain('undefined');
     }
   });
 });

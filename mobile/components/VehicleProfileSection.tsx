@@ -31,10 +31,10 @@ import {
  * onboarding chat read — so adding a vehicle field stays a config-only change
  * on both platforms. Nothing about the field list is hardcoded here.
  *
- * NOTE: the web Settings page blurb above this section still advertises
- * "daily/weekly drive caps" and "water refill / dump cadence"; those fields
- * were dropped from the profile and the copy needs fixing on both platforms.
- * The form below reflects the CURRENT question set, not that blurb.
+ * The blurb above this section on both Settings pages used to advertise
+ * "daily/weekly drive caps" and a "water refill / dump cadence" — fields
+ * dropped in migrations 0014/0015. Fixed on both platforms 2026-09-02; the
+ * form below has always reflected the CURRENT question set.
  *
  * Draft state stores canonical values (km for `*_km` fields, same as the API);
  * the mile display for imperial users is a pure view transform applied on the

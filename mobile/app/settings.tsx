@@ -82,16 +82,18 @@ export default function SettingsScreen() {
         <Card style={styles.section}>
           <Text style={styles.sectionTitle}>Vehicle profile</Text>
           {/*
-            Kept verbatim from the web so the two clients read identically —
-            but the copy is STALE: "daily/weekly drive caps" and the "water
-            refill / dump cadence" fields are no longer collected. Fix it on
-            both platforms together.
+            One line, and it earns its place under the copy rule in CLAUDE.md:
+            the heading and the field already say "vehicle" and "range", but
+            nothing on screen says what the number is FOR.
+
+            It replaces four lines that were also WRONG — they promised
+            "daily/weekly drive caps" and a "water refill / dump cadence", both
+            deleted long ago (migrations 0014/0015). The old comment here
+            admitted the copy was stale and asked for it to be fixed on both
+            platforms together, which is what this is. Keep it in step with
+            src/app/settings/page.tsx.
           */}
-          <Text style={styles.sectionBlurb}>
-            Penny uses these constraints to keep your plan realistic — how far you like to
-            drive between fuel stops, your daily/weekly drive caps, and your water refill /
-            dump cadence.
-          </Text>
+          <Text style={styles.sectionBlurb}>Penny plans fuel stops around this range.</Text>
           <VehicleProfileSection />
         </Card>
 
