@@ -1,18 +1,39 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { Card } from "@/components/ui";
+import PurchaseSheet from "@/components/PurchaseSheet";
 import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
+import { planStatusLine } from "@/shared/lib/planStatusLine";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
 /**
- * Restore purchases and Manage subscription, on Settings.
+ * The plan, on Settings: what you are on, how to buy, restore, and manage.
  *
- * These are on the purchase sheet too, and that is not duplication — the two
- * are for different people. The sheet's copies are for somebody being sold to.
- * These are for somebody who has ALREADY paid, and who therefore never sees a
- * paywall and never opens that sheet:
+ * This is the ONLY surface in the app that opens the purchase sheet in every
+ * account state. The other three — Penny's bubble, `PlanRequiredOverlay`,
+ * `app/paywall.tsx` — are paywalls, and every one of them is gated on the
+ * account NOT being entitled. That gating had a consequence nobody had walked:
+ *
+ *   An App Review reviewer signs in with their own Apple ID, exactly as
+ *   `docs/design/app-store-listing.md` tells them to and exactly as guideline
+ *   2.1(a) wants. They land in a fresh seven-day trial. Entitled. So no
+ *   paywall renders, no sheet can be opened, and there is no screen in the
+ *   whole app that shows a price — never mind one that completes a sandbox
+ *   purchase. That is the "we were unable to locate the in-app purchases"
+ *   rejection, and no review note can write around a screen that does not
+ *   exist.
+ *
+ * So "View plans" is here, unconditional. It is also the honest product
+ * behaviour: somebody three days into a trial who has decided should be able to
+ * subscribe without waiting to be blocked, and a monthly subscriber should be
+ * able to find the annual price. `GET /api/me/entitlement` sends `products` in
+ * every state for the same reason.
+ *
+ * Restore and Manage were already here, and they stay for the people they were
+ * put here for — someone who has ALREADY paid, who therefore never sees a
+ * paywall and never opens a sheet from one:
  *
  *  - A reinstall, or a new phone. The subscription is on their Apple ID and our
  *    server knows nothing about this install. They are entitled the moment
@@ -24,12 +45,13 @@ import { font } from "@/lib/typography";
  *    sheet that is trying to sell them something.
  *
  * `PlanRequiredOverlay` is deliberately never mounted on this screen (account
- * deletion and sign-out live here and neither may sit behind a paywall), so
- * this section is reachable in every account state — which is exactly what a
- * blocked user needs when the thing that unblocks them is a restore.
+ * deletion and sign-out live here and neither may sit behind a paywall), so all
+ * of this is reachable in every account state — which is exactly what a blocked
+ * user needs when the thing that unblocks them is a restore.
  */
 export default function SubscriptionSection() {
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,54 +63,117 @@ export default function SubscriptionSection() {
     };
   }, []);
 
-  const flow = usePurchaseFlow({ entitlement, onEntitled: setEntitlement });
+  const flow = usePurchaseFlow({
+    entitlement,
+    onEntitled: (fresh) => {
+      // Close on the SERVER's word, the same as every other surface. For an
+      // account that was already entitled when the sheet opened — a trial user
+      // buying early, a reviewer in sandbox — the first poll answers yes
+      // immediately, so this fires as soon as the charge clears. That is
+      // correct: there is nothing left to wait for.
+      setSheetOpen(false);
+      setEntitlement(fresh);
+    },
+  });
+
+  const status = entitlement
+    ? planStatusLine(entitlement.state, entitlement.trialDaysRemaining)
+    : null;
 
   return (
-    <Card style={styles.section}>
-      <Text style={styles.sectionTitle}>Plan</Text>
-      <Text style={styles.blurb}>
-        If you bought a plan on this Apple ID — on another device, or before reinstalling —
-        Restore puts it back on this account. You will not be charged again.
-      </Text>
+    <>
+      <Card style={styles.section}>
+        <Text style={styles.sectionTitle}>Plan</Text>
 
-      <View style={styles.row}>
-        <Pressable
-          testID="settings-restore-purchases"
-          accessibilityRole="button"
-          onPress={flow.restorePurchases}
-          disabled={flow.busy}
-          style={[styles.button, flow.busy ? styles.buttonOff : null]}
-        >
-          {flow.phase.kind === "restoring" || flow.phase.kind === "confirming" ? (
-            <ActivityIndicator size="small" color={theme.primary} />
-          ) : (
-            <Text style={styles.buttonText}>Restore purchases</Text>
-          )}
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={flow.manageSubscription}
-          style={styles.button}
-        >
-          <Text style={styles.buttonText}>Manage subscription</Text>
-        </Pressable>
-      </View>
+        {/*
+          Null while the first fetch is in flight, and null again if it failed.
+          A failed entitlement fetch must not blank this card: Restore is the
+          one control a user with a dead-looking account is here for, and it
+          does not need the payload to work.
+        */}
+        {status ? <Text style={styles.status}>{status}</Text> : null}
 
-      {/* Same two channels as the sheet: a restore that found nothing is not a
-          failure, and painting it red would send a paying user to support. */}
-      {flow.notice ? <Text style={styles.notice}>{flow.notice}</Text> : null}
-      {flow.error ? (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {flow.error}
+        <Text style={styles.blurb}>
+          See the prices and subscribe, or — if you bought a plan on this Apple ID, on
+          another device or before reinstalling — put it back on this account with Restore.
+          Restoring never charges you again.
         </Text>
+
+        <View style={styles.row}>
+          {/*
+            First and primary. It is the control a reviewer is sent to find, and
+            the one a trial user is looking for.
+          */}
+          <Pressable
+            testID="settings-view-plans"
+            accessibilityRole="button"
+            onPress={() => {
+              flow.clearMessages();
+              setSheetOpen(true);
+            }}
+            disabled={flow.busy}
+            style={[styles.primaryButton, flow.busy ? styles.buttonOff : null]}
+          >
+            <Text style={styles.primaryButtonText}>View plans</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.row}>
+          <Pressable
+            testID="settings-restore-purchases"
+            accessibilityRole="button"
+            onPress={flow.restorePurchases}
+            disabled={flow.busy}
+            style={[styles.button, flow.busy ? styles.buttonOff : null]}
+          >
+            {flow.phase.kind === "restoring" || flow.phase.kind === "confirming" ? (
+              <ActivityIndicator size="small" color={theme.primary} />
+            ) : (
+              <Text style={styles.buttonText}>Restore purchases</Text>
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={flow.manageSubscription}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>Manage subscription</Text>
+          </Pressable>
+        </View>
+
+        {/*
+          Same two channels as the sheet: a restore that found nothing is not a
+          failure, and painting it red would send a paying user to support.
+
+          Only shown while the sheet is CLOSED. The sheet renders the same
+          `flow`'s messages itself, and two copies of "Payment received —
+          switching your plan on…" on one screen reads as two events.
+        */}
+        {!sheetOpen && flow.notice ? <Text style={styles.notice}>{flow.notice}</Text> : null}
+        {!sheetOpen && flow.error ? (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {flow.error}
+          </Text>
+        ) : null}
+      </Card>
+
+      {/*
+        No `onRedeemed`, so no promo box. A code is redeemed on the surface that
+        blocked you, which is where somebody who was given one has been told to
+        look; a redemption field on Settings would be a second place to keep
+        right for no one who needs it.
+      */}
+      {sheetOpen ? (
+        <PurchaseSheet flow={flow} onClose={() => setSheetOpen(false)} />
       ) : null}
-    </Card>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   section: { padding: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontFamily: font.bold, color: theme.text, marginBottom: 6 },
+  status: { fontFamily: font.semibold, fontSize: 14, color: theme.text, marginBottom: 8 },
   blurb: {
     fontFamily: font.regular,
     fontSize: 13,
@@ -96,7 +181,17 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 14,
   },
-  row: { flexDirection: "row", flexWrap: "wrap", columnGap: 18, rowGap: 4 },
+  row: { flexDirection: "row", flexWrap: "wrap", columnGap: 18, rowGap: 4, alignItems: "center" },
+  primaryButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primary,
+    minHeight: 40,
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  primaryButtonText: { fontFamily: font.semibold, fontSize: 14, color: theme.onPrimary },
   button: { paddingVertical: 8, minHeight: 34, justifyContent: "center" },
   buttonOff: { opacity: 0.45 },
   buttonText: { fontFamily: font.semibold, fontSize: 14, color: theme.primary },

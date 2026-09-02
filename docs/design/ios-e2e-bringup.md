@@ -108,6 +108,88 @@ Two more, outside the flows, found on the way:
   `pipefail` reports SIGPIPE as 141, which `set -e` turns into an exit with no
   message.
 
+## The screenshots flow — its own bring-up, 2026-09-02
+
+`screenshots.yaml` was merged with a header saying it had never been executed,
+and predicting that its first run would be a bring-up rather than a regression.
+It was, and it cost two runs. The shape was identical to the eleven above: the
+failure was never where the message pointed.
+
+1. **`takeScreenshot` is SANDBOXED in Maestro 2.10.** The flow wrote to an
+   absolute `${SHOT_DIR}/01-trips`, on the reasoning — correct once — that a
+   relative path resolves against Maestro's working directory rather than the
+   repo. Maestro now refuses it outright:
+
+       CommandFailed: Invalid path ".../.local-run/shots/01-trips.png" for
+       takeScreenshot: it resolves outside this run's takeScreenshot output
+       folder.
+
+   The whole of `sign-in.yaml` had already passed at that point. The fix is bare
+   names; the images land at
+   `<--debug-output>/.maestro/tests/<timestamp>/<flow>/takeScreenshot/`, and
+   `ios-e2e-local.sh` collects them from there. Confirmed with a two-line probe
+   flow before touching the real one, which is the cheap way round a five-minute
+   feedback loop.
+
+2. **`'Penny is typing'` could never have matched.** `TypingBubble` puts that
+   string in an `accessibilityLabel` on a plain `<View>` with no `accessible`
+   prop, so iOS never promotes it to an accessibility element and it is simply
+   not in the hierarchy. The flow waited 20 seconds for it, failed, and — this
+   is the important part — **the server log said
+   `POST /api/trip/replan 200 in 6058ms` and Penny's answer was on screen the
+   entire time**. Dumping the tree at the moment of failure showed her reply,
+   the cleared composer and the `Read` receipt, and no typing indicator
+   anywhere.
+
+   This is the same lesson as #2 and #11 in the list above: read the server log
+   and the rendered tree, not the selector you wrote.
+
+   Replaced with two gates that are in the tree: `Read` (the delivery receipt,
+   which deliberately covers `typing` AND `responded`, so it means "she has it"
+   and not "she is done"), then `waitForAnimationToEnd` for the stream itself.
+
+3. **The keyboard has to go down BEFORE waiting out the stream.**
+   `waitForAnimationToEnd` means "the screen stopped changing", and a blinking
+   text caret never stops changing — so with the keyboard up it burns its entire
+   budget on every run instead of returning when Penny finishes. Reordering it
+   is not a tidy-up; it is the difference between a three-minute wait and a
+   fifteen-second one.
+
+4. **A bare `'REFILL EVERY'` matched nothing** on the Settings shot, because
+   Maestro matches a text selector against the WHOLE accessibility label and
+   that element reads `'REFILL EVERY ~300 km'` — the stat and its value merged
+   by `VehicleProfileSection`. This is the SAME trap as the trip card in
+   `sign-in.yaml`, which is documented in that file, in this document and in
+   CLAUDE.md, and it still cost a run. If you are matching text, assume the
+   label is the whole line and use a regex.
+
+**Two generalisable rules came out of this.**
+
+**`accessibilityLabel` on a bare `<View>` is invisible to Maestro.** No
+`accessible` prop means no accessibility element means nothing in the hierarchy.
+Check before writing any assertion against a label rather than a `testID` or
+rendered text.
+
+**Text selectors match the whole label, always.** Three separate flows have now
+been bitten by it. Prefer a `testID`; if it has to be text, write the regex.
+
+## Passing is not the same as usable
+
+Worth stating on its own, because it is the thing the automation cannot do and
+the reason the images are committed rather than trusted. The run that finally
+went green produced five correctly-sized PNGs of which **three were not
+shippable**: the itinerary read *"No fuel stop needed on this day"* (the
+canonical day 1 is 489 km and the fixture range was 500, so Finn correctly
+placed nothing — a picture of the app idle, in the slot meant to show it
+working), the map was a blank grid because the simulator's Apple Maps tiles
+never loaded, and Settings showed the fixture's `e2e.feraltravels.com` address
+in the middle of the frame.
+
+Two of those are fixed (`seedCanonicalFixture` took an optional `rangeKm`; the
+Settings shot centres the range stat instead of the section heading). The map is
+not fixable from a flow. `mobile/screenshots/README.md` carries the per-image
+verdict.
+
 ## What is still unproven
 
 - **No CI run.** The fixes to `.github/workflows/ci.yml` (Release, signing,

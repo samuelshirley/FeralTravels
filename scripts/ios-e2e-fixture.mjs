@@ -94,13 +94,23 @@ async function main() {
   const email = uniqueEmail();
 
   // The canonical graph — a vehicle and a named trip — because the flows assert
-  // on 'E2E Fixture Trip' to prove the session really resolved this user's own
+  // on the trip's name to prove the session really resolved this user's own
   // data. Names come from e2e/fixtures/constants.ts; keep them in step.
+  //
+  // OVERRIDABLE, with those literals as the defaults, for exactly one caller:
+  // `ios-e2e-local.sh screenshots` seeds the same two canonical legs (Paris →
+  // Strasbourg → Stuttgart, real coordinates, real road geometry) under names a
+  // customer could read. "E2E Fixture Trip" is the right name for a test and
+  // the wrong one for an App Store listing, and the seed endpoint has always
+  // taken all three as parameters — nothing about the graph changes.
   const seeded = await post('/api/test/seed', {
     email,
-    userName: 'E2E Fixture User',
-    vehicleName: 'E2E Fixture Van',
-    tripName: 'E2E Fixture Trip',
+    userName: arg('user-name', 'E2E Fixture User'),
+    vehicleName: arg('vehicle-name', 'E2E Fixture Van'),
+    tripName: arg('trip-name', 'E2E Fixture Trip'),
+    // Omitted by every caller but `screenshots`, where a shorter range is what
+    // makes day 1 actually need a fuel stop. See seedCanonicalFixture.
+    ...(arg('range-km', '') ? { rangeKm: Number(arg('range-km', '')) } : {}),
   });
   if (!seeded.ok) {
     throw new Error(

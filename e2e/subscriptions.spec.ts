@@ -122,9 +122,15 @@ test.describe('Subscriptions — trial', () => {
     expect(entitlement.state).toBe('trial');
     expect(entitlement.entitled).toBe(true);
     expect(entitlement.blockReason).toBeNull();
-    // Nothing to sell an entitled user, so nothing is sent to sell with.
+    // Nothing to SAY to an entitled user — but the prices still travel.
+    // Settings -> Plan opens the purchase sheet in every account state, which
+    // is the only way a reviewer in a fresh trial can reach the in-app
+    // purchase; a payload with no prices would render an empty sheet.
     expect(entitlement.paywall).toBeNull();
-    expect(entitlement.products).toEqual([]);
+    expect(entitlement.products.map((p) => p.id).sort()).toEqual([
+      'com.feraltravels.app.annual',
+      'com.feraltravels.app.monthly',
+    ]);
 
     await expect(notice(page)).toHaveCount(0);
     await expect(newTripButton(page)).toBeVisible();
@@ -299,9 +305,14 @@ test.describe('Subscriptions — subscribed', () => {
     expect(entitlement.state).toBe('subscribed_watch');
     expect(entitlement.entitled).toBe(true);
     expect(entitlement.blockReason).toBeNull();
-    // Nothing to say and nothing to sell.
+    // Nothing to say. The prices still travel — same reason as day 0: the
+    // purchase sheet is reachable from Settings in every state, including for
+    // a subscriber switching monthly to annual.
     expect(entitlement.paywall).toBeNull();
-    expect(entitlement.products).toEqual([]);
+    expect(entitlement.products.map((p) => p.id).sort()).toEqual([
+      'com.feraltravels.app.annual',
+      'com.feraltravels.app.monthly',
+    ]);
 
     await expect(notice(page)).toHaveCount(0);
     await expect(newTripButton(page)).toBeVisible();

@@ -31,16 +31,39 @@ export async function GET() {
       trialEndsAt: verdict.trialEndsAt?.toISOString() ?? null,
       trialDaysRemaining: daysUntil(verdict.trialEndsAt),
       paywall: copy,
-      // Empty for an entitled user: there is nothing to sell them, and a
-      // client that has no prices cannot accidentally render a purchase sheet.
-      products: verdict.entitled
-        ? []
-        : PRODUCTS.map((p) => ({
-            id: p.id,
-            priceLabel: p.priceLabel,
-            cadence: p.cadence,
-            note: p.period === 'year' ? 'Save $4 a year' : undefined,
-          })),
+      /**
+       * Sent in EVERY state, entitled included.
+       *
+       * This used to be empty for an entitled user, on the argument that a
+       * client holding no prices cannot accidentally render a purchase sheet.
+       * That argument quietly removed the only route App Review has to the
+       * in-app purchase. A reviewer signs in with their own Apple ID — which is
+       * exactly what `docs/design/app-store-listing.md` instructs, and the
+       * right answer to guideline 2.1(a) — and lands in a fresh seven-day
+       * trial. Every surface that can open the purchase sheet is gated on NOT
+       * being entitled, so with no prices in the payload there is no screen in
+       * the app that shows a price and no way to complete a sandbox purchase.
+       * That is the "we were unable to locate the in-app purchases" rejection,
+       * and no review note can write around it.
+       *
+       * The property that was being protected still holds, in the place that
+       * owns it: the three surfaces that SELL each gate themselves.
+       * `PlanRequiredOverlay` returns null for an entitled payload,
+       * `mobile/app/paywall.tsx` redirects to /trips, and Penny's bubble is
+       * flagged by the server. The one surface that opens the sheet
+       * deliberately in every state is Settings -> Plan -> "View plans", which
+       * is where a reviewer is sent and where a trial user who wants to commit
+       * early goes.
+       *
+       * Nothing here is a secret: two public prices already printed on the
+       * marketing site and in the App Store listing.
+       */
+      products: PRODUCTS.map((p) => ({
+        id: p.id,
+        priceLabel: p.priceLabel,
+        cadence: p.cadence,
+        note: p.period === 'year' ? 'Save $4 a year' : undefined,
+      })),
       testPurchaseAllowed: !verdict.entitled && isTestPurchaseAllowed(user.email),
     };
 

@@ -47,6 +47,11 @@ export const SHARED_FILES = [
   // package instead of against a copy of them.
   ['src/lib/purchaseOutcome.ts', 'mobile/shared/lib/purchaseOutcome.ts'],
   ['src/lib/entitlementPolling.ts', 'mobile/shared/lib/entitlementPolling.ts'],
+  // The Settings -> Plan status line. Mirrored so the two clients cannot end up
+  // describing the same twelve account states differently, and living in
+  // src/lib for the same reason as the two above: the root vitest project is
+  // the only test runner, and its exhaustive switch is worth a test.
+  ['src/lib/planStatusLine.ts', 'mobile/shared/lib/planStatusLine.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

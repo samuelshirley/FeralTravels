@@ -67,7 +67,14 @@ export interface EntitlementPayload {
   trialDaysRemaining: number;
   /** The paywall's own copy, server-authored so it can change without a build. */
   paywall: PaywallCopy | null;
-  /** Prices to render. Empty when the user is entitled. */
+  /**
+   * Prices to render, in every account state including entitled.
+   *
+   * Not conditional on `entitled`: Settings -> Plan opens the purchase sheet
+   * deliberately whatever the state, which is the only way a reviewer in a
+   * fresh trial can reach the in-app purchase at all. The surfaces that SELL
+   * gate themselves on `entitled`; this list does not gate them.
+   */
   products: PaywallProduct[];
   /**
    * True only for accounts explicitly allowlisted for the fake purchase path.

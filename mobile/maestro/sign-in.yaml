@@ -133,7 +133,12 @@ appId: ${APP_ID}
 # separator merged by TripCard. The bare name matched nothing, which is how a
 # completed, working sign-in still reported as a failure. The dates come from
 # the fixture seed and would make this brittle if they were spelled out here.
+#
+# ${TRIP_NAME} rather than the literal, because screenshots.yaml seeds the same
+# canonical graph under a name a customer could read — "E2E Fixture Trip" is
+# the right name for a test and the wrong one for the App Store. Every other
+# caller passes the default, so this asserts exactly what it always did.
 - extendedWaitUntil:
     visible:
-      text: '.*E2E Fixture Trip.*'
+      text: '.*${TRIP_NAME}.*'
     timeout: 30000
