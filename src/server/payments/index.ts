@@ -54,7 +54,13 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  * — keeps the entitlement surface cheap to import.
  */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
-export { paywallEnabled } from './switch';
+export {
+  paywallEnabled,
+  setPaywallEnabled,
+  invalidatePaywallSwitch,
+  paywallEnabledFromValue,
+  PAYWALL_META_KEY,
+} from './switch';
 /**
  * Promo codes belong on this surface, unlike `./testAccounts`: redeeming one
  * writes an ordinary `subscriptions` row through `upsertSubscription`, so it is
