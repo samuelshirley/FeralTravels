@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isFixtureEmail, isTestRequestAuthorized } from '@/server/auth/test-endpoints';
-import { createPromoCode } from '@/server/payments';
+import { createPromoCode, isPromoGrantMonths } from '@/server/payments';
 import { formatPromoCode } from '@/lib/promoCode';
 
 /**
@@ -40,6 +40,12 @@ const bodySchema = z.object({
     .refine(isFixtureEmail, 'not a fixture address'),
   /** Days until the code can no longer be redeemed. Absent = no expiry. */
   expiresInDays: z.number().int().min(-3650).max(3650).nullish(),
+  /**
+   * How long the granted access lasts. Optional HERE, unlike the admin route,
+   * and defaulted below — a spec that does not care about the term should not
+   * have to name one, and every spec that does care can say so.
+   */
+  grantMonths: z.number().int().nullish(),
 });
 
 export async function POST(req: Request) {
@@ -61,6 +67,9 @@ export async function POST(req: Request) {
       note: 'e2e fixture',
       createdBy: 'e2e',
       expiresAt,
+      // 12 unless a spec asks otherwise. The admin form has no default on
+      // purpose; a fixture wants one so the common case stays one line.
+      grantMonths: isPromoGrantMonths(body.grantMonths ?? 12) ? ((body.grantMonths ?? 12) as 6 | 12) : 12,
     });
 
     return Response.json({ ok: true, code: row.code, display: formatPromoCode(row.code) });

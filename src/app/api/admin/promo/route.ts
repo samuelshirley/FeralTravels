@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { requireAdmin, errorResponse } from '@/server/auth/guards';
-import { createPromoCode, listPromoCodes } from '@/server/payments';
+import {
+  createPromoCode,
+  isPromoGrantMonths,
+  listPromoCodes,
+  PROMO_GRANT_MONTHS,
+} from '@/server/payments';
 import { formatPromoCode } from '@/lib/promoCode';
 
 export const runtime = 'nodejs';
@@ -26,9 +31,24 @@ const createSchema = z.object({
   note: z.string().trim().max(280).optional(),
   /**
    * Days until the code can no longer be REDEEMED. Absent = never goes stale.
-   * Distinct from what it grants, which is unlimited either way.
+   *
+   * DISTINCT FROM `grantMonths`, and the two are easy to confuse now that both
+   * exist: this is the deadline to use the code, that is how long the access
+   * then lasts. The admin form labels them "code expires in" and "access" for
+   * the same reason.
    */
   expiresInDays: z.number().int().min(1).max(365).optional(),
+  /**
+   * How long the access lasts once redeemed, counted from REDEMPTION.
+   *
+   * Required, and constrained to the two the owner chose rather than left as
+   * free text — an admin typing 600 into a months box is a mistake nobody
+   * notices until a comped account is still comped in fifty years.
+   */
+  grantMonths: z
+    .number()
+    .int()
+    .refine(isPromoGrantMonths, `must be one of ${PROMO_GRANT_MONTHS.join(', ')}`),
 });
 
 export async function GET() {
@@ -60,6 +80,7 @@ export async function POST(req: Request) {
       note: body.note ?? null,
       createdBy: admin.email,
       expiresAt,
+      grantMonths: body.grantMonths,
     });
 
     return Response.json({ code: { ...row, display: formatPromoCode(row.code) } });

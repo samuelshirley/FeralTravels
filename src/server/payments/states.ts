@@ -16,7 +16,12 @@ import {
   TRIAL_DAYS,
   WATCH_MICROCENTS,
 } from './constants';
-import type { AccountState, BlockReason, SubscriptionStatus } from '@/types/entitlement';
+import type {
+  AccountState,
+  BlockReason,
+  SubscriptionSource,
+  SubscriptionStatus,
+} from '@/types/entitlement';
 
 export type { AccountState, BlockReason };
 
@@ -25,6 +30,19 @@ export interface SubscriptionFacts {
   /** Null means no end date — an admin grant or a lifetime promo. */
   currentPeriodEnd: Date | null;
   autoRenew: boolean;
+  /**
+   * Where the entitlement came from — `apple_iap`, `promo`, `admin`, `fake`.
+   *
+   * Display only, like `productId`. It is what lets Settings call a promo an
+   * Ambassador plan instead of guessing a product name it does not have: a
+   * promo row carries no `productId` by design, so without `source` the only
+   * honest thing to say was "Subscribed".
+   *
+   * NOT to be read by the rules. A promo subscriber is a subscriber; the whole
+   * point of writing an ordinary row is that `resolveAccountState` never learns
+   * about promo codes.
+   */
+  source?: SubscriptionSource | null;
   /**
    * The store product id, e.g. `com.feraltravels.app.annual`.
    *
@@ -85,6 +103,7 @@ export interface AccountVerdict {
   productId: string | null;
   currentPeriodEnd: Date | null;
   autoRenew: boolean;
+  source: SubscriptionSource | null;
 }
 
 export function trialEndsAt(createdAt: Date): Date {
@@ -124,6 +143,7 @@ export function resolveAccountState(facts: AccountFacts): AccountVerdict {
     productId: sub?.productId ?? null,
     currentPeriodEnd: sub?.currentPeriodEnd ?? null,
     autoRenew: sub?.autoRenew ?? false,
+    source: sub?.source ?? null,
     // The pure resolver always reports the true, enforced verdict. The switch
     // is applied one layer up, in `entitlements.ts`, so these tests keep
     // describing what the rules SAY rather than what an env var permits.

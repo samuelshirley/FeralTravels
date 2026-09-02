@@ -1,5 +1,5 @@
 import { formatPlanDate } from '@/lib/dates';
-import type { AccountState } from '@/types/entitlement';
+import type { AccountState, SubscriptionSource } from '@/types/entitlement';
 
 /**
  * One line describing the account's plan, for Settings -> Plan.
@@ -39,6 +39,15 @@ export interface PlanStatus {
   trialEndsAt: string | null;
   /** Which product, or null for a trial, an admin comp or a promo. */
   plan: 'monthly' | 'annual' | null;
+  /**
+   * Where the subscription came from. `promo` is the one that changes the
+   * wording — see `planLabel`.
+   *
+   * `comped` is NOT a value here. That is `users.comped`, a separate admin
+   * boolean that arrives as `state: 'comped'` and never has a subscription row
+   * at all. Two different grant paths, named differently on purpose.
+   */
+  source: SubscriptionSource | null;
   /** ISO8601. NULL MEANS NO END — a comp or a lifetime promo, not "unknown". */
   currentPeriodEnd: string | null;
   autoRenew: boolean;
@@ -47,19 +56,31 @@ export interface PlanStatus {
 /**
  * What to call the thing they are on.
  *
- * Falls back to "Subscribed" rather than inventing a plan name. An entitled
- * account with no product id is real and ordinary — an admin comp, a redeemed
- * promo — and "Monthly plan" would be a straightforward lie about a row that
- * says no such thing.
+ * THREE cases, because there are three ways to be a subscriber and calling them
+ * all "Subscribed" was the thing that made this line useless:
+ *
+ *  - A PROMO. "Ambassador plan" — the owner's word, and better than
+ *    "complimentary" for somebody being asked to go and use the thing. A promo
+ *    row carries no `productId` (nobody bought a product), so `source` is the
+ *    only thing that can tell it apart from an admin grant.
+ *  - A PAID plan, named by its product.
+ *  - Anything else — an admin grant, a `fake` test purchase — falls back to
+ *    "Subscribed" rather than inventing a name. "Monthly plan" would be a
+ *    straightforward lie about a row that says no such thing.
+ *
+ * Note the fourth case is not here at all: `users.comped` never reaches this
+ * function, because it short-circuits in `resolveAccountState` before any
+ * subscription row is read and arrives as `state: 'comped'` below.
  */
-function planLabel(plan: PlanStatus['plan']): string {
+function planLabel(plan: PlanStatus['plan'], source: SubscriptionSource | null): string {
+  if (source === 'promo') return 'Ambassador plan';
   if (plan === 'annual') return 'Annual plan';
   if (plan === 'monthly') return 'Monthly plan';
   return 'Subscribed';
 }
 
 export function planStatusLine(status: PlanStatus, now: Date): string {
-  const { state, trialDaysRemaining, trialEndsAt, plan, currentPeriodEnd } = status;
+  const { state, trialDaysRemaining, trialEndsAt, plan, currentPeriodEnd, source } = status;
 
   /**
    * The date clause, or nothing at all.
@@ -74,7 +95,7 @@ export function planStatusLine(status: PlanStatus, now: Date): string {
     return Number.isNaN(d.getTime()) ? null : formatPlanDate(d, now);
   };
 
-  const label = planLabel(plan);
+  const label = planLabel(plan, source);
   const ends = on(currentPeriodEnd);
 
   switch (state) {
@@ -105,7 +126,12 @@ export function planStatusLine(status: PlanStatus, now: Date): string {
     // user-visible or user-actionable, and it entitles exactly like
     // `subscribed` — so it must read identically here.
     case 'subscribed_watch':
-      return ends ? `${label} — renews ${ends}` : label;
+      // "ends", not "renews", for a promo. Nothing renews it — the term runs
+      // out and `periodOver` turns the row into `expired`. Saying "renews"
+      // would promise a recurrence that will not happen, to the one group of
+      // users who have no billing relationship to check it against.
+      if (!ends) return label;
+      return source === 'promo' ? `${label} — ends ${ends}` : `${label} — renews ${ends}`;
 
     case 'subscribed_capped':
       return `${label} — planning is paused on this account`;
@@ -129,8 +155,11 @@ export function planStatusLine(status: PlanStatus, now: Date): string {
     case 'revoked':
       return 'Subscription cancelled';
 
+    // `users.comped`, the admin boolean — the author's own account and the E2E
+    // fixtures. Not a promo, not a purchase, and no end date, so it says so
+    // plainly rather than borrowing either of their words.
     case 'comped':
-      return 'Complimentary plan';
+      return 'On the house — no end date';
 
     default: {
       // A thirteenth state fails `tsc` here rather than rendering an empty line

@@ -147,3 +147,44 @@ export function decidePromoRedemption(
   }
   return { ok: true };
 }
+
+/**
+ * The two terms an admin may grant. Validated at the API boundary.
+ *
+ * Here rather than in `server/payments/promo.ts` because that module is
+ * `server-only` and the unit project cannot import it — the same split that
+ * already puts `decidePromoRedemption` in this file. Mirrored into the app with
+ * the rest of it.
+ */
+export const PROMO_GRANT_MONTHS = [6, 12] as const;
+export type PromoGrantMonths = (typeof PROMO_GRANT_MONTHS)[number];
+
+export function isPromoGrantMonths(n: number): n is PromoGrantMonths {
+  return (PROMO_GRANT_MONTHS as readonly number[]).includes(n);
+}
+
+/**
+ * Add whole months to a date, clamped to the end of the target month.
+ *
+ * `setUTCMonth` alone rolls over: 31 August + 6 months is 31 February, which
+ * JavaScript silently turns into 3 March. Clamping to 28 February is the
+ * boring, expected answer, and it is the one an admin explaining a date to a
+ * recipient would give.
+ *
+ * UTC throughout, deliberately. The stored `current_period_end` is a UTC
+ * instant and the server runs in UTC; doing this in local time would make a
+ * developer's laptop mint a term an hour different from production's.
+ */
+export function addMonthsUTC(from: Date, months: number): Date {
+  const day = from.getUTCDate();
+  const d = new Date(from.getTime());
+  // Park on the 1st first, so adding the month cannot roll over on its own
+  // before the clamp below has a chance to run.
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const lastDayOfTarget = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDayOfTarget));
+  return d;
+}

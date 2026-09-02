@@ -102,6 +102,9 @@ export default function SubscriptionSection() {
           trialDaysRemaining: entitlement.trialDaysRemaining,
           trialEndsAt: entitlement.trialEndsAt,
           plan: entitlement.plan,
+          // Names an Ambassador (promo) plan apart from a purchase — a promo
+          // row carries no product, so without this it read "Subscribed".
+          source: entitlement.source,
           currentPeriodEnd: entitlement.currentPeriodEnd,
           autoRenew: entitlement.autoRenew,
         },

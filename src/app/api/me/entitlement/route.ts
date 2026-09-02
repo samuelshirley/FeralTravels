@@ -79,6 +79,7 @@ export async function GET() {
       plan: planFor(verdict.productId),
       currentPeriodEnd: verdict.currentPeriodEnd?.toISOString() ?? null,
       autoRenew: verdict.autoRenew,
+      source: verdict.source,
     };
 
     return Response.json(payload, {

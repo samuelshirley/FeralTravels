@@ -103,6 +103,20 @@ export interface EntitlementPayload {
   currentPeriodEnd: string | null;
   /** False once auto-renew is off. Does NOT itself mean access has ended. */
   autoRenew: boolean;
+  /**
+   * Where the entitlement came from, or null with no subscription row.
+   *
+   * The client uses it for ONE thing: naming the plan. A `promo` row carries no
+   * `plan` (nobody bought a product), so without this the only honest label was
+   * "Subscribed". It is not a second entitlement signal and nothing branches on
+   * it to decide access.
+   *
+   * NOTE `comped` is NOT here and is not a source: that is `users.comped`, an
+   * admin boolean checked before any subscription row is looked at, and it
+   * surfaces as `state: 'comped'`. The two grant paths are genuinely different
+   * and Settings names them differently.
+   */
+  source: SubscriptionSource | null;
 }
 
 export interface PaywallProduct {

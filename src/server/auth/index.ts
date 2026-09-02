@@ -12,7 +12,7 @@ import { syncAdminFlagOnSignIn } from './admin';
 // same events so a new account is correct on its very first request — a comped
 // user who got one paywalled request before the flag landed would be a bug
 // nobody could reproduce.
-import { syncCompedFlagOnSignIn } from '@/server/payments';
+import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
 
@@ -152,6 +152,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // users created before the flag was added.
       await syncAdminFlagOnSignIn(user?.email).catch(() => {});
       await syncCompedFlagOnSignIn(user?.email).catch(() => {});
+
+      /**
+       * A promo code minted for this address claims itself on sign-in.
+       *
+       * Only the `signIn` event, not `createUser`: `signIn` fires for BOTH a
+       * first sign-in and every one after it, so putting it here covers the new
+       * account and the person who was sent a code after already having one.
+       * `createUser` would miss the second case entirely.
+       *
+       * The other half of this pairing is in `createSessionForEmail`
+       * (auth/otp.ts), which these events do not fire for — that is the OTP and
+       * native-OAuth path, and wiring only the events here is the exact mistake
+       * already made once with `syncCompedFlagOnSignIn`.
+       *
+       * Non-fatal by construction: a promo must never be why somebody cannot
+       * sign in.
+       */
+      if (user?.id && user.email) {
+        await claimPromoOnSignIn({ userId: user.id, email: user.email }).catch(() => {});
+      }
 
       /**
        * Refresh the stored avatar on every Google sign-in.

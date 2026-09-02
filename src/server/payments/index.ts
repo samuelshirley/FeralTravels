@@ -67,5 +67,19 @@ export {
   redeemPromoCode,
   listPromoCodes,
   countOutstandingPromoCodes,
+  /**
+   * The sign-in auto-claim. On this surface rather than imported directly for
+   * the same reason redeem is: it is a way of BECOMING entitled, and the module
+   * that owns that decision should be the one that exposes it.
+   */
+  claimPromoOnSignIn,
+  PROMO_GRANT_MONTHS,
+  isPromoGrantMonths,
+  addMonthsUTC,
 } from './promo';
-export type { CreatePromoCodeInput, PromoCodeRow, RedeemResult } from './promo';
+export type {
+  CreatePromoCodeInput,
+  PromoCodeRow,
+  RedeemResult,
+  PromoGrantMonths,
+} from './promo';

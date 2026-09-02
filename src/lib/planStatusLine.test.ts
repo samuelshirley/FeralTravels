@@ -38,6 +38,7 @@ function status(overrides: Partial<PlanStatus> = {}): PlanStatus {
     trialDaysRemaining: 0,
     trialEndsAt: null,
     plan: 'monthly',
+    source: 'apple_iap',
     currentPeriodEnd: THIS_YEAR,
     autoRenew: true,
     ...overrides,
@@ -120,6 +121,40 @@ describe('planStatusLine', () => {
     // An admin comp or a redeemed promo has no product id. "Monthly plan"
     // would be a plain lie about a row that says no such thing.
     expect(line({ plan: null })).toBe('Subscribed — renews 3 Oct');
+  });
+
+  it('calls a promo an Ambassador plan, and says it ENDS rather than renews', () => {
+    /**
+     * Two different grant paths that the UI used to conflate. A promo writes an
+     * ordinary `subscriptions` row with `source: 'promo'` and NO product, so
+     * without `source` the only honest label was "Subscribed" — and "renews"
+     * would promise a recurrence that does not exist. Nothing renews a promo:
+     * the term runs out and `periodOver` turns the row into `expired`.
+     */
+    expect(line({ source: 'promo', plan: null })).toBe('Ambassador plan — ends 3 Oct');
+    expect(line({ source: 'promo', plan: null })).not.toContain('renews');
+  });
+
+  it('does NOT call an admin comp an Ambassador plan', () => {
+    // `comped` is `users.comped`, a boolean checked before any subscription row
+    // is read — a different grant path with no row, no source and no end date.
+    // It must not borrow the promo's word or the purchase's.
+    const comped = line({ state: 'comped', source: null, plan: null, currentPeriodEnd: null });
+    expect(comped).toBe('On the house — no end date');
+    expect(comped).not.toContain('Ambassador');
+    expect(comped).not.toContain('Complimentary');
+  });
+
+  it('reads an EXPIRED promo as ended, not as an ambassador still on the plan', () => {
+    /**
+     * The property the whole fixed-term design rests on. `resolveAccountState`
+     * turns an `active` row with a past `currentPeriodEnd` into `expired` — so
+     * by the time this function sees it, the state is already `expired` and the
+     * promo wording must be gone with it.
+     */
+    const ended = line({ state: 'expired', source: 'promo', plan: null, currentPeriodEnd: '2026-01-01T00:00:00Z' });
+    expect(ended).toBe('Subscription ended');
+    expect(ended).not.toContain('Ambassador');
   });
 
   it('reads subscribed_watch exactly like subscribed', () => {

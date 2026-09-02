@@ -49,6 +49,8 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
         // Display only — Settings says "Annual plan" rather than "Subscribed".
         // Nothing in `resolveAccountState` reads it.
         productId: subscriptions.productId,
+        // Display only. Tells "Ambassador plan" from "Monthly plan".
+        source: subscriptions.source,
       })
       .from(subscriptions)
       .where(eq(subscriptions.userId, userId))
@@ -83,6 +85,7 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
             currentPeriodEnd: subRows[0].currentPeriodEnd,
             autoRenew: subRows[0].autoRenew,
             productId: subRows[0].productId,
+            source: subRows[0].source,
           }
         : null,
     })

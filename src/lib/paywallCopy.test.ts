@@ -84,6 +84,7 @@ describe('user-facing copy never says the s-word', () => {
       productId: null,
       currentPeriodEnd: null,
       autoRenew: false,
+      source: null,
     };
   }
 
