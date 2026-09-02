@@ -143,9 +143,13 @@ dependency order in `docs/design/iap-setup.md`.
       wonders what the subscription is for.
 - [ ] **`SUBSCRIPTION_TESTING` UNSET on production.** It arms the fake-purchase
       route; an allowlisted address deliberately beats the real store.
-- [ ] **A TestFlight build carrying all of it.** Build 7 (2026-08-27) predates
-      the in-app-purchase client, the Settings "View plans" control and the
-      privacy manifest. None of the three can arrive over the air.
+- [ ] **A TestFlight build carrying all of it.** Build 7 (2026-08-27) was on the
+      OLD Apple account and is unreachable; the first build on the new team
+      (2026-09-02, buildNumber 1) is a **credentials bootstrap and must not be
+      submitted** — it was cut with the `REPLACE_WITH_…` RevenueCat placeholder,
+      so its purchase sheet shows prices with no checkout, which is precisely
+      the rejection §2 above is about. `EXPO_PUBLIC_*` values are compiled in,
+      so no OTA can fix it: the key goes into `eas.json` and a NEW build is cut.
 
 ---
 
@@ -165,6 +169,17 @@ exists in the repo:
   sets `ios.usesAppleSignIn` and adds the `expo-apple-authentication` plugin,
   whose config plugin writes `com.apple.developer.applesignin = ['Default']`
   into the entitlements. Verified by evaluating the config both ways.
+
+**And as of 2026-09-02 there is a specific thing to check, not just a general
+doubt.** The first build on the new team printed `Synced capabilities: No
+updates` on a freshly registered `com.feraltravels.ios` identifier — at the
+moment Sign in with Apple should have been added to it. Confirm the capability
+is actually ticked on the App ID (Apple Developer → Identifiers →
+`com.feraltravels.ios`) before submitting. The binary requests the entitlement
+either way and `isAvailableAsync()` reports OS capability rather than app
+setup, so the button renders whether or not the App ID allows it — this fails
+at authorization, in front of a reviewer, on the guideline that made offering it
+mandatory. `docs/design/iap-setup.md` has the full note.
 
 **None of that is proof it works.** It has never run against Apple. It cannot
 run on a simulator without a team, and the entitlement needs a provisioning

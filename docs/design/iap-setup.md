@@ -38,6 +38,72 @@ with nothing in any log to tell you why.
 > | `APPLE_APP_BUNDLE_ID` | Vercel, **if it is set** | The Apple ID-token audience. The code default is already `com.feraltravels.ios`; an env var still holding the old value would silently override it and fail every Apple sign-in. Check, and delete it rather than update it — the fallback is correct now. |
 > | App Store Connect record, agreements, products, sandbox testers, In-App Purchase Key | Apple + RevenueCat | All of §1–§7 below, from scratch, on the new account. |
 >
+> ### What the first build on the new account created (2026-09-02)
+>
+> `eas build --platform ios --profile production` succeeded on team
+> `TJX3F3832H`. On the Apple side it produced:
+>
+> - the **`com.feraltravels.ios` identifier**, registered by EAS;
+> - an **App Store distribution certificate** — serial
+>   `51E3CCE66D942100A65664BDE01A446B`, expires **2027-09-02**;
+> - an **App Store provisioning profile**, `F4P7A86L8A`;
+> - `buildNumber` initialised to **1**, EAS having found no prior version
+>   history — which is what a genuinely fresh account should look like.
+>
+> **It did NOT create an App Store Connect app record**, confirming what was
+> assumed rather than known: `eas build` works at the Developer-portal level.
+> The record is `eas submit`'s job or a manual one, which is why `ascAppId` is
+> still absent and why creating that record is the next Apple step.
+>
+> ### ⚠ Sign in with Apple: the capability was NOT visibly synced
+>
+> The build printed **`Synced capabilities: No updates`** on a freshly
+> registered identifier — at the exact moment Sign in with Apple was expected to
+> be added to it. **Verify it by hand before trusting it**: Apple Developer →
+> Certificates, Identifiers & Profiles → Identifiers → `com.feraltravels.ios` →
+> confirm **Sign In with Apple** is ticked. If it is not, tick it and cut a new
+> build so the provisioning profile is regenerated with it.
+>
+> **Why this one has to be checked rather than assumed.** It fails at RUNTIME,
+> not at build time, and it fails in the direction that looks fine:
+>
+> - `app.config.js` sets `ios.usesAppleSignIn: true` whenever
+>   `EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1`, which the `production` profile does, and
+>   `expo-apple-authentication`'s config plugin writes
+>   `com.apple.developer.applesignin` into the entitlements. So the BINARY asks
+>   for the capability regardless of what the App ID says.
+> - The app decides whether to show the button from
+>   `AppleAuthentication.isAvailableAsync()`, which reports **OS capability, not
+>   whether this app is set up for it** — `mobile/lib/config.ts` says so in its
+>   own comment. So the button renders either way.
+> - Guideline **4.8** makes offering Google sign-in without an equivalent a
+>   rejection. A button that renders and then fails at authorization is worse
+>   than no button: it is a rejection *and* a bad first impression.
+>
+> The build SUCCEEDING is weak evidence in favour — codesigning an app whose
+> entitlements request a capability the profile does not carry usually fails —
+> but it is not proof, and "usually" is not a thing to submit on. One click
+> settles it.
+>
+> ### ⚠ This .ipa must never be the build that goes to review
+>
+> The production profile still carries
+> `EXPO_PUBLIC_REVENUECAT_IOS_KEY: "REPLACE_WITH_appl_KEY_FROM_REVENUECAT"`, and
+> the build log confirms it was loaded. `mobile/lib/config.ts` requires the
+> `appl_` prefix, so it correctly resolves to **unset**: `purchasesAvailable()`
+> is false, `Purchases.configure` never runs, and the purchase sheet renders in
+> `unavailable` mode — **prices, no checkout**.
+>
+> That is the right behaviour and the wrong binary to submit. A reviewer sent to
+> Settings → Plan → "View plans" finds nothing to buy, which is the
+> "we were unable to locate the in-app purchases" rejection that
+> `docs/design/ios-review-notes.md` exists to prevent.
+>
+> **`EXPO_PUBLIC_*` values are compiled in, so an OTA cannot fix this after the
+> fact.** The key has to be in `eas.json` and a NEW build cut before submission.
+> This one is a credentials bootstrap: it exists to have created the identifier,
+> the certificate and the profile, and it has done that.
+>
 > ### The Google OAuth client: edited, not replaced
 >
 > An iOS OAuth client in Google Cloud is registered against a specific bundle
