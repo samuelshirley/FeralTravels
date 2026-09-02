@@ -91,22 +91,23 @@ a decision.
 | `02-penny-chat` | **Good.** A real, specific answer: day 1 measured against the vehicle's range, a recommendation, and an offer to place a stop. |
 | `03-itinerary` | **Was wrong, now good.** It read *"No fuel stop needed on this day"* — day 1 is 489 km and the fixture range was 500, so Finn correctly placed nothing, and the slot meant to show the product working showed it idle. `seedCanonicalFixture` now takes an optional `rangeKm` and the runner seeds 300, so the same leg genuinely needs stops: Reims at 147 km and Station AVIA Saverne at 442 km, with their routing buttons. Still carries a "LOCATION OFF — OPEN SETTINGS" line (see below). |
 | `04-map` | **Intermittent, not broken.** The first run produced a blank grid with a route line on it — Apple Maps tiles had not loaded on a freshly booted simulator. A later run on the same warmed simulator rendered France and Germany properly, with the route and both gold fuel markers. **If it comes out blank, re-run it**; nothing in the flow can tell the two apart. |
-| `05-settings` | **Still needs a decision.** The fixture's `playwright-…@e2e.feraltravels.com` address WAS plainly visible — centring the 'Vehicle profile' heading did not push it off a 6.9" screen. Centring the range stat instead removes it, but overshoots: the vehicle card is clipped at the top and the red **Delete account** panel dominates the frame, which is not what a store listing leads with. It also exposed a real app bug — the back button reads `trips/[tripId]`, a raw Expo Router route pattern. |
+| `05-settings` | **REMOVED from the set, 2026-09-02.** It leaked the fixture's `playwright-…@e2e.feraltravels.com` address, twice, for two different reasons. Centring the 'Vehicle profile' heading did not push it off a 6.9" screen; centring the range stat did — until the copy-rule cleanup deleted two blurbs, the screen got shorter, and the address came back into frame. The workaround was load-bearing on the page being long. Four images is inside Apple's 3–5, so the set ships without it until the layout is fixed. |
 
-### `05-settings` — the options
+### Getting `05-settings` back
 
-The screen is short, so the address and the vehicle card are hard to separate by
-scrolling alone. In rough order of preference:
+The screen is short and the address sits directly above the thing the image is
+meant to be about, so no amount of scrolling separates them reliably — twice now
+a crop that worked stopped working when something above it changed. Fix the
+layout instead, in rough order of preference:
 
-1. **Fix the layout** — move "Signed in as" below the vehicle profile, or mask
-   the address. It is arguably the better Settings screen anyway.
-2. **Take the shot from a different account** whose address is presentable.
-   `--user-name` already flows through; the ADDRESS does not, and it is a
-   fixture pattern for good reasons.
-3. **Use the `Plan` card as image 5 instead.** It is what an App Review reviewer
-   is sent to find (`docs/design/ios-review-notes.md` §2) and it photographs
-   cleanly — but it sells the subscription rather than the product.
-4. **Drop to four images.** Three to five is the accepted range.
+1. **Move "Signed in as" below the vehicle profile**, or mask the address. It is
+   arguably the better Settings screen anyway: the first thing on it should not
+   be your own email.
+2. **Use the `Plan` card as image 5.** It is what an App Review reviewer is sent
+   to find (`docs/design/ios-review-notes.md` §2) and it photographs cleanly —
+   but it sells the subscription rather than the product, and the Danger zone
+   sits right under it.
+3. **Stay at four.** Which is what the set does today.
 
-Fix `trips/[tripId]` regardless. It is visible to every user who opens Settings
-from inside a trip, not just to a screenshot.
+`trips/[tripId]` is FIXED (the back button reads "Back"), verified on device in
+the regenerated set — `src/lib/routeLabels.test.ts` guards it now.
