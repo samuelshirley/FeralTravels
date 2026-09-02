@@ -36,6 +36,13 @@ export const PROMO_ERROR_COPY: Record<PromoRefusal, string> = {
   // the fix rather than the suspicion.
   promo_wrong_account:
     'That code was issued to a different email address. Sign in with the address you gave us and it will work.',
+
+  // Reads as good news, because it is: they are already paying and the code is
+  // not lost. It must NOT sound like a refusal of the code — the one action
+  // this reader might otherwise take is cancelling a subscription to "make
+  // room", which would cost them the thing they came here with.
+  promo_active_subscription:
+    'You already have a plan running through the App Store, so this code has been left unused — it will still work if that ever lapses. Nothing has changed and you have not been charged twice.',
 };
 
 /** Label on the redeem control. Here so the two purchase sheets cannot drift. */

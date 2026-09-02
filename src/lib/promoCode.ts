@@ -114,7 +114,19 @@ export type PromoRefusal =
   /** Past `expiresAt`. The code was real; the window closed. */
   | 'promo_expired'
   /** Bound to a different address than the one signed in. */
-  | 'promo_wrong_account';
+  | 'promo_wrong_account'
+  /**
+   * They already hold a LIVE Apple subscription.
+   *
+   * Redeeming would overwrite it: `subscriptions` is one row per user, so the
+   * `apple_iap` row would become a `promo` row while Apple carried on charging
+   * them, and the next renewal webhook would land against a row that no longer
+   * describes what they bought. Nothing on the redeem screen says that happens,
+   * and choosing to redeem a code is not choosing to detach a subscription.
+   *
+   * LIVE, not merely present: a lapsed customer can still be given a plan.
+   */
+  | 'promo_active_subscription';
 
 export type PromoDecision = { ok: true } | { ok: false; reason: PromoRefusal };
 
@@ -187,4 +199,38 @@ export function addMonthsUTC(from: Date, months: number): Date {
   ).getUTCDate();
   d.setUTCDate(Math.min(day, lastDayOfTarget));
   return d;
+}
+
+/**
+ * Is this subscription row a real Apple purchase that has not ended?
+ *
+ * The guard that stops a promo redemption overwriting a paying customer.
+ * `subscriptions` is one row per user, so granting a promo to somebody
+ * currently paying Apple would turn their `apple_iap` row into a `promo` one
+ * while Apple carried on charging them, and the next renewal webhook would land
+ * against a row that no longer describes what they bought.
+ *
+ * Deliberately NARROWER than `resolveAccountState`, and deliberately not
+ * reusing it. That answers "may this account spend money", which has a master
+ * switch on top: `applySwitch` reports everybody entitled while
+ * `PAYWALL_ENABLED` is unset, so asking it here would refuse every redemption
+ * on production today. This asks something with no switch on it — does the row
+ * describe a purchase Apple still knows about.
+ *
+ * `cancelled` counts as LIVE. Auto-renew is off, but they paid through the
+ * period, the row still carries the `original_transaction_id`, and an
+ * `UNCANCELLATION` can still arrive against it.
+ *
+ * `expired`, `refunded` and `revoked` do not — nothing is arriving for those,
+ * and a lapsed customer is exactly who an ambassador plan is for.
+ */
+export function holdsLiveApplePurchase(
+  row: { source: string; status: string; currentPeriodEnd: Date | null },
+  now: Date
+): boolean {
+  if (row.source !== 'apple_iap') return false;
+  if (!['active', 'grace', 'cancelled'].includes(row.status)) return false;
+  // Null means no end date. It should not happen on an apple_iap row, but if it
+  // does, treat it as live rather than clobber it.
+  return row.currentPeriodEnd === null || row.currentPeriodEnd.getTime() > now.getTime();
 }

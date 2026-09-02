@@ -129,10 +129,10 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
         Promo codes
       </h2>
       <p style={{ fontSize: 12, color: 'var(--tp-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
-        Issues one code, bound to one address. The recipient signs in with that
-        address and redeems it in the app — it grants nothing on its own, and it
-        cannot be redeemed by anyone else. Access is unlimited and has no renewal
-        date; the ordinary usage ceiling still applies.
+        Issues one code, bound to one address, for the length of access you pick.
+        The recipient signs in with that address and it applies itself — they do
+        not have to type it — and nobody else can redeem it. The term runs from
+        when they redeem, not from now; the ordinary usage ceiling still applies.
       </p>
 
       {/*

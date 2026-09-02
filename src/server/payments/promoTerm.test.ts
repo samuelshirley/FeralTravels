@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { addMonthsUTC, PROMO_GRANT_MONTHS, isPromoGrantMonths } from '@/lib/promoCode';
+import {
+  addMonthsUTC,
+  holdsLiveApplePurchase,
+  isPromoGrantMonths,
+  PROMO_GRANT_MONTHS,
+} from '@/lib/promoCode';
 import { resolveAccountState, type AccountFacts } from './states';
 
 /**
@@ -152,5 +157,71 @@ describe('a promo term expires without any new code', () => {
       })
     );
     expect(forever.state).toBe('subscribed');
+  });
+});
+
+/**
+ * The guard that stops a promo redemption overwriting a paying customer.
+ *
+ * The failure it prevents: `subscriptions` is one row per user, so redeeming a
+ * code while an Apple subscription is live turns the `apple_iap` row into a
+ * `promo` one — Apple keeps charging, and the next renewal webhook arrives
+ * against a row that no longer carries the transaction id it is keyed to.
+ *
+ * It has to be exactly this narrow. Too wide and a lapsed customer can never be
+ * given an ambassador plan, which is one of the main reasons to issue one.
+ */
+describe('holdsLiveApplePurchase', () => {
+  const NOW_ = new Date('2026-09-02T12:00:00Z');
+  const FUTURE = new Date('2027-01-01T00:00:00Z');
+  const PAST = new Date('2026-01-01T00:00:00Z');
+
+  it('protects a live Apple subscription', () => {
+    for (const status of ['active', 'grace']) {
+      expect(
+        holdsLiveApplePurchase({ source: 'apple_iap', status, currentPeriodEnd: FUTURE }, NOW_),
+        status
+      ).toBe(true);
+    }
+  });
+
+  it('protects a CANCELLED subscription that has not run out yet', () => {
+    // Auto-renew is off, but they paid through the period, the row still
+    // carries the original transaction id, and an UNCANCELLATION can still
+    // land on it. Overwriting would lose all of that.
+    expect(
+      holdsLiveApplePurchase({ source: 'apple_iap', status: 'cancelled', currentPeriodEnd: FUTURE }, NOW_)
+    ).toBe(true);
+  });
+
+  it('does NOT protect a lapsed customer — they can have an ambassador plan', () => {
+    // The reason the test is "live" and not "has an apple_iap row at all".
+    for (const status of ['expired', 'refunded', 'revoked']) {
+      expect(
+        holdsLiveApplePurchase({ source: 'apple_iap', status, currentPeriodEnd: PAST }, NOW_),
+        status
+      ).toBe(false);
+    }
+    // Nor one whose period simply ran out while the status went stale.
+    expect(
+      holdsLiveApplePurchase({ source: 'apple_iap', status: 'active', currentPeriodEnd: PAST }, NOW_)
+    ).toBe(false);
+  });
+
+  it('does not protect rows that are not Apple purchases', () => {
+    // A promo, an admin grant or a test purchase is ours to overwrite — there
+    // is no store charging anybody and no webhook to strand.
+    for (const source of ['promo', 'admin', 'fake']) {
+      expect(
+        holdsLiveApplePurchase({ source, status: 'active', currentPeriodEnd: FUTURE }, NOW_),
+        source
+      ).toBe(false);
+    }
+  });
+
+  it('treats a null period end on an Apple row as live rather than clobbering it', () => {
+    expect(
+      holdsLiveApplePurchase({ source: 'apple_iap', status: 'active', currentPeriodEnd: null }, NOW_)
+    ).toBe(true);
   });
 });

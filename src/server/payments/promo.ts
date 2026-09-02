@@ -6,6 +6,7 @@ import { promoCodes, subscriptionEvents, users } from '@/server/db/schema';
 import {
   addMonthsUTC,
   decidePromoRedemption,
+  holdsLiveApplePurchase,
   isPromoGrantMonths,
   PROMO_GRANT_MONTHS,
   type PromoGrantMonths,
@@ -22,7 +23,7 @@ import { getSubscriptionRow, upsertSubscription } from './entitlements';
  * `server-only` and the unit project cannot import it — the same split that
  * already puts `decidePromoRedemption` there.
  */
-export { addMonthsUTC, isPromoGrantMonths, PROMO_GRANT_MONTHS };
+export { addMonthsUTC, holdsLiveApplePurchase, isPromoGrantMonths, PROMO_GRANT_MONTHS };
 export type { PromoGrantMonths };
 import { logUsageEvent } from '@/server/repos/usage';
 
@@ -215,6 +216,29 @@ export async function redeemPromoCode(params: {
   );
   if (!decision.ok) return decision;
 
+  /**
+   * NEVER OVERWRITE A LIVE APPLE SUBSCRIPTION.
+   *
+   * `subscriptions` is one row per user, so granting a promo to somebody who
+   * is currently paying Apple would turn their `apple_iap` row into a `promo`
+   * one — while Apple carried on charging them, and while the next renewal
+   * webhook landed against a row that no longer describes what they bought.
+   *
+   * This lives HERE, in the shared redeem path, rather than only in
+   * `claimPromoOnSignIn`. It was in the auto-claim first, on the argument that
+   * a user typing a code is at least choosing. That argument does not hold:
+   * they are choosing to redeem a code, not to detach their subscription, and
+   * nothing on the redeem screen says the second thing happens.
+   *
+   * Checked BEFORE the claim, so the code is not spent. It stays theirs and
+   * works later if the subscription lapses — which is the whole reason the test
+   * is LIVE rather than "has an apple_iap row at all".
+   */
+  const existing = await getSubscriptionRow(params.userId);
+  if (existing && holdsLiveApplePurchase(existing, now)) {
+    return { ok: false, reason: 'promo_active_subscription' };
+  }
+
   const claimed = await db
     .update(promoCodes)
     .set({ redeemedAt: now, redeemedByUserId: params.userId })
@@ -335,27 +359,15 @@ export async function claimPromoOnSignIn(params: {
   if (!row) return;
 
   /**
-   * NEVER CLOBBER A REAL PURCHASE.
+   * No live-subscription check here any more, and that is not an omission:
+   * `redeemPromoCode` owns that rule now and applies it to BOTH paths. It used
+   * to live only here, which left the manual redeem box able to overwrite a
+   * paying customer's `apple_iap` row.
    *
-   * `upsertSubscription` writes ONE row per user, so granting a promo to
-   * somebody who already pays Apple would overwrite their `apple_iap` row with
-   * a `promo` one — while Apple carries on charging them, and while the webhook
-   * for their next renewal arrives against a row that no longer describes what
-   * they bought. The manual box has always had this hazard, but a user typing a
-   * code is at least choosing; doing it silently on sign-in is not.
-   *
-   * The narrow rule is the right one: leave a paid row alone, overwrite
-   * anything else (no row, an admin grant, a spent promo, a test purchase).
-   * The code stays unredeemed and the manual box still works if their
-   * subscription later lapses.
-   *
-   * Deliberately NOT `hasEntitlement`: that answer runs through `applySwitch`,
-   * which reports everybody as entitled while `PAYWALL_ENABLED` is unset — so
-   * on production today it would skip every single claim.
+   * The refusal comes back as `promo_active_subscription` and is logged below
+   * like any other, so an auto-claim that declined for this reason is findable
+   * without being noisy.
    */
-  const existing = await getSubscriptionRow(params.userId);
-  if (existing?.source === 'apple_iap') return;
-
   const result = await redeemPromoCode({
     userId: params.userId,
     email,
