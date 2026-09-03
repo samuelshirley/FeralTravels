@@ -88,7 +88,7 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         justifyContent: 'space-between',
         padding: '10px 16px',
         borderBottom: '1px solid var(--tp-border)',
-        background: 'rgba(251, 248, 243, 0.92)',
+        background: 'rgba(31, 33, 48, 0.92)', // --tp-surface-muted @ 92%, behind the blur
         backdropFilter: 'blur(10px)',
         flexShrink: 0,
         zIndex: 1000,
@@ -187,8 +187,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               // translucent background, leaving the glyph invisible on white.
               // The photo covers this entirely; it shows through only in the
               // instant before the image loads, and if it never does.
-              background: '#DFE5ED',
-              color: '#4E7AB0',
+              background: '#2b2741',
+              color: '#d2cefd',
               overflow: 'hidden',
             }}
             aria-label={signedInAs ? `Account menu — signed in as ${signedInAs}` : 'Account menu'}
@@ -417,8 +417,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         .tp-app-navbar__account-btn:active,
         .tp-app-navbar__account-btn:focus,
         .tp-app-navbar__account-btn:focus-visible {
-          background: #DFE5ED !important;
-          color: #4E7AB0 !important;
+          background: #2b2741 !important;
+          color: #d2cefd !important;
         }
 
         @media (max-width: 480px) {

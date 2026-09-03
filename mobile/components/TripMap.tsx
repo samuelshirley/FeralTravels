@@ -107,27 +107,35 @@ const MAP_TIMEOUT_MESSAGE =
 const MAP_PROVIDER = GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
 
 /**
- * Warm light basemap aligned with app cream / tan palette (Google provider only).
- * Byte-identical to LIGHT_MAP_STYLE in src/components/TripMap.tsx:82-99.
+ * Nocturne basemap — INERT ON EVERY SHIPPED BUILD, and kept anyway.
+ *
+ * `customMapStyle` is honoured only under PROVIDER_GOOGLE, and no
+ * EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is set on either eas.json profile, so
+ * MAP_PROVIDER is undefined and this app renders Apple Maps. Apple follows
+ * `userInterfaceStyle: 'dark'` from app.config.js instead, which is what
+ * actually darkens the tiles today.
+ *
+ * It stays because the cost of deleting it is asymmetric: if a Google key is
+ * ever added, an absent style silently reinstates a light map inside a dark
+ * app. Mirrors DARK_MAP_STYLE in src/components/TripMap.tsx.
  */
-const LIGHT_MAP_STYLE: MapStyleElement[] = [
-  { elementType: "geometry", stylers: [{ color: "#ebe6dd" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#f6f2ea" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#5c5c5c" }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#d4c9ba" }] },
-  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#e0d8cc" }] },
-  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#333333" }] },
+const DARK_MAP_STYLE: MapStyleElement[] = [
+  { elementType: "geometry", stylers: [{ color: "#1f2130" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#161826" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b2b6ca" }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#595d6c" }] },
+  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#3f424d" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#e9e9ed" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#6b6b6b" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f0ebe3" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#d4c9ba" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#c5d4e0" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4e7ab0" }] },
-  { featureType: "landscape.natural", elementType: "geometry", stylers: [{ color: "#e2ddd4" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#292b31" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#75798c" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3f424d" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#595d6c" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#12131f" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#5d5294" }] },
+  { featureType: "landscape.natural", elementType: "geometry", stylers: [{ color: "#1b1d2a" }] },
 ];
-
 /** Where the map sits before we have any coordinates to fit (the web's center/zoom 5). */
 const FALLBACK_REGION: Region = {
   latitude: 52,
@@ -574,7 +582,7 @@ export default function TripMap({
         provider={MAP_PROVIDER}
         // Google-only styling; silently ignored by Apple Maps, which is the
         // acceptable degradation when no Maps key is configured.
-        customMapStyle={LIGHT_MAP_STYLE}
+        customMapStyle={DARK_MAP_STYLE}
         initialRegion={FALLBACK_REGION}
         onMapReady={handleMapReady}
         // react-native-maps' 'settled camera' event — the web re-clusters on the

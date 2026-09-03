@@ -80,23 +80,34 @@ interface GpxFeatureCollection {
   }>;
 }
 
-/** Warm light basemap aligned with app cream / tan palette */
-const LIGHT_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#ebe6dd' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#f6f2ea' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#5c5c5c' }] },
-  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
-  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#e0d8cc' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#333333' }] },
+/**
+ * Nocturne basemap.
+ *
+ * The web map is Google's JS API, so unlike native — which is Apple Maps and
+ * follows `userInterfaceStyle: 'dark'` for free — the dark ground has to be
+ * declared feature by feature. Without this the map is the one full-bleed
+ * light surface left in a dark app, which is exactly how it looked.
+ *
+ * Colours are the `--tp-*` values as literals, because the Maps API takes a
+ * style array rather than CSS. POI and transit stay OFF: the app draws its own
+ * markers, and Google's would compete with them.
+ */
+const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#1f2130' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#161826' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#b2b6ca' }] },
+  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#595d6c' }] },
+  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#3f424d' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#e9e9ed' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b6b' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#f0ebe3' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c5d4e0' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4e7ab0' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#e2ddd4' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#292b31' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#75798c' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3f424d' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#595d6c' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#12131f' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#5d5294' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#1b1d2a' }] },
 ];
 
 function legKey(leg: LegWithDetails): string {
@@ -219,7 +230,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         const map = new GMap(el, {
           center: { lat: 52, lng: 10 },
           zoom: 5,
-          styles: LIGHT_MAP_STYLE,
+          styles: DARK_MAP_STYLE,
           disableDefaultUI: false,
           zoomControl: true,
           streetViewControl: false,
