@@ -1,15 +1,23 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
-import { Onest } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import { Analytics } from '@vercel/analytics/next';
 import ErrorNotifier from '@/components/ErrorNotifier';
 import ViewportTimeReporter from '@/components/ViewportTimeReporter';
 
-const onest = Onest({
+/**
+ * Nocturne's face. Weights 700/800 are still loaded because 140 call sites
+ * across `src/` still ask for them; the palette's rule is that hierarchy is
+ * size and space rather than weight, so headings cap at 500 and 600 is kept
+ * for the 9-11px kickers, badges and button labels. Those two faces come out
+ * of this list once the per-screen sweep has removed the last of them —
+ * dropping them now would silently synthesise bold in 140 places.
+ */
+const inter = Inter({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700', '800'],
   display: 'swap',
-  variable: '--font-onest',
+  variable: '--font-inter',
 });
 
 export const metadata: Metadata = {
@@ -66,12 +74,12 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   interactiveWidget: 'resizes-content',
-  themeColor: '#4E7AB0',
+  themeColor: '#161826',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={onest.variable}>
+    <html lang="en" className={inter.variable}>
       <body>
         <div className="landscape-lock" aria-hidden="true">
           <div className="landscape-lock-icon">📱↻</div>

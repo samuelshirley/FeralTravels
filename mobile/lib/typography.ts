@@ -1,26 +1,33 @@
 /**
  * Single source of truth for type on native.
  *
- * The web loads Onest via `next/font/google` in src/app/layout.tsx:7-12 with
+ * The web loads Inter via `next/font/google` in src/app/layout.tsx with
  * `weight: ['400', '500', '600', '700', '800']`, and applies it to everything
- * through `--tp-font-sans` on `body` (src/app/layout.tsx:75, 120).
+ * through `--tp-font-sans` on `body` (src/app/globals.css).
  *
  * React Native does NOT synthesise a family from `fontWeight` for a custom
  * font: `fontFamily` has to name the exact static face. So every weight the
- * web uses maps to one @expo-google-fonts/onest family name here, and screens
+ * web uses maps to one @expo-google-fonts/inter family name here, and screens
  * set `fontFamily` instead of `fontWeight`.
+ *
+ * `bold` and `extrabold` are still loaded because call sites still ask for
+ * them. Nocturne's rule is that hierarchy is size and space, not weight —
+ * headings cap at `medium`, and `semibold` is for the 9-11px kickers, badges
+ * and button labels. Those two faces come out once the per-screen sweep has
+ * removed the last of them; dropping them now would leave RN rendering the
+ * DEFAULT SYSTEM FACE at those call sites, not a synthesised bold.
  */
 export const font = {
   /** CSS font-weight: 400 */
-  regular: "Onest_400Regular",
+  regular: "Inter_400Regular",
   /** CSS font-weight: 500 */
-  medium: "Onest_500Medium",
+  medium: "Inter_500Medium",
   /** CSS font-weight: 600 */
-  semibold: "Onest_600SemiBold",
+  semibold: "Inter_600SemiBold",
   /** CSS font-weight: 700 */
-  bold: "Onest_700Bold",
+  bold: "Inter_700Bold",
   /** CSS font-weight: 800 */
-  extrabold: "Onest_800ExtraBold",
+  extrabold: "Inter_800ExtraBold",
 } as const;
 
 /** Lookup by the numeric CSS weight, for code that carries a weight around. */

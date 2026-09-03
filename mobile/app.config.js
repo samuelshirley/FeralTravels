@@ -40,7 +40,22 @@ module.exports = {
     scheme: 'feraltravels',
     icon: './assets/icon.png',
     orientation: 'portrait',
-    userInterfaceStyle: 'automatic',
+    /*
+     * 'dark', not 'automatic'. Two jobs:
+     *
+     * 1. Nocturne is a dark theme with no light variant, so leaving this on
+     *    'automatic' hands a light-mode phone light system UI — keyboard,
+     *    action sheets, the share sheet — over a #161826 app.
+     * 2. It is ALSO how the map goes dark. `customMapStyle` is
+     *    PROVIDER_GOOGLE-only and this app ships on Apple Maps (no
+     *    EXPO_PUBLIC_GOOGLE_MAPS_API_KEY on either eas.json profile, so
+     *    MAP_PROVIDER is undefined and the LIGHT_MAP_STYLE in TripMap has
+     *    always been a no-op). Apple Maps follows the system appearance, so
+     *    this line is the whole of the dark-map change. Shipping a Google key
+     *    instead would add Crash Data, Device ID, Performance Data and
+     *    Product Interaction to the App Privacy nutrition label.
+     */
+    userInterfaceStyle: 'dark',
     newArchEnabled: true,
     ios: {
       bundleIdentifier: 'com.feraltravels.ios',

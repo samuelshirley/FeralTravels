@@ -16,36 +16,116 @@
 @import url('https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css');
 
 :root {
-  --tp-font-sans: var(--font-onest), Helvetica, Arial, sans-serif;
-  --tp-bg: #F6F2EA;
-  --tp-surface: #FFFFFF;
-  --tp-surface-muted: #FBF8F3;
-  --tp-border: #E6DFD4;
-  --tp-border-strong: #D4C9BA;
-  --tp-text: #333333;
-  --tp-muted: #5C5C5C;
-  --tp-subtle: rgba(51, 51, 51, 0.45);
-  --tp-primary: #4E7AB0;
-  --tp-primary-hover: #3D6799;
-  --tp-primary-muted: rgba(78, 122, 176, 0.14);
-  --tp-on-primary: #FFFFFF;
-  --tp-success: #4A8B7A;
-  --tp-success-muted: rgba(74, 139, 122, 0.14);
-  --tp-danger: #C65D4A;
-  --tp-danger-muted: rgba(198, 93, 74, 0.12);
-  --tp-accent-warm: #C97B63;
-  --tp-accent-warm-muted: rgba(201, 123, 99, 0.14);
-  --tp-gold: #B8956A;
-  --tp-accent-violet: #6B5B9A;
-  --tp-accent-violet-muted: rgba(107, 91, 154, 0.14);
-  --tp-overlay: rgba(51, 51, 51, 0.4);
-  --tp-shadow-sm: 0 1px 2px rgba(51, 51, 51, 0.06);
-  --tp-shadow-md: 0 4px 12px rgba(51, 51, 51, 0.08);
-  --tp-radius-sm: 8px;
-  --tp-radius-md: 12px;
-  --tp-radius-lg: 16px;
-  --tp-map-chrome: #EDE8E0;
-  --tp-focus-ring: 0 0 0 2px var(--tp-surface), 0 0 0 4px var(--tp-primary-muted);
+  /* ---------------------------------------------------------------------
+   * Nocturne. Dark blue-grey ground, ONE blurple accent, Inter.
+   *
+   * The mirror of this block is `mobile/lib/theme.ts` — hand-maintained,
+   * with no drift guard. Change a colour here and change it there, or the
+   * two apps diverge silently.
+   *
+   * Nocturne is a MONO palette: gold (fuel), success, accent-warm and
+   * accent-violet all collapse into the one accent, so a fuel stop, a
+   * confirmed leg and a primary action are now the same hue and differ by
+   * shape and label. `--tp-danger` is the deliberate exception — see below.
+   * ------------------------------------------------------------------- */
+
+  --tp-font-sans: var(--font-inter), Helvetica, Arial, sans-serif;
+
+  /* Ground and surfaces */
+  --tp-bg: #161826;
+  --tp-surface: #232532;
+  /* Declared, finally: StopCard read `var(--tp-surface-rgb, 30,30,30)` and
+     always got the fallback — a DARK value sitting under a cream theme. */
+  --tp-surface-rgb: 35, 37, 50;
+  --tp-surface-muted: #1f2130;
+  --tp-border: #3f424d;
+  --tp-border-strong: #595d6c;
+
+  /* Text */
+  --tp-text: #e9e9ed;
+  --tp-muted: #b2b6ca;
+  --tp-subtle: #75798c;
+  --tp-neutral-300: #cfd3e5;
+  --tp-neutral-900: #292b31; /* hairline inside a card */
+
+  /* Accent */
+  --tp-primary: #9184d9;
+  --tp-primary-hover: #b5abfc; /* LIGHTER on hover, not darker — dark ground */
+  --tp-primary-muted: rgba(145, 132, 217, 0.14);
+  --tp-on-primary: #e9e9ed; /* never pure white */
+  --tp-accent-300: #d2cefd;
+  --tp-accent-400: #b5abfc;
+  --tp-accent-700: #5d5294;
+  --tp-accent-900: #2b2741;
+
+  /* Roles folded into the accent by the mono rule */
+  --tp-success: #9184d9;
+  --tp-success-muted: rgba(145, 132, 217, 0.14);
+  --tp-gold: #9184d9;
+  --tp-accent-warm: #9184d9;
+  --tp-accent-warm-muted: rgba(145, 132, 217, 0.14);
+  --tp-accent-violet: #9184d9;
+  --tp-accent-violet-muted: rgba(145, 132, 217, 0.14);
+  /* Also declared for the first time: StopsSection wrote
+     `var(--tp-warning, #b7791f)` and always got the amber literal. */
+  --tp-warning: #d2cefd;
+  --tp-warning-muted: rgba(145, 132, 217, 0.14);
+
+  /* Danger — the ONE colour kept, against the mono rule and on purpose.
+     The designs render Delete as a neutral outline; a destructive action
+     that looks like every other action is a worse trade than a palette
+     with two hues in it. Lifted from #C65D4A, which scores 3.7:1 on this
+     ground and fails as body text — #E8705C is 5.9:1, just above the
+     accent's own contrast, and stays recognisably the same hue. */
+  --tp-danger: #E8705C;
+  --tp-danger-muted: rgba(232, 112, 92, 0.14);
+  --tp-danger-border: rgba(232, 112, 92, 0.4);
+
+  /* Elevation. On a dark ground this is an EDGE plus ambient darkness —
+     a soft drop shadow under a dark card is invisible. */
+  --tp-overlay: rgba(0, 0, 0, 0.55);
+  --tp-shadow-sm: 0 0 0 1px #3f424d;
+  --tp-shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0, 0, 0, 0.55);
+  /* Declared: two components referenced --tp-shadow-lg with two DIFFERENT
+     fallbacks, so modals and sheets were quietly inconsistent. */
+  --tp-shadow-lg: 0 0 0 1px #595d6c, 0 20px 60px rgba(0, 0, 0, 0.7);
+
+  /* Radius — 4 small / 8 default / 14 cards (was 8 / 12 / 16). */
+  --tp-radius-sm: 4px;
+  --tp-radius-md: 8px;
+  --tp-radius-lg: 14px;
+
+  /* Spacing. NEW — there was no scale at all, so "use the token, do not
+     hard-code" was unfollowable and every gap is a literal today. 0.7x
+     density; existing literals are migrated screen by screen, not in bulk. */
+  --tp-space-1: 2.8px;
+  --tp-space-2: 5.6px;
+  --tp-space-3: 8.4px;
+  --tp-space-4: 11.2px;
+  --tp-space-5: 16.8px;
+  --tp-space-6: 22.4px;
+
+  /* Type scale. NEW, same reasoning as spacing. Hierarchy is size and
+     space, not weight: headings cap at 500, and 600 is reserved for the
+     9-11px kickers, badges and button labels where it is doing legibility
+     work rather than shouting. */
+  --tp-text-kicker: 9.5px;
+  --tp-text-2xs: 10.5px;
+  --tp-text-xs: 11.5px;
+  --tp-text-sm: 13px;
+  --tp-text-base: 14px;
+  --tp-text-md: 16px;
+  --tp-text-lg: 18px;
+  --tp-text-xl: 22px;
+  --tp-text-2xl: 26px;
+  --tp-weight-regular: 400;
+  --tp-weight-medium: 500;
+  --tp-weight-semibold: 600;
+
+  --tp-map-chrome: #1f2130;
+  /* Inner ring is the GROUND on a dark theme, and the outer ring is the
+     solid accent — primary-muted at 14% is invisible against #161826. */
+  --tp-focus-ring: 0 0 0 2px var(--tp-bg), 0 0 0 4px var(--tp-primary);
 }
 /* Resizable pane drag handles */
 .trip-resize-handle:hover,
@@ -159,7 +239,7 @@ img, svg, canvas { max-width: 100%; }
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #86868b;
+  background: var(--tp-muted);
   animation: tp-typing-bounce 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 .typing-indicator-dot:nth-child(2) {
@@ -206,12 +286,12 @@ img, svg, canvas { max-width: 100%; }
   0%, 100% {
     opacity: 1;
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(201, 123, 99, 0.55);
+    box-shadow: 0 0 0 0 rgba(145, 132, 217, 0.55);
   }
   50% {
     opacity: 0.4;
     transform: scale(1.12);
-    box-shadow: 0 0 0 7px rgba(201, 123, 99, 0);
+    box-shadow: 0 0 0 7px rgba(145, 132, 217, 0);
   }
 }
 .new-trip-corner-cue {

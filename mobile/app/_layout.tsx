@@ -6,12 +6,12 @@ import * as SplashScreen from "expo-splash-screen";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   useFonts,
-  Onest_400Regular,
-  Onest_500Medium,
-  Onest_600SemiBold,
-  Onest_700Bold,
-  Onest_800ExtraBold,
-} from "@expo-google-fonts/onest";
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_800ExtraBold,
+} from "@expo-google-fonts/inter";
 import { UnitsProvider } from "@/lib/units";
 import { ErrorProvider } from "@/lib/errors";
 import { configurePurchases } from "@/lib/purchases";
@@ -47,13 +47,13 @@ configurePurchases();
  * needed rather than on cold start.
  */
 export default function RootLayout() {
-  // Same five Onest weights the web requests in src/app/layout.tsx:7-12.
+  // Same five Inter weights the web requests in src/app/layout.tsx.
   const [fontsLoaded, fontError] = useFonts({
-    Onest_400Regular,
-    Onest_500Medium,
-    Onest_600SemiBold,
-    Onest_700Bold,
-    Onest_800ExtraBold,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold,
   });
 
   // Safety net. app/index.tsx lifts the splash the moment it has routed; this
@@ -80,7 +80,8 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorProvider>
         <UnitsProvider>
-          <StatusBar style="dark" />
+          {/* Nocturne is a dark ground — the status bar glyphs have to be light. */}
+          <StatusBar style="light" />
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: theme.bg },

@@ -1010,6 +1010,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     borderRadius: 999,
     padding: 8,
+    // The only `shadow.sm` site with no edge of its own. `sm` is an inert
+    // object now (see mobile/lib/theme.ts), so on a dark ground this floated
+    // over the map with nothing separating it from the tiles.
+    borderWidth: 1,
+    borderColor: theme.border,
     ...shadow.sm,
   },
 });
