@@ -9,7 +9,13 @@ import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
-import { CollapseAllIcon, DisclosureIcon, ExpandAllIcon, PencilRenameIcon } from '@/components/icons';
+import {
+  CollapseAllIcon,
+  DisclosureIcon,
+  ExpandAllIcon,
+  NavigateIcon,
+  PencilRenameIcon,
+} from '@/components/icons';
 import { buttonStyle } from '@/components/ui/Button';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
@@ -381,8 +387,36 @@ export default function Itinerary({
   }
 
   const totalDist = allLegs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
-  const drivingDays = allLegs.filter((l) => (l.leg_type ?? 'drive') !== 'rest').length;
-  const restDays = allLegs.filter((l) => (l.leg_type ?? 'drive') === 'rest').length;
+  const fuelStopCount = allLegs.reduce(
+    (n, l) => n + l.stops.filter((st) => st.stop_type === 'fuel' && st.status !== 'dismissed').length,
+    0
+  );
+
+  /*
+   * The next fuel stop on the day the driver is on, promoted OUT of the day
+   * card so it is reachable without expanding anything — the one thing you
+   * want off this screen while driving.
+   *
+   * Null when there is none to name: fuel is sourced per leg on day-open, so
+   * a day nobody has opened has nothing to point at. The row is omitted
+   * rather than rendered empty.
+   */
+  const nextStop = useMemo(() => {
+    const leg = legs[0];
+    if (!leg) return null;
+    const stop = leg.stops
+      .filter(
+        (st) =>
+          st.stop_type === 'fuel' && st.status !== 'dismissed' && st.distance_from_start_km != null
+      )
+      .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
+    if (!stop || stop.lat == null || stop.lng == null) return null;
+    return {
+      name: stop.name,
+      distanceKm: stop.distance_from_start_km,
+      href: `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`,
+    };
+  }, [legs]);
 
   return (
     <div>
@@ -515,81 +549,52 @@ export default function Itinerary({
                 </span>
               </button>
             )}
-          </div>
-        )}
-        {(trip.start_date || trip.end_date) && (
-          <div style={{ fontSize: 13, color: 'var(--tp-muted)', marginTop: 6 }}>
-            {[trip.start_date, trip.end_date].filter(Boolean).join(' → ')}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 20, marginTop: 14, flexWrap: 'wrap' }}>
-          {([
-            // Primary total uses Distance so imperial users see the (X mi)
-            // secondary line under the km value.
-            {
-              label: 'TOTAL',
-              value: (
-                <Distance
-                  km={totalDist}
-                  primaryOverride={`~${totalDist.toLocaleString()} km`}
-                />
-              ),
-            },
-            // Show total days, with driving/rest breakdown when rest days exist.
-            ...(restDays > 0
-              ? [
-                  { label: 'TOTAL DAYS', value: `${allLegs.length}` as React.ReactNode },
-                  { label: 'DRIVING', value: `${drivingDays}` as React.ReactNode },
-                  { label: 'BASE', value: `${restDays}` as React.ReactNode },
-                ]
-              : [{ label: 'DAYS', value: `${allLegs.length}` as React.ReactNode }]),
-          ] as Array<{ label: string; value: React.ReactNode }>).map((s, i) => (
-            <div key={i}>
-              <div
+            {/*
+              Expand/Collapse All lives HERE, beside the rename pencil, rather
+              than as a row of its own below the header — it acts on the list,
+              so it belongs with the other thing that acts on the whole trip.
+              One control, not two: "Expand All" and "Collapse All" sat side by
+              side with only one of them ever meaningful.
+            */}
+            {!completed && (
+              <button
+                onClick={allExpanded ? collapseAll : expandAll}
+                title={allExpanded ? 'Collapse every day' : 'Expand every day'}
+                aria-label={allExpanded ? 'Collapse every day' : 'Expand every day'}
                 style={{
-                  fontSize: 9,
-                  fontWeight: 700,
-                  letterSpacing: '0.1em',
-                  color: 'var(--tp-subtle)',
+                  ...buttonStyle('secondary'),
+                  width: 30,
+                  height: 30,
+                  padding: 0,
+                  flexShrink: 0,
+                  color: 'var(--tp-muted)',
                 }}
               >
-                {s.label}
-              </div>
-              <div
-                style={{ fontSize: 14, fontWeight: 600, color: 'var(--tp-text)', marginTop: 2 }}
-              >
-                {s.value}
-              </div>
-            </div>
-          ))}
+                {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
+              </button>
+            )}
+          </div>
+        )}
+        {/* One line, not a row of stat blocks: dates, distance, days, fuel. */}
+        <div
+          style={{
+            fontSize: 11.5,
+            color: 'var(--tp-subtle)',
+            fontVariantNumeric: 'tabular-nums',
+            marginTop: 6,
+          }}
+        >
+          {[
+            [trip.start_date, trip.end_date].filter(Boolean).join(' → '),
+            totalDist > 0 ? `~${Math.round(totalDist).toLocaleString()} km` : '',
+            allLegs.length ? `${allLegs.length} day${allLegs.length === 1 ? '' : 's'}` : '',
+            fuelStopCount ? `${fuelStopCount} fuel` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </div>
-      </div>
 
-      {/*
-        One control, not two. "Expand All" and "Collapse All" sat side by side
-        with only one of them ever meaningful — whichever state you were
-        already in, half the pair did nothing. It is a toggle, so it is one
-        button that shows the action available.
-      */}
-      {!completed && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <button
-            onClick={allExpanded ? collapseAll : expandAll}
-            title={allExpanded ? 'Collapse every day' : 'Expand every day'}
-            aria-label={allExpanded ? 'Collapse every day' : 'Expand every day'}
-            style={{
-              ...buttonStyle('secondary'),
-              width: 30,
-              height: 30,
-              padding: 0,
-              color: 'var(--tp-muted)',
-            }}
-          >
-            {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
-          </button>
-        </div>
-      )}
+      </div>
 
       {/* Past days, collapsed by default so the trip opens at where the driver
           actually is. On a live trip the header says "behind you" rather than
@@ -879,6 +884,64 @@ export default function Itinerary({
             }
           `}</style>
         </div>
+      )}
+
+      {/*
+        NEXT STOP, promoted out of the day card. The one thing a driver wants
+        off this screen without opening anything.
+
+        It opens Google Maps, so the accessible name says so even though the
+        visible row is compact — the glyph alone cannot announce that tapping
+        leaves the app.
+      */}
+      {nextStop && !completed && !readonly && (
+        <a
+          href={nextStop.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${nextStop.name} in Google Maps`}
+          style={{
+            ...buttonStyle(),
+            display: 'flex',
+            width: '100%',
+            boxSizing: 'border-box',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 14px',
+            marginTop: 14,
+          }}
+        >
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <span
+              style={{
+                fontSize: 9.5,
+                fontWeight: 600,
+                letterSpacing: '0.13em',
+                color: 'var(--tp-subtle)',
+              }}
+            >
+              NEXT STOP
+            </span>
+            <span
+              style={{
+                fontSize: 13.5,
+                fontWeight: 500,
+                color: 'var(--tp-text)',
+                fontVariantNumeric: 'tabular-nums',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {nextStop.name} · fuel
+              {nextStop.distanceKm != null ? ` · ${Math.round(nextStop.distanceKm)} km` : ''}
+            </span>
+          </span>
+          <span aria-hidden style={{ lineHeight: 0, flexShrink: 0 }}>
+            <NavigateIcon size={18} />
+          </span>
+        </a>
       )}
 
       {/* Explicit scroll tail — padding on the pane scroller alone is unreliable
