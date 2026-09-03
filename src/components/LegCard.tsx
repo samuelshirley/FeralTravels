@@ -107,6 +107,19 @@ export default function LegCard({
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === 'rest';
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
+
+  /*
+   * What is left in the tank once this day is driven, when the day can be
+   * driven at all. `range_remaining_start_km` is derived server-side and is
+   * PESSIMISTIC where an earlier day has not been sourced yet, so a
+   * non-negative result here can never be a false positive: if this says the
+   * day fits, it fits. The negative case is deliberately NOT rendered — that
+   * number can be wrong, and Finn's stops already say what to do about it.
+   */
+  const tankSpareKm =
+    !isRestDay && leg.range_remaining_start_km != null && leg.distance_km != null
+      ? leg.range_remaining_start_km - leg.distance_km
+      : null;
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
@@ -361,6 +374,11 @@ export default function LegCard({
                 }}
               >
                 {driveHours} hrs
+              </span>
+            ) : null}
+            {tankSpareKm != null && tankSpareKm >= 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--tp-subtle)' }}>
+                <Distance km={Math.round(tankSpareKm)} layout="inline" /> to spare
               </span>
             ) : null}
             {isRestDay && leg.end_name && (

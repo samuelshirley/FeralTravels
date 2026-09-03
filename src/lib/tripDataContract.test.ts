@@ -88,6 +88,7 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
 function makeLegWithDetails(overrides: Partial<LegWithDetails> = {}): LegWithDetails {
   return {
     ...makeLeg(),
+    range_remaining_start_km: null,
     costs: [],
     links: [],
     routes: [],

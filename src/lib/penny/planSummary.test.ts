@@ -21,6 +21,7 @@ function mkLeg(partial: {
   const id = `leg-${legSeq++}`;
   return {
     id,
+    range_remaining_start_km: null,
     trip_id: 'trip-1',
     sort_order: legSeq,
     leg_type: partial.leg_type,

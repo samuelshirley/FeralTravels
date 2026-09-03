@@ -21,6 +21,7 @@ import {
 } from '@/lib/penny/schedule';
 import { getDirections } from '@/lib/google/directions';
 import { inferInsertAfterSort } from '@/lib/penny/legPlacement';
+import { rangeRemainingAtLegStarts } from '@/lib/penny/fuelTankState';
 import {
   trips,
   legs,
@@ -33,6 +34,7 @@ import {
   pois,
   legConstraints,
   users,
+  vehicles,
   chatHistory,
   type GeoJSONLineString,
 } from '@/server/db/schema';
@@ -338,8 +340,17 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
       )[0]?.timezone ?? null
     : null;
 
-  const [legRows, costRows, linkRows, routeRows, routeLinkRows, stopRows, taskRows, constraintRows] =
-    await Promise.all([
+  const [
+    legRows,
+    costRows,
+    linkRows,
+    routeRows,
+    routeLinkRows,
+    stopRows,
+    taskRows,
+    constraintRows,
+    vehicleRows,
+  ] = await Promise.all([
       db.select().from(legs).where(eq(legs.tripId, tripId)).orderBy(asc(legs.sortOrder)),
       db
         .select({ c: costs })
@@ -377,6 +388,16 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
         .innerJoin(legs, eq(legConstraints.legId, legs.id))
         .where(eq(legs.tripId, tripId))
         .orderBy(asc(legConstraints.createdAt)),
+      // The vehicle's single fuel range, for the per-leg tank figure below.
+      // One row by id, joined into the existing parallel block rather than
+      // awaited after it.
+      trip.vehicle_id
+        ? db
+            .select({ rangeKm: vehicles.rangeKm })
+            .from(vehicles)
+            .where(eq(vehicles.id, trip.vehicle_id))
+            .limit(1)
+        : Promise.resolve([] as { rangeKm: number | null }[]),
     ]);
 
   const costsByLeg = new Map<string, Cost[]>();
@@ -450,6 +471,38 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     }
   }
 
+  /*
+   * Range left in the tank at the START of each day.
+   *
+   * DERIVED, never stored — same call as `last_day_iso` and for the same
+   * reason CLAUDE.md gives about `trips.trip_status`. Every input is already
+   * in memory here (legs in sort order, every stop for the trip), so this
+   * costs one pass and cannot go stale.
+   *
+   * The figure is PESSIMISTIC where a preceding day has not been sourced yet:
+   * an unsourced day is indistinguishable from a day that genuinely needed no
+   * stop, so both read as "drove that far, no refuel". That asymmetry is what
+   * makes it safe on screen — see the note on `rangeRemainingAtLegStarts`.
+   */
+  const rangeKm = vehicleRows[0]?.rangeKm ?? null;
+  const remainingAtStart = rangeRemainingAtLegStarts(
+    legRows.map((row) => {
+      const legStops = stopsByLeg.get(row.id) || [];
+      const latestFuel = legStops
+        .filter((st) => st.stop_type === 'fuel' && st.status !== 'dismissed' && st.distance_from_start_km != null)
+        .sort((a, b) => (b.distance_from_start_km ?? 0) - (a.distance_from_start_km ?? 0))[0];
+      return {
+        distanceKm: row.distanceKm,
+        latestFuelDistanceKm: latestFuel?.distance_from_start_km ?? null,
+        declaredBurnedKmAtStart:
+          trip.declared_range_leg_id === row.id && trip.declared_range_km != null && rangeKm != null
+            ? Math.max(0, rangeKm - trip.declared_range_km)
+            : null,
+      };
+    }),
+    rangeKm
+  );
+
   const fullLegs: LegWithDetails[] = legRows.map((row, index) => {
     const leg = legRow(row);
     // Server-side calendar-date assignment: every leg (driving or rest) is one
@@ -475,6 +528,7 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     return {
       ...leg,
       date_iso,
+      range_remaining_start_km: remainingAtStart[index] ?? null,
       costs: costsByLeg.get(leg.id) || [],
       links: linksByLeg.get(leg.id) || [],
       routes: routesByLeg.get(leg.id) || [],

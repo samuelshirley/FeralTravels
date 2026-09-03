@@ -448,6 +448,23 @@ export interface Task {
 
 // Frontend-friendly types with parsed JSON fields
 export interface LegWithDetails extends Leg {
+  /**
+   * Range left in the tank at the START of this day, in km. Null when the
+   * vehicle has no `range_km`.
+   *
+   * DERIVED at read time in `getTripFull`, never stored — the same contract as
+   * `date_iso`, and for the reason CLAUDE.md gives about `trips.trip_status`.
+   *
+   * PESSIMISTIC BY CONSTRUCTION. A preceding day that has not been sourced yet
+   * is indistinguishable from one that genuinely needed no stop, so both count
+   * as "drove that far, no refuel" and this comes out LOW. That is what makes
+   * it safe to render: "you can finish this day on the tank" can never be a
+   * false positive. The inverse claim is NOT safe to make from this number.
+   *
+   * May be NEGATIVE — the day cannot be completed on the fuel in the tank,
+   * which is exactly when Finn places a stop.
+   */
+  range_remaining_start_km: number | null;
   costs: Cost[];
   links: Link[];
   routes: RouteWithLinks[];

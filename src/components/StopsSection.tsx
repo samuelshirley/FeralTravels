@@ -288,7 +288,7 @@ export default function StopsSection({
                   // instead of the ambiguous "no stops yet" (which reads as
                   // "nothing happened"). Only claims what the tank math checked;
                   // no promises about when the next fuel stop comes.
-                  'No fuel stop needed on this day — it fits within your range (assuming a full tank at trip start).'
+                  'No fuel stop needed on this day — it fits within the fuel you have left.'
                 : readonly
                   ? 'No stops.'
                   : 'No stops yet — fuel stops appear here automatically.'}
