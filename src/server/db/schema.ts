@@ -178,12 +178,22 @@ export const emailOtpCodes = pgTable(
  * first send of that window. Both reset once the window lapses (see
  * OTP_THROTTLE_WINDOW_MS in server/auth/otp.ts). `lastSentAt` is what the
  * cooldown gap is measured from.
+ *
+ * Both are `timestamptz`, unlike almost every other timestamp in this file,
+ * and that is deliberate. A `timestamp` without a zone stores whatever wall
+ * clock wrote it and drizzle reads it back as UTC — the two agree only on a
+ * UTC database, which Neon is, so the defect is invisible in production and
+ * live everywhere else. That is exactly how `email_otp_codes.created_at`
+ * makes `getExistingOtpAgeMs` return a NEGATIVE age on a non-UTC cluster,
+ * pinning the old cooldown open forever. This table exists to fix that class
+ * of bug; repeating it here would have been absurd. The rest of the schema is
+ * a separate audit.
  */
 export const otpSendThrottle = pgTable('otp_send_throttle', {
   email: text('email').primaryKey(),
   sends: integer('sends').default(0).notNull(),
-  windowStartedAt: timestamp('window_started_at').defaultNow().notNull(),
-  lastSentAt: timestamp('last_sent_at').defaultNow().notNull(),
+  windowStartedAt: timestamp('window_started_at', { withTimezone: true }).defaultNow().notNull(),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /**

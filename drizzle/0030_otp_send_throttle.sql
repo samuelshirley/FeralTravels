@@ -15,6 +15,6 @@
 CREATE TABLE IF NOT EXISTS "otp_send_throttle" (
 	"email" text PRIMARY KEY NOT NULL,
 	"sends" integer DEFAULT 0 NOT NULL,
-	"window_started_at" timestamp DEFAULT now() NOT NULL,
-	"last_sent_at" timestamp DEFAULT now() NOT NULL
+	"window_started_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_sent_at" timestamp with time zone DEFAULT now() NOT NULL
 );
