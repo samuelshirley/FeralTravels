@@ -5,6 +5,7 @@ import {
   ArrowsOutLineVertical,
   CaretDown,
   CaretLeft,
+  CrosshairSimple,
   GasPump,
   Info,
   MapPin,
@@ -232,4 +233,9 @@ export function InfoIcon({ color = 'currentColor', size = 15, weight = 'regular'
 /** The "add something" glyph on a collapsed disclosure row. */
 export function PlusIcon({ color = 'currentColor', size = 13, weight = 'regular' }: IconProps) {
   return <Plus color={color} size={size} weight={weight} />;
+}
+
+/** Recenter the map on the whole route. */
+export function CrosshairIcon({ color = 'currentColor', size = 16, weight = 'regular' }: IconProps) {
+  return <CrosshairSimple color={color} size={size} weight={weight} />;
 }

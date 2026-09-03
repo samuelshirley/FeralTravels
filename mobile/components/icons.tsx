@@ -6,6 +6,7 @@ import {
   ArrowsOutLineVerticalIcon,
   CaretDownIcon,
   CaretLeftIcon,
+  CrosshairSimpleIcon,
   GasPumpIcon,
   InfoIcon as PhosphorInfoIcon,
   MapPinIcon,
@@ -168,4 +169,9 @@ export function InfoIcon({ color, size = 15, weight = "regular" }: IconProps) {
 /** The "add something" glyph on a collapsed disclosure row. */
 export function PlusIcon({ color, size = 13, weight = "regular" }: IconProps) {
   return <PhosphorPlusIcon color={color} size={size} weight={weight} />;
+}
+
+/** Recenter the map on the whole route. */
+export function CrosshairIcon({ color, size = 16, weight = "regular" }: IconProps) {
+  return <CrosshairSimpleIcon color={color} size={size} weight={weight} />;
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -23,6 +25,9 @@ import { theme, shadow } from "@/lib/theme";
 import { clusterPixels, type PixelPoint } from "@/shared/lib/mapClustering";
 import { haversineKm } from "@/shared/lib/polyline";
 import { font } from "@/lib/typography";
+import { formatDate, parseISODate } from "@/shared/lib/dates";
+import { useUnits } from "@/lib/units";
+import { CrosshairIcon, ExternalLinkIcon, NavigateIcon } from "@/components/icons";
 import type {
   GeoJSONLineString,
   LegWithDetails,
@@ -296,6 +301,9 @@ export default function TripMap({
   onLegSelect,
   onStopSelect,
 }: TripMapProps) {
+  // Day-chip labels and the sheet's distances follow the user's unit choice,
+  // same as every other distance in the app.
+  const { units } = useUnits();
   const mapRef = useRef<MapView | null>(null);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -582,6 +590,67 @@ export default function TripMap({
   // user hasn't browsed has no stops to plot. Show a quiet hint so the empty map
   // reads as intentional rather than broken (see option B writeup).
   const hasLoadedStops = stopPoints.length > 0;
+
+  /*
+   * The app-drawn chrome. Everything below is OURS, not the map's — day chips,
+   * a recenter button and the next-stop sheet — because the tiles are Apple's
+   * and we cannot put anything on them.
+   */
+
+  /** One chip per day. Same order as the itinerary; label from the leg date. */
+  const dayChips = useMemo(
+    () =>
+      legs.map((leg, i) => ({
+        id: leg.id,
+        label: formatDate(parseISODate(leg.date_iso), units) || `Day ${i + 1}`,
+      })),
+    [legs, units]
+  );
+
+  /**
+   * The sheet's subject: the next fuel stop on the SELECTED day, or the
+   * current one when nothing is selected. Null when the day has no sourced
+   * stop — the sheet is omitted rather than shown empty, the same rule the
+   * itinerary's NEXT STOP row follows.
+   */
+  const sheetStop = useMemo(() => {
+    const leg = legs.find((l) => l.id === selectedLegId) ?? legs[0];
+    if (!leg) return null;
+    const stop = leg.stops
+      .filter(
+        (st) =>
+          st.stop_type === "fuel" &&
+          st.status !== "dismissed" &&
+          st.distance_from_start_km != null &&
+          st.lat != null &&
+          st.lng != null
+      )
+      .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
+    if (!stop) return null;
+    const legKm = leg.distance_km ?? null;
+    const fromStart = stop.distance_from_start_km ?? 0;
+    return {
+      name: stop.name,
+      fromStartKm: fromStart,
+      toEndKm: legKm != null ? Math.max(0, legKm - fromStart) : null,
+      endName: leg.end_name,
+      href: `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`,
+      legLabel: formatDate(parseISODate(leg.date_iso), units) || null,
+      legStart: leg.start_name,
+      legEnd: leg.end_name,
+      legKm,
+      legHours: leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null,
+    };
+  }, [legs, selectedLegId, units]);
+
+  /** Back to the whole route. The one control that undoes any panning. */
+  const recenter = useCallback(() => {
+    if (fitCoords.length === 0) return;
+    mapRef.current?.fitToCoordinates(fitCoords, {
+      edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
+      animated: true,
+    });
+  }, [fitCoords]);
   const showNoStopsHint = ready && !loadError && legs.length > 0 && !hasLoadedStops;
 
   return (
@@ -868,6 +937,91 @@ export default function TripMap({
         </View>
       ) : null}
 
+      {/* Day chips. Tapping one selects that leg, which the existing
+          `selectedLegId` effect already pans to — no new camera logic. */}
+      {ready && dayChips.length > 1 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.dayChipBar}
+          contentContainerStyle={styles.dayChipRow}
+        >
+          {dayChips.map((chip) => {
+            const active = chip.id === selectedLegId;
+            return (
+              <Pressable
+                key={chip.id}
+                onPress={() => onLegSelect(chip.id)}
+                style={[styles.dayChip, active && styles.dayChipActive]}
+              >
+                <Text style={[styles.dayChipText, active && styles.dayChipTextActive]}>
+                  {chip.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {/* Recenter — the one control that undoes any panning. */}
+      {ready ? (
+        <Pressable
+          onPress={recenter}
+          accessibilityLabel="Recenter the map on the whole route"
+          style={styles.recenter}
+        >
+          <CrosshairIcon color={theme.text} size={16} />
+        </Pressable>
+      ) : null}
+
+      {/* The next-stop sheet. Omitted when the day has no sourced stop —
+          the same rule the itinerary's NEXT STOP row follows. */}
+      {ready && sheetStop ? (
+        <View style={styles.sheet}>
+          <Text style={styles.sheetKicker}>NEXT STOP · FUEL</Text>
+          <Text style={styles.sheetName} numberOfLines={1}>
+            {sheetStop.name}
+          </Text>
+          <Text style={styles.sheetMeta} numberOfLines={1}>
+            {Math.round(sheetStop.fromStartKm)} km from start
+            {sheetStop.toEndKm != null && sheetStop.endName
+              ? ` · ${Math.round(sheetStop.toEndKm)} km to ${sheetStop.endName}`
+              : ""}
+          </Text>
+
+          {/* Full width, on its OWN row: at 402px a labelled button and the
+              two-clause meta line above cannot share a row without the
+              distances truncating. */}
+          <Pressable
+            onPress={() => void Linking.openURL(sheetStop.href)}
+            accessibilityRole="link"
+            accessibilityLabel={`Open ${sheetStop.name} in Google Maps`}
+            style={styles.sheetAction}
+          >
+            <NavigateIcon color={theme.accent300} size={15} />
+            <Text style={styles.sheetActionText}>Open {sheetStop.name} in Google Maps</Text>
+            <ExternalLinkIcon color={theme.accent300} size={13} />
+          </Pressable>
+
+          {sheetStop.legLabel ? (
+            <View style={styles.sheetFootRow}>
+              <Text style={styles.sheetFoot} numberOfLines={1}>
+                {[
+                  sheetStop.legLabel,
+                  sheetStop.legStart && sheetStop.legEnd
+                    ? `${sheetStop.legStart} → ${sheetStop.legEnd}`
+                    : null,
+                  sheetStop.legKm != null ? `${Math.round(sheetStop.legKm)} km` : null,
+                  sheetStop.legHours ? `${sheetStop.legHours} h` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       {trailsLoading && ready ? (
         <View style={styles.trailsBadge} pointerEvents="none">
           <Spinner />
@@ -1023,6 +1177,86 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12,
     color: theme.muted,
+  },
+  /* ── App-drawn chrome. The tiles are Apple's; everything here is ours. ── */
+  dayChipBar: { position: "absolute", top: 12, left: 12, right: 60, maxHeight: 34 },
+  dayChipRow: { flexDirection: "row", gap: 8, paddingRight: 12 },
+  dayChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    // 90% so the tiles show through slightly and the chip reads as floating
+    // ON the map rather than as a bar bolted over it.
+    backgroundColor: "rgba(35, 37, 50, 0.9)",
+  },
+  dayChipActive: { borderColor: theme.primary, backgroundColor: theme.accent900 },
+  dayChipText: { fontFamily: font.medium, fontSize: 12, color: theme.muted },
+  dayChipTextActive: { color: theme.accent300 },
+  recenter: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: "rgba(35, 37, 50, 0.9)",
+  },
+  sheet: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    padding: 14,
+    borderRadius: theme.radiusLg,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+    ...shadow.md,
+  },
+  sheetKicker: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  sheetName: { fontSize: 17, fontFamily: font.medium, color: theme.text, marginTop: 3 },
+  sheetMeta: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: theme.muted,
+    fontVariant: ["tabular-nums"],
+    marginTop: 3,
+  },
+  sheetAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 11,
+    borderRadius: theme.radiusMd,
+    borderWidth: 1,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
+  },
+  sheetActionText: { fontFamily: font.medium, fontSize: 13, color: theme.accent300 },
+  sheetFootRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.neutral900,
+  },
+  sheetFoot: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
   },
   trailsBadge: {
     position: "absolute",
