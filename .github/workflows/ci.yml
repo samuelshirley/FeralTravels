@@ -223,6 +223,34 @@ jobs:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: npm run db:migrate
 
+      # Turn paywall enforcement ON for the tested preview.
+      #
+      # It has to be on: e2e/subscriptions.spec.ts ages an account, plants spend
+      # and writes a subscription row, then asserts the wall appears — and with
+      # the switch off `applySwitch` hands every one of them full access. Six
+      # enforcement specs fail, and the ones asserting the ABSENCE of a wall pass
+      # for no reason at all, which is the worse half: they would keep passing
+      # with the paywall completely broken.
+      #
+      # This used to be `-e PAYWALL_ENABLED="1"` on the deploy below. The switch
+      # moved into `app_meta.paywall_enabled` on 2026-09-02 so that turning it
+      # OFF stops needing a redeploy, and that silently disarmed the flag — the
+      # `-e` was still there and nothing read it any more. This is the same
+      # decision expressed against the thing that now holds it.
+      #
+      # A test-only env override in switch.ts would have been a smaller change.
+      # It would also mean the suite exercised a path production does not use,
+      # and would put back the second source of truth that moving the switch
+      # removed. The suite tests what ships; what ships reads a row.
+      #
+      # BEFORE the deploy, so the 30s read cache in switch.ts is irrelevant —
+      # the first read any instance makes already sees it. Both deployments
+      # below share this Neon branch, so one write covers both.
+      - name: Turn the paywall ON for the tested preview
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+        run: node scripts/set-paywall-flag.mjs on
+
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
 
@@ -273,19 +301,18 @@ jobs:
           # To test the blocked state instead: restore `-e WEB_APP_ENABLED="0"`
           # below AND drop E2E_WEB_UI from the e2e job.
           #
-          # PAYWALL_ENABLED is OFF by default, deliberately — merging the paywall
-          # must not paywall anyone until there is something to buy. The tested
-          # preview is the one place that default is wrong: e2e/subscriptions.spec.ts
-          # sets up an account's age, spend and subscription row and asserts the
-          # wall appears, and with the switch off `applySwitch` hands every one of
-          # them full access. Six specs failed on exactly that, and the five that
-          # assert the ABSENCE of a wall passed for no reason at all — which is
-          # the worse half, since they would have kept passing with the paywall
-          # entirely broken.
+          # The paywall is switched on for this preview by the step above, which
+          # writes `app_meta.paywall_enabled` on the Neon branch. It is NOT an
+          # env var here any more.
+          #
+          # `-e PAYWALL_ENABLED="1"` used to be on both deploys below and has
+          # been removed rather than left: after the switch moved into the
+          # database on 2026-09-02 nothing read it, so it was a line that looked
+          # like it controlled the paywall and did not. That is the same trap
+          # the stale variable in Vercel is being deleted for.
           URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
-            -e PAYWALL_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
@@ -308,7 +335,6 @@ jobs:
           BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
-            -e PAYWALL_ENABLED="1" \
             -e WEB_APP_ENABLED="0" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
@@ -883,9 +909,19 @@ jobs:
           # reproduce it until the local database was pinned to UTC — see
           # mobile/maestro/read-otp.js for why, and note the underlying
           # `timestamp`-without-time-zone defect it describes.
+          # TRIP_NAME comes from the fixture step, which emitted the name it
+          # actually seeded. sign-in.yaml asserts on it, and it used to be the
+          # literal `E2E Fixture Trip` — it became a variable when
+          # `ios-e2e-local.sh screenshots` needed the same graph under a
+          # customer-readable name, the local runner was taught to pass it and
+          # this was not, and the assertion then could not match on any CI run.
+          # Passed from the fixture rather than restated here so the two cannot
+          # drift; src/lib/maestroFlowParams.test.ts fails if a flow references
+          # a variable no runner supplies.
           maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
             -e APP_ID=com.feraltravels.ios \
             -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
             -e BASE_URL="$E2E_BASE_URL" \
             -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
             --format junit \
