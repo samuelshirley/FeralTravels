@@ -200,12 +200,14 @@ export default function VehicleProfileSection() {
               style={{
                 marginTop: 12,
                 width: '100%',
-                padding: '10px 14px',
-                background: 'var(--tp-primary-muted)',
-                border: '1px dashed rgba(78, 122, 176, 0.45)',
-                borderRadius: 8,
-                color: 'var(--tp-primary)',
-                fontWeight: 600,
+                padding: '11px 14px',
+                background: 'transparent',
+                // Dashed: this adds something that is not there yet, which is a
+                // different act from the solid-outlined actions around it.
+                border: '1px dashed var(--tp-primary)',
+                borderRadius: 'var(--tp-radius-md)',
+                color: 'var(--tp-accent-300)',
+                fontWeight: 500,
                 fontSize: 13,
                 cursor: 'pointer',
               }}

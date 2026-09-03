@@ -362,14 +362,18 @@ export function VerifyForm({
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-          marginTop: 20,
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginTop: 18,
+          paddingTop: 14,
+          borderTop: '1px solid var(--tp-neutral-800)',
           fontSize: 13,
-          color: 'var(--tp-muted)',
+          color: 'var(--tp-neutral-500)',
         }}
       >
-        Didn&apos;t get it?
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          Didn&apos;t get it?
         <form action={resendOtpAction} style={{ display: 'inline' }}>
           <input type="hidden" name="email" value={email} />
           <input type="hidden" name="callbackUrl" value={callbackUrl} />
@@ -399,10 +403,7 @@ export function VerifyForm({
             {resendBlocked ? `Resend in ${secondsLeft}s` : 'Resend code'}
           </button>
         </form>
-      </div>
-
-      {/* Back link */}
-      <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: 'var(--tp-muted)' }}>
+        </span>
         <a
           href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
           className="auth-link"

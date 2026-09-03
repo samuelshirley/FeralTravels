@@ -634,19 +634,20 @@ const styles = StyleSheet.create({
   soloHintText: { fontFamily: font.regular, color: theme.muted, fontSize: 12, lineHeight: 17 },
   cardList: { gap: 10 },
   newFormWrap: { marginTop: 12 },
+  // Dashed: this adds something that is not there yet, which is a different
+  // act from the solid-outlined actions around it.
   addButton: {
     marginTop: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     paddingHorizontal: 14,
-    backgroundColor: theme.primaryMuted,
+    backgroundColor: "transparent",
     borderWidth: 1,
     borderStyle: "dashed",
-    // src/components/VehicleProfileSection.tsx:207 — 1px dashed
-    borderColor: "rgba(78, 122, 176, 0.45)",
-    borderRadius: 8,
+    borderColor: theme.primary,
+    borderRadius: theme.radiusMd,
     alignItems: "center",
   },
-  addButtonText: { color: theme.primary, fontFamily: font.semibold, fontSize: 13 },
+  addButtonText: { color: theme.accent300, fontFamily: font.medium, fontSize: 13 },
 
   vehicleCard: {
     borderWidth: 1,
