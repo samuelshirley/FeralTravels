@@ -169,6 +169,19 @@ interface OnboardingAnswerResult {
  *   typing     → first text chunk or tool event arrived (Penny is actively responding)
  *   responded  → Penny's full response is complete (SSE `applied` event)
  */
+/**
+ * The three on-trip prompt rows, and the on-trip equivalents of onboarding's
+ * first-run ones. Each is a DIFFERENT shape of request rather than three
+ * phrasings of the same one — a plan, a position report with a tank state, and
+ * an edit — because their job is to show the range of what Penny takes, not to
+ * be tapped verbatim.
+ */
+const CHAT_STARTERS = [
+  'Girona to Lisbon, 5 h days',
+  "I'm in Reims, 150 km in the tank",
+  'Add a rest day in Strasbourg',
+] as const;
+
 type DeliveryStatus = 'queued' | 'sending' | 'delivered' | 'read' | 'typing' | 'responded';
 
 interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
@@ -632,6 +645,13 @@ export default function ChatPanel({
       !!m.content,
   );
   const replanWaiting = loading && !pennyStreamingText;
+  /*
+   * Whether the identity strip reads THINKING or READY. Deliberately the SAME
+   * expression the transcript's typing bubble uses (see its render below) plus
+   * the streaming case — a strip that could say READY while three dots bounced
+   * would be worse than no strip at all.
+   */
+  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -1729,7 +1749,16 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* Header */}
+      {/*
+        Penny's identity strip. The avatar was a two-hue gradient
+        (primary → success) — under the mono palette those are now the same
+        colour, so it is a ring with a soft glow instead, which is also what
+        distinguishes it from the account avatar in the header above.
+
+        The status on the right is the ONLY place the panel says whether Penny
+        is working. It replaces nothing — before this you had to notice the
+        typing dots appear in the transcript.
+      */}
       <div
         style={{
           padding: '12px 16px',
@@ -1742,36 +1771,63 @@ export default function ChatPanel({
       >
         <div
           style={{
-            width: 28,
-            height: 28,
+            width: 34,
+            height: 34,
             borderRadius: '50%',
-            background: 'linear-gradient(145deg, var(--tp-primary) 0%, var(--tp-success) 100%)',
+            background: 'var(--tp-accent-900)',
+            border: '1px solid var(--tp-primary)',
+            boxShadow: '0 0 12px rgba(145, 132, 217, 0.35)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--tp-on-primary)',
-            fontWeight: 800,
-            fontSize: 13,
+            color: 'var(--tp-accent-300)',
+            fontWeight: 600,
+            fontSize: 14,
             flexShrink: 0,
           }}
         >
           P
         </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tp-text)', lineHeight: 1.1 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--tp-text)', lineHeight: 1.1 }}>
             Penny
           </div>
           <div
             style={{
-              fontSize: 10,
+              fontSize: 11,
               color: 'var(--tp-subtle)',
-              
-              letterSpacing: '0.04em',
+              letterSpacing: '0.02em',
               marginTop: 2,
             }}
           >
-            Feral Travels AI
+            Feral Travels AI · plans your days
           </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexShrink: 0,
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: '0.13em',
+            color: pennyThinking ? 'var(--tp-accent-300)' : 'var(--tp-subtle)',
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: pennyThinking ? 'var(--tp-accent-300)' : 'var(--tp-primary)',
+              // Same timing as the transcript's typing dots, so the two read
+              // as one state rather than two things happening.
+              animation: pennyThinking ? 'tp-pulse 1.2s ease-in-out infinite' : undefined,
+            }}
+          />
+          {pennyThinking ? 'THINKING' : 'READY'}
         </div>
       </div>
 
@@ -1830,8 +1886,64 @@ export default function ChatPanel({
             )}
           </div>
         )}
-        {messages.length === 0 && (
-          <div />
+        {/*
+          The empty state. It was a bare <div /> — a chat panel with nothing in
+          it and no indication of what to type, which is the moment a new user
+          decides whether this app does anything.
+
+          The rows PREFILL the composer and focus it rather than sending: the
+          examples are shapes to edit, not messages anyone actually wants to
+          send verbatim. Same channel `+ Add to this day` uses.
+        */}
+        {messages.length === 0 && !onboardingUiActive && (
+          <div style={{ padding: '4px 0 12px' }}>
+            <div
+              style={{
+                fontSize: 9.5,
+                fontWeight: 600,
+                letterSpacing: '0.13em',
+                color: 'var(--tp-subtle)',
+                marginBottom: 8,
+              }}
+            >
+              START HERE
+            </div>
+            <div
+              style={{
+                fontSize: 19,
+                fontWeight: 500,
+                lineHeight: 1.3,
+                color: 'var(--tp-text)',
+                textWrap: 'pretty',
+                marginBottom: 16,
+              }}
+            >
+              Tell Penny where you&apos;re going and how far you want to drive each day.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {CHAT_STARTERS.map((starter) => (
+                <button
+                  key={starter}
+                  type="button"
+                  onClick={() => {
+                    setInput(starter);
+                    textareaRef.current?.focus();
+                  }}
+                  style={{
+                    ...buttonStyle('secondary'),
+                    justifyContent: 'flex-start',
+                    textAlign: 'left',
+                    padding: '12px 14px',
+                    fontSize: 13.5,
+                    fontWeight: 400,
+                    color: 'var(--tp-muted)',
+                  }}
+                >
+                  &ldquo;{starter}&rdquo;
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         {messages.map((msg, msgIdx) => {

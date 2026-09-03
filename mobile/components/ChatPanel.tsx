@@ -136,6 +136,19 @@ interface ChatPanelProps {
   onActivity: (kind: "thinking" | "response" | "error") => void;
 }
 
+/**
+ * The three on-trip prompt rows, and the on-trip equivalents of onboarding's
+ * first-run ones. Each is a DIFFERENT shape of request rather than three
+ * phrasings of one — a plan, a position report with a tank state, and an edit
+ * — because their job is to show the range of what Penny takes, not to be
+ * tapped verbatim. Keep in step with src/components/ChatPanel.tsx.
+ */
+const CHAT_STARTERS = [
+  "Girona to Lisbon, 5 h days",
+  "I'm in Reims, 150 km in the tank",
+  "Add a rest day in Strasbourg",
+] as const;
+
 export default function ChatPanel({
   tripId,
   onboardingState,
@@ -482,6 +495,13 @@ export default function ChatPanel({
     (m) => m.id?.startsWith("optimistic-") && m.role === "assistant" && m.streaming && !!m.content
   );
   const replanWaiting = loading && !pennyStreamingText;
+  /*
+   * Whether the identity strip reads THINKING or READY. Deliberately the SAME
+   * expression the transcript's TypingBubble uses, plus the streaming case —
+   * a strip saying READY while three dots bounced would be worse than no
+   * strip at all. Mirrors src/components/ChatPanel.tsx.
+   */
+  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
 
   // ── applying / healing a turn ───────────────────────────────────────────
 
@@ -1312,16 +1332,25 @@ export default function ChatPanel({
      * subtraction clamps to zero and no padding is ever applied.
      */
     <View style={styles.root}>
-      {/* Header */}
+      {/*
+        Penny's identity strip. The avatar was a flat primary circle standing
+        in for the web's primary→success gradient; under the mono palette those
+        two stops are the same colour, so both sides are a ring now — which
+        also stops it reading as the account avatar in the header above.
+      */}
       <View style={styles.header}>
-        {/* The web paints this circle with a primary→success linear-gradient;
-            no gradient without another native dep, so it's flat primary. */}
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>P</Text>
         </View>
         <View style={styles.headerCopy}>
           <Text style={styles.headerName}>Penny</Text>
-          <Text style={styles.headerSub}>Feral Travels AI</Text>
+          <Text style={styles.headerSub}>Feral Travels AI · plans your days</Text>
+        </View>
+        <View style={styles.headerStatus}>
+          <View style={[styles.statusDot, pennyThinking && styles.statusDotThinking]} />
+          <Text style={[styles.statusText, pennyThinking && styles.statusTextThinking]}>
+            {pennyThinking ? "THINKING" : "READY"}
+          </Text>
         </View>
       </View>
 
@@ -1357,6 +1386,35 @@ export default function ChatPanel({
                 <Text style={styles.loadOlderButtonText}>Load older</Text>
               </Pressable>
             )}
+          </View>
+        ) : null}
+
+        {/*
+          The empty state. The panel rendered nothing at all — a chat screen
+          with no indication of what to type, which is the moment a new user
+          decides whether this app does anything.
+
+          The rows PREFILL the composer and focus it rather than sending: the
+          examples are shapes to edit, not messages anyone wants verbatim.
+        */}
+        {messages.length === 0 && !onboardingUiActive ? (
+          <View style={styles.starterBlock}>
+            <Text style={styles.starterKicker}>START HERE</Text>
+            <Text style={styles.starterHeadline}>
+              Tell Penny where you&apos;re going and how far you want to drive each day.
+            </Text>
+            {CHAT_STARTERS.map((starter) => (
+              <Pressable
+                key={starter}
+                onPress={() => {
+                  setInput(starter);
+                  inputRef.current?.focus();
+                }}
+                style={styles.starterRow}
+              >
+                <Text style={styles.starterText}>&ldquo;{starter}&rdquo;</Text>
+              </Pressable>
+            ))}
           </View>
         ) : null}
 
@@ -1692,18 +1750,59 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+  starterBlock: { paddingBottom: 12, gap: 8 },
+  starterKicker: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  starterHeadline: {
+    fontSize: 19,
+    fontFamily: font.medium,
+    lineHeight: 25,
+    color: theme.text,
+    marginBottom: 8,
+  },
+  starterRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.borderStrong,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
+  },
+  starterText: { fontFamily: font.regular, fontSize: 13.5, color: theme.muted },
   avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: theme.primary,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: theme.accent900,
+    borderWidth: 1,
+    borderColor: theme.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: theme.onPrimary, fontFamily: font.extrabold, fontSize: 13 },
-  headerCopy: { minWidth: 0 },
-  headerName: { fontSize: 14, fontFamily: font.bold, color: theme.text },
-  headerSub: { fontFamily: font.regular, fontSize: 10, color: theme.subtle, letterSpacing: 0.4, marginTop: 2 },
+  avatarText: { color: theme.accent300, fontFamily: font.semibold, fontSize: 14 },
+  headerCopy: { flex: 1, minWidth: 0 },
+  headerName: { fontSize: 14, fontFamily: font.medium, color: theme.text },
+  headerSub: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    letterSpacing: 0.2,
+    marginTop: 2,
+  },
+  headerStatus: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.primary },
+  statusDotThinking: { backgroundColor: theme.accent300 },
+  statusText: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  statusTextThinking: { color: theme.accent300 },
 
   scroll: { flex: 1, minHeight: 0 },
   scrollContent: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
