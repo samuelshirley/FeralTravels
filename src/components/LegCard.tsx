@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
+import { STATUS_MAP, type LegStatus } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
@@ -76,6 +77,8 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /** The day the driver is on — the only filled dot in the list. */
+  isCurrent?: boolean;
   /**
    * Source this leg's fuel on mount, even while the card is collapsed.
    *
@@ -102,6 +105,7 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  isCurrent = false,
   autoSourceFuel = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
@@ -276,8 +280,10 @@ export default function LegCard({
    * The DB column keeps `'rest'`. Renaming an enum across the schema, Penny's
    * tools and 148 references buys nothing the label does not.
    */
-  const baseDayColor = '#6BA368';
-  const driveColor = leg.color || '#4E7AB0';
+  // Base days keep the one second hue the palette still allows; everything
+  // else is the accent. `leg.color` is per-leg user data and still wins.
+  const baseDayColor = '#9690c9';
+  const driveColor = leg.color || 'var(--tp-primary)';
   const dotColor = isRestDay ? baseDayColor : driveColor;
 
   return (
@@ -286,16 +292,21 @@ export default function LegCard({
       data-leg-id={leg.id}
       data-leg-type={leg.leg_type ?? 'drive'}
       style={{
-        marginBottom: 2,
-        background: expanded
-          ? isRestDay
-            ? 'rgba(107, 163, 104, 0.06)'
-            : 'var(--tp-surface-muted)'
-          : 'transparent',
-        borderRadius: 8,
+        /*
+         * Two different objects, not one with a tweak. Collapsed, a day is a
+         * ROW in a list — no card, just a hairline under it, so a week of
+         * driving reads as one continuous plan instead of seven boxes.
+         * Expanded, it becomes the card, and the card is the thing you are
+         * working in.
+         */
+        marginBottom: expanded ? 10 : 0,
+        background: expanded ? 'var(--tp-surface)' : 'transparent',
+        borderRadius: expanded ? 'var(--tp-radius-lg)' : 0,
+        borderBottom: expanded ? 'none' : '1px solid var(--tp-neutral-900)',
+        boxShadow: expanded ? 'var(--tp-shadow-sm)' : 'none',
         overflow: 'hidden',
         transition: 'background 0.2s',
-        borderLeft: isRestDay ? `3px solid ${baseDayColor}40` : 'none',
+        borderLeft: isRestDay && expanded ? `3px solid ${baseDayColor}` : 'none',
       }}
     >
       <div
@@ -309,14 +320,21 @@ export default function LegCard({
           userSelect: 'none',
         }}
       >
+        {/*
+          Filled for today, a hollow ring for every day after it. The old dot
+          was filled on all of them, so the list had no "you are here" at all —
+          the colour was decoration rather than information.
+        */}
         <div
           style={{
             width: 10,
             height: 10,
             borderRadius: isRestDay ? 3 : '50%',
-            background: dotColor,
+            background: isCurrent ? dotColor : 'transparent',
+            border: isCurrent ? 'none' : `1px solid ${isRestDay ? baseDayColor : 'var(--tp-border-strong)'}`,
+            boxSizing: 'border-box',
             flexShrink: 0,
-            boxShadow: `0 0 8px ${dotColor}40`,
+            boxShadow: isCurrent ? `0 0 8px ${dotColor}` : 'none',
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -325,7 +343,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   letterSpacing: '0.1em',
                   color: baseDayColor,
                 }}
@@ -337,7 +355,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   letterSpacing: '0.1em',
                   color: isRestDay ? baseDayColor : 'var(--tp-subtle)',
                 }}
@@ -356,7 +374,7 @@ export default function LegCard({
                 {leg.label}
               </span>
             ) : null}
-            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>{leg.title}</span>
+            <span style={{ fontSize: 16, fontWeight: 500, color: 'var(--tp-text)' }}>{leg.title}</span>
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 3, flexWrap: 'wrap' }}>
             {!isRestDay && leg.distance_km ? (
@@ -413,7 +431,23 @@ export default function LegCard({
             </div>
           )}
         </div>
-        <StatusBadge status={leg.status} />
+        {expanded ? (
+          <StatusBadge status={leg.status} />
+        ) : (
+          // Collapsed, the badge chrome is repeated on every row and says
+          // nothing the word does not. The word alone.
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              color: 'var(--tp-accent-400)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {STATUS_MAP[leg.status as LegStatus]?.label ?? ''}
+          </span>
+        )}
         <span
           style={{
             color: 'var(--tp-subtle)',

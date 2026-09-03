@@ -12,7 +12,7 @@ export default function StatusBadge({ status }: StatusBadgeProps) {
     <span
       style={{
         fontSize: 9,
-        fontWeight: 700,
+        fontWeight: 600,
         letterSpacing: '0.08em',
         padding: '3px 8px',
         borderRadius: 4,

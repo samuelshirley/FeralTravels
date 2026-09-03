@@ -9,7 +9,7 @@ import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
-import { DisclosureIcon, PencilRenameIcon } from '@/components/icons';
+import { CollapseAllIcon, DisclosureIcon, ExpandAllIcon, PencilRenameIcon } from '@/components/icons';
 import { buttonStyle } from '@/components/ui/Button';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
@@ -108,6 +108,10 @@ export default function Itinerary({
    * with no stops in the day card, none on the map and nothing for
    * `useNextStop` to point at. One leg, cached for 48h.
    */
+  /** The day the driver is on. Rest day or not — unlike the auto-source
+   *  target below, which has to be a leg with a drive in it. */
+  const currentLegId = legs[0]?.id ?? null;
+
   const autoSourceLegId = useMemo(
     () => legs.find((l) => l.leg_type !== 'rest')?.id ?? null,
     [legs]
@@ -319,6 +323,11 @@ export default function Itinerary({
     setExpanded(new Set(legs.map((l) => l.id)));
   };
   const collapseAll = () => setExpanded(new Set());
+  // "Every day is open" is what decides which way the toggle points. Uses the
+  // REVEALED legs, not all of them: a day behind the lazy window is not on
+  // screen, so counting it would leave the button offering to expand what
+  // already looks expanded.
+  const allExpanded = legs.length > 0 && legs.every((l) => expanded.has(l.id));
 
   const visibleLegs = legs.slice(0, visibleCount);
   const hiddenCount = legs.length - visibleCount;
@@ -557,38 +566,27 @@ export default function Itinerary({
         </div>
       </div>
 
-      {/* Controls — they act on the days ahead, so a completed trip has none. */}
+      {/*
+        One control, not two. "Expand All" and "Collapse All" sat side by side
+        with only one of them ever meaningful — whichever state you were
+        already in, half the pair did nothing. It is a toggle, so it is one
+        button that shows the action available.
+      */}
       {!completed && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           <button
-            onClick={expandAll}
+            onClick={allExpanded ? collapseAll : expandAll}
+            title={allExpanded ? 'Collapse every day' : 'Expand every day'}
+            aria-label={allExpanded ? 'Collapse every day' : 'Expand every day'}
             style={{
-              background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
+              ...buttonStyle('secondary'),
+              width: 30,
+              height: 30,
+              padding: 0,
               color: 'var(--tp-muted)',
-              padding: '5px 12px',
-              borderRadius: 4,
-              fontSize: 11,
-              cursor: 'pointer',
-            
             }}
           >
-            Expand All
-          </button>
-          <button
-            onClick={collapseAll}
-            style={{
-              background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
-              color: 'var(--tp-muted)',
-              padding: '5px 12px',
-              borderRadius: 4,
-              fontSize: 11,
-              cursor: 'pointer',
-            
-            }}
-          >
-            Collapse All
+            {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
           </button>
         </div>
       )}
@@ -763,6 +761,7 @@ export default function Itinerary({
                       tripId={tripId}
                       leg={leg}
                       expanded={expanded.has(leg.id)}
+                      isCurrent={leg.id === currentLegId}
                       autoSourceFuel={leg.id === autoSourceLegId}
                       onToggle={() => toggle(leg.id)}
                       onNavigate={() => onLegSelect(leg.id)}
@@ -796,6 +795,7 @@ export default function Itinerary({
               tripId={tripId}
               leg={leg}
               expanded={expanded.has(leg.id)}
+              isCurrent={leg.id === currentLegId}
               autoSourceFuel={leg.id === autoSourceLegId}
               onToggle={() => toggle(leg.id)}
               onNavigate={() => onLegSelect(leg.id)}

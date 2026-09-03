@@ -148,6 +148,10 @@ export default function Itinerary({
    * The missing half of lazy fuel, not a reversal of it. Mirrors
    * src/components/Itinerary.tsx.
    */
+  /** The day the driver is on. Rest day or not — unlike the auto-source
+   *  target below, which has to be a leg with a drive in it. */
+  const currentLegId = legs[0]?.id ?? null;
+
   const autoSourceLegId = useMemo(
     () => legs.find((l) => l.leg_type !== "rest")?.id ?? null,
     [legs]
@@ -455,6 +459,7 @@ export default function Itinerary({
       highlightStopId={highlightStopId}
       selected={selectedLegId === leg.id}
       isPast={isPast}
+      isCurrent={!isPast && leg.id === currentLegId}
       autoSourceFuel={!isPast && leg.id === autoSourceLegId}
     />
   );

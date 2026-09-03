@@ -480,9 +480,23 @@ export interface TripWithLegs extends Trip {
 
 export type LegStatus = 'planning' | 'research' | 'confirmed' | 'anchored';
 
+/**
+ * The four leg statuses.
+ *
+ * They used to be four HUES — a red, a green, a blue and a gold. Nocturne is a
+ * mono palette, so all four now share one outlined treatment and THE LABEL is
+ * what distinguishes them. That is a real loss of at-a-glance signal and it is
+ * deliberate: the alternative was picking which two of the four get to keep a
+ * colour, which is a product decision nobody has made. If one of them ever
+ * earns the accent, `research` is the candidate — it is the only one that asks
+ * the user to do something.
+ *
+ * Mirrored into mobile/shared/types/trip.ts; run `npm run sync-shared` after
+ * touching this or `sharedMirror.test.ts` fails.
+ */
 export const STATUS_MAP: Record<LegStatus, { label: string; bg: string; border: string; text: string }> = {
-  anchored: { label: "DATE LOCKED", bg: "rgba(198, 93, 74, 0.12)", border: "rgba(198, 93, 74, 0.4)", text: "#C65D4A" },
-  confirmed: { label: "CONFIRMED", bg: "rgba(74, 139, 122, 0.12)", border: "rgba(74, 139, 122, 0.38)", text: "#4A8B7A" },
-  planning: { label: "PLANNING", bg: "rgba(78, 122, 176, 0.12)", border: "rgba(78, 122, 176, 0.35)", text: "#4E7AB0" },
-  research: { label: "NEEDS RESEARCH", bg: "rgba(184, 149, 106, 0.14)", border: "rgba(184, 149, 106, 0.4)", text: "#B8956A" },
+  anchored: { label: "DATE LOCKED", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
+  confirmed: { label: "CONFIRMED", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
+  planning: { label: "PLANNING", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
+  research: { label: "NEEDS RESEARCH", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
 };

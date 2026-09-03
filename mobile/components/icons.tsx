@@ -1,6 +1,8 @@
 import type { IconWeight } from "phosphor-react-native";
 import {
   ArrowUpIcon,
+  ArrowsInLineVerticalIcon,
+  ArrowsOutLineVerticalIcon,
   CaretDownIcon,
   CaretLeftIcon,
   GasPumpIcon,
@@ -133,6 +135,16 @@ export function DisclosureIcon({ color, size = 12, weight = "regular" }: IconPro
 /** Was `⚠` on the leg-continuity warning. */
 export function WarningIcon({ color, size = 14, weight = "regular" }: IconProps) {
   return <PhosphorWarningIcon color={color} size={size} weight={weight} />;
+}
+
+/** Expand every day. */
+export function ExpandAllIcon({ color, size = 16, weight = "regular" }: IconProps) {
+  return <ArrowsOutLineVerticalIcon color={color} size={size} weight={weight} />;
+}
+
+/** Collapse every day. */
+export function CollapseAllIcon({ color, size = 16, weight = "regular" }: IconProps) {
+  return <ArrowsInLineVerticalIcon color={color} size={size} weight={weight} />;
 }
 
 /** Was `×` on a remove control. */

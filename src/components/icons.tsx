@@ -1,5 +1,7 @@
 import {
   ArrowUp,
+  ArrowsInLineVertical,
+  ArrowsOutLineVertical,
   CaretDown,
   CaretLeft,
   GasPump,
@@ -136,6 +138,16 @@ export function DisclosureIcon({ color = 'currentColor', size = 12, weight = 're
 /** Was `⚠` on the leg-continuity warning. */
 export function WarningIcon({ color = 'currentColor', size = 14, weight = 'regular' }: IconProps) {
   return <Warning color={color} size={size} weight={weight} />;
+}
+
+/** Expand every day. Replaces the "Expand All" text button. */
+export function ExpandAllIcon({ color = 'currentColor', size = 16, weight = 'regular' }: IconProps) {
+  return <ArrowsOutLineVertical color={color} size={size} weight={weight} />;
+}
+
+/** Collapse every day. Replaces the "Collapse All" text button. */
+export function CollapseAllIcon({ color = 'currentColor', size = 16, weight = 'regular' }: IconProps) {
+  return <ArrowsInLineVertical color={color} size={size} weight={weight} />;
 }
 
 /** Was `×` on a remove control. */

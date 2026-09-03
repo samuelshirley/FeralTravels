@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { LegWithDetails } from "@/shared/types/trip";
+import { STATUS_MAP, type LegStatus } from "@/shared/types/trip";
 import { tripApi } from "@/lib/api";
 import {
   assertDestinationReachable,
@@ -14,7 +15,7 @@ import { useNextStop } from "@/shared/lib/useNextStop";
 import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
 import { Distance, Spinner, StatusBadge } from "@/components/ui";
-import { theme } from "@/lib/theme";
+import { shadow, theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
 import { DisclosureIcon, NavigateIcon, WarningIcon } from "@/components/icons";
@@ -81,6 +82,8 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /** The day the driver is on — the only filled dot in the list. */
+  isCurrent?: boolean;
   /**
    * Source this leg's fuel on mount, even while the card is collapsed. Set by
    * `Itinerary` for the ONE day the driver is on — see the note there.
@@ -103,6 +106,7 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  isCurrent = false,
   autoSourceFuel = false,
   selected = false,
 }: LegCardProps) {
@@ -268,9 +272,8 @@ export default function LegCard({
   // Base-day accent colour — softer green vs driving-day blue. "Base day" is
   // the user-facing name for `leg_type: 'rest'`; see src/components/LegCard.tsx.
   // src/components/LegCard.tsx:195
-  const restDayColor = "#6BA368";
-  // src/components/LegCard.tsx:196 — falls back to the --tp-primary literal.
-  const driveColor = leg.color || "#4E7AB0";
+  const restDayColor = theme.rest;
+  const driveColor = leg.color || theme.primary;
   const dotColor = isRestDay ? restDayColor : driveColor;
 
   // The web rotates the chevron with a CSS transition; Animated is the native
@@ -305,7 +308,13 @@ export default function LegCard({
         <View
           style={[
             styles.dot,
-            { backgroundColor: dotColor, borderRadius: isRestDay ? 3 : 5 },
+            {
+              // Filled for today, a hollow ring after it. The old dot was
+              // filled on every row, so the list had no "you are here".
+              backgroundColor: isCurrent ? dotColor : "transparent",
+              borderColor: isCurrent ? "transparent" : isRestDay ? restDayColor : theme.borderStrong,
+              borderRadius: isRestDay ? 3 : 5,
+            },
           ]}
         />
         <View style={styles.headerBody}>
@@ -345,7 +354,13 @@ export default function LegCard({
             </View>
           ) : null}
         </View>
-        <StatusBadge status={leg.status} />
+        {expanded ? (
+          <StatusBadge status={leg.status} />
+        ) : (
+          <Text style={styles.statusBare}>
+            {STATUS_MAP[leg.status as LegStatus]?.label ?? ""}
+          </Text>
+        )}
         <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
           <DisclosureIcon color={theme.subtle} size={14} />
         </Animated.View>
@@ -530,12 +545,27 @@ export default function LegCard({
 }
 
 const styles = StyleSheet.create({
-  card: { marginBottom: 2, borderRadius: 8, overflow: "hidden" },
-  cardExpanded: { backgroundColor: theme.surfaceMuted },
-  // src/components/LegCard.tsx:208
-  cardExpandedRest: { backgroundColor: "rgba(107, 163, 104, 0.06)" },
-  // src/components/LegCard.tsx:214 — `3px solid ${restDayColor}40` (#6BA368 @ 0x40).
-  cardRest: { borderLeftWidth: 3, borderLeftColor: "rgba(107, 163, 104, 0.25)" },
+  /*
+   * Collapsed a day is a ROW — a hairline under it and nothing else, so a
+   * week of driving reads as one plan rather than seven boxes. Expanded it
+   * becomes the card you are working in. Mirrors src/components/LegCard.tsx.
+   */
+  card: {
+    marginBottom: 0,
+    borderRadius: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.neutral900,
+    overflow: "hidden",
+  },
+  cardExpanded: {
+    marginBottom: 10,
+    backgroundColor: theme.surface,
+    borderRadius: theme.radiusLg,
+    borderBottomWidth: 0,
+    ...shadow.sm,
+  },
+  cardExpandedRest: { backgroundColor: theme.surface },
+  cardRest: { borderLeftWidth: 3, borderLeftColor: theme.rest },
   // The web has no selected state (the desktop list is always beside the map);
   // on a phone the list and map are separate tabs, so the leg the map is
   // highlighting gets a matching tint here.
@@ -547,11 +577,17 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
-  dot: { width: 10, height: 10 },
+  dot: { width: 10, height: 10, borderWidth: 1, borderColor: "transparent" },
   headerBody: { flex: 1, minWidth: 0 },
   titleLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
-  kicker: { fontSize: 10, fontFamily: font.bold, letterSpacing: 1, color: theme.subtle },
-  title: { fontSize: 15, fontFamily: font.semibold, color: theme.text },
+  kicker: { fontSize: 10, fontFamily: font.semibold, letterSpacing: 1, color: theme.subtle },
+  title: { fontSize: 16, fontFamily: font.medium, color: theme.text },
+  statusBare: {
+    fontSize: 9,
+    fontFamily: font.semibold,
+    letterSpacing: 0.8,
+    color: theme.accent400,
+  },
   metaLine: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 3 },
   meta: { fontFamily: font.regular, fontSize: 12, color: theme.subtle },
   continuityWarning: {
