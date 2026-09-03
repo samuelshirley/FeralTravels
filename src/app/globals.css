@@ -192,15 +192,16 @@ img, svg, canvas { max-width: 100%; }
   margin-bottom: 24px;
 }
 .page-title {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   margin: 0;
   color: var(--tp-text);
 }
 .page-eyebrow {
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   color: var(--tp-subtle);
   font-family: var(--tp-font-sans);
   margin-bottom: 4px;

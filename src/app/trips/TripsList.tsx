@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/api';
 import { LoadingOverlay } from '@/components/Spinner';
 import PullToRefresh from '@/components/PullToRefresh';
 import { PencilEditTripsIcon } from '@/components/icons';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface TripSummary {
   id: string;
@@ -85,18 +86,13 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             onClick={() => setEditMode((v) => !v)}
             aria-pressed={editMode}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
+              // A neutral outline at rest; the ACTIVE state is the one that
+              // has to read at a glance, since it changes what tapping a card
+              // does. It takes the accent rather than a second hue.
+              ...buttonStyle(editMode ? 'primary' : 'secondary'),
               fontSize: 12,
-              background: editMode ? 'var(--tp-accent-warm-muted)' : 'var(--tp-surface-muted)',
-              color: editMode ? 'var(--tp-accent-warm)' : 'var(--tp-muted)',
-              border: editMode
-                ? '1px solid rgba(201, 123, 99, 0.45)'
-                : '1px solid var(--tp-border)',
               borderRadius: 999,
               padding: '6px 12px',
-              cursor: 'pointer',
               letterSpacing: '0.05em',
               textTransform: 'uppercase',
             }}

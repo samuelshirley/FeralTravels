@@ -115,14 +115,14 @@ export default function TripCard({
             <View style={styles.actions}>
               {/* Affordance only — the whole card is already the "View" target. */}
               <View style={styles.viewPill}>
-                <Text style={styles.viewPillText}>View →</Text>
+                <Text style={styles.viewPillText}>View</Text>
               </View>
               <Pressable
                 disabled={cloneBusy}
                 onPress={() => onCloneClick?.(id)}
                 style={[styles.clonePill, cloneBusy && styles.clonePillBusy]}
               >
-                {cloneBusy ? <ActivityIndicator size="small" color={theme.success} /> : null}
+                {cloneBusy ? <ActivityIndicator size="small" color={theme.accent300} /> : null}
                 <Text style={styles.clonePillText}>
                   {cloneBusy ? "Cloning…" : "Clone to my trips"}
                 </Text>
@@ -200,13 +200,13 @@ export default function TripCard({
 const styles = StyleSheet.create({
   // src/app/layout.tsx:181 — .card-grid { gap: 10px } ≤767px.
   wrap: { position: "relative", marginBottom: 10 },
+  // Templates are secondary: a hairline and no fill, so they sit behind the
+  // user's own trips instead of competing with them.
   cardTemplate: {
-    backgroundColor: theme.primaryMuted,
-    // src/app/trips/TripCard.tsx:85
-    borderColor: "rgba(78, 122, 176, 0.28)",
+    backgroundColor: "transparent",
+    borderColor: theme.border,
   },
-  // src/app/trips/TripCard.tsx:87
-  cardEditing: { borderColor: "rgba(201, 123, 99, 0.45)" },
+  cardEditing: { borderColor: theme.borderStrong },
   // Same dimming the itinerary's "behind you" section uses, so a finished trip
   // reads as past wherever it appears.
   cardCompleted: { backgroundColor: theme.surfaceMuted, opacity: 0.75 },
@@ -227,18 +227,25 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     color: theme.muted,
   },
-  name: { fontSize: 16, fontFamily: font.semibold, color: theme.text },
-  dates: { fontFamily: font.regular, fontSize: 12, color: theme.muted, marginTop: 4 },
+  name: { fontSize: 16, fontFamily: font.medium, color: theme.text },
+  dates: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+    marginTop: 4,
+  },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  // Neutral outline — View is the lesser of the two template actions.
   viewPill: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.radiusSm,
     borderWidth: 1,
-    borderColor: theme.primaryMuted,
-    backgroundColor: theme.surfaceMuted,
+    borderColor: theme.borderStrong,
+    backgroundColor: theme.surface,
   },
-  viewPillText: { fontFamily: font.regular, fontSize: 12, color: theme.primary },
+  viewPillText: { fontFamily: font.medium, fontSize: 12, color: theme.text },
   clonePill: {
     flexDirection: "row",
     alignItems: "center",
@@ -247,12 +254,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: theme.radiusSm,
     borderWidth: 1,
-    // src/app/trips/TripCard.tsx:140
-    borderColor: "rgba(74, 139, 122, 0.35)",
-    backgroundColor: theme.successMuted,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
   },
   clonePillBusy: { opacity: 0.7 },
-  clonePillText: { fontFamily: font.regular, fontSize: 12, color: theme.success },
+  clonePillText: { fontFamily: font.medium, fontSize: 12, color: theme.accent300 },
   deleteCorner: {
     position: "absolute",
     top: 8,

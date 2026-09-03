@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 import Spinner from '@/components/Spinner';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface Props {
   id: string;
@@ -87,8 +88,10 @@ export default function TripCard({
           style={{
             display: 'block',
             padding: 16,
+            // Templates are secondary: a hairline and no fill, so they sit
+            // behind the user's own trips instead of competing with them.
             background: isTemplate
-              ? 'var(--tp-primary-muted)'
+              ? 'transparent'
               : completed
                 ? 'var(--tp-surface-muted)'
                 : 'var(--tp-surface)',
@@ -96,21 +99,21 @@ export default function TripCard({
             // finished trip reads as past on both surfaces.
             opacity: completed ? 0.75 : 1,
             border: isTemplate
-              ? '1px solid rgba(78, 122, 176, 0.28)'
+              ? '1px solid var(--tp-primary)'
               : editMode
-                ? '1px solid rgba(201, 123, 99, 0.45)'
+                ? '1px solid var(--tp-border-strong)'
                 : '1px solid var(--tp-border)',
-            borderRadius: 'var(--tp-radius-md)',
+            borderRadius: 'var(--tp-radius-lg)',
             color: 'var(--tp-text)',
             textDecoration: 'none',
             transition: 'background 120ms, border-color 120ms',
-            boxShadow: 'var(--tp-shadow-sm)',
+            boxShadow: isTemplate ? 'none' : 'var(--tp-shadow-sm)',
           }}
         >
           <div
             style={{
               fontSize: 16,
-              fontWeight: 600,
+              fontWeight: 500,
               paddingRight: editMode ? 40 : completed ? 96 : 28,
             }}
           >
@@ -118,9 +121,9 @@ export default function TripCard({
           </div>
           <div
             style={{
-              fontSize: 12,
-              color: 'var(--tp-muted)',
-              
+              fontSize: 11.5,
+              color: 'var(--tp-subtle)',
+              fontVariantNumeric: 'tabular-nums',
               marginTop: 4,
             }}
           >
@@ -134,17 +137,13 @@ export default function TripCard({
             >
               <span
                 style={{
+                  ...buttonStyle('secondary'),
                   fontSize: 12,
-                  color: 'var(--tp-primary)',
-                  textDecoration: 'none',
                   padding: '6px 12px',
-                  borderRadius: 'var(--tp-radius-sm)',
-                  border: '1px solid var(--tp-primary-muted)',
                   whiteSpace: 'nowrap',
-                  background: 'var(--tp-surface-muted)',
                 }}
               >
-                View →
+                View
               </span>
               <button
                 type="button"
@@ -155,20 +154,14 @@ export default function TripCard({
                 }}
                 disabled={cloneBusy}
                 style={{
+                  ...buttonStyle(),
                   fontSize: 12,
-                  background: 'var(--tp-success-muted)',
-                  border: '1px solid rgba(74, 139, 122, 0.35)',
-                  color: 'var(--tp-success)',
                   padding: '5px 10px',
-                  borderRadius: 'var(--tp-radius-sm)',
                   cursor: cloneBusy ? 'default' : 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
                   opacity: cloneBusy ? 0.7 : 1,
                 }}
               >
-                {cloneBusy && <Spinner size={11} color="var(--tp-success)" thickness={2} />}
+                {cloneBusy && <Spinner size={11} color="var(--tp-accent-300)" thickness={2} />}
                 {cloneBusy ? 'Cloning…' : 'Clone to my trips'}
               </button>
             </div>
@@ -183,7 +176,7 @@ export default function TripCard({
               top: 12,
               right: 12,
               fontSize: 10,
-              fontWeight: 700,
+              fontWeight: 600,
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
               color: 'var(--tp-muted)',

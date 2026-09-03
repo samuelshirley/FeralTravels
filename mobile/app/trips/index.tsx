@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
   },
   pageHeaderText: { flexShrink: 1, minWidth: 0 },
   // src/app/layout.tsx:179 — .page-title { font-size: 22px } ≤767px.
-  pageTitle: { fontSize: 22, fontFamily: font.bold, color: theme.text },
+  pageTitle: { fontSize: 26, fontFamily: font.medium, color: theme.text },
   createErr: { fontFamily: font.regular, fontSize: 12, color: theme.danger, textAlign: "right", marginBottom: 8 },
   newTripWrap: { position: "relative" },
   newTripButton: { paddingVertical: 8, paddingHorizontal: 16 },
@@ -618,7 +618,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   emptyText: { fontFamily: font.regular, fontSize: 14, lineHeight: 21, color: theme.muted },
-  emptyStrong: { color: theme.text, fontFamily: font.bold },
+  emptyStrong: { color: theme.text, fontFamily: font.medium },
   templatesHeader: { marginTop: 20, marginBottom: 10 },
   overlay: {
     flex: 1,
