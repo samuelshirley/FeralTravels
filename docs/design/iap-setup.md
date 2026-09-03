@@ -26,12 +26,13 @@ with nothing in any log to tell you why.
 > team. The app has never been released and has no users, so this is a pure
 > rename with nothing to migrate.
 >
-> Every id in this repo is already renamed, and nothing here is now *wrong* —
-> `ascAppId` is absent rather than stale. What remains is work on Apple's side:
+> **`mobile/eas.json` is COMPLETE as of 2026-09-03** — bundle id, product ids,
+> `appleTeamId: TJX3F3832H` and `ascAppId: 6807913556`, the record on the new
+> Spanish team. Nothing in this repo still points at the old account. What
+> remains is work on Apple's and RevenueCat's side:
 >
 > | Value | Where | Status |
 > |---|---|---|
-> | `ascAppId` | `mobile/eas.json` | **ABSENT 2026-09-02 — removed, not updated.** It held `6802705582`, the app record on the old US team, which no longer exists; leaving it would have pointed `eas submit` at a dead record. Absent is safe: with no `ascAppId`, EAS resolves the target from the bundle id and `appleTeamId`, or prompts. It will be set from whatever Apple ID number the NEW app record turns out to have — nothing to guess, and nothing to do until that record exists. |
 > | ~~`appleTeamId`~~ | `mobile/eas.json` | **DONE 2026-09-02 — `TJX3F3832H`.** |
 > | ~~`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`~~ | `mobile/eas.json`, both profiles | **DONE 2026-09-02, and it needed NO edit.** See below. |
 > | ~~`AUTH_GOOGLE_IOS_CLIENT_ID`~~ | Vercel (production + preview) | **DONE — no edit.** Same reason. |
@@ -52,8 +53,36 @@ with nothing in any log to tell you why.
 >
 > **It did NOT create an App Store Connect app record**, confirming what was
 > assumed rather than known: `eas build` works at the Developer-portal level.
-> The record is `eas submit`'s job or a manual one, which is why `ascAppId` is
-> still absent and why creating that record is the next Apple step.
+> The record is `eas submit`'s job or a manual one. It was created by hand on
+> 2026-09-03 (`ascAppId: 6807913556`), which is what unblocked auto-submit —
+> see the note below on the Mobile workflow.
+>
+> ### The Mobile workflow, and what merging this triggers
+>
+> Merging PR #21 classified as a NATIVE release — `react-native-purchases`
+> moved the dependency graph — so `.github/workflows/mobile.yml` ran
+> `eas build --auto-submit`. Credentials were fine (the certificate and profile
+> above), the binary compiled and reached EAS, and then:
+>
+> ```
+> Set ascAppId in the submit profile (eas.json) or re-run this command in
+> interactive mode
+> Submission failed
+> ```
+>
+> The build was not wasted — it exists on EAS — but nothing reached TestFlight,
+> and the workflow went red. That is the cost of having removed `ascAppId`
+> rather than replaced it, and removing it was still right: the alternative was
+> `eas submit` aiming at `6802705582`, a record on a team we no longer have.
+>
+> **`mobile/eas.json` is a native input**, so merging the change that sets
+> `ascAppId` will itself cut another native build — and that one should submit.
+> Expect ~30 minutes of EAS queue plus App Store Connect processing. If you
+> would rather not spend a second build credit, re-running the failed Mobile
+> workflow will not help (it rebuilds from that commit, which has no
+> `ascAppId`); submit the existing EAS build by hand instead, with
+> `eas submit -p ios --profile production` from a checkout that has the new
+> `eas.json`.
 >
 > ### ⚠ Sign in with Apple: the capability was NOT visibly synced
 >

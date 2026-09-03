@@ -84,8 +84,7 @@ repository secret, named `EXPO_TOKEN`.
 
 ### 2. App Store Connect credentials (needed only for auto-submit)
 
-`submit.production.ios` in `eas.json` pins `appleTeamId` (and, since 2026-09-02,
-no `ascAppId` — see `docs/design/iap-setup.md`) — but
+`submit.production.ios` in `eas.json` pins `ascAppId` and `appleTeamId` — but
 those are identifiers, not credentials. Interactive `eas submit` on your Mac
 prompts for the rest; a CI run has nobody to prompt, so `--auto-submit` fails
 *after* the build succeeds.

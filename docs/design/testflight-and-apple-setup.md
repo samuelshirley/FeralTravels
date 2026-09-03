@@ -54,9 +54,9 @@ build your testers have goes dead and they cannot reinstall it.
   time Apple looks at the app at all.
 
 **The app record already exists.** `mobile/eas.json` pins
-`appleTeamId: "TJX3F3832H"`, and no `ascAppId` — it was removed on 2026-09-02
-because it held the old account's app record. EAS resolves the app from the
-bundle id and the team instead. Once the record exists there is an App
+`appleTeamId: "TJX3F3832H"` and `ascAppId: "6807913556"` — both on the new
+Spanish team as of 2026-09-03; the old `6802705582` was removed on 2026-09-02
+because it held a record on a team we no longer have. So there is an App
 Store Connect app called Feral Travels with bundle id `com.feraltravels.ios`
 sitting there waiting for a build. You are not starting from zero.
 
@@ -196,8 +196,7 @@ API it expects.
   Two runs died on exactly this.
 - **An App Store Connect API key stored on EAS**, for the upload.
   `eas credentials` → iOS → production → App Store Connect API Key. `eas.json`
-  pins `appleTeamId` (no `ascAppId` since 2026-09-02), but those are
-  identifiers, not
+  pins `ascAppId` and `appleTeamId`, but those are identifiers, not
   credentials — without the key, `--auto-submit` fails *after* a successful
   thirty-minute build. Generated at App Store Connect → Users and Access →
   Integrations → App Store Connect API, **App Manager** role, `.p8`
