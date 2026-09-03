@@ -395,18 +395,19 @@ export default function SignInScreen() {
           {step === "email" ? (
             <>
               <Eyebrow>FERAL TRAVELS</Eyebrow>
-              <Text style={styles.h1}>Password-less Sign in / Sign-up</Text>
-              {/* The web copy opens with "Sign in with Google, or…" because the
-                  web ALWAYS has that button. Here it is conditional on an iOS
-                  OAuth client id, so the sentence has to follow the button —
-                  advertising a provider that is not on screen is worse than
-                  plainer copy. */}
+              <Text style={styles.h1}>Sign in or sign up</Text>
+              {/* "sign up" is in the h1 on purpose: a new user scans for that
+                  word and leaves if it is not there.
+
+                  The body still branches, because the web ALWAYS has the
+                  Google button and here it is conditional on an iOS OAuth
+                  client id — naming a provider that is not on screen is worse
+                  than plainer copy. Same sentence otherwise. */}
               <Text style={styles.body}>
                 {googleAvailable
-                  ? "Sign in with Google, or enter your email and we'll send you a 6-digit code. The same email always maps to one account."
-                  : "Enter your email and we'll send you a 6-digit code. The same email always maps to one account."}
+                  ? "Google, Apple or your email \u2014 any of them, any time. They all land in the same account, and there\u2019s no password to remember."
+                  : "Your email, and a 6-digit code \u2014 no password to remember."}
               </Text>
-              <Text style={[styles.body, styles.bodyGap]}>passwords are dumb</Text>
 
               {error ? <Banner tone="danger" body={error} /> : null}
 
@@ -475,10 +476,10 @@ export default function SignInScreen() {
           ) : (
             <>
               <Eyebrow>FERAL TRAVELS</Eyebrow>
-              <Text style={styles.h1}>Enter your code</Text>
+              <Text style={styles.h1}>Check your email</Text>
               <Text style={styles.body}>
-                We sent a 6-digit code to {maskEmail(email.trim())}. Enter it below —
-                it expires in 10 minutes.
+                We sent a code to {maskEmail(email.trim())}. Your phone should offer to
+                fill it in — it expires in 10 minutes.
               </Text>
 
               {error ? <Banner tone="danger" body={error} /> : null}
@@ -556,15 +557,17 @@ const styles = StyleSheet.create({
   },
   card: { width: "100%", maxWidth: 420, alignSelf: "center", padding: 20 },
   h1: {
-    // src/app/login/page.tsx:89 — fontSize 24, weight 700, marginBottom 4,
-    // and no letter-spacing.
+    // Mirrors src/app/login/page.tsx: 24px at MEDIUM. Nocturne's rule is that
+    // hierarchy is size and space, not weight — Inter at 700/24 reads as a
+    // different typeface, which is what "the font looks wrong" turned out to
+    // mean on this screen.
     fontSize: 24,
-    fontFamily: font.bold,
+    fontFamily: font.medium,
+    lineHeight: 27.6,
     color: theme.text,
-    marginBottom: 4,
+    marginBottom: 8,
   },
-  // src/app/login/page.tsx:90-98 — fontSize 13, line-height 1.5.
-  body: { fontFamily: font.regular, fontSize: 13, lineHeight: 19.5, color: theme.muted },
+  body: { fontFamily: font.regular, fontSize: 13, lineHeight: 20, color: theme.muted },
   bodyGap: { marginTop: 14, marginBottom: 4 },
 
   oauthButton: {

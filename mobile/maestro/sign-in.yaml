@@ -142,3 +142,15 @@ appId: ${APP_ID}
     visible:
       text: '.*${TRIP_NAME}.*'
     timeout: 30000
+
+# A SERVER ERROR MUST FAIL HERE, not three steps later as a missing selector.
+#
+# `ErrorProvider`'s fatal modal covers the whole screen, so when the API breaks
+# every later assertion fails as "X is not visible" — which reads as a broken
+# selector and sends you into the wrong component. That is not hypothetical: a
+# stale .next cache 500'd /api/mobile/otp/send, this modal appeared over the
+# sign-in screen, and the run reported that `signin-email` was missing.
+#
+# Asserting it is ABSENT, first, makes the failure say what it is.
+- assertNotVisible:
+    id: 'fatal-error-modal'
