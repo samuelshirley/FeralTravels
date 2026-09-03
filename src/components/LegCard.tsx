@@ -76,6 +76,17 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /**
+   * Source this leg's fuel on mount, even while the card is collapsed.
+   *
+   * Set by `Itinerary` for the ONE day the driver is actually on. Lazy fuel
+   * (migration 0013) exists so twenty days don't fan out searches nobody
+   * looks at — it was never meant to mean the day you are standing in has no
+   * fuel until you tap it. Without this, a trip that has just been planned
+   * shows no stops anywhere: not in the day card, not on the map, and not to
+   * `useNextStop`.
+   */
+  autoSourceFuel?: boolean;
 }
 
 export default function LegCard({
@@ -91,6 +102,7 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  autoSourceFuel = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === 'rest';
@@ -176,7 +188,8 @@ export default function LegCard({
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
     // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
-    if (readonly || isRestDay || !expanded || isPast) return;
+    if (readonly || isRestDay || isPast) return;
+    if (!expanded && !autoSourceFuel) return;
     const updatedAt = leg.fuel_stops_updated_at;
     const fresh = updatedAt
       ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS
@@ -231,6 +244,7 @@ export default function LegCard({
     isPast,
     leg.id,
     leg.fuel_status,
+    autoSourceFuel,
     leg.fuel_stops_updated_at,
     api,
     onChanged,

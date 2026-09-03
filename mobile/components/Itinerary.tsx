@@ -138,6 +138,20 @@ export default function Itinerary({
 
   const { units } = useUnits();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  /*
+   * The one day whose fuel is sourced without being asked for: the day the
+   * driver is on. `legs` is already sliced at the progress anchor, so its
+   * first DRIVING leg is that day — a rest day has no drive to fuel and is
+   * skipped rather than wasting the call.
+   *
+   * The missing half of lazy fuel, not a reversal of it. Mirrors
+   * src/components/Itinerary.tsx.
+   */
+  const autoSourceLegId = useMemo(
+    () => legs.find((l) => l.leg_type !== "rest")?.id ?? null,
+    [legs]
+  );
   const [showPast, setShowPast] = useState(false);
   // Stop id to briefly ring after a map marker tap, so the user's eye lands on
   // the right card. Cleared on a timer.
@@ -441,6 +455,7 @@ export default function Itinerary({
       highlightStopId={highlightStopId}
       selected={selectedLegId === leg.id}
       isPast={isPast}
+      autoSourceFuel={!isPast && leg.id === autoSourceLegId}
     />
   );
 

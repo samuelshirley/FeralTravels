@@ -95,6 +95,23 @@ export default function Itinerary({
   const legs = currentRank > 0 ? allLegs.slice(currentRank) : allLegs;
   const { units } = useUnits();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  /*
+   * The one day whose fuel is sourced without being asked for: the day the
+   * driver is on. `legs` is already sliced at the progress anchor, so its
+   * first DRIVING leg is that day — a rest day has no drive to fuel, so it is
+   * skipped rather than wasting the call.
+   *
+   * This is the missing half of lazy fuel, not a reversal of it. Migration
+   * 0013 exists so twenty days don't fan out searches nobody looks at; it was
+   * read as "source nothing until tapped", which left a freshly planned trip
+   * with no stops in the day card, none on the map and nothing for
+   * `useNextStop` to point at. One leg, cached for 48h.
+   */
+  const autoSourceLegId = useMemo(
+    () => legs.find((l) => l.leg_type !== 'rest')?.id ?? null,
+    [legs]
+  );
   const [showPast, setShowPast] = useState(false);
   // Stop id to briefly ring after a map marker click, so the user's eye lands
   // on the right card. Cleared on a timer.
@@ -746,6 +763,7 @@ export default function Itinerary({
                       tripId={tripId}
                       leg={leg}
                       expanded={expanded.has(leg.id)}
+                      autoSourceFuel={leg.id === autoSourceLegId}
                       onToggle={() => toggle(leg.id)}
                       onNavigate={() => onLegSelect(leg.id)}
                       onTrailsChanged={onTrailsChanged}
@@ -778,6 +796,7 @@ export default function Itinerary({
               tripId={tripId}
               leg={leg}
               expanded={expanded.has(leg.id)}
+              autoSourceFuel={leg.id === autoSourceLegId}
               onToggle={() => toggle(leg.id)}
               onNavigate={() => onLegSelect(leg.id)}
               onTrailsChanged={onTrailsChanged}

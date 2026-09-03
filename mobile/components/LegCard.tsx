@@ -81,6 +81,11 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /**
+   * Source this leg's fuel on mount, even while the card is collapsed. Set by
+   * `Itinerary` for the ONE day the driver is on — see the note there.
+   */
+  autoSourceFuel?: boolean;
   /** True when this leg is the one currently selected on the map. */
   selected?: boolean;
 }
@@ -98,6 +103,7 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  autoSourceFuel = false,
   selected = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
@@ -188,7 +194,8 @@ export default function LegCard({
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
     // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
-    if (readonly || isRestDay || !expanded || isPast) return;
+    if (readonly || isRestDay || isPast) return;
+    if (!expanded && !autoSourceFuel) return;
     const updatedAt = leg.fuel_stops_updated_at;
     const fresh = updatedAt ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS : false;
     const terminalSuccess =
@@ -239,6 +246,7 @@ export default function LegCard({
     isRestDay,
     readonly,
     isPast,
+    autoSourceFuel,
     leg.id,
     leg.fuel_status,
     leg.fuel_stops_updated_at,
