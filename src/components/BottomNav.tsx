@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { ChatIcon, ListIcon, MapIcon, SettingsIcon } from '@/components/icons';
 
 export type MobileTab = 'list' | 'map' | 'chat';
 
@@ -24,7 +25,6 @@ interface BottomNavProps {
 interface NavItem {
   id: MobileTab | 'settings';
   label: string;
-  iconPath: string;
   badge?: 'thinking' | number;
   href?: string;
 }
@@ -40,30 +40,22 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
     {
       id: 'list',
       label: 'List',
-      iconPath:
-        'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
       href: tripsHref,
     },
     {
       id: 'map',
       label: 'Map',
-      iconPath:
-        'M9 20l-5.447-2.724A1 1 0 0 1 3 16.382V5.618a1 1 0 0 1 1.447-.894L9 7m0 13 6-3m-6 3V7m6 10 5.553 2.276A1 1 0 0 0 22 18.382V7.618a1 1 0 0 0-.553-.894L15 4m0 13V4m0 0L9 7',
       href: tripsHref,
     },
     {
       id: 'chat',
       label: 'Chat',
-      iconPath:
-        'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
       badge: thinking ? 'thinking' : unread > 0 ? unread : undefined,
       href: tripsHref,
     },
     {
       id: 'settings',
       label: 'Settings',
-      iconPath:
-        'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.5 7.5 0 0 0-.1-1.4l2.1-1.6-2-3.5-2.5 1a7.5 7.5 0 0 0-2.4-1.4L14 2h-4l-.5 2.6a7.5 7.5 0 0 0-2.4 1.4l-2.5-1-2 3.5L4.7 10.6a7.5 7.5 0 0 0 0 2.8l-2.1 1.6 2 3.5 2.5-1a7.5 7.5 0 0 0 2.4 1.4L10 22h4l.5-2.6a7.5 7.5 0 0 0 2.4-1.4l2.5 1 2-3.5-2.1-1.6c.07-.45.1-.92.1-1.4Z',
       href: '/settings',
     },
   ];
@@ -75,7 +67,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
         bottom: 0,
         left: 0,
         right: 0,
-        background: 'rgba(251, 248, 243, 0.95)',
+        background: 'rgba(31, 33, 48, 0.95)',  // --tp-surface-muted @ 95%, behind the blur
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
         borderTop: '1px solid var(--tp-border)',
@@ -107,18 +99,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
               }}
             >
               <div style={{ position: 'relative', lineHeight: 0 }}>
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d={item.iconPath} />
-                </svg>
+                <NavGlyph id={item.id} active={isActive} />
                 {item.badge === 'thinking' && (
                   <span
                     aria-label="Penny is thinking"
@@ -131,7 +112,7 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
                       borderRadius: '50%',
                       background: 'var(--tp-success)',
                       animation: 'tp-pulse 1.2s ease-in-out infinite',
-                      boxShadow: '0 0 0 0 rgba(74,139,122,0.45)',
+                      boxShadow: '0 0 0 0 rgba(145,132,217,0.45)',
                     }}
                   />
                 )}
@@ -210,4 +191,19 @@ export default function BottomNav({ active, onChange, thinking = false, unread =
       `}</style>
     </nav>
   );
+}
+
+/**
+ * Tab glyphs, mirroring `NavGlyph` in mobile/components/BottomNav.tsx.
+ *
+ * Nocturne marks the selected tab by FILLING the glyph, not by shifting its
+ * hue. The colour change stays — the two together are what make a 22px icon
+ * read as selected without reading the label.
+ */
+function NavGlyph({ id, active }: { id: MobileTab | 'settings'; active: boolean }) {
+  const weight = active ? 'fill' : 'regular';
+  if (id === 'list') return <ListIcon weight={weight} />;
+  if (id === 'map') return <MapIcon weight={weight} />;
+  if (id === 'chat') return <ChatIcon weight={weight} />;
+  return <SettingsIcon weight={weight} />;
 }

@@ -9,6 +9,7 @@ import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
+import { PencilRenameIcon } from '@/components/icons';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
 // single render (matches the user-facing "20 days" model). Subsequent
@@ -486,20 +487,9 @@ export default function Itinerary({
                   lineHeight: 0,
                 }}
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 20h9" />
-                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-                </svg>
+                <span aria-hidden="true" style={{ lineHeight: 0 }}>
+                  <PencilRenameIcon />
+                </span>
               </button>
             )}
           </div>

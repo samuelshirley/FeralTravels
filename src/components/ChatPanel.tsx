@@ -16,6 +16,7 @@ import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
 // Imported, not restated: the native client derives its bubble with this same
 // id, and two hardcoded copies of it is how they quietly stop matching.
 import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
+import { PaperclipIcon, SendArrowIcon } from '@/components/icons';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -2409,9 +2410,7 @@ export default function ChatPanel({
               e.currentTarget.style.color = 'var(--tp-muted)';
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
+            <PaperclipIcon />
           </button>
           )}
           <textarea
@@ -2531,10 +2530,7 @@ export default function ChatPanel({
               justifyContent: 'center',
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19V5" />
-              <path d="m5 12 7-7 7 7" />
-            </svg>
+            <SendArrowIcon />
           </button>
         </div>
       </div>
