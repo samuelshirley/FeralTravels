@@ -112,7 +112,7 @@ export default function DeleteAccountSection() {
           padding: 20,
         }}
       >
-        <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>
+        <h2 style={{ margin: 0, marginBottom: 6, fontSize: 17, fontWeight: 500, color: 'var(--tp-text)' }}>
           Delete account
         </h2>
         <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: 'var(--tp-muted)', lineHeight: 1.5 }}>
@@ -168,12 +168,12 @@ export default function DeleteAccountSection() {
               padding: 24,
               maxWidth: 420,
               width: '100%',
-              boxShadow: 'var(--tp-shadow-lg, 0 20px 60px rgba(0,0,0,0.4))',
+              boxShadow: 'var(--tp-shadow-lg)',
             }}
           >
             <h3
               id="delete-account-title"
-              style={{ margin: 0, marginBottom: 10, fontSize: 18, fontWeight: 700, color: 'var(--tp-text)' }}
+              style={{ margin: 0, marginBottom: 10, fontSize: 18, fontWeight: 500, color: 'var(--tp-text)' }}
             >
               Are you sure you want to delete your account?
             </h3>
@@ -229,11 +229,14 @@ export default function DeleteAccountSection() {
               style={{
                 width: '100%',
                 fontSize: 15,
-                fontWeight: 700,
+                fontWeight: 600,
                 padding: '13px 16px',
-                background: armed && !deleting ? 'var(--tp-danger)' : 'rgba(198, 93, 74, 0.35)',
-                color: '#fff',
-                border: 'none',
+                // The LAST solid fill in the app, and it stays one. Every other
+                // action is an outline now, which is exactly what makes this
+                // one read as different in kind rather than merely important.
+                background: armed && !deleting ? 'var(--tp-danger)' : 'var(--tp-danger-muted)',
+                color: armed && !deleting ? 'var(--tp-bg)' : 'var(--tp-danger)',
+                border: '1px solid var(--tp-danger-border)',
                 borderRadius: 'var(--tp-radius-sm)',
                 cursor: armed && !deleting ? 'pointer' : 'not-allowed',
                 marginBottom: 8,

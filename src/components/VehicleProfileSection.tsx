@@ -256,15 +256,18 @@ function VehicleCard({
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 15 }} data-testid="vehicle-card-name">{vehicle.name}</strong>
+          <strong style={{ fontSize: 15, fontWeight: 500 }} data-testid="vehicle-card-name">
+            {vehicle.name}
+          </strong>
           {vehicle.is_default && (
             <span
               style={{
                 fontSize: 9,
-                fontWeight: 700,
+                fontWeight: 600,
                 letterSpacing: '0.08em',
-                background: 'var(--tp-success-muted)',
-                color: 'var(--tp-success)',
+                background: 'transparent',
+                border: '1px solid var(--tp-primary)',
+                color: 'var(--tp-accent-300)',
                 padding: '2px 6px',
                 borderRadius: 3,
                 textTransform: 'uppercase',
@@ -505,7 +508,7 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
       <div
         style={{
           fontSize: 10,
-          fontWeight: 700,
+          fontWeight: 600,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
           color: 'var(--tp-muted)',

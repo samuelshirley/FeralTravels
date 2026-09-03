@@ -12,6 +12,7 @@ import DeleteAccountSection from '@/components/DeleteAccountSection';
 import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
 import { requireWebAccess } from '@/server/auth/webAccess';
+import { buttonStyle } from '@/components/ui/Button';
 
 
 export const dynamic = 'force-dynamic';
@@ -75,15 +76,27 @@ export default async function SettingsPage() {
         >
           <div
             style={{
-              fontSize: 11,
+              fontSize: 10,
+              fontWeight: 600,
               color: 'var(--tp-subtle)',
-              letterSpacing: '0.15em',
+              letterSpacing: '0.14em',
               marginBottom: 4,
             }}
           >
             USER
           </div>
-          <h1 style={{ margin: 0, marginBottom: 24, fontSize: 28, fontWeight: 700, color: 'var(--tp-text)' }}>Settings</h1>
+          <h1
+            style={{
+              margin: 0,
+              marginBottom: 8,
+              fontSize: 26,
+              fontWeight: 500,
+              letterSpacing: '-0.01em',
+              color: 'var(--tp-text)',
+            }}
+          >
+            Settings
+          </h1>
 
           {/*
             Display-units toggle lives at the top of Settings because the
@@ -93,40 +106,36 @@ export default async function SettingsPage() {
             immediately via UnitsContext.
           */}
           <section
-            style={{
-              background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
-              borderRadius: 'var(--tp-radius-md)',
-              padding: 20,
-              marginBottom: 16,
-              boxShadow: 'var(--tp-shadow-sm)',
-            }}
+            style={{ padding: '20px 0' }}
           >
             <UnitsToggle />
           </section>
 
+          <hr className="tp-section-rule" />
+
           <section
-            style={{
-              background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
-              borderRadius: 'var(--tp-radius-md)',
-              padding: 20,
-              marginBottom: 16,
-              boxShadow: 'var(--tp-shadow-sm)',
-            }}
+            style={{ padding: '20px 0' }}
           >
-            <div style={{ fontSize: 12, color: 'var(--tp-muted)', marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginBottom: 4 }}>
               Signed in as
             </div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>
+            {/*
+              `anywhere`, not `break-word`: an address has no spaces to break
+              at, so a long one on a narrow column overflows the section
+              instead of wrapping.
+            */}
+            <div
+              style={{ fontSize: 13, fontWeight: 500, color: 'var(--tp-text)', overflowWrap: 'anywhere' }}
+            >
               {session.user.name || session.user.email}
             </div>
             {session.user.email && session.user.name && (
               <div
                 style={{
-                  fontSize: 12,
-                  color: 'var(--tp-subtle)',
+                  fontSize: 13,
+                  color: 'var(--tp-muted)',
                   marginTop: 4,
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {session.user.email}
@@ -134,17 +143,12 @@ export default async function SettingsPage() {
             )}
           </section>
 
+          <hr className="tp-section-rule" />
+
           <section
-            style={{
-              background: 'var(--tp-surface)',
-              border: '1px solid var(--tp-border)',
-              borderRadius: 'var(--tp-radius-md)',
-              padding: 20,
-              marginBottom: 16,
-              boxShadow: 'var(--tp-shadow-sm)',
-            }}
+            style={{ padding: '20px 0' }}
           >
-            <h2 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>
+            <h2 style={{ margin: 0, marginBottom: 6, fontSize: 17, fontWeight: 500, color: 'var(--tp-text)' }}>
               Vehicle profile
             </h2>
             {/*
@@ -159,13 +163,16 @@ export default async function SettingsPage() {
             <VehicleProfileSection />
           </section>
 
+          <hr className="tp-section-rule" />
+
           {admin && overview && (
             <>
               <div
                 style={{
                   fontSize: 11,
-                  color: 'var(--tp-gold)',
-                  letterSpacing: '0.15em',
+                  fontWeight: 600,
+                  color: 'var(--tp-subtle)',
+                  letterSpacing: '0.14em',
                   marginTop: 32,
                   marginBottom: 4,
                 }}
@@ -174,8 +181,8 @@ export default async function SettingsPage() {
               </div>
               <section
                 style={{
-                  background: 'rgba(184, 149, 106, 0.1)',
-                  border: '1px solid rgba(184, 149, 106, 0.35)',
+                  background: 'var(--tp-primary-tint)',
+                  border: '1px solid var(--tp-primary)',
                   borderRadius: 'var(--tp-radius-md)',
                   padding: 20,
                 }}
@@ -191,7 +198,9 @@ export default async function SettingsPage() {
                   }}
                 >
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--tp-text)' }}>System overview</h2>
+                    <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500, color: 'var(--tp-text)' }}>
+                      System overview
+                    </h2>
                     <p
                       style={{
                         margin: 0,
@@ -206,13 +215,9 @@ export default async function SettingsPage() {
                   <Link
                     href="/admin"
                     style={{
+                      ...buttonStyle('secondary'),
                       fontSize: 12,
-                      fontWeight: 600,
                       padding: '7px 12px',
-                      background: 'var(--tp-gold)',
-                      color: 'var(--tp-text)',
-                      borderRadius: 'var(--tp-radius-sm)',
-                      textDecoration: 'none',
                       whiteSpace: 'nowrap',
                     }}
                   >

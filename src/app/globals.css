@@ -521,3 +521,37 @@ img, svg, canvas { max-width: 100%; }
 .auth-link:hover {
   text-decoration: underline;
 }
+
+/* ---------------------------------------------------------------------------
+ * Section rules.
+ *
+ * A hairline separating two MAJOR sections fades at both ends, so it reads as
+ * a break in the page rather than a line drawn across it. Inside a card the
+ * plain `--tp-neutral-900` hairline is the right one — this is only for the
+ * top-level boundaries.
+ * ------------------------------------------------------------------------- */
+.tp-section-rule {
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--tp-neutral-800) 48px,
+    var(--tp-neutral-800) calc(100% - 48px),
+    transparent
+  );
+}
+/* Narrow columns (the settings page is 720px, but a phone is not) have no room
+   for a 48px fade at each end before the line disappears entirely. */
+@media (max-width: 520px) {
+  .tp-section-rule {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--tp-neutral-800) 16px,
+      var(--tp-neutral-800) calc(100% - 16px),
+      transparent
+    );
+  }
+}
