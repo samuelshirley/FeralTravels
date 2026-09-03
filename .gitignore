@@ -57,3 +57,6 @@ push-*.sh
 # Local iOS e2e runs (scripts/ios-e2e-local.sh) — logs, JUnit, Maestro's debug
 # output and screenshots. Regenerated on every run and often large.
 mobile/maestro/.local-run/
+
+# Playwright MCP scratch output (screenshots, console logs, snapshots).
+.playwright-mcp/
