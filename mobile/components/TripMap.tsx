@@ -68,14 +68,24 @@ const STOP_GRID_CELL_PX = 64;
 // Marker palette, copied from src/components/TripMap.tsx:
 //   :36 :37 :38 (stop/cluster), :297+ (leg stroke fallback = --tp-primary),
 //   :426 (last-leg destination), :354 (gap stroke), :452 and :668 (POI/trail).
-const FUEL_STOP_COLOR = "#C9912F";
-const OTHER_STOP_COLOR = "#7A7A7A";
-const CLUSTER_COLOR = "#4A5A6A";
-const DEFAULT_LEG_COLOR = "#4E7AB0";
-const DESTINATION_COLOR = "#B8956A";
-const GAP_COLOR = "#c65d4a";
-const POI_COLOR = "#E8D57C";
-const TRAIL_FALLBACK_COLOR = "#E8D57C";
+/*
+ * Map marker colours. Literals rather than `--tp-*` because the Maps API and
+ * react-native-maps both take colour STRINGS, not CSS — same reason
+ * DARK_MAP_STYLE is literal. Keep in step with src/app/globals.css.
+ *
+ * Under the mono palette fuel and the route are the SAME accent: a fuel marker
+ * is distinguished by its glyph and its ring, not by hue. The two that keep a
+ * colour of their own are the gap warning (danger, because it is the one thing
+ * on the map that means something is wrong) and base days.
+ */
+const FUEL_STOP_COLOR = "#9184d9";
+const OTHER_STOP_COLOR = "#b2b6ca";
+const CLUSTER_COLOR = "#595d6c";
+const DEFAULT_LEG_COLOR = "#9184d9";
+const DESTINATION_COLOR = "#d2cefd";
+const GAP_COLOR = "#E8705C";
+const POI_COLOR = "#9690c9";
+const TRAIL_FALLBACK_COLOR = "#9690c9";
 
 /** Web-Mercator tile size — the unit google.maps.Projection works in. */
 const WORLD_TILE_PX = 256;
@@ -873,25 +883,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.mapChrome,
   },
-  // src/components/TripMap.tsx:389/428/454/518/562 — every marker is stroked
-  // strokeColor: '#ffffff'; only the weight changes per marker class.
+  /*
+   * Every marker is stroked with the PAGE GROUND, not white — the web does the
+   * same. White was right on a cream map; on this one the halo's job is to
+   * punch the marker out of the tiles, which is the ground colour, and it also
+   * matches the ring the route timeline draws for the same stop.
+   */
   dot: {
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   destinationDot: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 3,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   poiDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
     backgroundColor: POI_COLOR,
     opacity: 0.7,
   },
@@ -899,17 +913,17 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderWidth: 1.5,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   cluster: {
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: CLUSTER_COLOR,
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   clusterLabel: {
-    color: "#ffffff",
+    color: theme.text,
     fontSize: 11,
     fontFamily: font.bold,
   },
@@ -947,8 +961,7 @@ const styles = StyleSheet.create({
   calloutFootnote: {
     fontFamily: font.regular,
     fontSize: 10,
-    // src/components/TripMap.tsx:535 — `color: #aaa`.
-    color: "#aaaaaa",
+    color: theme.subtle,
     marginTop: 4,
   },
   calloutLink: {
