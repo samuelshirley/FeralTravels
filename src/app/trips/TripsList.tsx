@@ -21,6 +21,10 @@ interface TripSummary {
    * browser says, and two notions of "today" is how the day-drift bug happened.
    */
   completed: boolean;
+  /** Derived by listTripsForUser — see the Trip type. */
+  day_count?: number | null;
+  total_distance_km?: number | null;
+  next_stop?: { name: string; distance_km: number | null } | null;
 }
 
 interface Props {
@@ -129,6 +133,9 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             name={trip.name}
             startDate={trip.start_date}
             endDate={trip.end_date}
+            dayCount={trip.day_count}
+            totalDistanceKm={trip.total_distance_km}
+            nextStop={trip.next_stop}
             completed={trip.completed}
             editMode={editMode}
             onDeleted={handleTripDeleted}

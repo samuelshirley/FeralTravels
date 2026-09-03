@@ -11,6 +11,16 @@ interface Props {
   name: string;
   startDate: string | null;
   endDate: string | null;
+  /** Trip length in days, derived by listTripsForUser. */
+  dayCount?: number | null;
+  /** Total driving distance in km, derived by listTripsForUser. */
+  totalDistanceKm?: number | null;
+  /**
+   * The next fuel stop on the day the driver is on. Null when there is not one
+   * to name — fuel is sourced per-leg on day-open, so a trip nobody has opened
+   * has no stop yet. The row is omitted rather than showing a placeholder.
+   */
+  nextStop?: { name: string; distance_km: number | null } | null;
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
@@ -41,6 +51,9 @@ export default function TripCard({
   name,
   startDate,
   endDate,
+  dayCount,
+  totalDistanceKm,
+  nextStop,
   isTemplate = false,
   completed = false,
   editMode = false,
@@ -51,6 +64,17 @@ export default function TripCard({
 }: Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  /*
+   * "16–17 Sep 2026 · 2 days · ~645 km". Each part is dropped when it is not
+   * known rather than shown as a zero — a template carries dates and nothing
+   * else, and it should read as a date range, not as a 0 km trip.
+   */
+  const metaBits: string[] = [];
+  const dateRange = [startDate, endDate].filter(Boolean).join(' → ');
+  if (dateRange) metaBits.push(dateRange);
+  if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? '' : 's'}`);
+  if (totalDistanceKm) metaBits.push(`~${totalDistanceKm} km`);
 
   async function handleDeleteConfirm() {
     setBusy(true);
@@ -127,8 +151,42 @@ export default function TripCard({
               marginTop: 4,
             }}
           >
-            {[startDate, endDate].filter(Boolean).join(' → ') || 'No dates set'}
+            {metaBits.join(' · ') || 'No dates set'}
           </div>
+
+          {/*
+            The one added line per card. Below a hairline INSIDE the card so it
+            reads as a footnote to this trip rather than a second row in the
+            list. Omitted entirely when there is no stop to name — see the prop.
+          */}
+          {nextStop && (
+            <div
+              style={{
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: '1px solid var(--tp-neutral-900)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 11,
+                color: 'var(--tp-muted)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--tp-primary)',
+                  flexShrink: 0,
+                }}
+              />
+              Next: fuel at {nextStop.name}
+              {nextStop.distance_km != null ? ` · in ${Math.round(nextStop.distance_km)} km` : ''}
+            </div>
+          )}
 
           {showClone && !editMode && (
             <div

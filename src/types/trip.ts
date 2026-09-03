@@ -84,6 +84,22 @@ export interface Trip {
    * `lib/tripCompletion`, and `LegWithDetails.date_iso` for the day model.
    */
   last_day_iso?: string | null;
+  /**
+   * Trip length in days and total driving distance, derived from the legs.
+   * Same contract as `last_day_iso` — list payload only, never a column.
+   */
+  day_count?: number | null;
+  total_distance_km?: number | null;
+  /**
+   * The next fuel stop on the day the driver is on, for the one added line on
+   * a trip card: "Next: fuel at Reims Ids · in 147 km".
+   *
+   * Null whenever there isn't one to name, which is a real state rather than a
+   * loading state — fuel is sourced per-leg when a day is opened, so a trip
+   * nobody has opened yet has no stop to point at. The card omits the line
+   * rather than inventing one.
+   */
+  next_stop?: { name: string; distance_km: number | null } | null;
 }
 
 /**

@@ -349,6 +349,9 @@ export default function TripsScreen() {
                 name={trip.name}
                 startDate={trip.start_date}
                 endDate={trip.end_date}
+                dayCount={trip.day_count}
+                totalDistanceKm={trip.total_distance_km}
+                nextStop={trip.next_stop}
                 isTemplate={isTemplate}
                 // On a phone the runtime zone IS the driver's zone (the web
                 // server runs in UTC and has to read the stored preference), so

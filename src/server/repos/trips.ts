@@ -281,19 +281,84 @@ export async function listTripsForUser(userId: string) {
   // needs is the leg ids in sort order: their count is the trip's length, and
   // the current leg's position in it is what a progress report re-anchors from.
   const legRows = await db
-    .select({ tripId: legs.tripId, id: legs.id })
+    .select({
+      tripId: legs.tripId,
+      id: legs.id,
+      // Added for the card's meta line and its next-stop row. Free — this
+      // query already runs and already reads a row per leg.
+      distanceKm: legs.distanceKm,
+      legType: legs.legType,
+    })
     .from(legs)
     .where(inArray(legs.tripId, list.map((t) => t.id)))
     .orderBy(asc(legs.tripId), asc(legs.sortOrder));
   const legIdsByTrip = new Map<string, string[]>();
+  const legMetaByTrip = new Map<string, { distanceKm: number | null }[]>();
   for (const row of legRows) {
     const arr = legIdsByTrip.get(row.tripId);
     if (arr) arr.push(row.id);
     else legIdsByTrip.set(row.tripId, [row.id]);
+    const meta = legMetaByTrip.get(row.tripId);
+    if (meta) meta.push({ distanceKm: row.distanceKm });
+    else legMetaByTrip.set(row.tripId, [{ distanceKm: row.distanceKm }]);
   }
+
+  /*
+   * The next fuel stop on the day each driver is on, for the card's one added
+   * line. A SECOND query rather than a join, because it is scoped to one leg
+   * per trip — the current one — so it reads a handful of rows rather than
+   * every stop of every trip in the list.
+   *
+   * This is empty for a trip whose current day has not been sourced yet. Fuel
+   * is planned per-leg on day-open, so that is a real state, not a loading
+   * one: the card omits the line rather than inventing a stop.
+   */
+  const currentLegIds = list
+    .map((trip) => {
+      const legIds = legIdsByTrip.get(trip.id) ?? [];
+      if (legIds.length === 0) return null;
+      const rank = trip.current_leg_id ? legIds.indexOf(trip.current_leg_id) : -1;
+      return legIds[rank >= 0 ? rank : 0] ?? null;
+    })
+    .filter((id): id is string => id != null);
+
+  const nextStopByLegId = new Map<string, { name: string; distance_km: number | null }>();
+  if (currentLegIds.length > 0) {
+    const stopRows = await db
+      .select({
+        legId: stops.legId,
+        name: stops.name,
+        distanceFromStartKm: stops.distanceFromStartKm,
+      })
+      .from(stops)
+      .where(
+        and(
+          inArray(stops.legId, currentLegIds),
+          eq(stops.stopType, 'fuel'),
+          ne(stops.status, 'dismissed')
+        )
+      )
+      .orderBy(asc(stops.legId), asc(stops.distanceFromStartKm));
+    for (const row of stopRows) {
+      // First by distance wins — the NEXT stop along the day, not the last.
+      if (nextStopByLegId.has(row.legId)) continue;
+      nextStopByLegId.set(row.legId, {
+        name: row.name,
+        distance_km: row.distanceFromStartKm,
+      });
+    }
+  }
+
   return list.map((trip) => {
     const legIds = legIdsByTrip.get(trip.id) ?? [];
+    const legMeta = legMetaByTrip.get(trip.id) ?? [];
+    const currentRank = trip.current_leg_id ? legIds.indexOf(trip.current_leg_id) : -1;
+    const currentLegId = legIds[currentRank >= 0 ? currentRank : 0] ?? null;
+    const totalKm = legMeta.reduce((sum, l) => sum + (l.distanceKm ?? 0), 0);
     return {
+      day_count: legIds.length || null,
+      total_distance_km: totalKm > 0 ? Math.round(totalKm) : null,
+      next_stop: currentLegId ? nextStopByLegId.get(currentLegId) ?? null : null,
       ...trip,
       last_day_iso: lastDayFromSchedule({
         startDateISO: trip.start_date_parsed,
