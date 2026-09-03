@@ -2,6 +2,7 @@
 
 import type { StopType } from '@/types/trip';
 import Distance from '@/components/Distance';
+import { FuelIcon, PlaceIcon } from '@/components/icons';
 
 export interface StopCardProps {
   stopType: StopType;
@@ -22,19 +23,19 @@ export interface StopCardProps {
  */
 const STOP_DISPLAY: Record<
   StopType,
-  { label: string; color: string; iconBg: string; icon: string }
+  { label: string; color: string; iconBg: string; Icon: typeof FuelIcon }
 > = {
   fuel: {
     label: 'FUEL',
     color: 'var(--tp-gold)',
-    iconBg: 'rgba(184,149,106,0.15)',
-    icon: '⛽',
+    iconBg: 'var(--tp-primary-muted)',
+    Icon: FuelIcon,
   },
   other: {
     label: 'STOP',
     color: 'var(--tp-muted)',
-    iconBg: 'rgba(92,92,92,0.1)',
-    icon: '📍',
+    iconBg: 'var(--tp-surface-muted)',
+    Icon: PlaceIcon,
   },
 };
 
@@ -92,7 +93,7 @@ export default function StopCard({
             background: display.iconBg,
           }}
         >
-          {display.icon}
+          <display.Icon color={display.color} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div

@@ -4,6 +4,7 @@ import { buildMapsSearchUrl } from "@/shared/lib/maps";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
+import { FuelIcon, PlaceIcon } from "@/components/icons";
 
 export interface StopCardProps {
   stopType: StopType;
@@ -24,21 +25,19 @@ export interface StopCardProps {
  */
 const STOP_DISPLAY: Record<
   StopType,
-  { label: string; color: string; iconBg: string; icon: string }
+  { label: string; color: string; iconBg: string; Icon: typeof FuelIcon }
 > = {
   fuel: {
     label: "FUEL",
     color: theme.gold,
-    // src/components/stops/StopCard.tsx:29
-    iconBg: "rgba(184,149,106,0.15)",
-    icon: "⛽",
+    iconBg: theme.primaryMuted,
+    Icon: FuelIcon,
   },
   other: {
     label: "STOP",
     color: theme.muted,
-    // src/components/stops/StopCard.tsx:35
-    iconBg: "rgba(92,92,92,0.1)",
-    icon: "📍",
+    iconBg: theme.surfaceMuted,
+    Icon: PlaceIcon,
   },
 };
 
@@ -71,7 +70,7 @@ export default function StopCard({
   const body = (
     <View style={styles.row}>
       <View style={[styles.icon, { backgroundColor: display.iconBg }]}>
-        <Text style={styles.iconGlyph}>{display.icon}</Text>
+        <display.Icon color={display.color} />
       </View>
       <View style={styles.text}>
         <Text style={[styles.type, { color: display.color }]}>{display.label}</Text>

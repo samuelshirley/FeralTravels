@@ -17,6 +17,7 @@ import { Distance, Spinner, StatusBadge } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
+import { DisclosureIcon, NavigateIcon, WarningIcon } from "@/components/icons";
 
 /**
  * How long a leg's sourced fuel stops stay fresh before the day-open loader
@@ -315,15 +316,15 @@ export default function LegCard({
           </View>
           {leg.continuity_warning ? (
             <View style={styles.continuityWarning}>
-              <Text style={styles.continuityIcon}>⚠</Text>
+              <WarningIcon color={theme.warning} />
               <Text style={styles.continuityText}>{leg.continuity_warning}</Text>
             </View>
           ) : null}
         </View>
         <StatusBadge status={leg.status} />
-        <Animated.Text style={[styles.chevron, { transform: [{ rotate: chevronRotate }] }]}>
-          ▾
-        </Animated.Text>
+        <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+          <DisclosureIcon color={theme.subtle} size={14} />
+        </Animated.View>
       </Pressable>
 
       {expanded && isRestDay ? (
@@ -451,7 +452,7 @@ export default function LegCard({
                         !seg.isNext && i > 0 && navButtons[0].isNext && styles.navButtonSecondary,
                       ]}
                     >
-                      <Text style={styles.navButtonText}>▶</Text>
+                      <NavigateIcon color={theme.accent300} />
                       <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
                       {seg.isNext ? <Text style={styles.navNextChip}>NEXT</Text> : null}
                     </Pressable>

@@ -32,7 +32,8 @@ export const theme = {
   /* Accent */
   primary: "#9184d9", // --tp-primary
   primaryHover: "#b5abfc", // --tp-primary-hover — LIGHTER, not darker
-  primaryMuted: "rgba(145, 132, 217, 0.14)", // --tp-primary-muted
+  primaryMuted: "rgba(145, 132, 217, 0.14)", // --tp-primary-muted — pressed
+  primaryTint: "rgba(145, 132, 217, 0.08)", // --tp-primary-tint — at rest
   onPrimary: "#e9e9ed", // --tp-on-primary — never pure white
   accent300: "#d2cefd", // --tp-accent-300
   accent400: "#b5abfc", // --tp-accent-400

@@ -11,6 +11,7 @@ import {
   vehicleProfileGroupTitle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
+import { buttonStyle } from '@/components/ui/Button';
 
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {};
 
@@ -561,12 +562,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 const primaryBtn: React.CSSProperties = {
+  ...buttonStyle(),
   padding: '8px 16px',
-  background: 'var(--tp-primary)',
-  color: 'var(--tp-on-primary)',
-  border: 'none',
-  borderRadius: 6,
   fontSize: 13,
-  fontWeight: 600,
-  cursor: 'pointer',
 };

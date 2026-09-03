@@ -13,7 +13,7 @@ import { Distance } from "@/components/ui";
 import { updateTrip } from "@/lib/api";
 import { useUnits } from "@/lib/units";
 import { theme, shadow } from "@/lib/theme";
-import { PencilRenameIcon } from "@/components/icons";
+import { DisclosureIcon, PencilRenameIcon } from "@/components/icons";
 import { behindCutoffRank, formatDate, parseISODate, todayISOInZone } from "@/shared/lib/dates";
 import { isTripCompleted, lastDayFromLegDates } from "@/shared/lib/tripCompletion";
 import { effectiveLegSegment } from "@/shared/lib/legSegmentGrouping";
@@ -543,7 +543,7 @@ export default function Itinerary({
         <View style={styles.pastBlock}>
           <Pressable onPress={() => setShowPast((v) => !v)} style={styles.pastToggle}>
             <Text style={styles.pastToggleText}>
-              {showPast ? "▾" : "▸"}{" "}
+              <DisclosureIcon color={theme.subtle} />{" "}
               {completed
                 ? `${showPast ? "Hide" : "Show"} past days — ${pastLegs.length} day${
                     pastLegs.length === 1 ? "" : "s"

@@ -1,6 +1,12 @@
 import {
   ArrowUp,
+  CaretDown,
   CaretLeft,
+  GasPump,
+  MapPin,
+  NavigationArrow,
+  Warning,
+  X,
   ChatTeardrop,
   GearSix,
   ListDashes,
@@ -100,4 +106,38 @@ export function SendArrowIcon({ color = 'currentColor', size = 16, weight = 'reg
 
 export function AccountIcon({ color = 'currentColor', size = 18, weight = 'regular' }: IconProps) {
   return <User color={color} size={size} weight={weight} />;
+}
+
+/* ── Glyphs that replaced emoji. Nocturne has no emoji: they carry a colour
+   and a vendor's drawing style that no palette controls, and they render
+   differently on every platform the app ships to. ─────────────────────── */
+
+/** Was `⛽` on a fuel stop. Filled, like every marker. */
+export function FuelIcon({ color = 'currentColor', size = 14, weight = 'fill' }: IconProps) {
+  return <GasPump color={color} size={size} weight={weight} />;
+}
+
+/** Was `📍` on a user-added stop. */
+export function PlaceIcon({ color = 'currentColor', size = 14, weight = 'fill' }: IconProps) {
+  return <MapPin color={color} size={size} weight={weight} />;
+}
+
+/** Was `▶` on a navigate action. */
+export function NavigateIcon({ color = 'currentColor', size = 14, weight = 'regular' }: IconProps) {
+  return <NavigationArrow color={color} size={size} weight={weight} />;
+}
+
+/** Was `▾` on a disclosure. */
+export function DisclosureIcon({ color = 'currentColor', size = 12, weight = 'regular' }: IconProps) {
+  return <CaretDown color={color} size={size} weight={weight} />;
+}
+
+/** Was `⚠` on the leg-continuity warning. */
+export function WarningIcon({ color = 'currentColor', size = 14, weight = 'regular' }: IconProps) {
+  return <Warning color={color} size={size} weight={weight} />;
+}
+
+/** Was `×` on a remove control. */
+export function CloseIcon({ color = 'currentColor', size = 12, weight = 'bold' }: IconProps) {
+  return <X color={color} size={size} weight={weight} />;
 }

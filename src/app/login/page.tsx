@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth, signIn, isAppleSignInConfigured } from '@/server/auth';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
+import Button from '@/components/ui/Button';
 
 interface LoginPageProps {
   searchParams: { callbackUrl?: string; error?: string; emailError?: string };
@@ -293,21 +294,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               outline: 'none',
             }}
           />
-          <button
-            type="submit"
-            style={{
-              padding: '10px 16px',
-              background: 'var(--tp-primary)',
-              color: 'var(--tp-on-primary)',
-              border: 'none',
-              borderRadius: 'var(--tp-radius-sm)',
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
+          <Button type="submit" block>
             Email me a code
-          </button>
+          </Button>
         </form>
 
         {/* Both Google's brand verification and Apple's App Review look for

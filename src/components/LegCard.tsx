@@ -17,6 +17,8 @@ import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
+import { buttonStyle } from '@/components/ui/Button';
+import { DisclosureIcon, NavigateIcon, WarningIcon } from '@/components/icons';
 
 /** Format a stop type slug into a readable label for nav buttons. */
 function formatStopType(stopType?: string): string {
@@ -369,8 +371,11 @@ export default function LegCard({
                 color: 'var(--tp-text)',
               }}
             >
-              <span aria-hidden style={{ color: '#d97706', flexShrink: 0 }}>
-                ⚠
+              <span
+                aria-hidden
+                style={{ color: 'var(--tp-warning)', flexShrink: 0, lineHeight: 0 }}
+              >
+                <WarningIcon />
               </span>
               <span>{leg.continuity_warning}</span>
             </div>
@@ -380,12 +385,12 @@ export default function LegCard({
         <span
           style={{
             color: 'var(--tp-subtle)',
-            fontSize: 18,
+            lineHeight: 0,
             transform: expanded ? 'rotate(180deg)' : 'rotate(0)',
             transition: 'transform 0.2s',
           }}
         >
-          ▾
+          <DisclosureIcon size={14} />
         </span>
       </div>
 
@@ -569,25 +574,16 @@ export default function LegCard({
                       data-nav-next={seg.isNext ? 'true' : undefined}
                       title={navButtonLabel(seg)}
                       style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
+                        ...buttonStyle(),
                         gap: 8,
                         fontSize: 12,
-                        fontWeight: 600,
                         letterSpacing: '0.04em',
-                        color: '#000',
-                        background: 'var(--tp-primary)',
                         padding: seg.isNext ? '7px 14px' : '6px 12px',
-                        borderRadius: 6,
-                        textDecoration: 'none',
-                        boxShadow: seg.isNext
-                          ? '0 2px 8px rgba(124,181,232,0.2)'
-                          : '0 2px 8px rgba(124,181,232,0.15)',
                         opacity: !seg.isNext && i > 0 && navButtons[0].isNext ? 0.82 : 1,
                         width: 'fit-content',
                       }}
                     >
-                      <span>\u25b6</span>
+                      <NavigateIcon />
                       {navButtonLabel(seg)}
                       {seg.isNext ? (
                         <span

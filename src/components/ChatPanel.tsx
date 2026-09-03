@@ -17,6 +17,7 @@ import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
 // id, and two hardcoded copies of it is how they quietly stop matching.
 import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
 import { PaperclipIcon, SendArrowIcon } from '@/components/icons';
+import { buttonStyle } from '@/components/ui/Button';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -2115,16 +2116,10 @@ export default function ChatPanel({
                       setPurchaseSheetOpen(true);
                     }}
                     style={{
+                      ...buttonStyle(),
                       padding: '7px 14px',
-                      background: 'var(--tp-primary)',
-                      color: 'var(--tp-on-primary)',
-                      border: 'none',
-                      borderRadius: 8,
                       fontSize: 12,
-                      fontWeight: 600,
                       letterSpacing: '0.02em',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
                     }}
                   >
                     {entitlement.paywall.buttonLabel}

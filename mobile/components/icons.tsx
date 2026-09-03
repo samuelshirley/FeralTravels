@@ -1,7 +1,13 @@
 import type { IconWeight } from "phosphor-react-native";
 import {
   ArrowUpIcon,
+  CaretDownIcon,
   CaretLeftIcon,
+  GasPumpIcon,
+  MapPinIcon,
+  NavigationArrowIcon,
+  WarningIcon as PhosphorWarningIcon,
+  XIcon,
   ChatTeardropIcon,
   GearSixIcon,
   ListDashesIcon,
@@ -98,4 +104,38 @@ export function SendArrowIcon({ color, size = 16, weight = "regular" }: IconProp
 
 export function AccountIcon({ color, size = 18, weight = "regular" }: IconProps) {
   return <UserIcon color={color} size={size} weight={weight} />;
+}
+
+/* ── Glyphs that replaced emoji. Nocturne has no emoji: they carry a colour
+   and a vendor's drawing style that no palette controls, and they render
+   differently on every platform the app ships to. ─────────────────────── */
+
+/** Was `⛽` on a fuel stop. Filled, like every marker. */
+export function FuelIcon({ color, size = 14, weight = "fill" }: IconProps) {
+  return <GasPumpIcon color={color} size={size} weight={weight} />;
+}
+
+/** Was `📍` on a user-added stop. */
+export function PlaceIcon({ color, size = 14, weight = "fill" }: IconProps) {
+  return <MapPinIcon color={color} size={size} weight={weight} />;
+}
+
+/** Was `▶` on a navigate action. */
+export function NavigateIcon({ color, size = 14, weight = "regular" }: IconProps) {
+  return <NavigationArrowIcon color={color} size={size} weight={weight} />;
+}
+
+/** Was `▾` on a disclosure. */
+export function DisclosureIcon({ color, size = 12, weight = "regular" }: IconProps) {
+  return <CaretDownIcon color={color} size={size} weight={weight} />;
+}
+
+/** Was `⚠` on the leg-continuity warning. */
+export function WarningIcon({ color, size = 14, weight = "regular" }: IconProps) {
+  return <PhosphorWarningIcon color={color} size={size} weight={weight} />;
+}
+
+/** Was `×` on a remove control. */
+export function CloseIcon({ color, size = 12, weight = "bold" }: IconProps) {
+  return <XIcon color={color} size={size} weight={weight} />;
 }

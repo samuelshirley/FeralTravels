@@ -8,6 +8,7 @@ import { useStopActions } from "@/components/useStopActions";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
+import { CloseIcon, DisclosureIcon } from "@/components/icons";
 
 interface StopsSectionProps {
   tripId: string;
@@ -190,7 +191,7 @@ export default function StopsSection({
                   accessibilityLabel={`Remove ${stop.name}`}
                   style={styles.removeButton}
                 >
-                  <Text style={styles.removeGlyph}>×</Text>
+                  <CloseIcon color={theme.subtle} />
                 </Pressable>
               ) : null}
             </View>
@@ -219,7 +220,7 @@ export default function StopsSection({
           <View style={styles.dismissedBlock}>
             <Pressable onPress={() => setShowDismissed((v) => !v)}>
               <Text style={styles.dismissedSummary}>
-                {showDismissed ? "▾" : "▸"} {dismissedStops.length} DISMISSED
+                <DisclosureIcon color={theme.subtle} /> {dismissedStops.length} DISMISSED
               </Text>
             </Pressable>
             {showDismissed ? (

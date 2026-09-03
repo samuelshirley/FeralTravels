@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/api';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface StopsSectionProps {
   tripId: string;
@@ -154,15 +155,7 @@ export default function StopsSection({
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <Link
                 href={vehicleSetupHref}
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: '4px 10px',
-                  borderRadius: 4,
-                  background: 'var(--tp-primary)',
-                  color: 'var(--tp-on-primary)',
-                  textDecoration: 'none',
-                }}
+                style={{ ...buttonStyle(), fontSize: 11, padding: '4px 10px' }}
               >
                 Open vehicle setup
               </Link>

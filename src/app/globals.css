@@ -51,7 +51,8 @@
   /* Accent */
   --tp-primary: #9184d9;
   --tp-primary-hover: #b5abfc; /* LIGHTER on hover, not darker — dark ground */
-  --tp-primary-muted: rgba(145, 132, 217, 0.14);
+  --tp-primary-muted: rgba(145, 132, 217, 0.14); /* pressed / selected */
+  --tp-primary-tint: rgba(145, 132, 217, 0.08); /* an outlined button at rest */
   --tp-on-primary: #e9e9ed; /* never pure white */
   --tp-accent-300: #d2cefd;
   --tp-accent-400: #b5abfc;

@@ -9,7 +9,8 @@ import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
-import { PencilRenameIcon } from '@/components/icons';
+import { DisclosureIcon, PencilRenameIcon } from '@/components/icons';
+import { buttonStyle } from '@/components/ui/Button';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
 // single render (matches the user-facing "20 days" model). Subsequent
@@ -420,13 +421,9 @@ export default function Itinerary({
                 data-testid="trip-name-save"
                 aria-label="Save name"
                 style={{
-                  background: 'var(--tp-primary)',
-                  border: 'none',
-                  color: '#fff',
+                  ...buttonStyle(),
                   padding: '6px 12px',
-                  borderRadius: 6,
                   fontSize: 12,
-                  fontWeight: 600,
                   cursor: savingName ? 'wait' : 'pointer',
                 }}
               >
@@ -601,7 +598,16 @@ export default function Itinerary({
               cursor: 'pointer',
             }}
           >
-            {showPast ? '▾' : '▸'}{' '}
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-flex',
+                transform: showPast ? 'rotate(0deg)' : 'rotate(-90deg)',
+                transition: 'transform 0.2s',
+              }}
+            >
+              <DisclosureIcon />
+            </span>{' '}
             {completed
               ? `${showPast ? 'Hide' : 'Show'} past days — ${pastLegs.length} day${
                   pastLegs.length === 1 ? '' : 's'

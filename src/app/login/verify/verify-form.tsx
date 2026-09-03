@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { verifyOtpAction, resendOtpAction } from './actions';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface VerifyFormProps {
   email: string;
@@ -319,16 +320,14 @@ export function VerifyForm({
           type="submit"
           disabled={submitting || !codeComplete}
           style={{
+            ...buttonStyle(),
             width: '100%',
-            padding: '10px 16px',
-            background: codeComplete ? 'var(--tp-primary)' : 'var(--tp-surface-muted)',
-            color: codeComplete ? 'var(--tp-on-primary)' : 'var(--tp-subtle)',
-            border: 'none',
-            borderRadius: 'var(--tp-radius-sm)',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: codeComplete ? 'pointer' : 'default',
-            transition: 'background 0.15s, color 0.15s',
+            // Incomplete code reads as unavailable rather than as a second
+            // button style: same outline, dimmed, exactly like every other
+            // disabled control.
+            ...(codeComplete
+              ? null
+              : { opacity: 0.6, cursor: 'default', color: 'var(--tp-subtle)' }),
           }}
         >
           {submitting ? 'Verifying…' : 'Verify code'}
