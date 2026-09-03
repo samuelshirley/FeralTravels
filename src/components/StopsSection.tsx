@@ -10,13 +10,17 @@ import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
 import { buttonStyle } from '@/components/ui/Button';
+import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
 
 interface StopsSectionProps {
   tripId: string;
   legId: string;
+  legStartName: string | null;
   legEndName: string | null;
   legEndCoords?: { lat: number | null; lng: number | null };
   legStartCoords?: { lat: number | null; lng: number | null };
+  /** Leg driving distance, for the DESTINATION row's marker. */
+  legDistanceKm?: number | null;
   initialStops: Stop[];
   fuelStatus?: FuelStatus;
   fuelPlanError?: string | null;
@@ -71,9 +75,11 @@ const TYPE_ORDER: StopType[] = ['fuel', 'other'];
 export default function StopsSection({
   tripId,
   legId,
-  legEndName: _legEndName,
-  legEndCoords: _legEndCoords,
-  legStartCoords: _legStartCoords,
+  legStartName,
+  legEndName,
+  legEndCoords,
+  legStartCoords,
+  legDistanceKm,
   initialStops,
   fuelStatus = 'none',
   fuelPlanError = null,
@@ -83,10 +89,6 @@ export default function StopsSection({
   readonly = false,
   highlightStopId = null,
 }: StopsSectionProps) {
-  void _legEndName;
-  void _legStartCoords;
-  void _legEndCoords;
-
   const {
     activeStops,
     dismissedStops,
@@ -125,6 +127,79 @@ export default function StopsSection({
       return TYPE_ORDER.indexOf(a.stop_type) - TYPE_ORDER.indexOf(b.stop_type);
     });
   }, [activeStops]);
+
+  /*
+   * The timeline's rows: the leg's own START, every active stop in route
+   * order, and its DESTINATION.
+   *
+   * The endpoints are rows rather than headings because they are places on the
+   * same line — a driver reading "Reims Ids · 147 km" needs to know 147 km
+   * from WHERE, and the answer used to be nowhere on the screen. `legStartName`
+   * and the coords were already being passed to this component and explicitly
+   * voided; this is what they were passed for.
+   */
+  const timelineRows = useMemo(() => {
+    const mapsHref = (lat: number | null | undefined, lng: number | null | undefined) =>
+      lat != null && lng != null
+        ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+        : null;
+
+    type Row = {
+      key: string;
+      kicker: string;
+      name: string;
+      distanceKm: number | null;
+      markerColor: string;
+      icon: React.ReactNode;
+      href: string | null;
+      stop: Stop | null;
+    };
+
+    const rows: Row[] = [];
+
+    if (legStartName) {
+      rows.push({
+        key: 'start',
+        kicker: 'START',
+        name: legStartName,
+        distanceKm: 0,
+        // A hollow neutral ring: you have already been here.
+        markerColor: 'var(--tp-border-strong)',
+        icon: null,
+        href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
+        stop: null,
+      });
+    }
+
+    for (const stop of sortedStops) {
+      const fuel = stop.stop_type === 'fuel';
+      rows.push({
+        key: String(stop.id),
+        kicker: fuel ? 'FUEL' : 'STOP',
+        name: stop.name,
+        distanceKm: stop.distance_from_start_km,
+        markerColor: fuel ? 'var(--tp-primary)' : 'var(--tp-muted)',
+        icon: fuel ? <FuelIcon size={12} /> : <PlaceIcon size={12} />,
+        href: mapsHref(stop.lat, stop.lng),
+        stop,
+      });
+    }
+
+    if (legEndName) {
+      rows.push({
+        key: 'destination',
+        kicker: 'DESTINATION',
+        name: legEndName,
+        distanceKm: legDistanceKm ?? null,
+        markerColor: 'var(--tp-primary)',
+        icon: <PlaceIcon size={12} />,
+        href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
+        stop: null,
+      });
+    }
+
+    return rows;
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops]);
 
   return (
     <>
@@ -221,69 +296,158 @@ export default function StopsSection({
           </div>
         )}
 
-        {/* Stops (fuel + user-added) */}
-        {sortedStops.map((stop) => {
-          const highlighted = highlightStopId === String(stop.id);
-          return (
-          <div
-            key={stop.id}
-            data-stop-anchor={String(stop.id)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              scrollMarginTop: 80,
-              borderRadius: 8,
-              boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
-              transition: 'box-shadow 0.3s ease',
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <StopCard
-                stopType={stop.stop_type}
-                name={stop.name}
-                distanceFromStartKm={stop.distance_from_start_km}
-                googleMapsUri={
-                  stop.lat != null && stop.lng != null
-                    ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                    : null
-                }
-                lat={stop.lat}
-                lng={stop.lng}
-                loading={false}
-              />
-            </div>
-            {!readonly && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  remove(stop.id);
-                }}
-                aria-label={`Remove ${stop.name}`}
-                title="Remove this stop"
+        {/*
+          THE ROUTE TIMELINE. Stops used to be a stack of cards; they are rows
+          on a line now — START, each stop in order, DESTINATION — so a day
+          reads as a route rather than as an inventory.
+
+          The connector is one absolutely-positioned element behind the
+          markers rather than a segment per row: a per-row line leaves a hairline
+          gap at every join, and the gaps are what make it look like a list of
+          separate things again. It uses the same accent gradient the map paints
+          on the route, so the two describe one journey.
+        */}
+        <div style={{ position: 'relative' }}>
+          {timelineRows.length > 1 && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: 12,
+                // Inset by half a marker at each end so the line starts and
+                // stops INSIDE the first and last rings rather than poking out.
+                top: 13,
+                bottom: 13,
+                width: 2,
+                borderRadius: 1,
+                background: 'linear-gradient(180deg, var(--tp-primary), var(--tp-accent-700))',
+                boxShadow: '0 0 8px rgba(145, 132, 217, 0.55)',
+              }}
+            />
+          )}
+
+          {timelineRows.map((row) => {
+            const highlighted = row.stop != null && highlightStopId === String(row.stop.id);
+            return (
+              <div
+                key={row.key}
+                data-stop-anchor={row.stop ? String(row.stop.id) : undefined}
                 style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  marginBottom: 6,
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 16,
-                  lineHeight: 1,
-                  background: 'transparent',
-                  border: '1px solid var(--tp-border)',
-                  borderRadius: 6,
-                  color: 'var(--tp-muted)',
-                  cursor: 'pointer',
+                  gap: 12,
+                  padding: '7px 0',
+                  scrollMarginTop: 80,
+                  borderRadius: 8,
+                  boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
+                  transition: 'box-shadow 0.3s ease',
                 }}
               >
-                ×
-              </button>
-            )}
-          </div>
-          );
-        })}
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    flexShrink: 0,
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    // Opaque, so the connector passes behind rather than through.
+                    background: 'var(--tp-bg)',
+                    border: `1px solid ${row.markerColor}`,
+                    color: row.markerColor,
+                  }}
+                >
+                  {row.icon}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: 600,
+                      letterSpacing: '0.13em',
+                      color: 'var(--tp-subtle)',
+                    }}
+                  >
+                    {row.kicker}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 500,
+                      color: 'var(--tp-text)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {row.name}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: 'var(--tp-subtle)',
+                    fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}
+                >
+                  {row.distanceKm != null ? `${Math.round(row.distanceKm)} km` : ''}
+                </div>
+
+                {row.href && (
+                  <a
+                    href={row.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${row.name} in Google Maps`}
+                    title={`${row.name} in Google Maps`}
+                    style={{
+                      flexShrink: 0,
+                      width: 30,
+                      height: 30,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--tp-accent-300)',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <NavigateIcon size={15} />
+                  </a>
+                )}
+
+                {row.stop && !readonly && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      remove(row.stop!.id);
+                    }}
+                    aria-label={`Remove ${row.name}`}
+                    title="Remove this stop"
+                    style={{
+                      flexShrink: 0,
+                      width: 26,
+                      height: 26,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--tp-subtle)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CloseIcon />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
         {sortedStops.length === 0 &&
           !fuelPlanning &&

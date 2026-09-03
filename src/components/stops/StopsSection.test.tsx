@@ -107,6 +107,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, mockUserStop]}
@@ -121,6 +122,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -135,6 +137,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -151,6 +154,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -164,6 +168,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -179,6 +184,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, mockDismissedStop]}
@@ -192,6 +198,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}
@@ -205,6 +212,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}
@@ -219,6 +227,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[]}
@@ -239,6 +248,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop, userStop]}
@@ -253,6 +263,7 @@ describe('StopsSection (refactored)', () => {
       <StopsSection
         tripId="00000000-0000-0000-0000-000000000001"
         legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
         legEndName="León"
         legEndCoords={{ lat: 42.6, lng: -5.57 }}
         initialStops={[mockFuelStop]}

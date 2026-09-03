@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
@@ -8,11 +8,23 @@ import { useStopActions } from "@/components/useStopActions";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
-import { CloseIcon, DisclosureIcon } from "@/components/icons";
+import {
+  CloseIcon,
+  DisclosureIcon,
+  FuelIcon,
+  NavigateIcon,
+  PlaceIcon,
+} from "@/components/icons";
 
 interface StopsSectionProps {
   tripId: string;
   legId: string;
+  legStartName: string | null;
+  legEndName: string | null;
+  legStartCoords?: { lat: number | null; lng: number | null };
+  legEndCoords?: { lat: number | null; lng: number | null };
+  /** Leg driving distance, for the DESTINATION row's marker. */
+  legDistanceKm?: number | null;
   initialStops: Stop[];
   fuelStatus?: FuelStatus;
   fuelPlanError?: string | null;
@@ -43,13 +55,18 @@ const TYPE_ORDER: StopType[] = ["fuel", "other"];
 /**
  * Native port of src/components/StopsSection.tsx.
  *
- * The web also takes legEndName / legEndCoords / legStartCoords and immediately
- * `void`s all three (leftovers from the removed manual-stop search UI) — they
- * are not part of this port.
+ * The leg's own endpoints ARE part of this port now: they are the first and
+ * last rows of the route timeline. The web had been passed them and `void`ed
+ * all three for so long that this file's header called them leftovers.
  */
 export default function StopsSection({
   tripId,
   legId,
+  legStartName,
+  legEndName,
+  legStartCoords,
+  legEndCoords,
+  legDistanceKm,
   initialStops,
   fuelStatus = "none",
   fuelPlanError = null,
@@ -98,6 +115,80 @@ export default function StopsSection({
       return TYPE_ORDER.indexOf(a.stop_type) - TYPE_ORDER.indexOf(b.stop_type);
     });
   }, [activeStops]);
+
+  /*
+   * The timeline's rows: the leg's own START, every active stop in route
+   * order, and its DESTINATION. The endpoints are rows rather than headings
+   * because they are places on the same line — "Reims Ids · 147 km" needs a
+   * FROM, and it used to be nowhere on the screen. Mirrors
+   * src/components/StopsSection.tsx.
+   */
+  const timelineRows = useMemo(() => {
+    const mapsHref = (lat: number | null | undefined, lng: number | null | undefined) =>
+      lat != null && lng != null
+        ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+        : null;
+
+    type Row = {
+      key: string;
+      kicker: string;
+      name: string;
+      distanceKm: number | null;
+      markerColor: string;
+      isFuel: boolean;
+      isEndpoint: boolean;
+      href: string | null;
+      stop: Stop | null;
+    };
+
+    const rows: Row[] = [];
+
+    if (legStartName) {
+      rows.push({
+        key: "start",
+        kicker: "START",
+        name: legStartName,
+        distanceKm: 0,
+        // A hollow neutral ring: you have already been here.
+        markerColor: theme.borderStrong,
+        isFuel: false,
+        isEndpoint: true,
+        href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
+        stop: null,
+      });
+    }
+
+    for (const stop of sortedStops) {
+      const fuel = stop.stop_type === "fuel";
+      rows.push({
+        key: String(stop.id),
+        kicker: fuel ? "FUEL" : "STOP",
+        name: stop.name,
+        distanceKm: stop.distance_from_start_km,
+        markerColor: fuel ? theme.primary : theme.muted,
+        isFuel: fuel,
+        isEndpoint: false,
+        href: mapsHref(stop.lat, stop.lng),
+        stop,
+      });
+    }
+
+    if (legEndName) {
+      rows.push({
+        key: "destination",
+        kicker: "DESTINATION",
+        name: legEndName,
+        distanceKm: legDistanceKm ?? null,
+        markerColor: theme.primary,
+        isFuel: false,
+        isEndpoint: true,
+        href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
+        stop: null,
+      });
+    }
+
+    return rows;
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops]);
 
   return (
     <>
@@ -167,36 +258,72 @@ export default function StopsSection({
           </View>
         ) : null}
 
-        {/* Stops (fuel + user-added) */}
-        {sortedStops.map((stop) => {
-          const highlighted = highlightStopId === String(stop.id);
-          return (
-            <View
-              key={stop.id}
-              style={[styles.stopRow, highlighted && styles.stopRowHighlighted]}
-            >
-              <View style={styles.stopRowCard}>
-                <StopCard
-                  stopType={stop.stop_type}
-                  name={stop.name}
-                  distanceFromStartKm={stop.distance_from_start_km}
-                  lat={stop.lat}
-                  lng={stop.lng}
-                  loading={false}
-                />
+        {/*
+          THE ROUTE TIMELINE. Stops were a stack of cards; they are rows on a
+          line now — START, each stop in order, DESTINATION — so a day reads as
+          a route rather than an inventory.
+
+          The connector is ONE absolutely-positioned element behind the markers,
+          not a segment per row: per-row segments leave a hairline gap at every
+          join, and the gaps are what make it look like a list again.
+        */}
+        <View style={styles.timeline}>
+          {timelineRows.length > 1 ? <View style={styles.timelineLine} /> : null}
+
+          {timelineRows.map((row) => {
+            const highlighted = row.stop != null && highlightStopId === String(row.stop.id);
+            return (
+              <View
+                key={row.key}
+                style={[styles.timelineRow, highlighted && styles.stopRowHighlighted]}
+              >
+                <View style={[styles.marker, { borderColor: row.markerColor }]}>
+                  {row.isFuel ? (
+                    <FuelIcon color={row.markerColor} size={12} />
+                  ) : row.isEndpoint && row.kicker !== "START" ? (
+                    <PlaceIcon color={row.markerColor} size={12} />
+                  ) : row.stop ? (
+                    <PlaceIcon color={row.markerColor} size={12} />
+                  ) : null}
+                </View>
+
+                <View style={styles.timelineBody}>
+                  <Text style={styles.timelineKicker}>{row.kicker}</Text>
+                  <Text style={styles.timelineName} numberOfLines={1}>
+                    {row.name}
+                  </Text>
+                </View>
+
+                <Text style={styles.timelineDistance}>
+                  {row.distanceKm != null ? `${Math.round(row.distanceKm)} km` : ""}
+                </Text>
+
+                {row.href ? (
+                  <Pressable
+                    onPress={() => void Linking.openURL(row.href!)}
+                    accessibilityRole="link"
+                    accessibilityLabel={`${row.name} in Google Maps`}
+                    hitSlop={6}
+                    style={styles.timelineNav}
+                  >
+                    <NavigateIcon color={theme.accent300} size={15} />
+                  </Pressable>
+                ) : null}
+
+                {row.stop && !readonly ? (
+                  <Pressable
+                    onPress={() => remove(row.stop!.id)}
+                    accessibilityLabel={`Remove ${row.name}`}
+                    hitSlop={6}
+                    style={styles.removeButton}
+                  >
+                    <CloseIcon color={theme.subtle} />
+                  </Pressable>
+                ) : null}
               </View>
-              {!readonly ? (
-                <Pressable
-                  onPress={() => remove(stop.id)}
-                  accessibilityLabel={`Remove ${stop.name}`}
-                  style={styles.removeButton}
-                >
-                  <CloseIcon color={theme.subtle} />
-                </Pressable>
-              ) : null}
-            </View>
-          );
-        })}
+            );
+          })}
+        </View>
 
         {sortedStops.length === 0 &&
         !fuelPlanning &&
@@ -325,6 +452,51 @@ const styles = StyleSheet.create({
     backgroundColor: theme.primary,
   },
   noticeButtonText: { fontSize: 11, fontFamily: font.semibold, color: theme.onPrimary },
+  timeline: { position: "relative" },
+  /* Inset by half a marker at each end so the line starts and stops INSIDE
+     the first and last rings rather than poking out of them. RN has no
+     gradient without another dependency, so this is the accent flat — the web
+     paints the same line as a gradient. */
+  timelineLine: {
+    position: "absolute",
+    left: 12,
+    top: 13,
+    bottom: 13,
+    width: 2,
+    borderRadius: 1,
+    backgroundColor: theme.primary,
+  },
+  timelineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 7,
+  },
+  marker: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    // Opaque, so the connector passes behind rather than through.
+    backgroundColor: theme.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timelineBody: { flex: 1, minWidth: 0 },
+  timelineKicker: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  timelineName: { fontSize: 13.5, fontFamily: font.medium, color: theme.text },
+  timelineDistance: {
+    fontSize: 10.5,
+    fontFamily: font.regular,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+  },
+  timelineNav: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
   stopRow: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8 },
   // The web pulses a box-shadow ring; RN has no inset shadow, so the highlight
   // is a gold outline on the row instead.

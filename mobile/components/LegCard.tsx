@@ -494,6 +494,11 @@ export default function LegCard({
           <StopsSection
             tripId={tripId}
             legId={leg.id}
+            legStartName={leg.start_name}
+            legEndName={leg.end_name}
+            legStartCoords={{ lat: leg.start_lat, lng: leg.start_lng }}
+            legEndCoords={{ lat: leg.end_lat, lng: leg.end_lng }}
+            legDistanceKm={leg.distance_km}
             initialStops={leg.stops}
             fuelStatus={leg.fuel_status}
             fuelPlanError={leg.fuel_plan_error}
