@@ -10,7 +10,7 @@ import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
 import { buttonStyle } from '@/components/ui/Button';
-import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
+import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon, PlusIcon } from '@/components/icons';
 
 interface StopsSectionProps {
   tripId: string;
@@ -100,6 +100,9 @@ export default function StopsSection({
     pasteError,
     addFromPaste,
   } = useStopActions({ tripId, legId, initialStops, onChanged });
+
+  // Collapsed by default — see the row below.
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   useEffect(() => {
     syncInitialStops(initialStops);
@@ -504,8 +507,42 @@ export default function StopsSection({
       {/* Paste GPS (kept for power users) */}
       {!readonly && (
         <div style={sectionCardStyle} onClick={(e) => e.stopPropagation()}>
-          <div style={sectionTitleStyle}>PASTE GPS</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {/*
+            Collapsed to a row. Pasting coordinates is a power-user path taken
+            once in a while, and an always-open text field for it sat under
+            every day of every trip, competing with the route above it.
+          */}
+          <button
+            type="button"
+            onClick={() => setPasteOpen((v) => !v)}
+            aria-expanded={pasteOpen}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: 0,
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 11.5,
+              color: 'var(--tp-muted)',
+              fontFamily: 'inherit',
+            }}
+          >
+            <span aria-hidden style={{ lineHeight: 0, color: 'var(--tp-subtle)' }}>
+              <PlusIcon />
+            </span>
+            Paste GPS or a Maps link
+          </button>
+          <div
+            style={{
+              display: pasteOpen ? 'flex' : 'none',
+              gap: 6,
+              flexWrap: 'wrap',
+              marginTop: 10,
+            }}
+          >
             <input
               value={pasteValue}
               onChange={(e) => setPasteValue(e.target.value)}

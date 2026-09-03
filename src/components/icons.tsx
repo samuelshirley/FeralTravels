@@ -16,6 +16,7 @@ import {
   ListDashes,
   MapTrifold,
   Paperclip,
+  Plus,
   PencilSimple,
   Truck,
   User,
@@ -226,4 +227,9 @@ export function AppleMark({ size = 15 }: { size?: number }) {
 /** The info glyph on a neutral notice. */
 export function InfoIcon({ color = 'currentColor', size = 15, weight = 'regular' }: IconProps) {
   return <Info color={color} size={size} weight={weight} />;
+}
+
+/** The "add something" glyph on a collapsed disclosure row. */
+export function PlusIcon({ color = 'currentColor', size = 13, weight = 'regular' }: IconProps) {
+  return <Plus color={color} size={size} weight={weight} />;
 }

@@ -14,6 +14,7 @@ import {
   FuelIcon,
   NavigateIcon,
   PlaceIcon,
+  PlusIcon,
 } from "@/components/icons";
 
 interface StopsSectionProps {
@@ -88,6 +89,9 @@ export default function StopsSection({
     pasteError,
     addFromPaste,
   } = useStopActions({ tripId, legId, initialStops, onChanged });
+
+  // Collapsed by default — see the row below.
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   useEffect(() => {
     syncInitialStops(initialStops);
@@ -371,7 +375,21 @@ export default function StopsSection({
       {/* Paste GPS (kept for power users) */}
       {!readonly ? (
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>PASTE GPS</Text>
+          {/*
+            Collapsed to a row. Pasting coordinates is a power-user path taken
+            once in a while; an always-open field for it sat under every day of
+            every trip, competing with the route above it. Mirrors
+            src/components/StopsSection.tsx.
+          */}
+          <Pressable
+            onPress={() => setPasteOpen((v) => !v)}
+            accessibilityRole="button"
+            style={styles.pasteToggle}
+          >
+            <PlusIcon color={theme.subtle} />
+            <Text style={styles.pasteToggleText}>Paste GPS or a Maps link</Text>
+          </Pressable>
+          {pasteOpen ? (
           <View style={styles.pasteRow}>
             <TextInput
               value={pasteValue}
@@ -394,7 +412,10 @@ export default function StopsSection({
               </Text>
             </Pressable>
           </View>
-          {pasteError ? <Text style={styles.pasteError}>{pasteError}</Text> : null}
+          ) : null}
+          {pasteOpen && pasteError ? (
+            <Text style={styles.pasteError}>{pasteError}</Text>
+          ) : null}
         </View>
       ) : null}
     </>
@@ -517,6 +538,8 @@ const styles = StyleSheet.create({
   dismissedBlock: { marginTop: 8 },
   dismissedSummary: { fontFamily: font.regular, fontSize: 10, color: theme.muted, letterSpacing: 0.8 },
   dismissedList: { marginTop: 6 },
+  pasteToggle: { flexDirection: "row", alignItems: "center", gap: 8 },
+  pasteToggleText: { fontFamily: font.regular, fontSize: 11.5, color: theme.muted },
   pasteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   pasteInput: {
     fontFamily: font.regular,

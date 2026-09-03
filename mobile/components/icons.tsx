@@ -7,6 +7,7 @@ import {
   CaretDownIcon,
   CaretLeftIcon,
   GasPumpIcon,
+  InfoIcon as PhosphorInfoIcon,
   MapPinIcon,
   NavigationArrowIcon,
   WarningIcon as PhosphorWarningIcon,
@@ -16,6 +17,7 @@ import {
   ListDashesIcon,
   MapTrifoldIcon,
   PaperclipIcon as PhosphorPaperclipIcon,
+  PlusIcon as PhosphorPlusIcon,
   PencilSimpleIcon,
   TruckIcon as PhosphorTruckIcon,
   UserIcon,
@@ -156,4 +158,14 @@ export function CollapseAllIcon({ color, size = 16, weight = "regular" }: IconPr
 /** Was `×` on a remove control. */
 export function CloseIcon({ color, size = 12, weight = "bold" }: IconProps) {
   return <XIcon color={color} size={size} weight={weight} />;
+}
+
+/** The footnote glyph — a caveat about one number, sitting on that number. */
+export function InfoIcon({ color, size = 15, weight = "regular" }: IconProps) {
+  return <PhosphorInfoIcon color={color} size={size} weight={weight} />;
+}
+
+/** The "add something" glyph on a collapsed disclosure row. */
+export function PlusIcon({ color, size = 13, weight = "regular" }: IconProps) {
+  return <PhosphorPlusIcon color={color} size={size} weight={weight} />;
 }

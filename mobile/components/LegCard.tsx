@@ -17,7 +17,7 @@ import { Distance, Spinner } from "@/components/ui";
 import { shadow, theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
-import { DisclosureIcon, ExternalLinkIcon, WarningIcon } from "@/components/icons";
+import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from "@/components/icons";
 
 /**
  * How long a leg's sourced fuel stops stay fresh before the day-open loader
@@ -194,6 +194,7 @@ export default function LegCard({
   // calls); a never-sourced or stale leg runs the real search. We mirror that
   // freshness check here so we don't even round-trip on a fresh cache.
   const [fuelLoading, setFuelLoading] = useState(false);
+  const [showDriveCaveat, setShowDriveCaveat] = useState(false);
   const fuelFetchSigRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -328,6 +329,16 @@ export default function LegCard({
               </Text>
             ) : null}
             {!isRestDay && driveHours ? <Text style={styles.meta}>{driveHours} hrs</Text> : null}
+            {driveHours ? (
+              <Pressable
+                onPress={() => setShowDriveCaveat((v) => !v)}
+                accessibilityLabel="About this driving time"
+                hitSlop={8}
+                style={styles.caveatToggle}
+              >
+                <InfoIcon color={theme.subtle} size={13} />
+              </Pressable>
+            ) : null}
             {tankSpareKm != null && tankSpareKm >= 0 ? (
               <Text style={styles.meta}>
                 <Distance km={Math.round(tankSpareKm)} layout="inline" /> to spare
@@ -337,6 +348,16 @@ export default function LegCard({
               <Text style={[styles.meta, { color: restDayColor }]}>{leg.end_name}</Text>
             ) : null}
           </View>
+          {/* Disclosed on tap rather than always on screen: it explains a
+              number most drivers never question, and a paragraph under every
+              day is noise until the one time it matters. */}
+          {showDriveCaveat && driveHours ? (
+            <Text style={styles.caveat}>
+              {navWaypointCount > 0
+                ? "Driving time is the leg headline start→destination only — it excludes detours via added stops."
+                : "Driving time assumes start→destination without intermediate stops inside this day."}
+            </Text>
+          ) : null}
           {leg.continuity_warning ? (
             <View style={styles.continuityWarning}>
               <WarningIcon color={theme.warning} />
@@ -481,13 +502,6 @@ export default function LegCard({
                   ))}
                 </View>
               )}
-              {driveHours ? (
-                <Text style={styles.caveat}>
-                  {navWaypointCount > 0
-                    ? `Shown driving time (~${driveHours} h) is the leg headline start→destination only — it excludes detours via added stops.`
-                    : `Shown driving time (~${driveHours} h) assumes start→destination without intermediate stops inside this leg card.`}
-                </Text>
-              ) : null}
             </View>
           ) : null}
 
@@ -655,7 +669,14 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     overflow: "hidden",
   },
-  caveat: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 8, maxWidth: 460, lineHeight: 16 },
+  caveat: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    marginTop: 6,
+    lineHeight: 16,
+  },
+  caveatToggle: { justifyContent: "center" },
   costsBlock: {
     marginTop: 12,
     paddingVertical: 10,

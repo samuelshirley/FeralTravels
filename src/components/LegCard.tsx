@@ -17,7 +17,7 @@ import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
 import { buttonStyle } from '@/components/ui/Button';
-import { DisclosureIcon, ExternalLinkIcon, WarningIcon } from '@/components/icons';
+import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from '@/components/icons';
 
 /** Build "Route to {Type} — {Name}" label for nav buttons. */
 /**
@@ -388,6 +388,29 @@ export default function LegCard({
                 {driveHours} hrs
               </span>
             ) : null}
+            {driveHours ? (
+              <span
+                // The caveat used to be a paragraph under the day. It is a
+                // footnote about ONE number, so it lives on that number —
+                // `title` on the meta, reachable on hover and by the
+                // screen-reader, and out of the way the rest of the time.
+                title={
+                  navWaypointCount > 0
+                    ? `Driving time is the leg headline start→destination only — it excludes detours via added stops.`
+                    : `Driving time assumes start→destination without intermediate stops inside this day.`
+                }
+                aria-label="About this driving time"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  color: 'var(--tp-subtle)',
+                  cursor: 'help',
+                  lineHeight: 0,
+                }}
+              >
+                <InfoIcon size={13} />
+              </span>
+            ) : null}
             {tankSpareKm != null && tankSpareKm >= 0 ? (
               <span style={{ fontSize: 12, color: 'var(--tp-subtle)' }}>
                 <Distance km={Math.round(tankSpareKm)} layout="inline" /> to spare
@@ -646,29 +669,6 @@ export default function LegCard({
                   ))}
                 </div>
               )}
-              {driveHours ? (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--tp-subtle)',
-                    margin: '8px 0 0 0',
-                    maxWidth: 460,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {navWaypointCount > 0 ? (
-                    <>
-                      Shown driving time (~{driveHours} h) is the leg headline start→destination only — it excludes
-                      detours via added stops.
-                    </>
-                  ) : (
-                    <>
-                      Shown driving time (~{driveHours} h) assumes start→destination without intermediate stops inside
-                      this leg card.
-                    </>
-                  )}
-                </p>
-              ) : null}
             </div>
           )}
 
