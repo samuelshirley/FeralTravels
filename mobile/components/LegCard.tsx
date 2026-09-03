@@ -18,7 +18,7 @@ import { Distance, Spinner, StatusBadge } from "@/components/ui";
 import { shadow, theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
-import { DisclosureIcon, NavigateIcon, WarningIcon } from "@/components/icons";
+import { DisclosureIcon, ExternalLinkIcon, WarningIcon } from "@/components/icons";
 
 /**
  * How long a leg's sourced fuel stops stay fresh before the day-open loader
@@ -29,23 +29,14 @@ import { DisclosureIcon, NavigateIcon, WarningIcon } from "@/components/icons";
  */
 const FUEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Format a stop type slug into a readable label for nav buttons. */
-function formatStopType(stopType?: string): string {
-  switch (stopType) {
-    case "fuel":
-      return "Fuel";
-    case "destination":
-      return "Destination";
-    case "other":
-      return "Stop";
-    default:
-      return "Stop";
-  }
-}
-
-/** Build "Route to {Type} — {Name}" label for nav buttons. */
+/**
+ * Every one of these opens Google Maps — `buildSegmentedNavUrls` produces an
+ * external URL and `Linking` hands the user to another app. The label says
+ * which app and the glyph says it leaves; "Route to" implied turn-by-turn
+ * inside a product that has never had any.
+ */
 function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+  return `${seg.label} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -491,7 +482,7 @@ export default function LegCard({
                         !seg.isNext && i > 0 && navButtons[0].isNext && styles.navButtonSecondary,
                       ]}
                     >
-                      <NavigateIcon color={theme.accent300} />
+                      <ExternalLinkIcon color={theme.accent300} />
                       <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
                       {seg.isNext ? <Text style={styles.navNextChip}>NEXT</Text> : null}
                     </Pressable>

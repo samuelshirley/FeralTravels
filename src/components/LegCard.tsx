@@ -19,21 +19,17 @@ import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
 import { buttonStyle } from '@/components/ui/Button';
-import { DisclosureIcon, NavigateIcon, WarningIcon } from '@/components/icons';
-
-/** Format a stop type slug into a readable label for nav buttons. */
-function formatStopType(stopType?: string): string {
-  switch (stopType) {
-    case 'fuel': return 'Fuel';
-    case 'destination': return 'Destination';
-    case 'other': return 'Stop';
-    default: return 'Stop';
-  }
-}
+import { DisclosureIcon, ExternalLinkIcon, WarningIcon } from '@/components/icons';
 
 /** Build "Route to {Type} — {Name}" label for nav buttons. */
+/**
+ * Every one of these opens Google Maps. `buildSegmentedNavUrls` produces an
+ * external URL and the browser or OS hands the user to another app, so the
+ * label says which app and the glyph says it leaves — "Route to" implied
+ * turn-by-turn inside a product that has never had any.
+ */
 function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+  return `${seg.label} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -649,7 +645,7 @@ export default function LegCard({
                         width: 'fit-content',
                       }}
                     >
-                      <NavigateIcon />
+                      <ExternalLinkIcon />
                       {navButtonLabel(seg)}
                       {seg.isNext ? (
                         <span

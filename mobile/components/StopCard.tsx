@@ -25,18 +25,16 @@ export interface StopCardProps {
  */
 const STOP_DISPLAY: Record<
   StopType,
-  { label: string; color: string; iconBg: string; Icon: typeof FuelIcon }
+  { label: string; color: string; Icon: typeof FuelIcon }
 > = {
   fuel: {
     label: "FUEL",
     color: theme.gold,
-    iconBg: theme.primaryMuted,
     Icon: FuelIcon,
   },
   other: {
     label: "STOP",
     color: theme.muted,
-    iconBg: theme.surfaceMuted,
     Icon: PlaceIcon,
   },
 };
@@ -69,7 +67,7 @@ export default function StopCard({
 
   const body = (
     <View style={styles.row}>
-      <View style={[styles.icon, { backgroundColor: display.iconBg }]}>
+      <View style={[styles.icon, { borderColor: display.color }]}>
         <display.Icon color={display.color} />
       </View>
       <View style={styles.text}>
@@ -116,18 +114,30 @@ const styles = StyleSheet.create({
   },
   cardLoading: { opacity: 0.6 },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
+  /*
+   * A ring on the route line, not a tile. The old 32px filled square read as
+   * a button — it is a marker, and the same marker the map draws.
+   */
   icon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    backgroundColor: theme.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   iconGlyph: { fontFamily: font.regular, fontSize: 16 },
   text: { flex: 1, minWidth: 0 },
   type: { fontSize: 10, fontFamily: font.semibold, letterSpacing: 0.8 },
-  name: { fontSize: 13, fontFamily: font.semibold, color: theme.text },
-  distance: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 1 },
+  name: { fontSize: 13.5, fontFamily: font.medium, color: theme.text },
+  distance: {
+    fontFamily: font.regular,
+    fontSize: 10.5,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+    marginTop: 1,
+  },
   openGlyph: { fontFamily: font.regular, fontSize: 14, color: theme.subtle },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

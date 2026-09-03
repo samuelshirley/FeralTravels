@@ -1,5 +1,6 @@
 import type { IconWeight } from "phosphor-react-native";
 import {
+  ArrowSquareOutIcon,
   ArrowUpIcon,
   ArrowsInLineVerticalIcon,
   ArrowsOutLineVerticalIcon,
@@ -135,6 +136,11 @@ export function DisclosureIcon({ color, size = 12, weight = "regular" }: IconPro
 /** Was `⚠` on the leg-continuity warning. */
 export function WarningIcon({ color, size = 14, weight = "regular" }: IconProps) {
   return <PhosphorWarningIcon color={color} size={size} weight={weight} />;
+}
+
+/** Leaves the app — every navigate affordance hands off to Google Maps. */
+export function ExternalLinkIcon({ color, size = 13, weight = "regular" }: IconProps) {
+  return <ArrowSquareOutIcon color={color} size={size} weight={weight} />;
 }
 
 /** Expand every day. */

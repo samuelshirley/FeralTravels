@@ -43,20 +43,27 @@ interface StopsSectionProps {
   highlightStopId?: string | null;
 }
 
+/*
+ * The one structural change in the reskin. `Itinerary` wrapped legs in a
+ * card, `LegCard` drew another surface, and this file drew two more inside
+ * that — STOPS and PASTE GPS — with StopCards nested inside those. Four
+ * levels of border and fill for one day.
+ *
+ * A section inside the day card is now a hairline and a kicker. The card is
+ * the day; everything within it is separated, not re-boxed.
+ */
 const sectionCardStyle: CSSProperties = {
-  marginTop: 12,
-  padding: '10px 14px',
-  background: 'var(--tp-surface-muted)',
-  borderRadius: 6,
-  border: '1px solid var(--tp-border)',
+  marginTop: 14,
+  paddingTop: 12,
+  borderTop: '1px solid var(--tp-neutral-900)',
 };
 
 const sectionTitleStyle: CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: '0.08em',
+  fontSize: 9.5,
+  fontWeight: 600,
+  letterSpacing: '0.13em',
   color: 'var(--tp-subtle)',
-  marginBottom: 6,
+  marginBottom: 8,
 };
 
 const TYPE_ORDER: StopType[] = ['fuel', 'other'];
@@ -227,7 +234,7 @@ export default function StopsSection({
               gap: 6,
               scrollMarginTop: 80,
               borderRadius: 8,
-              boxShadow: highlighted ? '0 0 0 2px var(--tp-gold)' : 'none',
+              boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
               transition: 'box-shadow 0.3s ease',
             }}
           >

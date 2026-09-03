@@ -1,4 +1,5 @@
 import {
+  ArrowSquareOut,
   ArrowUp,
   ArrowsInLineVertical,
   ArrowsOutLineVertical,
@@ -138,6 +139,14 @@ export function DisclosureIcon({ color = 'currentColor', size = 12, weight = 're
 /** Was `⚠` on the leg-continuity warning. */
 export function WarningIcon({ color = 'currentColor', size = 14, weight = 'regular' }: IconProps) {
   return <Warning color={color} size={size} weight={weight} />;
+}
+
+/**
+ * Leaves the app. Every navigate affordance carries this, because they all
+ * hand off to Google Maps rather than navigating in-app.
+ */
+export function ExternalLinkIcon({ color = 'currentColor', size = 13, weight = 'regular' }: IconProps) {
+  return <ArrowSquareOut color={color} size={size} weight={weight} />;
 }
 
 /** Expand every day. Replaces the "Expand All" text button. */

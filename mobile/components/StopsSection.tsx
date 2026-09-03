@@ -275,21 +275,24 @@ export default function StopsSection({
 }
 
 const styles = StyleSheet.create({
+  /*
+   * The one structural change in the reskin. This file drew two more cards
+   * inside the day card — STOPS and PASTE GPS — with stop rows nested inside
+   * those: four levels of border and fill for one day. A section is now a
+   * hairline and a kicker. Mirrors src/components/StopsSection.tsx.
+   */
   sectionCard: {
-    marginTop: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: theme.surfaceMuted,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: theme.border,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.neutral900,
   },
   sectionTitle: {
-    fontSize: 10,
-    fontFamily: font.bold,
-    letterSpacing: 0.8,
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
     color: theme.subtle,
-    marginBottom: 6,
+    marginBottom: 8,
   },
   planningRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   planningText: { fontFamily: font.regular, fontSize: 11, color: theme.muted },
