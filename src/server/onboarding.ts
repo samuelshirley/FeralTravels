@@ -52,6 +52,13 @@ export type QuestionKind =
   | 'number'
   | 'integer'
   | 'select'
+  /**
+   * Answer CHIPS: tappable options that submit immediately, alongside a
+   * composer that still accepts free text. Distinct from 'select', which is
+   * options ONLY — the date step needs both, because "next Saturday" is a
+   * chip and "the second week of June" is not.
+   */
+  | 'chips'
   | 'handoff';
 
 export interface SelectOption {
@@ -73,6 +80,19 @@ export interface Question {
   multiline?: boolean;
   /** Prefilled answer (e.g. a start date extracted from the trip description). */
   defaultValue?: string;
+  /**
+   * Tappable example answers that PREFILL the composer and focus it — they do
+   * NOT submit. That difference is the whole point: an `option` is an answer
+   * to this question, a `prompt` is a shape to edit. The first message of a
+   * trip is never something a user wants sent verbatim.
+   */
+  prompts?: string[];
+  /**
+   * One line under the chips explaining where a `defaultValue` came from, e.g.
+   * that the date was read out of the user's own message. Rendered small and
+   * quiet; omitted when nothing was inferred.
+   */
+  footnote?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,9 +102,20 @@ export interface Question {
 export const TRIP_INTENT_QUESTION: Question = {
   key: 'trip_intent',
   kind: 'handoff',
-  label: "Hi, I'm Penny. Let's plan a trip together! Tell me where you want to go — the more details the better. Feel free to drop in names of locations, Google Maps links, or addresses, and I'll put together a daily drive plan with gas stops based on your range.\n\nAfter you give me a summary, I'll ask some clarifying questions to make sure I'm planning as best I can.",
-  placeholder: "Tell Penny about your trip…",
+  /*
+   * 69 words became 15. The old greeting introduced Penny, explained the three
+   * accepted input formats, described what it would build, and warned that
+   * more questions were coming — all before the user had said anything. The
+   * three prompt rows below now demonstrate the formats in less space than
+   * listing them took, and the questions announce themselves when they arrive.
+   */
+  label: "Where are we going? One city is enough to start — I'll sort the fuel.",
+  placeholder: 'Where to?',
   multiline: true,
+  prompts: [
+    'Paris to Stuttgart, 5 h days',
+    'Pyrenees loop with 3 rest days',
+  ],
 };
 
 /** @deprecated Kept for backwards compatibility with old onboarding states. */
@@ -96,10 +127,23 @@ export const HANDOFF_QUESTION = TRIP_INTENT_QUESTION;
 // parse to an ISO date via tryParseToISO, otherwise we re-ask.
 export const TRIP_DATE_QUESTION: Question = {
   key: 'trip_date',
-  kind: 'text',
-  label:
-    "When are you setting off? A start date I can pin to the calendar — \"November 1st\", \"next Saturday\", or \"2026-06-03\" all work.",
-  placeholder: 'e.g. November 1st, next Saturday, or 2026-06-03',
+  /*
+   * Chips, not text. The examples that used to be listed inside the question
+   * ("November 1st", "next Saturday", "2026-06-03") are the answers now — and
+   * `kind: 'chips'` keeps the composer live, because a chip cannot express
+   * "the second week of June" and the step must not become a dead end.
+   *
+   * "Not sure yet" routes to TRIP_DATE_CLARIFY_QUESTION rather than refusing,
+   * which is the same escape hatch the free-text path already had.
+   */
+  kind: 'chips',
+  label: 'When are you setting off?',
+  placeholder: 'e.g. November 1st, or 2026-06-03',
+  options: [
+    { value: 'next Saturday', label: 'Next Saturday' },
+    { value: 'in a month', label: 'In a month' },
+    { value: 'not sure yet', label: 'Not sure yet' },
+  ],
 };
 
 // Shown once when the user gives NO usable date at all ("no idea yet"). We can't
@@ -407,6 +451,23 @@ function addDays(d: Date | null, n: number): Date {
   return new Date(base.getTime() + n * 24 * 60 * 60 * 1000);
 }
 
+/**
+ * How many numbered steps this user's onboarding has.
+ *
+ * Extracted because the count was being derived in TWO places — the snapshot
+ * path and the submit path — and they disagreed: one returned a number for the
+ * date-clarify turn and the other returned null, so the progress pill vanished
+ * on that turn and came back on reload.
+ */
+async function totalOnboardingSteps(userId: string): Promise<number> {
+  const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
+  const preVehicleSteps = 2 + (unitsAlreadyChosen ? 0 : 1);
+  const vehicleSteps = buildOnboardingSteps(
+    unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric'
+  );
+  return preVehicleSteps + vehicleSteps.length;
+}
+
 export async function getOnboardingSnapshot(
   tripId: string,
   userId: string
@@ -429,18 +490,27 @@ export async function getOnboardingSnapshot(
   // them so the progress bar reflects the full onboarding, not just the
   // vehicle-profile portion.
   const unitsAlreadyChosen = (await getRawUnitsPref(userId)) != null;
-  // trip_intent doesn't count in the numbered progress (it's the greeting).
-  // Pre-vehicle numbered steps: trip_date (always) + units_pick (when not yet
-  // chosen).
+  /*
+   * trip_intent IS step 1 now. It used to be excluded as "the greeting", which
+   * made the header read "1 OF 4" on the SECOND question and left the first
+   * with no progress at all — the one screen where a user most wants to know
+   * how long this will take.
+   *
+   * Numbered: trip_intent + trip_date + units_pick (when not already chosen)
+   * + the vehicle steps.
+   */
   const unitSteps = unitsAlreadyChosen ? 0 : 1;
-  const preVehicleSteps = 1 + unitSteps;
+  const preVehicleSteps = 2 + unitSteps;
 
   if (state === 'trip_intent') {
+    const vehicleStepsForIntent = buildOnboardingSteps(
+      unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric'
+    );
     return {
       state: 'trip_intent',
       question: await withTrialWelcome(TRIP_INTENT_QUESTION, userId),
       vehicles: [],
-      progress: null,
+      progress: { current: 1, total: preVehicleSteps + vehicleStepsForIntent.length },
     };
   }
 
@@ -462,28 +532,48 @@ export async function getOnboardingSnapshot(
         state: 'trip_date',
         question: TRIP_DATE_CLARIFY_QUESTION,
         vehicles: [],
-        progress: { current: 1, total: totalSteps },
+        /*
+         * Step 2, same as the un-clarified date question. This returned null
+         * before, so the progress pill VANISHED on the clarify turn and came
+         * back on reload — a flicker with no meaning behind it.
+         */
+        progress: { current: 2, total: totalSteps },
       };
     }
     // If the user already mentioned a date in their trip description, prefill it
     // so confirming is one keystroke instead of retyping. They can still edit.
     const extracted = extractDateFromText(trip.pendingIntent ?? '');
-    const question: Question = extracted
-      ? {
-          ...TRIP_DATE_QUESTION,
-          label: `Looks like you're setting off ${formatDate(
-            parseISODate(extracted),
-            unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric',
-          )} — send to confirm, or type a different date.`,
-          defaultValue: extracted,
-        }
-      : TRIP_DATE_QUESTION;
+    const question: Question = await (async (): Promise<Question> => {
+      if (!extracted) return TRIP_DATE_QUESTION;
+      const shown = formatDate(
+        parseISODate(extracted),
+        unitsAlreadyChosen ? await getUnitsPref(userId) : 'metric'
+      );
+      /*
+       * A scanned date becomes the FIRST CHIP rather than a rewritten
+       * question. The label used to carry the whole thing — "Looks like you're
+       * setting off Wed 16 Sep — send to confirm, or type a different date" —
+       * which is a question, an inference and two instructions in one
+       * sentence. The question stays the question; the inference is a chip you
+       * tap; the footnote says where it came from, so a wrong guess is
+       * obviously a guess rather than something the app has decided.
+       */
+      return {
+        ...TRIP_DATE_QUESTION,
+        options: [
+          { value: extracted, label: shown },
+          ...(TRIP_DATE_QUESTION.options ?? []),
+        ],
+        footnote: `Read "${shown}" out of your message — tap to confirm, or say another.`,
+        defaultValue: extracted,
+      };
+    })();
     return {
       state: 'trip_date',
       question,
       vehicles: [],
-      // First numbered step (the greeting is unnumbered).
-      progress: { current: 1, total: totalSteps },
+      // Step 2 — trip_intent is step 1 now, see the note above.
+      progress: { current: 2, total: totalSteps },
     };
   }
 
@@ -759,7 +849,13 @@ export async function submitAnswer(
           state: 'trip_date',
           question: TRIP_DATE_CLARIFY_QUESTION,
           vehicles: [],
-          progress: null,
+          /*
+           * Still step 2. This was null, so the progress pill vanished the
+           * moment a user said "no idea yet" and reappeared if they reloaded —
+           * the reload path (getOnboardingSnapshot) always returned a number.
+           * Two code paths for one screen, disagreeing.
+           */
+          progress: { current: 2, total: await totalOnboardingSteps(userId) },
         },
         answerLabel: text,
         didHandoff: false,

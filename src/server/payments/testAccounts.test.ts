@@ -19,6 +19,7 @@ import {
   seedTranscript,
 } from './testAccounts';
 import { seededTripStartISO } from '@/app/api/test/seedDates';
+import { TRIP_INTENT_QUESTION } from '@/server/onboarding';
 
 /**
  * The address pattern is the whole security boundary of the admin test-account
@@ -145,6 +146,10 @@ describe('seedTranscript', () => {
     const [first] = seedTranscript('trip-1', '2026-09-10', ROUTE);
     expect(first.role).toBe('assistant');
     expect(first.kind).toBe('form_question');
-    expect(first.content).toContain("Hi, I'm Penny");
+    // The CONSTANT, not a quoted fragment of it. This asserted
+    // `toContain("Hi, I'm Penny")` and broke the moment the greeting was
+    // rewritten — which is drift, not a regression, and exactly what the
+    // test's own name says it is checking.
+    expect(first.content).toContain(TRIP_INTENT_QUESTION.label);
   });
 });

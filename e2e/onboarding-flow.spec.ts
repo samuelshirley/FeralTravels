@@ -19,7 +19,10 @@ test.describe('Onboarding wizard', () => {
 
     const composer = page.getByTestId('trip-chat-composer');
 
-    await expect(page.getByText(/Tell me where you want to go/)).toBeVisible({ timeout: 30_000 });
+    // The greeting, which this branch cut from 69 words to 15. Matched on a
+    // distinctive fragment rather than the whole sentence so a later reword of
+    // the tail does not red the suite for no behavioural reason.
+    await expect(page.getByText(/Where are we going\?/)).toBeVisible({ timeout: 30_000 });
     await composer.fill('Road trip from Girona to Berlin');
     await composer.press('Enter');
 

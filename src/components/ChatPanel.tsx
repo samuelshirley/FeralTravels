@@ -129,7 +129,7 @@ interface AttachedImage {
 /** Shape of an onboarding form question (GET `/api/trips/:id/onboarding`). */
 interface OnboardingFormQuestion {
   key: string;
-  kind: 'text' | 'number' | 'integer' | 'select' | 'handoff';
+  kind: 'text' | 'number' | 'integer' | 'select' | 'chips' | 'handoff';
   label: string;
   placeholder?: string;
   help?: string;
@@ -139,6 +139,13 @@ interface OnboardingFormQuestion {
   max?: number;
   multiline?: boolean;
   defaultValue?: string;
+  /**
+   * Tappable examples that PREFILL the composer and do NOT submit — unlike
+   * `options`, which are answers. See the server type for why both exist.
+   */
+  prompts?: string[];
+  /** One quiet line explaining where a `defaultValue` came from. */
+  footnote?: string;
 }
 
 /** GET `/api/trips/:id/onboarding` — shape matches server snapshot. */
@@ -413,6 +420,13 @@ export default function ChatPanel({
     onboardingSnapshot.state !== 'done';
   const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
   const onboardingQuestion = onboardingUiActive ? onboardingSnapshot.question : null;
+  /*
+   * This locks the composer read-only, so it must stay `=== 'select'` and NOT
+   * widen to include 'chips'. That is the entire difference between the two
+   * kinds: a select is answered by tapping and nothing else, while a chips
+   * step offers shortcuts AND keeps typing available — "the second week of
+   * June" is a valid start date and no chip can express it.
+   */
   const onboardingSelectStep =
     onboardingUiActive &&
     onboardingQuestion &&
@@ -2355,7 +2369,8 @@ export default function ChatPanel({
                 </div>
               )}
               {onboardingUiActive &&
-                onboardingQuestion?.kind === 'select' &&
+                (onboardingQuestion?.kind === 'select' ||
+                  onboardingQuestion?.kind === 'chips') &&
                 onboardingQuestion.options && (
                   <div
                     style={{
@@ -2365,16 +2380,21 @@ export default function ChatPanel({
                       background: 'var(--tp-surface-muted)',
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--tp-muted)',
-                        marginBottom: 6,
-                        letterSpacing: '0.03em',
-                      }}
-                    >
-                      Tap an option
-                    </div>
+                    {/* Only for 'select', where tapping is the ONLY way to
+                        answer. On a 'chips' step the composer is live, so
+                        telling the user to tap would be wrong. */}
+                    {onboardingQuestion.kind === 'select' && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--tp-muted)',
+                          marginBottom: 6,
+                          letterSpacing: '0.03em',
+                        }}
+                      >
+                        Tap an option
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {onboardingQuestion.options.map((o) => (
                         <button
@@ -2398,8 +2418,66 @@ export default function ChatPanel({
                         </button>
                       ))}
                     </div>
+                    {onboardingQuestion.footnote && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--tp-subtle)',
+                          marginTop: 8,
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {onboardingQuestion.footnote}
+                      </div>
+                    )}
                   </div>
                 )}
+
+              {/*
+                PROMPT ROWS. These PREFILL the composer and focus it — they do
+                not submit, which is the whole difference between them and the
+                chips above. An option is an answer to this question; a prompt
+                is a shape to edit, and nobody wants their first message sent
+                verbatim.
+              */}
+              {onboardingUiActive && onboardingQuestion?.prompts?.length ? (
+                <div
+                  style={{
+                    padding: '10px 16px',
+                    flexShrink: 0,
+                    borderTop: '1px solid var(--tp-border)',
+                    background: 'var(--tp-surface-muted)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  {onboardingQuestion.prompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      disabled={onboardingComposerBusy}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setInput(prompt);
+                        textareaRef.current?.focus();
+                      }}
+                      style={{
+                        ...buttonStyle('secondary'),
+                        justifyContent: 'flex-start',
+                        textAlign: 'left',
+                        padding: '11px 14px',
+                        fontSize: 13.5,
+                        fontWeight: 400,
+                        color: 'var(--tp-muted)',
+                        opacity: onboardingComposerBusy ? 0.5 : 1,
+                      }}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
           <div
         style={{
           padding: '12px 16px',

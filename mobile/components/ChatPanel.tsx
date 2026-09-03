@@ -1643,9 +1643,16 @@ export default function ChatPanel({
               buildVehicleProfileQuestions in src/lib/vehicleProfile.ts), but the
               web ChatPanel declares the field and renders it nowhere, so there is
               no placement to copy. Confirm where it belongs before adding it. */}
-          {onboardingUiActive && onboardingQuestion?.kind === "select" && onboardingQuestion.options ? (
+          {onboardingUiActive &&
+          (onboardingQuestion?.kind === "select" || onboardingQuestion?.kind === "chips") &&
+          onboardingQuestion.options ? (
             <View style={styles.optionsWrap}>
-              <Text style={styles.optionsLabel}>Tap an option</Text>
+              {/* Only for 'select', where tapping is the ONLY way to answer.
+                  On a 'chips' step the composer stays live, so telling the
+                  user to tap would be wrong. */}
+              {onboardingQuestion.kind === "select" ? (
+                <Text style={styles.optionsLabel}>Tap an option</Text>
+              ) : null}
               <View style={styles.optionsRow}>
                 {onboardingQuestion.options.map((o) => (
                   <Pressable
@@ -1658,6 +1665,33 @@ export default function ChatPanel({
                   </Pressable>
                 ))}
               </View>
+              {onboardingQuestion.footnote ? (
+                <Text style={styles.optionsFootnote}>{onboardingQuestion.footnote}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/*
+            PROMPT ROWS. These PREFILL the composer and focus it — they do not
+            submit, which is the whole difference between them and the chips
+            above. An option is an answer; a prompt is a shape to edit, and
+            nobody wants their first message sent verbatim.
+          */}
+          {onboardingUiActive && onboardingQuestion?.prompts?.length ? (
+            <View style={styles.promptsWrap}>
+              {onboardingQuestion.prompts.map((prompt) => (
+                <Pressable
+                  key={prompt}
+                  disabled={onboardingComposerBusy}
+                  onPress={() => {
+                    setInput(prompt);
+                    inputRef.current?.focus();
+                  }}
+                  style={[styles.promptRow, onboardingComposerBusy ? styles.optionChipOff : null]}
+                >
+                  <Text style={styles.promptText}>{prompt}</Text>
+                </Pressable>
+              ))}
             </View>
           ) : null}
 
@@ -2019,6 +2053,30 @@ const styles = StyleSheet.create({
   },
   optionsLabel: { fontFamily: font.regular, fontSize: 11, color: theme.muted, marginBottom: 6, letterSpacing: 0.3 },
   optionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  optionsFootnote: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    lineHeight: 16,
+    marginTop: 8,
+  },
+  promptsWrap: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.surfaceMuted,
+    gap: 8,
+  },
+  promptRow: {
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.borderStrong,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
+  },
+  promptText: { fontFamily: font.regular, fontSize: 13.5, color: theme.muted },
   optionChip: {
     paddingVertical: 8,
     paddingHorizontal: 14,

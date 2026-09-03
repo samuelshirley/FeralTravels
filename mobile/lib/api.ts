@@ -400,7 +400,7 @@ export function tripApi(tripId: string) {
  */
 export interface OnboardingQuestion {
   key: string;
-  kind: "text" | "number" | "integer" | "select" | "handoff";
+  kind: "text" | "number" | "integer" | "select" | "chips" | "handoff";
   label: string;
   placeholder?: string;
   help?: string;
@@ -412,6 +412,13 @@ export interface OnboardingQuestion {
   multiline?: boolean;
   /** Prefilled answer (e.g. a start date extracted from the trip description). */
   defaultValue?: string;
+  /**
+   * Tappable examples that PREFILL the composer and do NOT submit — unlike
+   * `options`, which are answers to the question. See the server type.
+   */
+  prompts?: string[];
+  /** One quiet line explaining where a `defaultValue` came from. */
+  footnote?: string;
 }
 
 /**
