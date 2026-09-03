@@ -373,7 +373,36 @@ up() {
     ok "schema is current"
   fi
 
-  if curl -fsS "$API_URL/login" >/dev/null 2>&1; then
+  # Health-check an API ROUTE, not a page.
+  #
+  # This was `curl -fsS "$API_URL/login"`, which only proves a page renders.
+  # The flows live on `/api/*`, and those can be comprehensively broken while
+  # /login is perfectly fine — running `npm run build` while this dev server is
+  # up overwrites `.next/` underneath it, and every API route then 500s with
+  # "Cannot find module './8948.js'" while pages still serve.
+  #
+  # That exact state was reused twice, the runner cheerfully reporting "server
+  # already answering", and both times it surfaced as a Maestro selector
+  # failure. `/api/me` needs no auth to prove the point: 401 means the API
+  # layer compiled and ran, which is the whole question. Anything 5xx does not.
+  #
+  # NO `|| echo 000` HERE. curl PRINTS `000` and ALSO exits non-zero when it
+  # cannot connect, so a fallback appends to the status rather than replacing
+  # it: the string becomes `000000`, which is `!= "000"` and numerically 0, so
+  # it passes both halves of the test below. That is not hypothetical — it is
+  # why this reported "server already answering" against a port with nothing
+  # listening on it at all. Let the substitution yield curl's own output and
+  # test the value.
+  local __api_status __api_healthy
+  # `|| true` and NOT `|| echo 000`: curl exits non-zero on a refused
+  # connection and `set -e` would abort the whole run here, but `true` prints
+  # nothing, so curl's own `000` survives as the value.
+  __api_status="$(curl -s -o /dev/null -w '%{http_code}' "$API_URL/api/me" 2>/dev/null || true)"
+  case "$__api_status" in
+    ''|000|5??) __api_healthy=no ;;
+    *) __api_healthy=yes ;;
+  esac
+  if [ "$__api_healthy" = yes ]; then
     ok "server already answering on $API_URL"
   else
     say "Starting the server on $API_URL"
@@ -703,6 +732,24 @@ run_flow() {
   fi
 
   local udid; udid="$(device_id)"
+
+  # Reset the app's LOCATION permission before every flow.
+  #
+  # `clearState` does not touch it. Permission grants are system state held per
+  # bundle id — exactly like the keychain, which is why both flows already
+  # `clearKeychain` — so an earlier run that answered the dialog leaves the app
+  # on `canAskAgain: false` FOREVER, and `settings-location.yaml` then finds
+  # "Open Settings" where it expects "Turn on". That is a stale simulator
+  # reporting as a code failure.
+  #
+  # Every flow, not just that one: resetting to "never asked" is the state the
+  # others already assume. Nothing prompts on its own — `DeviceLocationContext`
+  # is mounted with `promptAllowed={false}` outside the trip screen, and
+  # `screenshots.yaml` still ends up with location OFF because it never asks.
+  # `|| true` — the reset fails on a simulator that has never installed the app,
+  # which is not a reason to fail the run.
+  xcrun simctl privacy "$udid" reset location "$APP_ID" >/dev/null 2>&1 || true
+
   rm -rf "$OUT/maestro"
   say "Running $flow on $udid"
   set +e
