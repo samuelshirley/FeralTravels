@@ -1,7 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { sendOtpCode, signInWithOtp } from '@/server/auth/otp';
+import { OtpRateLimitError, retryAfterSeconds, sendOtpCode, signInWithOtp } from '@/server/auth/otp';
 
 /**
  * Validate the submitted OTP code and sign the user in.
@@ -50,10 +50,17 @@ export async function resendOtpAction(formData: FormData) {
     ) {
       throw err;
     }
-    const message = err instanceof Error ? err.message : String(err);
-    const code = message === 'RateLimited' ? 'RateLimited' : 'EmailSendFailed';
+    // The wait is carried in the URL so the page can render an accurate
+    // countdown. Hard-coding "60 seconds" in the copy was the original sin
+    // here: it was wrong the moment the ladder had more than one rung, and
+    // it was wrong even before that for anyone who had already waited 55.
+    if (err instanceof OtpRateLimitError) {
+      redirect(
+        `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=RateLimited&retryAfter=${retryAfterSeconds(err.retryAfterMs)}`
+      );
+    }
     redirect(
-      `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=${code}`
+      `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=EmailSendFailed`
     );
   }
 }

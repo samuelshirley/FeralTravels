@@ -168,6 +168,25 @@ export const emailOtpCodes = pgTable(
 );
 
 /**
+ * Per-address send throttle for sign-in codes. Deliberately its OWN table
+ * rather than columns on `email_otp_codes`, because that row is deleted the
+ * moment a code is consumed, expires, or burns its five verify attempts — and
+ * a counter that lives on it can be reset by anyone willing to POST five wrong
+ * codes. The throttle has to outlive the code it is throttling.
+ *
+ * `sends` counts sends inside the current window; `windowStartedAt` is the
+ * first send of that window. Both reset once the window lapses (see
+ * OTP_THROTTLE_WINDOW_MS in server/auth/otp.ts). `lastSentAt` is what the
+ * cooldown gap is measured from.
+ */
+export const otpSendThrottle = pgTable('otp_send_throttle', {
+  email: text('email').primaryKey(),
+  sends: integer('sends').default(0).notNull(),
+  windowStartedAt: timestamp('window_started_at').defaultNow().notNull(),
+  lastSentAt: timestamp('last_sent_at').defaultNow().notNull(),
+});
+
+/**
  * One row per native OAuth ID token that has been redeemed at
  * /api/mobile/oauth/exchange. Two jobs, one table:
  *

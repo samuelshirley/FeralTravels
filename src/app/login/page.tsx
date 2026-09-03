@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth, signIn, isAppleSignInConfigured } from '@/server/auth';
-import { sendOtpCode } from '@/server/auth/otp';
+import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
 
 interface LoginPageProps {
   searchParams: { callbackUrl?: string; error?: string; emailError?: string };
@@ -29,7 +29,10 @@ function describeError(code?: string): string | null {
     case 'AccessDenied':
       return 'Access denied. If you think this is a mistake, contact support.';
     case 'RateLimited':
-      return 'A code was already sent recently — please wait 60 seconds before requesting another.';
+      // Reachable only as a fallback now: the email form sends a throttled
+      // user forward to the code screen rather than back here, because a
+      // pending code means the next step is entering it, not being scolded.
+      return 'A code is already on its way to that address. Check your inbox — it is still valid.';
     default:
       return `Sign-in failed: ${code}`;
   }
@@ -244,10 +247,22 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             try {
               await sendOtpCode(email);
             } catch (err) {
+              /**
+               * Being throttled here is not a failed sign-in — it means a
+               * code for this address is already in flight. Bouncing back to
+               * this page with a red error made the user re-enter an address
+               * that had already worked; forward to the code screen instead,
+               * which is where they were going anyway, and let it run the
+               * countdown on the resend button.
+               */
+              if (err instanceof OtpRateLimitError) {
+                redirect(
+                  `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&retryAfter=${retryAfterSeconds(err.retryAfterMs)}`
+                );
+                return;
+              }
               const message = err instanceof Error ? err.message : String(err);
-              const code = message === 'RateLimited'
-                ? 'RateLimited'
-                : message.startsWith('EmailSendFailed')
+              const code = message.startsWith('EmailSendFailed')
                 ? 'EmailSendFailed'
                 : 'Configuration';
               console.error('[login] OTP send failed:', message);

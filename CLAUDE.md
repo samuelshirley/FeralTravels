@@ -281,9 +281,9 @@ api/test/subscription     api/test/promo
 
 **`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
 
-### Schema (30 tables in `src/server/db/schema.ts`)
+### Schema (31 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes
+users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, legConstraints, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle
 
 **Account deletion — BUILT (migration 0024, 2026-08-20):** users can permanently delete their own account from Settings on **both** web and native. Apple guideline 5.1.1(v) requires an app that creates accounts to delete them *from inside the app*, so the native screen is the requirement and the web page is the mirror — not the other way round. **Immediate and unrecoverable by design: no grace period, no soft-delete, no undo.**
 

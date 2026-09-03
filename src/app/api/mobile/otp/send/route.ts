@@ -1,5 +1,5 @@
 import { z, ZodError } from 'zod';
-import { sendOtpCode } from '@/server/auth/otp';
+import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
 import { errorResponse, HttpError } from '@/server/auth/guards';
 
 export const runtime = 'nodejs';
@@ -9,8 +9,10 @@ export const dynamic = 'force-dynamic';
  * Mobile OTP step 1: email in, code sent via Resend.
  *
  * Same OTP machinery as the web login (same table, same 10-min expiry, same
- * 60s resend cooldown). Unauthenticated by design — requesting a code is the
- * start of sign-in. Response deliberately carries no account information.
+ * escalating resend ladder). Unauthenticated by design — requesting a code is
+ * the start of sign-in, which is also why the ladder exists: this route puts
+ * real email in any inbox a caller names. Response deliberately carries no
+ * account information.
  */
 const sendSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(320),
@@ -22,9 +24,15 @@ export async function POST(req: Request) {
     try {
       await sendOtpCode(body.email);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message === 'RateLimited') {
-        throw new HttpError(429, 'A code was just sent. Wait a minute before requesting another.');
+      // The app needs the number, not a sentence with a number baked into it:
+      // it drives the same countdown the web verify screen runs, and the
+      // ladder means the wait is no longer always "a minute".
+      if (err instanceof OtpRateLimitError) {
+        const retryAfter = retryAfterSeconds(err.retryAfterMs);
+        return Response.json(
+          { error: 'RateLimited', retryAfter },
+          { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+        );
       }
       throw new HttpError(502, 'Could not send the sign-in email. Try again in a moment.');
     }

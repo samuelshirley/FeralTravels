@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/server/auth';
+import { getResendCooldownRemainingMs, retryAfterSeconds } from '@/server/auth/otp';
 import { VerifyForm } from './verify-form';
 
 interface VerifyPageProps {
@@ -8,6 +9,7 @@ interface VerifyPageProps {
     callbackUrl?: string;
     error?: string;
     resent?: string;
+    retryAfter?: string;
   };
 }
 
@@ -21,6 +23,22 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
   // If no email in the URL, bounce back to login.
   const email = searchParams.email?.trim();
   if (!email) redirect('/login');
+
+  /**
+   * Seconds until Resend is live again, read from the throttle on every
+   * render rather than assumed. The page is reached three ways — straight
+   * from /login, from a rejected resend, from a wrong code — and only one of
+   * them carries a `retryAfter`, so the URL value is a hint and the database
+   * is the answer. Landing here from /login is the common case and is exactly
+   * where the old UI was worst: a code had just been sent, so Resend was
+   * already dead, and the page offered it anyway with no hint of that.
+   */
+  const urlHint = Number(searchParams.retryAfter);
+  const remainingMs = await getResendCooldownRemainingMs(email);
+  const resendInSeconds = Math.max(
+    remainingMs > 0 ? retryAfterSeconds(remainingMs) : 0,
+    Number.isFinite(urlHint) && urlHint > 0 ? Math.floor(urlHint) : 0
+  );
 
   return (
     <div
@@ -65,6 +83,7 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
           callbackUrl={callbackUrl}
           error={searchParams.error}
           resent={searchParams.resent === '1'}
+          resendInSeconds={resendInSeconds}
         />
       </div>
     </div>

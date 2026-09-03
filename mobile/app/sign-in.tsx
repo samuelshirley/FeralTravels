@@ -87,7 +87,7 @@ const ERROR_COPY: Record<string, string> = {
     "Couldn't send your sign-in code. Try Google sign-in or contact support.",
   AccessDenied: "Access denied. If you think this is a mistake, contact support.",
   RateLimited:
-    "A code was already sent recently — please wait 60 seconds before requesting another.",
+    "A code was already sent to that address and is still valid — check your inbox before requesting another.",
   InvalidCode:
     "That code is incorrect or has expired. Please try again or request a new one.",
   // --- native OAuth exchange (/api/mobile/oauth/exchange) ---
