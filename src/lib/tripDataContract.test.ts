@@ -94,7 +94,6 @@ function makeLegWithDetails(overrides: Partial<LegWithDetails> = {}): LegWithDet
     routes: [],
     stops: [makeStop()],
     tasks: [],
-    constraints: [],
     parsedNotes: [],
     ...overrides,
   };

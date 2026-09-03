@@ -1,6 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { formatKmDual } from "@/shared/lib/units";
-import { STATUS_MAP, type LegStatus } from "@/shared/types/trip";
 import { useUnits } from "@/lib/units";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
@@ -20,16 +19,6 @@ export function Spinner({ size = "small" }: { size?: "small" | "large" }) {
 
 export function Centered({ children }: { children: React.ReactNode }) {
   return <View style={styles.centered}>{children}</View>;
-}
-
-/** Mirrors src/components/StatusBadge.tsx. */
-export function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_MAP[status as LegStatus] || STATUS_MAP.planning;
-  return (
-    <View style={[styles.badge, { backgroundColor: s.bg, borderColor: s.border }]}>
-      <Text style={[styles.badgeText, { color: s.text }]}>{s.label}</Text>
-    </View>
-  );
 }
 
 /**
@@ -137,9 +126,6 @@ export function Banner({
   action?: { label: string; onPress: () => void };
 }) {
   const palette = {
-    // Borders come from STATUS_MAP in src/types/trip.ts:461-464 (planning /
-    // research / confirmed) plus the ubiquitous danger literal used at e.g.
-    // src/app/login/page.tsx:111.
     info: { bg: theme.primaryMuted, border: theme.primary, fg: theme.accent300 },
     warning: { bg: theme.warningMuted, border: theme.accent700, fg: theme.warning },
     danger: { bg: theme.dangerMuted, border: theme.dangerBorder, fg: theme.danger },

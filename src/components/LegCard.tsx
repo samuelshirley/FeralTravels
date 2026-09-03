@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
-import { STATUS_MAP, type LegStatus } from '@/types/trip';
 import { tripApi } from '@/lib/api';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
@@ -14,7 +13,6 @@ import {
   orderNavSegments,
 } from '@/lib/maps';
 import { useNextStop } from '@/lib/useNextStop';
-import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
@@ -427,23 +425,6 @@ export default function LegCard({
             </div>
           )}
         </div>
-        {expanded ? (
-          <StatusBadge status={leg.status} />
-        ) : (
-          // Collapsed, the badge chrome is repeated on every row and says
-          // nothing the word does not. The word alone.
-          <span
-            style={{
-              fontSize: 9,
-              fontWeight: 600,
-              letterSpacing: '0.08em',
-              color: 'var(--tp-accent-400)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {STATUS_MAP[leg.status as LegStatus]?.label ?? ''}
-          </span>
-        )}
         <span
           style={{
             color: 'var(--tp-subtle)',

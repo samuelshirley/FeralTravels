@@ -8,7 +8,6 @@ import {
   distanceKmSchema,
   driveTimeMinutesSchema,
   latSchema,
-  legStatusSchema,
   lngSchema,
   terrainSchema,
 } from './shared';
@@ -43,7 +42,6 @@ const baseSchema = z.object({
   drive_time_minutes: driveTimeMinutesSchema.nullish(),
   terrain: terrainSchema.nullish(),
   overnight: z.string().nullish(),
-  status: legStatusSchema.nullish(),
   color: z.string().nullish(),
   notes: z.array(z.string()).nullish(),
   sort_order: z.number().int().nullish(),
@@ -59,15 +57,6 @@ const baseSchema = z.object({
   // see ("Girona → Berlin"). Leave both null for short single-day jumps.
   segment_index: z.number().int().min(0).nullish(),
   segment_name: z.string().min(1).max(200).nullish(),
-  // ── Constraints (for nightly replan) ──
-  /** Constraints to attach to this leg — deadlines, earliest departures, or flexible intents. */
-  constraints: z.array(z.object({
-    constraint_type: z.enum(['arrive_by', 'depart_after', 'flexible']),
-    /** ISO 8601 datetime with timezone. Required for arrive_by/depart_after, null for flexible. */
-    datetime: z.string().nullish(),
-    buffer_minutes: z.number().int().min(0).max(1440).optional().default(60),
-    note: z.string().max(500).nullish(),
-  })).max(5).optional().default([]),
 });
 
 export type AddLegInput = z.infer<typeof baseSchema>;
@@ -177,11 +166,6 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
       },
       terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
       overnight: { type: 'string', description: 'Optional name of the overnight stop.' },
-      status: {
-        type: 'string',
-        enum: ['planning', 'research', 'confirmed', 'anchored'],
-        description: 'Default to "planning" for new legs unless the user explicitly confirms.',
-      },
       color: { type: 'string' },
       notes: { type: 'array', items: { type: 'string' } },
       sort_order: { type: 'integer' },
@@ -201,36 +185,6 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
         type: 'string',
         description:
           'Optional human label for the jump this day belongs to, e.g. "Girona → Berlin". Must be set together with segment_index.',
-      },
-      constraints: {
-        type: 'array',
-        description:
-          'Time constraints on this leg — deadlines ("be there by June 3"), earliest departures ("ferry at 2pm"), or flexible intents ("visit Neuschwanstein sometime"). Omit or [] for unconstrained legs.',
-        items: {
-          type: 'object',
-          required: ['constraint_type'],
-          properties: {
-            constraint_type: {
-              type: 'string',
-              enum: ['arrive_by', 'depart_after', 'flexible'],
-              description: 'arrive_by = hard arrival deadline. depart_after = cannot leave before this time. flexible = soft preference.',
-            },
-            datetime: {
-              type: 'string',
-              description: 'ISO 8601 datetime with timezone, e.g. "2026-06-03T15:00:00+02:00". Required for arrive_by/depart_after.',
-            },
-            buffer_minutes: {
-              type: 'integer',
-              minimum: 0,
-              maximum: 1440,
-              description: 'Minutes of slack. Default 60.',
-            },
-            note: {
-              type: 'string',
-              description: 'User-facing reason, e.g. "ferry departs at 2pm".',
-            },
-          },
-        },
       },
     },
   },

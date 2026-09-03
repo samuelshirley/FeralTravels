@@ -183,7 +183,7 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
   partialApplyWarning?: string | null;
   /**
    * Deterministic, DB-derived plan facts for this turn (day counts, dates,
-   * totals, deadline check). Optional here because optimistic/streaming
+   * totals). Optional here because optimistic/streaming
    * messages don't have it yet; persisted + history-loaded messages do. This
    * is the source of truth the card renders — never Penny's prose.
    */
@@ -304,17 +304,9 @@ function formatClock(
 }
 
 /** Minutes of slack → "26 min" / "2h 10m" (absolute value). */
-function formatSlack(minutes: number): string {
-  const a = Math.abs(minutes);
-  if (a < 60) return `${a} min`;
-  const h = Math.floor(a / 60);
-  const m = a % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
 /**
  * Deterministic plan summary card. Renders the DB-derived facts that Penny is
- * forbidden from stating in prose — day counts, dates, totals, deadline check —
+ * forbidden from stating in prose — day counts, dates, totals —
  * so the numbers the user sees are always the plan that actually saved. Penny's
  * bubble above is the conversational wrapper; THIS is the source of truth.
  */
@@ -327,51 +319,14 @@ function PlanSummaryCard({
 }) {
   const departDate = fmtPlanDate(summary.depart_date_iso, units);
   const arriveDate = fmtPlanDate(summary.arrive_date_iso, units);
-  const deadlineDate = fmtPlanDate(summary.deadline?.date_iso ?? null, units);
   const departTime = formatClock(summary.depart_time, units);
   const arriveTime = formatClock(summary.arrive_time, units);
-
-  const dl = summary.deadline;
-  const dlTime = formatClock(dl?.local_time ?? null, units);
-  const clock = dl?.same_day_clock ?? null;
-  const lateSameDay = clock != null && clock.slack_minutes < 0;
-  const tightSameDay = clock != null && clock.slack_minutes >= 0 && !clock.clears_buffer;
-  const missed = dl?.status === 'after' || lateSameDay;
 
   const dayBits = [`${summary.total_days} day${summary.total_days !== 1 ? 's' : ''}`];
   if (summary.drive_days > 0) dayBits.push(`${summary.drive_days} driving`);
   if (summary.rest_days > 0) dayBits.push(`${summary.rest_days} rest`);
 
-  // Deadline phrasing appended to the Arrive line. All numbers deterministic.
-  let deadlineSuffix: string | null = null;
-  if (dl && deadlineDate) {
-    const dlLabel = `${deadlineDate}${dlTime ? ` ${dlTime}` : ''}`;
-    if (dl.status === 'before' && dl.buffer_days != null) {
-      deadlineSuffix = ` — ${dl.buffer_days} day${dl.buffer_days !== 1 ? 's' : ''} before your ${dlLabel} deadline`;
-    } else if (dl.status === 'after' && dl.buffer_days != null) {
-      const late = Math.abs(dl.buffer_days);
-      deadlineSuffix = ` — ${late} day${late !== 1 ? 's' : ''} AFTER your ${dlLabel} deadline`;
-    } else if (dl.status === 'same_day') {
-      const dlClock = dlTime ?? 'deadline';
-      if (lateSameDay) {
-        deadlineSuffix = ` — past your ${dlClock} deadline`;
-      } else if (tightSameDay && clock) {
-        deadlineSuffix = ` — only ${formatSlack(clock.slack_minutes)} before your ${dlClock} deadline (tight)`;
-      } else if (clock && clock.clears_buffer) {
-        deadlineSuffix = ` — ${formatSlack(clock.slack_minutes)} before your ${dlClock} deadline`;
-      } else {
-        deadlineSuffix = ` — your deadline day`;
-      }
-    }
-  }
-
   const labelStyle: React.CSSProperties = { color: 'var(--tp-muted)', marginRight: 6 };
-  const arriveColor = missed
-    ? 'var(--tp-danger)'
-    : tightSameDay
-      ? '#c98a00'
-      : undefined;
-
   return (
     <div
       style={{
@@ -398,12 +353,11 @@ function PlanSummaryCard({
         </div>
       )}
       {arriveDate && (
-        <div style={arriveColor ? { color: arriveColor } : undefined}>
+        <div>
           <span style={labelStyle}>Arrive</span>
           {summary.arrive_name ? `${summary.arrive_name} · ` : ''}
           {arriveDate}
           {arriveTime ? ` · ETA ~${arriveTime}` : ''}
-          {deadlineSuffix}
         </div>
       )}
       {summary.total_drive_minutes > 0 && (

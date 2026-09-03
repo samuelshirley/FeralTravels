@@ -32,17 +32,6 @@ export type TripStatus = 'draft' | 'active' | 'paused' | 'completed';
 
 export type ConstraintType = 'arrive_by' | 'depart_after' | 'flexible';
 
-export interface LegConstraint {
-  id: string;
-  leg_id: string;
-  constraint_type: ConstraintType;
-  /** ISO timestamp with timezone, null for `flexible` constraints. */
-  constraint_datetime: string | null;
-  buffer_minutes: number;
-  note: string | null;
-  created_at: string;
-}
-
 export interface Trip {
   id: string;
   name: string;
@@ -288,42 +277,8 @@ export interface PlanSummary {
   total_drive_minutes: number;
   /** Waypoints with at least one night, in route order. */
   nights_per_stop: Array<{ name: string | null; nights: number }>;
-  /** Present only when a drive leg carries an arrive_by constraint. */
-  deadline: PlanSummaryDeadline | null;
 }
 
-/**
- * Date-only comparison of the planned arrival against a fixed arrive_by
- * constraint. We deliberately do NOT model clock time — the schedule only
- * assigns calendar dates — so we report the deadline DATE and whether arrival
- * lands before / on / after it, never an invented arrival time.
- */
-export interface PlanSummaryDeadline {
-  /** The constraint datetime exactly as authored (ISO 8601 with offset). */
-  datetime_iso: string;
-  /** Local calendar date of the deadline ("YYYY-MM-DD"), or null if unparseable. */
-  date_iso: string | null;
-  /** Local wall-clock time of the deadline ("HH:MM"), or null if date-only. */
-  local_time: string | null;
-  /** 'before' | 'same_day' | 'after' — by calendar date only. */
-  status: 'before' | 'same_day' | 'after';
-  /** Whole days of slack (deadline date − arrival date). 0 = same day, <0 = late. */
-  buffer_days: number | null;
-  /**
-   * Time-of-day check for the SAME-DAY case: when arrival lands on the deadline
-   * date and we know both the deadline time and the final drive time, the day
-   * model estimates the arrival clock-time and the slack against the deadline.
-   * Null when not a same-day comparison or times are unavailable.
-   */
-  same_day_clock: {
-    /** Estimated arrival "HH:MM" (day model: 08:00 + drive + breaks). */
-    eta: string;
-    /** Raw minutes before the deadline (deadline − eta). Negative = late. */
-    slack_minutes: number;
-    /** True when slack clears the 1-hour buffer (slack_minutes >= 60). */
-    clears_buffer: boolean;
-  } | null;
-}
 
 export type RouteLinkType =
   | 'gpx'
@@ -470,7 +425,6 @@ export interface LegWithDetails extends Leg {
   routes: RouteWithLinks[];
   stops: Stop[];
   tasks: Task[];
-  constraints: LegConstraint[];
   parsedNotes: string[];
 }
 
@@ -478,25 +432,3 @@ export interface TripWithLegs extends Trip {
   legs: LegWithDetails[];
 }
 
-export type LegStatus = 'planning' | 'research' | 'confirmed' | 'anchored';
-
-/**
- * The four leg statuses.
- *
- * They used to be four HUES — a red, a green, a blue and a gold. Nocturne is a
- * mono palette, so all four now share one outlined treatment and THE LABEL is
- * what distinguishes them. That is a real loss of at-a-glance signal and it is
- * deliberate: the alternative was picking which two of the four get to keep a
- * colour, which is a product decision nobody has made. If one of them ever
- * earns the accent, `research` is the candidate — it is the only one that asks
- * the user to do something.
- *
- * Mirrored into mobile/shared/types/trip.ts; run `npm run sync-shared` after
- * touching this or `sharedMirror.test.ts` fails.
- */
-export const STATUS_MAP: Record<LegStatus, { label: string; bg: string; border: string; text: string }> = {
-  anchored: { label: "DATE LOCKED", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
-  confirmed: { label: "CONFIRMED", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
-  planning: { label: "PLANNING", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
-  research: { label: "NEEDS RESEARCH", bg: "transparent", border: "#595d6c", text: "#b2b6ca" },
-};

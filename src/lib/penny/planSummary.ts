@@ -9,7 +9,7 @@
  * off-by-one arrival dates.
  *
  * The fix: Penny is a conversational wrapper only. Every NUMBER the user sees —
- * day counts, dates, totals, deadline check — is computed here from the legs as
+ * day counts, dates, totals — is computed here from the legs as
  * they actually landed in the DB (after `rebuildTripSchedule`), never authored
  * by the model. If the LLM can't state the number, it can't hallucinate it.
  *
@@ -21,14 +21,14 @@
  * exactly one calendar day, so a leg's date is `trip start + its rank`. We do
  * NOT model clock time anywhere, which is why the deadline check is date-only.
  */
-import { constraintLocalDateISO, constraintLocalTimeHHMM, daysBetweenISO } from '@/lib/dates';
+import { daysBetweenISO } from '@/lib/dates';
 import {
   DEFAULT_DAY_MODEL_CONFIG,
   canArriveSameDay,
   computeArrivalTime,
 } from '@/lib/dayModel';
 import type { LegWithDetails } from '@/types/trip';
-import type { PlanSummary, PlanSummaryDeadline } from '@/types/trip';
+import type { PlanSummary } from '@/types/trip';
 
 /** Buffer the deadline check wants cleared (minutes). Mirrors dayModel default. */
 const DEADLINE_BUFFER_MINUTES = 60;
@@ -108,81 +108,6 @@ export function computePlanSummary(
     total_distance_km,
     total_drive_minutes,
     nights_per_stop,
-    deadline: computeDeadline(legs, lastDrive),
   };
 }
 
-/**
- * Surface an arrive_by deadline as a date-only comparison against the planned
- * arrival. Prefers a constraint on the final driving leg (the arrival); falls
- * back to the latest drive leg that carries one. We never compare clock times —
- * the plan has no time model — so a same-day arrival reports `same_day`, not a
- * claim that we beat the hour.
- */
-function computeDeadline(
-  legs: LegWithDetails[],
-  lastDrive: LegWithDetails | null,
-): PlanSummaryDeadline | null {
-  const arriveByOn = (leg: LegWithDetails | null) =>
-    leg?.constraints.find(
-      (c) => c.constraint_type === 'arrive_by' && c.constraint_datetime != null,
-    ) ?? null;
-
-  // Prefer the arrival leg's own deadline; otherwise the latest drive that has
-  // one (route order).
-  let constraint = arriveByOn(lastDrive);
-  if (!constraint) {
-    for (let i = legs.length - 1; i >= 0; i--) {
-      if (legs[i].leg_type !== 'drive') continue;
-      const c = arriveByOn(legs[i]);
-      if (c) {
-        constraint = c;
-        break;
-      }
-    }
-  }
-  if (!constraint || constraint.constraint_datetime == null) return null;
-
-  const deadlineDateISO = constraintLocalDateISO(constraint.constraint_datetime);
-  const localTime = constraintLocalTimeHHMM(constraint.constraint_datetime);
-  const arrivalDateISO = lastDrive?.date_iso ?? null;
-  const buffer_days = daysBetweenISO(arrivalDateISO, deadlineDateISO);
-
-  let status: PlanSummaryDeadline['status'] = 'same_day';
-  if (buffer_days != null) {
-    if (buffer_days > 0) status = 'before';
-    else if (buffer_days < 0) status = 'after';
-    else status = 'same_day';
-  }
-
-  // Time-of-day check only matters when the drive lands on the deadline DAY and
-  // we know both clocks. canArriveSameDay returns slack AFTER subtracting the
-  // 1h buffer, so raw slack = its slack + buffer; it clears the buffer when its
-  // own feasible flag is true.
-  let same_day_clock: PlanSummaryDeadline['same_day_clock'] = null;
-  if (
-    status === 'same_day' &&
-    localTime != null &&
-    lastDrive?.drive_time_minutes != null
-  ) {
-    const check = canArriveSameDay(
-      lastDrive.drive_time_minutes,
-      localTime,
-      DEADLINE_BUFFER_MINUTES,
-    );
-    same_day_clock = {
-      eta: check.arrivalTime,
-      slack_minutes: check.slackMinutes + DEADLINE_BUFFER_MINUTES,
-      clears_buffer: check.feasible,
-    };
-  }
-
-  return {
-    datetime_iso: constraint.constraint_datetime,
-    date_iso: deadlineDateISO,
-    local_time: localTime,
-    status,
-    buffer_days,
-    same_day_clock,
-  };
-}

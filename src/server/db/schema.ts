@@ -240,12 +240,6 @@ export const tripStatusEnum = pgEnum('trip_status', [
   'completed',
 ]);
 
-export const constraintTypeEnum = pgEnum('constraint_type', [
-  'arrive_by',
-  'depart_after',
-  'flexible',
-]);
-
 // --- Trip planning (per-user) ---
 
 /** Vehicle profile: refill cadence + drive/water caps; distances stored in km. */
@@ -434,31 +428,6 @@ export const legs = pgTable(
   },
   (t) => ({
     tripIdx: index('legs_trip_idx').on(t.tripId),
-  })
-);
-
-/**
- * Constraints on legs — deadlines, earliest departures, or flexible intent.
- * Supports multiple constraints per leg (e.g., ferry window = arrive_by + depart_after).
- */
-export const legConstraints = pgTable(
-  'leg_constraints',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    legId: uuid('leg_id')
-      .notNull()
-      .references(() => legs.id, { onDelete: 'cascade' }),
-    constraintType: constraintTypeEnum('constraint_type').notNull(),
-    /** The actual deadline or earliest departure. Null for `flexible` constraints. */
-    constraintDatetime: timestamp('constraint_datetime', { withTimezone: true }),
-    /** Slack before/after the constraint datetime, in minutes. */
-    bufferMinutes: integer('buffer_minutes').default(60).notNull(),
-    /** User-facing context, e.g. "ferry departs at 2pm", "meet friends". */
-    note: text('note'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-  },
-  (t) => ({
-    legIdx: index('leg_constraints_leg_idx').on(t.legId),
   })
 );
 

@@ -5,7 +5,6 @@ import { ConflictError, HttpError } from '@/server/auth/guards';
 import {
   tryParseToISO,
   legDateISO,
-  constraintLocalDateISO,
   todayISO,
   todayISOInZone,
 } from '@/lib/dates';
@@ -32,7 +31,6 @@ import {
   stops,
   tasks,
   pois,
-  legConstraints,
   users,
   vehicles,
   chatHistory,
@@ -44,8 +42,6 @@ import type {
   TripWithLegs,
   TripStatus,
   LegWithDetails,
-  LegConstraint,
-  ConstraintType,
   Cost,
   Link,
   RouteWithLinks,
@@ -92,18 +88,6 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     user_id: r.userId,
     vehicle_id: r.vehicleId,
     is_template: r.isTemplate,
-  };
-}
-
-function legConstraintRow(r: typeof legConstraints.$inferSelect): LegConstraint {
-  return {
-    id: r.id,
-    leg_id: r.legId,
-    constraint_type: r.constraintType as ConstraintType,
-    constraint_datetime: r.constraintDatetime ? r.constraintDatetime.toISOString() : null,
-    buffer_minutes: r.bufferMinutes,
-    note: r.note,
-    created_at: r.createdAt.toISOString(),
   };
 }
 
@@ -260,7 +244,6 @@ function poiRow(r: typeof pois.$inferSelect): POI {
 export const rowMappers = {
   tripRow,
   legRow,
-  legConstraintRow,
   costRow,
   linkRow,
   routeRow,
@@ -348,7 +331,6 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     routeLinkRows,
     stopRows,
     taskRows,
-    constraintRows,
     vehicleRows,
   ] = await Promise.all([
       db.select().from(legs).where(eq(legs.tripId, tripId)).orderBy(asc(legs.sortOrder)),
@@ -382,12 +364,6 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
         .where(eq(legs.tripId, tripId))
         .orderBy(asc(stops.sortOrder), asc(stops.id)),
       db.select().from(tasks).where(eq(tasks.tripId, tripId)).orderBy(asc(tasks.createdAt)),
-      db
-        .select({ lc: legConstraints })
-        .from(legConstraints)
-        .innerJoin(legs, eq(legConstraints.legId, legs.id))
-        .where(eq(legs.tripId, tripId))
-        .orderBy(asc(legConstraints.createdAt)),
       // The vehicle's single fuel range, for the per-leg tank figure below.
       // One row by id, joined into the existing parallel block rather than
       // awaited after it.
@@ -435,12 +411,6 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
     stopsByLeg.set(s.legId, arr);
   });
 
-  const constraintsByLeg = new Map<string, LegConstraint[]>();
-  constraintRows.forEach(({ lc }) => {
-    const arr = constraintsByLeg.get(lc.legId) || [];
-    arr.push(legConstraintRow(lc));
-    constraintsByLeg.set(lc.legId, arr);
-  });
 
   const tasksByLeg = new Map<string, Task[]>();
   const orphanTasks: Task[] = [];
@@ -534,7 +504,6 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
       routes: routesByLeg.get(leg.id) || [],
       stops: stopsByLeg.get(leg.id) || [],
       tasks: legTasks,
-      constraints: constraintsByLeg.get(leg.id) || [],
       parsedNotes,
     };
   });
@@ -896,7 +865,7 @@ export interface ScheduleInfeasibilityOut {
 
 /**
  * Deterministically rebuild a trip's rest-day legs and leg ordering from its
- * DRIVING legs + fixed-date constraints. This is the server taking ownership of
+ * DRIVING legs. This is the server taking ownership of
  * the schedule (see src/lib/penny/schedule.ts for the math and the motivating
  * bug): Penny can no longer miscount rest days or leave a rest day stranded
  * after the drive it was meant to precede.
@@ -904,7 +873,6 @@ export interface ScheduleInfeasibilityOut {
  * What it does, given the trip start date:
  *   - Treats each drive leg (in its current order) as a "stop".
  *   - Derives desired nights at each stop from the rest legs currently there.
- *   - Reads dated arrive_by/depart_after constraints as fixed-date anchors.
  *   - Computes the correct rest-day allocation + chronological ordering.
  *   - Reconciles to the DB: reuses existing rest rows (preserving their data),
  *     creates any extra rest rows needed, deletes surplus ones, and renumbers
@@ -939,22 +907,9 @@ export async function rebuildTripSchedule(
   const restLegs = legRows.filter((l) => (l.legType ?? 'drive') === 'rest');
   if (driveLegs.length === 0) return []; // nothing to anchor a schedule on
 
-  // Dated constraints → an anchor date per drive leg.
-  const constraintRows = await db
-    .select({ lc: legConstraints })
-    .from(legConstraints)
-    .innerJoin(legs, eq(legConstraints.legId, legs.id))
-    .where(eq(legs.tripId, tripId));
+  // No per-leg date anchors any more: the leg date-constraint feature is gone,
+  // so every drive leg is dated purely by its rank from the trip start.
   const anchorByLegId = new Map<string, string>();
-  for (const { lc } of constraintRows) {
-    if (
-      (lc.constraintType === 'arrive_by' || lc.constraintType === 'depart_after') &&
-      lc.constraintDatetime
-    ) {
-      const iso = constraintLocalDateISO(lc.constraintDatetime.toISOString());
-      if (iso) anchorByLegId.set(lc.legId, iso);
-    }
-  }
 
   // Assign each existing rest leg to its stop (the drive that arrives there).
   const restsByStop = new Map<number, string[]>();
@@ -1816,62 +1771,5 @@ export async function applyTripProgress(input: {
   return { currentLegId: nextLegId, reroutedLeg };
 }
 
-// ── Leg constraints ─────────────────────────────────────────────────────────
 
-export async function addLegConstraint(input: {
-  legId: string;
-  constraintType: ConstraintType;
-  constraintDatetime?: string | null;
-  bufferMinutes?: number;
-  note?: string | null;
-}): Promise<LegConstraint> {
-  const [row] = await db
-    .insert(legConstraints)
-    .values({
-      legId: input.legId,
-      constraintType: input.constraintType,
-      constraintDatetime: input.constraintDatetime
-        ? new Date(input.constraintDatetime)
-        : null,
-      bufferMinutes: input.bufferMinutes ?? 60,
-      note: input.note ?? null,
-    })
-    .returning();
-  return legConstraintRow(row);
-}
-
-export async function deleteLegConstraint(constraintId: string) {
-  await db.delete(legConstraints).where(eq(legConstraints.id, constraintId));
-}
-
-export async function getConstraintsForLeg(legId: string): Promise<LegConstraint[]> {
-  const rows = await db
-    .select()
-    .from(legConstraints)
-    .where(eq(legConstraints.legId, legId))
-    .orderBy(asc(legConstraints.createdAt));
-  return rows.map(legConstraintRow);
-}
-
-/**
- * Get all constraints for all legs in a trip, grouped by leg ID.
- */
-export async function getConstraintsForTrip(
-  tripId: string,
-): Promise<Map<string, LegConstraint[]>> {
-  const rows = await db
-    .select({ lc: legConstraints })
-    .from(legConstraints)
-    .innerJoin(legs, eq(legConstraints.legId, legs.id))
-    .where(eq(legs.tripId, tripId))
-    .orderBy(asc(legConstraints.createdAt));
-
-  const map = new Map<string, LegConstraint[]>();
-  for (const { lc } of rows) {
-    const arr = map.get(lc.legId) || [];
-    arr.push(legConstraintRow(lc));
-    map.set(lc.legId, arr);
-  }
-  return map;
-}
 

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { LegWithDetails } from "@/shared/types/trip";
-import { STATUS_MAP, type LegStatus } from "@/shared/types/trip";
 import { tripApi } from "@/lib/api";
 import {
   assertDestinationReachable,
@@ -14,7 +13,7 @@ import {
 import { useNextStop } from "@/shared/lib/useNextStop";
 import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
-import { Distance, Spinner, StatusBadge } from "@/components/ui";
+import { Distance, Spinner } from "@/components/ui";
 import { shadow, theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
@@ -345,13 +344,6 @@ export default function LegCard({
             </View>
           ) : null}
         </View>
-        {expanded ? (
-          <StatusBadge status={leg.status} />
-        ) : (
-          <Text style={styles.statusBare}>
-            {STATUS_MAP[leg.status as LegStatus]?.label ?? ""}
-          </Text>
-        )}
         <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
           <DisclosureIcon color={theme.subtle} size={14} />
         </Animated.View>
@@ -573,12 +565,6 @@ const styles = StyleSheet.create({
   titleLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
   kicker: { fontSize: 10, fontFamily: font.semibold, letterSpacing: 1, color: theme.subtle },
   title: { fontSize: 16, fontFamily: font.medium, color: theme.text },
-  statusBare: {
-    fontSize: 9,
-    fontFamily: font.semibold,
-    letterSpacing: 0.8,
-    color: theme.accent400,
-  },
   metaLine: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 3 },
   meta: { fontFamily: font.regular, fontSize: 12, color: theme.subtle },
   continuityWarning: {

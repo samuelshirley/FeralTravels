@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computePlanSummary } from './planSummary';
-import type { LegConstraint, LegType, LegWithDetails } from '@/types/trip';
+import type { LegType, LegWithDetails } from '@/types/trip';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -16,7 +16,6 @@ function mkLeg(partial: {
   end_name?: string | null;
   distance_km?: number | null;
   drive_time_minutes?: number | null;
-  constraints?: LegConstraint[];
 }): LegWithDetails {
   const id = `leg-${legSeq++}`;
   return {
@@ -56,20 +55,7 @@ function mkLeg(partial: {
     routes: [],
     stops: [],
     tasks: [],
-    constraints: partial.constraints ?? [],
     parsedNotes: [],
-  };
-}
-
-function arriveBy(datetime: string): LegConstraint {
-  return {
-    id: `c-${legSeq++}`,
-    leg_id: 'x',
-    constraint_type: 'arrive_by',
-    constraint_datetime: datetime,
-    buffer_minutes: 60,
-    note: null,
-    created_at: '2026-05-01T00:00:00.000Z',
   };
 }
 
@@ -80,7 +66,7 @@ function arriveBy(datetime: string): LegConstraint {
  * deadline day. Penny had claimed "2 nights instead of 3" and "arriving Jun 2
  * at 1:47pm"; the deterministic summary must contradict both.
  */
-function gironaToBadKissingen(deadlineDatetime: string | null): LegWithDetails[] {
+function gironaToBadKissingen(): LegWithDetails[] {
   legSeq = 0;
   return [
     mkLeg({ leg_type: 'drive', date_iso: '2026-05-29', start_name: 'Girona', end_name: 'Montpellier', distance_km: 350, drive_time_minutes: 240 }),
@@ -95,7 +81,6 @@ function gironaToBadKissingen(deadlineDatetime: string | null): LegWithDetails[]
       end_name: 'Bad Kissingen',
       distance_km: 460,
       drive_time_minutes: 312,
-      constraints: deadlineDatetime ? [arriveBy(deadlineDatetime)] : [],
     }),
   ];
 }
@@ -111,7 +96,7 @@ describe('computePlanSummary', () => {
 
   it('counts drive/rest days and totals from the persisted legs', () => {
     const s = computePlanSummary({
-      legs: gironaToBadKissingen(null),
+      legs: gironaToBadKissingen(),
       tripStartISO: '2026-05-29',
     })!;
     expect(s.total_days).toBe(6);
@@ -123,7 +108,7 @@ describe('computePlanSummary', () => {
 
   it('reports depart and arrive from the first leg and final drive', () => {
     const s = computePlanSummary({
-      legs: gironaToBadKissingen(null),
+      legs: gironaToBadKissingen(),
       tripStartISO: '2026-05-29',
     })!;
     expect(s.depart_name).toBe('Girona');
@@ -134,7 +119,7 @@ describe('computePlanSummary', () => {
 
   it('attributes nights to the waypoint, not the destination — refutes the "2 nights" hallucination', () => {
     const s = computePlanSummary({
-      legs: gironaToBadKissingen(null),
+      legs: gironaToBadKissingen(),
       tripStartISO: '2026-05-29',
     })!;
     // Montpellier (0-night overnight) is excluded; Innsbruck has all 3 nights.
@@ -143,7 +128,7 @@ describe('computePlanSummary', () => {
 
   it('defaults departure to 08:00 and estimates the final ETA from the day model', () => {
     const s = computePlanSummary({
-      legs: gironaToBadKissingen(null),
+      legs: gironaToBadKissingen(),
       tripStartISO: '2026-05-29',
     })!;
     expect(s.depart_time).toBe('08:00');
@@ -151,59 +136,4 @@ describe('computePlanSummary', () => {
     expect(s.arrive_time).toBe('14:34');
   });
 
-  it('marks a same-day arrival against the deadline as same_day with a clock check', () => {
-    const s = computePlanSummary({
-      legs: gironaToBadKissingen('2026-06-03T15:00:00+02:00'),
-      tripStartISO: '2026-05-29',
-    })!;
-    expect(s.deadline).not.toBeNull();
-    expect(s.deadline!.date_iso).toBe('2026-06-03');
-    expect(s.deadline!.local_time).toBe('15:00');
-    expect(s.deadline!.status).toBe('same_day');
-    expect(s.deadline!.buffer_days).toBe(0);
-    // ETA 14:34 vs a 15:00 deadline = 26 min raw slack — inside the 1h buffer, so "tight".
-    expect(s.deadline!.same_day_clock).not.toBeNull();
-    expect(s.deadline!.same_day_clock!.eta).toBe('14:34');
-    expect(s.deadline!.same_day_clock!.slack_minutes).toBe(26);
-    expect(s.deadline!.same_day_clock!.clears_buffer).toBe(false);
-  });
-
-  it('clears the buffer when the same-day ETA beats the deadline by over an hour', () => {
-    const s = computePlanSummary({
-      legs: gironaToBadKissingen('2026-06-03T18:00:00+02:00'),
-      tripStartISO: '2026-05-29',
-    })!;
-    // ETA 14:34 vs 18:00 deadline = 206 min raw slack — clears the 1h buffer.
-    expect(s.deadline!.same_day_clock!.clears_buffer).toBe(true);
-    expect(s.deadline!.same_day_clock!.slack_minutes).toBe(206);
-  });
-
-  it('reports buffer days when arrival is before the deadline (no same-day clock)', () => {
-    const s = computePlanSummary({
-      legs: gironaToBadKissingen('2026-06-05T15:00:00+02:00'),
-      tripStartISO: '2026-05-29',
-    })!;
-    expect(s.deadline!.status).toBe('before');
-    expect(s.deadline!.buffer_days).toBe(2);
-    expect(s.deadline!.local_time).toBe('15:00');
-    expect(s.deadline!.same_day_clock).toBeNull();
-  });
-
-  it('flags a missed deadline as after with negative buffer (no same-day clock)', () => {
-    const s = computePlanSummary({
-      legs: gironaToBadKissingen('2026-06-02T15:00:00+02:00'),
-      tripStartISO: '2026-05-29',
-    })!;
-    expect(s.deadline!.status).toBe('after');
-    expect(s.deadline!.buffer_days).toBe(-1);
-    expect(s.deadline!.same_day_clock).toBeNull();
-  });
-
-  it('omits the deadline block when no leg carries an arrive_by constraint', () => {
-    const s = computePlanSummary({
-      legs: gironaToBadKissingen(null),
-      tripStartISO: '2026-05-29',
-    })!;
-    expect(s.deadline).toBeNull();
-  });
 });

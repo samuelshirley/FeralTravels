@@ -106,7 +106,6 @@ async function main() {
           driveTimeMinutes: leg.drive_time_minutes,
           terrain: leg.terrain,
           overnight: leg.overnight,
-          status: leg.status,
           color: leg.color,
           notes: JSON.stringify(leg.notes),
         })
