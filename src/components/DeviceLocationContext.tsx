@@ -28,6 +28,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -39,14 +40,43 @@ import type { LatLng } from '@/lib/polyline';
 
 export type GpsStatus = 'pending' | 'active' | 'denied' | 'unavailable';
 
+/**
+ * What a "turn location on" control can actually DO from here, which differs
+ * from native in a way worth stating.
+ *
+ *   'prompt'   — never asked, or asked and dismissed. Calling `request()`
+ *                raises the browser's own permission dialog.
+ *   'settings' — DENIED. There is no web API that reopens a permission pane,
+ *                so the only honest control is a sentence telling the user
+ *                where to change it. `request()` deliberately does nothing:
+ *                calling getCurrentPosition against a denied permission fails
+ *                silently and teaches the user the button is broken.
+ *   'none'     — no Geolocation API at all, or nothing to offer.
+ *
+ * Mirrors the shape of `enablePath` in mobile/lib/location.tsx, where the
+ * 'settings' case CAN act (Linking.openSettings). Same name, same three
+ * states, different capability — which is exactly why the caller branches on
+ * the path rather than on `gpsStatus`.
+ */
+export type EnablePath = 'none' | 'prompt' | 'settings';
+
 export interface DeviceLocation {
   /** Latest known device position, or null before the first fix / when unavailable. */
   position: LatLng | null;
   /** Current GPS acquisition state. */
   gpsStatus: GpsStatus;
+  /** What a "turn it on" control can do from here. See EnablePath. */
+  enablePath: EnablePath;
+  /** Raise the browser permission dialog. No-op unless enablePath is 'prompt'. */
+  request: () => void;
 }
 
-const DEFAULT_VALUE: DeviceLocation = { position: null, gpsStatus: 'unavailable' };
+const DEFAULT_VALUE: DeviceLocation = {
+  position: null,
+  gpsStatus: 'unavailable',
+  enablePath: 'none',
+  request: () => {},
+};
 
 const DeviceLocationContext = createContext<DeviceLocation>(DEFAULT_VALUE);
 
@@ -165,7 +195,40 @@ export function DeviceLocationProvider({
     };
   }, [promptAllowed]);
 
-  const value = useMemo(() => ({ position, gpsStatus }), [position, gpsStatus]);
+  /*
+   * A denied permission is a ONE-WAY DOOR on the web without this: nothing
+   * else in the app can re-raise the dialog, and the provider fires its single
+   * deliberate prompt only on mount. `request()` is the way back for the
+   * 'prompt' case; 'denied' has no way back that the page can trigger, and
+   * says so rather than offering a button that silently fails.
+   */
+  const enablePath: EnablePath = useMemo(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return 'none';
+    if (gpsStatus === 'denied') return 'settings';
+    if (gpsStatus === 'active') return 'none';
+    return 'prompt';
+  }, [gpsStatus]);
+
+  const request = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    // Only meaningful from 'prompt'. Against a denied permission this resolves
+    // to the same error forever, so the caller is expected not to offer it.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGpsStatus('active');
+      },
+      (err) => {
+        setGpsStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
+      },
+      { enableHighAccuracy: false, timeout: 8_000, maximumAge: 30_000 },
+    );
+  }, []);
+
+  const value = useMemo(
+    () => ({ position, gpsStatus, enablePath, request }),
+    [position, gpsStatus, enablePath, request]
+  );
 
   return (
     <DeviceLocationContext.Provider value={value}>{children}</DeviceLocationContext.Provider>

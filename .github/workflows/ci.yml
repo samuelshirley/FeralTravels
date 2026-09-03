@@ -928,6 +928,27 @@ jobs:
             --output maestro-report.xml \
             --debug-output maestro-debug
 
+          # A permission button is the one kind of UI that cannot be checked by
+          # looking at it: one that renders perfectly and calls nothing is
+          # indistinguishable from one that works, and `Mobile typecheck`
+          # compiles both. This taps it and asserts the SYSTEM dialog appears,
+          # which can only happen if the app actually reached iOS.
+          #
+          # LAST, deliberately: it spends the location dialog for the install
+          # and `canAskAgain` does not come back, so anything needing a fresh
+          # "never asked" state must run before it. It also DENIES at the end —
+          # granting makes report_position re-anchor the fixture trip to
+          # wherever the simulator thinks it is.
+          maestro --device "$SIM_UDID" test mobile/maestro/settings-location.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-location.xml \
+            --debug-output maestro-debug
+
       # Always. A screenshot of the failing screen is the entire value of
       # driving a real simulator, and it is as useful on a green run for seeing
       # what the flows actually did.

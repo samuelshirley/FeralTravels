@@ -27,7 +27,12 @@
 #                  app installs, launches, sign-in screen renders. If this is
 #                  red nothing else means anything.
 #   2. WIRING    — the app can reach the server and sign in. `sign-in.yaml`.
-#   3. BEHAVIOUR — the thing under test. `chat-keyboard.yaml`.
+#   3. BEHAVIOUR — the thing under test. `chat-keyboard.yaml`, and
+#                  `settings-location.yaml` for the one class of UI that
+#                  cannot be checked by looking at it: a permission button
+#                  that renders perfectly and calls nothing is
+#                  indistinguishable from one that works, until a device says
+#                  otherwise.
 #
 # `--all` runs them in that order and stops at the first failure, so the first
 # line of output names the layer.
@@ -870,6 +875,10 @@ case "${1:-all}" in
     say "Layer 1 — harness"   ; run_flow launch
     say "Layer 2 — wiring"    ; run_flow sign-in
     say "Layer 3 — behaviour" ; run_flow chat-keyboard
+    # Also layer 3, and deliberately LAST: it spends the iOS location dialog
+    # for the install, and `canAskAgain` does not come back. Anything that
+    # needs a fresh "never asked" state has to run before it.
+    say "Layer 3 — permissions"; run_flow settings-location
     ;;
   *) die "unknown command: $1 (see the header of this file)" ;;
 esac

@@ -1,0 +1,56 @@
+# Location permission, in Settings — and specifically that the button reaches
+# iOS rather than merely rendering.
+#
+# WHY THIS FLOW EXISTS. A permission control is the one kind of UI that cannot
+# be checked by looking at it: a button that renders perfectly and calls
+# nothing looks identical to one that works, and the difference only appears
+# on a device. `Mobile typecheck` compiles both equally happily. So the gate
+# here is BEHAVIOURAL — tap it and assert the SYSTEM dialog appears, which can
+# only happen if the app actually asked iOS.
+#
+# WHY IT DENIES AT THE END, deliberately: granting location makes
+# DeviceLocationContext report a position and `report_position` RE-ANCHORS the
+# trip to wherever the simulator thinks it is — a Paris trip quietly becomes a
+# Californian one. `screenshots.yaml` keeps location denied for exactly this
+# reason. Proving the dialog appears is the whole assertion; accepting it would
+# corrupt the fixture for every flow that runs afterwards.
+#
+# The permission is per-install, and `sign-in.yaml` clears state on launch, so
+# this starts from "never asked" every run.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# Settings is a route, not a pane — the tab leaves the workspace entirely.
+- tapOn:
+    accessibilityLabel: 'Settings'
+- assertVisible: 'Vehicle profile'
+
+# The section renders at all. It is hidden while the permission read is in
+# flight, so this also proves the read resolved.
+- assertVisible:
+    id: 'settings-location-section'
+- assertVisible: 'Location'
+
+# Never asked yet ⇒ Off, with a control offered.
+- assertVisible:
+    id: 'settings-location-status'
+- assertVisible: 'Turn on'
+
+- tapOn:
+    id: 'settings-location-enable'
+
+# THE ASSERTION. This text belongs to iOS, not to the app — it can only be on
+# screen if `requestForegroundPermissionsAsync` actually reached the system.
+# The app's own Info.plist string is what iOS renders above the buttons.
+- assertVisible: '.*Allow.*'
+
+# Decline, so the fixture trip keeps its real coordinates for later flows.
+- tapOn: "Don't Allow"
+
+# Back to Off, and now offering the Settings route rather than another prompt:
+# iOS spends the dialog after one refusal, which is the `canAskAgain: false`
+# branch. This is the half a unit test cannot reach at all.
+- assertVisible:
+    id: 'settings-location-status'
+- assertVisible: 'Open Settings'

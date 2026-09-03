@@ -13,6 +13,7 @@ import { UnitsProvider } from '@/components/UnitsContext';
 import UnitsToggle from '@/components/UnitsToggle';
 import { requireWebAccess } from '@/server/auth/webAccess';
 import { buttonStyle } from '@/components/ui/Button';
+import LocationSection from '@/components/LocationSection';
 
 
 export const dynamic = 'force-dynamic';
@@ -162,6 +163,11 @@ export default async function SettingsPage() {
             </p>
             <VehicleProfileSection />
           </section>
+
+          <hr className="tp-section-rule" />
+
+          {/* A capability question like the vehicle, not a billing one. */}
+          <LocationSection />
 
           <hr className="tp-section-rule" />
 

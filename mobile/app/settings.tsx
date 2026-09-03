@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import BottomNav from "@/components/BottomNav";
 import UnitsToggle from "@/components/UnitsToggle";
 import VehicleProfileSection from "@/components/VehicleProfileSection";
+import LocationSection from "@/components/LocationSection";
 import DeleteAccountSection from "@/components/DeleteAccountSection";
 import SubscriptionSection from "@/components/SubscriptionSection";
 import { Eyebrow, Spinner } from "@/components/ui";
@@ -107,6 +108,9 @@ export default function SettingsScreen() {
           — both are App Store obligations and both are meaningless in a
           browser.
         */}
+        <LocationSection />
+        <View style={styles.sectionRule} />
+
         <SubscriptionSection />
 
         {/*
