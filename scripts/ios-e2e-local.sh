@@ -686,8 +686,19 @@ run_flow() {
       --user-name "$USER_NAME" \
       ${RANGE_KM:+--range-km "$RANGE_KM"} >"$OUT/fixture.env" \
       || die "Could not mint a fixture — is the server up? see $OUT/server.log"
-    # shellcheck disable=SC1090
-    set -a; . "$OUT/fixture.env"; set +a
+    # Read it line by line rather than `.`-sourcing it.
+    #
+    # The file is GITHUB_ENV format — bare `KEY=value`, no quoting — because CI
+    # does `cat fixture.env >> "$GITHUB_ENV"` and GitHub treats quotes as part
+    # of the value. So the producer CANNOT quote, and sourcing a file whose
+    # default `TRIP_NAME=E2E Fixture Trip` contains spaces makes bash try to
+    # run `Fixture` as a command: "line 2: Fixture: command not found", which
+    # aborts the run with exit 127 before a single flow starts.
+    while IFS='=' read -r __k __v; do
+      [ -n "$__k" ] || continue
+      case "$__k" in \#*) continue ;; esac
+      export "$__k=$__v"
+    done < "$OUT/fixture.env"
     ok "$EMAIL"
   fi
 

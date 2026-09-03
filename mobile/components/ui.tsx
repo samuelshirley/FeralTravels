@@ -200,8 +200,25 @@ const styles = StyleSheet.create({
   buttonText: { fontSize: 14, fontFamily: font.semibold, color: theme.accent300 },
   buttonTextSecondary: { color: theme.text },
   buttonTextDanger: { color: theme.danger },
-  banner: { borderWidth: 1, borderRadius: theme.radiusSm, padding: 10, marginBottom: 10 },
-  bannerTitle: { fontSize: 12, fontFamily: font.bold, marginBottom: 3 },
+  /*
+   * `marginTop` as well as bottom. Every Banner is inserted BETWEEN things —
+   * under a paragraph on the sign-in card, between a heading and a form — and
+   * with only a bottom margin it butted straight against whatever preceded it.
+   * Visible on the simulator as an error box touching the body copy above it.
+   */
+  banner: {
+    borderWidth: 1,
+    borderRadius: theme.radiusSm,
+    padding: 10,
+    marginTop: 14,
+    marginBottom: 10,
+  },
+  bannerTitle: { fontSize: 12, fontFamily: font.semibold, marginBottom: 3 },
   bannerBody: { fontFamily: font.regular, fontSize: 12, lineHeight: 17 },
-  bannerAction: { fontSize: 12, fontFamily: font.bold, marginTop: 6, textDecorationLine: "underline" },
+  bannerAction: {
+    fontSize: 12,
+    fontFamily: font.semibold,
+    marginTop: 6,
+    textDecorationLine: "underline",
+  },
 });

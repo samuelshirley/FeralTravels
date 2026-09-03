@@ -85,7 +85,7 @@ appId: ${APP_ID}
 # down the spread branch and is unaffected — which is why this is fixed here
 # rather than in the app.
 - extendedWaitUntil:
-    visible: 'Enter your code'
+    visible: 'Check your email'
     timeout: 30000
 
 # Read the code NOW, not before the run. The app only reaches this screen once
