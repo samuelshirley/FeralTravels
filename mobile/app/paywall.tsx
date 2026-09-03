@@ -4,7 +4,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TypingBubble } from "@/components/chat/Indicators";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { fetchEntitlement, testPurchase, type EntitlementPayload } from "@/lib/entitlement";
+import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
+import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -44,9 +45,21 @@ export default function PaywallScreen() {
   const [typing, setTyping] = useState(true);
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * The purchase, the wait for the webhook and the restore all live in the
+   * hook — this screen only says where to go once the server agrees. Same
+   * destination as a redeemed promo code: this screen exists only to sell, so
+   * the moment there is nothing left to sell, leave.
+   */
+  const flow = usePurchaseFlow({
+    entitlement,
+    onEntitled: () => {
+      setSheetOpen(false);
+      router.replace("/trips");
+    },
+  });
 
   const load = useCallback(async () => {
     const payload = await fetchEntitlement();
@@ -83,30 +96,9 @@ export default function PaywallScreen() {
   // price list. Same branch as the in-chat button.
   const sellable = reason !== "usage_cap" && reason !== "revoked";
 
-  async function runTestPurchase(productId: string) {
-    setPurchasingId(productId);
-    setPurchaseError(null);
-    try {
-      await testPurchase(productId);
-      // Re-ask rather than believe the 200. The server is the authority on
-      // entitlement, and this is the one moment where trusting the client
-      // would let a failed grant look like a successful one.
-      const fresh = await fetchEntitlement();
-      if (fresh?.entitled) {
-        setSheetOpen(false);
-        router.replace("/trips");
-        return;
-      }
-      setPurchaseError("The purchase went through but access has not switched on yet.");
-    } catch (err) {
-      setPurchaseError(err instanceof Error ? err.message : "Purchase failed");
-    } finally {
-      setPurchasingId(null);
-    }
-  }
-
   function onButtonPress() {
     if (sellable) {
+      flow.clearMessages();
       setSheetOpen(true);
       return;
     }
@@ -148,13 +140,7 @@ export default function PaywallScreen() {
 
       {sheetOpen && entitlement ? (
         <PurchaseSheet
-          products={entitlement.products}
-          testPurchaseAllowed={entitlement.testPurchaseAllowed}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(id) => void runTestPurchase(id)}
-          // Same destination as a completed purchase: this screen exists only
-          // to sell, so the moment there is nothing left to sell, leave.
+          flow={flow}
           onRedeemed={() => {
             setSheetOpen(false);
             router.replace("/trips");

@@ -36,4 +36,23 @@ First `eas build` walks you through Apple credentials interactively
 (Apple ID sign-in, it creates certs/profiles for you). The app record in
 App Store Connect is created automatically on first `eas submit`.
 
-Bundle ID: `com.feraltravels.app` (permanent — set in `app.json`).
+Bundle ID: `com.feraltravels.ios`, set in `app.config.js`.
+
+**Renamed from `com.feraltravels.app` on 2026-09-02**, when the app moved to a
+new Apple developer account. The old id is permanently unusable: uploading a
+TestFlight build binds a bundle id to the account that uploaded it, forever
+(confirmed with Apple DTS). Nothing had shipped, so it was a pure rename.
+
+**`mobile/eas.json` carries no stale values.** `appleTeamId` is `TJX3F3832H`
+and `ascAppId` was removed rather than updated — it held the old team's app
+record, which no longer exists. With it absent, EAS resolves the submit target
+from the bundle id and the team, or prompts; it gets set from the new record's
+Apple ID number once that record exists.
+
+`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` needed no change at all: the Google iOS OAuth
+client was edited in place to point at the new bundle id rather than replaced,
+so the id is the same one. Do not delete that client — it is the live one. The
+table in `docs/design/iap-setup.md` is the full list.
+
+Android is deliberately still `com.feraltravels.app` — the binding is Apple's
+and Play has never seen this id.

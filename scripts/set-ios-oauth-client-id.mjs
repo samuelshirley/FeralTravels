@@ -38,7 +38,7 @@ const clientId = (process.argv[2] || fromClipboard()).trim();
 
 if (!clientId) {
   console.error('No client id given and the clipboard is empty.');
-  console.error('Google Cloud → Credentials → OAuth client ID → iOS (bundle id com.feraltravels.app).');
+  console.error('Google Cloud → Credentials → OAuth client ID → iOS (bundle id com.feraltravels.ios).');
   process.exit(1);
 }
 

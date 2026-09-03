@@ -7,7 +7,7 @@ import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { syncAdminFlagOnSignIn } from './admin';
-import { syncCompedFlagOnSignIn } from '@/server/payments';
+import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { cookies } from 'next/headers';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -309,6 +309,22 @@ export async function createSessionForEmail(
   // every E2E fixture. The admin flag has always had a call here for exactly
   // this reason; comped follows it.
   await syncCompedFlagOnSignIn(normalized).catch(() => {});
+
+  /**
+   * A promo code minted for this address claims itself, here, rather than
+   * waiting for the recipient to find a purchase sheet and paste a string.
+   *
+   * Same two-call-sites rule as the comped flag directly above, and for exactly
+   * the same reason: this function is NOT an Auth.js sign-in, so the
+   * `signIn`/`createUser` events never fire for it. Wiring the auto-claim only
+   * into those events would have covered web OAuth and missed every emailed
+   * code and every native sign-in — which is the majority of sign-ups.
+   *
+   * `.catch` is the contract, not laziness: a promo that cannot be claimed must
+   * never stop somebody getting into the app. `claimPromoOnSignIn` already
+   * swallows and logs its own refusals; this catches the database being down.
+   */
+  await claimPromoOnSignIn({ userId, email: normalized }).catch(() => {});
 
   // 2. Create a database session.
   const sessionToken = crypto.randomUUID();

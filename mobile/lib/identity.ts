@@ -23,7 +23,16 @@ import { getSignedInEmail } from "@/lib/auth";
  * the user over.
  */
 export function useIdentity(): Identity {
-  const [identity, setIdentity] = useState<Identity>({ email: null, name: null, image: null });
+  const [identity, setIdentity] = useState<Identity>({
+    // `id` stays null until the server answers, deliberately. It is the string
+    // RevenueCat is configured with, and the keychain has no copy of it — a
+    // guess here would be worse than nothing. `mobile/lib/purchases.ts` reads
+    // the route directly rather than this hook for exactly that reason.
+    id: null,
+    email: null,
+    name: null,
+    image: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +49,7 @@ export function useIdentity(): Identity {
       .then((remote) => {
         if (cancelled) return;
         setIdentity((prev) => ({
+          id: remote.id,
           email: remote.email ?? prev.email,
           name: remote.name,
           image: remote.image,

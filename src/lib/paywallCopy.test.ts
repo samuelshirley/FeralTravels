@@ -78,6 +78,13 @@ describe('user-facing copy never says the s-word', () => {
       crossedStop: false,
       enforced: true,
       spendMicrocents: 0,
+      // Display-only passthrough on the verdict. Irrelevant to copy, but the
+      // type is exhaustive on purpose, so a new field has to be answered here
+      // rather than silently defaulted.
+      productId: null,
+      currentPeriodEnd: null,
+      autoRenew: false,
+      source: null,
     };
   }
 

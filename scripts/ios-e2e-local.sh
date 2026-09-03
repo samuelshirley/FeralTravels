@@ -41,6 +41,11 @@
 #   scripts/ios-e2e-local.sh all           # doctor, up, build-if-needed, 1→2→3
 #   scripts/ios-e2e-local.sh hierarchy     # dump the current screen's view tree
 #   scripts/ios-e2e-local.sh studio        # Maestro Studio against this device
+#   scripts/ios-e2e-local.sh storekit      # point the scheme at the local store
+#   scripts/ios-e2e-local.sh xcode         # open the workspace to drive a purchase
+#   scripts/ios-e2e-local.sh screenshots [size]
+#                                          # the App Store set, into
+#                                          # mobile/screenshots/<size>/ (default 6.9)
 #   scripts/ios-e2e-local.sh down          # stop the server and the database
 #   scripts/ios-e2e-local.sh reset         # down, and delete the database volume
 #
@@ -59,13 +64,66 @@ API_URL="http://localhost:${PORT}"
 # some Docker setups only bind the v4 address, so `localhost` can resolve to ::1
 # and time out with a message about the database being unreachable.
 DB_URL="postgres://feral:feral@127.0.0.1:55432/feraltravels_e2e"
-APP_ID="com.feraltravels.app"
+APP_ID="com.feraltravels.ios"
 MAESTRO_PIN="2.10.0"
 # The toolchain Maestro's PREBUILT iOS driver was built with. Not a preference:
 # an older xcodebuild cannot run its .xctestrun, and the only symptom is
 # "iOS driver not ready in time", which sounds like a slow machine. Kept in step
 # with the same constant in .github/workflows/ci.yml.
 XCODE_APP="${E2E_XCODE_APP:-/Applications/Xcode_26.2.app}"
+
+# The local StoreKit store — a fake App Store in a JSON file, so a purchase can
+# be exercised in the simulator with no App Store Connect round trip and no
+# sandbox Apple Account. See mobile/storekit/README.md for what it does and does
+# NOT remove (RevenueCat's dashboard is still required).
+#
+# TRACKED, and it has to be: mobile/ios/ is gitignored CNG output that
+# `expo prebuild --clean` deletes wholesale, so a .storekit kept in there would
+# survive exactly one build.
+STOREKIT_FILE="mobile/storekit/FeralTravels.storekit"
+
+# ── The names the seeded graph wears ───────────────────────────────────────
+#
+# The test flows want a name that is obviously a fixture; the screenshot flow
+# wants one a customer could read on the App Store. Same canonical two legs
+# either way — Paris → Strasbourg → Stuttgart is a real route with real road
+# geometry, which is why it photographs well — only the labels differ.
+#
+# `sign-in.yaml` and `chat-keyboard.yaml` match the trip card against
+# ${TRIP_NAME}, so this and the seed have to move together. `screenshots`
+# overrides all three.
+TRIP_NAME="${E2E_TRIP_NAME:-E2E Fixture Trip}"
+VEHICLE_NAME="${E2E_VEHICLE_NAME:-E2E Fixture Van}"
+USER_NAME="${E2E_USER_NAME:-E2E Fixture User}"
+
+# Fixture vehicle range. EMPTY for the test flows, which want the Hilux's real
+# 500 km — day 1 (Paris → Strasbourg, 489 km) then needs no fuel stop, which is
+# correct and is what those flows assert around.
+#
+# `screenshots` overrides it, because that is exactly the wrong picture for the
+# App Store: the shot whose purpose is "the itinerary, with fuel stops" came out
+# reading "No fuel stop needed on this day". A shorter range makes the same leg
+# genuinely need one, so the image shows Finn doing the thing the app is for.
+RANGE_KM="${E2E_RANGE_KM:-}"
+
+# Where Maestro puts a named `takeScreenshot`.
+#
+# NOT ours to choose. Maestro 2.10 sandboxes the command — an absolute path
+# outside its own output folder is refused outright ("it resolves outside this
+# run's takeScreenshot output folder"), which is what the first real run of
+# screenshots.yaml died on, after getting all the way through sign-in. So the
+# flow uses BARE names and the images land under the --debug-output tree at
+# `<out>/.maestro/tests/<timestamp>/<flow>/takeScreenshot/`. `collect_shots`
+# below finds that directory rather than hard-coding the timestamp.
+MAESTRO_SHOT_GLOB=".maestro/tests/*/screenshots/takeScreenshot"
+
+# ── App Store screenshots ──────────────────────────────────────────────────
+#
+# Committed, because a screenshot nobody can regenerate is a screenshot that
+# silently describes last release's app — and because the alternative is
+# Cmd-S into ~/Desktop and a folder of numbered PNGs with no record of which
+# build produced them.
+SHOT_ROOT="mobile/screenshots"
 
 mkdir -p "$OUT"
 
@@ -368,6 +426,58 @@ build() {
     # EXPO_PUBLIC_API_URL is inlined — so it has to be in the environment for
     # xcodebuild too, not only for prebuild.
     export EXPO_PUBLIC_API_URL="$API_URL"
+
+    # ── The two flags that decide what this binary IS ────────────────────
+    #
+    # Both are `EXPO_PUBLIC_`, so they are inlined at bundle time and compiled
+    # in; neither can be turned on afterwards by an OTA, and `eas.json` sets
+    # both on the `preview` and `production` profiles. Until this block existed
+    # the local loop exported only EXPO_PUBLIC_API_URL, which meant every app
+    # this script has ever built differed from the one that ships in exactly
+    # the two places most likely to be rejected:
+    #
+    #   EXPO_PUBLIC_REVENUECAT_IOS_KEY   absent -> `purchasesAvailable()` is
+    #     false, `Purchases.configure` never runs, and the purchase sheet
+    #     renders in `unavailable` mode. Prices, no checkout. Everything about
+    #     the in-app-purchase work looks fine and none of it is exercised.
+    #
+    #   EXPO_PUBLIC_ENABLE_APPLE_SIGNIN  absent -> `app.config.js` omits BOTH
+    #     the `expo-apple-authentication` plugin and `ios.usesAppleSignIn`, so
+    #     the entitlement `com.apple.developer.applesignin` is never written,
+    #     the module is not linked, `appleAvailable()` returns false and the
+    #     button does not render. A build with no Apple sign-in in it is a
+    #     guideline 4.8 rejection, and this loop could not have shown you.
+    #
+    # Resolved through `env_value` — process env, then .env.local, then .env,
+    # skipping empty declarations — so `.env` is the place to put them and a
+    # Vercel-written empty line cannot shadow one. Absent stays a supported
+    # state (both clients degrade deliberately); it is just no longer a SILENT
+    # one, which is the whole change.
+    local rc_key apple_signin
+    rc_key="$(env_value EXPO_PUBLIC_REVENUECAT_IOS_KEY)"
+    apple_signin="$(env_value EXPO_PUBLIC_ENABLE_APPLE_SIGNIN)"
+
+    if [ -n "$rc_key" ]; then
+      export EXPO_PUBLIC_REVENUECAT_IOS_KEY="$rc_key"
+      echo "RevenueCat: key present, real purchases enabled in this build"
+    else
+      echo "RevenueCat: NO KEY — the purchase sheet will show prices and no checkout."
+      echo "  Put EXPO_PUBLIC_REVENUECAT_IOS_KEY=appl_… in .env to build the real thing."
+      echo "  (mobile/lib/config.ts requires the appl_ prefix, so eas.json's"
+      echo "   REPLACE_WITH_… placeholder correctly resolves to unset, not to a key.)"
+    fi
+
+    if [ "$apple_signin" = "1" ]; then
+      export EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1
+      echo "Sign in with Apple: ENABLED (entitlement + plugin will be prebuilt in)"
+    else
+      echo "Sign in with Apple: OFF — no entitlement, no button, cannot be tested."
+      echo "  EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1 in .env turns it on. A SIMULATOR"
+      echo "  build signs ad hoc and will compile with the entitlement, but the"
+      echo "  sign-in itself needs a device build against a provisioning profile"
+      echo "  carrying the capability — see docs/design/ios-review-notes.md."
+    fi
+
     npx expo prebuild --platform ios --clean
     local workspace scheme
     workspace="$(ls -d ios/*.xcworkspace | head -1)"
@@ -406,12 +516,115 @@ build() {
     cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
   ) >"$OUT/build.log" 2>&1 || { tail -40 "$OUT/build.log"; die "Build failed — see $OUT/build.log"; }
   ok "built $(ls -d mobile/ios-build/*.app | head -1)"
+  # After the compile, not before: `expo prebuild --clean` above rewrites the
+  # scheme from scratch, so the reference has to be put back every time. It
+  # changes nothing about the binary just built — the scheme is Xcode's, and the
+  # Maestro flows launch outside it — so it is free and it means `xcode` works
+  # without a second command.
+  storekit
   install_app
 }
 
+# ───────────────────────────────────────────────────────────────────────────
+# storekit — point the generated scheme at the local store
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Idempotent, and run as part of `build` because `expo prebuild --clean` writes
+# a fresh scheme every time and the reference has to be put back afterwards.
+#
+# WHAT IT BUYS: prices, Apple's confirmation dialog, cancel, Ask to Buy and
+# accelerated renewals in the simulator with no App Store Connect round trip and
+# no sandbox Apple Account. What it does NOT remove is RevenueCat — the app asks
+# RevenueCat for an Offering and RevenueCat looks the products up through
+# StoreKit, so this satisfies the second step and not the first.
+# mobile/storekit/README.md has the table.
+#
+# WHAT IT DOES NOT COVER, stated rather than implied: the Maestro flows. The
+# configuration is activated by the SCHEME's launch action, and Maestro installs
+# the .app with `simctl install` and launches it outside any scheme. There is no
+# `simctl storekit` subcommand as of Xcode 26.6 (checked with `simctl help`, not
+# assumed), so a purchase has to be driven from Xcode's Run — hence `xcode`
+# below. This is why no flow in mobile/maestro/ attempts one.
+#
+# The identifier is a path RELATIVE TO THE .xcodeproj, which is why it climbs
+# out of ios/ before descending into storekit/.
+storekit() {
+  local proj_dir="mobile/ios"
+  local scheme_file="$proj_dir/FeralTravels.xcodeproj/xcshareddata/xcschemes/FeralTravels.xcscheme"
+  [ -f "$STOREKIT_FILE" ] || die "No $STOREKIT_FILE"
+  if [ ! -f "$scheme_file" ]; then
+    warn "No generated scheme yet — run \`build\` first."
+    return 0
+  fi
+
+  # Copied BESIDE the .xcodeproj rather than referenced across the tree. The
+  # scheme's `identifier` is a path relative to the .xcodeproj bundle, so
+  # "../FeralTravels.storekit" resolving to a file sitting next to it is the
+  # exact layout Xcode itself writes when you add a configuration file to a
+  # normal project — the shape least likely to be wrong. mobile/ios/ is
+  # gitignored CNG output, so this copy is disposable and the tracked original
+  # in mobile/storekit/ stays the source of truth.
+  cp "$STOREKIT_FILE" "$proj_dir/FeralTravels.storekit"
+
+  if grep -q "StoreKitConfigurationFileReference" "$scheme_file"; then
+    ok "scheme already points at the local store"
+    return 0
+  fi
+
+  # Both actions: LaunchAction is Xcode's Run button, TestAction is
+  # `xcodebuild test`. Pointing only one of them at it is the kind of thing that
+  # works until the day you use the other.
+  python3 - "$scheme_file" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+src = open(path).read()
+ref = (
+    '      <StoreKitConfigurationFileReference\n'
+    '         identifier = "../FeralTravels.storekit">\n'
+    '      </StoreKitConfigurationFileReference>\n'
+)
+for action in ("LaunchAction", "TestAction"):
+    # Match the closing tag WITH its own indentation, so the inserted element
+    # lands on its own line rather than splicing in front of the tag.
+    src = re.sub(rf"^([ \t]*)</{action}>", ref + rf"\1</{action}>", src, count=1, flags=re.M)
+open(path, "w").write(src)
+PYEOF
+  grep -q "StoreKitConfigurationFileReference" "$scheme_file" \
+    || die "Could not write the StoreKit reference into $scheme_file"
+  ok "scheme points at the local store"
+  warn "If Xcode's scheme editor shows StoreKit Configuration: None, pick"
+  warn "  $proj_dir/FeralTravels.storekit there once — the path above is the"
+  warn "  standard layout but has not been proven by a launch on this machine."
+}
+
+# ───────────────────────────────────────────────────────────────────────────
+# xcode — the only way to actually complete a purchase on this machine
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Maestro cannot do this (see the note on `storekit`), so driving the purchase
+# sheet is a human job: open the workspace, press Run, sign in, tap a price.
+# Apple's transaction inspector is Debug -> StoreKit -> Manage Transactions,
+# which is where you cancel, refund and expire the test subscription.
+xcode() {
+  storekit
+  say "Opening the workspace"
+  printf '  Press Run. The local store is already selected in the scheme.\n'
+  printf '  Prices still need a RevenueCat offering and an appl_ key in the build\n'
+  printf '  — see docs/design/iap-setup.md section 5.\n'
+  open mobile/ios/FeralTravels.xcworkspace
+}
+
 install_app() {
+  # An explicit device wins. `screenshots` needs a SPECIFIC model — the pixel
+  # dimensions are the deliverable — while every test flow wants whatever
+  # iPhone is newest, which is what pick-ios-simulator.mjs answers and why it
+  # deliberately pins nothing.
   local udid label
-  read -r udid label < <(node scripts/pick-ios-simulator.mjs)
+  if [ -n "${1:-}" ]; then
+    udid="$1"; label="${2:-$1}"
+  else
+    read -r udid label < <(node scripts/pick-ios-simulator.mjs)
+  fi
   say "Booting $label"
   xcrun simctl shutdown all >/dev/null 2>&1 || true
 
@@ -461,7 +674,12 @@ run_flow() {
   EMAIL=""
   if [ "${flow%.yaml}" != "launch" ]; then
     say "Minting a fixture account"
-    E2E_BASE_URL="$API_URL" node scripts/ios-e2e-fixture.mjs --base-url "$API_URL" >"$OUT/fixture.env" \
+    E2E_BASE_URL="$API_URL" node scripts/ios-e2e-fixture.mjs \
+      --base-url "$API_URL" \
+      --trip-name "$TRIP_NAME" \
+      --vehicle-name "$VEHICLE_NAME" \
+      --user-name "$USER_NAME" \
+      ${RANGE_KM:+--range-km "$RANGE_KM"} >"$OUT/fixture.env" \
       || die "Could not mint a fixture — is the server up? see $OUT/server.log"
     # shellcheck disable=SC1090
     set -a; . "$OUT/fixture.env"; set +a
@@ -482,6 +700,7 @@ run_flow() {
     -e EMAIL="$EMAIL" \
     -e BASE_URL="$API_URL" \
     -e TEST_SECRET="${E2E_TEST_ENDPOINTS_SECRET:-}" \
+    -e TRIP_NAME="$TRIP_NAME" \
     --format junit \
     --output "$OUT/report.xml" \
     --debug-output "$OUT/maestro" \
@@ -513,6 +732,100 @@ run_flow() {
   ok "$flow passed"
 }
 
+# ───────────────────────────────────────────────────────────────────────────
+# screenshots — the App Store set, walked rather than photographed by hand
+# ───────────────────────────────────────────────────────────────────────────
+#
+# `scripts/ios-e2e-local.sh screenshots [size]`   (default size: 6.9)
+#
+# Produces mobile/screenshots/<size>/NN-name.png, overwriting the previous set.
+# Committed, because the alternative — Cmd-S into ~/Desktop — leaves five PNGs
+# with no record of which build, which account or which trip made them, so the
+# next release either ships these ones again or spends the afternoon again.
+#
+# WHAT IT DOES DIFFERENTLY FROM A TEST RUN, and why each one:
+#
+#  - A PINNED DEVICE MODEL. Everywhere else this script takes whatever iPhone
+#    is newest, because naming one is how a job breaks the month the runner
+#    drops it. Here the model IS the requirement: App Store Connect rejects an
+#    image that is not one of the dimensions it expects for the slot. See
+#    scripts/pick-screenshot-simulator.mjs.
+#  - PRESENTABLE NAMES on the same canonical graph. Paris → Strasbourg →
+#    Stuttgart with real coordinates and real road geometry is already what the
+#    fixture seeds; only "E2E Fixture Trip" had to go.
+#  - EVERY PNG IS MEASURED before it is kept. A set that is silently 1206x2622
+#    (an iPhone 17 Pro — the 6.3" device that §3 of the listing doc wrongly
+#    names for the 6.9" slot) is a set you find out about at upload.
+#
+# It does NOT run `doctor`, deliberately: the machine checks are about running
+# flows, and a failure here should name the screenshot step.
+screenshots() {
+  local size="${1:-6.9}"
+
+  command -v sips >/dev/null || die "No sips — it ships with macOS and this needs it to measure the PNGs."
+
+  local udid want_w want_h model
+  if ! read -r udid want_w want_h model < <(node scripts/pick-screenshot-simulator.mjs "$size"); then
+    die "No simulator for the $size-inch slot — the line above says how to create one."
+  fi
+  say "$size-inch slot: $model ($udid), expecting ${want_w}x${want_h}"
+
+  # A NAME A CUSTOMER COULD READ. Same two legs, same coordinates, same
+  # geometry — sign-in.yaml and screenshots.yaml both match the card against
+  # ${TRIP_NAME}, so these three and the seed move together.
+  TRIP_NAME="Paris to Stuttgart"
+  VEHICLE_NAME="The Hilux"
+  USER_NAME="Sam"
+  # 300 km against a 489 km day 1: Finn must place a stop, and must attach the
+  # reason. That is the picture. See RANGE_KM above.
+  RANGE_KM="300"
+
+  up
+  [ -d mobile/ios-build ] && [ -n "$(ls -d mobile/ios-build/*.app 2>/dev/null)" ] || build
+  install_app "$udid" "$model"
+
+  run_flow screenshots
+
+  # ── Measure, then keep ───────────────────────────────────────────────────
+  #
+  # Every image in one App Store slot must share one size; a mixed set is a
+  # rejected upload. `sips` is the arbiter rather than the device name, because
+  # the device the flow ACTUALLY ran on is the only thing that decides.
+  local dest="$SHOT_ROOT/$size"
+  rm -rf "$dest"; mkdir -p "$dest"
+
+  # Maestro chose where these went, not us — see MAESTRO_SHOT_GLOB. There is
+  # exactly one `tests/<timestamp>` directory because run_flow wipes
+  # "$OUT/maestro" before every run.
+  local stage
+  stage="$(find "$OUT/maestro"/$MAESTRO_SHOT_GLOB -type d -maxdepth 0 2>/dev/null | head -1)"
+  [ -n "$stage" ] && [ -n "$(ls "$stage"/*.png 2>/dev/null)" ] || die \
+    "The flow passed and produced no named PNG. Maestro sandboxes takeScreenshot to its own output folder, so the names in screenshots.yaml must be BARE (01-trips, not a path). Looked under $OUT/maestro/$MAESTRO_SHOT_GLOB."
+
+  local kept=0 shot w h
+  for shot in "$stage"/*.png; do
+    w="$(sips -g pixelWidth  "$shot" | awk '/pixelWidth/  {print $2}')"
+    h="$(sips -g pixelHeight "$shot" | awk '/pixelHeight/ {print $2}')"
+    if [ "$w" != "$want_w" ] || [ "$h" != "$want_h" ]; then
+      warn "$(basename "$shot") is ${w}x${h}, expected ${want_w}x${want_h}"
+      die "Wrong dimensions for the $size-inch slot. The flow ran on the wrong device, or Apple accepts a second pair for this slot that pick-screenshot-simulator.mjs does not list."
+    fi
+    cp "$shot" "$dest/$(basename "$shot")"
+    kept=$((kept + 1))
+  done
+
+  ok "$kept screenshots at ${want_w}x${want_h} in $dest"
+  printf "\n"
+  ls -1 "$dest" | sed 's/^/  /'
+  printf "\n"
+  # THE STEP THAT IS NOT AUTOMATED, said out loud. Nothing in this script can
+  # tell a good screenshot from a grey rectangle where a map should be, and
+  # these go on a public store listing.
+  warn "LOOK AT EVERY ONE before uploading. This proves they are the right size,"
+  warn "  not that they are worth showing anybody — a map that never loaded its"
+  warn "  tiles and a map that did are the same number of pixels."
+}
+
 hierarchy() {
   local udid; udid="$(device_id)"
   say "Dumping the view hierarchy of whatever is on screen"
@@ -538,7 +851,10 @@ case "${1:-all}" in
   install)   install_app ;;
   run)       run_flow "${2:-chat-keyboard}" ;;
   hierarchy) hierarchy ;;
+  screenshots) screenshots "${2:-6.9}" ;;
   studio)    maestro --device "$(device_id)" studio ;;
+  storekit)  storekit ;;
+  xcode)     xcode ;;
   down)      down ;;
   reset)
     down

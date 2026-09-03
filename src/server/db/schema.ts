@@ -936,11 +936,30 @@ export const promoCodes = pgTable(
     /** Admin address that minted it. Never null — every grant has an author. */
     createdBy: text('created_by').notNull(),
     /**
-     * Deadline to REDEEM, not an end date for the access it grants. Null means
-     * the code never goes stale. What it grants is separately unlimited: a
-     * promo subscription has `current_period_end = null`.
+     * Deadline to REDEEM. NOT the length of the access it grants — that is
+     * `grantMonths` below, and the two being confusable is the reason both
+     * carry this warning. Null means the code never goes stale.
      */
     expiresAt: timestamp('expires_at'),
+    /**
+     * How long the access lasts, in months, counted from REDEMPTION.
+     *
+     * 6 or 12 — validated in the Zod schema on `POST /api/admin/promo`, not
+     * here, because a check constraint on an integer column is a migration
+     * every time the owner wants a third option.
+     *
+     * NOT counted from minting. A six-month code minted today and redeemed in
+     * three weeks would otherwise be five months and a week of a gift meant as
+     * six, with nothing telling anybody. `expiresAt` is the control for "use it
+     * or lose it"; this is the control for "how much".
+     *
+     * Promo grants used to be unlimited (`current_period_end = null`). They are
+     * now a real term, and `resolveAccountState` expires them for free: its
+     * `periodOver` branch already treats an `active` row with a past
+     * `current_period_end` as `expired`, on the principle that the clock is the
+     * authority and not a stale status.
+     */
+    grantMonths: integer('grant_months').notNull(),
     /** Set once, by the atomic claim. Non-null means spent — codes are single-use. */
     redeemedAt: timestamp('redeemed_at'),
     /**
@@ -982,7 +1001,7 @@ export const subscriptions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     status: text('status').$type<SubscriptionStatus>().notNull(),
     source: text('source').$type<SubscriptionSource>().notNull(),
-    /** Store product id, e.g. `com.feraltravels.app.monthly`. Null for admin grants. */
+    /** Store product id, e.g. `com.feraltravels.ios.monthly`. Null for admin grants. */
     productId: text('product_id'),
     /**
      * When paid access ends. Null means "no end" — an admin comp or a lifetime

@@ -17,6 +17,7 @@ const ALL: PromoRefusal[] = [
   'promo_already_redeemed',
   'promo_expired',
   'promo_wrong_account',
+  'promo_active_subscription',
 ];
 
 describe('PROMO_ERROR_COPY', () => {

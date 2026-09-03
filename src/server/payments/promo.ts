@@ -4,13 +4,28 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { promoCodes, subscriptionEvents, users } from '@/server/db/schema';
 import {
+  addMonthsUTC,
   decidePromoRedemption,
+  holdsLiveApplePurchase,
+  isPromoGrantMonths,
+  PROMO_GRANT_MONTHS,
+  type PromoGrantMonths,
   generatePromoCode,
   isPromoCodeShape,
   normalizePromoCode,
   type PromoRefusal,
 } from '@/lib/promoCode';
-import { upsertSubscription } from './entitlements';
+import { getSubscriptionRow, upsertSubscription } from './entitlements';
+
+/**
+ * Re-exported so `@/server/payments` stays the one import site for this
+ * feature. They LIVE in `src/lib/promoCode.ts` because this file is
+ * `server-only` and the unit project cannot import it — the same split that
+ * already puts `decidePromoRedemption` there.
+ */
+export { addMonthsUTC, holdsLiveApplePurchase, isPromoGrantMonths, PROMO_GRANT_MONTHS };
+export type { PromoGrantMonths };
+import { logUsageEvent } from '@/server/repos/usage';
 
 /**
  * Promo codes: an admin hands one to a person, that person redeems it, and the
@@ -32,34 +47,59 @@ import { upsertSubscription } from './entitlements';
  *
  * ── What it grants ──
  *
- * Unlimited duration (`currentPeriodEnd: null`, which the admin UI already
- * renders as unlimited) and the ORDINARY usage cap. The owner's call, and the
- * reasoning is sound: a promo recipient is being asked to use the app hard and
- * should not have to think about a renewal date, but the $8.50 rolling-twelve-
- * month Anthropic ceiling still applies because a promo account generates no
- * revenue to offset it. If they hit it, that is a signal about per-trip cost —
- * which is what the cap is for.
+ * A FIXED TERM — six or twelve months from REDEMPTION — and the ORDINARY usage
+ * cap. It used to be unlimited; the term is the owner's call.
+ *
+ * The clock starts at redemption, not at minting. Minting is when an admin
+ * types an address into a form; redemption is when the recipient actually has
+ * the app. A six-month code minted today and redeemed in three weeks would
+ * otherwise be five months and a week of a gift meant as six, with nothing
+ * telling anybody. `expiresAt` is the separate control for "use it or lose it",
+ * and it is the right one for that job.
+ *
+ * `resolveAccountState` needed NO change for the term to work. Its `periodOver`
+ * branch already treats an `active` row with a past `current_period_end` as
+ * `expired` — "the clock is the authority, not the stale status" — which was
+ * written for a missing renewal webhook and turns out to be exactly right for a
+ * promo that has run out. `promo.test.ts` pins that for a promo row
+ * specifically, because it is now load-bearing for a second reason.
+ *
+ * The $8.50 rolling-twelve-month Anthropic ceiling still applies: a promo
+ * account generates no revenue to offset it, and hitting it is a signal about
+ * per-trip cost, which is what the cap is for.
  */
 
 /** The single-use grant a redeemed code writes. */
-const PROMO_GRANT = {
-  status: 'active',
-  source: 'promo',
-  /**
-   * No store product — nobody bought anything. The admin panel reads this
-   * column to tell a promo apart from a purchase at a glance.
-   */
-  productId: null,
-  /** Null = no end date. Unlimited, as the owner specified. */
-  currentPeriodEnd: null,
-  /**
-   * True, and it is the lesser of two inaccuracies. Nothing renews a promo —
-   * but `autoRenew: false` resolves to `cancelled_in_period`, which would tell
-   * the admin panel a story about a cancellation that never happened. `true`
-   * resolves to plain `subscribed`, and `source` carries the real story.
-   */
-  autoRenew: true,
-} as const;
+function promoGrant(grantMonths: number, now: Date) {
+  return {
+    status: 'active',
+    source: 'promo',
+    /**
+     * No store product — nobody bought anything. The admin panel reads this
+     * column to tell a promo apart from a purchase at a glance, and
+     * `planStatusLine` reads `source` to call it an Ambassador plan rather
+     * than guessing a product name it does not have.
+     */
+    productId: null,
+    /**
+     * The term, from NOW — the moment of redemption. See the header.
+     *
+     * This used to be null, meaning no end. Everything downstream already
+     * handled a real date, because a paid subscription has one.
+     */
+    currentPeriodEnd: addMonthsUTC(now, grantMonths),
+    /**
+     * True, and it is the lesser of two inaccuracies. Nothing renews a promo —
+     * but `autoRenew: false` resolves to `cancelled_in_period`, which would tell
+     * the admin panel a story about a cancellation that never happened. `true`
+     * resolves to plain `subscribed`, and `source` carries the real story.
+     *
+     * Still true with a term: the row expires on its date via `periodOver`
+     * whatever `autoRenew` says, so this changes nothing about when access ends.
+     */
+    autoRenew: true,
+  } as const;
+}
 
 export interface CreatePromoCodeInput {
   /** Who it is for. Redemption refuses any other address. */
@@ -68,8 +108,10 @@ export interface CreatePromoCodeInput {
   note?: string | null;
   /** Admin address minting it. Recorded, never null. */
   createdBy: string;
-  /** Deadline to REDEEM. Null = never goes stale. */
+  /** Deadline to REDEEM. Null = never goes stale. NOT the length of access. */
   expiresAt?: Date | null;
+  /** How long the access lasts once redeemed. 6 or 12. No default: the admin picks. */
+  grantMonths: PromoGrantMonths;
 }
 
 export interface PromoCodeRow {
@@ -82,6 +124,7 @@ export interface PromoCodeRow {
   redeemedAt: Date | null;
   redeemedByUserId: string | null;
   createdAt: Date;
+  grantMonths: number;
 }
 
 /**
@@ -116,6 +159,7 @@ export async function createPromoCode(
           note,
           createdBy: input.createdBy.trim().toLowerCase(),
           expiresAt: input.expiresAt ?? null,
+          grantMonths: input.grantMonths,
         })
         .returning();
       return row as PromoCodeRow;
@@ -172,6 +216,29 @@ export async function redeemPromoCode(params: {
   );
   if (!decision.ok) return decision;
 
+  /**
+   * NEVER OVERWRITE A LIVE APPLE SUBSCRIPTION.
+   *
+   * `subscriptions` is one row per user, so granting a promo to somebody who
+   * is currently paying Apple would turn their `apple_iap` row into a `promo`
+   * one — while Apple carried on charging them, and while the next renewal
+   * webhook landed against a row that no longer describes what they bought.
+   *
+   * This lives HERE, in the shared redeem path, rather than only in
+   * `claimPromoOnSignIn`. It was in the auto-claim first, on the argument that
+   * a user typing a code is at least choosing. That argument does not hold:
+   * they are choosing to redeem a code, not to detach their subscription, and
+   * nothing on the redeem screen says the second thing happens.
+   *
+   * Checked BEFORE the claim, so the code is not spent. It stays theirs and
+   * works later if the subscription lapses — which is the whole reason the test
+   * is LIVE rather than "has an apple_iap row at all".
+   */
+  const existing = await getSubscriptionRow(params.userId);
+  if (existing && holdsLiveApplePurchase(existing, now)) {
+    return { ok: false, reason: 'promo_active_subscription' };
+  }
+
   const claimed = await db
     .update(promoCodes)
     .set({ redeemedAt: now, redeemedByUserId: params.userId })
@@ -182,7 +249,7 @@ export async function redeemPromoCode(params: {
   // claimed it between the read and the update.
   if (claimed.length === 0) return { ok: false, reason: 'promo_already_redeemed' };
 
-  await upsertSubscription({ userId: params.userId, ...PROMO_GRANT });
+  await upsertSubscription({ userId: params.userId, ...promoGrant(row.grantMonths, now) });
 
   // Through the same ledger a real webhook uses, so the admin event log tells
   // the true story of how this account became entitled. `source: 'promo'` on the
@@ -216,6 +283,7 @@ export async function listPromoCodes(limit = 50) {
       expiresAt: promoCodes.expiresAt,
       redeemedAt: promoCodes.redeemedAt,
       createdAt: promoCodes.createdAt,
+      grantMonths: promoCodes.grantMonths,
       redeemedByEmail: users.email,
     })
     .from(promoCodes)
@@ -236,4 +304,91 @@ export async function countOutstandingPromoCodes(): Promise<number> {
 /** Postgres unique-violation SQLSTATE. Same check as `repos/pennyTurns.ts`. */
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === '23505';
+}
+
+/**
+ * Redeem a code for someone the moment they sign in, without them typing it.
+ *
+ * The flow this serves: an admin mints a code for alice@example.com and tells
+ * her to sign up. She does, and she is simply on the plan. Before this, minting
+ * granted nothing and she had to find a purchase sheet and paste a string —
+ * which is a step you have to explain in the same email, and a step that fails
+ * silently if she mistypes it.
+ *
+ * WIRED INTO BOTH SIGN-IN PATHS, and that is not belt-and-braces. Auth.js's
+ * `signIn`/`createUser` events do NOT fire for `createSessionForEmail`, which
+ * is what the OTP flow and `/api/mobile/oauth/exchange` actually use — so
+ * wiring only the events would have covered web OAuth and missed every emailed
+ * code and every native sign-in. That exact mistake has already been made once
+ * in this repo with `syncCompedFlagOnSignIn`; the comment beside its second
+ * call site says so.
+ *
+ * ── What it deliberately does NOT do ──
+ *
+ * It adds no second grant path. It calls `redeemPromoCode`, so the atomic claim
+ * (`UPDATE ... WHERE redeemed_at IS NULL RETURNING`) is the same one the manual
+ * box uses and two concurrent sign-ins cannot both win a code. Nothing here
+ * writes a subscription itself, and nothing in the paywall path learns about
+ * `promo_codes`.
+ *
+ * It never blocks a sign-in. Every failure is caught, logged and swallowed: a
+ * promo that cannot be claimed must not be the reason somebody cannot get into
+ * the app. The manual redeem box stays in both purchase sheets as the fallback
+ * — and it is a real fallback, for the common case of somebody signing up with
+ * a different address than the one the code was minted for.
+ */
+export async function claimPromoOnSignIn(params: {
+  userId: string;
+  email: string;
+  now?: Date;
+}): Promise<void> {
+  const now = params.now ?? new Date();
+  const email = params.email.trim().toLowerCase();
+  if (!email) return;
+
+  const [row] = await db
+    .select({ code: promoCodes.code })
+    .from(promoCodes)
+    .where(and(eq(promoCodes.email, email), isNull(promoCodes.redeemedAt)))
+    // Oldest first: if somebody has two codes, the one issued first is the one
+    // they were promised first, and the other stays claimable.
+    .orderBy(promoCodes.createdAt)
+    .limit(1);
+
+  // The overwhelmingly common case. No lookup failure, nothing to do.
+  if (!row) return;
+
+  /**
+   * No live-subscription check here any more, and that is not an omission:
+   * `redeemPromoCode` owns that rule now and applies it to BOTH paths. It used
+   * to live only here, which left the manual redeem box able to overwrite a
+   * paying customer's `apple_iap` row.
+   *
+   * The refusal comes back as `promo_active_subscription` and is logged below
+   * like any other, so an auto-claim that declined for this reason is findable
+   * without being noisy.
+   */
+  const result = await redeemPromoCode({
+    userId: params.userId,
+    email,
+    rawCode: row.code,
+    now,
+  });
+
+  if (!result.ok) {
+    /**
+     * Logged rather than thrown. `promo_expired` is ordinary and expected —
+     * somebody signing up after the deadline — and `promo_already_redeemed`
+     * means a concurrent claim won, which is the atomic claim doing its job.
+     * Neither is a reason to fail a sign-in, and both are worth being able to
+     * read afterwards in /admin/errors.
+     */
+    await logUsageEvent({
+      userId: params.userId,
+      provider: 'promo:auto-claim',
+      requests: 0,
+      success: false,
+      errorMessage: `${result.reason} for ${email}`,
+    }).catch(() => {});
+  }
 }

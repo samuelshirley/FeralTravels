@@ -17,7 +17,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com",
         "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com",
-        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1"
+        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "REPLACE_WITH_appl_KEY_FROM_REVENUECAT"
       }
     },
     "production": {
@@ -26,15 +27,15 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://www.feraltravels.com",
         "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "205269478779-1o13q21ekms0gari1cirj9on5njlkk05.apps.googleusercontent.com",
-        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1"
+        "EXPO_PUBLIC_ENABLE_APPLE_SIGNIN": "1",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "REPLACE_WITH_appl_KEY_FROM_REVENUECAT"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "ascAppId": "6802705582",
-        "appleTeamId": "4CG2UE2L49"
+        "appleTeamId": "TJX3F3832H"
       }
     }
   }

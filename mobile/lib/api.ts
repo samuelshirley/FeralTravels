@@ -205,6 +205,23 @@ export const getMe = () => apiFetch<Me>("/api/me");
  * no picture claim, ever) and for emailed-code sign-ins.
  */
 export interface Identity {
+  /**
+   * The caller's own `users.id`, and the string RevenueCat must carry as its
+   * `app_user_id`.
+   *
+   * `src/server/payments/webhook.ts` resolves a purchase with a direct equality
+   * join against this primary key, so `mobile/lib/purchases.ts` logs in with
+   * exactly this and refuses to buy anything without it. Anything else — an
+   * email, an anonymous `$RCAnonymousID:`, the session token — lands every
+   * webhook as `ignored_unknown_user`: money taken, nobody entitled, and no way
+   * for the app to tell.
+   *
+   * It is read from the server rather than remembered from the sign-in response
+   * because a restored keychain session has no sign-in response, which is the
+   * state the app is in on every launch after the first. Null only when the
+   * session outlived its user row.
+   */
+  id: string | null;
   email: string | null;
   name: string | null;
   image: string | null;

@@ -196,6 +196,20 @@ export async function seedFixture(opts: {
   userName?: string;
   vehicleName: string;
   tripName: string;
+  /**
+   * Override the fixture vehicle's range. Defaults to the Hilux's real number,
+   * so every existing caller — the whole Playwright suite and the three test
+   * flows — is unaffected.
+   *
+   * It exists for ONE caller: `ios-e2e-local.sh screenshots`. The canonical
+   * day 1 is Paris → Strasbourg at 489 km, and against the Hilux's real 500 km
+   * Finn correctly places NO fuel stop — so the App Store screenshot whose
+   * entire purpose is "the itinerary, with fuel stops" was a picture of an
+   * itinerary saying "no fuel stop needed on this day". Seeding a shorter range
+   * makes the leg genuinely need one, which is the product working rather than
+   * the product idle.
+   */
+  rangeKm?: number;
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
   assertEnabled();
   const userId = await ensureUserId(opts.email, opts.userName);
@@ -209,7 +223,7 @@ export async function seedFixture(opts: {
   // The Hilux's real numbers, not a made-up 400. See HILUX_FIXTURE_VEHICLE.
   const vehicle = await addVehicle(userId, {
     name: opts.vehicleName,
-    range_km: HILUX_FIXTURE_VEHICLE.range_km,
+    range_km: opts.rangeKm ?? HILUX_FIXTURE_VEHICLE.range_km,
     fuel_type: HILUX_FIXTURE_VEHICLE.fuel_type,
     is_default: true,
   });

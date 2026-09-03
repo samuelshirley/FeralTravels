@@ -1,0 +1,240 @@
+# App Store screenshots, driven rather than taken by hand.
+#
+# STATUS 2026-09-02: it runs, it passes, and it produces five PNGs at
+# 1320x2868. Its first run was the bring-up its old header predicted — two
+# separate things were wrong, neither a typo in a selector, and both are written
+# up in docs/design/ios-e2e-bringup.md: `takeScreenshot` is sandboxed by Maestro
+# 2.10 so the path had to become a bare name, and `'Penny is typing'` could
+# never have matched because that label sits on a `<View>` with no `accessible`
+# prop and is absent from the hierarchy.
+#
+# WHAT PASSING DOES NOT MEAN. The images were then looked at, and three of the
+# five were not shippable — which is the whole argument for generating them
+# rather than trusting them. Fixed here since: the vehicle range is seeded short
+# so day 1 genuinely needs a fuel stop (it read "No fuel stop needed on this
+# day", i.e. a picture of the app idle), and the Settings shot centres
+# 'REFILL EVERY' instead of the 'Vehicle profile' heading so the fixture's
+# e2e.feraltravels.com address is off the top of the frame.
+#
+# STILL OPEN, and neither is fixable here: `04-map` came back as a blank grid
+# because the simulator's Apple Maps tiles never loaded, and `03-itinerary`
+# carries a "LOCATION OFF — OPEN SETTINGS" line (see the location note below).
+# LOOK AT EVERY PNG before any of it goes near App Store Connect.
+#
+# WHY A FLOW AND NOT CMD-S. §3 of docs/design/app-store-listing.md said to seed
+# a good-looking trip and press Cmd-S five times. That produces five PNGs on a
+# Desktop with no record of which build, which account or which trip made them —
+# so the next release either ships last release's screenshots or spends the
+# afternoon again. This walks a seeded trip on a pinned device size and writes
+# the set into a directory in the repo.
+#
+# THE NAMES BELOW ARE BARE, and that is a correction. They used to be
+# `${SHOT_DIR}/01-trips` — an absolute path, on the reasoning that Maestro
+# resolves a relative one against its own working directory rather than the
+# repo. True once; not true of Maestro 2.10, which SANDBOXES takeScreenshot:
+#
+#   CommandFailed: Invalid path "…/.local-run/shots/01-trips.png" for
+#   takeScreenshot: it resolves outside this run's takeScreenshot output folder.
+#
+# So a bare name is the only thing that works, and the images land in
+# `<--debug-output>/.maestro/tests/<timestamp>/screenshots/takeScreenshot/`.
+# `ios-e2e-local.sh` collects them from there and is where the path lives now.
+# Verified by probe, not assumed — the run that found this got all the way
+# through sign-in and died on the very first shot.
+#
+# It reuses `sign-in.yaml`, so it inherits every hard-won thing in it — the
+# keychain clear, the per-box code entry, the auto-submit — and it seeds the
+# SAME canonical two legs the tests use (Paris → Strasbourg → Stuttgart, real
+# coordinates, real road geometry) under a name a customer could read. That
+# name arrives as ${TRIP_NAME}; the runner sets it.
+#
+# LOCATION STAYS DENIED, inherited from sign-in.yaml, and that is deliberate:
+# granting it makes `DeviceLocationContext` report a position, and
+# `report_position` RE-ANCHORS the trip to wherever the simulator thinks it is —
+# which is Cupertino unless somebody set otherwise. A screenshot set of a Paris
+# trip that has been silently re-anchored to California would be worse than no
+# screenshots. If you want the GPS-on look (the "next stop" pill, a live
+# NAVIGATE list), set the simulator somewhere ON the route first —
+# `xcrun simctl location <udid> set 48.5734,7.7521` is Strasbourg — and change
+# the permission here to `inuse`. Do that knowing it moves the trip.
+appId: ${APP_ID}
+---
+# Signs in as a freshly minted fixture account and lands on the trips list. Its
+# own final assertion (the trip card is visible) is what makes the first
+# screenshot below safe to take without repeating the wait.
+- runFlow: sign-in.yaml
+
+# ── 1. The trips list ───────────────────────────────────────────────────────
+# "shows it is a real tool with real trips" (listing doc §3.1).
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 01-trips
+
+# ── 2. Penny, mid-plan ──────────────────────────────────────────────────────
+# The differentiator, and the only one of the five that has to be EARNED — the
+# seeded graph carries no chat history, so this sends a real message and waits
+# for a real reply. It spends one Anthropic call, the same trade
+# chat-keyboard.yaml already makes.
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+- tapOn:
+    id: 'chat-composer-input'
+# The nav unmounting is how we know the keyboard actually came up — the same
+# gate chat-keyboard.yaml rests on, in the same direction.
+- extendedWaitUntil:
+    notVisible: 'CHAT'
+    timeout: 8000
+
+# A question with a real answer on this trip. Deliberately about fuel: it is
+# what the product is for, and it makes Penny's reply worth photographing.
+- inputText: 'How is the fuel looking on day one?'
+- tapOn:
+    id: 'chat-composer-send'
+
+# ── Waiting her out, using only what the app actually renders ───────────────
+#
+# This block used to assert on 'Penny is typing', then on its disappearance. It
+# could never have matched. `TypingBubble` puts that string in an
+# `accessibilityLabel` on a plain `<View>` with no `accessible` prop, so iOS
+# never promotes it to an accessibility element and it is absent from the view
+# hierarchy — confirmed by dumping the tree at the exact moment the assertion
+# failed. The server had answered `POST /api/trip/replan 200 in 6058ms` and
+# Penny's reply was on screen the whole time.
+#
+# So the gates below are two things that ARE in that tree.
+
+# 1. THE TURN STARTED. 'Read' is the delivery receipt on the last user message.
+#    It deliberately covers `typing` AND `responded` (see the comment beside it
+#    in ChatPanel) so the receipt does not flicker mid-stream — which makes it a
+#    reliable "she has it" and a useless "she is done". It is only the first
+#    gate for that reason.
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+
+# 2. KEYBOARD AWAY, BEFORE waiting out the stream rather than after.
+#    `waitForAnimationToEnd` is "the screen stopped changing", and a blinking
+#    text caret never stops changing — leave the keyboard up and it sits through
+#    its entire budget every single run. `hideKeyboard` CANNOT work on this
+#    field (returnKeyType="send", so no standard dismiss action — the bring-up
+#    doc has the story), but the transcript ScrollView carries
+#    keyboardShouldPersistTaps="handled", so a tap no child handles dismisses
+#    it. A point tap high in the transcript is that tap.
+- tapOn:
+    point: '50%,30%'
+# The nav coming BACK is the proof the keyboard went down — the exact inverse of
+# the gate chat-keyboard.yaml rests on, so it uses proven behaviour rather than
+# a new assumption. If this times out the shot would have been a picture of a
+# keyboard, and red is the right outcome.
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+
+# 3. THE STREAM FINISHED. Streaming text and the BlinkingCursor both repaint
+#    every frame, so "the screen is still" IS "she stopped writing". Generous,
+#    because a planning turn is long and a screenshot of a half-written sentence
+#    has to be retaken. It returns as soon as the screen settles, so the budget
+#    is a ceiling and not a cost.
+- waitForAnimationToEnd:
+    timeout: 180000
+- takeScreenshot: 02-penny-chat
+
+# ── 3. The itinerary, with fuel stops ───────────────────────────────────────
+# Fuel is LAZY — `plan_fuel_stops` runs when a day is opened, never before — so
+# a screenshot of the list without opening one shows an itinerary with no fuel
+# in it, which is a picture of the wrong app.
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris → Strasbourg.*'
+    timeout: 20000
+
+# Expand day 1, and only if it is not already expanded — a blind tap would
+# CLOSE it on a build whose list opens the first day by default, and the shot
+# would silently be the collapsed one.
+#
+# The gate is the nav block, which renders only in an expanded, non-rest day.
+# The alternation covers both of its branches: "NAVIGATE (n STOPS)" with GPS,
+# "LOCATION OFF — TAP TO TURN ON" without. Location is denied here (see the
+# header), so expect the second — and expect to decide whether that line is
+# acceptable in an App Store image.
+- runFlow:
+    when:
+      notVisible:
+        text: '.*(NAVIGATE|LOCATION OFF).*'
+    commands:
+      - tapOn:
+          text: '.*Paris → Strasbourg.*'
+
+- extendedWaitUntil:
+    visible:
+      text: '.*(NAVIGATE|LOCATION OFF).*'
+    timeout: 20000
+
+# The lazy search, waited out rather than raced. StopsSection renders
+# "Planning fuel stops…" (note the single-character ellipsis) while it runs; a
+# shot taken during it is a spinner. Overpass and OSRM are both live network
+# calls, hence the budget.
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 120000
+- waitForAnimationToEnd:
+    timeout: 10000
+- takeScreenshot: 03-itinerary
+
+# ── 4. The map ──────────────────────────────────────────────────────────────
+# Taken AFTER the day was opened on purpose: stops are lazy in the map too, and
+# a never-browsed trip renders the "Open a day to load its fuel stops" hint
+# instead of markers.
+- tapOn: 'MAP'
+# Tiles are a network fetch and the camera animates to fit the route. Nothing
+# below asserts on a tile — there is no handle on one — so this wait is the only
+# thing standing between the shot and a grey rectangle. LOOK at this one.
+- waitForAnimationToEnd:
+    timeout: 30000
+- takeScreenshot: 04-map
+
+# ── 5. Settings, at the vehicle profile ─────────────────────────────────────
+# "proves the fuel maths is yours to set".
+#
+# THE SCROLL IS NOT COSMETIC. Settings renders a "Signed in as" card directly
+# above the vehicle profile, holding the fixture's
+# `playwright-…@e2e.feraltravels.com` address, and that must not appear on a
+# public App Store listing.
+#
+# It scrolls to 'REFILL EVERY' rather than to the 'Vehicle profile' HEADING,
+# and that is the correction: centring the heading left the address plainly
+# visible in the middle of the frame on the 6.9" screen — read off the actual
+# PNG, which is the only way this kind of thing gets caught. 'REFILL EVERY' is
+# the range stat lower inside the same card, so centring it scrolls further and
+# takes the address off the top. It is also the more honest crop: the range IS
+# the thing this image is meant to be about.
+#
+# **Check the PNG anyway.** A shorter card, a bigger font or an extra section
+# above moves this, and the failure mode is silent.
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+# A REGEX, and it has to be. Maestro matches a text selector against the WHOLE
+# accessibility label, and this one element reads 'REFILL EVERY ~300 km' — the
+# stat and its value merged by VehicleProfileSection. The bare string matched
+# nothing and failed the run. Exactly the same trap as the trip card in
+# sign-in.yaml, which is documented three files away and still caught this.
+# The number is deliberately not spelled out: it comes from the seeded range.
+- scrollUntilVisible:
+    element:
+      text: '.*REFILL EVERY.*'
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 05-settings

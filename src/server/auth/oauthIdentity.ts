@@ -36,7 +36,7 @@ const APPLE_ISSUER = 'https://appleid.apple.com';
  * reaches this route.) Overridable so a rename of the bundle id is an env
  * change, not a deploy of a new constant.
  */
-const APPLE_AUDIENCE = process.env.APPLE_APP_BUNDLE_ID || 'com.feraltravels.app';
+const APPLE_AUDIENCE = process.env.APPLE_APP_BUNDLE_ID || 'com.feraltravels.ios';
 
 export type OAuthProvider = 'google' | 'apple';
 

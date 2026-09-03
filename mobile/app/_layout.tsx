@@ -14,6 +14,7 @@ import {
 } from "@expo-google-fonts/onest";
 import { UnitsProvider } from "@/lib/units";
 import { ErrorProvider } from "@/lib/errors";
+import { configurePurchases } from "@/lib/purchases";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -22,6 +23,21 @@ import { font } from "@/lib/typography";
 // the launch screen hands straight over to a real screen. Failures are ignored
 // on purpose — this call must never be able to strand the app on the splash.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+/**
+ * Configure RevenueCat once, at module scope, before the first render.
+ *
+ * Module scope rather than an effect because `Purchases.configure` is
+ * synchronous, idempotent behind its own guard, and must have happened before
+ * anything can call `getOfferings` — and a user can reach the paywall on the
+ * very first screen. It does not block the splash: the async part (resolving
+ * `users.id` and calling `logIn`) is fired and forgotten inside, and the actual
+ * gate on a purchase is `requirePurchaserId` at the moment of buying.
+ *
+ * A build with no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` no-ops here and the app
+ * behaves exactly as it did before StoreKit existed.
+ */
+configurePurchases();
 
 /**
  * Root shell. Mirrors the providers the web mounts around every signed-in
@@ -74,12 +90,45 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: theme.bg },
             }}
           >
+            {/*
+              EVERY ROUTE IS DECLARED HERE, and every one either hides its header
+              or gives it a human `title`. A native-stack header with neither
+              falls back to the ROUTE NAME, and Expo Router route names are file
+              patterns — so the UI renders `trips/[tripId]`, brackets and all.
+
+              That is not hypothetical: it was the Settings back button, visible
+              in the App Store screenshot set. The back button takes its label
+              from the PREVIOUS screen's title, `trips/[tripId]` declared none,
+              and the raw pattern leaked into a control the user reads. It was
+              also far wider than any other back affordance in the app, which is
+              what made it obvious in a screenshot and invisible in review.
+
+              `src/lib/routeLabels.test.ts` fails if a route is added without an
+              answer here.
+            */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
             {/* trips/index draws its own header — see the note at the top of that file. */}
             <Stack.Screen name="trips/index" options={{ headerShown: false }} />
             <Stack.Screen name="trips/[tripId]" options={{ headerShown: false }} />
-            <Stack.Screen name="settings" options={{ title: "Settings" }} />
+            {/*
+              Was missing entirely, which is the same bug one step further along:
+              undeclared, so it took the default options, so it drew a native
+              header titled "paywall" ON TOP of the Penny header the screen
+              already draws for itself. Found by auditing this list rather than
+              by anybody seeing it.
+            */}
+            <Stack.Screen name="paywall" options={{ headerShown: false }} />
+            {/*
+              "Back", not "Trip". Settings is pushed from BottomNav, TripHeader,
+              StopsSection, trips/index and PlanRequiredOverlay — so it is
+              reached from the trips LIST as often as from inside a trip, and
+              "Back to trip" would be a lie on half of those paths.
+            */}
+            <Stack.Screen
+              name="settings"
+              options={{ title: "Settings", headerBackTitle: "Back" }}
+            />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

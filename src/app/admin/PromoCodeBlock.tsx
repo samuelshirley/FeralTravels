@@ -11,11 +11,30 @@ import { useCallback, useEffect, useState } from 'react';
  * — no navigation, no confirmation step, and the code readable the instant it
  * exists, because the next thing you do is copy it into a reply.
  *
- * WHAT IT DOES NOT DO: grant anything by itself. Minting writes a row in
- * `promo_codes` and nothing else. The account becomes entitled only when the
- * person signs in as the bound address and redeems it themselves — which is why
- * there is no "grant access to this user" button here and no way for an admin to
- * hand out access without the recipient completing a real sign-in.
+ * WHAT MINTING DOES, as of 2026-09-02 — this changed, and the old rule is worth
+ * knowing because it was stated here as an invariant:
+ *
+ * It used to grant nothing at all. The row sat in `promo_codes` and the
+ * recipient had to sign in, find a purchase sheet and paste the code in
+ * themselves. That is a step you have to explain in the same email you send the
+ * code in, and a step that fails silently if they mistype it.
+ *
+ * Now the code CLAIMS ITSELF on sign-in: `claimPromoOnSignIn` runs on both
+ * sign-in paths, finds an unredeemed, unexpired code bound to that address, and
+ * redeems it. So minting for somebody who has not signed up yet is now enough —
+ * you send them the address you minted for, they sign in, they are on the plan.
+ *
+ * WHAT HAS NOT CHANGED, and is the part that mattered: an admin still cannot
+ * hand out access without the recipient completing a real sign-in as the bound
+ * address. There is still no "grant access to this user" button. The claim goes
+ * through the same `redeemPromoCode` and the same atomic
+ * `UPDATE ... WHERE redeemed_at IS NULL`, so a code is still single-use and two
+ * concurrent sign-ins cannot both win it. And it still writes an ordinary
+ * `subscriptions` row — nothing in the paywall path reads `promo_codes`.
+ *
+ * The manual box in both purchase sheets stays, as the fallback for the common
+ * case: somebody who signed up with a different address than the one you minted
+ * for.
  *
  * There is also no delete and no revoke. An unspent code that should not have
  * gone out is handled by not sending it; a spent one is a subscription, and
@@ -35,6 +54,7 @@ interface PromoRow {
   redeemedAt: string | null;
   createdAt: string;
   redeemedByEmail: string | null;
+  grantMonths: number;
 }
 
 export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
@@ -42,6 +62,9 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
   const [email, setEmail] = useState('');
   const [note, setNote] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('');
+  // No default. A term is a decision, and a select that arrives pre-answered is
+  // one an admin can submit without making it.
+  const [grantMonths, setGrantMonths] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minted, setMinted] = useState<PromoRow | null>(null);
@@ -66,7 +89,7 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
   }, [load]);
 
   async function mint() {
-    if (busy || !email.trim()) return;
+    if (busy || !email.trim() || !grantMonths) return;
     setBusy(true);
     setError(null);
     setCopied(false);
@@ -79,6 +102,7 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
           email: email.trim(),
           note: note.trim() || undefined,
           expiresInDays: expiresInDays.trim() ? Number(expiresInDays) : undefined,
+          grantMonths: Number(grantMonths),
         }),
       });
       if (!res.ok) {
@@ -90,6 +114,7 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
       setEmail('');
       setNote('');
       setExpiresInDays('');
+      setGrantMonths('');
       await load();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -104,10 +129,10 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
         Promo codes
       </h2>
       <p style={{ fontSize: 12, color: 'var(--tp-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
-        Issues one code, bound to one address. The recipient signs in with that
-        address and redeems it in the app — it grants nothing on its own, and it
-        cannot be redeemed by anyone else. Access is unlimited and has no renewal
-        date; the ordinary usage ceiling still applies.
+        Issues one code, bound to one address, for the length of access you pick.
+        The recipient signs in with that address and it applies itself — they do
+        not have to type it — and nobody else can redeem it. The term runs from
+        when they redeem, not from now; the ordinary usage ceiling still applies.
       </p>
 
       {/*
@@ -152,24 +177,45 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
           disabled={busy}
           style={{ ...field, flex: '2 1 180px' }}
         />
+        {/*
+          TWO DIFFERENT DURATIONS, and the labels carry the whole distinction.
+          "expires (days)" alone was survivable while it was the only time field
+          on the form; next to a term it is a real mistake waiting to happen —
+          an admin reading it as "how long they get" would mint a code that
+          grants a year and dies in seven days.
+        */}
         <input
+          data-testid="promo-admin-expires"
           value={expiresInDays}
           onChange={(e) => setExpiresInDays(e.target.value.replace(/\D/g, ''))}
-          placeholder="expires (days)"
+          placeholder="code expires in (days)"
           inputMode="numeric"
           disabled={busy}
-          style={{ ...field, flex: '1 1 110px' }}
+          style={{ ...field, flex: '1 1 150px' }}
+          title="Deadline to REDEEM the code. Blank = never goes stale. Not the length of access."
         />
+        <select
+          data-testid="promo-admin-months"
+          value={grantMonths}
+          onChange={(e) => setGrantMonths(e.target.value)}
+          disabled={busy}
+          style={{ ...field, flex: '1 1 130px' }}
+          title="How long the access lasts, counted from when they redeem it."
+        >
+          <option value="">access…</option>
+          <option value="6">access: 6 months</option>
+          <option value="12">access: 12 months</option>
+        </select>
         <button
           data-testid="promo-admin-mint"
           onClick={() => void mint()}
-          disabled={busy || !email.trim()}
+          disabled={busy || !email.trim() || !grantMonths}
           style={{
             padding: '9px 16px',
             borderRadius: 'var(--tp-radius-sm)',
             border: 'none',
-            background: busy || !email.trim() ? 'var(--tp-border)' : 'var(--tp-primary)',
-            color: busy || !email.trim() ? 'var(--tp-subtle)' : 'var(--tp-on-primary)',
+            background: busy || !email.trim() || !grantMonths ? 'var(--tp-border)' : 'var(--tp-primary)',
+            color: busy || !email.trim() || !grantMonths ? 'var(--tp-subtle)' : 'var(--tp-on-primary)',
             fontSize: 13,
             fontWeight: 600,
             fontFamily: 'inherit',
@@ -200,10 +246,10 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
           }}
         >
           <div style={{ fontSize: 11, color: 'var(--tp-muted)', marginBottom: 6 }}>
-            For {minted.email}
+            For {minted.email} · {minted.grantMonths} months of access
             {minted.expiresAt
               ? ` · redeem before ${new Date(minted.expiresAt).toLocaleDateString()}`
-              : ' · no expiry'}
+              : ' · code never expires'}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <code style={{ fontSize: 19, fontWeight: 700, letterSpacing: '0.04em' }}>
@@ -272,14 +318,28 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
  * spent code never looks mintable again.
  */
 function statusOf(r: PromoRow): string {
+  const term = `${r.grantMonths}mo`;
   if (r.redeemedAt) {
     const who = r.redeemedByEmail ? ` by ${r.redeemedByEmail}` : ' (account since deleted)';
-    return `Redeemed ${new Date(r.redeemedAt).toLocaleDateString()}${who}`;
+    /**
+     * Computed here rather than read off the subscription row, deliberately.
+     * The term runs from redemption and this component already knows both
+     * halves; joining `subscriptions` to show it would make the admin list
+     * depend on a table it otherwise never touches, for a date it can derive.
+     * It is the same arithmetic `promoGrant` did — if the two ever disagree,
+     * the subscription row is the truth.
+     */
+    const redeemed = new Date(r.redeemedAt);
+    const ends = new Date(redeemed);
+    ends.setMonth(ends.getMonth() + r.grantMonths);
+    return `Redeemed ${redeemed.toLocaleDateString()}${who} · access ends ${ends.toLocaleDateString()}`;
   }
-  if (r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()) return 'Expired, unused';
+  if (r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()) {
+    return `Expired, unused · ${term}`;
+  }
   return r.expiresAt
-    ? `Unused · expires ${new Date(r.expiresAt).toLocaleDateString()}`
-    : 'Unused';
+    ? `Unused · ${term} · code expires ${new Date(r.expiresAt).toLocaleDateString()}`
+    : `Unused · ${term}`;
 }
 
 const field: React.CSSProperties = {

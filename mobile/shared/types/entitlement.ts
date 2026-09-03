@@ -67,7 +67,14 @@ export interface EntitlementPayload {
   trialDaysRemaining: number;
   /** The paywall's own copy, server-authored so it can change without a build. */
   paywall: PaywallCopy | null;
-  /** Prices to render. Empty when the user is entitled. */
+  /**
+   * Prices to render, in every account state including entitled.
+   *
+   * Not conditional on `entitled`: Settings -> Plan opens the purchase sheet
+   * deliberately whatever the state, which is the only way a reviewer in a
+   * fresh trial can reach the in-app purchase at all. The surfaces that SELL
+   * gate themselves on `entitled`; this list does not gate them.
+   */
   products: PaywallProduct[];
   /**
    * True only for accounts explicitly allowlisted for the fake purchase path.
@@ -75,6 +82,41 @@ export interface EntitlementPayload {
    * does not exist, and the endpoint refuses it anyway.
    */
   testPurchaseAllowed: boolean;
+  /**
+   * Which plan is on the subscription row, or null when there is no row (a
+   * trial) or the row carries no product (an admin comp, a promo).
+   *
+   * Derived SERVER-SIDE from `PRODUCTS` via `productById`. The bundle id never
+   * crosses the wire for the client to parse: a client that pattern-matched
+   * `…app.annual` would be a second place that decides what a product is, and
+   * it would go wrong quietly the first time a product id changes.
+   */
+  plan: 'monthly' | 'annual' | null;
+  /**
+   * ISO8601. When the current paid period ends — a renewal date while
+   * `autoRenew` is true, an expiry date once it is false.
+   *
+   * NULL MEANS NO END, not "unknown": an admin comp or a lifetime promo. Any
+   * copy built from this has to handle null without rendering the word "null"
+   * at somebody, which is asserted in `planStatusLine.test.ts`.
+   */
+  currentPeriodEnd: string | null;
+  /** False once auto-renew is off. Does NOT itself mean access has ended. */
+  autoRenew: boolean;
+  /**
+   * Where the entitlement came from, or null with no subscription row.
+   *
+   * The client uses it for ONE thing: naming the plan. A `promo` row carries no
+   * `plan` (nobody bought a product), so without this the only honest label was
+   * "Subscribed". It is not a second entitlement signal and nothing branches on
+   * it to decide access.
+   *
+   * NOTE `comped` is NOT here and is not a source: that is `users.comped`, an
+   * admin boolean checked before any subscription row is looked at, and it
+   * surfaces as `state: 'comped'`. The two grant paths are genuinely different
+   * and Settings names them differently.
+   */
+  source: SubscriptionSource | null;
 }
 
 export interface PaywallProduct {

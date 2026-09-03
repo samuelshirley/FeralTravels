@@ -28,7 +28,7 @@ Verification lives in `src/server/auth/oauthIdentity.ts` — deliberately DB-fre
 | Check | Detail |
 |---|---|
 | Signature | `jose.jwtVerify` against the provider's remote JWKS (cached, rotation-safe) |
-| Audience | Google → `AUTH_GOOGLE_IOS_CLIENT_ID` (**not** the web client id). Apple → the bundle id `com.feraltravels.app` / `APPLE_APP_BUNDLE_ID` |
+| Audience | Google → `AUTH_GOOGLE_IOS_CLIENT_ID` (**not** the web client id). Apple → the bundle id `com.feraltravels.ios` / `APPLE_APP_BUNDLE_ID` |
 | Issuer | both Google forms; Apple exact |
 | Expiry | jose `exp`/`nbf` with `clockTolerance: 5`, **plus** an explicit refusal of a token with no `exp` at all (otherwise it'd be an immortal bearer credential) |
 | Email | must be present and `email_verified` must be `true`/`"true"` |
@@ -121,7 +121,7 @@ The guard is now `src/lib/sharedMirror.test.ts` — imports `SHARED_FILES` and `
 | Var | Where | Missing ⇒ |
 |---|---|---|
 | `AUTH_GOOGLE_IOS_CLIENT_ID` | Vercel | every Google native exchange → 503 |
-| `APPLE_APP_BUNDLE_ID` | Vercel (optional) | falls back to hardcoded `com.feraltravels.app` |
+| `APPLE_APP_BUNDLE_ID` | Vercel (optional) | falls back to hardcoded `com.feraltravels.ios` |
 | `AUTH_APPLE_ID` / `AUTH_APPLE_SECRET` | Vercel | web Apple button doesn't render. **Secret expires ≤6 months** |
 | `DELETED_USER_ENC_KEY` | Vercel prod **and** preview | deletions work, addresses unrecoverable |
 | `EXPO_TOKEN` | GitHub secret | Mobile workflow fails — **this is what just happened** |

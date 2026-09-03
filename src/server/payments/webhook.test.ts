@@ -18,6 +18,7 @@ import { normalizeWebhookEvent, revenueCatWebhookSchema } from './schemas';
 import {
   applySubscriptionEvent,
   decideFromEvent,
+  isKnownEventType,
   type ExistingSubscription,
   type WebhookDeps,
   type WebhookOutcome,
@@ -43,7 +44,7 @@ import {
  */
 
 const USER_ID = 'usr_7f3c1a90';
-const MONTHLY = 'com.feraltravels.app.monthly';
+const MONTHLY = 'com.feraltravels.ios.monthly';
 
 /** A real RevenueCat body, trimmed of the fields we never read but left messy. */
 function rcBody(over: Record<string, unknown> = {}) {
@@ -174,7 +175,9 @@ describe('decideFromEvent — type to state', () => {
   });
 
   it('ignores a type it does not handle', () => {
-    for (const type of ['SUBSCRIPTION_PAUSED', 'TRANSFER', 'TEST', 'SOMETHING_NEW']) {
+    // TRANSFER used to be on this list and is now handled — see the transfer
+    // describe block below. Everything here is still genuinely unhandled.
+    for (const type of ['SUBSCRIPTION_PAUSED', 'TEST', 'SOMETHING_NEW']) {
       expect(decideFromEvent(event({ type }), null), type).toEqual({
         ignored: 'ignored_unknown_type',
       });
@@ -216,7 +219,7 @@ describe('decideFromEvent — out-of-order delivery', () => {
     // Type is decided first on purpose: an event we do not understand tells us
     // nothing about ordering either, and the recorded outcome stays a function
     // of the type alone so the admin log reads consistently.
-    const stale = event({ type: 'TRANSFER', event_timestamp_ms: REFUND_AT - 60_000 });
+    const stale = event({ type: 'SUBSCRIPTION_PAUSED', event_timestamp_ms: REFUND_AT - 60_000 });
     expect(decideFromEvent(stale, REFUND_AT)).toEqual({ ignored: 'ignored_unknown_type' });
   });
 });
@@ -268,7 +271,13 @@ function fakeWorld(opts: { knownUsers?: string[]; existing?: ExistingSubscriptio
     },
   };
 
-  return { deps, events, writes, get existing() { return existing; } };
+  const transfers: Array<{ fromUserIds: string[]; toUserId: string }> = [];
+  deps.transferSubscription = async ({ fromUserIds, toUserId }) => {
+    transfers.push({ fromUserIds, toUserId });
+    return { movedFrom: fromUserIds };
+  };
+
+  return { deps, events, writes, transfers, get existing() { return existing; } };
 }
 
 describe('applySubscriptionEvent', () => {
@@ -530,5 +539,165 @@ describe('POST /api/webhooks/revenuecat', () => {
     applyMock.mockRejectedValue(new Error('connection terminated'));
     const res = await post({ authorization: SECRET });
     expect(res.status).toBe(500);
+  });
+});
+
+/**
+ * TRANSFER — a subscription moving between two of our accounts.
+ *
+ * The rule: it follows the Apple ID. The account that just restored it holds
+ * it, the previous one loses access immediately. One row per user and one
+ * payment behind it, so leaving the origin entitled would fund two accounts
+ * from one purchase.
+ *
+ * The reason these tests are worth their length is that this event does not
+ * look like any other one. It carries NO `app_user_id`, no `product_id`, no
+ * `expiration_at_ms` and no `original_transaction_id` — only
+ * `transferred_from` and `transferred_to`. Every assumption the other eight
+ * types let you make is wrong here.
+ */
+describe('applySubscriptionEvent — TRANSFER', () => {
+  const OLD_USER = 'usr_old_1111';
+  const NEW_USER = 'usr_new_2222';
+
+  /** A transfer body, shaped the way RevenueCat actually sends one. */
+  function transferBody(over: Record<string, unknown> = {}) {
+    return {
+      api_version: '1.0',
+      event: {
+        id: 'evt_transfer_1',
+        type: 'TRANSFER',
+        // NO app_user_id. This is not an omission in the fixture — the event
+        // does not have one, and the schema had to be taught that.
+        transferred_from: [OLD_USER],
+        transferred_to: [NEW_USER],
+        event_timestamp_ms: 1_756_000_000_000,
+        store: 'APP_STORE',
+        environment: 'PRODUCTION',
+        ...over,
+      },
+    };
+  }
+
+  const transferEvent = (over: Record<string, unknown> = {}) =>
+    normalizeWebhookEvent(revenueCatWebhookSchema.parse(transferBody(over)));
+
+  it('PARSES, despite carrying no app_user_id', () => {
+    // The regression that would otherwise have 400'd every real transfer at the
+    // boundary, with RevenueCat retrying each one for as long as its backoff
+    // allowed. `app_user_id` is required for every other type and refused here.
+    expect(() => revenueCatWebhookSchema.parse(transferBody())).not.toThrow();
+    const e = transferEvent();
+    expect(e.appUserId).toBeNull();
+    expect(e.transferredFrom).toEqual([OLD_USER]);
+    expect(e.transferredTo).toEqual([NEW_USER]);
+  });
+
+  it('still refuses a non-transfer event with no app_user_id', () => {
+    // The strictness the nullish field gives up, taken back everywhere else.
+    expect(() =>
+      revenueCatWebhookSchema.parse({
+        event: { id: 'e', type: 'RENEWAL', event_timestamp_ms: 1 },
+      })
+    ).toThrow();
+  });
+
+  it('refuses a TRANSFER that names no destination', () => {
+    expect(() => revenueCatWebhookSchema.parse(transferBody({ transferred_to: [] }))).toThrow();
+  });
+
+  it('gives the subscription to transferred_to and takes it from transferred_from', async () => {
+    const w = fakeWorld({ knownUsers: [OLD_USER, NEW_USER] });
+    const result = await applySubscriptionEvent(transferEvent(), w.deps);
+
+    expect(result).toEqual({
+      outcome: 'applied',
+      eventId: 'evt_transfer_1',
+      userId: NEW_USER,
+      status: 'active',
+    });
+    expect(w.transfers).toEqual([{ fromUserIds: [OLD_USER], toUserId: NEW_USER }]);
+  });
+
+  it('does NOT read the destination from app_user_id — the trap in this event', async () => {
+    /**
+     * If a body ever does carry `app_user_id`, it is not a promise about which
+     * side of the move it names. Here it is deliberately set to the LOSING
+     * account: an implementation that used it would grant the subscription to
+     * the user who just lost it and expire the one who just restored it — the
+     * exact inverse of the rule, and entirely silent.
+     */
+    const w = fakeWorld({ knownUsers: [OLD_USER, NEW_USER] });
+    await applySubscriptionEvent(transferEvent({ app_user_id: OLD_USER }), w.deps);
+
+    expect(w.transfers).toEqual([{ fromUserIds: [OLD_USER], toUserId: NEW_USER }]);
+  });
+
+  it('writes a ledger row for BOTH sides, under distinct event ids', async () => {
+    // `subscription_events.event_id` is unique, so the origin's row is
+    // suffixed. Both exist because the losing user is never told anything, and
+    // a support question about it arrives with no other trail.
+    const w = fakeWorld({ knownUsers: [OLD_USER, NEW_USER] });
+    await applySubscriptionEvent(transferEvent(), w.deps);
+
+    expect(w.events).toHaveLength(2);
+    expect(w.events.map((e) => e.userId).sort()).toEqual([NEW_USER, OLD_USER].sort());
+    expect(new Set(w.events.map((e) => e.eventId)).size).toBe(2);
+    for (const e of w.events) expect(e.outcome).toBe('applied');
+  });
+
+  it('changes NOTHING when the destination is unknown to us', async () => {
+    /**
+     * Reads well as "the subscription has gone, expire them" and is wrong: an
+     * unknown destination means the purchase left our system — most likely onto
+     * an anonymous RevenueCat id — and expiring the origin would strand
+     * somebody still paying with nobody to hand their access to.
+     */
+    const w = fakeWorld({ knownUsers: [OLD_USER] });
+    const result = await applySubscriptionEvent(transferEvent(), w.deps);
+
+    expect(result.outcome).toBe('ignored_unknown_user');
+    expect(w.transfers).toEqual([]);
+    expect(w.events).toHaveLength(1);
+    expect(w.events[0].userId).toBeNull();
+  });
+
+  it('never expires the destination, even if it names itself as an origin', async () => {
+    // A self-transfer is not a way to lose your own subscription.
+    const w = fakeWorld({ knownUsers: [NEW_USER] });
+    await applySubscriptionEvent(
+      transferEvent({ transferred_from: [NEW_USER], transferred_to: [NEW_USER] }),
+      w.deps
+    );
+    expect(w.transfers).toEqual([{ fromUserIds: [], toUserId: NEW_USER }]);
+  });
+
+  it('is idempotent — a retry moves nothing a second time', async () => {
+    const w = fakeWorld({ knownUsers: [OLD_USER, NEW_USER] });
+    await applySubscriptionEvent(transferEvent(), w.deps);
+    const replay = await applySubscriptionEvent(transferEvent(), w.deps);
+
+    expect(replay.outcome).toBe('ignored_duplicate');
+    expect(w.transfers).toHaveLength(1);
+  });
+
+  it('refuses a transfer that lands after a newer event for that user', async () => {
+    // Delivery order is not event order, and the same rule the other types get.
+    const w = fakeWorld({ knownUsers: [OLD_USER, NEW_USER] });
+    await applySubscriptionEvent(
+      event({ id: 'evt_refund', type: 'REFUND', app_user_id: NEW_USER, event_timestamp_ms: 1_757_000_000_000 }),
+      w.deps
+    );
+    const result = await applySubscriptionEvent(
+      transferEvent({ event_timestamp_ms: 1_756_000_000_000 }),
+      w.deps
+    );
+
+    expect(result.outcome).toBe('ignored_stale');
+    expect(w.transfers).toEqual([]);
+  });
+
+  it('is a known type, so it is never logged as unhandled', () => {
+    expect(isKnownEventType('TRANSFER')).toBe(true);
   });
 });

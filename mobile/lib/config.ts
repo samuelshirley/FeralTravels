@@ -51,3 +51,51 @@ export const GOOGLE_MAPS_API_KEY: string | null =
  */
 export const APPLE_SIGNIN_ENABLED: boolean =
   process.env.EXPO_PUBLIC_ENABLE_APPLE_SIGNIN === "1";
+
+/**
+ * RevenueCat's PUBLIC Apple SDK key (`appl_…`).
+ *
+ * Public by design — it identifies the app to RevenueCat and grants nothing on
+ * its own; every entitlement decision is made server-side from the webhook. It
+ * belongs in the bundle, which is why it is an `EXPO_PUBLIC_` var.
+ *
+ * The empty-string collapse is the same trap as GOOGLE_IOS_CLIENT_ID above, and
+ * it bites harder here: an `env` key declared in eas.json with no value inlines
+ * as `""` at build time, `?? null` would keep it, and `Purchases.configure`
+ * with an empty key produces a configured SDK that returns no offerings — which
+ * is indistinguishable, from inside the app, from the Paid Applications
+ * Agreement not being signed. Collapsing it to null instead means the app knows
+ * purchasing is not wired up and SAYS so, which is the one thing that tells
+ * those two failures apart.
+ *
+ * Unset is a supported state: `mobile/lib/purchases.ts` no-ops, the purchase
+ * sheet renders prices without a buy button, and the allowlisted test-purchase
+ * path still works. That is exactly the state every build before this one was
+ * in.
+ */
+const rawRevenueCatKey = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY?.trim();
+export const REVENUECAT_IOS_KEY: string | null =
+  // The `appl_` prefix is RevenueCat's own, and requiring it does two jobs.
+  //
+  // It makes `eas.json`'s REPLACE_WITH_… placeholder behave as UNSET rather
+  // than as a key: the alternative is `configure()` succeeding with nonsense
+  // and every offering coming back empty, which is exactly the symptom of the
+  // Paid Applications Agreement not being signed — two completely different
+  // problems presenting as the same blank sheet, which is the failure
+  // docs/design/iap-setup.md exists to stop.
+  //
+  // And it catches the two wrong keys that are easy to grab from the same
+  // dashboard page: the Android key (`goog_`), and the SECRET API key, which
+  // must never be in a client bundle at all.
+  rawRevenueCatKey?.startsWith("appl_") ? rawRevenueCatKey : null;
+
+/**
+ * The RevenueCat entitlement identifier both products hang off.
+ *
+ * Hardcoded rather than configurable because it must match three places that
+ * cannot check each other: the RevenueCat dashboard, `webhook.test.ts`'s
+ * fixtures (`entitlement_ids: ['pro']`), and this app. An env var would let
+ * them disagree silently — and a disagreement here means `restorePurchases`
+ * reports "nothing to restore" to somebody who is paying.
+ */
+export const REVENUECAT_ENTITLEMENT_ID = "pro";

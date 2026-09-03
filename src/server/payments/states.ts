@@ -16,7 +16,12 @@ import {
   TRIAL_DAYS,
   WATCH_MICROCENTS,
 } from './constants';
-import type { AccountState, BlockReason, SubscriptionStatus } from '@/types/entitlement';
+import type {
+  AccountState,
+  BlockReason,
+  SubscriptionSource,
+  SubscriptionStatus,
+} from '@/types/entitlement';
 
 export type { AccountState, BlockReason };
 
@@ -25,6 +30,28 @@ export interface SubscriptionFacts {
   /** Null means no end date — an admin grant or a lifetime promo. */
   currentPeriodEnd: Date | null;
   autoRenew: boolean;
+  /**
+   * Where the entitlement came from — `apple_iap`, `promo`, `admin`, `fake`.
+   *
+   * Display only, like `productId`. It is what lets Settings call a promo an
+   * Ambassador plan instead of guessing a product name it does not have: a
+   * promo row carries no `productId` by design, so without `source` the only
+   * honest thing to say was "Subscribed".
+   *
+   * NOT to be read by the rules. A promo subscriber is a subscriber; the whole
+   * point of writing an ordinary row is that `resolveAccountState` never learns
+   * about promo codes.
+   */
+  source?: SubscriptionSource | null;
+  /**
+   * The store product id, e.g. `com.feraltravels.ios.annual`.
+   *
+   * Optional because nothing about ENTITLEMENT depends on it — the resolver
+   * below never reads it, and it must not start to. It is carried so Settings
+   * can say *which* plan you are on instead of a bare "Subscribed"; the mapping
+   * from id to a human word happens once, at the API boundary, via `PRODUCTS`.
+   */
+  productId?: string | null;
 }
 
 export interface AccountFacts {
@@ -60,6 +87,23 @@ export interface AccountVerdict {
    * could report a number the decision was never made on.
    */
   spendMicrocents: number;
+  /**
+   * The three subscription facts, passed straight through for DISPLAY.
+   *
+   * None of them changes any decision this resolver makes — `state`,
+   * `entitled` and `blockReason` are computed exactly as before and a reader
+   * should not have to wonder whether adding these moved anything. They are
+   * here because `GET /api/me/entitlement` had no way to tell the app which
+   * plan was bought or when the period ends, so Settings could only say
+   * "Subscribed", and the data was on the row the whole time.
+   *
+   * `autoRenew` defaults to FALSE with no subscription, not true: "no row"
+   * means nothing is renewing.
+   */
+  productId: string | null;
+  currentPeriodEnd: Date | null;
+  autoRenew: boolean;
+  source: SubscriptionSource | null;
 }
 
 export function trialEndsAt(createdAt: Date): Date {
@@ -94,6 +138,12 @@ export function resolveAccountState(facts: AccountFacts): AccountVerdict {
     crossedWatch,
     crossedStop,
     spendMicrocents: spend,
+    // Display-only passthrough. See the note on AccountVerdict: these are read
+    // off the row, never consulted by the rules above.
+    productId: sub?.productId ?? null,
+    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+    autoRenew: sub?.autoRenew ?? false,
+    source: sub?.source ?? null,
     // The pure resolver always reports the true, enforced verdict. The switch
     // is applied one layer up, in `entitlements.ts`, so these tests keep
     // describing what the rules SAY rather than what an env var permits.

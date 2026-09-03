@@ -1,0 +1,128 @@
+{
+  "identifier" : "FERALTRAVELS",
+  "nonRenewingSubscriptions" : [
+  ],
+  "products" : [
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Verification"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Store Sync"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Subscription Status"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Transaction"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Manage Subscriptions Sheet"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Refund Request Sheet"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Offer Code Redeem Sheet"
+      }
+    ],
+    "_timeRate" : "oneRenewalEveryTwoMinutes"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21520000",
+      "localizations" : [
+        {
+          "description" : "",
+          "displayName" : "Feral Travels",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Feral Travels",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+          ],
+          "codeOffers" : [
+          ],
+          "displayPrice" : "2.00",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21520001",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Plan trips with Penny, month by month.",
+              "displayName" : "Feral Travels monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.feraltravels.ios.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Feral Travels monthly",
+          "subscriptionGroupID" : "21520000",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+          ]
+        },
+        {
+          "adHocOffers" : [
+          ],
+          "codeOffers" : [
+          ],
+          "displayPrice" : "20.00",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "21520002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Plan trips with Penny for a year.",
+              "displayName" : "Feral Travels annual",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.feraltravels.ios.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Feral Travels annual",
+          "subscriptionGroupID" : "21520000",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

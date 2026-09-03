@@ -90,6 +90,13 @@ export default async function AdminPage() {
   // Silent redirect — no error page, no info leak that /admin even exists.
   if (!(await isAdmin(session.user.email))) redirect('/trips');
 
+  /**
+   * Read ONCE, at the top, and passed down. It is a database read now rather
+   * than a `process.env` lookup, and calling it five times inside the JSX would
+   * be five reads of a value that cannot change mid-render.
+   */
+  const paywallOn = await paywallEnabled();
+
   const [
     overview,
     recentUsers,
@@ -290,9 +297,9 @@ export default async function AdminPage() {
           <div
             data-testid="admin-paywall-switch"
             title={
-              paywallEnabled()
-                ? 'PAYWALL_ENABLED=1 — verdicts are enforced.'
-                : 'PAYWALL_ENABLED is unset — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
+              paywallOn
+                ? 'Enforcement is ON — verdicts block.'
+                : 'Enforcement is OFF — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
             }
             style={{
               marginLeft: 'auto',
@@ -302,10 +309,10 @@ export default async function AdminPage() {
               padding: '3px 8px',
               borderRadius: 999,
               border: '1px solid var(--tp-border-strong)',
-              color: paywallEnabled() ? 'var(--tp-text)' : 'var(--tp-subtle)',
+              color: paywallOn ? 'var(--tp-text)' : 'var(--tp-subtle)',
             }}
           >
-            PAYWALL {paywallEnabled() ? 'ON' : 'OFF'}
+            PAYWALL {paywallOn ? 'ON' : 'OFF'}
           </div>
         </div>
 
@@ -771,7 +778,7 @@ export default async function AdminPage() {
             hardcoded where no environment variable can widen it, and every action refuses anything
             outside it.
           </p>
-          <TestUserBlock armed={testPurchasesArmed()} paywallOn={paywallEnabled()} />
+          <TestUserBlock armed={testPurchasesArmed()} paywallOn={paywallOn} />
         </section>
 
         {/*
@@ -781,7 +788,7 @@ export default async function AdminPage() {
           Reading in that order, the second is obviously the consequential one.
         */}
         <section>
-          <PromoCodeBlock paywallOn={paywallEnabled()} />
+          <PromoCodeBlock paywallOn={paywallOn} />
         </section>
       </main>
 

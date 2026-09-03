@@ -16,8 +16,8 @@ import { paywallEnabled } from './switch';
  * blocked before turning it on. Only the three fields that gate behaviour are
  * overridden.
  */
-export function applySwitch(verdict: AccountVerdict): AccountVerdict {
-  if (paywallEnabled()) return verdict;
+export async function applySwitch(verdict: AccountVerdict): Promise<AccountVerdict> {
+  if (await paywallEnabled()) return verdict;
   return {
     ...verdict,
     enforced: false,
@@ -46,6 +46,11 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
         status: subscriptions.status,
         currentPeriodEnd: subscriptions.currentPeriodEnd,
         autoRenew: subscriptions.autoRenew,
+        // Display only — Settings says "Annual plan" rather than "Subscribed".
+        // Nothing in `resolveAccountState` reads it.
+        productId: subscriptions.productId,
+        // Display only. Tells "Ambassador plan" from "Monthly plan".
+        source: subscriptions.source,
       })
       .from(subscriptions)
       .where(eq(subscriptions.userId, userId))
@@ -57,7 +62,7 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
   if (!user) {
     // The session outlived the row (deleted account mid-request). Refuse rather
     // than fabricating a trial for a user that does not exist.
-    return applySwitch(
+    return await applySwitch(
       resolveAccountState({
         now,
         createdAt: new Date(0),
@@ -68,7 +73,7 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
     );
   }
 
-  return applySwitch(
+  return await applySwitch(
     resolveAccountState({
       now,
       createdAt: user.createdAt,
@@ -79,6 +84,8 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
             status: subRows[0].status,
             currentPeriodEnd: subRows[0].currentPeriodEnd,
             autoRenew: subRows[0].autoRenew,
+            productId: subRows[0].productId,
+            source: subRows[0].source,
           }
         : null,
     })

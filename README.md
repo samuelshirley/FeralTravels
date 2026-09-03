@@ -120,7 +120,7 @@ A direct push to `main` has no CI run behind it, so the deploy refuses it — pu
 
 ## iOS app
 
-See [`mobile/README.md`](mobile/README.md) and [`docs/design/ios-app-plan.md`](docs/design/ios-app-plan.md). Bundle `com.feraltravels.app`; EAS build profiles `development` / `preview` / `production`; `eas submit` → TestFlight. Sign in with Apple is env-gated (`EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1`). Paywall (StoreKit 2 via RevenueCat) is designed but sequenced after TestFlight.
+See [`mobile/README.md`](mobile/README.md) and [`docs/design/ios-app-plan.md`](docs/design/ios-app-plan.md). Bundle `com.feraltravels.ios`; EAS build profiles `development` / `preview` / `production`; `eas submit` → TestFlight. Sign in with Apple is env-gated (`EXPO_PUBLIC_ENABLE_APPLE_SIGNIN=1`). Paywall (StoreKit 2 via RevenueCat) is designed but sequenced after TestFlight.
 
 ## Docs worth reading
 

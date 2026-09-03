@@ -1,97 +1,57 @@
 import { describe, it, expect, vi } from 'vitest';
 
+// `server-only` throws outside a React Server Component, and the switch now
+// reads a row so it imports the db client too. Both hoisted above the import,
+// same as webhook.test.ts — nothing here touches Postgres.
 vi.mock('server-only', () => ({}));
-vi.mock('@/server/db/client', () => ({ db: {} }));
-vi.mock('@/server/repos/trips', () => ({ cloneTrip: vi.fn(), createTrip: vi.fn() }));
-vi.mock('@/server/repos/vehicles', () => ({ addVehicle: vi.fn() }));
+vi.mock('@/server/db/client', () => ({ db: {}, schema: {} }));
 
-import { applySwitch } from './entitlements';
-import { resolveAccountState } from './states';
-import { paywallEnabled } from './switch';
+import { paywallEnabledFromValue, PAYWALL_META_KEY } from './switch';
 
 /**
- * The master switch, which had no test at all — and that gap is exactly what
- * turned PR #17's E2E job red.
+ * The paywall's master switch, as a rule rather than as a query.
  *
- * `subscriptions.spec.ts` was written before the switch existed. It sets up an
- * account's age, spend and subscription row, then asserts the wall appears.
- * With `PAYWALL_ENABLED` unset — which is the DEFAULT, and which no workflow
- * sets — `applySwitch` forces `entitled: true` for everyone, so every spec that
- * asserts a block asserts against an app that is deliberately not blocking.
+ * It moved out of `process.env` and into `app_meta` on 2026-09-02, so this file
+ * changed shape with it: the old version passed fake env objects to a pure
+ * lookup, and the new one tests the only part that is still pure — what a
+ * stored value MEANS. The database read around it is four lines of drizzle,
+ * and a mocked query builder would assert that we called drizzle the way we
+ * called drizzle. `webhook.test.ts` explains the same trade at length.
  *
- * These tests pin both halves of that, so the next person to change the default
- * finds out from the unit suite in seconds rather than from a red E2E job.
+ * What is worth pinning is the direction of every ambiguity: OFF. This switch
+ * blocks paying customers when it is wrong, and it blocked 28 of 29 production
+ * accounts once already.
  */
-
-const THIRTY_DAYS_AGO = new Date('2026-07-28T00:00:00Z');
-const NOW = new Date('2026-08-27T00:00:00Z');
-
-/** A real, unambiguously blocked verdict: trial long over, nothing bought. */
-const blocked = () =>
-  resolveAccountState({
-    now: NOW,
-    createdAt: THIRTY_DAYS_AGO,
-    comped: false,
-    anthropicMicrocents12mo: 0,
-    subscription: null,
+describe('paywallEnabledFromValue', () => {
+  it('is ON for exactly "1" and nothing else', () => {
+    expect(paywallEnabledFromValue('1')).toBe(true);
   });
 
-describe('paywallEnabled', () => {
-  it('is off unless the value is exactly "1"', () => {
-    expect(paywallEnabled({})).toBe(false);
-    expect(paywallEnabled({ PAYWALL_ENABLED: undefined })).toBe(false);
-    expect(paywallEnabled({ PAYWALL_ENABLED: '' })).toBe(false);
-    // Off for anything truthy-looking but not the literal 1. A paywall that
-    // switched on for "true"/"yes"/"0" would be a footgun in both directions.
-    expect(paywallEnabled({ PAYWALL_ENABLED: 'true' })).toBe(false);
-    expect(paywallEnabled({ PAYWALL_ENABLED: '0' })).toBe(false);
-    expect(paywallEnabled({ PAYWALL_ENABLED: '1' })).toBe(true);
-  });
-});
-
-describe('applySwitch', () => {
-  it('the verdict is genuinely blocked before the switch touches it', () => {
-    const v = blocked();
-    expect(v.state).toBe('trial_expired');
-    expect(v.entitled).toBe(false);
-    expect(v.blockReason).toBe('trial_over');
+  it('is OFF for every other truthy-looking string', () => {
+    /**
+     * The failure this prevents: somebody sets the row by hand — from psql, or
+     * from a future admin form that posts a string — and types the word they
+     * would say out loud. A loose check (`Boolean(value)`, or `!== '0'`) turns
+     * every one of these into an enforced paywall, which is the expensive
+     * direction.
+     */
+    for (const v of ['true', 'TRUE', 'yes', 'on', 'enabled', '2', ' 1', '1 ', '01']) {
+      expect(paywallEnabledFromValue(v), v).toBe(false);
+    }
   });
 
-  it('OFF: hands back full access while leaving the state truthful', () => {
-    vi.stubEnv('PAYWALL_ENABLED', '');
-    const v = applySwitch(blocked());
-    // This is the line that made six E2E specs assert nothing.
-    expect(v.entitled).toBe(true);
-    expect(v.canViewExistingTrips).toBe(true);
-    expect(v.blockReason).toBeNull();
-    expect(v.enforced).toBe(false);
-    // The STATE must survive, or the admin panel could never show who would be
-    // blocked before the switch is turned on — which is the whole point of
-    // having a switch rather than deleting the feature.
-    expect(v.state).toBe('trial_expired');
-    vi.unstubAllEnvs();
+  it('is OFF for absent, empty and null — the states a fresh database is in', () => {
+    // No row at all is the normal state of a database that has never had the
+    // switch touched, including every preview branch and every local checkout.
+    expect(paywallEnabledFromValue(undefined)).toBe(false);
+    expect(paywallEnabledFromValue(null)).toBe(false);
+    expect(paywallEnabledFromValue('')).toBe(false);
+    expect(paywallEnabledFromValue('0')).toBe(false);
   });
 
-  it('ON: the blocked verdict passes through untouched', () => {
-    vi.stubEnv('PAYWALL_ENABLED', '1');
-    const v = applySwitch(blocked());
-    expect(v.entitled).toBe(false);
-    expect(v.blockReason).toBe('trial_over');
-    expect(v.enforced).toBe(true);
-    vi.unstubAllEnvs();
-  });
-
-  it('never REMOVES access that the rules already granted', () => {
-    // The switch is one-way on purpose: it can only ever be more permissive.
-    vi.stubEnv('PAYWALL_ENABLED', '');
-    const entitled = resolveAccountState({
-      now: NOW,
-      createdAt: NOW,
-      comped: false,
-      anthropicMicrocents12mo: 0,
-      subscription: null,
-    });
-    expect(applySwitch(entitled).entitled).toBe(true);
-    vi.unstubAllEnvs();
+  it('names the row it reads', () => {
+    // Pinned because two places write it: `setPaywallEnabled` and any hand fix
+    // from psql when the admin page itself is the thing that is broken.
+    expect(PAYWALL_META_KEY).toBe('paywall_enabled');
   });
 });

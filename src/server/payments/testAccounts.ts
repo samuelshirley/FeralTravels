@@ -176,7 +176,7 @@ export async function createTestAccount(input: CreateTestAccountInput): Promise<
       userId: row.id,
       status: input.subscription,
       source: 'fake',
-      productId: 'com.feraltravels.app.annual',
+      productId: 'com.feraltravels.ios.annual',
       currentPeriodEnd: periodEnd,
       autoRenew: input.autoRenew ?? true,
     });

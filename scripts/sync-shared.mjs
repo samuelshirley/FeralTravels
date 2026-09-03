@@ -36,6 +36,22 @@ export const SHARED_FILES = [
   // exists: an error code with no copy in a client shows "Something went wrong".
   ['src/lib/promoCode.ts', 'mobile/shared/lib/promoCode.ts'],
   ['src/lib/promoCopy.ts', 'mobile/shared/lib/promoCopy.ts'],
+  // The in-app-purchase vocabulary and its copy, plus the rule for how long the
+  // app waits on the webhook. Nothing on the web can buy anything, so these
+  // live in src/lib for ONE reason: the root vitest project is the only test
+  // runner this repo has, and `mobile/lib/purchases.ts` cannot be tested by it
+  // (it imports react-native-purchases, and CI's unit job installs no
+  // mobile/node_modules). Same trade as paywallNotice.ts. The parts that DO
+  // need the SDK — the PURCHASES_ERROR_CODE mapping — deliberately stay over
+  // there, where `tsc --noEmit` checks the enum member names against the real
+  // package instead of against a copy of them.
+  ['src/lib/purchaseOutcome.ts', 'mobile/shared/lib/purchaseOutcome.ts'],
+  ['src/lib/entitlementPolling.ts', 'mobile/shared/lib/entitlementPolling.ts'],
+  // The Settings -> Plan status line. Mirrored so the two clients cannot end up
+  // describing the same twelve account states differently, and living in
+  // src/lib for the same reason as the two above: the root vitest project is
+  // the only test runner, and its exhaustive switch is worth a test.
+  ['src/lib/planStatusLine.ts', 'mobile/shared/lib/planStatusLine.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

@@ -94,13 +94,24 @@ async function main() {
   const email = uniqueEmail();
 
   // The canonical graph — a vehicle and a named trip — because the flows assert
-  // on 'E2E Fixture Trip' to prove the session really resolved this user's own
+  // on the trip's name to prove the session really resolved this user's own
   // data. Names come from e2e/fixtures/constants.ts; keep them in step.
+  //
+  // OVERRIDABLE, with those literals as the defaults, for exactly one caller:
+  // `ios-e2e-local.sh screenshots` seeds the same two canonical legs (Paris →
+  // Strasbourg → Stuttgart, real coordinates, real road geometry) under names a
+  // customer could read. "E2E Fixture Trip" is the right name for a test and
+  // the wrong one for an App Store listing, and the seed endpoint has always
+  // taken all three as parameters — nothing about the graph changes.
+  const tripName = arg('trip-name', 'E2E Fixture Trip');
   const seeded = await post('/api/test/seed', {
     email,
-    userName: 'E2E Fixture User',
-    vehicleName: 'E2E Fixture Van',
-    tripName: 'E2E Fixture Trip',
+    userName: arg('user-name', 'E2E Fixture User'),
+    vehicleName: arg('vehicle-name', 'E2E Fixture Van'),
+    tripName,
+    // Omitted by every caller but `screenshots`, where a shorter range is what
+    // makes day 1 actually need a fuel stop. See seedCanonicalFixture.
+    ...(arg('range-km', '') ? { rangeKm: Number(arg('range-km', '')) } : {}),
   });
   if (!seeded.ok) {
     throw new Error(
@@ -127,7 +138,7 @@ async function main() {
     if (res.ok) {
       const body = JSON.parse(res.text || '{}');
       if (body.code) {
-        emit(email);
+        emit(email, tripName);
         return;
       }
       last = 'code not written yet';
@@ -140,12 +151,31 @@ async function main() {
   throw new Error(`no OTP for ${email} (${last})`);
 }
 
-function emit(email) {
+/**
+ * `TRIP_NAME` is emitted alongside `EMAIL`, and for the same reason: the flows
+ * assert on it, so it has to come from the thing that actually seeded it rather
+ * than be restated by the caller.
+ *
+ * `sign-in.yaml` matches the trip card against `.*${TRIP_NAME}.*`. That used to
+ * be the literal `E2E Fixture Trip` and became a variable when
+ * `ios-e2e-local.sh screenshots` needed to seed the same graph under a
+ * customer-readable name. The local runner was taught to pass it; ci.yml was
+ * not — so on CI the variable was undefined and the assertion could never match
+ * a card that says "E2E Fixture Trip". It passed locally and failed on every CI
+ * run, which is the shape this repo keeps hitting.
+ *
+ * Emitting it here means the value cannot drift from what was seeded, the way a
+ * literal in ci.yml could. `src/lib/maestroFlowParams.test.ts` fails if a flow
+ * ever references a variable no runner supplies.
+ */
+function emit(email, tripName) {
   process.stderr.write(`[ios-e2e] fixture ready: ${email}\n`);
   process.stderr.write('[ios-e2e] code NOT emitted — read-otp.js reads the live one in-flow\n');
   process.stdout.write(`EMAIL=${email}\n`);
+  process.stdout.write(`TRIP_NAME=${tripName}\n`);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `email=${email}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `trip_name=${tripName}\n`);
   }
 }
 

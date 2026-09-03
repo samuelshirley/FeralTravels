@@ -114,7 +114,19 @@ export type PromoRefusal =
   /** Past `expiresAt`. The code was real; the window closed. */
   | 'promo_expired'
   /** Bound to a different address than the one signed in. */
-  | 'promo_wrong_account';
+  | 'promo_wrong_account'
+  /**
+   * They already hold a LIVE Apple subscription.
+   *
+   * Redeeming would overwrite it: `subscriptions` is one row per user, so the
+   * `apple_iap` row would become a `promo` row while Apple carried on charging
+   * them, and the next renewal webhook would land against a row that no longer
+   * describes what they bought. Nothing on the redeem screen says that happens,
+   * and choosing to redeem a code is not choosing to detach a subscription.
+   *
+   * LIVE, not merely present: a lapsed customer can still be given a plan.
+   */
+  | 'promo_active_subscription';
 
 export type PromoDecision = { ok: true } | { ok: false; reason: PromoRefusal };
 
@@ -146,4 +158,79 @@ export function decidePromoRedemption(
     return { ok: false, reason: 'promo_expired' };
   }
   return { ok: true };
+}
+
+/**
+ * The two terms an admin may grant. Validated at the API boundary.
+ *
+ * Here rather than in `server/payments/promo.ts` because that module is
+ * `server-only` and the unit project cannot import it — the same split that
+ * already puts `decidePromoRedemption` in this file. Mirrored into the app with
+ * the rest of it.
+ */
+export const PROMO_GRANT_MONTHS = [6, 12] as const;
+export type PromoGrantMonths = (typeof PROMO_GRANT_MONTHS)[number];
+
+export function isPromoGrantMonths(n: number): n is PromoGrantMonths {
+  return (PROMO_GRANT_MONTHS as readonly number[]).includes(n);
+}
+
+/**
+ * Add whole months to a date, clamped to the end of the target month.
+ *
+ * `setUTCMonth` alone rolls over: 31 August + 6 months is 31 February, which
+ * JavaScript silently turns into 3 March. Clamping to 28 February is the
+ * boring, expected answer, and it is the one an admin explaining a date to a
+ * recipient would give.
+ *
+ * UTC throughout, deliberately. The stored `current_period_end` is a UTC
+ * instant and the server runs in UTC; doing this in local time would make a
+ * developer's laptop mint a term an hour different from production's.
+ */
+export function addMonthsUTC(from: Date, months: number): Date {
+  const day = from.getUTCDate();
+  const d = new Date(from.getTime());
+  // Park on the 1st first, so adding the month cannot roll over on its own
+  // before the clamp below has a chance to run.
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const lastDayOfTarget = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDayOfTarget));
+  return d;
+}
+
+/**
+ * Is this subscription row a real Apple purchase that has not ended?
+ *
+ * The guard that stops a promo redemption overwriting a paying customer.
+ * `subscriptions` is one row per user, so granting a promo to somebody
+ * currently paying Apple would turn their `apple_iap` row into a `promo` one
+ * while Apple carried on charging them, and the next renewal webhook would land
+ * against a row that no longer describes what they bought.
+ *
+ * Deliberately NARROWER than `resolveAccountState`, and deliberately not
+ * reusing it. That answers "may this account spend money", which has a master
+ * switch on top: `applySwitch` reports everybody entitled while
+ * `PAYWALL_ENABLED` is unset, so asking it here would refuse every redemption
+ * on production today. This asks something with no switch on it — does the row
+ * describe a purchase Apple still knows about.
+ *
+ * `cancelled` counts as LIVE. Auto-renew is off, but they paid through the
+ * period, the row still carries the `original_transaction_id`, and an
+ * `UNCANCELLATION` can still arrive against it.
+ *
+ * `expired`, `refunded` and `revoked` do not — nothing is arriving for those,
+ * and a lapsed customer is exactly who an ambassador plan is for.
+ */
+export function holdsLiveApplePurchase(
+  row: { source: string; status: string; currentPeriodEnd: Date | null },
+  now: Date
+): boolean {
+  if (row.source !== 'apple_iap') return false;
+  if (!['active', 'grace', 'cancelled'].includes(row.status)) return false;
+  // Null means no end date. It should not happen on an apple_iap row, but if it
+  // does, treat it as live rather than clobber it.
+  return row.currentPeriodEnd === null || row.currentPeriodEnd.getTime() > now.getTime();
 }

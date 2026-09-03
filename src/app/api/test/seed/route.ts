@@ -11,6 +11,8 @@ const bodySchema = z.object({
   userName: z.string().optional(),
   vehicleName: z.string().min(1),
   tripName: z.string().min(1),
+  /** Optional fixture vehicle range. Defaults to the Hilux's real 500 km. */
+  rangeKm: z.number().int().min(50).max(2000).optional(),
 });
 
 export async function POST(req: Request) {

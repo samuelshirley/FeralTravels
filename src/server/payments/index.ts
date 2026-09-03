@@ -54,7 +54,13 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  * — keeps the entitlement surface cheap to import.
  */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
-export { paywallEnabled } from './switch';
+export {
+  paywallEnabled,
+  setPaywallEnabled,
+  invalidatePaywallSwitch,
+  paywallEnabledFromValue,
+  PAYWALL_META_KEY,
+} from './switch';
 /**
  * Promo codes belong on this surface, unlike `./testAccounts`: redeeming one
  * writes an ordinary `subscriptions` row through `upsertSubscription`, so it is
@@ -67,5 +73,19 @@ export {
   redeemPromoCode,
   listPromoCodes,
   countOutstandingPromoCodes,
+  /**
+   * The sign-in auto-claim. On this surface rather than imported directly for
+   * the same reason redeem is: it is a way of BECOMING entitled, and the module
+   * that owns that decision should be the one that exposes it.
+   */
+  claimPromoOnSignIn,
+  PROMO_GRANT_MONTHS,
+  isPromoGrantMonths,
+  addMonthsUTC,
 } from './promo';
-export type { CreatePromoCodeInput, PromoCodeRow, RedeemResult } from './promo';
+export type {
+  CreatePromoCodeInput,
+  PromoCodeRow,
+  RedeemResult,
+  PromoGrantMonths,
+} from './promo';
