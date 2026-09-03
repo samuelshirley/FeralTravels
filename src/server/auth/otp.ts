@@ -103,8 +103,21 @@ async function claimSendSlot(email: string): Promise<number | null> {
         windowStartedAt: windowStartedAt ?? now,
         lastSentAt: now,
       },
+      /*
+       * `eq()`, NOT a raw `sql` template with the Date interpolated.
+       *
+       * Interpolating a JS Date straight into `sql` hands postgres-js a bind
+       * parameter with no column type behind it, and the driver then tries to
+       * serialise the Date as a string: `ERR_INVALID_ARG_TYPE: The "string"
+       * argument ... Received an instance of Date`. It throws at BIND time, so
+       * it never touches the database and no test that reads a row can see it.
+       * It also only fires on the second send for an address — the first
+       * insert has no conflict and never evaluates this — which is why it
+       * survived the unit suite and surfaced as a 502 on the simulator's
+       * resend. `eq` carries the column's own timestamptz mapping.
+       */
       setWhere: lastSentAt
-        ? sql`${otpSendThrottle.lastSentAt} = ${lastSentAt}`
+        ? eq(otpSendThrottle.lastSentAt, lastSentAt)
         : sql`true`,
     })
     .returning({ sends: otpSendThrottle.sends });
