@@ -466,7 +466,7 @@ export default function SignInScreen() {
                 editable={!sending}
               />
               <Button
-                label="Email me a code"
+                label="Email me a 6-digit code"
                 onPress={() => void send()}
                 busy={sending}
                 style={styles.submit}

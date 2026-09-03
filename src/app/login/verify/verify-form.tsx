@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { verifyOtpAction, resendOtpAction } from './actions';
-import { buttonStyle } from '@/components/ui/Button';
+import { InfoIcon } from '@/components/icons';
 
 interface VerifyFormProps {
   email: string;
@@ -176,11 +176,11 @@ export function VerifyForm({
     boxSizing: 'border-box' as const,
     aspectRatio: '1 / 1.2',
     textAlign: 'center',
-    fontSize: 'clamp(18px, 5vw, 26px)',
-    fontWeight: 700,
+    fontSize: 24,
+    fontWeight: 500,
     fontVariantNumeric: 'tabular-nums',
-    background: 'var(--tp-surface-muted)',
-    border: '1px solid var(--tp-border)',
+    background: 'var(--tp-neutral-900)',
+    border: '1px solid var(--tp-neutral-800)',
     borderRadius: 'var(--tp-radius-sm)',
     color: 'var(--tp-text)',
     outline: 'none',
@@ -204,42 +204,59 @@ export function VerifyForm({
         <div
           role="status"
           style={{
-            padding: '8px 12px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            padding: '9px 12px',
             borderRadius: 'var(--tp-radius-sm)',
-            background:
-              notice.tone === 'error' ? 'var(--tp-danger-muted)' : 'var(--tp-surface-muted)',
-            border:
-              notice.tone === 'error'
-                ? '1px solid rgba(198, 93, 74, 0.35)'
-                : '1px solid var(--tp-border)',
-            color: notice.tone === 'error' ? 'var(--tp-danger)' : 'var(--tp-muted)',
+            background: 'var(--tp-neutral-900)',
+            border: '1px solid var(--tp-neutral-700)',
+            color: 'var(--tp-neutral-200)',
             fontSize: 12,
+            lineHeight: 1.45,
             marginBottom: 16,
           }}
         >
-          {notice.text}
+          {/* ONE box for both tones. `notice.tone` still exists because the
+              copy differs, but it no longer picks a colour: a red panel on a
+              sign-in screen reads as "your account is in trouble" when the
+              truth is a mistyped digit or a code still in flight. */}
+          <span style={{ flexShrink: 0, lineHeight: 0, color: 'var(--tp-accent-300)' }}>
+            <InfoIcon />
+          </span>
+          <span>{notice.text}</span>
         </div>
       )}
 
       {resent && !error && (
         <div
           style={{
-            padding: '8px 12px',
+            padding: '9px 12px',
             borderRadius: 'var(--tp-radius-sm)',
-            background: 'var(--tp-primary-muted)',
-            border: '1px solid rgba(78, 122, 176, 0.35)',
-            color: 'var(--tp-primary)',
+            background: 'var(--tp-neutral-900)',
+            border: '1px solid var(--tp-neutral-700)',
+            color: 'var(--tp-neutral-200)',
             fontSize: 12,
             marginBottom: 16,
           }}
         >
-          A new code was sent to <strong>{maskEmail(email)}</strong>.
+          A new code was sent to{' '}
+          <strong style={{ fontWeight: 500, color: 'var(--tp-text)' }}>{maskEmail(email)}</strong>.
         </div>
       )}
 
-      <p style={{ fontSize: 13, color: 'var(--tp-muted)', margin: '0 0 20px', lineHeight: 1.5 }}>
-        We sent a 6-digit code to <strong>{maskEmail(email)}</strong>. Enter it below — it expires
-        in 10 minutes.
+      <p
+        style={{
+          fontSize: 13,
+          fontWeight: 400,
+          lineHeight: 1.55,
+          color: 'var(--tp-neutral-400)',
+          textWrap: 'pretty',
+          margin: '0 0 20px',
+        }}
+      >
+        We sent a code to <strong style={{ fontWeight: 500, color: 'var(--tp-text)' }}>{maskEmail(email)}</strong>. Your
+        phone should offer to fill it in — it expires in 10 minutes.
       </p>
 
       {/* Code entry form */}
@@ -285,14 +302,20 @@ export function VerifyForm({
                   e.target.select();
                 }}
                 onBlur={() => setFocusedIndex(null)}
+                className="auth-digit"
                 style={{
                   ...digitBoxStyle,
                   width: '100%',
-                  borderColor: focusedIndex === i
-                    ? 'var(--tp-primary)'
-                    : digit
-                    ? 'var(--tp-border-strong)'
-                    : 'var(--tp-border)',
+                  borderColor:
+                    focusedIndex === i
+                      ? 'var(--tp-primary)'
+                      : digit
+                        ? 'var(--tp-neutral-700)'
+                        : 'var(--tp-neutral-800)',
+                  // A ring rather than a thicker border, so the box does not
+                  // change size as focus moves along the row.
+                  boxShadow:
+                    focusedIndex === i ? '0 0 0 2px rgba(145, 132, 217, 0.3)' : undefined,
                 }}
                 aria-label={`Digit ${i + 1} of ${NUM_DIGITS}`}
               />
@@ -319,16 +342,8 @@ export function VerifyForm({
         <button
           type="submit"
           disabled={submitting || !codeComplete}
-          style={{
-            ...buttonStyle(),
-            width: '100%',
-            // Incomplete code reads as unavailable rather than as a second
-            // button style: same outline, dimmed, exactly like every other
-            // disabled control.
-            ...(codeComplete
-              ? null
-              : { opacity: 0.6, cursor: 'default', color: 'var(--tp-subtle)' }),
-          }}
+          className="auth-btn auth-btn-email"
+          style={{ marginTop: 16 }}
         >
           {submitting ? 'Verifying…' : 'Verify code'}
         </button>
@@ -367,15 +382,16 @@ export function VerifyForm({
                 ? 'Your last code was just sent — give it a moment to arrive.'
                 : undefined
             }
+            className={resendBlocked ? undefined : 'auth-link'}
             style={{
               background: 'none',
               border: 'none',
               padding: 0,
-              color: resendBlocked ? 'var(--tp-subtle)' : 'var(--tp-primary)',
+              color: resendBlocked ? 'var(--tp-neutral-500)' : 'var(--tp-accent-300)',
               fontSize: 13,
-              fontWeight: 600,
+              fontWeight: 500,
               cursor: resendBlocked ? 'default' : 'pointer',
-              textDecoration: resendBlocked ? 'none' : 'underline',
+              textDecoration: 'none',
               fontVariantNumeric: 'tabular-nums',
               transition: 'color 0.15s',
             }}
@@ -389,9 +405,9 @@ export function VerifyForm({
       <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: 'var(--tp-muted)' }}>
         <a
           href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-          style={{ color: 'var(--tp-subtle)', textDecoration: 'none' }}
+          className="auth-link"
         >
-          ← Use a different email
+          Use another email
         </a>
       </div>
     </div>

@@ -45,7 +45,18 @@
   --tp-text: #e9e9ed;
   --tp-muted: #b2b6ca;
   --tp-subtle: #75798c;
+  /* The full neutral ramp. `border`, `border-strong`, `muted` and `subtle`
+     above are the semantic names for four of these steps and stay the way
+     components should reach for them; the numbered ramp exists for the places
+     a design calls out a step by number. 200 and 500 are interpolated — every
+     other step is Nocturne's own. */
+  --tp-neutral-200: #e2e5f0;
   --tp-neutral-300: #cfd3e5;
+  --tp-neutral-400: #b2b6ca; /* = --tp-muted */
+  --tp-neutral-500: #949ab0;
+  --tp-neutral-600: #75798c; /* = --tp-subtle */
+  --tp-neutral-700: #595d6c; /* = --tp-border-strong */
+  --tp-neutral-800: #3f424d; /* = --tp-border */
   --tp-neutral-900: #292b31; /* hairline inside a card */
 
   /* Accent */
@@ -54,6 +65,7 @@
   --tp-primary-muted: rgba(145, 132, 217, 0.14); /* pressed / selected */
   --tp-primary-tint: rgba(145, 132, 217, 0.08); /* an outlined button at rest */
   --tp-on-primary: #e9e9ed; /* never pure white */
+  --tp-accent-200: #e4e2fe;
   --tp-accent-300: #d2cefd;
   --tp-accent-400: #b5abfc;
   --tp-accent-700: #5d5294;
@@ -411,4 +423,101 @@ img, svg, canvas { max-width: 100%; }
 }
 .legal-doc strong {
   color: var(--tp-text);
+}
+
+/* ---------------------------------------------------------------------------
+ * Sign-in surfaces (/login, /login/verify).
+ *
+ * These live here rather than inline because both pages are SERVER components
+ * and a hover state is not expressible in a style object. `color-mix` needs
+ * Chrome 111 / Safari 16.4; the un-mixed border and label carry the button on
+ * anything older, so the fallback is a flat outline rather than an invisible
+ * control.
+ * ------------------------------------------------------------------------- */
+.auth-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--tp-radius-sm);
+  font-family: var(--tp-font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+/* Google is the fast path, so it carries the accent edge. */
+.auth-btn-google {
+  border: 1px solid var(--tp-primary);
+  color: var(--tp-text);
+}
+.auth-btn-google:hover {
+  background: color-mix(in oklch, var(--tp-primary) 12%, transparent);
+}
+.auth-btn-google:active {
+  background: color-mix(in oklch, var(--tp-primary) 20%, transparent);
+}
+.auth-btn-apple {
+  border: 1px solid var(--tp-neutral-700);
+  color: var(--tp-text);
+}
+.auth-btn-apple:hover {
+  border-color: var(--tp-primary);
+  background: color-mix(in oklch, var(--tp-primary) 8%, transparent);
+}
+/* Email is secondary emphasis: filled tint, so it reads below Google. */
+.auth-btn-email {
+  border: 1px solid var(--tp-primary);
+  color: var(--tp-accent-200);
+  background: color-mix(in oklch, var(--tp-primary) 10%, transparent);
+}
+.auth-btn-email:hover {
+  background: color-mix(in oklch, var(--tp-primary) 18%, transparent);
+}
+.auth-btn-email:active {
+  background: color-mix(in oklch, var(--tp-primary) 26%, transparent);
+}
+.auth-btn-email:disabled {
+  border-color: var(--tp-neutral-800);
+  color: var(--tp-neutral-500);
+  background: transparent;
+  cursor: default;
+}
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  background: var(--tp-neutral-900);
+  border: 1px solid var(--tp-neutral-800);
+  border-radius: var(--tp-radius-sm);
+  color: var(--tp-text);
+  font-family: var(--tp-font-sans);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.auth-input:focus {
+  border-color: var(--tp-primary);
+}
+.auth-input::placeholder {
+  color: var(--tp-neutral-500);
+}
+/* One ring everywhere on these screens, never the browser's blue default. */
+.auth-btn:focus-visible,
+.auth-input:focus-visible,
+.auth-link:focus-visible,
+.auth-digit:focus-visible {
+  outline: 2px solid var(--tp-primary);
+  outline-offset: 2px;
+}
+.auth-link {
+  color: var(--tp-accent-300);
+  text-decoration: none;
+}
+.auth-link:hover {
+  text-decoration: underline;
 }

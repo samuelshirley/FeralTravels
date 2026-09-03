@@ -56,7 +56,7 @@ test.describe('Email OTP login — real delivery', () => {
     await page.locator('input[name="email"]').fill(email);
     await Promise.all([
       page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
-      page.getByRole('button', { name: /email me a code/i }).click(),
+      page.getByRole('button', { name: /email me a 6-digit code/i }).click(),
     ]);
     await expect(page.locator('text=/6-digit code/i')).toBeVisible();
 

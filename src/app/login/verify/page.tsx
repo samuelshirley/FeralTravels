@@ -34,7 +34,27 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
    * already dead, and the page offered it anyway with no hint of that.
    */
   const urlHint = Number(searchParams.retryAfter);
-  const remainingMs = await getResendCooldownRemainingMs(email);
+
+  /*
+   * The throttle read CANNOT be allowed to take this page down. It decides
+   * how a countdown renders; the page is the only way into the product. An
+   * unguarded await here means any failure of that one query — the table
+   * missing because a migration has not run yet, a connection blip — turns
+   * the whole sign-in screen into a 500 and nobody gets in at all. Found by
+   * loading this page against a database without migration 0030.
+   *
+   * On failure we fall back to the URL hint, which is the same number the
+   * redirect that sent the user here already computed. The server remains the
+   * authority regardless: a press that arrives too early is refused by
+   * `sendOtpCode`, not by this countdown.
+   */
+  let remainingMs = 0;
+  try {
+    remainingMs = await getResendCooldownRemainingMs(email);
+  } catch (err) {
+    console.error('[verify] could not read the resend throttle:', err);
+  }
+
   const resendInSeconds = Math.max(
     remainingMs > 0 ? retryAfterSeconds(remainingMs) : 0,
     Number.isFinite(urlHint) && urlHint > 0 ? Math.floor(urlHint) : 0
@@ -54,28 +74,38 @@ export default async function VerifyPage({ searchParams }: VerifyPageProps) {
       <div
         style={{
           width: '100%',
-          maxWidth: 420,
+          maxWidth: 400,
+          boxSizing: 'border-box',
           background: 'var(--tp-surface)',
-          border: '1px solid var(--tp-border)',
+          border: '1px solid var(--tp-neutral-800)',
           borderRadius: 'var(--tp-radius-md)',
-          padding: 'clamp(20px, 5vw, 32px)',
+          padding: '32px 28px 22px',
           color: 'var(--tp-text)',
-          boxShadow: 'var(--tp-shadow-md)',
+          // No box-shadow — on a dark ground elevation is an edge.
         }}
       >
         <div
           style={{
             fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.15em',
-            color: 'var(--tp-subtle)',
+            fontWeight: 600,
+            letterSpacing: '0.16em',
+            color: 'var(--tp-accent-300)',
             marginBottom: 6,
           }}
         >
           FERAL TRAVELS
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 20 }}>
-          Enter your code
+        <h1
+          style={{
+            fontSize: 24,
+            fontWeight: 500,
+            lineHeight: 1.15,
+            letterSpacing: '-0.01em',
+            margin: 0,
+            marginBottom: 8,
+          }}
+        >
+          Check your email
         </h1>
 
         <VerifyForm

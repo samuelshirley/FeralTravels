@@ -65,7 +65,7 @@ appId: ${APP_ID}
 # fully clear of it and the tap below lands on the button. Read off the live
 # hierarchy, not assumed. If a smaller device ever puts the two in contact the
 # fix is to scroll the button into view, not to reinstate this.
-- tapOn: 'Email me a code'
+- tapOn: 'Email me a 6-digit code'
 
 # The verify screen.
 #

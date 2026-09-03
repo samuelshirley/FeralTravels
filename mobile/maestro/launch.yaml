@@ -48,4 +48,4 @@ appId: ${APP_ID}
 
 # Both halves of the screen, so a partial render is a failure rather than a
 # pass on one lucky node.
-- assertVisible: 'Email me a code'
+- assertVisible: 'Email me a 6-digit code'
