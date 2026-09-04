@@ -150,7 +150,7 @@ Composer placeholder: `e.g. November 1st, or 2026-06-03`. The user's answer rend
 
 Labels **verbatim from `onboarding.ts:510`** — `Metric (km)` and `Imperial (cheeseburgers)`; the second gets a `Hamburger` glyph on the right. Two stacked 46px radio rows (not a segmented strip — the label is too long to split a 402px screen), selected row = accent border + 8% tint + filled radio dot. Help line beneath: `Only changes what you see — planning always runs in km.`
 
-Answered steps above collapse to one-line receipts: `Check` icon in accent + 11.5px subtle text (`Trip · Lisbon`, `Setting off · Sat 19 Sep 2026`). Do this instead of leaving the full Q&A bubbles in the transcript.
+~~Answered steps above collapse to one-line receipts: `Check` icon in accent + 11.5px subtle text (`Trip · Lisbon`, `Setting off · Sat 19 Sep 2026`). Do this instead of leaving the full Q&A bubbles in the transcript.~~ **Superseded 2026-09-04** (`docs/bugs/mobile-web-nav-units-prompt.md` item 9): answered steps stay in the transcript as ordinary chat bubbles — a Penny bubble per question, a right-aligned user bubble per answer. Only step 1 (7b) gets the special treatment. The receipts shipped briefly and were removed.
 
 ### 7e — Onboarding 4/4 · `vehicle.name` + `range_km`, one card
 
@@ -179,7 +179,7 @@ One card (surface, 14px radius, shadow-sm), everything inside it:
 - **Navigation is an external hand-off, and must look like it.** Every navigate affordance opens Google Maps via the existing `buildSegmentedNavUrls` / `buildLegDirectionsUrl` URL — so the per-row arrow and the primary action both carry an `ArrowSquareOut` glyph and the action reads `{stop} in Google Maps`, never a bare "Navigate" that implies in-app turn-by-turn.
 - One accent-outlined 44px action: `Navigate to {next stop}` — GPS ordering rules unchanged (`orderNavSegments`; GPS decides order, never contents; destination always reachable).
 - `Location off — open Settings` becomes an 11px accent-300 row with a `CrosshairSimple` icon. **This needs building, not just restyling:** when the OS permission is denied it must call `Linking.openSettings()` to land the user in the iOS Settings pane for the app; when the app has simply not asked yet, it fires the in-app permission request. `LegCard`'s `enablePath` branch anticipates both paths — wire them and confirm the copy switches between "open Settings" and "tap to turn on" accordingly.
-- `PASTE GPS` collapses to a hairline-separated row: `Plus` + `Paste GPS or a Maps link`, expanding to the existing input + Add on tap.
+- No `PASTE GPS` row. The day card's paste affordance was removed 2026-09-04 (it forwarded the coordinate provenance `google_maps` into the stop's author column and 500'd on every Maps link); pasting a link is a chat message, and Penny writes the stop.
 - Keep, restyled to hairline rows: `Planning fuel stops…` spinner, the three fuel notices (vehicle-profile / platform / `no_stations_found`), dismissed-stops disclosure, `ESTIMATED COSTS`, base-day (`leg_type: 'rest'`) variant — base days use `--color-accent-2-500` `#9690c9` where they used green.
 
 ### 7h — Map (`TripMap.tsx`)

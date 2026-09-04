@@ -37,6 +37,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { LatLng } from '@/lib/polyline';
+import { reverseGeocode } from '@/lib/reverseGeocode';
 
 export type GpsStatus = 'pending' | 'active' | 'denied' | 'unavailable';
 
@@ -63,6 +64,16 @@ export type EnablePath = 'none' | 'prompt' | 'settings';
 export interface DeviceLocation {
   /** Latest known device position, or null before the first fix / when unavailable. */
   position: LatLng | null;
+  /**
+   * A short label for where the device is ("Girona, Spain"), reverse-geocoded
+   * ONCE per session from the first fix — the same lookup the position report
+   * sends the server, so the onboarding chip, the composer placeholder and
+   * Penny's `device_location` all name the same place. Null until resolved,
+   * and null for good when the lookup misses (no key, no result).
+   */
+  place: string | null;
+  /** True once the place lookup has settled, hit or miss. */
+  placeResolved: boolean;
   /** Current GPS acquisition state. */
   gpsStatus: GpsStatus;
   /** What a "turn it on" control can do from here. See EnablePath. */
@@ -73,6 +84,8 @@ export interface DeviceLocation {
 
 const DEFAULT_VALUE: DeviceLocation = {
   position: null,
+  place: null,
+  placeResolved: false,
   gpsStatus: 'unavailable',
   enablePath: 'none',
   request: () => {},
@@ -102,6 +115,32 @@ export function DeviceLocationProvider({
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>('pending');
   // Guard so a permission onchange → granted can't stack a second watch.
   const startedRef = useRef(false);
+  const [place, setPlace] = useState<string | null>(null);
+  const [placeResolved, setPlaceResolved] = useState(false);
+  const placeLookupRef = useRef(false);
+
+  // One reverse geocode per session, on the first fix. The watch keeps
+  // updating `position` (smart nav wants metres); the label does not need to
+  // follow it — a driver does not leave town between two onboarding steps.
+  useEffect(() => {
+    if (!position || placeLookupRef.current) return;
+    placeLookupRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      let label: string | null = null;
+      try {
+        label = await reverseGeocode(position.lat, position.lng);
+      } catch {
+        label = null;
+      }
+      if (cancelled) return;
+      setPlace(label);
+      setPlaceResolved(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [position]);
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -226,8 +265,8 @@ export function DeviceLocationProvider({
   }, []);
 
   const value = useMemo(
-    () => ({ position, gpsStatus, enablePath, request }),
-    [position, gpsStatus, enablePath, request]
+    () => ({ position, place, placeResolved, gpsStatus, enablePath, request }),
+    [position, place, placeResolved, gpsStatus, enablePath, request]
   );
 
   return (

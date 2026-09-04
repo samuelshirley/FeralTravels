@@ -1,3 +1,4 @@
+import type { QuestionKind } from "@/shared/lib/onboardingForm";
 import { API_BASE_URL } from "@/lib/config";
 import { getToken, clearToken } from "@/lib/auth";
 import type {
@@ -353,15 +354,6 @@ export function tripApi(tripId: string) {
         ...opts,
       }),
 
-    parseCoords: (input: string) =>
-      apiFetch<{
-        lat: number;
-        lng: number;
-        name?: string;
-        source?: string;
-        source_url?: string;
-      }>("/api/coords/parse", { body: { input }, skipGlobalErrorReport: true }),
-
     listGpxForLeg: (legId: string) =>
       apiFetch<GPXTrail[]>("/api/gpx", { query: { tripId, legId } }),
 
@@ -405,7 +397,8 @@ export function tripApi(tripId: string) {
  */
 export interface OnboardingQuestion {
   key: string;
-  kind: "text" | "number" | "integer" | "select" | "chips" | "vehicle" | "handoff";
+  /** Shared with the server and the web — see `@/shared/lib/onboardingForm`. */
+  kind: QuestionKind;
   label: string;
   placeholder?: string;
   help?: string;

@@ -71,6 +71,7 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     trip_status: (r.tripStatus as TripStatus) ?? 'draft',
     onboarding_state: r.onboardingState as Trip['onboarding_state'],
     prefer_avoid_highways: !!r.preferAvoidHighways,
+    daily_drive_hours: r.dailyDriveHours ?? null,
     last_known_lat: r.lastKnownLat ?? null,
     last_known_lng: r.lastKnownLng ?? null,
     last_known_place: r.lastKnownPlace ?? null,

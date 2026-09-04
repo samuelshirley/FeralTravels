@@ -34,6 +34,12 @@ export interface PennyContext {
     current_leg_id: string | null;
     current_place: string | null;
     /**
+     * Hours of driving a day the driver asked for at onboarding, or null for
+     * the flat 8h default. get_route splits long segments on it; the leg
+     * validators keep 8h as the hard ceiling regardless.
+     */
+    daily_drive_hours: number | null;
+    /**
      * The driver's declared tank state (the `declare_fuel_state` tool), or
      * null when none is active. `leg_id` anchors it: the driver said they can
      * cover `remaining_range_km` from that leg's START before needing fuel.
@@ -181,8 +187,10 @@ export async function buildPennyContext(
     tripId,
     limit: options.recentChatLimit ?? 12,
     // Only feed live chat back into Penny — onboarding form Q/A rows would
-    // look like user instructions and confuse her.
-    kinds: ['ai'],
+    // look like user instructions and confuse her. `handoff` IS live chat:
+    // it is the opening intent she planned from, hidden from the transcript
+    // only because the receipts already show it.
+    kinds: ['ai', 'handoff'],
   });
 
   // Penny's only hard requirement for fuel planning is a fuel range in
@@ -205,6 +213,7 @@ export async function buildPennyContext(
       status: trip.status,
       current_leg_id: trip.current_leg_id,
       current_place: currentLeg?.start_name ?? null,
+      daily_drive_hours: trip.daily_drive_hours ?? null,
       declared_fuel_state:
         trip.declared_range_km != null &&
         trip.declared_range_leg_id != null &&

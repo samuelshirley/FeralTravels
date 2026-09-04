@@ -182,6 +182,7 @@ describe('Trip data contract — fields required by the UI', () => {
         trip_status: 'draft',
         onboarding_state: 'done',
         prefer_avoid_highways: false,
+        daily_drive_hours: null,
         last_known_lat: null,
         last_known_lng: null,
         last_known_place: null,

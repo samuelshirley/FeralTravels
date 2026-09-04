@@ -1,7 +1,9 @@
 export type OnboardingState =
   | 'not_started'
   | 'trip_intent'
+  | 'trip_origin'    // where the trip starts — asked only when the opening message did not say
   | 'trip_date'      // forced start-date entry — must parse to a real calendar day
+  | 'trip_pace'      // hours of driving a day — skipped when the opening message stated it
   | 'trip_name'      // legacy only — naming step removed; rows here are advanced on read
   | 'units_pick'
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
@@ -24,6 +26,20 @@ export type OnboardingState =
 export interface OnboardingScan {
   /** Fuel range (km), in-band, awaiting confirmation on the vehicle step. */
   range_km?: number | null;
+  /**
+   * Where the trip starts, as the driver put it — read out of the opening
+   * message by the scan, or answered on the `trip_origin` step. Folded into
+   * the intent handed to Penny at handoff, so she never has to ask.
+   */
+  origin_place?: string | null;
+  /**
+   * The opening message carried an EXACT start date, so `trip_date` was
+   * applied at scan time and its step skipped. Read by the progress counter,
+   * which otherwise cannot tell a skipped date from an answered one.
+   */
+  date_skipped?: boolean;
+  /** The opening message stated a daily driving time ("5 h days"); `trip_pace` was skipped. */
+  pace_skipped?: boolean;
 }
 
 // ── Nightly replan types ──────────────────────────────────────────────────
@@ -51,6 +67,11 @@ export interface Trip {
   onboarding_state: OnboardingState;
   /** When true, Penny defaults `get_route` to Maps avoid=highways (motorways); user can toggle in workspace. */
   prefer_avoid_highways: boolean;
+  /**
+   * Hours of driving a day the driver asked for (onboarding `trip_pace`), or
+   * null for the flat default. Penny's get_route splits days on it.
+   */
+  daily_drive_hours: number | null;
   // ── GPS position (device location, refreshed each app open) ──
   last_known_lat: number | null;
   last_known_lng: number | null;
@@ -236,7 +257,13 @@ export interface Link {
  * The UI renders them identically (chat bubbles) but the client-side form
  * submitter needs to know the current row is a question it should respond to.
  */
-export type ChatKind = 'ai' | 'form_question' | 'form_answer';
+/**
+ * `handoff` is the onboarding intent fired at Penny when the wizard finishes:
+ * a user message for HER — it carries the stored intent plus the origin — but
+ * not a bubble for the transcript, which already shows that answer as the
+ * `Trip · …` receipt. Both clients hide it; Penny's context reads it.
+ */
+export type ChatKind = 'ai' | 'form_question' | 'form_answer' | 'handoff';
 
 export interface ChatMessage {
   id: string;

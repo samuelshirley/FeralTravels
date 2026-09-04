@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage, OnboardingState, PlanSummary } from '@/types/trip';
+import type { ChatKind, ChatMessage, OnboardingState, PlanSummary } from '@/types/trip';
 import { apiFetch } from '@/lib/api';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
@@ -18,6 +18,15 @@ import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
 import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
 import { PaperclipIcon, SendArrowIcon } from '@/components/icons';
 import { buttonStyle } from '@/components/ui/Button';
+import { useDeviceLocation } from '@/components/DeviceLocationContext';
+import {
+  cityFromPlace,
+  intentPlaceholder,
+  isTapToAnswerKind,
+  locksComposer,
+  type QuestionKind,
+} from '@/lib/onboardingForm';
+import { CalendarBlank, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -129,7 +138,8 @@ interface AttachedImage {
 /** Shape of an onboarding form question (GET `/api/trips/:id/onboarding`). */
 interface OnboardingFormQuestion {
   key: string;
-  kind: 'text' | 'number' | 'integer' | 'select' | 'chips' | 'vehicle' | 'handoff';
+  /** Shared with the server and native — see `@/lib/onboardingForm`. */
+  kind: QuestionKind;
   label: string;
   placeholder?: string;
   help?: string;
@@ -187,7 +197,7 @@ interface OnboardingAnswerResult {
  */
 const CHAT_STARTERS = [
   'Girona to Lisbon, 5 h days',
-  "I'm in Reims, 150 km in the tank",
+  "I'm in Reims, 150 km in the tank", // units-literal-ok — a sentence to edit, not a rendered distance
   'Add a rest day in Strasbourg',
 ] as const;
 
@@ -255,6 +265,48 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/** An optimistic form row (question, answer or Penny's deterministic note). */
+function formRow(
+  tripId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  kind: ChatKind,
+  ts: number,
+): UIMessage {
+  return {
+    // Its own namespace. `optimistic-${Date.now()}` is what sendChatMessage
+    // mints for the bubbles it appends a beat later; two rows sharing an id
+    // meant Penny's streamed text was written into the `Duncan` receipt.
+    id: `optimistic-form-${ts}`,
+    trip_id: tripId,
+    role,
+    content,
+    kind,
+    changes_made: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/*
+ * What the transcript actually draws: every message except the `handoff` row
+ * — the intent fired at Penny when the wizard finished. That is a message for
+ * HER, not a bubble for the driver: the answer it repeats is already in the
+ * transcript as the first question's user bubble, and replaying it read as
+ * though the driver had just typed it under the last question.
+ *
+ * Onboarding questions and answers stay as ORDINARY bubbles (item 9,
+ * 2026-09-04). A §7d receipts treatment (`Check` + `Setting off · Sat 19
+ * Sep`) was built here and taken out again; the owner wants to see the
+ * questions and the answers.
+ */
+type TranscriptItem = { type: 'message'; id: string; role: string; msg: UIMessage };
+
+function buildTranscript(messages: UIMessage[]): TranscriptItem[] {
+  return messages
+    .filter((m) => m.kind !== 'handoff')
+    .map((m) => ({ type: 'message' as const, id: m.id, role: m.role, msg: m }));
+}
 
 /* ── iMessage-style grouping ─────────────────────────────────────────────
  * Consecutive messages from the same role are visually grouped: tighter
@@ -431,23 +483,21 @@ export default function ChatPanel({
   const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
   const onboardingQuestion = onboardingUiActive ? onboardingSnapshot.question : null;
   /*
-   * This locks the composer read-only, so it must stay `=== 'select'` and NOT
-   * widen to include 'chips'. That is the entire difference between the two
-   * kinds: a select is answered by tapping and nothing else, while a chips
-   * step offers shortcuts AND keeps typing available — "the second week of
-   * June" is a valid start date and no chip can express it.
+   * Locks the composer read-only. Which kinds do that is decided in ONE place
+   * (`locksComposer`, shared with native): `select` because tapping is the
+   * whole answer, `vehicle` because the card carries two fields submitted
+   * together. `chips` deliberately does not — "the second week of June" is a
+   * valid start date and no chip can express it.
    */
   const onboardingSelectStep =
-    onboardingUiActive &&
-    onboardingQuestion &&
-    (onboardingQuestion.kind === 'select' ||
-      /*
-       * 'vehicle' locks the composer for the same reason 'select' does, and a
-       * stronger one: the card carries TWO fields submitted together, so there
-       * is no single value a composer could stand for. Leaving it live would
-       * offer a way to answer that cannot work.
-       */
-      onboardingQuestion.kind === 'vehicle');
+    onboardingUiActive && onboardingQuestion && locksComposer(onboardingQuestion.kind);
+  /*
+   * The device's city, for the location-seeded first-message placeholder
+   * (`Girona to …`, frame 7b). Resolved once by DeviceLocationContext — the
+   * same lookup that names the position report — so there is one resolver.
+   */
+  const { place: devicePlace } = useDeviceLocation();
+  const deviceCity = cityFromPlace(devicePlace);
   const attachImagesAllowed = !isOnboarding;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   // Latest messages, readable from event handlers (visibilitychange reconcile)
@@ -607,16 +657,21 @@ export default function ChatPanel({
     [fetchEntitlement],
   );
   const [input, setInput] = useState('');
-  // When an onboarding question arrives with a prefilled answer (e.g. a start
-  // date we extracted from the trip description), drop it into the composer once
-  // so the user confirms with a single keystroke. Keyed on question identity so
-  // we don't clobber edits or re-fill after they clear it.
+  /*
+   * A question's `defaultValue` is a CHIP to tap (the accented MagicWand one
+   * inside Penny's bubble), not a composer prefill — frame 7c. It used to be
+   * dropped into the composer, which left the value and the question in two
+   * different places and made "tap to confirm" a lie. The composite vehicle
+   * card is the one exception: its range half is a set of buttons, so a
+   * scanned range preselects the matching button. Keyed on question identity
+   * so an edit is never clobbered.
+   */
   const prefilledQuestionKey = useRef<string | null>(null);
   useEffect(() => {
     const q = onboardingQuestion;
-    if (q?.defaultValue && prefilledQuestionKey.current !== q.key) {
+    if (q?.kind === 'vehicle' && q.defaultValue && prefilledQuestionKey.current !== q.key) {
       prefilledQuestionKey.current = q.key;
-      setInput(q.defaultValue);
+      setVehicleRange(q.defaultValue);
     }
   }, [onboardingQuestion]);
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -1064,6 +1119,14 @@ export default function ChatPanel({
      * moment her response streamed in.
      */
     insertPlanningMedia = false,
+    /**
+     * True for the ONE turn that ends onboarding. The intent is a message for
+     * Penny, not a bubble for the transcript: the driver already sees that
+     * answer as the `Trip · …` receipt, so replaying it here read as if they
+     * had just typed it under the last question. The server persists it as
+     * kind `handoff`, hidden the same way on reload.
+     */
+    handoff = false,
   ): Promise<void> => {
     if (!trimmed && attachedImages.length === 0) return;
 
@@ -1134,7 +1197,7 @@ export default function ChatPanel({
         : null;
       setMessages((prev) => [
         ...prev,
-        tempUserMsg,
+        ...(handoff ? [] : [tempUserMsg]),
         ...(planningMediaMsg ? [planningMediaMsg] : []),
         pendingAssistantMsg,
       ]);
@@ -1238,6 +1301,7 @@ export default function ChatPanel({
             mediaType: i.mediaType,
           })),
           idempotencyKey,
+          handoff,
         }),
       });
 
@@ -1458,28 +1522,32 @@ export default function ChatPanel({
       if (result.didHandoff) {
         setOnboardingSnapshot({ state: 'done', question: null, vehicles: [], progress: null });
         setInput('');
-        // Surface any deterministic acknowledgment (e.g. the start-date confirm/
-        // placeholder) as a Penny bubble before her real planning response.
-        if (result.note) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `optimistic-${Date.now()}`,
-              trip_id: tripId,
-              role: 'assistant' as const,
-              content: result.note as string,
-              kind: 'ai' as const,
-              changes_made: null,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-        }
+        const ts = Date.now();
+        setMessages((prev) => {
+          const additions: UIMessage[] = [];
+          /*
+           * The final answer gets its bubble like every other step. This
+           * branch never appended one, so the last thing the driver typed
+           * never rendered at all — and the intent replayed in its place.
+           */
+          if (result.answerLabel) {
+            additions.push(formRow(tripId, 'user', result.answerLabel, 'form_answer', ts + 1));
+          }
+          // Surface any deterministic acknowledgment (e.g. the start-date
+          // confirm / placeholder) as a Penny bubble before her real planning
+          // response.
+          if (result.note) {
+            additions.push(formRow(tripId, 'assistant', result.note, 'ai', ts + 4));
+          }
+          return [...prev, ...additions];
+        });
         // Fire the stored trip intent at Penny (not the last answer — that was a vehicle question)
         const intent = result.tripIntent ?? (typeof value === 'string' ? value : String(value));
         // This handoff turn is the full-trip build — the one wait we know will
         // be long. Pass insertPlanningMedia so Penny "sends" the dog-fetch clip
         // as a persistent transcript message (only here, never on later edits).
-        await sendChatMessage(intent, [], undefined, true);
+        // `handoff` keeps the intent out of the transcript — see sendChatMessage.
+        await sendChatMessage(intent, [], undefined, true, true);
         onTripUpdated();
         // Re-focus the textarea so the keyboard stays open on mobile during
         // the transition from onboarding to normal chat.
@@ -1572,7 +1640,10 @@ export default function ChatPanel({
   async function submitOnboardingPick(rawValue: string | number) {
     const q = onboardingSnapshot?.question;
     if (!q || onboardingSubmitting || onboardingLoading) return;
-    if (q.kind !== 'select') return;
+    // The SAME list the renderer reads (`TAP_TO_ANSWER_KINDS`), so a kind that
+    // draws chips is by construction a kind this accepts. It was `!== 'select'`
+    // while the renderer drew chips for `chips` too — three dead chips.
+    if (!isTapToAnswerKind(q.kind)) return;
     await submitOnboardingPost(q.key, rawValue);
   }
 
@@ -1775,6 +1846,342 @@ export default function ChatPanel({
   // submitOnboardingTextAnswer.
   const onboardingComposerDisabled = onboardingUiActive && (onboardingLoading || introTyping);
 
+  const transcript = buildTranscript(messages);
+  // The bubble the current setup question lives in — the LAST form_question
+  // whose text is the question the snapshot is asking. Its chips / card render
+  // inside that bubble (frames 7b–7e), so the question and its answers are one
+  // thing on screen rather than a bubble up here and a strip down there.
+  let activeQuestionId: string | null = null;
+  if (onboardingUiActive && onboardingQuestion) {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const it = transcript[i];
+      if (it.type === 'message' && it.msg.kind === 'form_question') {
+        if (it.msg.content === onboardingQuestion.label) activeQuestionId = it.id;
+        break;
+      }
+    }
+  }
+
+  /** Pick a calendar day for the date step (the `Pick a date` chip). */
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const openDatePicker = () => {
+    const el = dateInputRef.current;
+    if (!el) return;
+    const withPicker = el as HTMLInputElement & { showPicker?: () => void };
+    try {
+      if (typeof withPicker.showPicker === 'function') withPicker.showPicker();
+      else el.click();
+    } catch {
+      el.click();
+    }
+  };
+
+  /*
+   * Everything the active question needs beyond its text, rendered INSIDE
+   * Penny's bubble: the answer chips (accented MagicWand chip for a value the
+   * app read out of the driver's own words, `Pick a date` for the calendar),
+   * the footnote, the composite vehicle card, and the first message's prompt
+   * rows. The composer below stays the way to type anything a chip cannot.
+   */
+  const chipStyle = (accent: boolean): React.CSSProperties => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '8px 14px',
+    background: accent ? 'var(--tp-primary-muted)' : 'var(--tp-surface-muted)',
+    border: `1px solid ${accent ? 'var(--tp-primary)' : 'var(--tp-border)'}`,
+    borderRadius: 999,
+    color: accent ? 'var(--tp-accent-300)' : 'var(--tp-text)',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    cursor: onboardingComposerBusy ? 'default' : 'pointer',
+    opacity: onboardingComposerBusy ? 0.5 : 1,
+  });
+  const onboardingCard =
+    onboardingUiActive && onboardingQuestion ? (
+      <div
+        data-testid="onboarding-card"
+        style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options && (
+          <>
+            {/* Only for 'select', where tapping is the ONLY way to answer. On a
+                'chips' step the composer is live, so telling the user to tap
+                would be wrong. */}
+            {onboardingQuestion.kind === 'select' && (
+              <div style={{ fontSize: 11, color: 'var(--tp-muted)', letterSpacing: '0.03em' }}>
+                Tap an option
+              </div>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {onboardingQuestion.options.map((o) => {
+                const inferred =
+                  onboardingQuestion.defaultValue != null &&
+                  o.value === onboardingQuestion.defaultValue;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    disabled={onboardingComposerBusy}
+                    data-testid={inferred ? 'onboarding-chip-inferred' : 'onboarding-chip'}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void submitOnboardingPick(o.value)}
+                    style={chipStyle(inferred)}
+                  >
+                    {inferred && <MagicWand size={14} weight="regular" aria-hidden />}
+                    {o.label}
+                  </button>
+                );
+              })}
+              {onboardingQuestion.key === 'trip_date' && (
+                <>
+                  <button
+                    type="button"
+                    disabled={onboardingComposerBusy}
+                    data-testid="onboarding-pick-date"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={openDatePicker}
+                    style={chipStyle(false)}
+                  >
+                    <CalendarBlank size={14} weight="regular" aria-hidden />
+                    Pick a date
+                  </button>
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    aria-label="Start date"
+                    tabIndex={-1}
+                    onChange={(e) => {
+                      const iso = e.target.value;
+                      if (iso) void submitOnboardingPost(onboardingQuestion.key, iso);
+                    }}
+                    style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+                  />
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        {onboardingQuestion.kind === 'vehicle' && (
+          <div
+            style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+            data-testid="onboarding-vehicle-card"
+          >
+            <div>
+              <label
+                htmlFor="onboarding-vehicle-name"
+                style={{
+                  display: 'block',
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.13em',
+                  textTransform: 'uppercase',
+                  color: 'var(--tp-subtle)',
+                  marginBottom: 6,
+                }}
+              >
+                Name it
+              </label>
+              <input
+                id="onboarding-vehicle-name"
+                className="auth-input"
+                data-testid="onboarding-vehicle-name"
+                value={vehicleName}
+                disabled={onboardingComposerBusy}
+                placeholder={onboardingQuestion.nameField?.placeholder}
+                onChange={(e) => setVehicleName(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div>
+              <div
+                title={onboardingQuestion.help}
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.13em',
+                  textTransform: 'uppercase',
+                  color: 'var(--tp-subtle)',
+                  marginBottom: 6,
+                }}
+              >
+                Range on a tank
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {onboardingQuestion.options?.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    disabled={onboardingComposerBusy}
+                    onClick={() => setVehicleRange(o.value)}
+                    style={{
+                      ...buttonStyle(vehicleRange === o.value ? 'primary' : 'secondary'),
+                      fontSize: 13,
+                      padding: '8px 14px',
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+                {/* Dashed, because three options cannot cover every tank and
+                    this is the safety number the fuel planner rests on. */}
+                <input
+                  aria-label="Another range"
+                  data-testid="onboarding-vehicle-range-other"
+                  value={
+                    onboardingQuestion.options?.some((o) => o.value === vehicleRange)
+                      ? ''
+                      : vehicleRange
+                  }
+                  disabled={onboardingComposerBusy}
+                  placeholder={`Other… (${onboardingQuestion.placeholder})`}
+                  inputMode="numeric"
+                  onChange={(e) => setVehicleRange(e.target.value)}
+                  style={{
+                    width: 150,
+                    padding: '8px 12px',
+                    borderRadius: 'var(--tp-radius-md)',
+                    border: '1px dashed var(--tp-border-strong)',
+                    background: 'transparent',
+                    color: 'var(--tp-text)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={onboardingComposerBusy}
+              data-testid="onboarding-vehicle-submit"
+              onClick={() => void submitVehicleSetup(vehicleRange)}
+              style={{ ...buttonStyle('primary'), width: '100%' }}
+            >
+              Plan my trip →
+            </button>
+
+            {/* Routes to the EXISTING range_help estimator: the server reads a
+                non-numeric range as "work it out for me". The name is saved
+                first, so the helper comes back to the range alone and never
+                asks for the name twice. */}
+            <button
+              type="button"
+              disabled={onboardingComposerBusy}
+              onClick={() => void submitVehicleSetup("I'm not sure")}
+              className="auth-link"
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                fontSize: 12,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              Not sure — work it out from my vehicle
+            </button>
+          </div>
+        )}
+
+        {onboardingQuestion.footnote && (
+          <div style={{ fontSize: 11, color: 'var(--tp-subtle)', lineHeight: 1.45 }}>
+            {onboardingQuestion.footnote}
+          </div>
+        )}
+
+        {/*
+          PROMPT ROWS (frame 7b). These PREFILL the composer and focus it —
+          they do not submit, which is the whole difference between them and
+          the chips above. An option is an answer to this question; a prompt
+          is a shape to edit, and nobody wants their first message sent
+          verbatim. The first row prefills nothing: it is the "just name a
+          city" invitation, and its only job is to put the cursor in the box.
+        */}
+        {onboardingQuestion.prompts?.length ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              style={{
+                fontSize: 9.5,
+                fontWeight: 600,
+                letterSpacing: '0.13em',
+                color: 'var(--tp-subtle)',
+                marginTop: 2,
+              }}
+            >
+              TAP TO START, THEN EDIT
+            </div>
+            <button
+              type="button"
+              disabled={onboardingComposerBusy}
+              data-testid="onboarding-prompt-city"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => textareaRef.current?.focus()}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                minHeight: 48,
+                padding: '8px 12px',
+                background: 'var(--tp-primary-muted)',
+                border: '1px solid var(--tp-accent-700)',
+                borderRadius: 'var(--tp-radius-md)',
+                color: 'var(--tp-accent-300)',
+                fontSize: 13.5,
+                fontFamily: 'inherit',
+                textAlign: 'left',
+                cursor: 'pointer',
+                opacity: onboardingComposerBusy ? 0.5 : 1,
+              }}
+            >
+              <MapPinSimpleArea size={22} weight="regular" aria-hidden />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span>Name a city — Lisbon, Girona, Tromsø…</span>
+                <span style={{ fontSize: 11.5, color: 'var(--tp-subtle)' }}>
+                  or just start typing
+                </span>
+              </span>
+            </button>
+            {onboardingQuestion.prompts.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                disabled={onboardingComposerBusy}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setInput(prompt);
+                  textareaRef.current?.focus();
+                }}
+                style={{
+                  ...buttonStyle('secondary'),
+                  justifyContent: 'flex-start',
+                  textAlign: 'left',
+                  padding: '11px 14px',
+                  fontSize: 13.5,
+                  fontWeight: 400,
+                  color: 'var(--tp-muted)',
+                  opacity: onboardingComposerBusy ? 0.5 : 1,
+                }}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+  // The first message's placeholder is seeded from the device city
+  // (`Girona to …`, frame 7b); `Where to?` when location is denied,
+  // unavailable or unresolved. Drawn as an overlay so the city can carry the
+  // accent — a native placeholder is one colour.
+  const seededPlaceholder =
+    onboardingUiActive && onboardingQuestion?.key === 'trip_intent'
+      ? intentPlaceholder(deviceCity)
+      : null;
+
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -1836,8 +2243,41 @@ export default function ChatPanel({
           alignItems: 'center',
           gap: 10,
           flexShrink: 0,
+          position: 'relative',
         }}
       >
+        {/*
+          The onboarding step counter and its 2px accent progress bar live HERE
+          (frame 7b), not in a strip under the transcript: the header is the
+          one part of the panel that never scrolls away, and "how much is
+          left" is a fact about the whole setup rather than about one question.
+        */}
+        {onboardingUiActive && onboardingSnapshot?.progress && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: -1,
+              height: 2,
+              background: 'var(--tp-neutral-900)',
+            }}
+          >
+            <div
+              style={{
+                height: 2,
+                width: `${Math.round(
+                  (100 * onboardingSnapshot.progress.current) /
+                    Math.max(1, onboardingSnapshot.progress.total),
+                )}%`,
+                background: 'var(--tp-primary)',
+                boxShadow: '0 0 8px rgba(145, 132, 217, 0.6)',
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
+        )}
         <div
           style={{
             width: 34,
@@ -1896,7 +2336,13 @@ export default function ChatPanel({
               animation: pennyThinking ? 'tp-pulse 1.2s ease-in-out infinite' : undefined,
             }}
           />
-          {pennyThinking ? 'THINKING' : 'READY'}
+          {onboardingUiActive && onboardingSnapshot?.progress ? (
+            <span data-testid="onboarding-progress">
+              {onboardingSnapshot.progress.current} OF {onboardingSnapshot.progress.total}
+            </span>
+          ) : (
+            pennyThinking ? 'THINKING' : 'READY'
+          )}
         </div>
       </div>
 
@@ -2015,7 +2461,9 @@ export default function ChatPanel({
           </div>
         )}
 
-        {messages.map((msg, msgIdx) => {
+        {transcript.map((item, msgIdx) => {
+          const gp = getGroupPosition(transcript, msgIdx);
+          const msg = item.msg;
           // Hide the empty assistant bubble while Penny is working but hasn't
           // emitted any text yet — the 3-dot typing indicator covers this
           // state. Without this, a streaming-but-textless bubble would render
@@ -2023,7 +2471,7 @@ export default function ChatPanel({
           if (msg.role === 'assistant' && msg.streaming && !msg.content) {
             return null;
           }
-          const gp = getGroupPosition(messages, msgIdx);
+          const isActiveQuestion = item.id === activeQuestionId;
           // Tight 2px gap inside a group, 10px between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
           // The dog-fetch clip Penny "sends" on the first full build: a caption
@@ -2054,8 +2502,11 @@ export default function ChatPanel({
             key={msg.id}
             data-testid="chat-message"
             data-message-role={msg.role}
+            data-onboarding-question={isActiveQuestion || undefined}
             style={{
-              maxWidth: '80%',
+              // The active setup question carries its chips / card inside
+              // the bubble, so it gets the room a form needs.
+              maxWidth: isActiveQuestion ? '94%' : '80%',
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
               display: 'flex',
               flexDirection: 'column',
@@ -2102,6 +2553,7 @@ export default function ChatPanel({
               </div>
             )}
             {msg.paywall ? <PaywallText text={msg.content} /> : msg.content}
+            {isActiveQuestion && onboardingCard}
             {msg.streaming && msg.content && (
               <span
                 aria-hidden
@@ -2407,266 +2859,6 @@ export default function ChatPanel({
             </div>
           ) : (
             <>
-              {onboardingUiActive && onboardingSnapshot?.progress && (
-                <div
-                  style={{
-                    padding: '8px 16px 0',
-                    flexShrink: 0,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: 'var(--tp-primary)',
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    background: 'var(--tp-surface-muted)',
-                  }}
-                >
-                  Setup · {onboardingSnapshot.progress.current} of {onboardingSnapshot.progress.total}
-                </div>
-              )}
-              {onboardingUiActive &&
-                (onboardingQuestion?.kind === 'select' ||
-                  onboardingQuestion?.kind === 'chips') &&
-                onboardingQuestion.options && (
-                  <div
-                    style={{
-                      padding: '10px 16px 10px',
-                      flexShrink: 0,
-                      borderTop: '1px solid var(--tp-border)',
-                      background: 'var(--tp-surface-muted)',
-                    }}
-                  >
-                    {/* Only for 'select', where tapping is the ONLY way to
-                        answer. On a 'chips' step the composer is live, so
-                        telling the user to tap would be wrong. */}
-                    {onboardingQuestion.kind === 'select' && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--tp-muted)',
-                          marginBottom: 6,
-                          letterSpacing: '0.03em',
-                        }}
-                      >
-                        Tap an option
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {onboardingQuestion.options.map((o) => (
-                        <button
-                          key={o.value}
-                          type="button"
-                          disabled={onboardingComposerBusy}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => void submitOnboardingPick(o.value)}
-                          style={{
-                            padding: '8px 14px',
-                            background: 'var(--tp-surface)',
-                            border: '1px solid var(--tp-border)',
-                            borderRadius: 999,
-                            color: 'var(--tp-text)',
-                            fontSize: 13,
-                            cursor: onboardingComposerBusy ? 'default' : 'pointer',
-                            opacity: onboardingComposerBusy ? 0.5 : 1,
-                          }}
-                        >
-                          {o.label}
-                        </button>
-                      ))}
-                    </div>
-                    {onboardingQuestion.footnote && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--tp-subtle)',
-                          marginTop: 8,
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {onboardingQuestion.footnote}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-              {/*
-                THE COMPOSITE VEHICLE CARD (frame 7e) — nickname and range in
-                one card, one submit. The composer is locked while it is up:
-                two answers cannot be typed into one box, and leaving it live
-                would offer a second way to answer that goes nowhere.
-              */}
-              {onboardingUiActive && onboardingQuestion?.kind === 'vehicle' && (
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    flexShrink: 0,
-                    borderTop: '1px solid var(--tp-border)',
-                    background: 'var(--tp-surface-muted)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                  }}
-                  data-testid="onboarding-vehicle-card"
-                >
-                  <div>
-                    <label
-                      htmlFor="onboarding-vehicle-name"
-                      style={{
-                        display: 'block',
-                        fontSize: 12,
-                        color: 'var(--tp-muted)',
-                        marginBottom: 6,
-                      }}
-                    >
-                      {onboardingQuestion.nameField?.label}
-                    </label>
-                    <input
-                      id="onboarding-vehicle-name"
-                      className="auth-input"
-                      data-testid="onboarding-vehicle-name"
-                      value={vehicleName}
-                      disabled={onboardingComposerBusy}
-                      placeholder={onboardingQuestion.nameField?.placeholder}
-                      onChange={(e) => setVehicleName(e.target.value)}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-
-                  <div>
-                    <div
-                      style={{ fontSize: 12, color: 'var(--tp-muted)', marginBottom: 6 }}
-                    >
-                      {onboardingQuestion.label}
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {onboardingQuestion.options?.map((o) => (
-                        <button
-                          key={o.value}
-                          type="button"
-                          disabled={onboardingComposerBusy}
-                          onClick={() => setVehicleRange(o.value)}
-                          style={{
-                            ...buttonStyle(vehicleRange === o.value ? 'primary' : 'secondary'),
-                            fontSize: 13,
-                            padding: '8px 14px',
-                          }}
-                        >
-                          {o.label}
-                        </button>
-                      ))}
-                      {/* Dashed, because three options cannot cover every tank
-                          and this is the safety number the fuel planner rests
-                          on. */}
-                      <input
-                        aria-label="Another range"
-                        data-testid="onboarding-vehicle-range-other"
-                        value={
-                          onboardingQuestion.options?.some((o) => o.value === vehicleRange)
-                            ? ''
-                            : vehicleRange
-                        }
-                        disabled={onboardingComposerBusy}
-                        placeholder={`Other… (${onboardingQuestion.placeholder})`}
-                        inputMode="numeric"
-                        onChange={(e) => setVehicleRange(e.target.value)}
-                        style={{
-                          width: 150,
-                          padding: '8px 12px',
-                          borderRadius: 'var(--tp-radius-md)',
-                          border: '1px dashed var(--tp-border-strong)',
-                          background: 'transparent',
-                          color: 'var(--tp-text)',
-                          fontSize: 13,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={onboardingComposerBusy}
-                    data-testid="onboarding-vehicle-submit"
-                    onClick={() => void submitVehicleSetup(vehicleRange)}
-                    style={{ ...buttonStyle('primary'), width: '100%' }}
-                  >
-                    Plan my trip →
-                  </button>
-
-                  {/* Routes to the EXISTING range_help estimator: the server
-                      reads a non-numeric range as "work it out for me". The
-                      name is saved first, so the helper comes back to the
-                      range alone and never asks for the name twice. */}
-                  <button
-                    type="button"
-                    disabled={onboardingComposerBusy}
-                    onClick={() => void submitVehicleSetup("I'm not sure")}
-                    className="auth-link"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      padding: 0,
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
-                  >
-                    Not sure — work it out from my vehicle
-                  </button>
-
-                  {onboardingQuestion.footnote && (
-                    <div
-                      style={{ fontSize: 11, color: 'var(--tp-subtle)', lineHeight: 1.45 }}
-                    >
-                      {onboardingQuestion.footnote}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/*
-                PROMPT ROWS. These PREFILL the composer and focus it — they do
-                not submit, which is the whole difference between them and the
-                chips above. An option is an answer to this question; a prompt
-                is a shape to edit, and nobody wants their first message sent
-                verbatim.
-              */}
-              {onboardingUiActive && onboardingQuestion?.prompts?.length ? (
-                <div
-                  style={{
-                    padding: '10px 16px',
-                    flexShrink: 0,
-                    borderTop: '1px solid var(--tp-border)',
-                    background: 'var(--tp-surface-muted)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                  }}
-                >
-                  {onboardingQuestion.prompts.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      disabled={onboardingComposerBusy}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setInput(prompt);
-                        textareaRef.current?.focus();
-                      }}
-                      style={{
-                        ...buttonStyle('secondary'),
-                        justifyContent: 'flex-start',
-                        textAlign: 'left',
-                        padding: '11px 14px',
-                        fontSize: 13.5,
-                        fontWeight: 400,
-                        color: 'var(--tp-muted)',
-                        opacity: onboardingComposerBusy ? 0.5 : 1,
-                      }}
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
           <div
         style={{
           padding: '12px 16px',
@@ -2741,6 +2933,7 @@ export default function ChatPanel({
             <PaperclipIcon />
           </button>
           )}
+          <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
           <textarea
             ref={textareaRef}
             data-testid="trip-chat-composer"
@@ -2766,9 +2959,13 @@ export default function ChatPanel({
                 ? "See Penny's message above"
                 : onboardingSelectStep
                   ? 'Tap an option above…'
-                  : onboardingUiActive && onboardingQuestion
-                    ? onboardingQuestion.placeholder ?? 'Type your answer…'
-                    : 'Ask Penny…'
+                  : seededPlaceholder
+                    ? seededPlaceholder.city
+                      ? ''
+                      : seededPlaceholder.rest
+                    : onboardingUiActive && onboardingQuestion
+                      ? onboardingQuestion.placeholder ?? 'Type your answer…'
+                      : 'Ask Penny…'
             }
             disabled={onboardingComposerDisabled || paywalled}
             rows={1}
@@ -2794,6 +2991,28 @@ export default function ChatPanel({
               display: 'block',
             }}
           />
+          {seededPlaceholder?.city && input === '' && (
+            <div
+              aria-hidden
+              data-testid="composer-seeded-placeholder"
+              style={{
+                position: 'absolute',
+                left: 4,
+                top: 7,
+                pointerEvents: 'none',
+                fontSize: 14,
+                lineHeight: 1.4,
+                color: 'var(--tp-subtle)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                maxWidth: '100%',
+              }}
+            >
+              <span style={{ color: 'var(--tp-accent-300)' }}>{seededPlaceholder.city}</span>
+              {seededPlaceholder.rest}
+            </div>
+          )}
+          </div>
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={sendMessage}

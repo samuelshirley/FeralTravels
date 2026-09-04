@@ -36,6 +36,8 @@ const patchSchema = z.object({
   vehicle_id: z.string().uuid().nullable().optional(),
   /** Google Directions `avoid=highways` (motorways); merged into Penny get_route */
   prefer_avoid_highways: z.boolean().optional(),
+  /** Hours of driving a day (1–8), or null for the flat default. */
+  daily_drive_hours: z.number().int().min(1).max(8).nullable().optional(),
 });
 
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
@@ -118,6 +120,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     if (body.vehicle_id !== undefined) update.vehicleId = body.vehicle_id;
     if (body.prefer_avoid_highways !== undefined)
       update.preferAvoidHighways = body.prefer_avoid_highways;
+    if (body.daily_drive_hours !== undefined) update.dailyDriveHours = body.daily_drive_hours;
 
     await db.update(trips).set(update).where(eq(trips.id, tripId));
 

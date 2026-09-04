@@ -10,7 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 // `server-only` throws under the jsdom test env; stub it (hoisted above imports).
 vi.mock('server-only', () => ({}));
 
-import { validateScannedRange } from './onboardingIntentScan';
+import { validateScannedOrigin, validateScannedRange } from './onboardingIntentScan';
 import { FUEL_STOP_SPACING_KM_MIN, FUEL_STOP_SPACING_KM_MAX } from '@/lib/vehicleProfile';
 
 describe('validateScannedRange', () => {
@@ -38,5 +38,20 @@ describe('validateScannedRange', () => {
     expect(validateScannedRange(FUEL_STOP_SPACING_KM_MAX)).toEqual({
       rangeKm: FUEL_STOP_SPACING_KM_MAX,
     });
+  });
+});
+
+describe('validateScannedOrigin', () => {
+  it('keeps a plain place name, collapsing whitespace', () => {
+    expect(validateScannedOrigin('  Paris ')).toBe('Paris');
+    expect(validateScannedOrigin('Girona,\n Spain')).toBe('Girona, Spain');
+  });
+
+  it('treats anything that is not a bounded string as absent', () => {
+    expect(validateScannedOrigin(null)).toBeNull();
+    expect(validateScannedOrigin('')).toBeNull();
+    expect(validateScannedOrigin('   ')).toBeNull();
+    expect(validateScannedOrigin(42)).toBeNull();
+    expect(validateScannedOrigin('x'.repeat(121))).toBeNull();
   });
 });

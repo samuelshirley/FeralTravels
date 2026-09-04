@@ -32,6 +32,17 @@ export type EnablePath = "prompt" | "settings" | "none";
 
 export interface DeviceLocation {
   position: { lat: number; lng: number; accuracy: number | null } | null;
+  /**
+   * A short label for where the device is ("Girona, Spain"), reverse-geocoded
+   * ONCE per session from the first fix through expo-location (no Google
+   * dependency). The position report sends it to the server, which is what
+   * puts the "Are you leaving from Girona?" chip on the onboarding origin
+   * step; the composer placeholder reads it too. Null until resolved, and
+   * null for good on a miss.
+   */
+  place: string | null;
+  /** True once the place lookup has settled, hit or miss. */
+  placeResolved: boolean;
   gpsStatus: GpsStatus;
   /** What a "turn on location" affordance should do here — see EnablePath. */
   enablePath: EnablePath;
@@ -45,6 +56,8 @@ export function useDeviceLocation(): DeviceLocation {
   return (
     useContext(Ctx) ?? {
       position: null,
+      place: null,
+      placeResolved: false,
       gpsStatus: "unavailable",
       enablePath: "none",
       request: async () => {},
@@ -91,6 +104,38 @@ export function DeviceLocationProvider({
 }) {
   const [position, setPosition] = useState<DeviceLocation["position"]>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("pending");
+  const [place, setPlace] = useState<string | null>(null);
+  const [placeResolved, setPlaceResolved] = useState(false);
+  const placeLookupRef = useRef(false);
+
+  // One reverse geocode per session, on the first fix — mirrors
+  // src/components/DeviceLocationContext.tsx. The watch keeps updating
+  // `position`; the label does not need to follow it.
+  useEffect(() => {
+    if (!position || placeLookupRef.current) return;
+    placeLookupRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      let label: string | null = null;
+      try {
+        const [hit] = await Location.reverseGeocodeAsync({
+          latitude: position.lat,
+          longitude: position.lng,
+        });
+        const town = hit?.city || hit?.subregion || hit?.region || null;
+        const country = hit?.country || null;
+        label = town ? (country ? `${town}, ${country}` : town) : null;
+      } catch {
+        label = null;
+      }
+      if (cancelled) return;
+      setPlace(label ? label.slice(0, 200) : null);
+      setPlaceResolved(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [position]);
   const [enablePath, setEnablePath] = useState<EnablePath>("none");
   const [primerVisible, setPrimerVisible] = useState(false);
   const subRef = useRef<Location.LocationSubscription | null>(null);
@@ -225,7 +270,7 @@ export function DeviceLocationProvider({
   }, [promptAllowed]);
 
   return (
-    <Ctx.Provider value={{ position, gpsStatus, enablePath, request }}>
+    <Ctx.Provider value={{ position, place, placeResolved, gpsStatus, enablePath, request }}>
       {children}
       <LocationPrimer
         visible={primerVisible}

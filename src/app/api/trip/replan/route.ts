@@ -223,6 +223,13 @@ const inputSchema = z.object({
    * (the server mints one), but then idempotency degrades to best-effort.
    */
   idempotencyKey: z.string().min(8).max(100).optional(),
+  /**
+   * True for the ONE turn that ends onboarding: the stored intent fired at
+   * Penny. Persisted as kind `handoff` so neither client renders it as a
+   * user bubble — the transcript already carries that answer as a receipt —
+   * while Penny's context still reads it as the message she planned from.
+   */
+  handoff: z.boolean().optional().default(false),
 });
 
 /**
@@ -350,7 +357,7 @@ export async function POST(req: Request) {
 
     // Persist the user's bubble now so it shows in chat order immediately,
     // whether we run this turn now or queue it.
-    await addChatMessage(tripId, 'user', message || '(image only)');
+    await addChatMessage(tripId, 'user', message || '(image only)', null, body.handoff ? 'handoff' : 'ai');
     userTurnSaved = true;
 
     // Claim the trip's single execution slot. The partial unique index

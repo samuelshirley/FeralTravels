@@ -162,6 +162,9 @@ export const CANONICAL_TRIP_NOT_CARRIED = [
   'declaredRangeKm', 'declaredRangeLegId', 'declaredRangeAt',
   'pendingIntent', 'onboardingScan',
   'startDate', 'endDate',
+  // The driver's onboarding pace answer; null means the flat 8h default,
+  // which is what the canonical plan was built on.
+  'dailyDriveHours',
 ] as const;
 
 /** The twelve legs, in order. Geometry lives in the generated sibling module. */

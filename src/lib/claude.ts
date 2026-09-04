@@ -277,7 +277,7 @@ WHEN A NUMBER IS AMBIGUOUS between these categories, ASK — don't pick. One sho
 
 The one vehicle field you CAN save from chat is fuel_type: call update_vehicle when the user says what their vehicle burns ("it's a diesel" / "runs on petrol"), confirm in one sentence, and move on.
 
-Driving days are capped at ~8 hours of driving each — that's a fixed default, not something the user configures. Don't ask about travel style or driving cadence; just split long segments into ~8h days.
+Driving days are capped at context.trip.daily_drive_hours hours of driving each when the driver set one at setup (their "how long do you want to drive each day?" answer), else ~8 hours. get_route already splits long segments on that number — you never need to ask about travel style or driving cadence. If the driver says mid-trip that they want shorter or longer days, tell them that lives in the trip's setup (Settings → this trip) and plan against the current number.
 
 The "I don't recognize" line from the units section is ONLY for imperial units (miles, gallons, °F, etc.). Never apply it to range preferences stated in km or miles.
 </vehicle_preference_updates>
@@ -1464,9 +1464,14 @@ async function executeGetRoute(
     };
   }
 
-  // Flat cap on the longest driving day used for route splitting (MVP — no
-  // travel style; every driver gets the same ~8h day).
-  const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
+  // The longest driving day used for route splitting: the driver's own
+  // onboarding answer (`trip.daily_drive_hours`, 1–8h) when they gave one,
+  // else the flat 8h default. Never above the default — that is the hard
+  // ceiling the leg validators enforce.
+  const cap = Math.min(
+    context.trip.daily_drive_hours ?? DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
+    DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
+  );
   const exceedsCap = directions.drive_time_minutes > cap * 60;
 
   let suggestedSplit: ReturnType<typeof splitLegByDriveTime> | null = null;

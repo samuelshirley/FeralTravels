@@ -36,6 +36,15 @@ import {
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import PurchaseSheet from "@/components/PurchaseSheet";
 import { PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import { MagicWand, MapPinSimpleArea } from "phosphor-react-native";
+import { useDeviceLocation } from "@/lib/location";
+import {
+  cityFromPlace,
+  intentPlaceholder,
+  isTapToAnswerKind,
+  locksComposer,
+} from "@/shared/lib/onboardingForm";
+import type { ChatKind } from "@/shared/types/trip";
 import { Spinner } from "@/components/ui";
 import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
 import { BlinkingCursor, TypingBubble } from "@/components/chat/Indicators";
@@ -91,6 +100,39 @@ const CONTINUE_PROMPT =
  */
 const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
 
+/** An optimistic form row (question, answer or Penny's deterministic note). */
+function formRow(
+  tripId: string,
+  role: "user" | "assistant",
+  content: string,
+  kind: ChatKind,
+  ts: number
+): UIMessage {
+  return {
+    // Its own namespace — see the web ChatPanel's formRow.
+    id: `optimistic-form-${ts}`,
+    trip_id: tripId,
+    role,
+    content,
+    kind,
+    changes_made: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/*
+ * What the transcript actually draws — mirrors src/components/ChatPanel.tsx:
+ * every message except the `handoff` row, the intent fired at Penny when the
+ * wizard finished. Onboarding Q&A stay as ordinary bubbles (item 9).
+ */
+type TranscriptItem = { type: "message"; id: string; role: string; msg: UIMessage };
+
+function buildTranscript(messages: UIMessage[]): TranscriptItem[] {
+  return messages
+    .filter((m) => m.kind !== "handoff")
+    .map((m) => ({ type: "message" as const, id: m.id, role: m.role, msg: m }));
+}
+
 /**
  * One inbox, one human — the same address as /support and as the web's
  * `SUPPORT_EMAIL`.
@@ -145,7 +187,7 @@ interface ChatPanelProps {
  */
 const CHAT_STARTERS = [
   "Girona to Lisbon, 5 h days",
-  "I'm in Reims, 150 km in the tank",
+  "I'm in Reims, 150 km in the tank", // units-literal-ok — a sentence to edit, not a rendered distance
   "Add a rest day in Strasbourg",
 ] as const;
 
@@ -362,9 +404,13 @@ export default function ChatPanel({
    * src/components/ChatPanel.tsx.
    */
   const onboardingSelectStep = Boolean(
-    onboardingQuestion &&
-      (onboardingQuestion.kind === "select" || onboardingQuestion.kind === "vehicle"),
+    onboardingQuestion && locksComposer(onboardingQuestion.kind),
   );
+  // The device's city, for the location-seeded first-message placeholder
+  // (`Girona to …`, frame 7b). Resolved once by the location provider — the
+  // same lookup the position report sends the server.
+  const { place: devicePlace } = useDeviceLocation();
+  const deviceCity = cityFromPlace(devicePlace);
   const [vehicleName, setVehicleName] = useState("");
   const [vehicleRange, setVehicleRange] = useState("");
   const attachImagesAllowed = !isOnboarding && !readonly;
@@ -729,12 +775,19 @@ export default function ChatPanel({
     /** When draining the queue, pass the existing optimistic id to reuse it. */
     existingUserMsgId?: string,
     /** Only true for the post-onboarding full-trip build. */
-    insertPlanningNotice?: boolean
+    insertPlanningNotice?: boolean,
+    /**
+     * True for the ONE turn that ends onboarding. The intent is a message for
+     * Penny, not a bubble: the transcript already shows that answer as the
+     * `Trip · …` receipt. Persisted server-side as kind `handoff`.
+     */
+    handoff?: boolean
   ) => Promise<void> = async (
     trimmed,
     attachedImages = [],
     existingUserMsgId,
-    insertPlanningNotice = false
+    insertPlanningNotice = false,
+    handoff = false
   ) => {
     // The one choke point every send passes through — the composer, the queue
     // drain, the truncated bubble's "Continue planning", the onboarding
@@ -808,7 +861,7 @@ export default function ChatPanel({
         : null;
       setMessages((prev) => [
         ...prev,
-        tempUserMsg,
+        ...(handoff ? [] : [tempUserMsg]),
         ...(planningNotice ? [planningNotice] : []),
         pendingAssistantMsg,
       ]);
@@ -864,6 +917,7 @@ export default function ChatPanel({
           message: trimmed,
           images: attachedImages.map((i) => ({ dataUrl: i.dataUrl, mediaType: i.mediaType })),
           idempotencyKey,
+          handoff,
         },
         headers: await authHeaders(),
         handlers: {
@@ -1058,11 +1112,14 @@ export default function ChatPanel({
   // A question can arrive with a prefilled answer (e.g. a start date we pulled
   // out of the trip description) — drop it into the composer once, keyed on
   // question identity so we don't clobber edits or re-fill after a clear.
+  // A `defaultValue` is a CHIP inside Penny's bubble (frame 7c), not a composer
+  // prefill. The composite vehicle card is the exception: its range half is a
+  // set of buttons, so a scanned range preselects the matching one.
   useEffect(() => {
     const q = onboardingQuestion;
-    if (q?.defaultValue && prefilledQuestionKey.current !== q.key) {
+    if (q?.kind === "vehicle" && q.defaultValue && prefilledQuestionKey.current !== q.key) {
       prefilledQuestionKey.current = q.key;
-      setInput(q.defaultValue);
+      setVehicleRange(q.defaultValue);
     }
   }, [onboardingQuestion]);
 
@@ -1082,28 +1139,26 @@ export default function ChatPanel({
       if (result.didHandoff) {
         setOnboardingSnapshot({ state: "done", question: null, vehicles: [], progress: null });
         setInput("");
-        // Surface any deterministic acknowledgment (e.g. the start-date confirm
-        // / placeholder) as a Penny bubble before her real planning response.
-        if (result.note) {
-          const note = result.note;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `optimistic-${Date.now()}`,
-              trip_id: tripId,
-              role: "assistant" as const,
-              content: note,
-              kind: "ai" as const,
-              changes_made: null,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-        }
+        const ts = Date.now();
+        const note = result.note;
+        setMessages((prev) => {
+          const additions: UIMessage[] = [];
+          // The final answer gets its bubble like every other step. Mirrors
+          // the web.
+          if (result.answerLabel) {
+            additions.push(formRow(tripId, "user", result.answerLabel, "form_answer", ts + 1));
+          }
+          // Surface any deterministic acknowledgment (e.g. the start-date
+          // confirm / placeholder) as a Penny bubble before her real response.
+          if (note) additions.push(formRow(tripId, "assistant", note, "ai", ts + 4));
+          return [...prev, ...additions];
+        });
         // Fire the STORED trip intent at Penny — not the last answer, which was
         // whatever the final setup question asked about. This handoff turn is
-        // the full-trip build, the one wait we know will be long.
+        // the full-trip build, the one wait we know will be long. `handoff`
+        // keeps the intent out of the transcript — see sendChatMessage.
         const intent = result.tripIntent ?? (typeof value === "string" ? value : String(value));
-        await sendChatMessage(intent, [], undefined, true);
+        await sendChatMessage(intent, [], undefined, true, true);
         onTripUpdated();
       } else {
         const ts = Date.now();
@@ -1188,7 +1243,10 @@ export default function ChatPanel({
   const submitOnboardingPick = async (rawValue: string | number) => {
     const q = onboardingSnapshot?.question;
     if (!q || onboardingSubmitting || onboardingLoading) return;
-    if (q.kind !== "select") return;
+    // The SAME list the renderer reads (`TAP_TO_ANSWER_KINDS`), so a kind that
+    // draws chips is by construction a kind this accepts. It was `!== "select"`
+    // while the renderer drew chips for "chips" too — three dead chips.
+    if (!isTapToAnswerKind(q.kind)) return;
     await submitOnboardingAnswer(q.key, rawValue);
   };
 
@@ -1366,9 +1424,179 @@ export default function ChatPanel({
       "See Penny's message above"
     : onboardingSelectStep
       ? "Tap an option above…"
-      : onboardingUiActive && onboardingQuestion
-        ? (onboardingQuestion.placeholder ?? "Type your answer…")
-        : "Ask Penny…";
+      : onboardingUiActive && onboardingQuestion?.key === "trip_intent"
+        ? // Seeded from the device city (frame 7b): `Girona to …`, else `Where to?`.
+          (() => {
+            const seeded = intentPlaceholder(deviceCity);
+            return seeded.city ? `${seeded.city}${seeded.rest}` : seeded.rest;
+          })()
+        : onboardingUiActive && onboardingQuestion
+          ? (onboardingQuestion.placeholder ?? "Type your answer…")
+          : "Ask Penny…";
+
+  const transcript = buildTranscript(visibleMessages);
+  // The bubble the current setup question lives in — the LAST form_question
+  // whose text is the question the snapshot is asking. Its chips / card render
+  // inside that bubble (frames 7b–7e). Mirrors the web.
+  let activeQuestionId: string | null = null;
+  if (onboardingUiActive && onboardingQuestion) {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const it = transcript[i];
+      if (it.type === "message" && it.msg.kind === "form_question") {
+        if (it.msg.content === onboardingQuestion.label) activeQuestionId = it.id;
+        break;
+      }
+    }
+  }
+
+  const onboardingCard =
+    onboardingUiActive && onboardingQuestion ? (
+      <View style={styles.card} testID="onboarding-card">
+        {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options ? (
+          <>
+            {/* Only for 'select', where tapping is the ONLY way to answer.
+                On a 'chips' step the composer stays live, so telling the
+                user to tap would be wrong. */}
+            {onboardingQuestion.kind === "select" ? (
+              <Text style={styles.optionsLabel}>Tap an option</Text>
+            ) : null}
+            <View style={styles.optionsRow}>
+              {onboardingQuestion.options.map((o) => {
+                const inferred =
+                  onboardingQuestion.defaultValue != null &&
+                  o.value === onboardingQuestion.defaultValue;
+                return (
+                  <Pressable
+                    key={o.value}
+                    disabled={onboardingComposerBusy}
+                    testID={inferred ? "onboarding-chip-inferred" : "onboarding-chip"}
+                    onPress={() => void submitOnboardingPick(o.value)}
+                    style={[
+                      styles.optionChip,
+                      inferred ? styles.optionChipOn : null,
+                      onboardingComposerBusy ? styles.optionChipOff : null,
+                    ]}
+                  >
+                    {inferred ? <MagicWand size={14} color={theme.accent300} /> : null}
+                    <Text style={[styles.optionChipText, inferred ? styles.optionChipTextOn : null]}>
+                      {o.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+
+        {onboardingQuestion.kind === "vehicle" ? (
+          <View style={styles.vehicleCard} testID="onboarding-vehicle-card">
+            <Text style={styles.kicker}>NAME IT</Text>
+            <TextInput
+              testID="onboarding-vehicle-name"
+              value={vehicleName}
+              onChangeText={setVehicleName}
+              editable={!onboardingComposerBusy}
+              placeholder={onboardingQuestion.nameField?.placeholder}
+              placeholderTextColor={theme.subtle}
+              style={styles.vehicleInput}
+            />
+
+            <Text style={styles.kicker}>RANGE ON A TANK</Text>
+            <View style={styles.optionsRow}>
+              {onboardingQuestion.options?.map((o) => (
+                <Pressable
+                  key={o.value}
+                  disabled={onboardingComposerBusy}
+                  onPress={() => setVehicleRange(o.value)}
+                  style={[
+                    styles.optionChip,
+                    vehicleRange === o.value ? styles.optionChipOn : null,
+                    onboardingComposerBusy ? styles.optionChipOff : null,
+                  ]}
+                >
+                  <Text style={styles.optionChipText}>{o.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {/* Three options cannot cover every tank, and this is the safety
+                number the fuel planner rests on. */}
+            <TextInput
+              testID="onboarding-vehicle-range-other"
+              value={
+                onboardingQuestion.options?.some((o) => o.value === vehicleRange)
+                  ? ""
+                  : vehicleRange
+              }
+              onChangeText={setVehicleRange}
+              editable={!onboardingComposerBusy}
+              keyboardType="number-pad"
+              placeholder={`Other… (${onboardingQuestion.placeholder ?? ""})`}
+              placeholderTextColor={theme.subtle}
+              style={[styles.vehicleInput, styles.vehicleInputDashed]}
+            />
+
+            <Pressable
+              testID="onboarding-vehicle-submit"
+              disabled={onboardingComposerBusy}
+              onPress={() => void submitVehicleSetup(vehicleRange)}
+              style={[styles.vehicleSubmit, onboardingComposerBusy ? styles.optionChipOff : null]}
+            >
+              <Text style={styles.vehicleSubmitText}>Plan my trip →</Text>
+            </Pressable>
+
+            {/* Routes to the EXISTING range_help estimator: the server reads
+                a non-numeric range as "work it out for me". The name is
+                saved first, so it never gets asked for twice. */}
+            <Pressable
+              disabled={onboardingComposerBusy}
+              onPress={() => void submitVehicleSetup("I'm not sure")}
+            >
+              <Text style={styles.vehicleHelpLink}>Not sure — work it out from my vehicle</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {onboardingQuestion.footnote ? (
+          <Text style={styles.optionsFootnote}>{onboardingQuestion.footnote}</Text>
+        ) : null}
+
+        {/*
+          PROMPT ROWS (frame 7b). These PREFILL the composer and focus it —
+          they do not submit. The first row prefills nothing: it is the "just
+          name a city" invitation, and its only job is to focus the box.
+        */}
+        {onboardingQuestion.prompts?.length ? (
+          <View style={styles.promptsWrap}>
+            <Text style={styles.kicker}>TAP TO START, THEN EDIT</Text>
+            <Pressable
+              disabled={onboardingComposerBusy}
+              testID="onboarding-prompt-city"
+              onPress={() => inputRef.current?.focus()}
+              style={[styles.cityRow, onboardingComposerBusy ? styles.optionChipOff : null]}
+            >
+              <MapPinSimpleArea size={22} color={theme.accent300} />
+              <View style={styles.cityRowCopy}>
+                <Text style={styles.cityRowText}>Name a city — Lisbon, Girona, Tromsø…</Text>
+                <Text style={styles.cityRowSub}>or just start typing</Text>
+              </View>
+            </Pressable>
+            {onboardingQuestion.prompts.map((prompt) => (
+              <Pressable
+                key={prompt}
+                disabled={onboardingComposerBusy}
+                onPress={() => {
+                  setInput(prompt);
+                  inputRef.current?.focus();
+                }}
+                style={[styles.promptRow, onboardingComposerBusy ? styles.optionChipOff : null]}
+              >
+                <Text style={styles.promptText}>{prompt}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    ) : null;
 
   return (
     /*
@@ -1396,10 +1624,34 @@ export default function ChatPanel({
         </View>
         <View style={styles.headerStatus}>
           <View style={[styles.statusDot, pennyThinking && styles.statusDotThinking]} />
-          <Text style={[styles.statusText, pennyThinking && styles.statusTextThinking]}>
-            {pennyThinking ? "THINKING" : "READY"}
+          <Text
+            style={[styles.statusText, pennyThinking && styles.statusTextThinking]}
+            testID={onboardingUiActive && onboardingSnapshot?.progress ? "onboarding-progress" : undefined}
+          >
+            {onboardingUiActive && onboardingSnapshot?.progress
+              ? `${onboardingSnapshot.progress.current} OF ${onboardingSnapshot.progress.total}`
+              : pennyThinking
+                ? "THINKING"
+                : "READY"}
           </Text>
         </View>
+        {/* The step counter's 2pt accent progress bar (frame 7b) — in the
+            header, the one part of the panel that never scrolls away. */}
+        {onboardingUiActive && onboardingSnapshot?.progress ? (
+          <View style={styles.progressTrack} pointerEvents="none">
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  width: `${Math.round(
+                    (100 * onboardingSnapshot.progress.current) /
+                      Math.max(1, onboardingSnapshot.progress.total)
+                  )}%`,
+                },
+              ]}
+            />
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -1466,7 +1718,10 @@ export default function ChatPanel({
           </View>
         ) : null}
 
-        {visibleMessages.map((msg, msgIdx) => {
+        {transcript.map((item, msgIdx) => {
+          const gp = getGroupPosition(transcript, msgIdx);
+          const msg = item.msg;
+          const isActiveQuestion = item.id === activeQuestionId;
           // Hide the empty assistant bubble while Penny is working but hasn't
           // emitted any text yet — the 3-dot indicator covers that state. The
           // web only checks `streaming`; we also drop a finished-but-empty
@@ -1489,19 +1744,21 @@ export default function ChatPanel({
             return null;
           }
 
-          const gp = getGroupPosition(visibleMessages, msgIdx);
           // Tight 2pt gap inside a group, 10pt between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
           const isUser = msg.role === "user";
           const isQueued = msg.deliveryStatus === "queued";
           const isLastUserMessage =
-            isUser && !visibleMessages.slice(msgIdx + 1).some((m) => m.role === "user");
+            isUser && !transcript.slice(msgIdx + 1).some((it) => it.role === "user");
 
           return (
             <View
               key={msg.id}
               style={[
                 styles.row,
+                // The active setup question carries its chips / card inside
+                // the bubble, so it gets the room a form needs.
+                isActiveQuestion ? styles.rowWide : null,
                 { marginTop, alignSelf: isUser ? "flex-end" : "flex-start" },
                 isQueued ? styles.queued : null,
               ]}
@@ -1529,6 +1786,7 @@ export default function ChatPanel({
                     {msg.streaming ? <BlinkingCursor /> : null}
                   </Text>
                 ) : null}
+                {isActiveQuestion ? onboardingCard : null}
 
                 {msg.changes_made && !msg.applyError ? (
                   <View style={styles.appliedNote}>
@@ -1678,155 +1936,6 @@ export default function ChatPanel({
         </View>
       ) : (
         <>
-          {onboardingUiActive && onboardingSnapshot?.progress ? (
-            <View style={styles.progressWrap}>
-              <Text style={styles.progressText}>
-                Setup · {onboardingSnapshot.progress.current} of {onboardingSnapshot.progress.total}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* TODO(sam): the server can attach `help` to a question (units_pick,
-              range_km — see
-              buildVehicleProfileQuestions in src/lib/vehicleProfile.ts), but the
-              web ChatPanel declares the field and renders it nowhere, so there is
-              no placement to copy. Confirm where it belongs before adding it. */}
-          {onboardingUiActive &&
-          (onboardingQuestion?.kind === "select" || onboardingQuestion?.kind === "chips") &&
-          onboardingQuestion.options ? (
-            <View style={styles.optionsWrap}>
-              {/* Only for 'select', where tapping is the ONLY way to answer.
-                  On a 'chips' step the composer stays live, so telling the
-                  user to tap would be wrong. */}
-              {onboardingQuestion.kind === "select" ? (
-                <Text style={styles.optionsLabel}>Tap an option</Text>
-              ) : null}
-              <View style={styles.optionsRow}>
-                {onboardingQuestion.options.map((o) => (
-                  <Pressable
-                    key={o.value}
-                    disabled={onboardingComposerBusy}
-                    onPress={() => void submitOnboardingPick(o.value)}
-                    style={[styles.optionChip, onboardingComposerBusy ? styles.optionChipOff : null]}
-                  >
-                    <Text style={styles.optionChipText}>{o.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              {onboardingQuestion.footnote ? (
-                <Text style={styles.optionsFootnote}>{onboardingQuestion.footnote}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {/*
-            THE COMPOSITE VEHICLE CARD (frame 7e) — nickname and range on one
-            card, one submit. The composer is locked while it is up (see
-            `onboardingSelectStep`): two answers cannot go into one box.
-            Mirrors src/components/ChatPanel.tsx; the two share no code.
-          */}
-          {onboardingUiActive && onboardingQuestion?.kind === "vehicle" ? (
-            <View style={styles.vehicleCard} testID="onboarding-vehicle-card">
-              <Text style={styles.vehicleFieldLabel}>
-                {onboardingQuestion.nameField?.label}
-              </Text>
-              <TextInput
-                testID="onboarding-vehicle-name"
-                value={vehicleName}
-                onChangeText={setVehicleName}
-                editable={!onboardingComposerBusy}
-                placeholder={onboardingQuestion.nameField?.placeholder}
-                placeholderTextColor={theme.subtle}
-                style={styles.vehicleInput}
-              />
-
-              <Text style={styles.vehicleFieldLabel}>{onboardingQuestion.label}</Text>
-              <View style={styles.optionsRow}>
-                {onboardingQuestion.options?.map((o) => (
-                  <Pressable
-                    key={o.value}
-                    disabled={onboardingComposerBusy}
-                    onPress={() => setVehicleRange(o.value)}
-                    style={[
-                      styles.optionChip,
-                      vehicleRange === o.value ? styles.optionChipOn : null,
-                      onboardingComposerBusy ? styles.optionChipOff : null,
-                    ]}
-                  >
-                    <Text style={styles.optionChipText}>{o.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              {/* Three options cannot cover every tank, and this is the safety
-                  number the fuel planner rests on. */}
-              <TextInput
-                testID="onboarding-vehicle-range-other"
-                value={
-                  onboardingQuestion.options?.some((o) => o.value === vehicleRange)
-                    ? ""
-                    : vehicleRange
-                }
-                onChangeText={setVehicleRange}
-                editable={!onboardingComposerBusy}
-                keyboardType="number-pad"
-                placeholder={`Other… (${onboardingQuestion.placeholder ?? ""})`}
-                placeholderTextColor={theme.subtle}
-                style={[styles.vehicleInput, styles.vehicleInputDashed]}
-              />
-
-              <Pressable
-                testID="onboarding-vehicle-submit"
-                disabled={onboardingComposerBusy}
-                onPress={() => void submitVehicleSetup(vehicleRange)}
-                style={[
-                  styles.vehicleSubmit,
-                  onboardingComposerBusy ? styles.optionChipOff : null,
-                ]}
-              >
-                <Text style={styles.vehicleSubmitText}>Plan my trip →</Text>
-              </Pressable>
-
-              {/* Routes to the EXISTING range_help estimator: the server reads
-                  a non-numeric range as "work it out for me". The name is
-                  saved first, so it never gets asked for twice. */}
-              <Pressable
-                disabled={onboardingComposerBusy}
-                onPress={() => void submitVehicleSetup("I'm not sure")}
-              >
-                <Text style={styles.vehicleHelpLink}>
-                  Not sure — work it out from my vehicle
-                </Text>
-              </Pressable>
-
-              {onboardingQuestion.footnote ? (
-                <Text style={styles.optionsFootnote}>{onboardingQuestion.footnote}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {/*
-            PROMPT ROWS. These PREFILL the composer and focus it — they do not
-            submit, which is the whole difference between them and the chips
-            above. An option is an answer; a prompt is a shape to edit, and
-            nobody wants their first message sent verbatim.
-          */}
-          {onboardingUiActive && onboardingQuestion?.prompts?.length ? (
-            <View style={styles.promptsWrap}>
-              {onboardingQuestion.prompts.map((prompt) => (
-                <Pressable
-                  key={prompt}
-                  disabled={onboardingComposerBusy}
-                  onPress={() => {
-                    setInput(prompt);
-                    inputRef.current?.focus();
-                  }}
-                  style={[styles.promptRow, onboardingComposerBusy ? styles.optionChipOff : null]}
-                >
-                  <Text style={styles.promptText}>{prompt}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
 
           <View testID="chat-composer" style={styles.composerWrap}>
             {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
@@ -2168,22 +2277,51 @@ const styles = StyleSheet.create({
   },
   setupLoadingText: { fontFamily: font.regular, color: theme.muted, fontSize: 13 },
 
-  progressWrap: { paddingTop: 8, paddingHorizontal: 16, backgroundColor: theme.surfaceMuted },
-  progressText: {
-    fontSize: 11,
-    fontFamily: font.semibold,
-    color: theme.primary,
-    letterSpacing: 0.7,
-    textTransform: "uppercase",
+  progressTrack: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: -1,
+    height: 2,
+    backgroundColor: theme.neutral900,
+  },
+  progressFill: {
+    height: 2,
+    backgroundColor: theme.primary,
+    shadowColor: theme.primary,
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
   },
 
-  optionsWrap: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    backgroundColor: theme.surfaceMuted,
+  // Everything the active question needs beyond its text, INSIDE Penny's
+  // bubble (frames 7b–7e).
+  card: { marginTop: 10, gap: 10 },
+  rowWide: { maxWidth: "94%" },
+  kicker: {
+    fontFamily: font.semibold,
+    fontSize: 9.5,
+    letterSpacing: 1.2,
+    color: theme.subtle,
+    textTransform: "uppercase",
   },
+  cityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 48,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: theme.accent700,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.primaryTint,
+  },
+  cityRowCopy: { gap: 2, flexShrink: 1 },
+  cityRowText: { fontFamily: font.regular, fontSize: 13.5, color: theme.accent300 },
+  cityRowSub: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
+  optionChipTextOn: { color: theme.accent300 },
+
   optionsLabel: { fontFamily: font.regular, fontSize: 11, color: theme.muted, marginBottom: 6, letterSpacing: 0.3 },
   optionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   optionsFootnote: {
@@ -2193,14 +2331,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 8,
   },
-  promptsWrap: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    backgroundColor: theme.surfaceMuted,
-    gap: 8,
-  },
+  promptsWrap: { gap: 6 },
   promptRow: {
     paddingVertical: 11,
     paddingHorizontal: 14,
@@ -2211,9 +2342,12 @@ const styles = StyleSheet.create({
   },
   promptText: { fontFamily: font.regular, fontSize: 13.5, color: theme.muted },
   optionChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingVertical: 8,
     paddingHorizontal: 14,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.surfaceMuted,
     borderWidth: 1,
     borderColor: theme.border,
     borderRadius: 999,
@@ -2223,14 +2357,7 @@ const styles = StyleSheet.create({
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
 
   // The composite first-run vehicle card (frame 7e).
-  vehicleCard: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    backgroundColor: theme.surfaceMuted,
-    gap: 8,
-  },
+  vehicleCard: { gap: 8 },
   vehicleFieldLabel: { fontFamily: font.regular, fontSize: 12, color: theme.muted },
   vehicleInput: {
     paddingVertical: 10,

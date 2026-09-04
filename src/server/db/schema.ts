@@ -321,6 +321,13 @@ export const trips = pgTable(
     onboardingScan: jsonb('onboarding_scan').$type<import('@/types/trip').OnboardingScan | null>(),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
+    /**
+     * Hours of driving a day the driver asked for — the onboarding `trip_pace`
+     * answer (migration 0033). Null falls through to
+     * DEFAULT_MAX_DRIVE_HOURS_PER_DAY; the leg validators keep that 8h as the
+     * hard ceiling either way. Read by Penny's context and get_route's split.
+     */
+    dailyDriveHours: integer('daily_drive_hours'),
     // ── GPS position (device location, refreshed each time the app opens) ──
     // This is the driver's *device* location from the browser Geolocation API,
     // distinct from the driver-reported progress anchor below. It's what powers
