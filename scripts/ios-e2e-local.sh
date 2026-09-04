@@ -70,6 +70,10 @@ API_URL="http://localhost:${PORT}"
 # and time out with a message about the database being unreachable.
 DB_URL="postgres://feral:feral@127.0.0.1:55432/feraltravels_e2e"
 APP_ID="com.feraltravels.ios"
+# Kept in step with `MAESTRO_VERSION` in the `ios-e2e` job of
+# .github/workflows/ci.yml — a shell script and a workflow cannot share a
+# definition, so each points at the other. Bump both together, and move the
+# Xcode below with them.
 MAESTRO_PIN="2.10.0"
 # The toolchain Maestro's PREBUILT iOS driver was built with. Not a preference:
 # an older xcodebuild cannot run its .xctestrun, and the only symptom is
