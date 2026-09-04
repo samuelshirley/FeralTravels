@@ -9,6 +9,8 @@ import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
+import { buildGoHereUrl } from '@/lib/maps';
+import { approxDistance, formatKm } from '@/lib/units';
 import {
   CollapseAllIcon,
   DisclosureIcon,
@@ -414,7 +416,8 @@ export default function Itinerary({
     return {
       name: stop.name,
       distanceKm: stop.distance_from_start_km,
-      href: `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`,
+      // Turn-by-turn from wherever the device is — not a dropped pin.
+      href: buildGoHereUrl(stop.lat, stop.lng) as string,
     };
   }, [legs]);
 
@@ -586,7 +589,7 @@ export default function Itinerary({
         >
           {[
             [trip.start_date, trip.end_date].filter(Boolean).join(' → '),
-            totalDist > 0 ? `~${Math.round(totalDist).toLocaleString()} km` : '',
+            totalDist > 0 ? approxDistance(totalDist, units) : '',
             allLegs.length ? `${allLegs.length} day${allLegs.length === 1 ? '' : 's'}` : '',
             fuelStopCount ? `${fuelStopCount} fuel` : '',
           ]
@@ -745,7 +748,7 @@ export default function Itinerary({
                         <Distance
                           km={Math.round(groupKm)}
                           layout="inline"
-                          primaryOverride={`~${Math.round(groupKm).toLocaleString()} km`}
+                          primaryOverride={approxDistance(groupKm, units)}
                         />
                       </>
                     )}
@@ -935,7 +938,7 @@ export default function Itinerary({
               }}
             >
               {nextStop.name} · fuel
-              {nextStop.distanceKm != null ? ` · ${Math.round(nextStop.distanceKm)} km` : ''}
+              {nextStop.distanceKm != null ? ` · ${formatKm(nextStop.distanceKm, units)}` : ''}
             </span>
           </span>
           <span aria-hidden style={{ lineHeight: 0, flexShrink: 0 }}>

@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import { theme } from "@/lib/theme";
 import { useUnits } from "@/lib/units";
-import { kmToMi, miToKm, type UnitsPref } from "@/shared/lib/units";
+import { kmToMi, miToKm, type UnitsPref, approxDistance } from "@/shared/lib/units";
 import { font } from "@/lib/typography";
 import {
   buildVehicleProfileQuestions,
@@ -297,17 +297,8 @@ function VehicleCard({
   onSetDefault: () => void;
 }) {
   const { units } = useUnits();
-  // The card's own "~400 km" phrasing, not the shared Distance component: this
-  // is a soft planning number and the web prints the tilde inline.
-  const fmtRange = (km: number | null): string | null => {
-    if (km == null) return null;
-    if (units === "imperial") {
-      const mi = kmToMi(km);
-      return mi == null ? null : `~${Math.round(mi)} mi`;
-    }
-    return `~${km} km`;
-  };
-  const refillLabel = fmtRange(vehicle.range_km);
+  // A soft planning number, in the user's unit: "~400 km" / "~250 mi".
+  const refillLabel = vehicle.range_km == null ? null : approxDistance(vehicle.range_km, units);
 
   return (
     <View style={styles.vehicleCard}>

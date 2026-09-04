@@ -16,7 +16,6 @@ vi.mock('@/lib/api', () => ({
     deleteStop: vi.fn().mockResolvedValue({}),
     selectStop: vi.fn().mockResolvedValue({}),
     swapStopPrimary: vi.fn().mockResolvedValue({}),
-    parseCoords: vi.fn().mockResolvedValue(null),
   }),
   ApiError: class ApiError extends Error {
     status: number;
@@ -25,12 +24,6 @@ vi.mock('@/lib/api', () => ({
       this.status = status;
     }
   },
-}));
-
-// Mock coords
-vi.mock('@/lib/coords', () => ({
-  parseCoords: vi.fn().mockReturnValue(null),
-  needsServerResolution: vi.fn().mockReturnValue(false),
 }));
 
 // Mock fuel error semantics
@@ -222,20 +215,6 @@ describe('StopsSection (refactored)', () => {
     expect(screen.queryByLabelText(/remove repsol burgos norte/i)).not.toBeInTheDocument();
   });
 
-  it('renders paste GPS section when not readonly', () => {
-    render(
-      <StopsSection
-        tripId="00000000-0000-0000-0000-000000000001"
-        legId="00000000-0000-0000-0000-000000000010"
-        legStartName="Burgos"
-        legEndName="León"
-        legEndCoords={{ lat: 42.6, lng: -5.57 }}
-        initialStops={[]}
-      />
-    );
-    expect(screen.getByPlaceholderText(/paste gps/i)).toBeInTheDocument();
-  });
-
   it('renders StopCard with correct type labels', () => {
     const userStop: Stop = {
       ...mockFuelStop,
@@ -273,5 +252,54 @@ describe('StopsSection (refactored)', () => {
     const mapsLink = links.find((l) => l.getAttribute('href')?.includes('google.com/maps'));
     expect(mapsLink).toBeTruthy();
     expect(mapsLink).toHaveAttribute('target', '_blank');
+  });
+});
+
+describe('stop rows navigate', () => {
+  /*
+   * The row is the link and the link is a DRIVE. It used to be a div with a
+   * 30px arrow as the only clickable thing, opening a dropped pin
+   * (`/maps/search/?api=1&query=`); the obvious press — the row itself — did
+   * nothing. Asserted through the DOM: the accessible link wraps the row's
+   * text, and its href is turn-by-turn with no origin.
+   */
+  it('the whole row is a directions link, with no origin', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[mockFuelStop]}
+      />
+    );
+    const link = screen.getByRole('link', { name: /Repsol Burgos Norte in Google Maps/i });
+    // The link carries the row's own text — pressing the name is pressing the link.
+    expect(link).toHaveTextContent('Repsol Burgos Norte');
+    expect(link).toHaveTextContent('62 km');
+    const url = new URL(link.getAttribute('href') ?? '');
+    expect(url.pathname).toBe('/maps/dir/');
+    expect(url.searchParams.get('dir_action')).toBe('navigate');
+    expect(url.searchParams.get('destination')).toBe('42.35,-3.7');
+    expect(url.searchParams.has('origin')).toBe(false);
+    // The remove control is NOT inside the link.
+    const remove = screen.getByLabelText(/remove repsol burgos norte/i);
+    expect(link.contains(remove)).toBe(false);
+  });
+
+  it('the destination row is a directions link too', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[]}
+      />
+    );
+    const link = screen.getByRole('link', { name: /León in Google Maps/i });
+    expect(new URL(link.getAttribute('href') ?? '').pathname).toBe('/maps/dir/');
   });
 });

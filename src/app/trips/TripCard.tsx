@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { approxDistance, formatKm } from '@/lib/units';
+import { useUnits } from '@/components/UnitsContext';
 import Spinner from '@/components/Spinner';
 import { buttonStyle } from '@/components/ui/Button';
 
@@ -62,6 +64,7 @@ export default function TripCard({
   cloneBusy = false,
   onDeleted,
 }: Props) {
+  const { units } = useUnits();
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -74,7 +77,7 @@ export default function TripCard({
   const dateRange = [startDate, endDate].filter(Boolean).join(' → ');
   if (dateRange) metaBits.push(dateRange);
   if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? '' : 's'}`);
-  if (totalDistanceKm) metaBits.push(`~${totalDistanceKm} km`);
+  if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
 
   async function handleDeleteConfirm() {
     setBusy(true);
@@ -184,7 +187,7 @@ export default function TripCard({
                 }}
               />
               Next: fuel at {nextStop.name}
-              {nextStop.distance_km != null ? ` · in ${Math.round(nextStop.distance_km)} km` : ''}
+              {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ''}
             </div>
           )}
 

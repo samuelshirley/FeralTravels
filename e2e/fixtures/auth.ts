@@ -1,4 +1,10 @@
 import { expect, type Page } from '@playwright/test';
+// A static import. This was `await import('./test-trip')` inside
+// signInAsNewUser, and under the runner's CJS transform that intermittently
+// threw "Cannot use import statement outside a module" — the spec then failed
+// before it had opened a page. test-trip.ts imports nothing from this file,
+// so there is no cycle to work around.
+import { seedCanonicalFixture } from './test-trip';
 
 /**
  * Signing in, the way a user does it.
@@ -147,7 +153,6 @@ export async function signInAsNewUser(
   page: Page,
   opts: { redirectTo?: string; seedFixture?: boolean } = {},
 ): Promise<string> {
-  const { seedCanonicalFixture } = await import('./test-trip');
   const email = uniqueEmail();
   if (opts.seedFixture !== false) await seedCanonicalFixture(email);
   await login(page, email, opts.redirectTo || '/trips');

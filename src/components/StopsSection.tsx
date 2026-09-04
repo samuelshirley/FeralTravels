@@ -6,11 +6,14 @@ import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
 import { apiFetch } from '@/lib/api';
+import { buildGoHereUrl } from '@/lib/maps';
+import { formatKm } from '@/lib/units';
+import { useUnits } from '@/components/UnitsContext';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
 import { buttonStyle } from '@/components/ui/Button';
-import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon, PlusIcon } from '@/components/icons';
+import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
 
 interface StopsSectionProps {
   tripId: string;
@@ -94,15 +97,8 @@ export default function StopsSection({
     dismissedStops,
     syncInitialStops,
     remove,
-    pasteValue,
-    setPasteValue,
-    pasteBusy,
-    pasteError,
-    addFromPaste,
   } = useStopActions({ tripId, legId, initialStops, onChanged });
-
-  // Collapsed by default — see the row below.
-  const [pasteOpen, setPasteOpen] = useState(false);
+  const { units } = useUnits();
 
   useEffect(() => {
     syncInitialStops(initialStops);
@@ -142,10 +138,8 @@ export default function StopsSection({
    * voided; this is what they were passed for.
    */
   const timelineRows = useMemo(() => {
-    const mapsHref = (lat: number | null | undefined, lng: number | null | undefined) =>
-      lat != null && lng != null
-        ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
-        : null;
+    // Directions from wherever the device is, never a dropped pin.
+    const mapsHref = buildGoHereUrl;
 
     type Row = {
       key: string;
@@ -331,22 +325,15 @@ export default function StopsSection({
 
           {timelineRows.map((row) => {
             const highlighted = row.stop != null && highlightStopId === String(row.stop.id);
-            return (
-              <div
-                key={row.key}
-                data-stop-anchor={row.stop ? String(row.stop.id) : undefined}
-                style={{
-                  position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '7px 0',
-                  scrollMarginTop: 80,
-                  borderRadius: 8,
-                  boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
-                  transition: 'box-shadow 0.3s ease',
-                }}
-              >
+            /*
+             * THE WHOLE ROW IS THE LINK. It used to be a div with a 30px
+             * arrow at the end as the only clickable thing, so the obvious
+             * press — the `FUEL / Shell / 390 km` row itself — did nothing.
+             * The `×` remove control is a SIBLING of the link, not inside it,
+             * so removing a stop can never also start a drive.
+             */
+            const rowBody = (
+              <>
                 <div
                   style={{
                     width: 26,
@@ -398,16 +385,12 @@ export default function StopsSection({
                     flexShrink: 0,
                   }}
                 >
-                  {row.distanceKm != null ? `${Math.round(row.distanceKm)} km` : ''}
+                  {row.distanceKm != null ? formatKm(row.distanceKm, units) : ''}
                 </div>
 
                 {row.href && (
-                  <a
-                    href={row.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`${row.name} in Google Maps`}
-                    title={`${row.name} in Google Maps`}
+                  <span
+                    aria-hidden
                     style={{
                       flexShrink: 0,
                       width: 30,
@@ -420,7 +403,49 @@ export default function StopsSection({
                     }}
                   >
                     <NavigateIcon size={15} />
+                  </span>
+                )}
+              </>
+            );
+            const rowStyle: CSSProperties = {
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              flex: 1,
+              minWidth: 0,
+              color: 'inherit',
+              textDecoration: 'none',
+            };
+            return (
+              <div
+                key={row.key}
+                data-stop-anchor={row.stop ? String(row.stop.id) : undefined}
+                data-testid="stop-row"
+                style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '7px 0',
+                  scrollMarginTop: 80,
+                  borderRadius: 8,
+                  boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
+                  transition: 'box-shadow 0.3s ease',
+                }}
+              >
+                {row.href ? (
+                  <a
+                    href={row.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${row.name} in Google Maps`}
+                    title={`Navigate to ${row.name}`}
+                    style={rowStyle}
+                  >
+                    {rowBody}
                   </a>
+                ) : (
+                  <div style={rowStyle}>{rowBody}</div>
                 )}
 
                 {row.stop && !readonly && (
@@ -489,11 +514,7 @@ export default function StopsSection({
                   stopType={stop.stop_type}
                   name={stop.name}
                   distanceFromStartKm={stop.distance_from_start_km}
-                  googleMapsUri={
-                    stop.lat != null && stop.lng != null
-                      ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                      : null
-                  }
+                  googleMapsUri={buildGoHereUrl(stop.lat, stop.lng)}
                   lat={stop.lat}
                   lng={stop.lng}
                 />
@@ -503,90 +524,6 @@ export default function StopsSection({
         )}
 
       </div>
-
-      {/* Paste GPS (kept for power users) */}
-      {!readonly && (
-        <div style={sectionCardStyle} onClick={(e) => e.stopPropagation()}>
-          {/*
-            Collapsed to a row. Pasting coordinates is a power-user path taken
-            once in a while, and an always-open text field for it sat under
-            every day of every trip, competing with the route above it.
-          */}
-          <button
-            type="button"
-            onClick={() => setPasteOpen((v) => !v)}
-            aria-expanded={pasteOpen}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              padding: 0,
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: 11.5,
-              color: 'var(--tp-muted)',
-              fontFamily: 'inherit',
-            }}
-          >
-            <span aria-hidden style={{ lineHeight: 0, color: 'var(--tp-subtle)' }}>
-              <PlusIcon />
-            </span>
-            Paste GPS or a Maps link
-          </button>
-          <div
-            style={{
-              display: pasteOpen ? 'flex' : 'none',
-              gap: 6,
-              flexWrap: 'wrap',
-              marginTop: 10,
-            }}
-          >
-            <input
-              value={pasteValue}
-              onChange={(e) => setPasteValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addFromPaste();
-              }}
-              placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
-              disabled={pasteBusy}
-              style={{
-                flex: '1 1 240px',
-                minWidth: 180,
-                padding: '6px 10px',
-                background: 'var(--tp-surface-muted)',
-                border: '1px solid var(--tp-border)',
-                borderRadius: 4,
-                color: 'var(--tp-text)',
-                fontSize: 12,
-                outline: 'none',
-              }}
-            />
-            <button
-              onClick={addFromPaste}
-              disabled={pasteBusy || !pasteValue.trim()}
-              style={{
-                fontSize: 11,
-                background: pasteBusy ? 'var(--tp-surface-muted)' : 'var(--tp-primary)',
-                border: 'none',
-                color: pasteBusy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
-                padding: '6px 14px',
-                borderRadius: 4,
-                cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              {pasteBusy ? 'Adding…' : 'Add'}
-            </button>
-          </div>
-          {pasteError && (
-            <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>
-              {pasteError}
-            </div>
-          )}
-        </div>
-      )}
 
     </>
   );

@@ -5,7 +5,7 @@ import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import type { LegWithDetails, POI, Stop, StopType } from '@/types/trip';
 import { clusterPixels, type PixelPoint } from '@/lib/mapClustering';
 import { useUnits } from '@/components/UnitsContext';
-import { formatKmDual, type UnitsPref } from '@/lib/units';
+import { formatKm, formatKmDual, type UnitsPref } from '@/lib/units';
 
 let optionsConfigured = false;
 
@@ -453,7 +453,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
               <div style="font-size: 14px; font-weight: 600; margin: 4px 0; color: #333;">${leg.title}</div>
               <div style="font-size: 12px; color: #6b6b6b;">${leg.dates || ''}</div>
               <div style="font-size: 12px; color: #6b6b6b; margin-top: 2px;">
-                ${leg.distance_km ? leg.distance_km + ' km' : ''} ${leg.drive_time_minutes ? '• ' + Math.round(leg.drive_time_minutes / 60) + ' hrs' : ''}
+                ${leg.distance_km ? formatKm(leg.distance_km, units) : ''} ${leg.drive_time_minutes ? '• ' + Math.round(leg.drive_time_minutes / 60) + ' hrs' : ''}
               </div>
               <div style="font-size: 11px; color: #8a8a8a; margin-top: 4px;">${leg.overnight || ''}</div>
             </div>

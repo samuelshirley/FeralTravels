@@ -13,6 +13,8 @@ import LegCard from "@/components/LegCard";
 import { Distance } from "@/components/ui";
 import { updateTrip } from "@/lib/api";
 import { useUnits } from "@/lib/units";
+import { approxDistance, formatKm } from "@/shared/lib/units";
+import { buildGoHereUrl } from "@/shared/lib/maps";
 import { theme, shadow } from "@/lib/theme";
 import {
   CollapseAllIcon,
@@ -317,7 +319,8 @@ export default function Itinerary({
     return {
       name: stop.name,
       distanceKm: stop.distance_from_start_km,
-      href: `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`,
+      // Turn-by-turn from wherever the device is — not a dropped pin.
+      href: buildGoHereUrl(stop.lat, stop.lng) as string,
     };
   }, [legs]);
 
@@ -568,7 +571,7 @@ export default function Itinerary({
         <Text style={styles.headerMeta}>
           {[
             dateRange,
-            totalDist > 0 ? `~${Math.round(totalDist).toLocaleString()} km` : "",
+            totalDist > 0 ? approxDistance(totalDist, units) : "",
             allLegs.length ? `${allLegs.length} day${allLegs.length === 1 ? "" : "s"}` : "",
             fuelStopCount ? `${fuelStopCount} fuel` : "",
           ]
@@ -626,7 +629,7 @@ export default function Itinerary({
           <Text style={styles.nextStopKicker}>NEXT STOP</Text>
           <Text style={styles.nextStopName} numberOfLines={1}>
             {nextStop.name} · fuel
-            {nextStop.distanceKm != null ? ` · ${Math.round(nextStop.distanceKm)} km` : ""}
+            {nextStop.distanceKm != null ? ` · ${formatKm(nextStop.distanceKm, units)}` : ""}
           </Text>
         </View>
         <NavigateIcon color={theme.accent300} size={18} />
@@ -679,7 +682,7 @@ export default function Itinerary({
                 <Distance
                   km={Math.round(item.km)}
                   layout="inline"
-                  primaryOverride={`~${Math.round(item.km).toLocaleString()} km`}
+                  primaryOverride={approxDistance(item.km, units)}
                 />
               </Text>
             ) : null}

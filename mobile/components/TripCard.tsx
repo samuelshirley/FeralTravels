@@ -10,6 +10,8 @@ import {
 import { useRouter } from "expo-router";
 import { Card } from "@/components/ui";
 import { deleteTrip, isAuthError } from "@/lib/api";
+import { useUnits } from "@/lib/units";
+import { approxDistance, formatKm } from "@/shared/lib/units";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -75,6 +77,7 @@ export default function TripCard({
   onDeleted,
 }: Props) {
   const router = useRouter();
+  const { units } = useUnits();
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -88,7 +91,7 @@ export default function TripCard({
   const dateRange = [startDate, endDate].filter(Boolean).join(" → ");
   if (dateRange) metaBits.push(dateRange);
   if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? "" : "s"}`);
-  if (totalDistanceKm) metaBits.push(`~${totalDistanceKm} km`);
+  if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
   const dates = metaBits.join(" · ") || "No dates set";
 
   async function handleDeleteConfirm() {
@@ -144,9 +147,7 @@ export default function TripCard({
               <View style={styles.nextStopDot} />
               <Text style={styles.nextStopText} numberOfLines={1}>
                 Next: fuel at {nextStop.name}
-                {nextStop.distance_km != null
-                  ? ` · in ${Math.round(nextStop.distance_km)} km`
-                  : ""}
+                {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ""}
               </Text>
             </View>
           ) : null}

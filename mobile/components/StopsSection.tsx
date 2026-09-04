@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
+import { buildGoHereUrl } from "@/shared/lib/maps";
+import { formatKm } from "@/shared/lib/units";
+import { useUnits } from "@/lib/units";
 import StopCard from "@/components/StopCard";
 import { useStopActions } from "@/components/useStopActions";
 import { Spinner } from "@/components/ui";
@@ -14,7 +17,6 @@ import {
   FuelIcon,
   NavigateIcon,
   PlaceIcon,
-  PlusIcon,
 } from "@/components/icons";
 
 interface StopsSectionProps {
@@ -78,20 +80,13 @@ export default function StopsSection({
   highlightStopId = null,
 }: StopsSectionProps) {
   const router = useRouter();
+  const { units } = useUnits();
   const {
     activeStops,
     dismissedStops,
     syncInitialStops,
     remove,
-    pasteValue,
-    setPasteValue,
-    pasteBusy,
-    pasteError,
-    addFromPaste,
   } = useStopActions({ tripId, legId, initialStops, onChanged });
-
-  // Collapsed by default — see the row below.
-  const [pasteOpen, setPasteOpen] = useState(false);
 
   useEffect(() => {
     syncInitialStops(initialStops);
@@ -128,10 +123,8 @@ export default function StopsSection({
    * src/components/StopsSection.tsx.
    */
   const timelineRows = useMemo(() => {
-    const mapsHref = (lat: number | null | undefined, lng: number | null | undefined) =>
-      lat != null && lng != null
-        ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
-        : null;
+    // Directions from wherever the device is, never a dropped pin.
+    const mapsHref = buildGoHereUrl;
 
     type Row = {
       key: string;
@@ -276,11 +269,16 @@ export default function StopsSection({
 
           {timelineRows.map((row) => {
             const highlighted = row.stop != null && highlightStopId === String(row.stop.id);
-            return (
-              <View
-                key={row.key}
-                style={[styles.timelineRow, highlighted && styles.stopRowHighlighted]}
-              >
+            /*
+             * THE WHOLE ROW IS THE PRESS TARGET. It used to be a View with a
+             * 30pt arrow at the end as the only pressable thing, so the
+             * obvious press — the `FUEL / Shell / 390 km` row itself — did
+             * nothing. The `×` remove control is a SIBLING of the link, not
+             * inside it, so removing a stop can never also start a drive.
+             * Mirrors src/components/StopsSection.tsx.
+             */
+            const rowBody = (
+              <>
                 <View style={[styles.marker, { borderColor: row.markerColor }]}>
                   {row.isFuel ? (
                     <FuelIcon color={row.markerColor} size={12} />
@@ -299,20 +297,34 @@ export default function StopsSection({
                 </View>
 
                 <Text style={styles.timelineDistance}>
-                  {row.distanceKm != null ? `${Math.round(row.distanceKm)} km` : ""}
+                  {row.distanceKm != null ? formatKm(row.distanceKm, units) : ""}
                 </Text>
 
+                {row.href ? (
+                  <View style={styles.timelineNav}>
+                    <NavigateIcon color={theme.accent300} size={15} />
+                  </View>
+                ) : null}
+              </>
+            );
+            return (
+              <View
+                key={row.key}
+                style={[styles.timelineRow, highlighted && styles.stopRowHighlighted]}
+              >
                 {row.href ? (
                   <Pressable
                     onPress={() => void Linking.openURL(row.href!)}
                     accessibilityRole="link"
                     accessibilityLabel={`${row.name} in Google Maps`}
-                    hitSlop={6}
-                    style={styles.timelineNav}
+                    testID="stop-row-link"
+                    style={styles.timelineLink}
                   >
-                    <NavigateIcon color={theme.accent300} size={15} />
+                    {rowBody}
                   </Pressable>
-                ) : null}
+                ) : (
+                  <View style={styles.timelineLink}>{rowBody}</View>
+                )}
 
                 {row.stop && !readonly ? (
                   <Pressable
@@ -372,52 +384,6 @@ export default function StopsSection({
         ) : null}
       </View>
 
-      {/* Paste GPS (kept for power users) */}
-      {!readonly ? (
-        <View style={styles.sectionCard}>
-          {/*
-            Collapsed to a row. Pasting coordinates is a power-user path taken
-            once in a while; an always-open field for it sat under every day of
-            every trip, competing with the route above it. Mirrors
-            src/components/StopsSection.tsx.
-          */}
-          <Pressable
-            onPress={() => setPasteOpen((v) => !v)}
-            accessibilityRole="button"
-            style={styles.pasteToggle}
-          >
-            <PlusIcon color={theme.subtle} />
-            <Text style={styles.pasteToggleText}>Paste GPS or a Maps link</Text>
-          </Pressable>
-          {pasteOpen ? (
-          <View style={styles.pasteRow}>
-            <TextInput
-              value={pasteValue}
-              onChangeText={setPasteValue}
-              onSubmitEditing={() => void addFromPaste()}
-              placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
-              placeholderTextColor={theme.subtle}
-              editable={!pasteBusy}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.pasteInput}
-            />
-            <Pressable
-              onPress={() => void addFromPaste()}
-              disabled={pasteBusy || !pasteValue.trim()}
-              style={[styles.addButton, pasteBusy && styles.addButtonBusy]}
-            >
-              <Text style={[styles.addButtonText, pasteBusy && styles.addButtonTextBusy]}>
-                {pasteBusy ? "Adding…" : "Add"}
-              </Text>
-            </Pressable>
-          </View>
-          ) : null}
-          {pasteOpen && pasteError ? (
-            <Text style={styles.pasteError}>{pasteError}</Text>
-          ) : null}
-        </View>
-      ) : null}
     </>
   );
 }
@@ -518,6 +484,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   timelineNav: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
+  timelineLink: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
   stopRow: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8 },
   // The web pulses a box-shadow ring; RN has no inset shadow, so the highlight
   // is a gold outline on the row instead.
@@ -538,30 +505,4 @@ const styles = StyleSheet.create({
   dismissedBlock: { marginTop: 8 },
   dismissedSummary: { fontFamily: font.regular, fontSize: 10, color: theme.muted, letterSpacing: 0.8 },
   dismissedList: { marginTop: 6 },
-  pasteToggle: { flexDirection: "row", alignItems: "center", gap: 8 },
-  pasteToggleText: { fontFamily: font.regular, fontSize: 11.5, color: theme.muted },
-  pasteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  pasteInput: {
-    fontFamily: font.regular,
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 4,
-    color: theme.text,
-    fontSize: 12,
-  },
-  addButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 4,
-    backgroundColor: theme.primary,
-  },
-  addButtonBusy: { backgroundColor: theme.surfaceMuted },
-  addButtonText: { fontSize: 11, fontFamily: font.semibold, color: theme.onPrimary },
-  addButtonTextBusy: { color: theme.muted },
-  pasteError: { fontFamily: font.regular, fontSize: 11, color: theme.danger, marginTop: 4 },
 });

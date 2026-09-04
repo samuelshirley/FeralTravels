@@ -1,6 +1,8 @@
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { StopType } from "@/shared/types/trip";
-import { buildMapsSearchUrl } from "@/shared/lib/maps";
+import { buildGoHereUrl } from "@/shared/lib/maps";
+import { formatKm } from "@/shared/lib/units";
+import { useUnits } from "@/lib/units";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
@@ -58,12 +60,9 @@ export default function StopCard({
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
 
-  // The shared helper takes a search query, which the web's flat
-  // `?api=1&query=lat,lng` form folds into the coordinate pair itself — so pass
-  // the pair as the query to land on the same point with the same result.
-  const href =
-    googleMapsUri ??
-    (lat != null && lng != null ? buildMapsSearchUrl(lat, lng, `${lat},${lng}`) : null);
+  const { units } = useUnits();
+  // Directions from the device to the stop — never a dropped pin.
+  const href = googleMapsUri ?? buildGoHereUrl(lat, lng);
 
   const body = (
     <View style={styles.row}>
@@ -77,7 +76,7 @@ export default function StopCard({
         </Text>
         {distanceFromStartKm != null ? (
           <Text style={styles.distance}>
-            {Math.round(distanceFromStartKm)} km from start
+            {formatKm(distanceFromStartKm, units)} from start
           </Text>
         ) : null}
       </View>

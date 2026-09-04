@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fetchVehicles, invalidateVehicleCache } from '@/lib/vehicleCache';
-import { kmToMi, miToKm } from '@/lib/units';
+import { kmToMi, miToKm, approxDistance } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
@@ -235,15 +235,7 @@ function VehicleCard({
   onSetDefault: () => void;
 }) {
   const { units } = useUnits();
-  const fmtRange = (km: number | null): string | null => {
-    if (km == null) return null;
-    if (units === 'imperial') {
-      const mi = kmToMi(km);
-      return mi == null ? null : `~${Math.round(mi)} mi`;
-    }
-    return `~${km} km`;
-  };
-  const refillLabel = fmtRange(vehicle.range_km);
+  const refillLabel = vehicle.range_km == null ? null : approxDistance(vehicle.range_km, units);
 
   return (
     <div

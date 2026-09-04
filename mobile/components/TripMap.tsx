@@ -27,6 +27,8 @@ import { haversineKm } from "@/shared/lib/polyline";
 import { font } from "@/lib/typography";
 import { formatDate, parseISODate } from "@/shared/lib/dates";
 import { useUnits } from "@/lib/units";
+import { formatKm } from "@/shared/lib/units";
+import { buildGoHereUrl } from "@/shared/lib/maps";
 import { CrosshairIcon, ExternalLinkIcon, NavigateIcon } from "@/components/icons";
 import type {
   GeoJSONLineString,
@@ -634,7 +636,8 @@ export default function TripMap({
       fromStartKm: fromStart,
       toEndKm: legKm != null ? Math.max(0, legKm - fromStart) : null,
       endName: leg.end_name,
-      href: `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`,
+      // Turn-by-turn from wherever the device is — not a dropped pin.
+      href: buildGoHereUrl(stop.lat, stop.lng) as string,
       legLabel: formatDate(parseISODate(leg.date_iso), units) || null,
       legStart: leg.start_name,
       legEnd: leg.end_name,
@@ -771,7 +774,7 @@ export default function TripMap({
                   <Text style={styles.calloutTitle}>{leg.title}</Text>
                   {leg.dates ? <Text style={styles.calloutBody}>{leg.dates}</Text> : null}
                   <Text style={styles.calloutBody}>
-                    {leg.distance_km ? `${leg.distance_km} km` : ""}
+                    {leg.distance_km ? formatKm(leg.distance_km, units) : ""}
                     {leg.drive_time_minutes
                       ? ` • ${Math.round(leg.drive_time_minutes / 60)} hrs`
                       : ""}
@@ -877,7 +880,7 @@ export default function TripMap({
                     <Text style={styles.calloutTitle}>{p.name}</Text>
                     {p.distanceKm != null ? (
                       <Text style={styles.calloutBody}>
-                        {Math.round(p.distanceKm)} km from start
+                        {formatKm(p.distanceKm, units)} from start
                       </Text>
                     ) : null}
                     {/* Web says "Click to open in list" — same action, touch wording. */}
@@ -983,9 +986,9 @@ export default function TripMap({
             {sheetStop.name}
           </Text>
           <Text style={styles.sheetMeta} numberOfLines={1}>
-            {Math.round(sheetStop.fromStartKm)} km from start
+            {formatKm(sheetStop.fromStartKm, units)} from start
             {sheetStop.toEndKm != null && sheetStop.endName
-              ? ` · ${Math.round(sheetStop.toEndKm)} km to ${sheetStop.endName}`
+              ? ` · ${formatKm(sheetStop.toEndKm, units)} to ${sheetStop.endName}`
               : ""}
           </Text>
 
@@ -1011,7 +1014,7 @@ export default function TripMap({
                   sheetStop.legStart && sheetStop.legEnd
                     ? `${sheetStop.legStart} → ${sheetStop.legEnd}`
                     : null,
-                  sheetStop.legKm != null ? `${Math.round(sheetStop.legKm)} km` : null,
+                  sheetStop.legKm != null ? formatKm(sheetStop.legKm, units) : null,
                   sheetStop.legHours ? `${sheetStop.legHours} h` : null,
                 ]
                   .filter(Boolean)

@@ -3,6 +3,7 @@
 import type { StopType } from '@/types/trip';
 import Distance from '@/components/Distance';
 import { FuelIcon, PlaceIcon } from '@/components/icons';
+import { buildGoHereUrl } from '@/lib/maps';
 
 export interface StopCardProps {
   stopType: StopType;
@@ -37,8 +38,9 @@ const STOP_DISPLAY: Record<
   },
 };
 
+/** Directions from the device to the stop — never a dropped pin. */
 function buildFallbackMapsUrl(lat: number, lng: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  return buildGoHereUrl(lat, lng) as string;
 }
 
 /**
