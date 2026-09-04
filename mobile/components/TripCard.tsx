@@ -10,6 +10,8 @@ import {
 import { useRouter } from "expo-router";
 import { Card } from "@/components/ui";
 import { deleteTrip, isAuthError } from "@/lib/api";
+import { useUnits } from "@/lib/units";
+import { approxDistance, formatKm } from "@/shared/lib/units";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -23,6 +25,16 @@ interface Props {
   name: string;
   startDate: string | null;
   endDate: string | null;
+  /** Trip length in days, derived by listTripsForUser. */
+  dayCount?: number | null;
+  /** Total driving distance in km, derived by listTripsForUser. */
+  totalDistanceKm?: number | null;
+  /**
+   * The next fuel stop on the day the driver is on. Null when there is not one
+   * to name — fuel is sourced per-leg on day-open, so a trip nobody has opened
+   * has no stop yet. The row is omitted rather than showing a placeholder.
+   */
+  nextStop?: { name: string; distance_km: number | null } | null;
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
@@ -53,6 +65,9 @@ export default function TripCard({
   name,
   startDate,
   endDate,
+  dayCount,
+  totalDistanceKm,
+  nextStop,
   isTemplate = false,
   completed = false,
   editMode = false,
@@ -62,11 +77,22 @@ export default function TripCard({
   onDeleted,
 }: Props) {
   const router = useRouter();
+  const { units } = useUnits();
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Same expression as the web card so a half-dated trip renders identically.
-  const dates = [startDate, endDate].filter(Boolean).join(" → ") || "No dates set";
+  /*
+   * "16–17 Sep 2026 · 2 days · ~645 km". Each part is dropped when it is not
+   * known rather than shown as a zero — a template carries dates and nothing
+   * else, and it should read as a date range, not as a 0 km trip.
+   */
+  const metaBits: string[] = [];
+  const dateRange = [startDate, endDate].filter(Boolean).join(" → ");
+  if (dateRange) metaBits.push(dateRange);
+  if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? "" : "s"}`);
+  if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
+  const dates = metaBits.join(" · ") || "No dates set";
 
   async function handleDeleteConfirm() {
     setBusy(true);
@@ -111,18 +137,33 @@ export default function TripCard({
           </Text>
           <Text style={styles.dates}>{dates}</Text>
 
+          {/*
+            The one added line per card, below a hairline INSIDE the card so it
+            reads as a footnote to this trip rather than a second list row.
+            Omitted entirely when there is no stop to name — see the prop.
+          */}
+          {nextStop ? (
+            <View style={styles.nextStopRow}>
+              <View style={styles.nextStopDot} />
+              <Text style={styles.nextStopText} numberOfLines={1}>
+                Next: fuel at {nextStop.name}
+                {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ""}
+              </Text>
+            </View>
+          ) : null}
+
           {showClone && !editMode ? (
             <View style={styles.actions}>
               {/* Affordance only — the whole card is already the "View" target. */}
               <View style={styles.viewPill}>
-                <Text style={styles.viewPillText}>View →</Text>
+                <Text style={styles.viewPillText}>View</Text>
               </View>
               <Pressable
                 disabled={cloneBusy}
                 onPress={() => onCloneClick?.(id)}
                 style={[styles.clonePill, cloneBusy && styles.clonePillBusy]}
               >
-                {cloneBusy ? <ActivityIndicator size="small" color={theme.success} /> : null}
+                {cloneBusy ? <ActivityIndicator size="small" color={theme.accent300} /> : null}
                 <Text style={styles.clonePillText}>
                   {cloneBusy ? "Cloning…" : "Clone to my trips"}
                 </Text>
@@ -200,13 +241,13 @@ export default function TripCard({
 const styles = StyleSheet.create({
   // src/app/layout.tsx:181 — .card-grid { gap: 10px } ≤767px.
   wrap: { position: "relative", marginBottom: 10 },
+  // Templates are secondary: a hairline and no fill, so they sit behind the
+  // user's own trips instead of competing with them.
   cardTemplate: {
-    backgroundColor: theme.primaryMuted,
-    // src/app/trips/TripCard.tsx:85
-    borderColor: "rgba(78, 122, 176, 0.28)",
+    backgroundColor: "transparent",
+    borderColor: theme.border,
   },
-  // src/app/trips/TripCard.tsx:87
-  cardEditing: { borderColor: "rgba(201, 123, 99, 0.45)" },
+  cardEditing: { borderColor: theme.borderStrong },
   // Same dimming the itinerary's "behind you" section uses, so a finished trip
   // reads as past wherever it appears.
   cardCompleted: { backgroundColor: theme.surfaceMuted, opacity: 0.75 },
@@ -227,18 +268,42 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     color: theme.muted,
   },
-  name: { fontSize: 16, fontFamily: font.semibold, color: theme.text },
-  dates: { fontFamily: font.regular, fontSize: 12, color: theme.muted, marginTop: 4 },
+  name: { fontSize: 16, fontFamily: font.medium, color: theme.text },
+  dates: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+    marginTop: 4,
+  },
+  nextStopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.neutral900,
+  },
+  nextStopDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.primary },
+  nextStopText: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.muted,
+    fontVariant: ["tabular-nums"],
+  },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  // Neutral outline — View is the lesser of the two template actions.
   viewPill: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.radiusSm,
     borderWidth: 1,
-    borderColor: theme.primaryMuted,
-    backgroundColor: theme.surfaceMuted,
+    borderColor: theme.borderStrong,
+    backgroundColor: theme.surface,
   },
-  viewPillText: { fontFamily: font.regular, fontSize: 12, color: theme.primary },
+  viewPillText: { fontFamily: font.medium, fontSize: 12, color: theme.text },
   clonePill: {
     flexDirection: "row",
     alignItems: "center",
@@ -247,12 +312,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: theme.radiusSm,
     borderWidth: 1,
-    // src/app/trips/TripCard.tsx:140
-    borderColor: "rgba(74, 139, 122, 0.35)",
-    backgroundColor: theme.successMuted,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
   },
   clonePillBusy: { opacity: 0.7 },
-  clonePillText: { fontFamily: font.regular, fontSize: 12, color: theme.success },
+  clonePillText: { fontFamily: font.medium, fontSize: 12, color: theme.accent300 },
   deleteCorner: {
     position: "absolute",
     top: 8,

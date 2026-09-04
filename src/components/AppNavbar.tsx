@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import SupportModal from './SupportModal';
+import { AccountIcon, ChevronLeftIcon } from '@/components/icons';
 
 /**
  * The fallback account glyph — what everyone without a Google photo gets.
@@ -18,21 +19,9 @@ import SupportModal from './SupportModal';
  */
 function AccountGlyph() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      style={{ display: 'block' }}
-    >
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
+    <span aria-hidden style={{ display: 'block', lineHeight: 0 }}>
+      <AccountIcon />
+    </span>
   );
 }
 
@@ -99,7 +88,7 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         justifyContent: 'space-between',
         padding: '10px 16px',
         borderBottom: '1px solid var(--tp-border)',
-        background: 'rgba(251, 248, 243, 0.92)',
+        background: 'rgba(31, 33, 48, 0.92)', // --tp-surface-muted @ 92%, behind the blur
         backdropFilter: 'blur(10px)',
         flexShrink: 0,
         zIndex: 1000,
@@ -133,19 +122,9 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         >
           {tripName ? (
             <>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
+              <span aria-hidden style={{ lineHeight: 0 }}>
+                <ChevronLeftIcon />
+              </span>
               <span>Trips</span>
             </>
           ) : (
@@ -208,8 +187,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               // translucent background, leaving the glyph invisible on white.
               // The photo covers this entirely; it shows through only in the
               // instant before the image loads, and if it never does.
-              background: '#DFE5ED',
-              color: '#4E7AB0',
+              background: '#2b2741',
+              color: '#d2cefd',
               overflow: 'hidden',
             }}
             aria-label={signedInAs ? `Account menu — signed in as ${signedInAs}` : 'Account menu'}
@@ -438,8 +417,8 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
         .tp-app-navbar__account-btn:active,
         .tp-app-navbar__account-btn:focus,
         .tp-app-navbar__account-btn:focus-visible {
-          background: #DFE5ED !important;
-          color: #4E7AB0 !important;
+          background: #2b2741 !important;
+          color: #d2cefd !important;
         }
 
         @media (max-width: 480px) {

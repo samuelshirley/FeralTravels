@@ -13,10 +13,11 @@ import {
 import { useNextStop } from "@/shared/lib/useNextStop";
 import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
-import { Distance, Spinner, StatusBadge } from "@/components/ui";
-import { theme } from "@/lib/theme";
+import { Distance, Spinner } from "@/components/ui";
+import { shadow, theme } from "@/lib/theme";
 import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
+import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from "@/components/icons";
 
 /**
  * How long a leg's sourced fuel stops stay fresh before the day-open loader
@@ -27,23 +28,14 @@ import { font } from "@/lib/typography";
  */
 const FUEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Format a stop type slug into a readable label for nav buttons. */
-function formatStopType(stopType?: string): string {
-  switch (stopType) {
-    case "fuel":
-      return "Fuel";
-    case "destination":
-      return "Destination";
-    case "other":
-      return "Stop";
-    default:
-      return "Stop";
-  }
-}
-
-/** Build "Route to {Type} — {Name}" label for nav buttons. */
+/**
+ * Every one of these opens Google Maps — `buildSegmentedNavUrls` produces an
+ * external URL and `Linking` hands the user to another app. The label says
+ * which app and the glyph says it leaves; "Route to" implied turn-by-turn
+ * inside a product that has never had any.
+ */
 function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+  return `${seg.label} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -80,6 +72,13 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /** The day the driver is on — the only filled dot in the list. */
+  isCurrent?: boolean;
+  /**
+   * Source this leg's fuel on mount, even while the card is collapsed. Set by
+   * `Itinerary` for the ONE day the driver is on — see the note there.
+   */
+  autoSourceFuel?: boolean;
   /** True when this leg is the one currently selected on the map. */
   selected?: boolean;
 }
@@ -97,11 +96,24 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  isCurrent = false,
+  autoSourceFuel = false,
   selected = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === "rest";
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
+
+  /*
+   * What is left in the tank once this day is driven. Mirrors
+   * src/components/LegCard.tsx — the server figure is pessimistic where an
+   * earlier day is unsourced, so a non-negative result here cannot be a false
+   * positive. The negative case is deliberately not rendered.
+   */
+  const tankSpareKm =
+    !isRestDay && leg.range_remaining_start_km != null && leg.distance_km != null
+      ? leg.range_remaining_start_km - leg.distance_km
+      : null;
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
@@ -182,12 +194,22 @@ export default function LegCard({
   // calls); a never-sourced or stale leg runs the real search. We mirror that
   // freshness check here so we don't even round-trip on a fresh cache.
   const [fuelLoading, setFuelLoading] = useState(false);
-  const fuelFetchSigRef = useRef<string | null>(null);
+  const [showDriveCaveat, setShowDriveCaveat] = useState(false);
+  // Two guards, not one signature — see src/components/LegCard.tsx for the
+  // bug the signature caused: an invalidated leg (`none`, no timestamp) has
+  // the same signature as its own first auto-source, so the refetch was
+  // swallowed and the open day sat on "No stops yet" until a full reload.
+  const fuelInFlightRef = useRef(false);
+  const fuelFailedSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (expanded) fuelFailedSigRef.current = null;
+  }, [expanded]);
 
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
     // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
-    if (readonly || isRestDay || !expanded || isPast) return;
+    if (readonly || isRestDay || isPast) return;
+    if (!expanded && !autoSourceFuel) return;
     const updatedAt = leg.fuel_stops_updated_at;
     const fresh = updatedAt ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS : false;
     const terminalSuccess =
@@ -196,20 +218,19 @@ export default function LegCard({
     // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
     // station/route calls are cheap and cache-guarded, so a retry self-heals
     // legs stranded on a stale/transient error. We still skip
-    // 'computing'/'pending' (a search is already in flight); the
-    // signature guard below stops duplicate fires within a render session.
+    // 'computing'/'pending' (a search is already in flight); the in-flight
+    // flag below stops duplicate fires while one request is outstanding.
     const needsFetch =
       leg.fuel_status === "none" ||
       leg.fuel_status === "failed" ||
       (terminalSuccess && !fresh);
     if (!needsFetch) return;
 
-    // Guard against duplicate fires: the effect re-runs on every trip reload.
-    // The signature folds in the fuel state, so once a fetch lands new data the
-    // guard naturally allows a future genuinely-new state through.
+    if (fuelInFlightRef.current) return;
     const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? "none"}`;
-    if (fuelFetchSigRef.current === sig) return;
-    fuelFetchSigRef.current = sig;
+    if (leg.fuel_status === "failed" && fuelFailedSigRef.current === sig) return;
+    fuelInFlightRef.current = true;
+    if (leg.fuel_status === "failed") fuelFailedSigRef.current = sig;
 
     let cancelled = false;
     setFuelLoading(true);
@@ -222,11 +243,12 @@ export default function LegCard({
       })
       .catch((e) => {
         // apiFetch already surfaced this via the global error surface (no silent
-        // swallow). Clear the guard so the next open can retry.
-        fuelFetchSigRef.current = null;
+        // swallow). Clear the failed marker so the next open can retry.
+        fuelFailedSigRef.current = null;
         console.warn("lazy fuel fetch failed", e);
       })
       .finally(() => {
+        fuelInFlightRef.current = false;
         if (!cancelled) setFuelLoading(false);
       });
 
@@ -238,6 +260,7 @@ export default function LegCard({
     isRestDay,
     readonly,
     isPast,
+    autoSourceFuel,
     leg.id,
     leg.fuel_status,
     leg.fuel_stops_updated_at,
@@ -248,9 +271,8 @@ export default function LegCard({
   // Base-day accent colour — softer green vs driving-day blue. "Base day" is
   // the user-facing name for `leg_type: 'rest'`; see src/components/LegCard.tsx.
   // src/components/LegCard.tsx:195
-  const restDayColor = "#6BA368";
-  // src/components/LegCard.tsx:196 — falls back to the --tp-primary literal.
-  const driveColor = leg.color || "#4E7AB0";
+  const restDayColor = theme.rest;
+  const driveColor = leg.color || theme.primary;
   const dotColor = isRestDay ? restDayColor : driveColor;
 
   // The web rotates the chevron with a CSS transition; Animated is the native
@@ -285,7 +307,13 @@ export default function LegCard({
         <View
           style={[
             styles.dot,
-            { backgroundColor: dotColor, borderRadius: isRestDay ? 3 : 5 },
+            {
+              // Filled for today, a hollow ring after it. The old dot was
+              // filled on every row, so the list had no "you are here".
+              backgroundColor: isCurrent ? dotColor : "transparent",
+              borderColor: isCurrent ? "transparent" : isRestDay ? restDayColor : theme.borderStrong,
+              borderRadius: isRestDay ? 3 : 5,
+            },
           ]}
         />
         <View style={styles.headerBody}>
@@ -309,21 +337,45 @@ export default function LegCard({
               </Text>
             ) : null}
             {!isRestDay && driveHours ? <Text style={styles.meta}>{driveHours} hrs</Text> : null}
+            {driveHours ? (
+              <Pressable
+                onPress={() => setShowDriveCaveat((v) => !v)}
+                accessibilityLabel="About this driving time"
+                hitSlop={8}
+                style={styles.caveatToggle}
+              >
+                <InfoIcon color={theme.subtle} size={13} />
+              </Pressable>
+            ) : null}
+            {tankSpareKm != null && tankSpareKm >= 0 ? (
+              <Text style={styles.meta}>
+                <Distance km={Math.round(tankSpareKm)} layout="inline" /> to spare
+              </Text>
+            ) : null}
             {isRestDay && leg.end_name ? (
               <Text style={[styles.meta, { color: restDayColor }]}>{leg.end_name}</Text>
             ) : null}
           </View>
+          {/* Disclosed on tap rather than always on screen: it explains a
+              number most drivers never question, and a paragraph under every
+              day is noise until the one time it matters. */}
+          {showDriveCaveat && driveHours ? (
+            <Text style={styles.caveat}>
+              {navWaypointCount > 0
+                ? "Driving time is the leg headline start→destination only — it excludes detours via added stops."
+                : "Driving time assumes start→destination without intermediate stops inside this day."}
+            </Text>
+          ) : null}
           {leg.continuity_warning ? (
             <View style={styles.continuityWarning}>
-              <Text style={styles.continuityIcon}>⚠</Text>
+              <WarningIcon color={theme.warning} />
               <Text style={styles.continuityText}>{leg.continuity_warning}</Text>
             </View>
           ) : null}
         </View>
-        <StatusBadge status={leg.status} />
-        <Animated.Text style={[styles.chevron, { transform: [{ rotate: chevronRotate }] }]}>
-          ▾
-        </Animated.Text>
+        <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+          <DisclosureIcon color={theme.subtle} size={14} />
+        </Animated.View>
       </Pressable>
 
       {expanded && isRestDay ? (
@@ -451,26 +503,24 @@ export default function LegCard({
                         !seg.isNext && i > 0 && navButtons[0].isNext && styles.navButtonSecondary,
                       ]}
                     >
-                      <Text style={styles.navButtonText}>▶</Text>
+                      <ExternalLinkIcon color={theme.accent300} />
                       <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
                       {seg.isNext ? <Text style={styles.navNextChip}>NEXT</Text> : null}
                     </Pressable>
                   ))}
                 </View>
               )}
-              {driveHours ? (
-                <Text style={styles.caveat}>
-                  {navWaypointCount > 0
-                    ? `Shown driving time (~${driveHours} h) is the leg headline start→destination only — it excludes detours via added stops.`
-                    : `Shown driving time (~${driveHours} h) assumes start→destination without intermediate stops inside this leg card.`}
-                </Text>
-              ) : null}
             </View>
           ) : null}
 
           <StopsSection
             tripId={tripId}
             legId={leg.id}
+            legStartName={leg.start_name}
+            legEndName={leg.end_name}
+            legStartCoords={{ lat: leg.start_lat, lng: leg.start_lng }}
+            legEndCoords={{ lat: leg.end_lat, lng: leg.end_lng }}
+            legDistanceKm={leg.distance_km}
             initialStops={leg.stops}
             fuelStatus={leg.fuel_status}
             fuelPlanError={leg.fuel_plan_error}
@@ -505,12 +555,27 @@ export default function LegCard({
 }
 
 const styles = StyleSheet.create({
-  card: { marginBottom: 2, borderRadius: 8, overflow: "hidden" },
-  cardExpanded: { backgroundColor: theme.surfaceMuted },
-  // src/components/LegCard.tsx:208
-  cardExpandedRest: { backgroundColor: "rgba(107, 163, 104, 0.06)" },
-  // src/components/LegCard.tsx:214 — `3px solid ${restDayColor}40` (#6BA368 @ 0x40).
-  cardRest: { borderLeftWidth: 3, borderLeftColor: "rgba(107, 163, 104, 0.25)" },
+  /*
+   * Collapsed a day is a ROW — a hairline under it and nothing else, so a
+   * week of driving reads as one plan rather than seven boxes. Expanded it
+   * becomes the card you are working in. Mirrors src/components/LegCard.tsx.
+   */
+  card: {
+    marginBottom: 0,
+    borderRadius: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.neutral900,
+    overflow: "hidden",
+  },
+  cardExpanded: {
+    marginBottom: 10,
+    backgroundColor: theme.surface,
+    borderRadius: theme.radiusLg,
+    borderBottomWidth: 0,
+    ...shadow.sm,
+  },
+  cardExpandedRest: { backgroundColor: theme.surface },
+  cardRest: { borderLeftWidth: 3, borderLeftColor: theme.rest },
   // The web has no selected state (the desktop list is always beside the map);
   // on a phone the list and map are separate tabs, so the leg the map is
   // highlighting gets a matching tint here.
@@ -522,11 +587,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
-  dot: { width: 10, height: 10 },
+  dot: { width: 10, height: 10, borderWidth: 1, borderColor: "transparent" },
   headerBody: { flex: 1, minWidth: 0 },
   titleLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
-  kicker: { fontSize: 10, fontFamily: font.bold, letterSpacing: 1, color: theme.subtle },
-  title: { fontSize: 15, fontFamily: font.semibold, color: theme.text },
+  kicker: { fontSize: 10, fontFamily: font.semibold, letterSpacing: 1, color: theme.subtle },
+  title: { fontSize: 16, fontFamily: font.medium, color: theme.text },
   metaLine: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 3 },
   meta: { fontFamily: font.regular, fontSize: 12, color: theme.subtle },
   continuityWarning: {
@@ -612,7 +677,14 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     overflow: "hidden",
   },
-  caveat: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 8, maxWidth: 460, lineHeight: 16 },
+  caveat: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    marginTop: 6,
+    lineHeight: 16,
+  },
+  caveatToggle: { justifyContent: "center" },
   costsBlock: {
     marginTop: 12,
     paddingVertical: 10,

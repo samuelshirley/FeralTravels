@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import { theme } from "@/lib/theme";
 import { useUnits } from "@/lib/units";
-import { kmToMi, miToKm, type UnitsPref } from "@/shared/lib/units";
+import { kmToMi, miToKm, type UnitsPref, approxDistance } from "@/shared/lib/units";
 import { font } from "@/lib/typography";
 import {
   buildVehicleProfileQuestions,
@@ -297,17 +297,8 @@ function VehicleCard({
   onSetDefault: () => void;
 }) {
   const { units } = useUnits();
-  // The card's own "~400 km" phrasing, not the shared Distance component: this
-  // is a soft planning number and the web prints the tilde inline.
-  const fmtRange = (km: number | null): string | null => {
-    if (km == null) return null;
-    if (units === "imperial") {
-      const mi = kmToMi(km);
-      return mi == null ? null : `~${Math.round(mi)} mi`;
-    }
-    return `~${km} km`;
-  };
-  const refillLabel = fmtRange(vehicle.range_km);
+  // A soft planning number, in the user's unit: "~400 km" / "~250 mi".
+  const refillLabel = vehicle.range_km == null ? null : approxDistance(vehicle.range_km, units);
 
   return (
     <View style={styles.vehicleCard}>
@@ -634,19 +625,20 @@ const styles = StyleSheet.create({
   soloHintText: { fontFamily: font.regular, color: theme.muted, fontSize: 12, lineHeight: 17 },
   cardList: { gap: 10 },
   newFormWrap: { marginTop: 12 },
+  // Dashed: this adds something that is not there yet, which is a different
+  // act from the solid-outlined actions around it.
   addButton: {
     marginTop: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     paddingHorizontal: 14,
-    backgroundColor: theme.primaryMuted,
+    backgroundColor: "transparent",
     borderWidth: 1,
     borderStyle: "dashed",
-    // src/components/VehicleProfileSection.tsx:207 — 1px dashed
-    borderColor: "rgba(78, 122, 176, 0.45)",
-    borderRadius: 8,
+    borderColor: theme.primary,
+    borderRadius: theme.radiusMd,
     alignItems: "center",
   },
-  addButtonText: { color: theme.primary, fontFamily: font.semibold, fontSize: 13 },
+  addButtonText: { color: theme.accent300, fontFamily: font.medium, fontSize: 13 },
 
   vehicleCard: {
     borderWidth: 1,

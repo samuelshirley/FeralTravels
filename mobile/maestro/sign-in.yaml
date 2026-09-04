@@ -43,6 +43,12 @@ appId: ${APP_ID}
       # before the app was even asked to render anything.
       location: never
 
+# The same guard launch.yaml carries, and for the same reason: this flow is
+# `runFlow`ed by chat-keyboard, screenshots and settings-location, so one
+# assertion here makes a server error name itself in all four.
+- assertNotVisible:
+    id: 'fatal-error-modal'
+
 - extendedWaitUntil:
     visible:
       id: 'signin-email'
@@ -65,7 +71,7 @@ appId: ${APP_ID}
 # fully clear of it and the tap below lands on the button. Read off the live
 # hierarchy, not assumed. If a smaller device ever puts the two in contact the
 # fix is to scroll the button into view, not to reinstate this.
-- tapOn: 'Email me a code'
+- tapOn: 'Email me a 6-digit code'
 
 # The verify screen.
 #
@@ -85,7 +91,7 @@ appId: ${APP_ID}
 # down the spread branch and is unaffected — which is why this is fixed here
 # rather than in the app.
 - extendedWaitUntil:
-    visible: 'Enter your code'
+    visible: 'Check your email'
     timeout: 30000
 
 # Read the code NOW, not before the run. The app only reaches this screen once

@@ -3,13 +3,26 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { approxDistance, formatKm } from '@/lib/units';
+import { useUnits } from '@/components/UnitsContext';
 import Spinner from '@/components/Spinner';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface Props {
   id: string;
   name: string;
   startDate: string | null;
   endDate: string | null;
+  /** Trip length in days, derived by listTripsForUser. */
+  dayCount?: number | null;
+  /** Total driving distance in km, derived by listTripsForUser. */
+  totalDistanceKm?: number | null;
+  /**
+   * The next fuel stop on the day the driver is on. Null when there is not one
+   * to name — fuel is sourced per-leg on day-open, so a trip nobody has opened
+   * has no stop yet. The row is omitted rather than showing a placeholder.
+   */
+  nextStop?: { name: string; distance_km: number | null } | null;
   /** When true, render the trip card in the "DEMO / TEMPLATES" accent. */
   isTemplate?: boolean;
   /**
@@ -40,6 +53,9 @@ export default function TripCard({
   name,
   startDate,
   endDate,
+  dayCount,
+  totalDistanceKm,
+  nextStop,
   isTemplate = false,
   completed = false,
   editMode = false,
@@ -48,8 +64,20 @@ export default function TripCard({
   cloneBusy = false,
   onDeleted,
 }: Props) {
+  const { units } = useUnits();
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  /*
+   * "16–17 Sep 2026 · 2 days · ~645 km". Each part is dropped when it is not
+   * known rather than shown as a zero — a template carries dates and nothing
+   * else, and it should read as a date range, not as a 0 km trip.
+   */
+  const metaBits: string[] = [];
+  const dateRange = [startDate, endDate].filter(Boolean).join(' → ');
+  if (dateRange) metaBits.push(dateRange);
+  if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? '' : 's'}`);
+  if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
 
   async function handleDeleteConfirm() {
     setBusy(true);
@@ -87,8 +115,10 @@ export default function TripCard({
           style={{
             display: 'block',
             padding: 16,
+            // Templates are secondary: a hairline and no fill, so they sit
+            // behind the user's own trips instead of competing with them.
             background: isTemplate
-              ? 'var(--tp-primary-muted)'
+              ? 'transparent'
               : completed
                 ? 'var(--tp-surface-muted)'
                 : 'var(--tp-surface)',
@@ -96,21 +126,21 @@ export default function TripCard({
             // finished trip reads as past on both surfaces.
             opacity: completed ? 0.75 : 1,
             border: isTemplate
-              ? '1px solid rgba(78, 122, 176, 0.28)'
+              ? '1px solid var(--tp-primary)'
               : editMode
-                ? '1px solid rgba(201, 123, 99, 0.45)'
+                ? '1px solid var(--tp-border-strong)'
                 : '1px solid var(--tp-border)',
-            borderRadius: 'var(--tp-radius-md)',
+            borderRadius: 'var(--tp-radius-lg)',
             color: 'var(--tp-text)',
             textDecoration: 'none',
             transition: 'background 120ms, border-color 120ms',
-            boxShadow: 'var(--tp-shadow-sm)',
+            boxShadow: isTemplate ? 'none' : 'var(--tp-shadow-sm)',
           }}
         >
           <div
             style={{
               fontSize: 16,
-              fontWeight: 600,
+              fontWeight: 500,
               paddingRight: editMode ? 40 : completed ? 96 : 28,
             }}
           >
@@ -118,14 +148,48 @@ export default function TripCard({
           </div>
           <div
             style={{
-              fontSize: 12,
-              color: 'var(--tp-muted)',
-              
+              fontSize: 11.5,
+              color: 'var(--tp-subtle)',
+              fontVariantNumeric: 'tabular-nums',
               marginTop: 4,
             }}
           >
-            {[startDate, endDate].filter(Boolean).join(' → ') || 'No dates set'}
+            {metaBits.join(' · ') || 'No dates set'}
           </div>
+
+          {/*
+            The one added line per card. Below a hairline INSIDE the card so it
+            reads as a footnote to this trip rather than a second row in the
+            list. Omitted entirely when there is no stop to name — see the prop.
+          */}
+          {nextStop && (
+            <div
+              style={{
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: '1px solid var(--tp-neutral-900)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 11,
+                color: 'var(--tp-muted)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--tp-primary)',
+                  flexShrink: 0,
+                }}
+              />
+              Next: fuel at {nextStop.name}
+              {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ''}
+            </div>
+          )}
 
           {showClone && !editMode && (
             <div
@@ -134,17 +198,13 @@ export default function TripCard({
             >
               <span
                 style={{
+                  ...buttonStyle('secondary'),
                   fontSize: 12,
-                  color: 'var(--tp-primary)',
-                  textDecoration: 'none',
                   padding: '6px 12px',
-                  borderRadius: 'var(--tp-radius-sm)',
-                  border: '1px solid var(--tp-primary-muted)',
                   whiteSpace: 'nowrap',
-                  background: 'var(--tp-surface-muted)',
                 }}
               >
-                View →
+                View
               </span>
               <button
                 type="button"
@@ -155,20 +215,14 @@ export default function TripCard({
                 }}
                 disabled={cloneBusy}
                 style={{
+                  ...buttonStyle(),
                   fontSize: 12,
-                  background: 'var(--tp-success-muted)',
-                  border: '1px solid rgba(74, 139, 122, 0.35)',
-                  color: 'var(--tp-success)',
                   padding: '5px 10px',
-                  borderRadius: 'var(--tp-radius-sm)',
                   cursor: cloneBusy ? 'default' : 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
                   opacity: cloneBusy ? 0.7 : 1,
                 }}
               >
-                {cloneBusy && <Spinner size={11} color="var(--tp-success)" thickness={2} />}
+                {cloneBusy && <Spinner size={11} color="var(--tp-accent-300)" thickness={2} />}
                 {cloneBusy ? 'Cloning…' : 'Clone to my trips'}
               </button>
             </div>
@@ -183,7 +237,7 @@ export default function TripCard({
               top: 12,
               right: 12,
               fontSize: 10,
-              fontWeight: 700,
+              fontWeight: 600,
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
               color: 'var(--tp-muted)',

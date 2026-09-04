@@ -1,6 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { formatKmDual } from "@/shared/lib/units";
-import { STATUS_MAP, type LegStatus } from "@/shared/types/trip";
 import { useUnits } from "@/lib/units";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
@@ -20,16 +19,6 @@ export function Spinner({ size = "small" }: { size?: "small" | "large" }) {
 
 export function Centered({ children }: { children: React.ReactNode }) {
   return <View style={styles.centered}>{children}</View>;
-}
-
-/** Mirrors src/components/StatusBadge.tsx. */
-export function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_MAP[status as LegStatus] || STATUS_MAP.planning;
-  return (
-    <View style={[styles.badge, { backgroundColor: s.bg, borderColor: s.border }]}>
-      <Text style={[styles.badgeText, { color: s.text }]}>{s.label}</Text>
-    </View>
-  );
 }
 
 /**
@@ -89,19 +78,34 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={isOff}
-      style={[
+      style={({ pressed }) => [
         styles.button,
         variant === "secondary" && styles.buttonSecondary,
         variant === "danger" && styles.buttonDanger,
+        pressed && !isOff && styles.buttonPressed,
+        pressed && !isOff && variant === "secondary" && styles.buttonSecondaryPressed,
+        pressed && !isOff && variant === "danger" && styles.buttonDangerPressed,
         isOff && styles.buttonDisabled,
         style,
       ]}
     >
       {busy ? (
-        <ActivityIndicator color={variant === "secondary" ? theme.primary : theme.onPrimary} />
+        <ActivityIndicator
+          color={
+            variant === "secondary"
+              ? theme.text
+              : variant === "danger"
+                ? theme.danger
+                : theme.accent300
+          }
+        />
       ) : (
         <Text
-          style={[styles.buttonText, variant === "secondary" && styles.buttonTextSecondary]}
+          style={[
+            styles.buttonText,
+            variant === "secondary" && styles.buttonTextSecondary,
+            variant === "danger" && styles.buttonTextDanger,
+          ]}
         >
           {label}
         </Text>
@@ -122,13 +126,10 @@ export function Banner({
   action?: { label: string; onPress: () => void };
 }) {
   const palette = {
-    // Borders come from STATUS_MAP in src/types/trip.ts:461-464 (planning /
-    // research / confirmed) plus the ubiquitous danger literal used at e.g.
-    // src/app/login/page.tsx:111.
-    info: { bg: theme.primaryMuted, border: "rgba(78, 122, 176, 0.35)", fg: theme.primary },
-    warning: { bg: theme.warningMuted, border: "rgba(184, 149, 106, 0.4)", fg: theme.warning },
-    danger: { bg: theme.dangerMuted, border: "rgba(198, 93, 74, 0.35)", fg: theme.danger },
-    success: { bg: theme.successMuted, border: "rgba(74, 139, 122, 0.38)", fg: theme.success },
+    info: { bg: theme.primaryMuted, border: theme.primary, fg: theme.accent300 },
+    warning: { bg: theme.warningMuted, border: theme.accent700, fg: theme.warning },
+    danger: { bg: theme.dangerMuted, border: theme.dangerBorder, fg: theme.danger },
+    success: { bg: theme.successMuted, border: theme.primary, fg: theme.accent300 },
   }[tone];
   return (
     <View style={[styles.banner, { backgroundColor: palette.bg, borderColor: palette.border }]}>
@@ -166,25 +167,58 @@ const styles = StyleSheet.create({
   distanceStack: { flexDirection: "column" },
   distanceSecondary: { fontFamily: font.regular, color: theme.subtle, fontSize: 11 },
   distanceSecondaryInline: { fontFamily: font.regular, color: theme.subtle, fontSize: 12 },
+  /*
+   * Primary is OUTLINED, not filled. Nocturne's rule, and on this ground it
+   * is also the legible option: the old `onPrimary` (#e9e9ed) on a solid
+   * #9184d9 scores 2.5:1 and fails as a label, where accent-300 on the dark
+   * ground is 11:1.
+   */
   button: {
-    backgroundColor: theme.primary,
+    backgroundColor: theme.primaryTint,
+    borderWidth: 1,
+    borderColor: theme.primary,
     borderRadius: theme.radiusSm,
     paddingVertical: 12,
     paddingHorizontal: 16,
     alignItems: "center",
     justifyContent: "center",
   },
+  buttonPressed: { backgroundColor: theme.primaryMuted, borderColor: theme.accent400 },
   buttonSecondary: {
     backgroundColor: theme.surface,
     borderWidth: 1,
     borderColor: theme.borderStrong,
   },
-  buttonDanger: { backgroundColor: theme.danger },
+  buttonSecondaryPressed: { backgroundColor: theme.surfaceMuted },
+  /* Danger keeps its hue but takes the same outlined shape as everything else. */
+  buttonDanger: {
+    backgroundColor: theme.dangerMuted,
+    borderColor: theme.dangerBorder,
+  },
+  buttonDangerPressed: { backgroundColor: theme.dangerMuted, borderColor: theme.danger },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { fontSize: 14, fontFamily: font.semibold, color: theme.onPrimary },
+  buttonText: { fontSize: 14, fontFamily: font.semibold, color: theme.accent300 },
   buttonTextSecondary: { color: theme.text },
-  banner: { borderWidth: 1, borderRadius: theme.radiusSm, padding: 10, marginBottom: 10 },
-  bannerTitle: { fontSize: 12, fontFamily: font.bold, marginBottom: 3 },
+  buttonTextDanger: { color: theme.danger },
+  /*
+   * `marginTop` as well as bottom. Every Banner is inserted BETWEEN things —
+   * under a paragraph on the sign-in card, between a heading and a form — and
+   * with only a bottom margin it butted straight against whatever preceded it.
+   * Visible on the simulator as an error box touching the body copy above it.
+   */
+  banner: {
+    borderWidth: 1,
+    borderRadius: theme.radiusSm,
+    padding: 10,
+    marginTop: 14,
+    marginBottom: 10,
+  },
+  bannerTitle: { fontSize: 12, fontFamily: font.semibold, marginBottom: 3 },
   bannerBody: { fontFamily: font.regular, fontSize: 12, lineHeight: 17 },
-  bannerAction: { fontSize: 12, fontFamily: font.bold, marginTop: 6, textDecorationLine: "underline" },
+  bannerAction: {
+    fontSize: 12,
+    fontFamily: font.semibold,
+    marginTop: 6,
+    textDecorationLine: "underline",
+  },
 });

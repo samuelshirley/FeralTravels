@@ -6,6 +6,7 @@ import {
   registerGlobalErrorReporter,
 } from '@/lib/api';
 import { pickSillyError, type SillyError } from '@/lib/sillyErrors';
+import { buttonStyle } from '@/components/ui/Button';
 
 /**
  * ErrorNotifier — single global mount that owns the toast (4xx) and the
@@ -323,13 +324,9 @@ function SillyModal({
             onClick={handleReload}
             disabled={reloading}
             style={{
-              background: 'var(--tp-primary)',
-              color: 'var(--tp-on-primary)',
-              border: 'none',
+              ...buttonStyle(),
               padding: '10px 20px',
-              borderRadius: 6,
               fontSize: 13,
-              fontWeight: 700,
               cursor: reloading ? 'default' : 'pointer',
               opacity: reloading ? 0.8 : 1,
               letterSpacing: '0.06em',

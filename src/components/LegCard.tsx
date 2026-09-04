@@ -13,24 +13,21 @@ import {
   orderNavSegments,
 } from '@/lib/maps';
 import { useNextStop } from '@/lib/useNextStop';
-import StatusBadge from './StatusBadge';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
-
-/** Format a stop type slug into a readable label for nav buttons. */
-function formatStopType(stopType?: string): string {
-  switch (stopType) {
-    case 'fuel': return 'Fuel';
-    case 'destination': return 'Destination';
-    case 'other': return 'Stop';
-    default: return 'Stop';
-  }
-}
+import { buttonStyle } from '@/components/ui/Button';
+import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from '@/components/icons';
 
 /** Build "Route to {Type} — {Name}" label for nav buttons. */
+/**
+ * Every one of these opens Google Maps. `buildSegmentedNavUrls` produces an
+ * external URL and the browser or OS hands the user to another app, so the
+ * label says which app and the glyph says it leaves — "Route to" implied
+ * turn-by-turn inside a product that has never had any.
+ */
 function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `Route to ${formatStopType(seg.stopType)} — ${seg.label}`;
+  return `${seg.label} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -74,6 +71,19 @@ interface LegCardProps {
    * is instant and quiet.
    */
   isPast?: boolean;
+  /** The day the driver is on — the only filled dot in the list. */
+  isCurrent?: boolean;
+  /**
+   * Source this leg's fuel on mount, even while the card is collapsed.
+   *
+   * Set by `Itinerary` for the ONE day the driver is actually on. Lazy fuel
+   * (migration 0013) exists so twenty days don't fan out searches nobody
+   * looks at — it was never meant to mean the day you are standing in has no
+   * fuel until you tap it. Without this, a trip that has just been planned
+   * shows no stops anywhere: not in the day card, not on the map, and not to
+   * `useNextStop`.
+   */
+  autoSourceFuel?: boolean;
 }
 
 export default function LegCard({
@@ -89,10 +99,25 @@ export default function LegCard({
   fuelSyncTotalLegs,
   highlightStopId = null,
   isPast = false,
+  isCurrent = false,
+  autoSourceFuel = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === 'rest';
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
+
+  /*
+   * What is left in the tank once this day is driven, when the day can be
+   * driven at all. `range_remaining_start_km` is derived server-side and is
+   * PESSIMISTIC where an earlier day has not been sourced yet, so a
+   * non-negative result here can never be a false positive: if this says the
+   * day fits, it fits. The negative case is deliberately NOT rendered — that
+   * number can be wrong, and Finn's stops already say what to do about it.
+   */
+  const tankSpareKm =
+    !isRestDay && leg.range_remaining_start_km != null && leg.distance_km != null
+      ? leg.range_remaining_start_km - leg.distance_km
+      : null;
   const totalCost = leg.costs.find((c) => c.is_total);
   const itemCosts = leg.costs.filter((c) => !c.is_total);
 
@@ -169,12 +194,36 @@ export default function LegCard({
   // calls); a never-sourced or stale leg runs the real search. We mirror that
   // freshness check here so we don't even round-trip on a fresh cache.
   const [fuelLoading, setFuelLoading] = useState(false);
-  const fuelFetchSigRef = useRef<string | null>(null);
+  /*
+   * Two guards, and the difference between them is a bug that shipped.
+   *
+   * There used to be ONE: a signature `${id}:${status}:${updated_at}`
+   * remembered across renders, so a trip reload with the same fuel state did
+   * not fire a second search. But an INVALIDATED leg — coords changed through
+   * `update_leg`, continuity repair, a position report — is reset to exactly
+   * `none` with no timestamp, which is the signature the first auto-source
+   * of that day already recorded. Same string, so the guard swallowed the
+   * refetch: the open day went from a planned stop to "No stops yet" with no
+   * spinner and stayed that way until a full page reload, because collapsing
+   * and re-expanding did not change the signature either (2026-09-04, Girona
+   * → Annecy, the Shell at 390 km).
+   *
+   * So: an IN-FLIGHT flag stops the duplicate the signature was for, and a
+   * signature is kept only for a search that came back `failed`, so a broken
+   * leg is retried once per open rather than on every unrelated reload.
+   */
+  const fuelInFlightRef = useRef(false);
+  const fuelFailedSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Opening the day is the driver asking again — a failed leg gets its retry.
+    if (expanded) fuelFailedSigRef.current = null;
+  }, [expanded]);
 
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
     // driver. Skipping here also keeps `fuelLoading` false so no spinner shows.
-    if (readonly || isRestDay || !expanded || isPast) return;
+    if (readonly || isRestDay || isPast) return;
+    if (!expanded && !autoSourceFuel) return;
     const updatedAt = leg.fuel_stops_updated_at;
     const fresh = updatedAt
       ? Date.now() - Date.parse(updatedAt) < FUEL_CACHE_TTL_MS
@@ -185,20 +234,19 @@ export default function LegCard({
     // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
     // station/route calls are cheap and cache-guarded, so a retry self-heals
     // legs stranded on a stale/transient error. We still skip
-    // 'computing'/'pending' (a search is already in flight); the
-    // signature guard below stops duplicate fires within a render session.
+    // 'computing'/'pending' (a search is already in flight); the in-flight
+    // flag below stops duplicate fires while one request is outstanding.
     const needsFetch =
       leg.fuel_status === 'none' ||
       leg.fuel_status === 'failed' ||
       (terminalSuccess && !fresh);
     if (!needsFetch) return;
 
-    // Guard against duplicate fires: the effect re-runs on every trip reload.
-    // The signature folds in the fuel state, so once a fetch lands new data the
-    // guard naturally allows a future genuinely-new state through.
+    if (fuelInFlightRef.current) return;
     const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? 'none'}`;
-    if (fuelFetchSigRef.current === sig) return;
-    fuelFetchSigRef.current = sig;
+    if (leg.fuel_status === 'failed' && fuelFailedSigRef.current === sig) return;
+    fuelInFlightRef.current = true;
+    if (leg.fuel_status === 'failed') fuelFailedSigRef.current = sig;
 
     let cancelled = false;
     setFuelLoading(true);
@@ -211,11 +259,12 @@ export default function LegCard({
       })
       .catch((e) => {
         // apiFetch already surfaced this via the global ErrorNotifier (no silent
-        // swallow). Clear the guard so the next open can retry.
-        fuelFetchSigRef.current = null;
+        // swallow). Clear the failed marker so the next open can retry.
+        fuelFailedSigRef.current = null;
         console.warn('lazy fuel fetch failed', e);
       })
       .finally(() => {
+        fuelInFlightRef.current = false;
         if (!cancelled) setFuelLoading(false);
       });
 
@@ -229,6 +278,7 @@ export default function LegCard({
     isPast,
     leg.id,
     leg.fuel_status,
+    autoSourceFuel,
     leg.fuel_stops_updated_at,
     api,
     onChanged,
@@ -247,8 +297,10 @@ export default function LegCard({
    * The DB column keeps `'rest'`. Renaming an enum across the schema, Penny's
    * tools and 148 references buys nothing the label does not.
    */
-  const baseDayColor = '#6BA368';
-  const driveColor = leg.color || '#4E7AB0';
+  // Base days keep the one second hue the palette still allows; everything
+  // else is the accent. `leg.color` is per-leg user data and still wins.
+  const baseDayColor = '#9690c9';
+  const driveColor = leg.color || 'var(--tp-primary)';
   const dotColor = isRestDay ? baseDayColor : driveColor;
 
   return (
@@ -257,16 +309,21 @@ export default function LegCard({
       data-leg-id={leg.id}
       data-leg-type={leg.leg_type ?? 'drive'}
       style={{
-        marginBottom: 2,
-        background: expanded
-          ? isRestDay
-            ? 'rgba(107, 163, 104, 0.06)'
-            : 'var(--tp-surface-muted)'
-          : 'transparent',
-        borderRadius: 8,
+        /*
+         * Two different objects, not one with a tweak. Collapsed, a day is a
+         * ROW in a list — no card, just a hairline under it, so a week of
+         * driving reads as one continuous plan instead of seven boxes.
+         * Expanded, it becomes the card, and the card is the thing you are
+         * working in.
+         */
+        marginBottom: expanded ? 10 : 0,
+        background: expanded ? 'var(--tp-surface)' : 'transparent',
+        borderRadius: expanded ? 'var(--tp-radius-lg)' : 0,
+        borderBottom: expanded ? 'none' : '1px solid var(--tp-neutral-900)',
+        boxShadow: expanded ? 'var(--tp-shadow-sm)' : 'none',
         overflow: 'hidden',
         transition: 'background 0.2s',
-        borderLeft: isRestDay ? `3px solid ${baseDayColor}40` : 'none',
+        borderLeft: isRestDay && expanded ? `3px solid ${baseDayColor}` : 'none',
       }}
     >
       <div
@@ -280,14 +337,21 @@ export default function LegCard({
           userSelect: 'none',
         }}
       >
+        {/*
+          Filled for today, a hollow ring for every day after it. The old dot
+          was filled on all of them, so the list had no "you are here" at all —
+          the colour was decoration rather than information.
+        */}
         <div
           style={{
             width: 10,
             height: 10,
             borderRadius: isRestDay ? 3 : '50%',
-            background: dotColor,
+            background: isCurrent ? dotColor : 'transparent',
+            border: isCurrent ? 'none' : `1px solid ${isRestDay ? baseDayColor : 'var(--tp-border-strong)'}`,
+            boxSizing: 'border-box',
             flexShrink: 0,
-            boxShadow: `0 0 8px ${dotColor}40`,
+            boxShadow: isCurrent ? `0 0 8px ${dotColor}` : 'none',
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -296,7 +360,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   letterSpacing: '0.1em',
                   color: baseDayColor,
                 }}
@@ -308,7 +372,7 @@ export default function LegCard({
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   letterSpacing: '0.1em',
                   color: isRestDay ? baseDayColor : 'var(--tp-subtle)',
                 }}
@@ -327,7 +391,7 @@ export default function LegCard({
                 {leg.label}
               </span>
             ) : null}
-            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp-text)' }}>{leg.title}</span>
+            <span style={{ fontSize: 16, fontWeight: 500, color: 'var(--tp-text)' }}>{leg.title}</span>
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 3, flexWrap: 'wrap' }}>
             {!isRestDay && leg.distance_km ? (
@@ -345,6 +409,34 @@ export default function LegCard({
                 }}
               >
                 {driveHours} hrs
+              </span>
+            ) : null}
+            {driveHours ? (
+              <span
+                // The caveat used to be a paragraph under the day. It is a
+                // footnote about ONE number, so it lives on that number —
+                // `title` on the meta, reachable on hover and by the
+                // screen-reader, and out of the way the rest of the time.
+                title={
+                  navWaypointCount > 0
+                    ? `Driving time is the leg headline start→destination only — it excludes detours via added stops.`
+                    : `Driving time assumes start→destination without intermediate stops inside this day.`
+                }
+                aria-label="About this driving time"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  color: 'var(--tp-subtle)',
+                  cursor: 'help',
+                  lineHeight: 0,
+                }}
+              >
+                <InfoIcon size={13} />
+              </span>
+            ) : null}
+            {tankSpareKm != null && tankSpareKm >= 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--tp-subtle)' }}>
+                <Distance km={Math.round(tankSpareKm)} layout="inline" /> to spare
               </span>
             ) : null}
             {isRestDay && leg.end_name && (
@@ -369,23 +461,25 @@ export default function LegCard({
                 color: 'var(--tp-text)',
               }}
             >
-              <span aria-hidden style={{ color: '#d97706', flexShrink: 0 }}>
-                ⚠
+              <span
+                aria-hidden
+                style={{ color: 'var(--tp-warning)', flexShrink: 0, lineHeight: 0 }}
+              >
+                <WarningIcon />
               </span>
               <span>{leg.continuity_warning}</span>
             </div>
           )}
         </div>
-        <StatusBadge status={leg.status} />
         <span
           style={{
             color: 'var(--tp-subtle)',
-            fontSize: 18,
+            lineHeight: 0,
             transform: expanded ? 'rotate(180deg)' : 'rotate(0)',
             transition: 'transform 0.2s',
           }}
         >
-          ▾
+          <DisclosureIcon size={14} />
         </span>
       </div>
 
@@ -569,25 +663,16 @@ export default function LegCard({
                       data-nav-next={seg.isNext ? 'true' : undefined}
                       title={navButtonLabel(seg)}
                       style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
+                        ...buttonStyle(),
                         gap: 8,
                         fontSize: 12,
-                        fontWeight: 600,
                         letterSpacing: '0.04em',
-                        color: '#000',
-                        background: 'var(--tp-primary)',
                         padding: seg.isNext ? '7px 14px' : '6px 12px',
-                        borderRadius: 6,
-                        textDecoration: 'none',
-                        boxShadow: seg.isNext
-                          ? '0 2px 8px rgba(124,181,232,0.2)'
-                          : '0 2px 8px rgba(124,181,232,0.15)',
                         opacity: !seg.isNext && i > 0 && navButtons[0].isNext ? 0.82 : 1,
                         width: 'fit-content',
                       }}
                     >
-                      <span>\u25b6</span>
+                      <ExternalLinkIcon />
                       {navButtonLabel(seg)}
                       {seg.isNext ? (
                         <span
@@ -607,36 +692,15 @@ export default function LegCard({
                   ))}
                 </div>
               )}
-              {driveHours ? (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--tp-subtle)',
-                    margin: '8px 0 0 0',
-                    maxWidth: 460,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {navWaypointCount > 0 ? (
-                    <>
-                      Shown driving time (~{driveHours} h) is the leg headline start→destination only — it excludes
-                      detours via added stops.
-                    </>
-                  ) : (
-                    <>
-                      Shown driving time (~{driveHours} h) assumes start→destination without intermediate stops inside
-                      this leg card.
-                    </>
-                  )}
-                </p>
-              ) : null}
             </div>
           )}
 
           <StopsSection
             tripId={tripId}
             legId={leg.id}
+            legStartName={leg.start_name}
             legEndName={leg.end_name}
+            legDistanceKm={leg.distance_km}
             legEndCoords={{ lat: leg.end_lat, lng: leg.end_lng }}
             legStartCoords={{ lat: leg.start_lat, lng: leg.start_lng }}
             initialStops={leg.stops}

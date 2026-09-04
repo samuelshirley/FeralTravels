@@ -47,23 +47,32 @@ export function formatKm(km: number | null | undefined, units: UnitsPref): strin
 }
 
 /**
- * For the "primary km, secondary mi" display pattern. Always returns the
- * km string as `primary`. `secondary` is the miles equivalent ONLY when
- * units==='imperial' — metric users see no secondary line because we've
- * decided to teach metric.
+ * The primary/secondary shape `Distance` renders. `primary` is the distance
+ * in the user's unit — miles for imperial, kilometres for metric — and
+ * `secondary` is always null now.
+ *
+ * It used to be "km primary, (mi) secondary" for imperial users, on a
+ * product decision to teach metric. That decision was reversed 2026-09-04:
+ * an imperial user sees miles and no kilometres anywhere. The shape is kept
+ * so the call sites did not have to change; the second line is simply never
+ * produced, and the whole app moved at once because every distance renders
+ * through here or `formatKm`.
  */
 export function formatKmDual(
   km: number | null | undefined,
   units: UnitsPref
 ): { primary: string; secondary: string | null } {
-  if (km == null || !Number.isFinite(km)) {
-    return { primary: '—', secondary: null };
-  }
-  const primary = `${Math.round(km).toLocaleString()} km`;
-  if (units !== 'imperial') return { primary, secondary: null };
-  const mi = kmToMi(km);
-  const secondary = mi == null ? null : `(${Math.round(mi).toLocaleString()} mi)`;
-  return { primary, secondary };
+  return { primary: formatKm(km, units), secondary: null };
+}
+
+/**
+ * A soft planning number: "~652 km" / "~405 mi". The tilde belongs next to
+ * the number, so it is applied HERE rather than by callers pasting `~` in
+ * front of a string that already carries the unit.
+ */
+export function approxDistance(km: number | null | undefined, units: UnitsPref): string {
+  const s = formatKm(km, units);
+  return s === '—' ? s : `~${s}`;
 }
 
 /** Narrow a free string to a UnitsPref, defaulting to 'metric'. */

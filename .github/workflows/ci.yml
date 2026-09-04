@@ -344,18 +344,15 @@ jobs:
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Preview: $URL"
 
-      # Publish the preview URL in TWO places, because one of them is never
-      # where you're looking:
+      # Publish the preview URL as ONE sticky comment, deleted and reposted on
+      # every push so it is always current and always at the bottom of the
+      # thread (see the block comment inside the script for why not edit).
       #
-      #   1. A sticky comment (created once, edited in place on later pushes,
-      #      so the thread doesn't collect one per commit). Editing has a cost
-      #      though — an edited comment keeps its ORIGINAL position in the
-      #      timeline, so after six more commits the link is buried up-thread
-      #      and looks stale even when it isn't.
-      #   2. A pinned block at the TOP OF THE PR DESCRIPTION, which is always
-      #      on screen no matter how long the conversation gets. Only the text
-      #      between our two markers is touched; anything you wrote in the
-      #      description is left alone.
+      # It used to ALSO be pinned into the top of the PR description. That was
+      # removed on purpose: the URL changes on every push, so a link sitting in
+      # the description was a value going stale in the one place a reader
+      # assumes is authoritative. Existing PRs that carry the block keep it;
+      # nothing here touches the description any more.
       - name: Publish the preview URL on the PR
         uses: actions/github-script@v7
         env:
@@ -370,7 +367,6 @@ jobs:
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             const marker = '<!-- feraltravels-preview -->';
-            const endMarker = '<!-- /feraltravels-preview -->';
 
             const body = [
               marker,
@@ -381,10 +377,9 @@ jobs:
               `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
               `Built from \`${sha}\` · [CI run](${runUrl})`,
-              endMarker,
             ].join('\n');
 
-            // 1. Sticky comment.
+            // The sticky comment.
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
@@ -407,23 +402,6 @@ jobs:
               await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
-
-            // 2. Pinned block at the top of the PR description. Replace only
-            // our own marked region; never rewrite the author's prose.
-            const pinned = [
-              marker,
-              `> **🔍 Preview:** ${url}`,
-              `> Built from \`${sha}\` · Neon branch \`${branch}\` · [CI run](${runUrl})`,
-              endMarker,
-            ].join('\n');
-            const current = pr.body || '';
-            const region = new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n*`);
-            const updated = region.test(current)
-              ? current.replace(region, `${pinned}\n\n`)
-              : `${pinned}\n\n${current}`;
-            if (updated !== current) {
-              await github.rest.pulls.update({ ...context.repo, pull_number: pr.number, body: updated });
-            }
 
   e2e:
     name: E2E tests (against preview)
@@ -669,6 +647,16 @@ jobs:
     needs: preview
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      # ONE definition, read by both the install step and its cache key.
+      #
+      # It pairs with the Xcode selected further down: Maestro ships a PREBUILT
+      # iOS driver, so the release and the Xcode that built it move together.
+      # `scripts/ios-e2e-local.sh` carries the same pin as `MAESTRO_PIN` — the
+      # two files cannot share a definition, so each points at the other.
+      # When bumping, check which Xcode that release's `rebuild-ios-drivers.yaml`
+      # used and move the `xcode-select` with it.
+      MAESTRO_VERSION: 2.10.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -687,9 +675,10 @@ jobs:
       # is exactly the change most likely to break the trips screen. Nothing
       # else would have caught it — the first report would have been a phone.
       #
-      # The BUILD is still cached against the native fingerprint below, which is
-      # where the real time went: a JS-only PR reuses the .app and skips ~15
-      # minutes of Xcode while testing the same binary.
+      # There is NO build cache — see the long note below, which explains why
+      # one was removed rather than fixed. Every run compiles the app. This
+      # paragraph used to end by promising the opposite, describing a cache the
+      # step below it had already deleted.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -700,11 +689,13 @@ jobs:
         run: npm ci
         working-directory: mobile
 
-      # The same question mobile.yml asks before publishing an OTA: did anything
-      # that ends up in the BINARY move? If not, last run's .app still runs this
-      # JS, and compiling it again buys nothing.
       # NO BUILD CACHE, deliberately, and this is a correction rather than a
       # preference.
+      #
+      # (The two sentences that stood here asked "did anything that ends up in
+      # the BINARY move? If not, last run's .app still runs this JS" — the
+      # rationale for the cache that the rest of this comment explains was
+      # removed. They described the deleted step as though it were still there.)
       #
       # There was one, keyed on a "native fingerprint" (package-lock +
       # app.config + eas.json), with a comment promising "the JS bundle is
@@ -748,6 +739,26 @@ jobs:
           SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
           echo "Building scheme $SCHEME from $WORKSPACE"
           echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
+          # NO EXTRA BUILD SETTINGS HERE, and that is a MEASURED result rather
+          # than an omission.
+          #
+          # `ONLY_ACTIVE_ARCH=YES`, `COMPILER_INDEX_STORE_ENABLE=NO` and
+          # `DEBUG_INFORMATION_FORMAT=dwarf` were added on the reasoning that
+          # this job throws away a second architecture slice, an index store
+          # and a dSYM. Measured across two real runs, the build went 14m06s →
+          # 14m46s — no saving, inside the noise of a macOS runner.
+          #
+          # The arch flag was a NO-OP: both logs contain the same four
+          # `-arch x86_64` lines, and all four are `clang -v -E -dM ...
+          # /dev/null` toolchain PROBES, not compilation. The build was already
+          # arm64-only, so there was never a second slice to skip.
+          #
+          # Don't re-add them without a measurement — an unexplained flag in a
+          # build invocation costs more later than the seconds it did not save.
+          #
+          # `-configuration Release` stays: see the note below on Debug builds
+          # containing no JavaScript at all. `-quiet` is deliberately NOT here —
+          # a quieter build log is a worse one the day it breaks.
           xcodebuild -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
@@ -832,12 +843,33 @@ jobs:
       # it has to run are a pair that would otherwise drift apart without a
       # single line of this repository changing. When bumping it, check which
       # Xcode that release's `rebuild-ios-drivers.yaml` used and move both.
+      # The version is a JOB-level env (see `env:` on the job) so the cache key
+      # below and the installer read the SAME value. Retyping it into the key
+      # would let a key silently disagree with the pin — a cache serving a
+      # different Maestro than the one requested, which is the failure this job
+      # is least equipped to explain, since a driver/Xcode mismatch presents as
+      # a timeout that names no version.
+      #
+      # `~/.maestro` is a fixed artifact for a pinned version, so this is a pure
+      # download saving and cannot change what the flows exercise.
+      - name: Cache Maestro
+        uses: actions/cache@v4
+        with:
+          path: ~/.maestro
+          key: maestro-${{ runner.os }}-${{ env.MAESTRO_VERSION }}
+
       - name: Install Maestro
-        env:
-          MAESTRO_VERSION: 2.10.0
         run: |
           set -euo pipefail
-          curl -Ls https://get.maestro.mobile.dev | bash
+          # Skip the download when the cache restored a usable install. The
+          # PATH export and `--version` stay OUTSIDE this branch so a restored
+          # Maestro is still put on the path and still prints its version into
+          # the log — a cached run and a fresh one look the same from here.
+          if [ -x "$HOME/.maestro/bin/maestro" ]; then
+            echo "Maestro restored from cache"
+          else
+            curl -Ls https://get.maestro.mobile.dev | bash
+          fi
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
           "$HOME/.maestro/bin/maestro" --version
 
@@ -926,6 +958,27 @@ jobs:
             -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
             --format junit \
             --output maestro-report.xml \
+            --debug-output maestro-debug
+
+          # A permission button is the one kind of UI that cannot be checked by
+          # looking at it: one that renders perfectly and calls nothing is
+          # indistinguishable from one that works, and `Mobile typecheck`
+          # compiles both. This taps it and asserts the SYSTEM dialog appears,
+          # which can only happen if the app actually reached iOS.
+          #
+          # LAST, deliberately: it spends the location dialog for the install
+          # and `canAskAgain` does not come back, so anything needing a fresh
+          # "never asked" state must run before it. It also DENIES at the end —
+          # granting makes report_position re-anchor the fixture trip to
+          # wherever the simulator thinks it is.
+          maestro --device "$SIM_UDID" test mobile/maestro/settings-location.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-location.xml \
             --debug-output maestro-debug
 
       # Always. A screenshot of the failing screen is the entire value of

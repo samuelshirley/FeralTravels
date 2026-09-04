@@ -90,3 +90,51 @@ export function kmBurnedSinceLastRefuel(
   }
   return kmBurned;
 }
+
+/**
+ * Range remaining in the tank at the START of each leg, in route order.
+ *
+ * The same model as [[kmBurnedSinceLastRefuel]], run FORWARDS in one pass
+ * instead of walking back per leg — the planner needs one leg's answer, the
+ * UI needs every leg's, and doing the backward walk once per leg is O(n²) for
+ * an identical result.
+ *
+ * WHY THIS IS SAFE TO PUT ON SCREEN. When a preceding day has not been
+ * sourced yet its `latestFuelDistanceKm` is null, which is indistinguishable
+ * from a day that genuinely needed no stop. Both read as "drove that far, no
+ * refuel", so the burn is OVER-estimated and the remaining range comes out
+ * LOW. That asymmetry is the whole point: a claim derived from this can only
+ * ever be pessimistic, so "you can make it start to finish" is never a false
+ * positive. Do not invert the claim — "you will NOT make it" is not safe to
+ * assert from these numbers, because that one can be wrong.
+ *
+ * @param rangeKm The vehicle's single fuel range. Null → every entry is null,
+ *   because without a range there is no tank to reason about.
+ * @returns One entry per leg, aligned by index. Null where `rangeKm` is null.
+ *   May be NEGATIVE: that means the leg cannot be completed on the fuel in
+ *   the tank, which is exactly when Finn places a stop.
+ */
+export function rangeRemainingAtLegStarts(
+  legsInOrder: LegFuelHistory[],
+  rangeKm: number | null
+): (number | null)[] {
+  if (rangeKm == null || rangeKm <= 0) return legsInOrder.map(() => null);
+
+  let burned = 0;
+  return legsInOrder.map((leg) => {
+    const remainingAtStart = rangeKm - burned;
+    const legDist = leg.distanceKm ?? 0;
+
+    // A declaration re-baselines the tank at this leg's start; a fuel stop on
+    // the same leg is later than its start and so wins below.
+    const declared = leg.declaredBurnedKmAtStart;
+    const startBurn = declared != null ? declared : burned;
+
+    burned =
+      leg.latestFuelDistanceKm != null
+        ? Math.max(0, legDist - leg.latestFuelDistanceKm)
+        : startBurn + legDist;
+
+    return declared != null ? rangeKm - declared : remainingAtStart;
+  });
+}

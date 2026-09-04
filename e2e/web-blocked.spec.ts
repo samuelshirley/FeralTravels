@@ -159,11 +159,12 @@ test.describe('web app off', () => {
     // bearing.
     //
     // UNIQUE, because this spec now runs in two projects against two
-    // deployments that share ONE database, and `sendOtpCode` enforces a
-    // 60-second resend cooldown keyed on the address. With one constant address
-    // the `api` project sent the code and `web-blocked` got the 429 it earned —
-    // a red build with nothing whatsoever wrong with the app. The timestamp
-    // covers retries too: all three attempts fell inside the same minute.
+    // deployments that share ONE database, and `sendOtpCode` enforces an
+    // escalating resend cooldown keyed on the address (1s for the first three
+    // sends, then 60s, then 2m). With one constant address the `api` project
+    // sent the code and `web-blocked` got the 429 it earned — a red build with
+    // nothing whatsoever wrong with the app. The timestamp covers retries too:
+    // all three attempts fell inside the same minute.
     //
     // `playwright-` PREFIXED, because anything that does not match
     // FIXTURE_EMAIL_PATTERN falls through to a real Resend send, and

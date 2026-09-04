@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -23,6 +25,11 @@ import { theme, shadow } from "@/lib/theme";
 import { clusterPixels, type PixelPoint } from "@/shared/lib/mapClustering";
 import { haversineKm } from "@/shared/lib/polyline";
 import { font } from "@/lib/typography";
+import { formatDate, parseISODate } from "@/shared/lib/dates";
+import { useUnits } from "@/lib/units";
+import { formatKm } from "@/shared/lib/units";
+import { buildGoHereUrl } from "@/shared/lib/maps";
+import { CrosshairIcon, ExternalLinkIcon, NavigateIcon } from "@/components/icons";
 import type {
   GeoJSONLineString,
   LegWithDetails,
@@ -68,14 +75,24 @@ const STOP_GRID_CELL_PX = 64;
 // Marker palette, copied from src/components/TripMap.tsx:
 //   :36 :37 :38 (stop/cluster), :297+ (leg stroke fallback = --tp-primary),
 //   :426 (last-leg destination), :354 (gap stroke), :452 and :668 (POI/trail).
-const FUEL_STOP_COLOR = "#C9912F";
-const OTHER_STOP_COLOR = "#7A7A7A";
-const CLUSTER_COLOR = "#4A5A6A";
-const DEFAULT_LEG_COLOR = "#4E7AB0";
-const DESTINATION_COLOR = "#B8956A";
-const GAP_COLOR = "#c65d4a";
-const POI_COLOR = "#E8D57C";
-const TRAIL_FALLBACK_COLOR = "#E8D57C";
+/*
+ * Map marker colours. Literals rather than `--tp-*` because the Maps API and
+ * react-native-maps both take colour STRINGS, not CSS — same reason
+ * DARK_MAP_STYLE is literal. Keep in step with src/app/globals.css.
+ *
+ * Under the mono palette fuel and the route are the SAME accent: a fuel marker
+ * is distinguished by its glyph and its ring, not by hue. The two that keep a
+ * colour of their own are the gap warning (danger, because it is the one thing
+ * on the map that means something is wrong) and base days.
+ */
+const FUEL_STOP_COLOR = "#9184d9";
+const OTHER_STOP_COLOR = "#b2b6ca";
+const CLUSTER_COLOR = "#595d6c";
+const DEFAULT_LEG_COLOR = "#9184d9";
+const DESTINATION_COLOR = "#d2cefd";
+const GAP_COLOR = "#E8705C";
+const POI_COLOR = "#9690c9";
+const TRAIL_FALLBACK_COLOR = "#9690c9";
 
 /** Web-Mercator tile size — the unit google.maps.Projection works in. */
 const WORLD_TILE_PX = 256;
@@ -107,27 +124,35 @@ const MAP_TIMEOUT_MESSAGE =
 const MAP_PROVIDER = GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
 
 /**
- * Warm light basemap aligned with app cream / tan palette (Google provider only).
- * Byte-identical to LIGHT_MAP_STYLE in src/components/TripMap.tsx:82-99.
+ * Nocturne basemap — INERT ON EVERY SHIPPED BUILD, and kept anyway.
+ *
+ * `customMapStyle` is honoured only under PROVIDER_GOOGLE, and no
+ * EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is set on either eas.json profile, so
+ * MAP_PROVIDER is undefined and this app renders Apple Maps. Apple follows
+ * `userInterfaceStyle: 'dark'` from app.config.js instead, which is what
+ * actually darkens the tiles today.
+ *
+ * It stays because the cost of deleting it is asymmetric: if a Google key is
+ * ever added, an absent style silently reinstates a light map inside a dark
+ * app. Mirrors DARK_MAP_STYLE in src/components/TripMap.tsx.
  */
-const LIGHT_MAP_STYLE: MapStyleElement[] = [
-  { elementType: "geometry", stylers: [{ color: "#ebe6dd" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#f6f2ea" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#5c5c5c" }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#d4c9ba" }] },
-  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#e0d8cc" }] },
-  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#333333" }] },
+const DARK_MAP_STYLE: MapStyleElement[] = [
+  { elementType: "geometry", stylers: [{ color: "#1f2130" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#161826" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b2b6ca" }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#595d6c" }] },
+  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#3f424d" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#e9e9ed" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#6b6b6b" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f0ebe3" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#d4c9ba" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#c5d4e0" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4e7ab0" }] },
-  { featureType: "landscape.natural", elementType: "geometry", stylers: [{ color: "#e2ddd4" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#292b31" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#75798c" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3f424d" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#595d6c" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#12131f" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#5d5294" }] },
+  { featureType: "landscape.natural", elementType: "geometry", stylers: [{ color: "#1b1d2a" }] },
 ];
-
 /** Where the map sits before we have any coordinates to fit (the web's center/zoom 5). */
 const FALLBACK_REGION: Region = {
   latitude: 52,
@@ -278,6 +303,9 @@ export default function TripMap({
   onLegSelect,
   onStopSelect,
 }: TripMapProps) {
+  // Day-chip labels and the sheet's distances follow the user's unit choice,
+  // same as every other distance in the app.
+  const { units } = useUnits();
   const mapRef = useRef<MapView | null>(null);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -564,6 +592,68 @@ export default function TripMap({
   // user hasn't browsed has no stops to plot. Show a quiet hint so the empty map
   // reads as intentional rather than broken (see option B writeup).
   const hasLoadedStops = stopPoints.length > 0;
+
+  /*
+   * The app-drawn chrome. Everything below is OURS, not the map's — day chips,
+   * a recenter button and the next-stop sheet — because the tiles are Apple's
+   * and we cannot put anything on them.
+   */
+
+  /** One chip per day. Same order as the itinerary; label from the leg date. */
+  const dayChips = useMemo(
+    () =>
+      legs.map((leg, i) => ({
+        id: leg.id,
+        label: formatDate(parseISODate(leg.date_iso), units) || `Day ${i + 1}`,
+      })),
+    [legs, units]
+  );
+
+  /**
+   * The sheet's subject: the next fuel stop on the SELECTED day, or the
+   * current one when nothing is selected. Null when the day has no sourced
+   * stop — the sheet is omitted rather than shown empty, the same rule the
+   * itinerary's NEXT STOP row follows.
+   */
+  const sheetStop = useMemo(() => {
+    const leg = legs.find((l) => l.id === selectedLegId) ?? legs[0];
+    if (!leg) return null;
+    const stop = leg.stops
+      .filter(
+        (st) =>
+          st.stop_type === "fuel" &&
+          st.status !== "dismissed" &&
+          st.distance_from_start_km != null &&
+          st.lat != null &&
+          st.lng != null
+      )
+      .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
+    if (!stop) return null;
+    const legKm = leg.distance_km ?? null;
+    const fromStart = stop.distance_from_start_km ?? 0;
+    return {
+      name: stop.name,
+      fromStartKm: fromStart,
+      toEndKm: legKm != null ? Math.max(0, legKm - fromStart) : null,
+      endName: leg.end_name,
+      // Turn-by-turn from wherever the device is — not a dropped pin.
+      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+      legLabel: formatDate(parseISODate(leg.date_iso), units) || null,
+      legStart: leg.start_name,
+      legEnd: leg.end_name,
+      legKm,
+      legHours: leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null,
+    };
+  }, [legs, selectedLegId, units]);
+
+  /** Back to the whole route. The one control that undoes any panning. */
+  const recenter = useCallback(() => {
+    if (fitCoords.length === 0) return;
+    mapRef.current?.fitToCoordinates(fitCoords, {
+      edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
+      animated: true,
+    });
+  }, [fitCoords]);
   const showNoStopsHint = ready && !loadError && legs.length > 0 && !hasLoadedStops;
 
   return (
@@ -574,7 +664,7 @@ export default function TripMap({
         provider={MAP_PROVIDER}
         // Google-only styling; silently ignored by Apple Maps, which is the
         // acceptable degradation when no Maps key is configured.
-        customMapStyle={LIGHT_MAP_STYLE}
+        customMapStyle={DARK_MAP_STYLE}
         initialRegion={FALLBACK_REGION}
         onMapReady={handleMapReady}
         // react-native-maps' 'settled camera' event — the web re-clusters on the
@@ -684,7 +774,7 @@ export default function TripMap({
                   <Text style={styles.calloutTitle}>{leg.title}</Text>
                   {leg.dates ? <Text style={styles.calloutBody}>{leg.dates}</Text> : null}
                   <Text style={styles.calloutBody}>
-                    {leg.distance_km ? `${leg.distance_km} km` : ""}
+                    {leg.distance_km ? formatKm(leg.distance_km, units) : ""}
                     {leg.drive_time_minutes
                       ? ` • ${Math.round(leg.drive_time_minutes / 60)} hrs`
                       : ""}
@@ -790,7 +880,7 @@ export default function TripMap({
                     <Text style={styles.calloutTitle}>{p.name}</Text>
                     {p.distanceKm != null ? (
                       <Text style={styles.calloutBody}>
-                        {Math.round(p.distanceKm)} km from start
+                        {formatKm(p.distanceKm, units)} from start
                       </Text>
                     ) : null}
                     {/* Web says "Click to open in list" — same action, touch wording. */}
@@ -850,6 +940,91 @@ export default function TripMap({
         </View>
       ) : null}
 
+      {/* Day chips. Tapping one selects that leg, which the existing
+          `selectedLegId` effect already pans to — no new camera logic. */}
+      {ready && dayChips.length > 1 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.dayChipBar}
+          contentContainerStyle={styles.dayChipRow}
+        >
+          {dayChips.map((chip) => {
+            const active = chip.id === selectedLegId;
+            return (
+              <Pressable
+                key={chip.id}
+                onPress={() => onLegSelect(chip.id)}
+                style={[styles.dayChip, active && styles.dayChipActive]}
+              >
+                <Text style={[styles.dayChipText, active && styles.dayChipTextActive]}>
+                  {chip.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {/* Recenter — the one control that undoes any panning. */}
+      {ready ? (
+        <Pressable
+          onPress={recenter}
+          accessibilityLabel="Recenter the map on the whole route"
+          style={styles.recenter}
+        >
+          <CrosshairIcon color={theme.text} size={16} />
+        </Pressable>
+      ) : null}
+
+      {/* The next-stop sheet. Omitted when the day has no sourced stop —
+          the same rule the itinerary's NEXT STOP row follows. */}
+      {ready && sheetStop ? (
+        <View style={styles.sheet}>
+          <Text style={styles.sheetKicker}>NEXT STOP · FUEL</Text>
+          <Text style={styles.sheetName} numberOfLines={1}>
+            {sheetStop.name}
+          </Text>
+          <Text style={styles.sheetMeta} numberOfLines={1}>
+            {formatKm(sheetStop.fromStartKm, units)} from start
+            {sheetStop.toEndKm != null && sheetStop.endName
+              ? ` · ${formatKm(sheetStop.toEndKm, units)} to ${sheetStop.endName}`
+              : ""}
+          </Text>
+
+          {/* Full width, on its OWN row: at 402px a labelled button and the
+              two-clause meta line above cannot share a row without the
+              distances truncating. */}
+          <Pressable
+            onPress={() => void Linking.openURL(sheetStop.href)}
+            accessibilityRole="link"
+            accessibilityLabel={`Open ${sheetStop.name} in Google Maps`}
+            style={styles.sheetAction}
+          >
+            <NavigateIcon color={theme.accent300} size={15} />
+            <Text style={styles.sheetActionText}>Open {sheetStop.name} in Google Maps</Text>
+            <ExternalLinkIcon color={theme.accent300} size={13} />
+          </Pressable>
+
+          {sheetStop.legLabel ? (
+            <View style={styles.sheetFootRow}>
+              <Text style={styles.sheetFoot} numberOfLines={1}>
+                {[
+                  sheetStop.legLabel,
+                  sheetStop.legStart && sheetStop.legEnd
+                    ? `${sheetStop.legStart} → ${sheetStop.legEnd}`
+                    : null,
+                  sheetStop.legKm != null ? formatKm(sheetStop.legKm, units) : null,
+                  sheetStop.legHours ? `${sheetStop.legHours} h` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       {trailsLoading && ready ? (
         <View style={styles.trailsBadge} pointerEvents="none">
           <Spinner />
@@ -865,25 +1040,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.mapChrome,
   },
-  // src/components/TripMap.tsx:389/428/454/518/562 — every marker is stroked
-  // strokeColor: '#ffffff'; only the weight changes per marker class.
+  /*
+   * Every marker is stroked with the PAGE GROUND, not white — the web does the
+   * same. White was right on a cream map; on this one the halo's job is to
+   * punch the marker out of the tiles, which is the ground colour, and it also
+   * matches the ring the route timeline draws for the same stop.
+   */
   dot: {
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   destinationDot: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 3,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   poiDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
     backgroundColor: POI_COLOR,
     opacity: 0.7,
   },
@@ -891,17 +1070,17 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderWidth: 1.5,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   cluster: {
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: CLUSTER_COLOR,
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: theme.bg,
   },
   clusterLabel: {
-    color: "#ffffff",
+    color: theme.text,
     fontSize: 11,
     fontFamily: font.bold,
   },
@@ -939,8 +1118,7 @@ const styles = StyleSheet.create({
   calloutFootnote: {
     fontFamily: font.regular,
     fontSize: 10,
-    // src/components/TripMap.tsx:535 — `color: #aaa`.
-    color: "#aaaaaa",
+    color: theme.subtle,
     marginTop: 4,
   },
   calloutLink: {
@@ -1003,6 +1181,86 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.muted,
   },
+  /* ── App-drawn chrome. The tiles are Apple's; everything here is ours. ── */
+  dayChipBar: { position: "absolute", top: 12, left: 12, right: 60, maxHeight: 34 },
+  dayChipRow: { flexDirection: "row", gap: 8, paddingRight: 12 },
+  dayChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    // 90% so the tiles show through slightly and the chip reads as floating
+    // ON the map rather than as a bar bolted over it.
+    backgroundColor: "rgba(35, 37, 50, 0.9)",
+  },
+  dayChipActive: { borderColor: theme.primary, backgroundColor: theme.accent900 },
+  dayChipText: { fontFamily: font.medium, fontSize: 12, color: theme.muted },
+  dayChipTextActive: { color: theme.accent300 },
+  recenter: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: "rgba(35, 37, 50, 0.9)",
+  },
+  sheet: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    padding: 14,
+    borderRadius: theme.radiusLg,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+    ...shadow.md,
+  },
+  sheetKicker: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  sheetName: { fontSize: 17, fontFamily: font.medium, color: theme.text, marginTop: 3 },
+  sheetMeta: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: theme.muted,
+    fontVariant: ["tabular-nums"],
+    marginTop: 3,
+  },
+  sheetAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 11,
+    borderRadius: theme.radiusMd,
+    borderWidth: 1,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
+  },
+  sheetActionText: { fontFamily: font.medium, fontSize: 13, color: theme.accent300 },
+  sheetFootRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.neutral900,
+  },
+  sheetFoot: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+  },
   trailsBadge: {
     position: "absolute",
     top: 12,
@@ -1010,6 +1268,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     borderRadius: 999,
     padding: 8,
+    // The only `shadow.sm` site with no edge of its own. `sm` is an inert
+    // object now (see mobile/lib/theme.ts), so on a dark ground this floated
+    // over the map with nothing separating it from the tiles.
+    borderWidth: 1,
+    borderColor: theme.border,
     ...shadow.sm,
   },
 });

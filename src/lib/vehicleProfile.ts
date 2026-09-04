@@ -66,7 +66,13 @@ export const VEHICLE_PROFILE_KEYS = [
 
 export type VehicleProfileFieldKey = (typeof VEHICLE_PROFILE_KEYS)[number];
 
-export type VehicleProfileQuestionKind = 'text' | 'number' | 'integer' | 'select';
+export type VehicleProfileQuestionKind =
+  | 'text'
+  | 'number'
+  | 'integer'
+  | 'select'
+  /** Tappable answers alongside a live composer — see the onboarding type. */
+  | 'chips';
 
 export type VehicleProfileFieldGroup = 'identity' | 'driving';
 
@@ -108,8 +114,22 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
     },
     {
       key: 'range_km',
-      kind: 'integer',
+      /*
+       * Chips, not a bare number field. Three common ranges cover most
+       * vehicles and turn the one genuinely intimidating question in
+       * onboarding into a tap — but the composer stays live, because a
+       * 640 km tank is not one of three options and this number is the
+       * safety number the whole fuel planner rests on.
+       *
+       * The values are in DISPLAY units, like the min/max below and like
+       * everything else the user sees on this step; the submit path converts.
+       */
+      kind: 'chips',
       group: 'driving',
+      options: (isImperial ? [200, 300, 450] : [300, 500, 700]).map((n) => ({
+        value: String(n),
+        label: `${n} ${distLabel === 'kilometers' ? 'km' : 'mi'}`,
+      })),
       label: `What's your driving range on a tank, in ${distLabel}?`,
       placeholder: distPlaceholder,
       help:
@@ -150,6 +170,18 @@ export function coerceVehicleProfileValue(
       if (!valid.includes(raw)) throw new Error(`${q.key} must be one of: ${valid.join(', ')}`);
       return raw;
     }
+    /*
+     * 'chips' validates as a NUMBER here, not as a select. The chips on the
+     * range step are shortcuts to a numeric answer and the composer stays
+     * live, so a typed 640 must pass exactly the same min/max as a tapped
+     * 500 — validating against the option list would reject it.
+     *
+     * This is safe because the only chips question in the vehicle profile is
+     * `range_km`, which carries min/max. A future non-numeric chips field
+     * would need its own case, and the exhaustive `never` below is what will
+     * tell you so.
+     */
+    case 'chips':
     case 'number':
     case 'integer': {
       if (!q.optional && (raw === null || raw === undefined || raw === '')) {
@@ -157,7 +189,7 @@ export function coerceVehicleProfileValue(
       }
       const n = typeof raw === 'number' ? raw : Number(raw);
       if (!Number.isFinite(n)) throw new Error(`Expected number for ${q.key}`);
-      if (q.kind === 'integer' && !Number.isInteger(n)) {
+      if ((q.kind === 'integer' || q.kind === 'chips') && !Number.isInteger(n)) {
         throw new Error(`Expected integer for ${q.key}`);
       }
       if (q.min !== undefined && n < q.min) {

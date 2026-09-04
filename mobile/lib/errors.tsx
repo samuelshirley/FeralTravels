@@ -83,13 +83,28 @@ export function ErrorProvider({ children }: { children: React.ReactNode }) {
         </Animated.View>
       ) : null}
 
+      {/*
+        `testID` on the sheet is for the MAESTRO FLOWS, and it earns its place.
+
+        This modal covers the screen, so when it fires during a flow every
+        subsequent assertion fails as "X is not visible" — which reads as a
+        selector problem and sends you hunting through the component that
+        rendered X. It cost a real debugging detour: a stale .next cache made
+        the API 500, this appeared over the sign-in screen, and the flow
+        reported that `signin-email` was missing.
+
+        Every flow now asserts this is ABSENT before anything else, so a server
+        error names itself instead of disguising itself as a broken selector.
+      */}
       <Modal visible={fatal != null} transparent animationType="fade">
         <View style={styles.backdrop}>
-          <View style={styles.sheet}>
+          <View style={styles.sheet} testID="fatal-error-modal">
             <Text style={styles.fatalEmoji}>{fatal?.emoji}</Text>
             <Text style={styles.fatalTitle}>{fatal?.headline}</Text>
             <Text style={styles.fatalBody}>{fatal?.blurb}</Text>
-            <Text style={styles.fatalDetail}>{fatal?.message}</Text>
+            <Text style={styles.fatalDetail} testID="fatal-error-detail">
+              {fatal?.message}
+            </Text>
             {fatal?.errorId ? <Text style={styles.errorId}>{fatal.errorId}</Text> : null}
             <Pressable style={styles.fatalButton} onPress={() => setFatal(null)}>
               <Text style={styles.fatalButtonText}>Dismiss</Text>

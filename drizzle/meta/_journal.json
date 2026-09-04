@@ -211,6 +211,34 @@
       "when": 1787863204447,
       "tag": "0029_promo_grant_months",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1787863204448,
+      "tag": "0030_otp_send_throttle",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787863205448,
+      "tag": "0031_drop_leg_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787863206448,
+      "tag": "0032_timestamptz",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788518454416,
+      "tag": "0033_daily_drive_hours",
+      "breakpoints": true
     }
   ]
 }

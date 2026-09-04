@@ -116,9 +116,12 @@ with nothing in any log to tell you why.
 >
 > ### ⚠ This .ipa must never be the build that goes to review
 >
-> The production profile still carries
+> **Historical, and still true of build 3 specifically.** At the time it was
+> cut the production profile carried
 > `EXPO_PUBLIC_REVENUECAT_IOS_KEY: "REPLACE_WITH_appl_KEY_FROM_REVENUECAT"`, and
-> the build log confirms it was loaded. `mobile/lib/config.ts` requires the
+> the build log confirms it was loaded. The real key landed on 2026-09-03, so
+> builds cut after that do carry it — but build 3 cannot be fixed after the
+> fact, because `EXPO_PUBLIC_*` is compiled in. `mobile/lib/config.ts` requires the
 > `appl_` prefix, so it correctly resolves to **unset**: `purchasesAvailable()`
 > is false, `Purchases.configure` never runs, and the purchase sheet renders in
 > `unavailable` mode — **prices, no checkout**.
@@ -372,8 +375,15 @@ RevenueCat → API keys → the **public** Apple SDK key (`appl_…`). Public by
 design: it identifies the app and grants nothing, and every entitlement decision
 is made server-side from the webhook.
 
-Replace `REPLACE_WITH_appl_KEY_FROM_REVENUECAT` in **both** `build.preview.env`
-and `build.production.env` in `mobile/eas.json`.
+**DONE 2026-09-03** — `appl_ymqwHItHpPeBYqnWQFcVwPvQgja` is set in **both**
+`build.preview.env` and `build.production.env` in `mobile/eas.json`.
+
+It is committed to the repo on purpose. This is the PUBLIC SDK key: it
+identifies the app to RevenueCat and grants nothing on its own, every
+entitlement decision is made server-side from the webhook, and it has to be in
+the client bundle to work at all — which is why it is an `EXPO_PUBLIC_` var.
+The key that must never be here is the SECRET API key from the same dashboard
+page.
 
 **Both, and in eas.json specifically.** `eas.json`'s `env` block applies to
 builds; `eas update` bundles with whatever is in the shell — and

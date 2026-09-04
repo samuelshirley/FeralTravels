@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import Spinner from '@/components/Spinner';
+import Button from '@/components/ui/Button';
 
 interface NewTripButtonProps {
   /**
@@ -51,31 +52,15 @@ export default function NewTripButton({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-      <button
-        type="button"
+      <Button
         onClick={handleCreate}
         disabled={busy}
-        aria-busy={busy}
-        style={{
-          position: 'relative',
-          padding: '8px 16px',
-          background: 'var(--tp-primary)',
-          color: 'var(--tp-on-primary)',
-          border: 'none',
-          borderRadius: 'var(--tp-radius-sm)',
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: busy ? 'default' : 'pointer',
-          boxShadow: 'var(--tp-shadow-sm)',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-        }}
+        style={{ position: 'relative', padding: '8px 16px', fontSize: 13 }}
       >
         {emphasizeWhenNoTrips && !busy && <span className="new-trip-corner-cue" aria-hidden />}
-        {busy && <Spinner size={11} color="var(--tp-on-primary)" thickness={2} />}
+        {busy && <Spinner size={11} color="var(--tp-accent-300)" thickness={2} />}
         {busy ? 'Creating…' : '+ New trip'}
-      </button>
+      </Button>
       {err && (
         <span role="alert" style={{ fontSize: 12, color: 'var(--tp-danger)' }}>
           {err}

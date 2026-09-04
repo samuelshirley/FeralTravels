@@ -55,7 +55,7 @@ export const users = pgTable('users', {
     .$defaultFn(() => crypto.randomUUID()),
   name: text('name'),
   email: text('email').unique(),
-  emailVerified: timestamp('emailVerified', { mode: 'date' }),
+  emailVerified: timestamp('emailVerified', { mode: 'date', withTimezone: true }),
   image: text('image'),
   /** Mirrors admin allowlist at sign-in; never infer admin from email alone. */
   isAdmin: boolean('is_admin').default(false).notNull(),
@@ -80,7 +80,7 @@ export const users = pgTable('users', {
    * itself cannot produce, so nothing in the app noticed. A seeded account can
    * now be asked the same question a real one answers.
    */
-  onboardingCompletedAt: timestamp('onboarding_completed_at'),
+  onboardingCompletedAt: timestamp('onboarding_completed_at', { withTimezone: true }),
   /** `'metric' | 'imperial'` — null until the user picks units (onboarding / settings). */
   unitsPref: text('units_pref'),
   /**
@@ -91,7 +91,7 @@ export const users = pgTable('users', {
    * server's notion of the current day matches the driver's wall clock.
    */
   timezone: text('timezone'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const accounts = pgTable(
@@ -127,7 +127,7 @@ export const sessions = pgTable(
     userId: text('userId')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    expires: timestamp('expires', { mode: 'date' }).notNull(),
+    expires: timestamp('expires', { mode: 'date', withTimezone: true }).notNull(),
   },
   (t) => ({
     // Postgres does NOT index a foreign key automatically. Without this, the
@@ -144,7 +144,7 @@ export const verificationTokens = pgTable(
   {
     identifier: text('identifier').notNull(),
     token: text('token').notNull(),
-    expires: timestamp('expires', { mode: 'date' }).notNull(),
+    expires: timestamp('expires', { mode: 'date', withTimezone: true }).notNull(),
   },
   (vt) => ({
     pk: primaryKey({ columns: [vt.identifier, vt.token] }),
@@ -158,14 +158,43 @@ export const emailOtpCodes = pgTable(
     id: serial('id').primaryKey(),
     email: text('email').notNull(),
     code: text('code').notNull(),
-    expires: timestamp('expires', { mode: 'date' }).notNull(),
+    expires: timestamp('expires', { mode: 'date', withTimezone: true }).notNull(),
     attempts: integer('attempts').default(0).notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     emailIdx: index('otp_email_idx').on(t.email),
   })
 );
+
+/**
+ * Per-address send throttle for sign-in codes. Deliberately its OWN table
+ * rather than columns on `email_otp_codes`, because that row is deleted the
+ * moment a code is consumed, expires, or burns its five verify attempts — and
+ * a counter that lives on it can be reset by anyone willing to POST five wrong
+ * codes. The throttle has to outlive the code it is throttling.
+ *
+ * `sends` counts sends inside the current window; `windowStartedAt` is the
+ * first send of that window. Both reset once the window lapses (see
+ * OTP_THROTTLE_WINDOW_MS in server/auth/otp.ts). `lastSentAt` is what the
+ * cooldown gap is measured from.
+ *
+ * Both are `timestamptz`, unlike almost every other timestamp in this file,
+ * and that is deliberate. A `timestamp` without a zone stores whatever wall
+ * clock wrote it and drizzle reads it back as UTC — the two agree only on a
+ * UTC database, which Neon is, so the defect is invisible in production and
+ * live everywhere else. That is exactly how `email_otp_codes.created_at`
+ * makes `getExistingOtpAgeMs` return a NEGATIVE age on a non-UTC cluster,
+ * pinning the old cooldown open forever. This table exists to fix that class
+ * of bug; repeating it here would have been absurd. The rest of the schema is
+ * a separate audit.
+ */
+export const otpSendThrottle = pgTable('otp_send_throttle', {
+  email: text('email').primaryKey(),
+  sends: integer('sends').default(0).notNull(),
+  windowStartedAt: timestamp('window_started_at', { withTimezone: true }).defaultNow().notNull(),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }).defaultNow().notNull(),
+});
 
 /**
  * One row per native OAuth ID token that has been redeemed at
@@ -193,8 +222,8 @@ export const oauthTokenUses = pgTable(
   {
     tokenHash: text('token_hash').primaryKey(),
     email: text('email').notNull(),
-    usedAt: timestamp('used_at').defaultNow().notNull(),
-    expires: timestamp('expires', { mode: 'date' }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }).defaultNow().notNull(),
+    expires: timestamp('expires', { mode: 'date', withTimezone: true }).notNull(),
   },
   (t) => ({
     emailUsedAtIdx: index('oauth_token_uses_email_used_at_idx').on(t.email, t.usedAt),
@@ -209,12 +238,6 @@ export const tripStatusEnum = pgEnum('trip_status', [
   'active',
   'paused',
   'completed',
-]);
-
-export const constraintTypeEnum = pgEnum('constraint_type', [
-  'arrive_by',
-  'depart_after',
-  'flexible',
 ]);
 
 // --- Trip planning (per-user) ---
@@ -248,8 +271,8 @@ export const vehicles = pgTable(
     // and dump-station tracking were all removed in the onboarding teardown; the
     // planner caps each driving day at DEFAULT_MAX_DRIVE_HOURS_PER_DAY
     // (vehicleProfile.ts).
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     userIdx: index('vehicles_user_idx').on(t.userId),
@@ -298,6 +321,13 @@ export const trips = pgTable(
     onboardingScan: jsonb('onboarding_scan').$type<import('@/types/trip').OnboardingScan | null>(),
     /** Maps option avoid highways; merged with tool-level avoid flags. */
     preferAvoidHighways: boolean('prefer_avoid_highways').default(false).notNull(),
+    /**
+     * Hours of driving a day the driver asked for — the onboarding `trip_pace`
+     * answer (migration 0033). Null falls through to
+     * DEFAULT_MAX_DRIVE_HOURS_PER_DAY; the leg validators keep that 8h as the
+     * hard ceiling either way. Read by Penny's context and get_route's split.
+     */
+    dailyDriveHours: integer('daily_drive_hours'),
     // ── GPS position (device location, refreshed each time the app opens) ──
     // This is the driver's *device* location from the browser Geolocation API,
     // distinct from the driver-reported progress anchor below. It's what powers
@@ -307,7 +337,7 @@ export const trips = pgTable(
     lastKnownLat: doublePrecision('last_known_lat'),
     lastKnownLng: doublePrecision('last_known_lng'),
     lastKnownPlace: text('last_known_place'),
-    positionUpdatedAt: timestamp('position_updated_at'),
+    positionUpdatedAt: timestamp('position_updated_at', { withTimezone: true }),
     // ── Driver-reported trip progress (see the `report_position` Penny tool) ──
     // `currentLegId` is the leg the driver is on / about to drive next; legs
     // before it in sort order are "behind you" (completed). `progressAnchorDate`
@@ -318,7 +348,7 @@ export const trips = pgTable(
     currentLat: doublePrecision('current_lat'),
     currentLng: doublePrecision('current_lng'),
     progressAnchorDate: date('progress_anchor_date', { mode: 'string' }),
-    progressUpdatedAt: timestamp('progress_updated_at'),
+    progressUpdatedAt: timestamp('progress_updated_at', { withTimezone: true }),
     // ── Declared tank state (the `declare_fuel_state` Penny tool) ──────────
     // The driver's own statement of how far they can drive from the START of
     // `declaredRangeLegId` before needing fuel ("I only have ~150 km in the
@@ -330,9 +360,9 @@ export const trips = pgTable(
     // ignored (anchor resolution checks the leg still exists on this trip).
     declaredRangeKm: doublePrecision('declared_range_km'),
     declaredRangeLegId: uuid('declared_range_leg_id'),
-    declaredRangeAt: timestamp('declared_range_at'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    declaredRangeAt: timestamp('declared_range_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     userIdx: index('trips_user_idx').on(t.userId),
@@ -386,7 +416,7 @@ export const legs = pgTable(
      * re-searches once it goes stale. Cleared by `invalidateLegFuelCache` when a
      * leg edit / report_position changes the route. See `server/fuel.ts`.
      */
-    fuelStopsUpdatedAt: timestamp('fuel_stops_updated_at'),
+    fuelStopsUpdatedAt: timestamp('fuel_stops_updated_at', { withTimezone: true }),
     /**
      * Set by repairLegContinuity when it chained this leg's start to the prior
      * leg's end but the re-route then failed, so distance/time/geometry were
@@ -400,36 +430,11 @@ export const legs = pgTable(
      * Persisted at planning time so the UI never calls external APIs during viewing.
      */
     geometry: jsonb('geometry').$type<GeoJSONLineString | null>(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     tripIdx: index('legs_trip_idx').on(t.tripId),
-  })
-);
-
-/**
- * Constraints on legs — deadlines, earliest departures, or flexible intent.
- * Supports multiple constraints per leg (e.g., ferry window = arrive_by + depart_after).
- */
-export const legConstraints = pgTable(
-  'leg_constraints',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    legId: uuid('leg_id')
-      .notNull()
-      .references(() => legs.id, { onDelete: 'cascade' }),
-    constraintType: constraintTypeEnum('constraint_type').notNull(),
-    /** The actual deadline or earliest departure. Null for `flexible` constraints. */
-    constraintDatetime: timestamp('constraint_datetime', { withTimezone: true }),
-    /** Slack before/after the constraint datetime, in minutes. */
-    bufferMinutes: integer('buffer_minutes').default(60).notNull(),
-    /** User-facing context, e.g. "ferry departs at 2pm", "meet friends". */
-    note: text('note'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-  },
-  (t) => ({
-    legIdx: index('leg_constraints_leg_idx').on(t.legId),
   })
 );
 
@@ -467,7 +472,7 @@ export const pois = pgTable(
     rating: doublePrecision('rating'),
     url: text('url'),
     data: text('data'),
-    lastVerified: timestamp('last_verified'),
+    lastVerified: timestamp('last_verified', { withTimezone: true }),
     status: text('status').default('active').notNull(),
   },
   (t) => ({
@@ -586,8 +591,8 @@ export const stops = pgTable(
     googleMapsUri: text('google_maps_uri'),
     /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
     photos: jsonb('photos').$type<StopPhoto[]>(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     legIdx: index('stops_leg_idx').on(t.legId),
@@ -622,9 +627,9 @@ export const tasks = pgTable(
     answerSourceUrl: text('answer_source_url'),
     answerImageUrl: text('answer_image_url'),
     createdBy: text('created_by').default('user').notNull(),
-    dueAt: timestamp('due_at'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     tripIdx: index('tasks_trip_idx').on(t.tripId),
@@ -653,7 +658,7 @@ export const chatHistory = pgTable(
     planSummary: jsonb('plan_summary').$type<import('@/types/trip').PlanSummary | null>(),
     /** `form_question` | `form_answer` | `ai` — onboarding vs live chat. */
     kind: text('kind').default('ai').notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     tripIdx: index('chat_trip_idx').on(t.tripId),
@@ -685,7 +690,7 @@ export const usageEvents = pgTable(
     costMicrocents: bigint('cost_microcents', { mode: 'number' }),
     success: boolean('success').default(true).notNull(),
     errorMessage: text('error_message'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     userIdx: index('usage_user_idx').on(t.userId),
@@ -736,7 +741,7 @@ export const announcements = pgTable('announcements', {
   buttonText: text('button_text').notNull().default('Got it'),
   /** Only active announcements are shown; flip to false to retire. */
   active: boolean('active').notNull().default(true),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /** Tracks which users have dismissed which announcements (one row = dismissed). */
@@ -749,7 +754,7 @@ export const announcementDismissals = pgTable(
     announcementId: uuid('announcement_id')
       .notNull()
       .references(() => announcements.id, { onDelete: 'cascade' }),
-    dismissedAt: timestamp('dismissed_at').defaultNow().notNull(),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.announcementId] }),
@@ -801,8 +806,8 @@ export const pennyTurns = pgTable(
     resultMeta: jsonb('result_meta').$type<Record<string, unknown> | null>(),
     /** Real error text when `status = 'error'`. */
     errorMessage: text('error_message'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     keyIdx: uniqueIndex('penny_turns_idempotency_key_idx').on(t.idempotencyKey),
@@ -865,14 +870,14 @@ export const deletedUsers = pgTable(
     /** `'google' | 'apple' | 'otp'` etc. — which provider(s) the account had linked. */
     signInProviders: text('sign_in_providers'),
     /** When the account was originally created — pairs with `deletedAt` to give tenure. */
-    accountCreatedAt: timestamp('account_created_at'),
+    accountCreatedAt: timestamp('account_created_at', { withTimezone: true }),
     /** How much they had built before quitting. Cheap churn signal, no PII. */
     tripCount: integer('trip_count').default(0).notNull(),
     vehicleCount: integer('vehicle_count').default(0).notNull(),
     chatMessageCount: integer('chat_message_count').default(0).notNull(),
     /** `'self'` today; leaves room for `'admin'` / `'support'` later. */
     deletedBy: text('deleted_by').default('self').notNull(),
-    deletedAt: timestamp('deleted_at').defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     hashIdx: index('deleted_users_email_hash_idx').on(t.emailHash),
@@ -940,7 +945,7 @@ export const promoCodes = pgTable(
      * `grantMonths` below, and the two being confusable is the reason both
      * carry this warning. Null means the code never goes stale.
      */
-    expiresAt: timestamp('expires_at'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     /**
      * How long the access lasts, in months, counted from REDEMPTION.
      *
@@ -961,7 +966,7 @@ export const promoCodes = pgTable(
      */
     grantMonths: integer('grant_months').notNull(),
     /** Set once, by the atomic claim. Non-null means spent — codes are single-use. */
-    redeemedAt: timestamp('redeemed_at'),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
     /**
      * `set null`, not `cascade`: if the user later deletes their account, the
      * record that a code was issued and spent must survive them. Deleting the
@@ -970,7 +975,7 @@ export const promoCodes = pgTable(
     redeemedByUserId: text('redeemed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     /**
@@ -1008,17 +1013,17 @@ export const subscriptions = pgTable(
      * promo. A null here with an entitled status is unlimited access, so the
      * admin UI must show it as such rather than as a blank cell.
      */
-    currentPeriodEnd: timestamp('current_period_end'),
+    currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     /** Apple's stable id for the subscription across renewals. The join key for ASSN. */
     originalTransactionId: text('original_transaction_id'),
     /** False once the user turns off auto-renew. Does NOT itself remove access. */
     autoRenew: boolean('auto_renew').default(true).notNull(),
     /** Set by the break-glass revoke. Both are required by the admin UI when it is used. */
-    revokedAt: timestamp('revoked_at'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedBy: text('revoked_by'),
     revokedReason: text('revoked_reason'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     statusIdx: index('subscriptions_status_idx').on(t.status),
@@ -1062,7 +1067,7 @@ export const subscriptionEvents = pgTable(
      * "somebody paid us and we cannot find their account" is not.
      */
     outcome: text('outcome').notNull(),
-    receivedAt: timestamp('received_at').defaultNow().notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     eventIdUnique: uniqueIndex('subscription_events_event_id_idx').on(t.eventId),
@@ -1087,7 +1092,7 @@ export const usageAlerts = pgTable(
     threshold: text('threshold').$type<'watch' | 'stop'>().notNull(),
     /** The 12-month Anthropic total at the moment it fired, for the email and the audit. */
     microcentsAtFiring: bigint('microcents_at_firing', { mode: 'number' }),
-    firedAt: timestamp('fired_at').defaultNow().notNull(),
+    firedAt: timestamp('fired_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.threshold] }),

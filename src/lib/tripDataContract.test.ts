@@ -88,12 +88,12 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
 function makeLegWithDetails(overrides: Partial<LegWithDetails> = {}): LegWithDetails {
   return {
     ...makeLeg(),
+    range_remaining_start_km: null,
     costs: [],
     links: [],
     routes: [],
     stops: [makeStop()],
     tasks: [],
-    constraints: [],
     parsedNotes: [],
     ...overrides,
   };
@@ -182,6 +182,7 @@ describe('Trip data contract — fields required by the UI', () => {
         trip_status: 'draft',
         onboarding_state: 'done',
         prefer_avoid_highways: false,
+        daily_drive_hours: null,
         last_known_lat: null,
         last_known_lng: null,
         last_known_place: null,

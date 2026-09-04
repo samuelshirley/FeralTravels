@@ -89,6 +89,25 @@ export function buildMapsSearchUrl(
   return `https://www.google.com/maps/search/${q}/@${lat},${lng},${zoom}z`;
 }
 
+/**
+ * "Take me here": turn-by-turn from wherever the device is to one point.
+ *
+ * `buildNavUrl` with no start coords omits `origin`, and Google Maps then
+ * routes from the device's current location — which is exactly what a tap on
+ * a stop row or the NEXT STOP button means. It is NOT a `/maps/search/` pin:
+ * two places hand-built that URL for a "go here" action and opened a dropped
+ * pin instead of a drive (2026-09-04). A search URL is for finding things
+ * near a point (the park/dog-park route links below); a directions URL is for
+ * going to one.
+ */
+export function buildGoHereUrl(
+  lat: number | null | undefined,
+  lng: number | null | undefined
+): string | null {
+  if (lat == null || lng == null) return null;
+  return buildNavUrl({ end_lat: lat, end_lng: lng });
+}
+
 /** "Dog parks near this point" Google Maps search. */
 export function buildDogParkSearchUrl(lat: number, lng: number): string {
   return buildMapsSearchUrl(lat, lng, 'dog park');

@@ -349,6 +349,9 @@ export default function TripsScreen() {
                 name={trip.name}
                 startDate={trip.start_date}
                 endDate={trip.end_date}
+                dayCount={trip.day_count}
+                totalDistanceKm={trip.total_distance_km}
+                nextStop={trip.next_stop}
                 isTemplate={isTemplate}
                 // On a phone the runtime zone IS the driver's zone (the web
                 // server runs in UTC and has to read the stored preference), so
@@ -520,11 +523,44 @@ function AccountMenu({
   onSupport: () => void;
   onSignOut: () => void;
 }) {
+  /*
+   * The testIDs are load-bearing for `mobile/maestro/settings-location.yaml`.
+   *
+   * Each item is a bare `<Text>` inside a `Pressable` with no
+   * `accessibilityRole`, so iOS publishes no accessibility element for it and
+   * Maestro cannot match the words on screen — `tapOn: 'Settings'` fails with
+   * "Element not found" against a menu that is fully open and legible in the
+   * failure screenshot. A `testID` is published regardless, which is how the
+   * error sheet in `lib/errors.tsx` is reachable inside the same kind of
+   * transparent Modal.
+   */
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.menuBackdrop} onPress={onClose}>
+      {/*
+        The BACKDROP needs `accessible={false}` too, not just the panel below.
+        It is the outermost Pressable, so it is the one that was merging the
+        whole menu into a single accessibility element — fixing only the inner
+        panel changed nothing at all.
+      */}
+      <Pressable style={styles.menuBackdrop} onPress={onClose} accessible={false}>
+        {/*
+          `accessible={false}` on the wrapper is what makes the items below
+          reachable AT ALL.
+
+          A Pressable is an accessibility element, and iOS MERGES an
+          accessibility element's whole subtree into one node — so this menu
+          published a single element labelled
+          "SIGNED IN AS, <name>, <email>, Trips, Settings, Contact Support,
+          Sign out" and nothing else. Neither the words on screen nor the
+          testIDs below existed as far as the accessibility tree was
+          concerned, which is why Maestro reported "Element not found" against
+          a menu that is fully open in the failure screenshot. VoiceOver got
+          the same blob: one unactivatable label instead of four buttons.
+
+          Touch handling is unaffected — this only stops the merge.
+        */}
         {/* Swallow taps inside the panel so they don't dismiss the menu. */}
-        <Pressable style={[styles.menuPanel, { top }]} onPress={() => {}}>
+        <Pressable style={[styles.menuPanel, { top }]} onPress={() => {}} accessible={false}>
           {name || email ? (
             <View style={styles.menuIdentity}>
               {/* Native counterpart of the web navbar's hover card: a phone has
@@ -539,16 +575,16 @@ function AccountMenu({
             </View>
           ) : null}
           {/* This screen IS the trips list, so "Trips" just dismisses. */}
-          <Pressable style={styles.menuItem} onPress={onClose}>
+          <Pressable style={styles.menuItem} onPress={onClose} testID="account-menu-trips" accessibilityRole="button">
             <Text style={styles.menuItemText}>Trips</Text>
           </Pressable>
-          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSettings}>
+          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSettings} testID="account-menu-settings" accessibilityRole="button">
             <Text style={styles.menuItemText}>Settings</Text>
           </Pressable>
-          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSupport}>
+          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSupport} testID="account-menu-support" accessibilityRole="button">
             <Text style={styles.menuItemText}>Contact Support</Text>
           </Pressable>
-          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSignOut}>
+          <Pressable style={[styles.menuItem, styles.menuItemDivided]} onPress={onSignOut} testID="account-menu-signout" accessibilityRole="button">
             <Text style={[styles.menuItemText, styles.menuItemDanger]}>Sign out</Text>
           </Pressable>
         </Pressable>
@@ -576,7 +612,7 @@ const styles = StyleSheet.create({
   },
   pageHeaderText: { flexShrink: 1, minWidth: 0 },
   // src/app/layout.tsx:179 — .page-title { font-size: 22px } ≤767px.
-  pageTitle: { fontSize: 22, fontFamily: font.bold, color: theme.text },
+  pageTitle: { fontSize: 26, fontFamily: font.medium, color: theme.text },
   createErr: { fontFamily: font.regular, fontSize: 12, color: theme.danger, textAlign: "right", marginBottom: 8 },
   newTripWrap: { position: "relative" },
   newTripButton: { paddingVertical: 8, paddingHorizontal: 16 },
@@ -618,7 +654,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   emptyText: { fontFamily: font.regular, fontSize: 14, lineHeight: 21, color: theme.muted },
-  emptyStrong: { color: theme.text, fontFamily: font.bold },
+  emptyStrong: { color: theme.text, fontFamily: font.medium },
   templatesHeader: { marginTop: 20, marginBottom: 10 },
   overlay: {
     flex: 1,

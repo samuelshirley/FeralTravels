@@ -4,9 +4,10 @@ import { useRouter } from "expo-router";
 import BottomNav from "@/components/BottomNav";
 import UnitsToggle from "@/components/UnitsToggle";
 import VehicleProfileSection from "@/components/VehicleProfileSection";
+import LocationSection from "@/components/LocationSection";
 import DeleteAccountSection from "@/components/DeleteAccountSection";
 import SubscriptionSection from "@/components/SubscriptionSection";
-import { Card, Eyebrow, Spinner } from "@/components/ui";
+import { Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
 import { useSignedInEmail } from "@/lib/identity";
 import { theme } from "@/lib/theme";
@@ -63,11 +64,12 @@ export default function SettingsScreen() {
           picks units once and the rest of the page reflects it
           immediately via the units context.
         */}
-        <Card style={styles.section}>
+        <View style={styles.section}>
           <UnitsToggle />
-        </Card>
+        </View>
+        <View style={styles.sectionRule} />
 
-        <Card style={styles.section}>
+        <View style={styles.section}>
           <Text style={styles.sectionCaption}>Signed in as</Text>
           {loading && !me ? (
             <Spinner />
@@ -77,9 +79,10 @@ export default function SettingsScreen() {
               {email && name ? <Text style={styles.identitySecondary}>{email}</Text> : null}
             </>
           )}
-        </Card>
+        </View>
+        <View style={styles.sectionRule} />
 
-        <Card style={styles.section}>
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Vehicle profile</Text>
           {/*
             One line, and it earns its place under the copy rule in CLAUDE.md:
@@ -95,7 +98,8 @@ export default function SettingsScreen() {
           */}
           <Text style={styles.sectionBlurb}>Penny plans fuel stops around this range.</Text>
           <VehicleProfileSection />
-        </Card>
+        </View>
+        <View style={styles.sectionRule} />
 
         {/*
           Between the vehicle profile and the danger zone: a subscriber looking
@@ -104,6 +108,9 @@ export default function SettingsScreen() {
           — both are App Store obligations and both are meaningless in a
           browser.
         */}
+        <LocationSection />
+        <View style={styles.sectionRule} />
+
         <SubscriptionSection />
 
         {/*
@@ -128,11 +135,12 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
   content: { padding: 16, paddingTop: 24, paddingBottom: 80 },
-  title: { fontSize: 28, fontFamily: font.bold, color: theme.text, marginBottom: 24 },
-  section: { padding: 20, marginBottom: 16 },
-  sectionCaption: { fontFamily: font.regular, fontSize: 12, color: theme.muted, marginBottom: 4 },
-  identityPrimary: { fontSize: 15, fontFamily: font.semibold, color: theme.text },
-  identitySecondary: { fontFamily: font.regular, fontSize: 12, color: theme.subtle, marginTop: 4 },
-  sectionTitle: { fontSize: 16, fontFamily: font.bold, color: theme.text, marginBottom: 6 },
+  title: { fontSize: 26, fontFamily: font.medium, color: theme.text, marginBottom: 8 },
+  section: { paddingVertical: 20 },
+  sectionRule: { height: 1, backgroundColor: theme.neutral900 },
+  sectionCaption: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginBottom: 4 },
+  identityPrimary: { fontSize: 13, fontFamily: font.medium, color: theme.text },
+  identitySecondary: { fontFamily: font.regular, fontSize: 13, color: theme.muted, marginTop: 4 },
+  sectionTitle: { fontSize: 17, fontFamily: font.medium, color: theme.text, marginBottom: 6 },
   sectionBlurb: { fontFamily: font.regular, fontSize: 13, color: theme.muted, lineHeight: 20, marginBottom: 14 },
 });

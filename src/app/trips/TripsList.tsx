@@ -6,6 +6,8 @@ import TripCard from './TripCard';
 import { apiFetch } from '@/lib/api';
 import { LoadingOverlay } from '@/components/Spinner';
 import PullToRefresh from '@/components/PullToRefresh';
+import { PencilEditTripsIcon } from '@/components/icons';
+import { buttonStyle } from '@/components/ui/Button';
 
 interface TripSummary {
   id: string;
@@ -19,6 +21,10 @@ interface TripSummary {
    * browser says, and two notions of "today" is how the day-drift bug happened.
    */
   completed: boolean;
+  /** Derived by listTripsForUser — see the Trip type. */
+  day_count?: number | null;
+  total_distance_km?: number | null;
+  next_stop?: { name: string; distance_km: number | null } | null;
 }
 
 interface Props {
@@ -84,26 +90,18 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             onClick={() => setEditMode((v) => !v)}
             aria-pressed={editMode}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
+              // A neutral outline at rest; the ACTIVE state is the one that
+              // has to read at a glance, since it changes what tapping a card
+              // does. It takes the accent rather than a second hue.
+              ...buttonStyle(editMode ? 'primary' : 'secondary'),
               fontSize: 12,
-              background: editMode ? 'var(--tp-accent-warm-muted)' : 'var(--tp-surface-muted)',
-              color: editMode ? 'var(--tp-accent-warm)' : 'var(--tp-muted)',
-              border: editMode
-                ? '1px solid rgba(201, 123, 99, 0.45)'
-                : '1px solid var(--tp-border)',
               borderRadius: 999,
               padding: '6px 12px',
-              cursor: 'pointer',
               letterSpacing: '0.05em',
               textTransform: 'uppercase',
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
+            <PencilEditTripsIcon />
             {editMode ? 'Done' : 'Edit trips'}
           </button>
         </div>
@@ -135,6 +133,9 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             name={trip.name}
             startDate={trip.start_date}
             endDate={trip.end_date}
+            dayCount={trip.day_count}
+            totalDistanceKm={trip.total_distance_km}
+            nextStop={trip.next_stop}
             completed={trip.completed}
             editMode={editMode}
             onDeleted={handleTripDeleted}

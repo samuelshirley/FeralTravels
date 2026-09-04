@@ -2,25 +2,49 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { verifyOtpAction, resendOtpAction } from './actions';
+import { InfoIcon } from '@/components/icons';
 
 interface VerifyFormProps {
   email: string;
   callbackUrl: string;
   error?: string;
   resent?: boolean;
+  /** Seconds until "Resend code" is live again. 0 means it is live now. */
+  resendInSeconds?: number;
 }
 
-function describeError(code?: string): string | null {
+/**
+ * Nothing has gone wrong when a resend is refused: the code we already sent
+ * is sitting in the user's inbox, still valid, and the only correct action is
+ * the one they were already taking. Rendering that in the same red box as
+ * "that code is incorrect" told them to panic about a non-event — so it is
+ * classified as a notice, and the countdown below means they should rarely
+ * reach it at all.
+ */
+type Notice = { tone: 'error' | 'info'; text: string };
+
+function describeError(code: string | undefined, retryInSeconds: number): Notice | null {
   if (!code) return null;
   switch (code) {
     case 'InvalidCode':
-      return 'That code is incorrect or has expired. Please try again or request a new one.';
+      return {
+        tone: 'error',
+        text: 'That code is incorrect or has expired. Please try again or request a new one.',
+      };
     case 'RateLimited':
-      return 'A code was already sent recently — please wait 60 seconds before requesting another.';
+      return {
+        tone: 'info',
+        text: retryInSeconds > 0
+          ? `Your code is still on its way — you can request another in ${retryInSeconds}s.`
+          : 'Your most recent code is still valid. Check your inbox before requesting another.',
+      };
     case 'EmailSendFailed':
-      return "Couldn't send a new code. Please try again or use Google sign-in.";
+      return {
+        tone: 'error',
+        text: "Couldn't send a new code. Please try again or use Google sign-in.",
+      };
     default:
-      return `Something went wrong (${code}). Please try again.`;
+      return { tone: 'error', text: `Something went wrong (${code}). Please try again.` };
   }
 }
 
@@ -31,13 +55,47 @@ function maskEmail(email: string): string {
   return `${local[0]}***@${domain}`;
 }
 
-export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProps) {
+export function VerifyForm({
+  email,
+  callbackUrl,
+  error,
+  resent,
+  resendInSeconds = 0,
+}: VerifyFormProps) {
   const NUM_DIGITS = 6;
   const [digits, setDigits] = useState<string[]>(Array(NUM_DIGITS).fill(''));
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const formRef = useRef<HTMLFormElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(resendInSeconds);
+
+  /**
+   * Tick the resend countdown down to zero.
+   *
+   * Counted against a fixed deadline rather than by decrementing a number
+   * once per tick, because `setInterval` is throttled hard in a background
+   * tab: a decrementing counter comes back from a minimised window still
+   * claiming 48s left, and the button stays dead long after the server would
+   * have allowed the press. Recomputing from the deadline means a tab that
+   * was asleep for the whole cooldown wakes up correct.
+   *
+   * The server remains the authority — this only mirrors the number it gave
+   * us on render, so clock skew costs at most one rejected press rather than
+   * an inconsistent limit.
+   */
+  useEffect(() => {
+    setSecondsLeft(resendInSeconds);
+    if (resendInSeconds <= 0) return;
+
+    const deadline = Date.now() + resendInSeconds * 1000;
+    const id = setInterval(() => {
+      const left = Math.ceil((deadline - Date.now()) / 1000);
+      setSecondsLeft(left > 0 ? left : 0);
+      if (left <= 0) clearInterval(id);
+    }, 250);
+    return () => clearInterval(id);
+  }, [resendInSeconds]);
 
   const code = digits.join('');
   const codeComplete = code.length === NUM_DIGITS && digits.every((d) => d !== '');
@@ -110,18 +168,19 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
     inputRefs.current[firstEmpty === -1 ? NUM_DIGITS - 1 : firstEmpty]?.focus();
   }
 
-  const errorMessage = describeError(error);
+  const notice = describeError(error, secondsLeft);
+  const resendBlocked = secondsLeft > 0;
 
   const digitBoxStyle: React.CSSProperties = {
     // Width is 100% of the wrapper div which handles the flex sizing.
     boxSizing: 'border-box' as const,
     aspectRatio: '1 / 1.2',
     textAlign: 'center',
-    fontSize: 'clamp(18px, 5vw, 26px)',
-    fontWeight: 700,
+    fontSize: 24,
+    fontWeight: 500,
     fontVariantNumeric: 'tabular-nums',
-    background: 'var(--tp-surface-muted)',
-    border: '1px solid var(--tp-border)',
+    background: 'var(--tp-neutral-900)',
+    border: '1px solid var(--tp-neutral-800)',
     borderRadius: 'var(--tp-radius-sm)',
     color: 'var(--tp-text)',
     outline: 'none',
@@ -141,41 +200,63 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
           50% { opacity: 0; }
         }
       `}</style>
-      {errorMessage && (
+      {notice && (
         <div
+          role="status"
           style={{
-            padding: '8px 12px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            padding: '9px 12px',
             borderRadius: 'var(--tp-radius-sm)',
-            background: 'var(--tp-danger-muted)',
-            border: '1px solid rgba(198, 93, 74, 0.35)',
-            color: 'var(--tp-danger)',
+            background: 'var(--tp-neutral-900)',
+            border: '1px solid var(--tp-neutral-700)',
+            color: 'var(--tp-neutral-200)',
             fontSize: 12,
+            lineHeight: 1.45,
             marginBottom: 16,
           }}
         >
-          {errorMessage}
+          {/* ONE box for both tones. `notice.tone` still exists because the
+              copy differs, but it no longer picks a colour: a red panel on a
+              sign-in screen reads as "your account is in trouble" when the
+              truth is a mistyped digit or a code still in flight. */}
+          <span style={{ flexShrink: 0, lineHeight: 0, color: 'var(--tp-accent-300)' }}>
+            <InfoIcon />
+          </span>
+          <span>{notice.text}</span>
         </div>
       )}
 
       {resent && !error && (
         <div
           style={{
-            padding: '8px 12px',
+            padding: '9px 12px',
             borderRadius: 'var(--tp-radius-sm)',
-            background: 'var(--tp-primary-muted)',
-            border: '1px solid rgba(78, 122, 176, 0.35)',
-            color: 'var(--tp-primary)',
+            background: 'var(--tp-neutral-900)',
+            border: '1px solid var(--tp-neutral-700)',
+            color: 'var(--tp-neutral-200)',
             fontSize: 12,
             marginBottom: 16,
           }}
         >
-          A new code was sent to <strong>{maskEmail(email)}</strong>.
+          A new code was sent to{' '}
+          <strong style={{ fontWeight: 500, color: 'var(--tp-text)' }}>{maskEmail(email)}</strong>.
         </div>
       )}
 
-      <p style={{ fontSize: 13, color: 'var(--tp-muted)', margin: '0 0 20px', lineHeight: 1.5 }}>
-        We sent a 6-digit code to <strong>{maskEmail(email)}</strong>. Enter it below — it expires
-        in 10 minutes.
+      <p
+        style={{
+          fontSize: 13,
+          fontWeight: 400,
+          lineHeight: 1.55,
+          color: 'var(--tp-neutral-400)',
+          textWrap: 'pretty',
+          margin: '0 0 20px',
+        }}
+      >
+        We sent a code to <strong style={{ fontWeight: 500, color: 'var(--tp-text)' }}>{maskEmail(email)}</strong>. Your
+        phone should offer to fill it in — it expires in 10 minutes.
       </p>
 
       {/* Code entry form */}
@@ -221,14 +302,20 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
                   e.target.select();
                 }}
                 onBlur={() => setFocusedIndex(null)}
+                className="auth-digit"
                 style={{
                   ...digitBoxStyle,
                   width: '100%',
-                  borderColor: focusedIndex === i
-                    ? 'var(--tp-primary)'
-                    : digit
-                    ? 'var(--tp-border-strong)'
-                    : 'var(--tp-border)',
+                  borderColor:
+                    focusedIndex === i
+                      ? 'var(--tp-primary)'
+                      : digit
+                        ? 'var(--tp-neutral-700)'
+                        : 'var(--tp-neutral-800)',
+                  // A ring rather than a thicker border, so the box does not
+                  // change size as focus moves along the row.
+                  boxShadow:
+                    focusedIndex === i ? '0 0 0 2px rgba(145, 132, 217, 0.3)' : undefined,
                 }}
                 aria-label={`Digit ${i + 1} of ${NUM_DIGITS}`}
               />
@@ -255,64 +342,73 @@ export function VerifyForm({ email, callbackUrl, error, resent }: VerifyFormProp
         <button
           type="submit"
           disabled={submitting || !codeComplete}
-          style={{
-            width: '100%',
-            padding: '10px 16px',
-            background: codeComplete ? 'var(--tp-primary)' : 'var(--tp-surface-muted)',
-            color: codeComplete ? 'var(--tp-on-primary)' : 'var(--tp-subtle)',
-            border: 'none',
-            borderRadius: 'var(--tp-radius-sm)',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: codeComplete ? 'pointer' : 'default',
-            transition: 'background 0.15s, color 0.15s',
-          }}
+          className="auth-btn auth-btn-email"
+          style={{ marginTop: 16 }}
         >
           {submitting ? 'Verifying…' : 'Verify code'}
         </button>
       </form>
 
-      {/* Resend */}
+      {/*
+        Resend, gated by a live countdown rather than by an error message.
+
+        The button used to be offered unconditionally and the cooldown was
+        only discovered by pressing it — which put a red failure box on screen
+        for a user whose only mistake was following the one instruction the
+        page gave them. A disabled control that says when it will work is the
+        same rule, communicated before the press instead of after it.
+      */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-          marginTop: 20,
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginTop: 18,
+          paddingTop: 14,
+          borderTop: '1px solid var(--tp-neutral-800)',
           fontSize: 13,
-          color: 'var(--tp-muted)',
+          color: 'var(--tp-neutral-500)',
         }}
       >
-        Didn&apos;t get it?
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          Didn&apos;t get it?
         <form action={resendOtpAction} style={{ display: 'inline' }}>
           <input type="hidden" name="email" value={email} />
           <input type="hidden" name="callbackUrl" value={callbackUrl} />
           <button
             type="submit"
+            disabled={resendBlocked}
+            aria-live="polite"
+            title={
+              resendBlocked
+                ? 'Your last code was just sent — give it a moment to arrive.'
+                : undefined
+            }
+            className={resendBlocked ? undefined : 'auth-link'}
             style={{
               background: 'none',
               border: 'none',
               padding: 0,
-              color: 'var(--tp-primary)',
+              color: resendBlocked ? 'var(--tp-neutral-500)' : 'var(--tp-accent-300)',
               fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              textDecoration: 'underline',
+              fontWeight: 500,
+              cursor: resendBlocked ? 'default' : 'pointer',
+              textDecoration: 'none',
+              fontVariantNumeric: 'tabular-nums',
+              transition: 'color 0.15s',
             }}
           >
-            Resend code
+            {resendBlocked ? `Resend in ${secondsLeft}s` : 'Resend code'}
           </button>
         </form>
-      </div>
-
-      {/* Back link */}
-      <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: 'var(--tp-muted)' }}>
+        </span>
         <a
           href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-          style={{ color: 'var(--tp-subtle)', textDecoration: 'none' }}
+          className="auth-link"
         >
-          ← Use a different email
+          Use another email
         </a>
       </div>
     </div>

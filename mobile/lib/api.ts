@@ -1,3 +1,4 @@
+import type { QuestionKind } from "@/shared/lib/onboardingForm";
 import { API_BASE_URL } from "@/lib/config";
 import { getToken, clearToken } from "@/lib/auth";
 import type {
@@ -353,15 +354,6 @@ export function tripApi(tripId: string) {
         ...opts,
       }),
 
-    parseCoords: (input: string) =>
-      apiFetch<{
-        lat: number;
-        lng: number;
-        name?: string;
-        source?: string;
-        source_url?: string;
-      }>("/api/coords/parse", { body: { input }, skipGlobalErrorReport: true }),
-
     listGpxForLeg: (legId: string) =>
       apiFetch<GPXTrail[]>("/api/gpx", { query: { tripId, legId } }),
 
@@ -371,7 +363,12 @@ export function tripApi(tripId: string) {
         query: { tripId, before },
       }),
     getOnboarding: () => apiFetch<OnboardingSnapshot>(`/api/trips/${tripId}/onboarding`),
-    answerOnboarding: (questionKey: string, value: string | number | null) =>
+    // The object shape is the composite vehicle card's answer — one card,
+    // two fields, one submit. Mirrors `answerSchema` on the route.
+    answerOnboarding: (
+      questionKey: string,
+      value: string | number | null | { name: string; range_km: string },
+    ) =>
       apiFetch<OnboardingAnswer>(`/api/trips/${tripId}/onboarding`, {
         body: { questionKey, value },
       }),
@@ -400,11 +397,14 @@ export function tripApi(tripId: string) {
  */
 export interface OnboardingQuestion {
   key: string;
-  kind: "text" | "number" | "integer" | "select" | "handoff";
+  /** Shared with the server and the web — see `@/shared/lib/onboardingForm`. */
+  kind: QuestionKind;
   label: string;
   placeholder?: string;
   help?: string;
   options?: Array<{ value: string; label: string }>;
+  /** `kind: 'vehicle'` — the name half of the composite first-run card. */
+  nameField?: { label: string; placeholder?: string };
   optional?: boolean;
   min?: number;
   max?: number;
@@ -412,6 +412,13 @@ export interface OnboardingQuestion {
   multiline?: boolean;
   /** Prefilled answer (e.g. a start date extracted from the trip description). */
   defaultValue?: string;
+  /**
+   * Tappable examples that PREFILL the composer and do NOT submit — unlike
+   * `options`, which are answers to the question. See the server type.
+   */
+  prompts?: string[];
+  /** One quiet line explaining where a `defaultValue` came from. */
+  footnote?: string;
 }
 
 /**
