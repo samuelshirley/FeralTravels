@@ -39,6 +39,8 @@ appId: ${APP_ID}
 # The trips list never prompts, so this arrives at Settings with the dialog
 # unspent. `simctl privacy … reset location` in the runner covers the state
 # left behind by PREVIOUS runs; this covers the state this run would create.
+# (The old wording of this comment referred to a "Turn on" button; the
+# control is a switch now, and the branches below read the hint under it.)
 #
 # The avatar is matched on its accessibilityLabel, which Maestro exposes as
 # element text — hence a regex, since the label carries the fixture address.
@@ -79,28 +81,32 @@ appId: ${APP_ID}
 
 # WHICH BRANCH RUNS DEPENDS ON THE DEVICE, AND BOTH ASSERT SOMETHING REAL.
 #
-# The intended state for this flow is "never asked", where the button reads
-# "Turn on" and tapping it must raise the iOS dialog. That state could NOT be
-# produced on an iOS 26.5 simulator: a freshly ERASED device reports
-# `{"status":"denied","canAskAgain":false}` to `getForegroundPermissionsAsync`
-# before anything has asked, and neither `simctl privacy reset location` nor
-# `simctl privacy grant location` changes it — `launchctl kickstart` on
-# locationd answers "Please switch to user/foreground/com.apple.locationd
-# (rdar://78126471)", i.e. the daemon moved to a user domain that `simctl
-# privacy` no longer writes to. Verified by rendering the raw permission object
-# into the view and reading it back out of the hierarchy, not inferred.
+# The control is a SWITCH (2026-09-04), so the branch is read off the hint
+# under it rather than off a button label. The intended state for this flow
+# is "never asked": no hint, and flipping the switch must raise the iOS
+# dialog. That state could NOT be produced on an iOS 26.5 simulator: a freshly
+# ERASED device reports `{"status":"denied","canAskAgain":false}` to
+# `getForegroundPermissionsAsync` before anything has asked, and neither
+# `simctl privacy reset location` nor `simctl privacy grant location` changes
+# it — `launchctl kickstart` on locationd answers "Please switch to
+# user/foreground/com.apple.locationd (rdar://78126471)", i.e. the daemon
+# moved to a user domain that `simctl privacy` no longer writes to. Verified
+# by rendering the raw permission object into the view and reading it back
+# out of the hierarchy, not inferred.
 #
 # So the flow takes whichever branch the device offers. Neither is a skip:
 #
-#   "Turn on"       — the real thing. Tap, and the SYSTEM dialog must appear;
+#   no hint         — the real thing. Flip, and the SYSTEM dialog must appear;
 #                     that text belongs to iOS and can only be on screen if
 #                     `requestForegroundPermissionsAsync` reached it. Then
-#                     decline, so the fixture trip keeps its own coordinates.
+#                     decline, so the fixture trip keeps its own coordinates —
+#                     and the hint about the Settings app appears, because
+#                     iOS has now spent its dialog.
 #
-#   "Open Settings" — the denied branch. Tapping calls `Linking.openSettings()`,
+#   "Settings app"  — the spent branch. Flipping calls `Linking.openSettings()`,
 #                     which BACKGROUNDS the app. The gate is that our own
 #                     screen goes away: only a real call into iOS can do that,
-#                     so a button wired to nothing still fails here. This is
+#                     so a switch wired to nothing still fails here. This is
 #                     the branch a simulator currently takes.
 #
 # If a future runtime restores the not-determined state, the first branch
@@ -110,7 +116,7 @@ appId: ${APP_ID}
 
 - runFlow:
     when:
-      visible: 'Turn on'
+      notVisible: '.*Settings app.*'
     commands:
       - tapOn:
           id: 'settings-location-enable'
@@ -119,15 +125,15 @@ appId: ${APP_ID}
       # `Don.t Allow` as a REGEX — iOS renders a typographic apostrophe.
       - tapOn: 'Don.t Allow'
       # Spent dialog ⇒ the Settings route. The half a unit test cannot reach.
-      - assertVisible: 'Open Settings'
+      - assertVisible: '.*Settings app.*'
 
 - runFlow:
     when:
-      visible: 'Open Settings'
+      visible: '.*Settings app.*'
     commands:
       - tapOn:
           id: 'settings-location-enable'
-      # The app is no longer in front — iOS took over. A dead button leaves
+      # The app is no longer in front — iOS took over. A dead switch leaves
       # this element exactly where it was and the flow fails.
       - extendedWaitUntil:
           notVisible:

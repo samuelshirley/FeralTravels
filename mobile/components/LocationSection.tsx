@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppState, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking, StyleSheet, Switch, Text, View } from "react-native";
 import * as Location from "expo-location";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
 /**
- * Location permission, in Settings.
+ * Location permission, in Settings — as a TOGGLE.
  *
  * WHY IT IS HERE AND NOT ONLY ON THE TRIP SCREEN. `LegCard` offers a way back
  * from a denied permission, but only inside an expanded day of a live trip —
@@ -19,6 +19,18 @@ import { font } from "@/lib/typography";
  * `getForegroundPermissionsAsync` READS without prompting, which is what a
  * settings row must do — a screen that raises a system dialog just by being
  * opened is the behaviour this app has been careful to avoid.
+ *
+ * THE TWO DIRECTIONS ARE NOT THE SAME, and the switch is honest about it:
+ *
+ *   off → on   `requestForegroundPermissionsAsync` — the iOS dialog appears.
+ *              Once iOS has spent that dialog (`canAskAgain: false`) the only
+ *              way on is the Settings app, so the flip hands the user there.
+ *   on → off   No app can revoke its own permission. The flip opens the
+ *              Settings app, where the real control is, and the switch does
+ *              not animate off until iOS says so (re-read on foreground).
+ *
+ * The web section is live in ONE direction only, because a page has no
+ * equivalent of `Linking.openSettings()`; see src/components/LocationSection.tsx.
  */
 type PermState = "loading" | "granted" | "prompt" | "settings" | "unavailable";
 
@@ -53,24 +65,34 @@ export default function LocationSection() {
     return () => sub.remove();
   }, [read]);
 
-  const onPress = useCallback(async () => {
-    if (state === "settings") {
-      void Linking.openSettings();
-      return;
-    }
-    if (state !== "prompt") return;
-    setBusy(true);
-    try {
-      await Location.requestForegroundPermissionsAsync();
-    } finally {
-      setBusy(false);
-      void read();
-    }
-  }, [state, read]);
+  const onToggle = useCallback(
+    async (next: boolean) => {
+      if (busy) return;
+      // on → off, or on from a spent dialog: only the Settings app can do it.
+      if (!next || state === "settings") {
+        void Linking.openSettings();
+        return;
+      }
+      if (state !== "prompt") return;
+      setBusy(true);
+      try {
+        await Location.requestForegroundPermissionsAsync();
+      } finally {
+        setBusy(false);
+        void read();
+      }
+    },
+    [busy, state, read]
+  );
 
   if (state === "loading" || state === "unavailable") return null;
 
   const granted = state === "granted";
+  const hint = granted
+    ? "To turn it off, use Feral Travels in the Settings app."
+    : state === "settings"
+      ? "iOS won’t ask again — turn it on under Feral Travels in the Settings app."
+      : null;
 
   return (
     <View style={styles.section} testID="settings-location-section">
@@ -80,31 +102,24 @@ export default function LocationSection() {
       </Text>
 
       <View style={styles.row}>
-        <View style={styles.statusWrap}>
-          <View style={[styles.dot, granted ? styles.dotOn : styles.dotOff]} />
-          <Text style={styles.status} testID="settings-location-status">
-            {granted ? "On" : "Off"}
-          </Text>
-        </View>
-
-        {!granted ? (
-          <Pressable
-            onPress={() => void onPress()}
-            disabled={busy}
-            accessibilityRole="button"
-            testID="settings-location-enable"
-            style={[styles.button, busy && styles.buttonBusy]}
-          >
-            <Text style={styles.buttonText}>
-              {state === "settings" ? "Open Settings" : "Turn on"}
-            </Text>
-          </Pressable>
-        ) : null}
+        <Text style={styles.status} testID="settings-location-status">
+          {granted ? "On" : "Off"}
+        </Text>
+        <Switch
+          value={granted}
+          disabled={busy}
+          onValueChange={(v) => void onToggle(v)}
+          accessibilityLabel="Location"
+          testID="settings-location-enable"
+          trackColor={{ true: theme.primary, false: theme.borderStrong }}
+          thumbColor={theme.text}
+          ios_backgroundColor={theme.borderStrong}
+        />
       </View>
 
-      {state === "settings" ? (
-        <Text style={styles.hint}>
-          iOS won&apos;t ask again — turn it on under Feral Travels in the Settings app.
+      {hint ? (
+        <Text style={styles.hint} testID="settings-location-hint">
+          {hint}
         </Text>
       ) : null}
     </View>
@@ -122,21 +137,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  statusWrap: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  dotOn: { backgroundColor: theme.primary },
-  dotOff: { backgroundColor: theme.borderStrong },
   status: { fontFamily: font.medium, fontSize: 15, color: theme.text },
-  button: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: theme.primary,
-    backgroundColor: theme.primaryTint,
-    borderRadius: theme.radiusMd,
-  },
-  buttonBusy: { opacity: 0.6 },
-  buttonText: { fontFamily: font.medium, fontSize: 13, color: theme.accent300 },
   hint: {
     fontFamily: font.regular,
     fontSize: 11,
