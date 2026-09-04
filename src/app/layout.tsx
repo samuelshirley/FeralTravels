@@ -1,4 +1,5 @@
 import './globals.css';
+import { VIEWPORT_HINT_SCRIPT } from '@/lib/viewportHint';
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import { Analytics } from '@vercel/analytics/next';
@@ -81,6 +82,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={inter.variable}>
       <body>
+        {/*
+          Runs before anything below it is parsed: writes the viewport cookie
+          the dynamic pages read on the NEXT request so the server can render
+          a phone's tree first (see lib/viewportHint.ts). Blocking on purpose
+          — it is a few dozen bytes, and deferring it would leave the cookie
+          one load behind the window.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: VIEWPORT_HINT_SCRIPT }} />
         <div className="landscape-lock" aria-hidden="true">
           <div className="landscape-lock-icon">📱↻</div>
           <p className="landscape-lock-title">Please rotate your device</p>

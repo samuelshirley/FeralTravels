@@ -10,6 +10,7 @@ import BottomNav from '@/components/BottomNav';
 import VehicleProfileSection from '@/components/VehicleProfileSection';
 import DeleteAccountSection from '@/components/DeleteAccountSection';
 import { UnitsProvider } from '@/components/UnitsContext';
+import ViewportHintFromCookie from '@/components/ViewportHintFromCookie';
 import UnitsToggle from '@/components/UnitsToggle';
 import { requireWebAccess } from '@/server/auth/webAccess';
 import { buttonStyle } from '@/components/ui/Button';
@@ -51,6 +52,7 @@ export default async function SettingsPage() {
     : 0;
 
   return (
+    <ViewportHintFromCookie>
     <UnitsProvider initialUnits={unitsPref}>
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
@@ -260,6 +262,7 @@ export default async function SettingsPage() {
         <BottomNav active="settings" />
       </div>
     </UnitsProvider>
+    </ViewportHintFromCookie>
   );
 }
 
