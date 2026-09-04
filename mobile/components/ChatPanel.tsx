@@ -1174,7 +1174,25 @@ export default function ChatPanel({
       await submitOnboardingAnswer(q.key, trimmed);
       return;
     }
-    if (q.kind === "text") {
+    /*
+     * A `chips` step is answered EITHER by tapping a shortcut or by TYPING,
+     * and this is the typed half. Without it a chips question fell through
+     * this function and did nothing: the composer took the text, send looked
+     * like it worked, and the answer was never submitted — the exact case the
+     * kind exists for, since "the second week of June" is a valid start date
+     * and no chip can express it.
+     *
+     * BOUNDS decide the validation. The range question's 300/500/700 chips
+     * carry them (200–1500) and are numeric; the date question's phrases do
+     * not and are free text. They also produce the inline "Must be at least
+     * 200", the only place a driver learns the floor before being rejected.
+     *
+     * Mirrors src/components/ChatPanel.tsx — the two share no code.
+     */
+    const numericChips =
+      q.kind === "chips" && (q.min !== undefined || q.max !== undefined);
+
+    if (q.kind === "text" || (q.kind === "chips" && !numericChips)) {
       if (!trimmed) {
         setOnboardingError("This one is required.");
         return;
@@ -1182,7 +1200,7 @@ export default function ChatPanel({
       await submitOnboardingAnswer(q.key, trimmed);
       return;
     }
-    if (q.kind === "number" || q.kind === "integer") {
+    if (q.kind === "number" || q.kind === "integer" || numericChips) {
       if (!trimmed) {
         setOnboardingError("This one is required.");
         return;

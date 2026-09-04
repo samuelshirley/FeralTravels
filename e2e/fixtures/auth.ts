@@ -111,7 +111,13 @@ export async function login(
   await page.getByPlaceholder('you@example.com').fill(email);
   await Promise.all([
     page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
-    page.getByRole('button', { name: /email me a code/i }).click(),
+    // `/email me a/i`, not the full sentence: the button reads "Email me a
+    // 6-digit code" since the sign-in rebuild, and the old
+    // `/email me a code/i` could not match across the inserted words. The
+    // click then never landed and the 15s waitForURL above rejected first,
+    // so all 36 web specs failed with a navigation timeout that said nothing
+    // about a button. Match the stable part of the label.
+    page.getByRole('button', { name: /email me a/i }).click(),
   ]);
 
   const code = await readOtpCode(page, email);
