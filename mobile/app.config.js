@@ -338,6 +338,12 @@ module.exports = {
       ],
       'expo-secure-store',
       'expo-web-browser',
+      // The only video in the app is Penny's muted, looping dog-fetch clip
+      // (components/chat/PennyPlanningVideo). Both flags are stated as false
+      // rather than omitted: `true` on either adds the `audio` background mode
+      // to Info.plist, and a claim of background audio playback is a claim App
+      // Review asks about and this app cannot justify.
+      ['expo-video', { supportsBackgroundPlayback: false, supportsPictureInPicture: false }],
       ...(APPLE_SIGNIN ? ['expo-apple-authentication'] : []),
       [
         'expo-location',

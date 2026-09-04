@@ -47,6 +47,7 @@ import {
 import type { ChatKind } from "@/shared/types/trip";
 import { Spinner } from "@/components/ui";
 import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
+import PennyPlanningVideo from "@/components/chat/PennyPlanningVideo";
 import { BlinkingCursor, TypingBubble } from "@/components/chat/Indicators";
 import { bubbleRadius, getGroupPosition } from "@/components/chat/format";
 import { startTurnStream, type TurnStreamHandle } from "@/components/chat/turnStream";
@@ -94,9 +95,10 @@ const CONTINUE_PROMPT =
 
 /**
  * Caption Penny "sends" alongside the dog-fetch clip on the first full build.
- * The clip itself (PennyPlanningVideo) is not ported — there is no video asset
- * in the native bundle — but the caption still carries the "this will take a
- * moment" expectation, which is the part that matters during a 60s+ build.
+ * Same string as the web's PLANNING_VIDEO_COPY. Until 2026-09-04 the native
+ * app sent the caption ALONE — the clip had never been ported, so the one
+ * turn we know will be long got a sentence where the web got a video. The
+ * clip is now bundled (mobile/assets) and rendered by chat/PennyPlanningVideo.
  */
 const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
 
@@ -857,6 +859,7 @@ export default function ChatPanel({
             kind: "ai",
             changes_made: null,
             created_at: new Date().toISOString(),
+            planningMedia: true,
           }
         : null;
       setMessages((prev) => [
@@ -1746,6 +1749,24 @@ export default function ChatPanel({
 
           // Tight 2pt gap inside a group, 10pt between groups.
           const marginTop = msgIdx === 0 ? 0 : gp.isFirst ? 10 : 2;
+          // The dog-fetch clip Penny "sends" on the first full build: a caption
+          // bubble + a persistent looping video bubble, rendered like a real
+          // iMessage video message so it stays in the transcript (scrollable).
+          if (msg.planningMedia) {
+            return (
+              <View
+                key={msg.id}
+                style={[styles.row, styles.planningRow, { marginTop, alignSelf: "flex-start" }]}
+              >
+                {msg.content ? (
+                  <View style={[styles.bubble, styles.bubbleAssistant, styles.planningCopy]}>
+                    <Text style={styles.bubbleText}>{msg.content}</Text>
+                  </View>
+                ) : null}
+                <PennyPlanningVideo />
+              </View>
+            );
+          }
           const isUser = msg.role === "user";
           const isQueued = msg.deliveryStatus === "queued";
           const isLastUserMessage =
@@ -2117,6 +2138,10 @@ const styles = StyleSheet.create({
   bubbleImages: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   bubbleImagesGap: { marginBottom: 8 },
   bubbleImage: { width: 160, height: 160, borderRadius: 6, resizeMode: "cover" },
+  // The planning-video message: caption above, clip below, 6pt apart — the
+  // web's flex column with `gap: 6` and the full 18px radius on the caption.
+  planningRow: { alignItems: "flex-start", gap: 6 },
+  planningCopy: { borderRadius: 18 },
 
   appliedNote: {
     marginTop: 8,
