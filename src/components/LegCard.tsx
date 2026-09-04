@@ -194,7 +194,30 @@ export default function LegCard({
   // calls); a never-sourced or stale leg runs the real search. We mirror that
   // freshness check here so we don't even round-trip on a fresh cache.
   const [fuelLoading, setFuelLoading] = useState(false);
-  const fuelFetchSigRef = useRef<string | null>(null);
+  /*
+   * Two guards, and the difference between them is a bug that shipped.
+   *
+   * There used to be ONE: a signature `${id}:${status}:${updated_at}`
+   * remembered across renders, so a trip reload with the same fuel state did
+   * not fire a second search. But an INVALIDATED leg — coords changed through
+   * `update_leg`, continuity repair, a position report — is reset to exactly
+   * `none` with no timestamp, which is the signature the first auto-source
+   * of that day already recorded. Same string, so the guard swallowed the
+   * refetch: the open day went from a planned stop to "No stops yet" with no
+   * spinner and stayed that way until a full page reload, because collapsing
+   * and re-expanding did not change the signature either (2026-09-04, Girona
+   * → Annecy, the Shell at 390 km).
+   *
+   * So: an IN-FLIGHT flag stops the duplicate the signature was for, and a
+   * signature is kept only for a search that came back `failed`, so a broken
+   * leg is retried once per open rather than on every unrelated reload.
+   */
+  const fuelInFlightRef = useRef(false);
+  const fuelFailedSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Opening the day is the driver asking again — a failed leg gets its retry.
+    if (expanded) fuelFailedSigRef.current = null;
+  }, [expanded]);
 
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
@@ -211,20 +234,19 @@ export default function LegCard({
     // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
     // station/route calls are cheap and cache-guarded, so a retry self-heals
     // legs stranded on a stale/transient error. We still skip
-    // 'computing'/'pending' (a search is already in flight); the
-    // signature guard below stops duplicate fires within a render session.
+    // 'computing'/'pending' (a search is already in flight); the in-flight
+    // flag below stops duplicate fires while one request is outstanding.
     const needsFetch =
       leg.fuel_status === 'none' ||
       leg.fuel_status === 'failed' ||
       (terminalSuccess && !fresh);
     if (!needsFetch) return;
 
-    // Guard against duplicate fires: the effect re-runs on every trip reload.
-    // The signature folds in the fuel state, so once a fetch lands new data the
-    // guard naturally allows a future genuinely-new state through.
+    if (fuelInFlightRef.current) return;
     const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? 'none'}`;
-    if (fuelFetchSigRef.current === sig) return;
-    fuelFetchSigRef.current = sig;
+    if (leg.fuel_status === 'failed' && fuelFailedSigRef.current === sig) return;
+    fuelInFlightRef.current = true;
+    if (leg.fuel_status === 'failed') fuelFailedSigRef.current = sig;
 
     let cancelled = false;
     setFuelLoading(true);
@@ -237,11 +259,12 @@ export default function LegCard({
       })
       .catch((e) => {
         // apiFetch already surfaced this via the global ErrorNotifier (no silent
-        // swallow). Clear the guard so the next open can retry.
-        fuelFetchSigRef.current = null;
+        // swallow). Clear the failed marker so the next open can retry.
+        fuelFailedSigRef.current = null;
         console.warn('lazy fuel fetch failed', e);
       })
       .finally(() => {
+        fuelInFlightRef.current = false;
         if (!cancelled) setFuelLoading(false);
       });
 

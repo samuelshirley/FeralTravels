@@ -195,7 +195,15 @@ export default function LegCard({
   // freshness check here so we don't even round-trip on a fresh cache.
   const [fuelLoading, setFuelLoading] = useState(false);
   const [showDriveCaveat, setShowDriveCaveat] = useState(false);
-  const fuelFetchSigRef = useRef<string | null>(null);
+  // Two guards, not one signature — see src/components/LegCard.tsx for the
+  // bug the signature caused: an invalidated leg (`none`, no timestamp) has
+  // the same signature as its own first auto-source, so the refetch was
+  // swallowed and the open day sat on "No stops yet" until a full reload.
+  const fuelInFlightRef = useRef(false);
+  const fuelFailedSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (expanded) fuelFailedSigRef.current = null;
+  }, [expanded]);
 
   useEffect(() => {
     // Never source fuel for a past day — that drive is already behind the
@@ -210,20 +218,19 @@ export default function LegCard({
     // has gone stale, OR a prior 'failed'. We auto-retry 'failed' — the Google
     // station/route calls are cheap and cache-guarded, so a retry self-heals
     // legs stranded on a stale/transient error. We still skip
-    // 'computing'/'pending' (a search is already in flight); the
-    // signature guard below stops duplicate fires within a render session.
+    // 'computing'/'pending' (a search is already in flight); the in-flight
+    // flag below stops duplicate fires while one request is outstanding.
     const needsFetch =
       leg.fuel_status === "none" ||
       leg.fuel_status === "failed" ||
       (terminalSuccess && !fresh);
     if (!needsFetch) return;
 
-    // Guard against duplicate fires: the effect re-runs on every trip reload.
-    // The signature folds in the fuel state, so once a fetch lands new data the
-    // guard naturally allows a future genuinely-new state through.
+    if (fuelInFlightRef.current) return;
     const sig = `${leg.id}:${leg.fuel_status}:${updatedAt ?? "none"}`;
-    if (fuelFetchSigRef.current === sig) return;
-    fuelFetchSigRef.current = sig;
+    if (leg.fuel_status === "failed" && fuelFailedSigRef.current === sig) return;
+    fuelInFlightRef.current = true;
+    if (leg.fuel_status === "failed") fuelFailedSigRef.current = sig;
 
     let cancelled = false;
     setFuelLoading(true);
@@ -236,11 +243,12 @@ export default function LegCard({
       })
       .catch((e) => {
         // apiFetch already surfaced this via the global error surface (no silent
-        // swallow). Clear the guard so the next open can retry.
-        fuelFetchSigRef.current = null;
+        // swallow). Clear the failed marker so the next open can retry.
+        fuelFailedSigRef.current = null;
         console.warn("lazy fuel fetch failed", e);
       })
       .finally(() => {
+        fuelInFlightRef.current = false;
         if (!cancelled) setFuelLoading(false);
       });
 
