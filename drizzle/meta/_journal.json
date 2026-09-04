@@ -225,6 +225,13 @@
       "when": 1787863205448,
       "tag": "0031_drop_leg_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787863206448,
+      "tag": "0032_timestamptz",
+      "breakpoints": true
     }
   ]
 }
