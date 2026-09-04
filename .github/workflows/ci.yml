@@ -739,23 +739,22 @@ jobs:
           SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
           echo "Building scheme $SCHEME from $WORKSPACE"
           echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
-          # The three settings below drop work whose OUTPUT NOTHING HERE READS.
-          # None of them changes the app that gets installed:
+          # NO EXTRA BUILD SETTINGS HERE, and that is a MEASURED result rather
+          # than an omission.
           #
-          #   ONLY_ACTIVE_ARCH=YES     macos-15 is Apple Silicon and the
-          #                            simulator is arm64, but the simulator
-          #                            SDK's standard archs are arm64 + x86_64,
-          #                            so a second slice was compiled and thrown
-          #                            away. If this job is ever moved to an
-          #                            Intel host, this becomes a no-op rather
-          #                            than a problem.
-          #   COMPILER_INDEX_STORE_ENABLE=NO
-          #                            the index store feeds Xcode's editor.
-          #                            There is no editor.
-          #   DEBUG_INFORMATION_FORMAT=dwarf
-          #                            skips dSYM generation. Nothing in this
-          #                            job symbolicates a crash — the flows fail
-          #                            on selectors and screenshots.
+          # `ONLY_ACTIVE_ARCH=YES`, `COMPILER_INDEX_STORE_ENABLE=NO` and
+          # `DEBUG_INFORMATION_FORMAT=dwarf` were added on the reasoning that
+          # this job throws away a second architecture slice, an index store
+          # and a dSYM. Measured across two real runs, the build went 14m06s →
+          # 14m46s — no saving, inside the noise of a macOS runner.
+          #
+          # The arch flag was a NO-OP: both logs contain the same four
+          # `-arch x86_64` lines, and all four are `clang -v -E -dM ...
+          # /dev/null` toolchain PROBES, not compilation. The build was already
+          # arm64-only, so there was never a second slice to skip.
+          #
+          # Don't re-add them without a measurement — an unexplained flag in a
+          # build invocation costs more later than the seconds it did not save.
           #
           # `-configuration Release` stays: see the note below on Debug builds
           # containing no JavaScript at all. `-quiet` is deliberately NOT here —
@@ -764,10 +763,7 @@ jobs:
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphonesimulator \
-            -derivedDataPath ios/build \
-            ONLY_ACTIVE_ARCH=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            DEBUG_INFORMATION_FORMAT=dwarf
+            -derivedDataPath ios/build
           # CODE_SIGNING_ALLOWED=NO was here. It has to go, and this is not a
           # preference. `expo-secure-store` is where the session token lives, and
           # the keychain refuses an app with no entitlements: sign-in completed,
