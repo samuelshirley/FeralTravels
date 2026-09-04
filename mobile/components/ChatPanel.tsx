@@ -355,7 +355,18 @@ export default function ChatPanel({
   const onboardingQuestion: OnboardingQuestion | null = onboardingUiActive
     ? onboardingSnapshot.question
     : null;
-  const onboardingSelectStep = Boolean(onboardingQuestion && onboardingQuestion.kind === "select");
+  /*
+   * 'vehicle' locks the composer alongside 'select', and for a stronger
+   * reason: the composite card carries TWO answers submitted together, so
+   * there is no single value the composer could stand for. Mirrors
+   * src/components/ChatPanel.tsx.
+   */
+  const onboardingSelectStep = Boolean(
+    onboardingQuestion &&
+      (onboardingQuestion.kind === "select" || onboardingQuestion.kind === "vehicle"),
+  );
+  const [vehicleName, setVehicleName] = useState("");
+  const [vehicleRange, setVehicleRange] = useState("");
   const attachImagesAllowed = !isOnboarding && !readonly;
 
   // ── scrolling ───────────────────────────────────────────────────────────
@@ -1059,7 +1070,10 @@ export default function ChatPanel({
     if (isOnboarding) setImages([]);
   }, [isOnboarding]);
 
-  const submitOnboardingAnswer = async (questionKey: string, value: string | number) => {
+  const submitOnboardingAnswer = async (
+    questionKey: string,
+    value: string | number | { name: string; range_km: string },
+  ) => {
     if (!onboardingSnapshot?.question || onboardingSubmitting) return;
     setOnboardingSubmitting(true);
     setOnboardingError(null);
@@ -1153,6 +1167,22 @@ export default function ChatPanel({
     } finally {
       setOnboardingSubmitting(false);
     }
+  };
+
+  /**
+   * The composite vehicle card's one submit. The range is sent AS TYPED — a
+   * non-numeric answer is legitimate and routes to the server-side estimator,
+   * so rejecting it here would remove the "work it out for me" escape hatch.
+   */
+  const submitVehicleSetup = async (range: string) => {
+    const q = onboardingSnapshot?.question;
+    if (!q || onboardingSubmitting || onboardingLoading) return;
+    const name = vehicleName.trim();
+    if (!name || !range.trim()) {
+      setOnboardingError("This field is required.");
+      return;
+    }
+    await submitOnboardingAnswer(q.key, { name, range_km: range.trim() });
   };
 
   const submitOnboardingPick = async (rawValue: string | number) => {
@@ -1690,6 +1720,91 @@ export default function ChatPanel({
           ) : null}
 
           {/*
+            THE COMPOSITE VEHICLE CARD (frame 7e) — nickname and range on one
+            card, one submit. The composer is locked while it is up (see
+            `onboardingSelectStep`): two answers cannot go into one box.
+            Mirrors src/components/ChatPanel.tsx; the two share no code.
+          */}
+          {onboardingUiActive && onboardingQuestion?.kind === "vehicle" ? (
+            <View style={styles.vehicleCard} testID="onboarding-vehicle-card">
+              <Text style={styles.vehicleFieldLabel}>
+                {onboardingQuestion.nameField?.label}
+              </Text>
+              <TextInput
+                testID="onboarding-vehicle-name"
+                value={vehicleName}
+                onChangeText={setVehicleName}
+                editable={!onboardingComposerBusy}
+                placeholder={onboardingQuestion.nameField?.placeholder}
+                placeholderTextColor={theme.subtle}
+                style={styles.vehicleInput}
+              />
+
+              <Text style={styles.vehicleFieldLabel}>{onboardingQuestion.label}</Text>
+              <View style={styles.optionsRow}>
+                {onboardingQuestion.options?.map((o) => (
+                  <Pressable
+                    key={o.value}
+                    disabled={onboardingComposerBusy}
+                    onPress={() => setVehicleRange(o.value)}
+                    style={[
+                      styles.optionChip,
+                      vehicleRange === o.value ? styles.optionChipOn : null,
+                      onboardingComposerBusy ? styles.optionChipOff : null,
+                    ]}
+                  >
+                    <Text style={styles.optionChipText}>{o.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {/* Three options cannot cover every tank, and this is the safety
+                  number the fuel planner rests on. */}
+              <TextInput
+                testID="onboarding-vehicle-range-other"
+                value={
+                  onboardingQuestion.options?.some((o) => o.value === vehicleRange)
+                    ? ""
+                    : vehicleRange
+                }
+                onChangeText={setVehicleRange}
+                editable={!onboardingComposerBusy}
+                keyboardType="number-pad"
+                placeholder={`Other… (${onboardingQuestion.placeholder ?? ""})`}
+                placeholderTextColor={theme.subtle}
+                style={[styles.vehicleInput, styles.vehicleInputDashed]}
+              />
+
+              <Pressable
+                testID="onboarding-vehicle-submit"
+                disabled={onboardingComposerBusy}
+                onPress={() => void submitVehicleSetup(vehicleRange)}
+                style={[
+                  styles.vehicleSubmit,
+                  onboardingComposerBusy ? styles.optionChipOff : null,
+                ]}
+              >
+                <Text style={styles.vehicleSubmitText}>Plan my trip →</Text>
+              </Pressable>
+
+              {/* Routes to the EXISTING range_help estimator: the server reads
+                  a non-numeric range as "work it out for me". The name is
+                  saved first, so it never gets asked for twice. */}
+              <Pressable
+                disabled={onboardingComposerBusy}
+                onPress={() => void submitVehicleSetup("I'm not sure")}
+              >
+                <Text style={styles.vehicleHelpLink}>
+                  Not sure — work it out from my vehicle
+                </Text>
+              </Pressable>
+
+              {onboardingQuestion.footnote ? (
+                <Text style={styles.optionsFootnote}>{onboardingQuestion.footnote}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/*
             PROMPT ROWS. These PREFILL the composer and focus it — they do not
             submit, which is the whole difference between them and the chips
             above. An option is an answer; a prompt is a shape to edit, and
@@ -2104,7 +2219,42 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   optionChipOff: { opacity: 0.5 },
+  optionChipOn: { borderColor: theme.primary, backgroundColor: theme.primaryTint },
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
+
+  // The composite first-run vehicle card (frame 7e).
+  vehicleCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.surfaceMuted,
+    gap: 8,
+  },
+  vehicleFieldLabel: { fontFamily: font.regular, fontSize: 12, color: theme.muted },
+  vehicleInput: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
+    color: theme.text,
+    fontFamily: font.regular,
+    fontSize: 14,
+  },
+  vehicleInputDashed: { borderStyle: "dashed", backgroundColor: "transparent" },
+  vehicleSubmit: {
+    marginTop: 4,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
+    borderRadius: theme.radiusMd,
+  },
+  vehicleSubmitText: { fontFamily: font.medium, fontSize: 14, color: theme.accent300 },
+  vehicleHelpLink: { fontFamily: font.regular, fontSize: 12, color: theme.accent300 },
 
   /*
    * paddingBottom is a flat 12 — this component never owns the bottom safe

@@ -129,11 +129,13 @@ interface AttachedImage {
 /** Shape of an onboarding form question (GET `/api/trips/:id/onboarding`). */
 interface OnboardingFormQuestion {
   key: string;
-  kind: 'text' | 'number' | 'integer' | 'select' | 'chips' | 'handoff';
+  kind: 'text' | 'number' | 'integer' | 'select' | 'chips' | 'vehicle' | 'handoff';
   label: string;
   placeholder?: string;
   help?: string;
   options?: Array<{ value: string; label: string }>;
+  /** `kind: 'vehicle'` — the name half of the composite card. */
+  nameField?: { label: string; placeholder?: string };
   optional?: boolean;
   min?: number;
   max?: number;
@@ -414,6 +416,14 @@ export default function ChatPanel({
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  /*
+   * The composite vehicle card owns its own two fields rather than borrowing
+   * the composer. It has to: the composer is ONE input and this step has two
+   * answers that are submitted together, so there is nothing for a single
+   * text box to mean here.
+   */
+  const [vehicleName, setVehicleName] = useState('');
+  const [vehicleRange, setVehicleRange] = useState('');
   const onboardingUiActive =
     isOnboarding &&
     onboardingSnapshot !== null &&
@@ -430,7 +440,14 @@ export default function ChatPanel({
   const onboardingSelectStep =
     onboardingUiActive &&
     onboardingQuestion &&
-    onboardingQuestion.kind === 'select';
+    (onboardingQuestion.kind === 'select' ||
+      /*
+       * 'vehicle' locks the composer for the same reason 'select' does, and a
+       * stronger one: the card carries TWO fields submitted together, so there
+       * is no single value a composer could stand for. Leaving it live would
+       * offer a way to answer that cannot work.
+       */
+      onboardingQuestion.kind === 'vehicle');
   const attachImagesAllowed = !isOnboarding;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   // Latest messages, readable from event handlers (visibilitychange reconcile)
@@ -1532,6 +1549,26 @@ export default function ChatPanel({
     }
   }
 
+  /**
+   * The composite vehicle card's one submit. `range` is passed through as
+   * typed — a non-numeric answer is a legitimate one that routes to the
+   * estimator server-side, so this must not "helpfully" reject it here.
+   */
+  async function submitVehicleSetup(range: string) {
+    const q = onboardingSnapshot?.question;
+    if (!q || onboardingSubmitting || onboardingLoading) return;
+    const name = vehicleName.trim();
+    if (!name) {
+      setOnboardingError('This field is required.');
+      return;
+    }
+    if (!range.trim()) {
+      setOnboardingError('This field is required.');
+      return;
+    }
+    await submitOnboardingPost(q.key, { name, range_km: range.trim() });
+  }
+
   async function submitOnboardingPick(rawValue: string | number) {
     const q = onboardingSnapshot?.question;
     if (!q || onboardingSubmitting || onboardingLoading) return;
@@ -2450,6 +2487,140 @@ export default function ChatPanel({
                     )}
                   </div>
                 )}
+
+              {/*
+                THE COMPOSITE VEHICLE CARD (frame 7e) — nickname and range in
+                one card, one submit. The composer is locked while it is up:
+                two answers cannot be typed into one box, and leaving it live
+                would offer a second way to answer that goes nowhere.
+              */}
+              {onboardingUiActive && onboardingQuestion?.kind === 'vehicle' && (
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    flexShrink: 0,
+                    borderTop: '1px solid var(--tp-border)',
+                    background: 'var(--tp-surface-muted)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                  }}
+                  data-testid="onboarding-vehicle-card"
+                >
+                  <div>
+                    <label
+                      htmlFor="onboarding-vehicle-name"
+                      style={{
+                        display: 'block',
+                        fontSize: 12,
+                        color: 'var(--tp-muted)',
+                        marginBottom: 6,
+                      }}
+                    >
+                      {onboardingQuestion.nameField?.label}
+                    </label>
+                    <input
+                      id="onboarding-vehicle-name"
+                      className="auth-input"
+                      data-testid="onboarding-vehicle-name"
+                      value={vehicleName}
+                      disabled={onboardingComposerBusy}
+                      placeholder={onboardingQuestion.nameField?.placeholder}
+                      onChange={(e) => setVehicleName(e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <div
+                      style={{ fontSize: 12, color: 'var(--tp-muted)', marginBottom: 6 }}
+                    >
+                      {onboardingQuestion.label}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {onboardingQuestion.options?.map((o) => (
+                        <button
+                          key={o.value}
+                          type="button"
+                          disabled={onboardingComposerBusy}
+                          onClick={() => setVehicleRange(o.value)}
+                          style={{
+                            ...buttonStyle(vehicleRange === o.value ? 'primary' : 'secondary'),
+                            fontSize: 13,
+                            padding: '8px 14px',
+                          }}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                      {/* Dashed, because three options cannot cover every tank
+                          and this is the safety number the fuel planner rests
+                          on. */}
+                      <input
+                        aria-label="Another range"
+                        data-testid="onboarding-vehicle-range-other"
+                        value={
+                          onboardingQuestion.options?.some((o) => o.value === vehicleRange)
+                            ? ''
+                            : vehicleRange
+                        }
+                        disabled={onboardingComposerBusy}
+                        placeholder={`Other… (${onboardingQuestion.placeholder})`}
+                        inputMode="numeric"
+                        onChange={(e) => setVehicleRange(e.target.value)}
+                        style={{
+                          width: 150,
+                          padding: '8px 12px',
+                          borderRadius: 'var(--tp-radius-md)',
+                          border: '1px dashed var(--tp-border-strong)',
+                          background: 'transparent',
+                          color: 'var(--tp-text)',
+                          fontSize: 13,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={onboardingComposerBusy}
+                    data-testid="onboarding-vehicle-submit"
+                    onClick={() => void submitVehicleSetup(vehicleRange)}
+                    style={{ ...buttonStyle('primary'), width: '100%' }}
+                  >
+                    Plan my trip →
+                  </button>
+
+                  {/* Routes to the EXISTING range_help estimator: the server
+                      reads a non-numeric range as "work it out for me". The
+                      name is saved first, so the helper comes back to the
+                      range alone and never asks for the name twice. */}
+                  <button
+                    type="button"
+                    disabled={onboardingComposerBusy}
+                    onClick={() => void submitVehicleSetup("I'm not sure")}
+                    className="auth-link"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    Not sure — work it out from my vehicle
+                  </button>
+
+                  {onboardingQuestion.footnote && (
+                    <div
+                      style={{ fontSize: 11, color: 'var(--tp-subtle)', lineHeight: 1.45 }}
+                    >
+                      {onboardingQuestion.footnote}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/*
                 PROMPT ROWS. These PREFILL the composer and focus it — they do

@@ -27,9 +27,30 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
 const answerSchema = z.object({
   // questionKey can be any string; the server validates it against current state.
   questionKey: z.string().min(1).max(60),
-  // Accept strings, numbers, or null (for optional skip). Everything else is
-  // coerced server-side; no need to over-constrain here.
-  value: z.union([z.string(), z.number(), z.null()]),
+  /*
+   * Strings, numbers, null (an optional skip) — and ONE closed object shape,
+   * for the composite vehicle card that answers a nickname and a range
+   * together.
+   *
+   * The object is spelled out rather than allowed as `z.record(z.unknown())`,
+   * because "accept an object here" is how a locked-down endpoint stops being
+   * one. `.strict()` rejects an unexpected key instead of ignoring it, and
+   * `range_km` stays a union because "I don't know" is a legitimate answer to
+   * it that routes to the estimator. `submitAnswer` re-validates all of it —
+   * name non-empty, range numeric and inside the vehicle bounds — so this is
+   * the shape of the payload, never the authority on its contents.
+   */
+  value: z.union([
+    z.string(),
+    z.number(),
+    z.null(),
+    z
+      .object({
+        name: z.string(),
+        range_km: z.union([z.string(), z.number()]),
+      })
+      .strict(),
+  ]),
 });
 
 export async function POST(req: Request, ctx: { params: { id: string } }) {

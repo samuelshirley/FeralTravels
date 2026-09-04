@@ -59,6 +59,19 @@ export type QuestionKind =
    * chip and "the second week of June" is not.
    */
   | 'chips'
+  /**
+   * The composite first-run vehicle card (frame 7e): the nickname and the
+   * range asked TOGETHER, answered by one submit. It exists because they were
+   * two consecutive steps for one object, and the second of them is the only
+   * number the fuel planner rests on — putting them on one card is what lets
+   * the range carry its chips and its "work it out for me" escape hatch
+   * without the setup feeling like an interrogation.
+   *
+   * It is offered ONLY when both halves are empty. A vehicle that already has
+   * a name and needs only a range — which is what `range_help` returns to, and
+   * what the validation fixture seeds — still gets the single `chips` step.
+   */
+  | 'vehicle'
   | 'handoff';
 
 export interface SelectOption {
@@ -93,6 +106,14 @@ export interface Question {
    * quiet; omitted when nothing was inferred.
    */
   footnote?: string;
+  /**
+   * For `kind: 'vehicle'` only — the NAME half of the composite card. The
+   * range half reuses this question's own `label`, `options`, `min`, `max`,
+   * `placeholder` and `help`, so the two halves cannot describe their bounds
+   * differently and the single-step `chips` question stays the one definition
+   * of what a valid range is.
+   */
+  nameField?: { label: string; placeholder?: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +222,33 @@ function buildOnboardingSteps(units: UnitsPref): VehicleProfileQuestion[] {
   return buildVehicleProfileQuestions(units);
 }
 
+/** The key the composite card answers under. Not a vehicle column. */
+export const VEHICLE_SETUP_KEY = 'vehicle_setup';
+
+/**
+ * The composite name+range card (frame 7e), BUILT FROM the two single steps
+ * rather than restating them. That is deliberate: the range half's chips,
+ * bounds and help text have exactly one definition
+ * (`buildVehicleProfileQuestions`), so this card and the single `range_km`
+ * step can never disagree about what a valid range is — and a units change
+ * moves both at once.
+ */
+function buildVehicleSetupQuestion(units: UnitsPref): Question {
+  const [nameQ, rangeQ] = buildVehicleProfileQuestions(units);
+  return {
+    key: VEHICLE_SETUP_KEY,
+    kind: 'vehicle',
+    label: rangeQ.label,
+    placeholder: rangeQ.placeholder,
+    help: rangeQ.help,
+    options: rangeQ.options?.map((o) => ({ value: o.value, label: o.label })),
+    min: rangeQ.min,
+    max: rangeQ.max,
+    nameField: { label: nameQ.label, placeholder: nameQ.placeholder },
+    footnote: 'Change either of these any time in Settings.',
+  };
+}
+
 function vehicleHasProfileValue(vehicle: VehicleApi, key: string): boolean {
   const raw = (vehicle as unknown as Record<string, unknown>)[key];
   return raw !== null && raw !== undefined && raw !== '';
@@ -226,6 +274,29 @@ function nextVehicleOnboardingQuestion(
   unitsPref: UnitsPref
 ): { question: Question; progress: { current: number; total: number } } | null {
   const questions = buildVehicleProfileQuestions(unitsPref);
+
+  /*
+   * BOTH halves empty ⇒ one composite card, and it counts as ONE step.
+   *
+   * `total` is computed here rather than from `questions.length` because the
+   * progress counter is a promise to the user about how much is left; showing
+   * "2 of 3" on a card that finishes the setup is the kind of small lie that
+   * makes the rest of the numbers untrustworthy.
+   *
+   * The condition is deliberately "neither is set" and not "no vehicle": a
+   * vehicle row can exist with a name and no range — `range_help` returns to
+   * exactly that state, and the validation fixture seeds it — and re-asking
+   * for a name already given would be worse than the two steps this replaces.
+   */
+  const nameMissing = !vehicle || !vehicleHasProfileValue(vehicle, 'name');
+  const rangeMissing = !vehicle || !vehicleHasProfileValue(vehicle, 'range_km');
+  if (nameMissing && rangeMissing) {
+    return {
+      question: buildVehicleSetupQuestion(unitsPref),
+      progress: { current: 1, total: 1 },
+    };
+  }
+
   const total = questions.length;
 
   if (!vehicle) {
@@ -954,6 +1025,75 @@ export async function submitAnswer(
   if (state === 'vehicle_new') {
     const unitsPref = await getUnitsPref(userId);
     const questions = buildVehicleProfileQuestions(unitsPref);
+
+    /*
+     * THE COMPOSITE CARD (frame 7e) — name and range in one submit.
+     *
+     * It reuses the SINGLE steps' question objects for validation rather than
+     * re-deriving bounds, so there is still exactly one definition of a legal
+     * range and the two surfaces cannot drift apart. The server re-validates
+     * the whole object regardless of what the client sent: the composite is a
+     * rendering decision, not a relaxation of the boundary.
+     *
+     * "I don't know" still works. The name is persisted FIRST and then the
+     * range routes to `range_help` exactly as it does on the single step —
+     * which is why the walker's composite condition is "neither is set": with
+     * a name on the row, the helper returns to the range-only question and the
+     * user is never asked to name the vehicle twice.
+     */
+    if (input.questionKey === VEHICLE_SETUP_KEY) {
+      const [nameQ, rangeQ] = questions;
+      const raw = input.value;
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        throw new Error('Expected a name and a range.');
+      }
+      const { name: rawName, range_km: rawRange } = raw as Record<string, unknown>;
+
+      const name = typeof rawName === 'string' ? rawName.trim() : '';
+      if (!name) throw new Error('This field is required.');
+
+      let vehicleForSetup: VehicleApi | null = trip.vehicleId
+        ? await getVehicleForUser(userId, trip.vehicleId)
+        : null;
+      if (!vehicleForSetup) {
+        vehicleForSetup = await addVehicle(userId, { name, is_default: false });
+        await db
+          .update(trips)
+          .set({ vehicleId: vehicleForSetup.id, updatedAt: new Date() })
+          .where(eq(trips.id, tripId));
+      } else {
+        await updateVehicle(userId, vehicleForSetup.id, { name });
+      }
+      await writeQA(tripId, nameQ.label, name);
+
+      // Non-numeric range ⇒ the helper, with the name already safe.
+      if (isNonNumericRangeAnswer(rawRange)) {
+        return runRangeHelp(tripId, userId, rawRange.trim(), unitsPref, false);
+      }
+      if (rawRange === null || rawRange === undefined || rawRange === '') {
+        throw new Error('This field is required.');
+      }
+
+      const parsedRange = coerceVehicleProfileValue(rangeQ, rawRange);
+      const shown = parsedRange as number;
+      if (!Number.isFinite(shown)) throw new Error('Please enter a number.');
+      if (rangeQ.min !== undefined && shown < rangeQ.min) {
+        throw new Error(`Must be at least ${rangeQ.min}.`);
+      }
+      if (rangeQ.max !== undefined && shown > rangeQ.max) {
+        throw new Error(`Must be at most ${rangeQ.max}.`);
+      }
+
+      const km = unitsPref === 'imperial' ? Math.round(miToKm(shown)!) : shown;
+      await updateVehicle(userId, vehicleForSetup.id, { range_km: km });
+
+      const rangeLabel = humanizeVehicleProfileAnswer(rangeQ, shown, unitsPref);
+      await writeQA(tripId, rangeQ.label, rangeLabel);
+
+      const after = await getOnboardingSnapshot(tripId, userId);
+      if (after.state === 'done') return completeOnboarding(tripId);
+      return { next: after, answerLabel: `${name} · ${rangeLabel}`, didHandoff: false };
+    }
 
     const question = questions.find((q) => q.key === input.questionKey);
     if (!question) throw new Error(`Unknown question ${input.questionKey}`);

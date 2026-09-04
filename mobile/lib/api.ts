@@ -371,7 +371,12 @@ export function tripApi(tripId: string) {
         query: { tripId, before },
       }),
     getOnboarding: () => apiFetch<OnboardingSnapshot>(`/api/trips/${tripId}/onboarding`),
-    answerOnboarding: (questionKey: string, value: string | number | null) =>
+    // The object shape is the composite vehicle card's answer — one card,
+    // two fields, one submit. Mirrors `answerSchema` on the route.
+    answerOnboarding: (
+      questionKey: string,
+      value: string | number | null | { name: string; range_km: string },
+    ) =>
       apiFetch<OnboardingAnswer>(`/api/trips/${tripId}/onboarding`, {
         body: { questionKey, value },
       }),
@@ -400,11 +405,13 @@ export function tripApi(tripId: string) {
  */
 export interface OnboardingQuestion {
   key: string;
-  kind: "text" | "number" | "integer" | "select" | "chips" | "handoff";
+  kind: "text" | "number" | "integer" | "select" | "chips" | "vehicle" | "handoff";
   label: string;
   placeholder?: string;
   help?: string;
   options?: Array<{ value: string; label: string }>;
+  /** `kind: 'vehicle'` — the name half of the composite first-run card. */
+  nameField?: { label: string; placeholder?: string };
   optional?: boolean;
   min?: number;
   max?: number;
