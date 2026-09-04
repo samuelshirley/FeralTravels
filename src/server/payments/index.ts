@@ -18,6 +18,7 @@
 
 export { hasEntitlement, getAccountVerdict, getTrialDaysRemaining } from './entitlements';
 export { upsertSubscription, revokeSubscription, getSubscriptionRow } from './entitlements';
+export { setPaywallEnforcedForUser } from './entitlements';
 export { isCompedEmail, syncCompedFlagOnSignIn } from './comped';
 export { maybeAlertThreshold, alertAlreadyFired } from './alerts';
 export { anthropicMicrocentsInWindow } from './usage';
@@ -59,6 +60,7 @@ export {
   setPaywallEnabled,
   invalidatePaywallSwitch,
   paywallEnabledFromValue,
+  enforcementApplies,
   PAYWALL_META_KEY,
 } from './switch';
 /**

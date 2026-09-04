@@ -285,9 +285,9 @@ export default async function AdminPage() {
             signed in as {session.user.email}
           </div>
           {/*
-            Enforcement state, in the header, always. `PAYWALL_ENABLED` is an
-            env var with no deploy attached and no other tell — the account
-            state machine keeps running truthfully with the switch off, so the
+            Enforcement state, in the header, always. The switch has no other
+            tell — the account state machine keeps running truthfully with it
+            off, so the
             user page still reads `trial_expired` while every one of those
             accounts walks the app unblocked. That gap cost an afternoon of
             hunting a paywall bug that did not exist. The switch is a fact

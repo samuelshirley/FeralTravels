@@ -9,12 +9,14 @@ import {
   anthropicMicrocentsInWindow,
   getAccountVerdict,
   getSubscriptionRow,
+  paywallEnabled,
   MICROCENTS_PER_DOLLAR,
   STOP_MICROCENTS,
   WATCH_MICROCENTS,
 } from '@/server/payments';
 import AppNavbar from '@/components/AppNavbar';
 import RevokeAccessControl from './RevokeAccessControl';
+import PaywallEnforceControl from './PaywallEnforceControl';
 import styles from '../../admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -127,14 +129,17 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
    * the user is experiencing, rather than a re-derivation from the status
    * column that could disagree with it.
    */
-  const [verdict, subscription, spend12mo, watchFired, stopFired, subEvents] = await Promise.all([
-    getAccountVerdict(params.id),
-    getSubscriptionRow(params.id),
-    anthropicMicrocentsInWindow(params.id),
-    alertAlreadyFired(params.id, 'watch'),
-    alertAlreadyFired(params.id, 'stop'),
-    getSubscriptionEventsForUser(params.id),
-  ]);
+  const [verdict, subscription, spend12mo, watchFired, stopFired, subEvents, paywallGlobalOn] =
+    await Promise.all([
+      getAccountVerdict(params.id),
+      getSubscriptionRow(params.id),
+      anthropicMicrocentsInWindow(params.id),
+      alertAlreadyFired(params.id, 'watch'),
+      alertAlreadyFired(params.id, 'stop'),
+      getSubscriptionEventsForUser(params.id),
+      // Read so the override can say when it is redundant, not to gate it.
+      paywallEnabled(),
+    ]);
 
   const spend12moUsd = spend12mo / MICROCENTS_PER_DOLLAR;
   const thresholds = [
@@ -391,6 +396,22 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               {subscription.revokedReason ?? '(no reason recorded)'}
             </div>
           )}
+
+          {/*
+            The paywall override sits ABOVE revoke deliberately: this is the
+            routine one — make a test user, flip it, watch the wall — and
+            revoke is break-glass. Putting the destructive control last keeps
+            the ordinary path from ending next to it.
+          */}
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--tp-border)' }}>
+            <PaywallEnforceControl
+              userId={detail.user.id}
+              userLabel={detail.user.email || detail.user.name || detail.user.id}
+              enforced={detail.user.paywallEnforced}
+              comped={detail.user.comped}
+              globalOn={paywallGlobalOn}
+            />
+          </div>
 
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--tp-border)' }}>
             <RevokeAccessControl

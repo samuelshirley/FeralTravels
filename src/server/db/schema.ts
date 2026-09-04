@@ -70,6 +70,28 @@ export const users = pgTable('users', {
    */
   comped: boolean('comped').default(false).notNull(),
   /**
+   * The inverse of `comped`, and it exists for one job: proving the paywall
+   * works while it is switched off for everybody else.
+   *
+   * `app_meta.paywall_enabled` is a single row for the whole deployment, and
+   * with no App Store app there is nothing to buy — so it stays OFF, and while
+   * it is off `applySwitch` hands every account full access and no paywall UI
+   * exists anywhere to look at. This column enforces the paywall on ONE
+   * account regardless, so a test user can walk into the wall on a deployment
+   * where nobody else can.
+   *
+   * `comped` WINS. A comped account is entitled inside `resolveAccountState`,
+   * before the switch is ever consulted, so setting this on one changes
+   * nothing — the admin panel says so rather than leaving you to work it out.
+   * That precedence is deliberate and tested: the comped accounts are the
+   * author's and the E2E fixtures, and a flag that could paywall the fixtures
+   * is a flag that can turn the suite red from the database.
+   *
+   * Never set from an email allowlist, unlike `comped` and `is_admin`: this one
+   * is per-account, set by hand from /admin, and logged when it flips.
+   */
+  paywallEnforced: boolean('paywall_enforced').default(false).notNull(),
+  /**
    * When this account first finished trip onboarding — vehicle supplied, range
    * set, handed off to Penny. Null means they never have.
    *

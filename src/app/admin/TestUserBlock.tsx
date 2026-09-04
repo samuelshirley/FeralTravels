@@ -66,12 +66,15 @@ export default function TestUserBlock({
    * generated in production, signed into, and walked end to end: no overlay on
    * /trips, nothing locked on the trip, no bubble from Penny, and "+ New trip"
    * still worked. Every one of those is `applySwitch` doing its job — with
-   * `PAYWALL_ENABLED` unset it rewrites every verdict to entitled, so the
-   * account WAS `trial_expired` the whole time and nothing was ever allowed to
-   * act on it. The state was right; the switch was off.
+   * enforcement off it rewrites every verdict to entitled, so the account WAS
+   * `trial_expired` the whole time and nothing was ever allowed to act on it.
+   * The state was right; the switch was off. (The switch was
+   * `PAYWALL_ENABLED=1` in the environment when that afternoon happened; since
+   * 2026-09-02 it is the `app_meta.paywall_enabled` row and the toggle in this
+   * panel's header.)
    *
-   * No test could have caught it: `e2e/subscriptions.spec.ts` deploys its
-   * preview with `PAYWALL_ENABLED=1` precisely so the walls appear, so the
+   * No test could have caught it: `e2e/subscriptions.spec.ts` turns
+   * enforcement on for its own preview precisely so the walls appear, so the
    * suite is green and production is unenforced at the same time, correctly.
    * The gap is not coverage, it is that the one screen whose entire purpose is
    * to produce a blocked account never said whether blocking was switched on.
@@ -206,8 +209,10 @@ export default function TestUserBlock({
           still be <code style={mono}>trial_expired</code> and the account page will still say so,
           but <code style={mono}>applySwitch</code> hands every verdict full access, so nothing will
           block: no overlay on <code style={mono}>/trips</code>, no lock on the trip, no bubble from
-          Penny. Set <code style={mono}>PAYWALL_ENABLED=1</code> on this deployment to walk a real
-          wall. It is an env change, not a deploy.
+          Penny. Two ways to walk a real wall: the enforcement toggle in this panel&apos;s header,
+          which switches it on for <em>everybody</em> on this deployment — or, on an account page,{' '}
+          <strong>Force the paywall on this account</strong>, which walls that one account and
+          nobody else. Prefer the second while the web app is being demoed.
         </p>
       )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>

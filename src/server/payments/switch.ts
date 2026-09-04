@@ -124,3 +124,36 @@ export async function setPaywallEnabled(on: boolean): Promise<void> {
 export function paywallEnabledFromValue(value: string | null | undefined): boolean {
   return value === '1';
 }
+
+/**
+ * Does enforcement apply to THIS request?
+ *
+ * Pure, and separated from both reads on purpose: the interesting property is
+ * not either lookup, it is that there are exactly two ways to be enforced and
+ * that neither of them can be reached by accident.
+ *
+ * `forcedForUser` is `users.paywall_enforced` — the per-account override that
+ * lets the wall be tested on one test user while the global switch stays off
+ * for the web demo. It is an OR, never an AND: turning the global switch on
+ * must not require visiting every row, and the override must work while the
+ * global switch is off, which is the entire reason it exists.
+ *
+ * There is no per-account way to be EXEMPTED here. That already exists and is
+ * `users.comped`, which is read by `resolveAccountState` before this is ever
+ * consulted — so a comped account is entitled whatever this returns. Do not
+ * add an exemption branch to this function; it would give two places the power
+ * to decide the same thing, which is the failure this module is shaped to
+ * avoid.
+ *
+ * Both inputs are booleans the caller has already resolved, and both resolve to
+ * `false` when their read failed. The fail direction is deliberate and
+ * asymmetric, for the same reason `paywallEnabled()` documents: wrongly
+ * answering "enforced" walls somebody who has done nothing wrong, and wrongly
+ * answering "not enforced" costs a few free Penny turns.
+ */
+export function enforcementApplies(input: {
+  globalOn: boolean;
+  forcedForUser: boolean;
+}): boolean {
+  return input.globalOn || input.forcedForUser;
+}
