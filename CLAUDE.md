@@ -541,8 +541,9 @@ Reproduce first, then explain. Reading a CI log and reasoning about what the pag
 "must" be doing is how three days went into a mail-provider migration for what was
 actually a React hydration crash, visible in the browser console in ten seconds.
 
-Point it at the deployed preview (the URL is pinned at the top of the PR), not a
-local dev server — the bugs that matter here only appear on a cold production
+Point it at the deployed preview (the URL is in the sticky comment at the bottom
+of the PR thread — it is no longer pinned into the description, since 2026-09-04,
+because it changes on every push), not a local dev server — the bugs that matter here only appear on a cold production
 build.
 
 **Subscriptions / paywall (migration 0026, 2026-08-26):** seven days free from
