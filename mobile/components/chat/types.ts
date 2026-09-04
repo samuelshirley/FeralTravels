@@ -97,6 +97,15 @@ export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary"> {
    * than on web, because a native copy fix is an App Store review away.
    */
   paywall?: boolean;
+  /**
+   * UI-only marker for the dog-fetch clip Penny "sends" at the start of the
+   * post-onboarding full-trip build. ChatPanel renders such a message as a
+   * caption bubble plus a persistent, looping video bubble
+   * (`chat/PennyPlanningVideo`) — a real transcript row the user can scroll
+   * back to, not a transient loader. Session-only, like `paywall`: never
+   * written to `chat_history`, gone on reload. Mirrors the web ChatPanel.
+   */
+  planningMedia?: boolean;
   /** True while the stream is still appending paragraphs. */
   streaming?: boolean;
   /** Delivery lifecycle for user messages. */
