@@ -556,7 +556,10 @@ test.describe('Subscriptions — the public edge', () => {
 
     // A way in, both ways in.
     await expect(page.getByPlaceholder('you@example.com')).toBeVisible();
-    await expect(page.getByRole('button', { name: /email me a code/i })).toBeVisible();
+    // `/email me a/i` — the button reads "Email me a 6-digit code" since the
+    // sign-in rebuild, and the old full-sentence regex cannot match across the
+    // inserted words. Same fix as e2e/fixtures/auth.ts.
+    await expect(page.getByRole('button', { name: /email me a/i })).toBeVisible();
 
     // And no block notice anywhere — signed out is not a blocked state.
     await expect(notice(page)).toHaveCount(0);

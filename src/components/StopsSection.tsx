@@ -6,16 +6,24 @@ import { usePathname } from 'next/navigation';
 import type { FuelStatus, Stop, StopType } from '@/types/trip';
 import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
 import { apiFetch } from '@/lib/api';
+import { buildGoHereUrl } from '@/lib/maps';
+import { formatKm } from '@/lib/units';
+import { useUnits } from '@/components/UnitsContext';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
+import { buttonStyle } from '@/components/ui/Button';
+import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
 
 interface StopsSectionProps {
   tripId: string;
   legId: string;
+  legStartName: string | null;
   legEndName: string | null;
   legEndCoords?: { lat: number | null; lng: number | null };
   legStartCoords?: { lat: number | null; lng: number | null };
+  /** Leg driving distance, for the DESTINATION row's marker. */
+  legDistanceKm?: number | null;
   initialStops: Stop[];
   fuelStatus?: FuelStatus;
   fuelPlanError?: string | null;
@@ -42,20 +50,27 @@ interface StopsSectionProps {
   highlightStopId?: string | null;
 }
 
+/*
+ * The one structural change in the reskin. `Itinerary` wrapped legs in a
+ * card, `LegCard` drew another surface, and this file drew two more inside
+ * that — STOPS and PASTE GPS — with StopCards nested inside those. Four
+ * levels of border and fill for one day.
+ *
+ * A section inside the day card is now a hairline and a kicker. The card is
+ * the day; everything within it is separated, not re-boxed.
+ */
 const sectionCardStyle: CSSProperties = {
-  marginTop: 12,
-  padding: '10px 14px',
-  background: 'var(--tp-surface-muted)',
-  borderRadius: 6,
-  border: '1px solid var(--tp-border)',
+  marginTop: 14,
+  paddingTop: 12,
+  borderTop: '1px solid var(--tp-neutral-900)',
 };
 
 const sectionTitleStyle: CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: '0.08em',
+  fontSize: 9.5,
+  fontWeight: 600,
+  letterSpacing: '0.13em',
   color: 'var(--tp-subtle)',
-  marginBottom: 6,
+  marginBottom: 8,
 };
 
 const TYPE_ORDER: StopType[] = ['fuel', 'other'];
@@ -63,9 +78,11 @@ const TYPE_ORDER: StopType[] = ['fuel', 'other'];
 export default function StopsSection({
   tripId,
   legId,
-  legEndName: _legEndName,
-  legEndCoords: _legEndCoords,
-  legStartCoords: _legStartCoords,
+  legStartName,
+  legEndName,
+  legEndCoords,
+  legStartCoords,
+  legDistanceKm,
   initialStops,
   fuelStatus = 'none',
   fuelPlanError = null,
@@ -75,21 +92,13 @@ export default function StopsSection({
   readonly = false,
   highlightStopId = null,
 }: StopsSectionProps) {
-  void _legEndName;
-  void _legStartCoords;
-  void _legEndCoords;
-
   const {
     activeStops,
     dismissedStops,
     syncInitialStops,
     remove,
-    pasteValue,
-    setPasteValue,
-    pasteBusy,
-    pasteError,
-    addFromPaste,
   } = useStopActions({ tripId, legId, initialStops, onChanged });
+  const { units } = useUnits();
 
   useEffect(() => {
     syncInitialStops(initialStops);
@@ -117,6 +126,77 @@ export default function StopsSection({
       return TYPE_ORDER.indexOf(a.stop_type) - TYPE_ORDER.indexOf(b.stop_type);
     });
   }, [activeStops]);
+
+  /*
+   * The timeline's rows: the leg's own START, every active stop in route
+   * order, and its DESTINATION.
+   *
+   * The endpoints are rows rather than headings because they are places on the
+   * same line — a driver reading "Reims Ids · 147 km" needs to know 147 km
+   * from WHERE, and the answer used to be nowhere on the screen. `legStartName`
+   * and the coords were already being passed to this component and explicitly
+   * voided; this is what they were passed for.
+   */
+  const timelineRows = useMemo(() => {
+    // Directions from wherever the device is, never a dropped pin.
+    const mapsHref = buildGoHereUrl;
+
+    type Row = {
+      key: string;
+      kicker: string;
+      name: string;
+      distanceKm: number | null;
+      markerColor: string;
+      icon: React.ReactNode;
+      href: string | null;
+      stop: Stop | null;
+    };
+
+    const rows: Row[] = [];
+
+    if (legStartName) {
+      rows.push({
+        key: 'start',
+        kicker: 'START',
+        name: legStartName,
+        distanceKm: 0,
+        // A hollow neutral ring: you have already been here.
+        markerColor: 'var(--tp-border-strong)',
+        icon: null,
+        href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
+        stop: null,
+      });
+    }
+
+    for (const stop of sortedStops) {
+      const fuel = stop.stop_type === 'fuel';
+      rows.push({
+        key: String(stop.id),
+        kicker: fuel ? 'FUEL' : 'STOP',
+        name: stop.name,
+        distanceKm: stop.distance_from_start_km,
+        markerColor: fuel ? 'var(--tp-primary)' : 'var(--tp-muted)',
+        icon: fuel ? <FuelIcon size={12} /> : <PlaceIcon size={12} />,
+        href: mapsHref(stop.lat, stop.lng),
+        stop,
+      });
+    }
+
+    if (legEndName) {
+      rows.push({
+        key: 'destination',
+        kicker: 'DESTINATION',
+        name: legEndName,
+        distanceKm: legDistanceKm ?? null,
+        markerColor: 'var(--tp-primary)',
+        icon: <PlaceIcon size={12} />,
+        href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
+        stop: null,
+      });
+    }
+
+    return rows;
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops]);
 
   return (
     <>
@@ -154,15 +234,7 @@ export default function StopsSection({
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <Link
                 href={vehicleSetupHref}
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: '4px 10px',
-                  borderRadius: 4,
-                  background: 'var(--tp-primary)',
-                  color: 'var(--tp-on-primary)',
-                  textDecoration: 'none',
-                }}
+                style={{ ...buttonStyle(), fontSize: 11, padding: '4px 10px' }}
               >
                 Open vehicle setup
               </Link>
@@ -221,69 +293,189 @@ export default function StopsSection({
           </div>
         )}
 
-        {/* Stops (fuel + user-added) */}
-        {sortedStops.map((stop) => {
-          const highlighted = highlightStopId === String(stop.id);
-          return (
-          <div
-            key={stop.id}
-            data-stop-anchor={String(stop.id)}
-            style={{
+        {/*
+          THE ROUTE TIMELINE. Stops used to be a stack of cards; they are rows
+          on a line now — START, each stop in order, DESTINATION — so a day
+          reads as a route rather than as an inventory.
+
+          The connector is one absolutely-positioned element behind the
+          markers rather than a segment per row: a per-row line leaves a hairline
+          gap at every join, and the gaps are what make it look like a list of
+          separate things again. It uses the same accent gradient the map paints
+          on the route, so the two describe one journey.
+        */}
+        <div style={{ position: 'relative' }}>
+          {timelineRows.length > 1 && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: 12,
+                // Inset by half a marker at each end so the line starts and
+                // stops INSIDE the first and last rings rather than poking out.
+                top: 13,
+                bottom: 13,
+                width: 2,
+                borderRadius: 1,
+                background: 'linear-gradient(180deg, var(--tp-primary), var(--tp-accent-700))',
+                boxShadow: '0 0 8px rgba(145, 132, 217, 0.55)',
+              }}
+            />
+          )}
+
+          {timelineRows.map((row) => {
+            const highlighted = row.stop != null && highlightStopId === String(row.stop.id);
+            /*
+             * THE WHOLE ROW IS THE LINK. It used to be a div with a 30px
+             * arrow at the end as the only clickable thing, so the obvious
+             * press — the `FUEL / Shell / 390 km` row itself — did nothing.
+             * The `×` remove control is a SIBLING of the link, not inside it,
+             * so removing a stop can never also start a drive.
+             */
+            const rowBody = (
+              <>
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    flexShrink: 0,
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    // Opaque, so the connector passes behind rather than through.
+                    background: 'var(--tp-bg)',
+                    border: `1px solid ${row.markerColor}`,
+                    color: row.markerColor,
+                  }}
+                >
+                  {row.icon}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: 600,
+                      letterSpacing: '0.13em',
+                      color: 'var(--tp-subtle)',
+                    }}
+                  >
+                    {row.kicker}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 500,
+                      color: 'var(--tp-text)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {row.name}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: 'var(--tp-subtle)',
+                    fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}
+                >
+                  {row.distanceKm != null ? formatKm(row.distanceKm, units) : ''}
+                </div>
+
+                {row.href && (
+                  <span
+                    aria-hidden
+                    style={{
+                      flexShrink: 0,
+                      width: 30,
+                      height: 30,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--tp-accent-300)',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <NavigateIcon size={15} />
+                  </span>
+                )}
+              </>
+            );
+            const rowStyle: CSSProperties = {
               display: 'flex',
               alignItems: 'center',
-              gap: 6,
-              scrollMarginTop: 80,
-              borderRadius: 8,
-              boxShadow: highlighted ? '0 0 0 2px var(--tp-gold)' : 'none',
-              transition: 'box-shadow 0.3s ease',
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <StopCard
-                stopType={stop.stop_type}
-                name={stop.name}
-                distanceFromStartKm={stop.distance_from_start_km}
-                googleMapsUri={
-                  stop.lat != null && stop.lng != null
-                    ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                    : null
-                }
-                lat={stop.lat}
-                lng={stop.lng}
-                loading={false}
-              />
-            </div>
-            {!readonly && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  remove(stop.id);
-                }}
-                aria-label={`Remove ${stop.name}`}
-                title="Remove this stop"
+              gap: 12,
+              flex: 1,
+              minWidth: 0,
+              color: 'inherit',
+              textDecoration: 'none',
+            };
+            return (
+              <div
+                key={row.key}
+                data-stop-anchor={row.stop ? String(row.stop.id) : undefined}
+                data-testid="stop-row"
                 style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  marginBottom: 6,
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 16,
-                  lineHeight: 1,
-                  background: 'transparent',
-                  border: '1px solid var(--tp-border)',
-                  borderRadius: 6,
-                  color: 'var(--tp-muted)',
-                  cursor: 'pointer',
+                  gap: 12,
+                  padding: '7px 0',
+                  scrollMarginTop: 80,
+                  borderRadius: 8,
+                  boxShadow: highlighted ? '0 0 0 2px var(--tp-primary)' : 'none',
+                  transition: 'box-shadow 0.3s ease',
                 }}
               >
-                ×
-              </button>
-            )}
-          </div>
-          );
-        })}
+                {row.href ? (
+                  <a
+                    href={row.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${row.name} in Google Maps`}
+                    title={`Navigate to ${row.name}`}
+                    style={rowStyle}
+                  >
+                    {rowBody}
+                  </a>
+                ) : (
+                  <div style={rowStyle}>{rowBody}</div>
+                )}
+
+                {row.stop && !readonly && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      remove(row.stop!.id);
+                    }}
+                    aria-label={`Remove ${row.name}`}
+                    title="Remove this stop"
+                    style={{
+                      flexShrink: 0,
+                      width: 26,
+                      height: 26,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--tp-subtle)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CloseIcon />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
         {sortedStops.length === 0 &&
           !fuelPlanning &&
@@ -295,7 +487,7 @@ export default function StopsSection({
                   // instead of the ambiguous "no stops yet" (which reads as
                   // "nothing happened"). Only claims what the tank math checked;
                   // no promises about when the next fuel stop comes.
-                  'No fuel stop needed on this day — it fits within your range (assuming a full tank at trip start).'
+                  'No fuel stop needed on this day — it fits within the fuel you have left.'
                 : readonly
                   ? 'No stops.'
                   : 'No stops yet — fuel stops appear here automatically.'}
@@ -322,11 +514,7 @@ export default function StopsSection({
                   stopType={stop.stop_type}
                   name={stop.name}
                   distanceFromStartKm={stop.distance_from_start_km}
-                  googleMapsUri={
-                    stop.lat != null && stop.lng != null
-                      ? `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`
-                      : null
-                  }
+                  googleMapsUri={buildGoHereUrl(stop.lat, stop.lng)}
                   lat={stop.lat}
                   lng={stop.lng}
                 />
@@ -336,56 +524,6 @@ export default function StopsSection({
         )}
 
       </div>
-
-      {/* Paste GPS (kept for power users) */}
-      {!readonly && (
-        <div style={sectionCardStyle} onClick={(e) => e.stopPropagation()}>
-          <div style={sectionTitleStyle}>PASTE GPS</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <input
-              value={pasteValue}
-              onChange={(e) => setPasteValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addFromPaste();
-              }}
-              placeholder="Paste GPS (48.8566, 2.3522) or a Google Maps URL"
-              disabled={pasteBusy}
-              style={{
-                flex: '1 1 240px',
-                minWidth: 180,
-                padding: '6px 10px',
-                background: 'var(--tp-surface-muted)',
-                border: '1px solid var(--tp-border)',
-                borderRadius: 4,
-                color: 'var(--tp-text)',
-                fontSize: 12,
-                outline: 'none',
-              }}
-            />
-            <button
-              onClick={addFromPaste}
-              disabled={pasteBusy || !pasteValue.trim()}
-              style={{
-                fontSize: 11,
-                background: pasteBusy ? 'var(--tp-surface-muted)' : 'var(--tp-primary)',
-                border: 'none',
-                color: pasteBusy ? 'var(--tp-muted)' : 'var(--tp-on-primary)',
-                padding: '6px 14px',
-                borderRadius: 4,
-                cursor: pasteBusy || !pasteValue.trim() ? 'default' : 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              {pasteBusy ? 'Adding…' : 'Add'}
-            </button>
-          </div>
-          {pasteError && (
-            <div style={{ fontSize: 11, color: 'var(--tp-danger)', marginTop: 4 }}>
-              {pasteError}
-            </div>
-          )}
-        </div>
-      )}
 
     </>
   );

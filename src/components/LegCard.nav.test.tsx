@@ -88,7 +88,6 @@ function gironaToBurgos(overrides: Partial<LegWithDetails> = {}): LegWithDetails
     links: [],
     routes: [],
     tasks: [],
-    constraints: [],
     parsedNotes: [],
     stops: [
       {

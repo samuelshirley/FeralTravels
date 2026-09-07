@@ -83,7 +83,7 @@ export default function BottomNav({
               style={styles.item}
             >
               <View style={styles.glyphSlot}>
-                <NavGlyph id={item.id} color={color} />
+                <NavGlyph id={item.id} color={color} active={isActive} />
                 {item.badge === "thinking" ? <ThinkingDot /> : null}
                 {typeof item.badge === "number" && item.badge > 0 ? (
                   <View style={styles.countBadge}>
@@ -108,11 +108,23 @@ export default function BottomNav({
  * The four nav icons, straight from src/components/BottomNav.tsx's `iconPath`
  * table. `color` stands in for the web's `currentColor`.
  */
-function NavGlyph({ id, color }: { id: MobileTab | "settings"; color: string }) {
-  if (id === "list") return <ListIcon color={color} />;
-  if (id === "map") return <MapIcon color={color} />;
-  if (id === "chat") return <ChatIcon color={color} />;
-  return <SettingsIcon color={color} />;
+function NavGlyph({
+  id,
+  color,
+  active,
+}: {
+  id: MobileTab | "settings";
+  color: string;
+  active: boolean;
+}) {
+  // Nocturne marks the selected tab by FILLING the glyph, not by shifting its
+  // hue. The colour change stays — the two together are what make a 20px icon
+  // read as selected without looking at the label.
+  const weight = active ? "fill" : "regular";
+  if (id === "list") return <ListIcon color={color} weight={weight} />;
+  if (id === "map") return <MapIcon color={color} weight={weight} />;
+  if (id === "chat") return <ChatIcon color={color} weight={weight} />;
+  return <SettingsIcon color={color} weight={weight} />;
 }
 
 /** The web's `tp-pulse` keyframes: 0.5→1 opacity, 0.9→1.15 scale, 1.2s loop. */

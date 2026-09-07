@@ -27,7 +27,6 @@ export const distanceKmSchema = z.number().positive().max(100_000);
  */
 export const driveTimeMinutesSchema = z.number().int().positive().max(24 * 60);
 
-export const legStatusSchema = z.enum(['planning', 'research', 'confirmed', 'anchored']);
 export const routeStatusSchema = z.enum(['option', 'selected', 'dismissed']);
 export const stopStatusSchema = z.enum(['option', 'selected', 'dismissed']);
 export const taskStatusSchema = z.enum(['open', 'answered', 'dismissed']);

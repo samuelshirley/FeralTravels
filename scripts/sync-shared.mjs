@@ -52,6 +52,12 @@ export const SHARED_FILES = [
   // src/lib for the same reason as the two above: the root vitest project is
   // the only test runner, and its exhaustive switch is worth a test.
   ['src/lib/planStatusLine.ts', 'mobile/shared/lib/planStatusLine.ts'],
+  // The onboarding form's vocabulary: which question kinds are answered by a
+  // tap, the question labels, and the receipt titles derived from them. Both
+  // ChatPanels render chips for exactly the kinds their tap handler accepts
+  // BECAUSE they read the same constant; the date step once drew three chips
+  // that did nothing because the two lists were spelled out separately.
+  ['src/lib/onboardingForm.ts', 'mobile/shared/lib/onboardingForm.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

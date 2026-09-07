@@ -13,7 +13,6 @@ export interface DemoLeg {
   drive_time_minutes: number | null;
   terrain: string;
   overnight: string;
-  status: string;
   color: string;
   notes: string[];
   costs: { item: string; est: string; isTotal?: boolean }[];
@@ -42,7 +41,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Highway',
     overnight: 'Rest stop / Aire in southern France or Liguria',
     color: '#C97B63',
-    status: 'planning',
     notes: [
       'Straight shot on AP-7 → A9 through France → Italian autostrada',
       'Consider stopping near Genoa or the Ligurian coast for the night',
@@ -66,7 +64,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Highway → Gravel/Mountain Pass',
     overnight: 'Wild camp near pass summit or alpine meadow',
     color: '#4E7AB0',
-    status: 'research',
     notes: [
       'Highway through Po Valley to Brenner area or Dolomites',
       'Alpine pass options for gravel crossing',
@@ -92,7 +89,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'City / Driveway',
     overnight: "Friend's driveway / local Stellplatz",
     color: '#4A8B7A',
-    status: 'confirmed',
     notes: [
       '2 nights in Innsbruck with your friend',
       'Stellplatz or a nearby park if not staying in driveway',
@@ -115,7 +111,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Highway / Autobahn',
     overnight: 'Camp en route or push through',
     color: '#E8D57C',
-    status: 'anchored',
     notes: [
       'Easy drive — could do it in one shot or split with a camp night',
       'Austrian Vignette required for autobahn (10-day = €11.50)',
@@ -141,7 +136,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Camp Area / Exhibition',
     overnight: 'Camp Area (Saalewiesen, Bad Kissingen)',
     color: '#C87CE8',
-    status: 'anchored',
     notes: [
       'Exhibition runs Thu Jun 4 – Sun Jun 7',
       '400+ exhibitors, 110,000 sqm',
@@ -166,7 +160,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Autobahn',
     overnight: 'Camp near Nürburg / parking lot',
     color: '#E87C7C',
-    status: 'planning',
     notes: [
       'Short easy drive',
       'RingFreaks — BMW E90 330i: 3.0L inline-6, 270hp, 6-speed MANUAL',
@@ -194,7 +187,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Autobahn → Danish back roads',
     overnight: 'Beach camp (saved spot)',
     color: '#7CCFE8',
-    status: 'planning',
     notes: [
       'Split into 2 days — camp somewhere in northern Germany',
       'Denmark: beach camping technically not allowed but widely practiced',
@@ -216,7 +208,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Highway / Ferry',
     overnight: 'Van parking / city park near Oslo center',
     color: '#A3E87C',
-    status: 'planning',
     notes: [
       'Route options: Øresund Bridge → Swedish coast → Oslo, or ferry Hirtshals → Kristiansand/Larvik',
       'Oslo: 3–4 days exploring',
@@ -240,7 +231,6 @@ export const DEMO_LEGS: DemoLeg[] = [
     terrain: 'Highways → Mountain roads → Arctic coast',
     overnight: 'Mix of wild camping + campsites',
     color: '#E8C17C',
-    status: 'planning',
     notes: [
       'Midnight sun at Nordkapp: May 12 – July 31',
       'Summer solstice: Jun 20–21 = sun highest at midnight = PEAK experience',

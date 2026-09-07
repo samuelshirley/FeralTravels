@@ -13,8 +13,9 @@ interface DistanceProps {
    */
   layout?: 'inline' | 'stacked';
   /**
-   * Override the primary "X km" with a custom node (e.g. a `~${km} km`
-   * prefix). The secondary mi label is appended unchanged.
+   * Override the primary label with a custom node. The label is in the
+   * user's own unit, so an override must be too — build it with `formatKm`
+   * or `approxDistance`, never by writing a unit into a string.
    */
   primaryOverride?: React.ReactNode;
   /** Optional className to forward to the wrapping span/div. */
@@ -24,13 +25,11 @@ interface DistanceProps {
 }
 
 /**
- * Render a distance value with a unit-aware label.
- *
- * Behaviour:
- *   - For metric users: just "{km} km".
- *   - For imperial users: "{km} km" with a small light-contrast "(X mi)"
- *     beneath/beside it. We deliberately keep km as the *primary* label
- *     even for imperial users — the product decision is to teach metric.
+ * Render a distance value in the user's unit: "{km} km" for metric users,
+ * "{mi} mi" for imperial users — and nothing else. The old "km primary,
+ * (mi) secondary" pairing for imperial users is gone (2026-09-04); the
+ * `layout` prop survives for the day a secondary line returns, and today
+ * both layouts render one label.
  *
  * The component is client-only because it reads from UnitsContext; pages
  * that render distances need to be inside a UnitsProvider (currently mounted

@@ -2,6 +2,8 @@
 
 import type { StopType } from '@/types/trip';
 import Distance from '@/components/Distance';
+import { FuelIcon, PlaceIcon } from '@/components/icons';
+import { buildGoHereUrl } from '@/lib/maps';
 
 export interface StopCardProps {
   stopType: StopType;
@@ -22,24 +24,23 @@ export interface StopCardProps {
  */
 const STOP_DISPLAY: Record<
   StopType,
-  { label: string; color: string; iconBg: string; icon: string }
+  { label: string; color: string; Icon: typeof FuelIcon }
 > = {
   fuel: {
     label: 'FUEL',
     color: 'var(--tp-gold)',
-    iconBg: 'rgba(184,149,106,0.15)',
-    icon: '⛽',
+    Icon: FuelIcon,
   },
   other: {
     label: 'STOP',
     color: 'var(--tp-muted)',
-    iconBg: 'rgba(92,92,92,0.1)',
-    icon: '📍',
+    Icon: PlaceIcon,
   },
 };
 
+/** Directions from the device to the stop — never a dropped pin. */
 function buildFallbackMapsUrl(lat: number, lng: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  return buildGoHereUrl(lat, lng) as string;
 }
 
 /**
@@ -79,20 +80,26 @@ export default function StopCard({
   const content = (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/*
+          A ring on the route line, not a tile. The old 32px filled square
+          read as a button — it is a marker, and the same marker the map
+          draws, so the list and the map describe one route rather than two
+          representations of it.
+        */}
         <div
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
+            width: 26,
+            height: 26,
+            borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 16,
             flexShrink: 0,
-            background: display.iconBg,
+            background: 'var(--tp-bg)',
+            border: `1px solid ${display.color}`,
           }}
         >
-          {display.icon}
+          <display.Icon color={display.color} size={13} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -107,8 +114,8 @@ export default function StopCard({
           </div>
           <div
             style={{
-              fontSize: 13,
-              fontWeight: 600,
+              fontSize: 13.5,
+              fontWeight: 500,
               color: 'var(--tp-text)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -119,7 +126,12 @@ export default function StopCard({
           </div>
           {distanceFromStartKm != null && (
             <div
-              style={{ fontSize: 11, color: 'var(--tp-subtle)', marginTop: 1 }}
+              style={{
+                fontSize: 10.5,
+                color: 'var(--tp-subtle)',
+                fontVariantNumeric: 'tabular-nums',
+                marginTop: 1,
+              }}
             >
               {/*
                 Was a hardcoded `${Math.round(km)} km`, which made this the one

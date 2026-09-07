@@ -205,7 +205,7 @@ export default function SubscriptionSection() {
 
 const styles = StyleSheet.create({
   section: { padding: 20, marginBottom: 16 },
-  sectionTitle: { fontSize: 16, fontFamily: font.bold, color: theme.text, marginBottom: 6 },
+  sectionTitle: { fontSize: 17, fontFamily: font.medium, color: theme.text, marginBottom: 6 },
   status: { fontFamily: font.semibold, fontSize: 14, color: theme.text, marginBottom: 14 },
   row: { flexDirection: "row", flexWrap: "wrap", columnGap: 18, rowGap: 4, alignItems: "center" },
   primaryButton: {

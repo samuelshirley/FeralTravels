@@ -245,21 +245,19 @@ function Workspace({
   // Report the driver's position once per workspace mount, on the first fix —
   // whether that arrived immediately (permission already granted) or after the
   // user answered the prompt. Fire-and-forget: denial just means no report.
-  const { position } = useDeviceLocation();
+  const { position, place, placeResolved } = useDeviceLocation();
   const positionReportedRef = useRef(false);
   useEffect(() => {
-    if (readonly || !position || positionReportedRef.current) return;
+    // Waits for the provider's ONE reverse geocode to settle (hit or miss) so
+    // the report carries the label the onboarding origin chip is built from.
+    if (readonly || !position || !placeResolved || positionReportedRef.current) return;
     positionReportedRef.current = true;
-    // TODO(sam): the web reverse-geocodes here so Penny can name the driver's
-    // location instead of reciting coordinates. Native should do the same with
-    // expo-location's `reverseGeocodeAsync` (no Google dependency needed) in a
-    // follow-up; until then the server just gets the coordinates.
-    reportPosition(tripId, { lat: position.lat, lng: position.lng, place_name: null }).catch(
+    reportPosition(tripId, { lat: position.lat, lng: position.lng, place_name: place }).catch(
       () => {
         // Best-effort — a failed position report must never surface to the user.
       }
     );
-  }, [tripId, readonly, position]);
+  }, [tripId, readonly, position, place, placeResolved]);
 
   // Tapping a marker opens that day/stop in the list: select it so the map
   // keeps highlighting the same leg, stamp a fresh nonce, then switch tabs.

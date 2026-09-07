@@ -136,7 +136,19 @@ export default function TripHeader({
 
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         {/* Tap-anywhere-to-dismiss stands in for the web's outside-mousedown handler. */}
-        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+        {/*
+          `accessible={false}`: a Pressable is an accessibility element and iOS
+          merges its whole subtree into one node, so this backdrop published
+          the entire menu as a single label ("SIGNED IN AS, …, Trips, Settings,
+          …") and none of the items existed separately — unactivatable under
+          VoiceOver, and invisible to Maestro. Same fix, same reason, as the
+          trips-list menu in app/trips/index.tsx. Touch is unaffected.
+        */}
+        <Pressable
+          style={styles.menuBackdrop}
+          onPress={() => setMenuOpen(false)}
+          accessible={false}
+        >
           <View style={[styles.menu, { top: insets.top + 48 }]}>
             {signedInEmail ? (
               <View style={styles.menuIdentity}>
@@ -148,10 +160,20 @@ export default function TripHeader({
                 </Text>
               </View>
             ) : null}
-            <Pressable style={styles.menuItem} onPress={() => go("/trips")}>
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => go("/trips")}
+              testID="trip-menu-trips"
+              accessibilityRole="button"
+            >
               <Text style={styles.menuItemText}>Trips</Text>
             </Pressable>
-            <Pressable style={[styles.menuItem, styles.menuDivider]} onPress={() => go("/settings")}>
+            <Pressable
+              style={[styles.menuItem, styles.menuDivider]}
+              onPress={() => go("/settings")}
+              testID="trip-menu-settings"
+              accessibilityRole="button"
+            >
               <Text style={styles.menuItemText}>Settings</Text>
             </Pressable>
             <Pressable
@@ -160,10 +182,17 @@ export default function TripHeader({
                 setMenuOpen(false);
                 setSupportOpen(true);
               }}
+              testID="trip-menu-support"
+              accessibilityRole="button"
             >
               <Text style={styles.menuItemText}>Contact Support</Text>
             </Pressable>
-            <Pressable style={[styles.menuItem, styles.menuDivider]} onPress={signOut}>
+            <Pressable
+              style={[styles.menuItem, styles.menuDivider]}
+              onPress={signOut}
+              testID="trip-menu-signout"
+              accessibilityRole="button"
+            >
               <Text style={[styles.menuItemText, styles.menuItemDanger]}>Sign out</Text>
             </Pressable>
           </View>

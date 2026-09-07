@@ -15,7 +15,6 @@ import { useTripPaywallLock } from '@/components/TripPaywallLock';
 import { useViewport } from '@/lib/useMediaQuery';
 import { useKeyboardOpen } from '@/lib/useKeyboardOpen';
 import { tripApi } from '@/lib/api';
-import { reverseGeocode } from '@/lib/reverseGeocode';
 import {
   DeviceLocationProvider,
   useDeviceLocation,
@@ -32,6 +31,17 @@ interface Props {
     name: string;
     vehicle_id: string | null;
   };
+  /**
+   * The SAME `getTripFull` result the page already fetched, so the workspace
+   * renders its real tree on the server and at hydration instead of a
+   * spinner. Before this the trip was fetched a second time client-side and
+   * every load painted TWO loading states (Next's loading.tsx, then this
+   * component's own) before any content — the "flash, then flash again" of
+   * item 8. `loadTrip` still runs on mount as a refresh. Optional so the
+   * demo/template and test call sites need not change.
+   */
+  initialTrip?: TripWithLegs | null;
+  initialPois?: POI[];
   readonly: boolean;
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin?: boolean;
@@ -147,6 +157,8 @@ function TripWorkspaceInner({
   replanFromOffRoute = false,
   openChatOnMount = false,
   blockReason = null,
+  initialTrip = null,
+  initialPois,
 }: Props) {
   // Memoize so a fresh re-render doesn't yield a new api object reference and
   // re-fire effects that depend on it. This was previously causing an infinite
@@ -155,8 +167,8 @@ function TripWorkspaceInner({
   const viewport = useViewport();
   const keyboardOpen = useKeyboardOpen();
 
-  const [trip, setTrip] = useState<TripWithLegs | null>(null);
-  const [pois, setPois] = useState<POI[]>([]);
+  const [trip, setTrip] = useState<TripWithLegs | null>(initialTrip);
+  const [pois, setPois] = useState<POI[]>(initialPois ?? []);
   const [selectedLegId, setSelectedLegId] = useState<string | null>(null);
   // Drives "open this in the list view": set when the user clicks a leg or stop
   // marker on the map. The nonce makes repeated clicks on the same target
@@ -167,7 +179,7 @@ function TripWorkspaceInner({
     stopId: string | null;
     nonce: number;
   } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialTrip);
   const [trailsVersion, setTrailsVersion] = useState(0);
 
   // Lazy initial value rather than an effect, so an arrival aimed at chat never
@@ -233,32 +245,29 @@ function TripWorkspaceInner({
   // arrived immediately (permission already granted) or after the user
   // answered the on-load prompt. Fire-and-forget — never block the UI;
   // denial just means no position report.
-  const { position: devicePosition } = useDeviceLocation();
+  const {
+    position: devicePosition,
+    place: devicePlace,
+    placeResolved: devicePlaceResolved,
+  } = useDeviceLocation();
   const positionReportedRef = useRef(false);
   useEffect(() => {
-    if (readonly || !devicePosition || positionReportedRef.current) return;
+    // The label comes from DeviceLocationContext's ONE reverse geocode (the
+    // same one the onboarding origin chip and the composer placeholder read),
+    // so this waits for it to settle — hit or miss — rather than running a
+    // second lookup. A miss still posts the coordinates.
+    if (readonly || !devicePosition || !devicePlaceResolved || positionReportedRef.current) return;
     positionReportedRef.current = true;
     const { lat, lng } = devicePosition;
-    // Best-effort reverse-geocode to a readable label so Penny can name the
-    // driver's current location instead of reciting coordinates. Never block
-    // the position report on it — post coords immediately if it misses.
-    void (async () => {
-      let place: string | null = null;
-      try {
-        place = await reverseGeocode(lat, lng);
-      } catch {
-        place = null;
-      }
-      fetch(`/api/trips/${tripId}/position`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat, lng, place_name: place }),
-        credentials: 'same-origin',
-      }).catch(() => {
-        // Silently ignore — position reporting is best-effort.
-      });
-    })();
-  }, [tripId, readonly, devicePosition]);
+    fetch(`/api/trips/${tripId}/position`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng, place_name: devicePlace }),
+      credentials: 'same-origin',
+    }).catch(() => {
+      // Silently ignore — position reporting is best-effort.
+    });
+  }, [tripId, readonly, devicePosition, devicePlace, devicePlaceResolved]);
 
   // Auto-open chat and switch to chat tab when arriving from the off-route
   // email deep link (?replan=true). Runs once on mount.
@@ -522,6 +531,7 @@ function TripWorkspaceInner({
       <>
 
         <div
+        data-layout="mobile"
         style={{
           // Use position:fixed instead of height:100dvh so that iOS Safari
           // cannot scroll the page when the soft keyboard opens — this keeps
@@ -655,7 +665,7 @@ function TripWorkspaceInner({
     return (
       <>
 
-        <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+        <div data-layout="tablet" style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <AppNavbar
           user={user}
           tripName={trip.name}
@@ -715,7 +725,7 @@ function TripWorkspaceInner({
   // want a wider itinerary can drag the chat panel narrow.
   return (
     <>
-      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+      <div data-layout="desktop" style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <AppNavbar
         user={user}
         tripName={trip.name}

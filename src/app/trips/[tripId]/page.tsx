@@ -4,8 +4,10 @@ import { isAdmin } from '@/server/auth/guards';
 import { getAccountVerdict } from '@/server/payments';
 import { getChatPage } from '@/server/repos/chat';
 import { getTripFull } from '@/server/repos/trips';
+import { getPoisForTrip } from '@/server/repos/pois';
 import { getUnitsPref } from '@/server/repos/users';
 import { UnitsProvider } from '@/components/UnitsContext';
+import ViewportHintFromCookie from '@/components/ViewportHintFromCookie';
 import TripWorkspace from './TripWorkspace';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -49,8 +51,10 @@ export default async function TripPage({ params, searchParams }: Props) {
 
   const admin = await isAdmin(session.user.email);
   const initialChat = await getChatPage({ tripId });
+  const initialPois = await getPoisForTrip(tripId);
 
   return (
+    <ViewportHintFromCookie>
     <UnitsProvider initialUnits={unitsPref}>
       <TripWorkspace
         tripId={tripId}
@@ -58,6 +62,12 @@ export default async function TripPage({ params, searchParams }: Props) {
           name: trip.name,
           vehicle_id: trip.vehicle_id ?? null,
         }}
+        // The whole trip, so the server renders the real workspace tree and
+        // the client hydrates it — no second fetch, no second spinner. With
+        // the viewport hint this is also what makes a phone's reload paint
+        // the phone's tree first.
+        initialTrip={trip}
+        initialPois={initialPois}
         readonly={!isOwner}
         user={{
           name: session.user.name,
@@ -84,5 +94,6 @@ export default async function TripPage({ params, searchParams }: Props) {
         blockReason={isOwner ? verdict.blockReason : null}
       />
     </UnitsProvider>
+    </ViewportHintFromCookie>
   );
 }

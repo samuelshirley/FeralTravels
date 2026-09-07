@@ -5,7 +5,7 @@ import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import type { LegWithDetails, POI, Stop, StopType } from '@/types/trip';
 import { clusterPixels, type PixelPoint } from '@/lib/mapClustering';
 import { useUnits } from '@/components/UnitsContext';
-import { formatKmDual, type UnitsPref } from '@/lib/units';
+import { formatKm, formatKmDual, type UnitsPref } from '@/lib/units';
 
 let optionsConfigured = false;
 
@@ -35,9 +35,19 @@ interface MapStopPoint {
 }
 
 const STOP_GRID_CELL_PX = 64;
-const FUEL_STOP_COLOR = '#C9912F';
-const OTHER_STOP_COLOR = '#7A7A7A';
-const CLUSTER_COLOR = '#4A5A6A';
+/*
+ * Map marker colours. Literals rather than `--tp-*` because the Maps API and
+ * react-native-maps both take colour STRINGS, not CSS — same reason
+ * DARK_MAP_STYLE is literal. Keep in step with src/app/globals.css.
+ *
+ * Under the mono palette fuel and the route are the SAME accent: a fuel marker
+ * is distinguished by its glyph and its ring, not by hue. The two that keep a
+ * colour of their own are the gap warning (danger, because it is the one thing
+ * on the map that means something is wrong) and base days.
+ */
+const FUEL_STOP_COLOR = '#9184d9';
+const OTHER_STOP_COLOR = '#b2b6ca';
+const CLUSTER_COLOR = '#595d6c';
 
 /** Flatten every renderable stop (has coords, not dismissed) out of the legs. */
 function collectStopPoints(legs: LegWithDetails[]): MapStopPoint[] {
@@ -80,23 +90,34 @@ interface GpxFeatureCollection {
   }>;
 }
 
-/** Warm light basemap aligned with app cream / tan palette */
-const LIGHT_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#ebe6dd' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#f6f2ea' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#5c5c5c' }] },
-  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
-  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#e0d8cc' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#333333' }] },
+/**
+ * Nocturne basemap.
+ *
+ * The web map is Google's JS API, so unlike native — which is Apple Maps and
+ * follows `userInterfaceStyle: 'dark'` for free — the dark ground has to be
+ * declared feature by feature. Without this the map is the one full-bleed
+ * light surface left in a dark app, which is exactly how it looked.
+ *
+ * Colours are the `--tp-*` values as literals, because the Maps API takes a
+ * style array rather than CSS. POI and transit stay OFF: the app draws its own
+ * markers, and Google's would compete with them.
+ */
+const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#1f2130' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#161826' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#b2b6ca' }] },
+  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#595d6c' }] },
+  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#3f424d' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#e9e9ed' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b6b' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#f0ebe3' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#d4c9ba' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c5d4e0' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4e7ab0' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#e2ddd4' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#292b31' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#75798c' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3f424d' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#595d6c' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#12131f' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#5d5294' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#1b1d2a' }] },
 ];
 
 function legKey(leg: LegWithDetails): string {
@@ -219,7 +240,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         const map = new GMap(el, {
           center: { lat: 52, lng: 10 },
           zoom: 5,
-          styles: LIGHT_MAP_STYLE,
+          styles: DARK_MAP_STYLE,
           disableDefaultUI: false,
           zoomControl: true,
           streetViewControl: false,
@@ -228,7 +249,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           mapTypeControlOptions: {
             mapTypeIds: ['roadmap', 'hybrid', 'terrain'],
           },
-          backgroundColor: '#ede8e0',
+          backgroundColor: '#1f2130',
         });
 
         mapRef.current = map;
@@ -315,7 +336,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
     // Per-leg road-following polylines (or straight-line fallback while routes load)
     legs.forEach((leg) => {
       const isSelected = leg.id === selectedLegId;
-      const color = leg.color || '#4E7AB0';
+      const color = leg.color || '#9184d9';
 
       const cached = routeCacheRef.current.get(legKey(leg));
       if (cached?.length) {
@@ -381,12 +402,12 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
               { lat: next.start_lat, lng: next.start_lng },
             ],
             map,
-            strokeColor: '#c65d4a',
+            strokeColor: '#E8705C',
             strokeOpacity: 0,
             strokeWeight: 3,
             icons: [
               {
-                icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.7, strokeColor: '#c65d4a', scale: 3 },
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.7, strokeColor: '#E8705C', scale: 3 },
                 offset: '0',
                 repeat: '12px',
               },
@@ -406,7 +427,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
     legs.forEach((leg) => {
       if (leg.start_lat == null || leg.start_lng == null) return;
       const isSelected = leg.id === selectedLegId;
-      const color = leg.color || '#4E7AB0';
+      const color = leg.color || '#9184d9';
       const size = isSelected ? 18 : 14;
 
       const marker = new google.maps.Marker({
@@ -416,7 +437,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           path: google.maps.SymbolPath.CIRCLE,
           fillColor: color,
           fillOpacity: 1,
-          strokeColor: '#ffffff',
+          strokeColor: '#161826',
           strokeWeight: 2,
           scale: size / 2,
         },
@@ -432,7 +453,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
               <div style="font-size: 14px; font-weight: 600; margin: 4px 0; color: #333;">${leg.title}</div>
               <div style="font-size: 12px; color: #6b6b6b;">${leg.dates || ''}</div>
               <div style="font-size: 12px; color: #6b6b6b; margin-top: 2px;">
-                ${leg.distance_km ? leg.distance_km + ' km' : ''} ${leg.drive_time_minutes ? '• ' + Math.round(leg.drive_time_minutes / 60) + ' hrs' : ''}
+                ${leg.distance_km ? formatKm(leg.distance_km, units) : ''} ${leg.drive_time_minutes ? '• ' + Math.round(leg.drive_time_minutes / 60) + ' hrs' : ''}
               </div>
               <div style="font-size: 11px; color: #8a8a8a; margin-top: 4px;">${leg.overnight || ''}</div>
             </div>
@@ -453,9 +474,9 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         map,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
-          fillColor: lastLeg.color || '#B8956A',
+          fillColor: lastLeg.color || '#d2cefd',
           fillOpacity: 1,
-          strokeColor: '#ffffff',
+          strokeColor: '#161826',
           strokeWeight: 3,
           scale: 10,
         },
@@ -479,9 +500,9 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         map,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
-          fillColor: '#E8D57C',
+          fillColor: '#9690c9',
           fillOpacity: 0.7,
-          strokeColor: '#ffffff',
+          strokeColor: '#161826',
           strokeWeight: 1,
           scale: 4,
         },
@@ -545,7 +566,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           path: 'M -1,-1 L 1,-1 L 1,1 L -1,1 Z',
           fillColor: isFuel ? FUEL_STOP_COLOR : OTHER_STOP_COLOR,
           fillOpacity: 1,
-          strokeColor: '#ffffff',
+          strokeColor: '#161826',
           strokeWeight: 1.5,
           scale: 5,
           anchor: new google.maps.Point(0, 0),
@@ -559,7 +580,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
       if (canHoverRef.current) {
         const html = `
           <div style="min-width: 160px; font-family: var(--tp-font-sans);">
-            <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#6b6b6b'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
+            <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#b2b6ca'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
             <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(p.name)}</div>
             ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${stopDistanceLabel(p.distanceKm, unitsRef.current)} from start</div>` : ''}
             <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Click to open in list</div>
@@ -589,13 +610,13 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           path: google.maps.SymbolPath.CIRCLE,
           fillColor: CLUSTER_COLOR,
           fillOpacity: 0.92,
-          strokeColor: '#ffffff',
+          strokeColor: '#161826',
           strokeWeight: 2,
           scale: 12 + Math.min(count, 9),
         },
         label: {
           text: String(count),
-          color: '#ffffff',
+          color: '#e9e9ed',
           fontSize: '11px',
           fontWeight: '700',
         },
@@ -695,7 +716,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           if (cancelled) return;
 
           trails.forEach((trail, idx) => {
-            const trailColor = trail.color || leg.color || '#E8D57C';
+            const trailColor = trail.color || leg.color || '#9690c9';
             const polylines: google.maps.Polyline[] = [];
             trail.geojson.features.forEach((f) => {
               const lines: [number, number, number?][][] = [];

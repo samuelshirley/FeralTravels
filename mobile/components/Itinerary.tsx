@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -12,8 +13,16 @@ import LegCard from "@/components/LegCard";
 import { Distance } from "@/components/ui";
 import { updateTrip } from "@/lib/api";
 import { useUnits } from "@/lib/units";
+import { approxDistance, formatKm } from "@/shared/lib/units";
+import { buildGoHereUrl } from "@/shared/lib/maps";
 import { theme, shadow } from "@/lib/theme";
-import { PencilRenameIcon } from "@/components/icons";
+import {
+  CollapseAllIcon,
+  DisclosureIcon,
+  ExpandAllIcon,
+  NavigateIcon,
+  PencilRenameIcon,
+} from "@/components/icons";
 import { behindCutoffRank, formatDate, parseISODate, todayISOInZone } from "@/shared/lib/dates";
 import { isTripCompleted, lastDayFromLegDates } from "@/shared/lib/tripCompletion";
 import { effectiveLegSegment } from "@/shared/lib/legSegmentGrouping";
@@ -138,6 +147,24 @@ export default function Itinerary({
 
   const { units } = useUnits();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  /*
+   * The one day whose fuel is sourced without being asked for: the day the
+   * driver is on. `legs` is already sliced at the progress anchor, so its
+   * first DRIVING leg is that day — a rest day has no drive to fuel and is
+   * skipped rather than wasting the call.
+   *
+   * The missing half of lazy fuel, not a reversal of it. Mirrors
+   * src/components/Itinerary.tsx.
+   */
+  /** The day the driver is on. Rest day or not — unlike the auto-source
+   *  target below, which has to be a leg with a drive in it. */
+  const currentLegId = legs[0]?.id ?? null;
+
+  const autoSourceLegId = useMemo(
+    () => legs.find((l) => l.leg_type !== "rest")?.id ?? null,
+    [legs]
+  );
   const [showPast, setShowPast] = useState(false);
   // Stop id to briefly ring after a map marker tap, so the user's eye lands on
   // the right card. Cleared on a timer.
@@ -263,6 +290,39 @@ export default function Itinerary({
     setExpanded(new Set(legs.map((l) => l.id)));
   };
   const collapseAll = () => setExpanded(new Set());
+  const allExpanded = legs.length > 0 && legs.every((l) => expanded.has(l.id));
+
+  const fuelStopCount = allLegs.reduce(
+    (n, l) =>
+      n + l.stops.filter((st) => st.stop_type === "fuel" && st.status !== "dismissed").length,
+    0
+  );
+
+  /*
+   * The next fuel stop on the day the driver is on, promoted OUT of the day
+   * card so it is reachable without expanding anything. Null when there is
+   * none to name — the row is omitted rather than rendered empty. Mirrors
+   * src/components/Itinerary.tsx.
+   */
+  const nextStop = useMemo(() => {
+    const leg = legs[0];
+    if (!leg) return null;
+    const stop = leg.stops
+      .filter(
+        (st) =>
+          st.stop_type === "fuel" &&
+          st.status !== "dismissed" &&
+          st.distance_from_start_km != null
+      )
+      .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
+    if (!stop || stop.lat == null || stop.lng == null) return null;
+    return {
+      name: stop.name,
+      distanceKm: stop.distance_from_start_km,
+      // Turn-by-turn from wherever the device is — not a dropped pin.
+      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+    };
+  }, [legs]);
 
   const visibleLegs = useMemo(() => legs.slice(0, visibleCount), [legs, visibleCount]);
   const hiddenCount = legs.length - visibleCount;
@@ -403,27 +463,6 @@ export default function Itinerary({
   }, [focusTarget?.nonce]);
 
   const totalDist = allLegs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
-  const drivingDays = allLegs.filter((l) => (l.leg_type ?? "drive") !== "rest").length;
-  const restDays = allLegs.filter((l) => (l.leg_type ?? "drive") === "rest").length;
-
-  const stats: Array<{ label: string; value: React.ReactNode }> = [
-    // Primary total uses Distance so imperial users see the (X mi)
-    // secondary line under the km value.
-    {
-      label: "TOTAL",
-      value: (
-        <Distance km={totalDist} primaryOverride={`~${totalDist.toLocaleString()} km`} />
-      ),
-    },
-    // Show total days, with driving/rest breakdown when rest days exist.
-    ...(restDays > 0
-      ? [
-          { label: "TOTAL DAYS", value: `${allLegs.length}` as React.ReactNode },
-          { label: "DRIVING", value: `${drivingDays}` as React.ReactNode },
-          { label: "BASE", value: `${restDays}` as React.ReactNode },
-        ]
-      : [{ label: "DAYS", value: `${allLegs.length}` as React.ReactNode }]),
-  ];
 
   const dateRange = [trip.start_date, trip.end_date].filter(Boolean).join(" → ");
 
@@ -441,6 +480,8 @@ export default function Itinerary({
       highlightStopId={highlightStopId}
       selected={selectedLegId === leg.id}
       isPast={isPast}
+      isCurrent={!isPast && leg.id === currentLegId}
+      autoSourceFuel={!isPast && leg.id === autoSourceLegId}
     />
   );
 
@@ -503,36 +544,41 @@ export default function Itinerary({
                 <PencilRenameIcon color={theme.subtle} />
               </Pressable>
             ) : null}
+            {/*
+              Expand/Collapse All lives HERE, beside the rename pencil, rather
+              than as a row of its own below the header — it acts on the list,
+              so it belongs with the other thing that acts on the whole trip.
+              One control, not the pair, only one of which was ever meaningful.
+            */}
+            {!completed ? (
+              <Pressable
+                onPress={allExpanded ? collapseAll : expandAll}
+                accessibilityLabel={allExpanded ? "Collapse every day" : "Expand every day"}
+                hitSlop={8}
+                style={styles.headerIconButton}
+              >
+                {allExpanded ? (
+                  <CollapseAllIcon color={theme.muted} />
+                ) : (
+                  <ExpandAllIcon color={theme.muted} />
+                )}
+              </Pressable>
+            ) : null}
           </View>
         )}
 
-        {dateRange ? <Text style={styles.dateRange}>{dateRange}</Text> : null}
-
-        <View style={styles.statRow}>
-          {stats.map((s, i) => (
-            <View key={i}>
-              <Text style={styles.statLabel}>{s.label}</Text>
-              {typeof s.value === "string" ? (
-                <Text style={styles.statValue}>{s.value}</Text>
-              ) : (
-                <View style={styles.statValueBox}>{s.value}</View>
-              )}
-            </View>
-          ))}
-        </View>
+        {/* One line, not a row of stat blocks: dates, distance, days, fuel. */}
+        <Text style={styles.headerMeta}>
+          {[
+            dateRange,
+            totalDist > 0 ? approxDistance(totalDist, units) : "",
+            allLegs.length ? `${allLegs.length} day${allLegs.length === 1 ? "" : "s"}` : "",
+            fuelStopCount ? `${fuelStopCount} fuel` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Text>
       </View>
-
-      {/* Controls — they act on the days ahead, so a completed trip has none. */}
-      {completed ? null : (
-        <View style={styles.controls}>
-          <Pressable onPress={expandAll} style={styles.controlButton}>
-            <Text style={styles.controlText}>Expand All</Text>
-          </Pressable>
-          <Pressable onPress={collapseAll} style={styles.controlButton}>
-            <Text style={styles.controlText}>Collapse All</Text>
-          </Pressable>
-        </View>
-      )}
 
       {/* Past days, collapsed by default so the trip opens at where the driver
           actually is. On a live trip the header says "behind you" rather than
@@ -543,7 +589,7 @@ export default function Itinerary({
         <View style={styles.pastBlock}>
           <Pressable onPress={() => setShowPast((v) => !v)} style={styles.pastToggle}>
             <Text style={styles.pastToggleText}>
-              {showPast ? "▾" : "▸"}{" "}
+              <DisclosureIcon color={theme.subtle} />{" "}
               {completed
                 ? `${showPast ? "Hide" : "Show"} past days — ${pastLegs.length} day${
                     pastLegs.length === 1 ? "" : "s"
@@ -565,6 +611,31 @@ export default function Itinerary({
     </View>
   );
 
+  /*
+   * NEXT STOP, promoted out of the day card — the one thing a driver wants off
+   * this screen without opening anything. It opens Google Maps, so the
+   * accessible label says so: the glyph alone cannot announce that tapping
+   * leaves the app.
+   */
+  const nextStopRow =
+    nextStop && !completed && !readonly ? (
+      <Pressable
+        onPress={() => void Linking.openURL(nextStop.href)}
+        accessibilityRole="link"
+        accessibilityLabel={`${nextStop.name} in Google Maps`}
+        style={styles.nextStopButton}
+      >
+        <View style={styles.nextStopTextWrap}>
+          <Text style={styles.nextStopKicker}>NEXT STOP</Text>
+          <Text style={styles.nextStopName} numberOfLines={1}>
+            {nextStop.name} · fuel
+            {nextStop.distanceKm != null ? ` · ${formatKm(nextStop.distanceKm, units)}` : ""}
+          </Text>
+        </View>
+        <NavigateIcon color={theme.accent300} size={18} />
+      </Pressable>
+    ) : null;
+
   const footer =
     hiddenCount > 0 ? (
       <View style={styles.loadMore}>
@@ -577,6 +648,13 @@ export default function Itinerary({
         </Text>
       </View>
     ) : null;
+
+  const listFooter = (
+    <View>
+      {nextStopRow}
+      {footer}
+    </View>
+  );
 
   const renderRow = ({ item }: ListRenderItemInfo<Row>) => {
     if (item.kind === "segment") {
@@ -604,7 +682,7 @@ export default function Itinerary({
                 <Distance
                   km={Math.round(item.km)}
                   layout="inline"
-                  primaryOverride={`~${Math.round(item.km).toLocaleString()} km`}
+                  primaryOverride={approxDistance(item.km, units)}
                 />
               </Text>
             ) : null}
@@ -632,7 +710,7 @@ export default function Itinerary({
       keyExtractor={(row) => row.key}
       renderItem={renderRow}
       ListHeaderComponent={header}
-      ListFooterComponent={footer}
+      ListFooterComponent={listFooter}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
       onEndReachedThreshold={0.6}
@@ -704,20 +782,49 @@ const styles = StyleSheet.create({
   cancelButtonText: { fontFamily: font.regular, color: theme.muted, fontSize: 12 },
   nameError: { fontFamily: font.regular, fontSize: 12, color: theme.danger, marginTop: 6 },
   dateRange: { fontFamily: font.regular, fontSize: 13, color: theme.muted, marginTop: 6 },
-  statRow: { flexDirection: "row", flexWrap: "wrap", gap: 20, marginTop: 14 },
-  statLabel: { fontSize: 9, fontFamily: font.bold, letterSpacing: 1, color: theme.subtle },
-  statValue: { fontSize: 14, fontFamily: font.semibold, color: theme.text, marginTop: 2 },
-  statValueBox: { marginTop: 2 },
-  controls: { flexDirection: "row", gap: 8, marginBottom: 12 },
-  controlButton: {
-    backgroundColor: theme.surface,
+  headerIconButton: {
+    width: 30,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 12,
+    borderColor: theme.borderStrong,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
   },
-  controlText: { fontFamily: font.regular, fontSize: 11, color: theme.muted },
+  nextStopButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryTint,
+    borderRadius: theme.radiusMd,
+  },
+  nextStopTextWrap: { flex: 1, minWidth: 0, gap: 2 },
+  nextStopKicker: {
+    fontSize: 9.5,
+    fontFamily: font.semibold,
+    letterSpacing: 1.3,
+    color: theme.subtle,
+  },
+  nextStopName: {
+    fontSize: 13.5,
+    fontFamily: font.medium,
+    color: theme.text,
+    fontVariant: ["tabular-nums"],
+  },
+  headerMeta: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+    marginTop: 6,
+  },
   pastBlock: { marginBottom: 12 },
   pastToggle: {
     backgroundColor: theme.surfaceMuted,

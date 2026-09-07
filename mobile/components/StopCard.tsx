@@ -1,9 +1,12 @@
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { StopType } from "@/shared/types/trip";
-import { buildMapsSearchUrl } from "@/shared/lib/maps";
+import { buildGoHereUrl } from "@/shared/lib/maps";
+import { formatKm } from "@/shared/lib/units";
+import { useUnits } from "@/lib/units";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
+import { FuelIcon, PlaceIcon } from "@/components/icons";
 
 export interface StopCardProps {
   stopType: StopType;
@@ -24,21 +27,17 @@ export interface StopCardProps {
  */
 const STOP_DISPLAY: Record<
   StopType,
-  { label: string; color: string; iconBg: string; icon: string }
+  { label: string; color: string; Icon: typeof FuelIcon }
 > = {
   fuel: {
     label: "FUEL",
     color: theme.gold,
-    // src/components/stops/StopCard.tsx:29
-    iconBg: "rgba(184,149,106,0.15)",
-    icon: "⛽",
+    Icon: FuelIcon,
   },
   other: {
     label: "STOP",
     color: theme.muted,
-    // src/components/stops/StopCard.tsx:35
-    iconBg: "rgba(92,92,92,0.1)",
-    icon: "📍",
+    Icon: PlaceIcon,
   },
 };
 
@@ -61,17 +60,14 @@ export default function StopCard({
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
 
-  // The shared helper takes a search query, which the web's flat
-  // `?api=1&query=lat,lng` form folds into the coordinate pair itself — so pass
-  // the pair as the query to land on the same point with the same result.
-  const href =
-    googleMapsUri ??
-    (lat != null && lng != null ? buildMapsSearchUrl(lat, lng, `${lat},${lng}`) : null);
+  const { units } = useUnits();
+  // Directions from the device to the stop — never a dropped pin.
+  const href = googleMapsUri ?? buildGoHereUrl(lat, lng);
 
   const body = (
     <View style={styles.row}>
-      <View style={[styles.icon, { backgroundColor: display.iconBg }]}>
-        <Text style={styles.iconGlyph}>{display.icon}</Text>
+      <View style={[styles.icon, { borderColor: display.color }]}>
+        <display.Icon color={display.color} />
       </View>
       <View style={styles.text}>
         <Text style={[styles.type, { color: display.color }]}>{display.label}</Text>
@@ -80,7 +76,7 @@ export default function StopCard({
         </Text>
         {distanceFromStartKm != null ? (
           <Text style={styles.distance}>
-            {Math.round(distanceFromStartKm)} km from start
+            {formatKm(distanceFromStartKm, units)} from start
           </Text>
         ) : null}
       </View>
@@ -117,18 +113,30 @@ const styles = StyleSheet.create({
   },
   cardLoading: { opacity: 0.6 },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
+  /*
+   * A ring on the route line, not a tile. The old 32px filled square read as
+   * a button — it is a marker, and the same marker the map draws.
+   */
   icon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    backgroundColor: theme.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   iconGlyph: { fontFamily: font.regular, fontSize: 16 },
   text: { flex: 1, minWidth: 0 },
   type: { fontSize: 10, fontFamily: font.semibold, letterSpacing: 0.8 },
-  name: { fontSize: 13, fontFamily: font.semibold, color: theme.text },
-  distance: { fontFamily: font.regular, fontSize: 11, color: theme.subtle, marginTop: 1 },
+  name: { fontSize: 13.5, fontFamily: font.medium, color: theme.text },
+  distance: {
+    fontFamily: font.regular,
+    fontSize: 10.5,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+    marginTop: 1,
+  },
   openGlyph: { fontFamily: font.regular, fontSize: 14, color: theme.subtle },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

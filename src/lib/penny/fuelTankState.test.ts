@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   kmBurnedSinceLastRefuel,
+  rangeRemainingAtLegStarts,
   type LegFuelHistory,
 } from './fuelTankState';
 
@@ -161,5 +162,53 @@ describe('declared tank state (the declare_fuel_state tool)', () => {
       { distanceKm: 120, latestFuelDistanceKm: null, declaredBurnedKmAtStart: -40 },
     ];
     expect(kmBurnedSinceLastRefuel(history)).toBe(120);
+  });
+});
+
+describe('rangeRemainingAtLegStarts', () => {
+  const leg = (
+    distanceKm: number | null,
+    latestFuelDistanceKm: number | null = null,
+    declaredBurnedKmAtStart: number | null = null
+  ): LegFuelHistory => ({ distanceKm, latestFuelDistanceKm, declaredBurnedKmAtStart });
+
+  it('starts full and burns forward across days', () => {
+    // Two 200km days, no refuelling: 500 → 300 → 100.
+    expect(rangeRemainingAtLegStarts([leg(200), leg(200), leg(200)], 500)).toEqual([500, 300, 100]);
+  });
+
+  it("Sam's Monday: fuel at 300km of a 505km day leaves 205km burned on Tuesday", () => {
+    const [monday, tuesday] = rangeRemainingAtLegStarts([leg(505, 300), leg(400)], 500);
+    expect(monday).toBe(500);
+    expect(tuesday).toBe(295); // 500 - (505 - 300)
+  });
+
+  it('agrees with the backward walk it replaces', () => {
+    const history = [leg(505, 300), leg(120), leg(400)];
+    const forward = rangeRemainingAtLegStarts(history, 500);
+    // kmBurnedSinceLastRefuel takes the preceding legs in REVERSE order.
+    for (let i = 0; i < history.length; i++) {
+      const back = kmBurnedSinceLastRefuel(history.slice(0, i).reverse());
+      expect(forward[i]).toBe(500 - back);
+    }
+  });
+
+  it('goes negative when a leg cannot be completed on the tank', () => {
+    // 600km day on a 500km range: the next leg starts 100km in the red, which
+    // is precisely the condition that forces a stop.
+    expect(rangeRemainingAtLegStarts([leg(600), leg(50)], 500)).toEqual([500, -100]);
+  });
+
+  it('rest days pass burn straight through — they are not refuels', () => {
+    expect(rangeRemainingAtLegStarts([leg(300), leg(null), leg(100)], 500)).toEqual([500, 200, 200]);
+  });
+
+  it('a declaration re-baselines the tank', () => {
+    // "I have 150km left" at the start of leg 2, on a 500km range.
+    expect(rangeRemainingAtLegStarts([leg(300), leg(100, null, 350)], 500)).toEqual([500, 150]);
+  });
+
+  it('is null throughout when the vehicle has no range', () => {
+    expect(rangeRemainingAtLegStarts([leg(200), leg(200)], null)).toEqual([null, null]);
   });
 });

@@ -1,7 +1,9 @@
 export type OnboardingState =
   | 'not_started'
   | 'trip_intent'
+  | 'trip_origin'    // where the trip starts — asked only when the opening message did not say
   | 'trip_date'      // forced start-date entry — must parse to a real calendar day
+  | 'trip_pace'      // hours of driving a day — skipped when the opening message stated it
   | 'trip_name'      // legacy only — naming step removed; rows here are advanced on read
   | 'units_pick'
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
@@ -24,6 +26,20 @@ export type OnboardingState =
 export interface OnboardingScan {
   /** Fuel range (km), in-band, awaiting confirmation on the vehicle step. */
   range_km?: number | null;
+  /**
+   * Where the trip starts, as the driver put it — read out of the opening
+   * message by the scan, or answered on the `trip_origin` step. Folded into
+   * the intent handed to Penny at handoff, so she never has to ask.
+   */
+  origin_place?: string | null;
+  /**
+   * The opening message carried an EXACT start date, so `trip_date` was
+   * applied at scan time and its step skipped. Read by the progress counter,
+   * which otherwise cannot tell a skipped date from an answered one.
+   */
+  date_skipped?: boolean;
+  /** The opening message stated a daily driving time ("5 h days"); `trip_pace` was skipped. */
+  pace_skipped?: boolean;
 }
 
 // ── Nightly replan types ──────────────────────────────────────────────────
@@ -31,17 +47,6 @@ export interface OnboardingScan {
 export type TripStatus = 'draft' | 'active' | 'paused' | 'completed';
 
 export type ConstraintType = 'arrive_by' | 'depart_after' | 'flexible';
-
-export interface LegConstraint {
-  id: string;
-  leg_id: string;
-  constraint_type: ConstraintType;
-  /** ISO timestamp with timezone, null for `flexible` constraints. */
-  constraint_datetime: string | null;
-  buffer_minutes: number;
-  note: string | null;
-  created_at: string;
-}
 
 export interface Trip {
   id: string;
@@ -62,6 +67,11 @@ export interface Trip {
   onboarding_state: OnboardingState;
   /** When true, Penny defaults `get_route` to Maps avoid=highways (motorways); user can toggle in workspace. */
   prefer_avoid_highways: boolean;
+  /**
+   * Hours of driving a day the driver asked for (onboarding `trip_pace`), or
+   * null for the flat default. Penny's get_route splits days on it.
+   */
+  daily_drive_hours: number | null;
   // ── GPS position (device location, refreshed each app open) ──
   last_known_lat: number | null;
   last_known_lng: number | null;
@@ -95,6 +105,22 @@ export interface Trip {
    * `lib/tripCompletion`, and `LegWithDetails.date_iso` for the day model.
    */
   last_day_iso?: string | null;
+  /**
+   * Trip length in days and total driving distance, derived from the legs.
+   * Same contract as `last_day_iso` — list payload only, never a column.
+   */
+  day_count?: number | null;
+  total_distance_km?: number | null;
+  /**
+   * The next fuel stop on the day the driver is on, for the one added line on
+   * a trip card: "Next: fuel at Reims Ids · in 147 km".
+   *
+   * Null whenever there isn't one to name, which is a real state rather than a
+   * loading state — fuel is sourced per-leg when a day is opened, so a trip
+   * nobody has opened yet has no stop to point at. The card omits the line
+   * rather than inventing one.
+   */
+  next_stop?: { name: string; distance_km: number | null } | null;
 }
 
 /**
@@ -231,7 +257,13 @@ export interface Link {
  * The UI renders them identically (chat bubbles) but the client-side form
  * submitter needs to know the current row is a question it should respond to.
  */
-export type ChatKind = 'ai' | 'form_question' | 'form_answer';
+/**
+ * `handoff` is the onboarding intent fired at Penny when the wizard finishes:
+ * a user message for HER — it carries the stored intent plus the origin — but
+ * not a bubble for the transcript, which already shows that answer as the
+ * `Trip · …` receipt. Both clients hide it; Penny's context reads it.
+ */
+export type ChatKind = 'ai' | 'form_question' | 'form_answer' | 'handoff';
 
 export interface ChatMessage {
   id: string;
@@ -288,42 +320,8 @@ export interface PlanSummary {
   total_drive_minutes: number;
   /** Waypoints with at least one night, in route order. */
   nights_per_stop: Array<{ name: string | null; nights: number }>;
-  /** Present only when a drive leg carries an arrive_by constraint. */
-  deadline: PlanSummaryDeadline | null;
 }
 
-/**
- * Date-only comparison of the planned arrival against a fixed arrive_by
- * constraint. We deliberately do NOT model clock time — the schedule only
- * assigns calendar dates — so we report the deadline DATE and whether arrival
- * lands before / on / after it, never an invented arrival time.
- */
-export interface PlanSummaryDeadline {
-  /** The constraint datetime exactly as authored (ISO 8601 with offset). */
-  datetime_iso: string;
-  /** Local calendar date of the deadline ("YYYY-MM-DD"), or null if unparseable. */
-  date_iso: string | null;
-  /** Local wall-clock time of the deadline ("HH:MM"), or null if date-only. */
-  local_time: string | null;
-  /** 'before' | 'same_day' | 'after' — by calendar date only. */
-  status: 'before' | 'same_day' | 'after';
-  /** Whole days of slack (deadline date − arrival date). 0 = same day, <0 = late. */
-  buffer_days: number | null;
-  /**
-   * Time-of-day check for the SAME-DAY case: when arrival lands on the deadline
-   * date and we know both the deadline time and the final drive time, the day
-   * model estimates the arrival clock-time and the slack against the deadline.
-   * Null when not a same-day comparison or times are unavailable.
-   */
-  same_day_clock: {
-    /** Estimated arrival "HH:MM" (day model: 08:00 + drive + breaks). */
-    eta: string;
-    /** Raw minutes before the deadline (deadline − eta). Negative = late. */
-    slack_minutes: number;
-    /** True when slack clears the 1-hour buffer (slack_minutes >= 60). */
-    clears_buffer: boolean;
-  } | null;
-}
 
 export type RouteLinkType =
   | 'gpx'
@@ -448,12 +446,28 @@ export interface Task {
 
 // Frontend-friendly types with parsed JSON fields
 export interface LegWithDetails extends Leg {
+  /**
+   * Range left in the tank at the START of this day, in km. Null when the
+   * vehicle has no `range_km`.
+   *
+   * DERIVED at read time in `getTripFull`, never stored — the same contract as
+   * `date_iso`, and for the reason CLAUDE.md gives about `trips.trip_status`.
+   *
+   * PESSIMISTIC BY CONSTRUCTION. A preceding day that has not been sourced yet
+   * is indistinguishable from one that genuinely needed no stop, so both count
+   * as "drove that far, no refuel" and this comes out LOW. That is what makes
+   * it safe to render: "you can finish this day on the tank" can never be a
+   * false positive. The inverse claim is NOT safe to make from this number.
+   *
+   * May be NEGATIVE — the day cannot be completed on the fuel in the tank,
+   * which is exactly when Finn places a stop.
+   */
+  range_remaining_start_km: number | null;
   costs: Cost[];
   links: Link[];
   routes: RouteWithLinks[];
   stops: Stop[];
   tasks: Task[];
-  constraints: LegConstraint[];
   parsedNotes: string[];
 }
 
@@ -461,11 +475,3 @@ export interface TripWithLegs extends Trip {
   legs: LegWithDetails[];
 }
 
-export type LegStatus = 'planning' | 'research' | 'confirmed' | 'anchored';
-
-export const STATUS_MAP: Record<LegStatus, { label: string; bg: string; border: string; text: string }> = {
-  anchored: { label: "DATE LOCKED", bg: "rgba(198, 93, 74, 0.12)", border: "rgba(198, 93, 74, 0.4)", text: "#C65D4A" },
-  confirmed: { label: "CONFIRMED", bg: "rgba(74, 139, 122, 0.12)", border: "rgba(74, 139, 122, 0.38)", text: "#4A8B7A" },
-  planning: { label: "PLANNING", bg: "rgba(78, 122, 176, 0.12)", border: "rgba(78, 122, 176, 0.35)", text: "#4E7AB0" },
-  research: { label: "NEEDS RESEARCH", bg: "rgba(184, 149, 106, 0.14)", border: "rgba(184, 149, 106, 0.4)", text: "#B8956A" },
-};

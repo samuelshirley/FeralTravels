@@ -125,14 +125,14 @@ dependency order in `docs/design/iap-setup.md`.
       where there should be two is a product-id problem, not an agreement one**.
 - [ ] **Both products attached to this app version for review.** A subscription
       not submitted alongside the build is not reviewed with it.
-- [ ] **`EXPO_PUBLIC_REVENUECAT_IOS_KEY` set in `mobile/eas.json`.** It is
-      currently the literal `REPLACE_WITH_appl_KEY_FROM_REVENUECAT` on BOTH the
-      `preview` and `production` profiles. `mobile/lib/config.ts` requires the
-      `appl_` prefix, so that placeholder correctly resolves to *unset* — which
-      means a build cut today ships with purchasing disabled and the sheet in its
-      "no checkout" mode. **This is the single thing most likely to fail a
-      submission**, and it cannot be fixed by an OTA: `EXPO_PUBLIC_` values are
-      compiled in.
+- [x] **`EXPO_PUBLIC_REVENUECAT_IOS_KEY` set in `mobile/eas.json`** — done
+      2026-09-03, on BOTH the `preview` and `production` profiles. Until then it
+      was the literal `REPLACE_WITH_appl_KEY_FROM_REVENUECAT`, which
+      `mobile/lib/config.ts` correctly resolved to *unset* (it requires the
+      `appl_` prefix), so any build cut before that date ships with purchasing
+      disabled and the sheet in its "no checkout" mode — **including build 3**.
+      It cannot be fixed by an OTA: `EXPO_PUBLIC_` values are compiled in. The
+      build that goes to review must be cut after this date.
 - [ ] **A RevenueCat sandbox purchase actually walked, once, end to end** —
       including the webhook arriving at `POST /api/webhooks/revenuecat` and the
       app flipping over. `mobile/storekit/` removes App Store Connect from that

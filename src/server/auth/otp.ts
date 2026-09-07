@@ -1,6 +1,6 @@
 import 'server-only';
 import { db } from '@/server/db/client';
-import { emailOtpCodes, users, sessions } from '@/server/db/schema';
+import { emailOtpCodes, users, sessions, otpSendThrottle } from '@/server/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { isFixtureRecipient } from './test-endpoints';
@@ -9,10 +9,130 @@ import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { syncAdminFlagOnSignIn } from './admin';
 import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { cookies } from 'next/headers';
+import {
+  OTP_RESEND_LADDER_MS,
+  OTP_THROTTLE_WINDOW_MS,
+  cooldownForSendCount,
+  retryAfterSeconds,
+} from './otpThrottle';
+
+// Re-exported so callers keep importing the OTP surface from one place.
+export { OTP_RESEND_LADDER_MS, OTP_THROTTLE_WINDOW_MS, cooldownForSendCount, retryAfterSeconds };
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_MAX_ATTEMPTS = 5;
-const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds between sends
+
+/**
+ * Thrown by `sendOtpCode` when the cooldown is still running.
+ *
+ * `message` stays exactly `'RateLimited'` — four call sites compare it as a
+ * string across an HTTP boundary and the native copy guard asserts on that
+ * code — while `retryAfterMs` carries the part the UI actually needs: how
+ * long is left, so the button can show a countdown instead of the user
+ * discovering the limit by being told off for pressing it.
+ */
+export class OtpRateLimitError extends Error {
+  readonly retryAfterMs: number;
+  constructor(retryAfterMs: number) {
+    super('RateLimited');
+    this.name = 'OtpRateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** The throttle row for an address, with a lapsed window already zeroed out. */
+async function readThrottle(
+  email: string
+): Promise<{ sends: number; lastSentAt: Date | null; windowStartedAt: Date | null }> {
+  const rows = await db
+    .select()
+    .from(otpSendThrottle)
+    .where(eq(otpSendThrottle.email, email))
+    .limit(1);
+  if (rows.length === 0) return { sends: 0, lastSentAt: null, windowStartedAt: null };
+
+  const row = rows[0];
+  // A lapsed window is indistinguishable from no history at all.
+  if (Date.now() - row.windowStartedAt.getTime() > OTP_THROTTLE_WINDOW_MS) {
+    return { sends: 0, lastSentAt: row.lastSentAt, windowStartedAt: null };
+  }
+  return { sends: row.sends, lastSentAt: row.lastSentAt, windowStartedAt: row.windowStartedAt };
+}
+
+/**
+ * Milliseconds until `email` may request another code, or 0 if it may now.
+ * Read-only: the verify page calls this to seed its countdown, so rendering
+ * the page must not itself consume a rung of the ladder.
+ */
+export async function getResendCooldownRemainingMs(email: string): Promise<number> {
+  const normalized = email.trim().toLowerCase();
+  const { sends, lastSentAt } = await readThrottle(normalized);
+  if (sends === 0 || !lastSentAt) return 0;
+  return Math.max(0, cooldownForSendCount(sends) - (Date.now() - lastSentAt.getTime()));
+}
+
+/**
+ * Check the ladder and, if the send is allowed, claim the slot.
+ * Returns null when the caller may send, or the remaining wait in ms.
+ *
+ * The claim is optimistic rather than a plain read-then-write: two requests
+ * for the same address can both read "allowed" in the same tick, and without
+ * the `setWhere` guard both would send. The guard pins the update to the
+ * `last_sent_at` we actually observed, so the loser updates zero rows, gets
+ * an empty `returning()`, and is told to wait. This matters more than it
+ * looks — the whole point of the ladder is that it cannot be outrun by
+ * firing requests in parallel.
+ */
+async function claimSendSlot(email: string): Promise<number | null> {
+  const { sends, lastSentAt, windowStartedAt } = await readThrottle(email);
+
+  if (sends > 0 && lastSentAt) {
+    const remaining = cooldownForSendCount(sends) - (Date.now() - lastSentAt.getTime());
+    if (remaining > 0) return remaining;
+  }
+
+  const now = new Date();
+  const claimed = await db
+    .insert(otpSendThrottle)
+    .values({ email, sends: 1, windowStartedAt: now, lastSentAt: now })
+    .onConflictDoUpdate({
+      target: otpSendThrottle.email,
+      set: {
+        sends: sends + 1,
+        // Restart the window when the one we read had lapsed.
+        windowStartedAt: windowStartedAt ?? now,
+        lastSentAt: now,
+      },
+      /*
+       * `eq()`, NOT a raw `sql` template with the Date interpolated.
+       *
+       * Interpolating a JS Date straight into `sql` hands postgres-js a bind
+       * parameter with no column type behind it, and the driver then tries to
+       * serialise the Date as a string: `ERR_INVALID_ARG_TYPE: The "string"
+       * argument ... Received an instance of Date`. It throws at BIND time, so
+       * it never touches the database and no test that reads a row can see it.
+       * It also only fires on the second send for an address — the first
+       * insert has no conflict and never evaluates this — which is why it
+       * survived the unit suite and surfaced as a 502 on the simulator's
+       * resend. `eq` carries the column's own timestamptz mapping.
+       */
+      setWhere: lastSentAt
+        ? eq(otpSendThrottle.lastSentAt, lastSentAt)
+        : sql`true`,
+    })
+    .returning({ sends: otpSendThrottle.sends });
+
+  // Zero rows back = another request claimed this slot between our read and
+  // our write. Make the loser wait a full bottom rung rather than send.
+  if (claimed.length === 0) return OTP_RESEND_LADDER_MS[0];
+
+  return null;
+}
+
+/** Clear the ladder for an address — called on a successful sign-in. */
+export async function clearSendThrottle(email: string): Promise<void> {
+  await db.delete(otpSendThrottle).where(eq(otpSendThrottle.email, email.trim().toLowerCase()));
+}
 
 /** Generate a cryptographically random 6-digit code (zero-padded). */
 export function generateOtpCode(): string {
@@ -46,7 +166,11 @@ export async function storeOtpCode(email: string, code: string): Promise<void> {
 
 /**
  * Returns the age in milliseconds of the existing pending OTP for `email`,
- * or null if no code exists. Used to enforce the resend cooldown.
+ * or null if no code exists.
+ *
+ * No longer drives the resend cooldown — that moved to `otp_send_throttle`,
+ * because a counter living on the code row was resettable by anyone willing
+ * to burn the code's five verify attempts. Kept for tests and diagnostics.
  */
 export async function getExistingOtpAgeMs(email: string): Promise<number | null> {
   const normalized = email.trim().toLowerCase();
@@ -99,8 +223,11 @@ export async function verifyOtpCode(email: string, code: string): Promise<boolea
     return false;
   }
 
-  // Correct → consume the code.
+  // Correct → consume the code, and reset the send ladder. Someone who just
+  // proved they own the address should not start their next sign-in three
+  // rungs up because delivery was slow an hour ago.
   await db.delete(emailOtpCodes).where(eq(emailOtpCodes.id, row.id));
+  await clearSendThrottle(normalized).catch(() => {});
   return true;
 }
 
@@ -109,16 +236,19 @@ export async function verifyOtpCode(email: string, code: string): Promise<boolea
  * Throws if Resend is not configured or the send fails.
  * Returns the generated code so callers can use it in test contexts.
  *
- * Enforces a 60-second cooldown between sends for the same address to prevent
- * abuse. Throws an error with message 'RateLimited' if the cooldown is active.
+ * Enforces the escalating resend cooldown (see OTP_RESEND_LADDER_MS). Throws
+ * `OtpRateLimitError` — message 'RateLimited', plus `retryAfterMs` — when the
+ * cooldown is still running.
  */
 export async function sendOtpCode(email: string): Promise<string> {
   const normalized = email.trim().toLowerCase();
 
-  // Cooldown check.
-  const ageMs = await getExistingOtpAgeMs(normalized);
-  if (ageMs !== null && ageMs < OTP_RESEND_COOLDOWN_MS) {
-    throw new Error('RateLimited');
+  // Ladder check. Claims the slot up front, before the code is minted: the
+  // old check keyed off the pending code row's age, which meant a verify
+  // attempt that consumed or expired the code also cleared the cooldown.
+  const waitMs = await claimSendSlot(normalized);
+  if (waitMs !== null) {
+    throw new OtpRateLimitError(waitMs);
   }
 
   const code = generateOtpCode();

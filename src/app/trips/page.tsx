@@ -9,6 +9,7 @@ import { isTripCompleted } from '@/lib/tripCompletion';
 import AppNavbar from '@/components/AppNavbar';
 
 import { UnitsProvider } from '@/components/UnitsContext';
+import ViewportHintFromCookie from '@/components/ViewportHintFromCookie';
 import AnnouncementModal from '@/components/AnnouncementModal';
 import EntitlementNotice from '@/components/EntitlementNotice';
 import NewTripButton from './NewTripButton';
@@ -53,6 +54,7 @@ export default async function TripsPage() {
   const templates = allTrips.filter((t) => t.is_template && t.user_id !== userId);
 
   return (
+    <ViewportHintFromCookie>
     <UnitsProvider initialUnits={unitsPref}>
       <AnnouncementModal />
       <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
@@ -130,5 +132,6 @@ export default async function TripsPage() {
 
       </div>
     </UnitsProvider>
+    </ViewportHintFromCookie>
   );
 }

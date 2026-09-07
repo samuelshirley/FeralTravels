@@ -7,7 +7,6 @@ import {
   distanceKmSchema,
   driveTimeMinutesSchema,
   latSchema,
-  legStatusSchema,
   lngSchema,
   terrainSchema,
 } from './shared';
@@ -28,7 +27,6 @@ const dataSchema = z.object({
   drive_time_minutes: driveTimeMinutesSchema.nullish(),
   terrain: terrainSchema.nullish(),
   overnight: z.string().nullish(),
-  status: legStatusSchema.nullish(),
   color: z.string().nullish(),
   notes: z.array(z.string()).nullish(),
   // Re-tag a leg's group membership. Pass null for both to ungroup.
@@ -150,7 +148,6 @@ export const tool: Anthropic.Tool = {
           drive_time_minutes: { type: 'integer', minimum: 0, maximum: 24 * 60 },
           terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
           overnight: { type: 'string' },
-          status: { type: 'string', enum: ['planning', 'research', 'confirmed', 'anchored'] },
           color: { type: 'string' },
           notes: { type: 'array', items: { type: 'string' } },
           segment_index: {

@@ -170,10 +170,15 @@ describe('mobile/components/ChatPanel.tsx', () => {
 
   it('renders the transcript through the derivation, not raw message state', () => {
     expect(source).toContain('withPaywallNotice');
-    expect(source).toContain('visibleMessages.map(');
+    // The bubbles are drawn from `transcript`, which is built FROM the
+    // derived list (receipts and the hidden handoff row are a second, later
+    // rewrite) — never from raw message state.
+    expect(source).toContain('buildTranscript(visibleMessages)');
+    expect(source).toContain('transcript.map(');
     // The raw list is still the source of truth for sending and queueing, but
     // it must not be what the bubbles are drawn from.
     expect(source).not.toContain('{messages.map(');
+    expect(source).not.toContain('buildTranscript(messages)');
   });
 
   it('does not author the synthetic bubble into chat state', () => {

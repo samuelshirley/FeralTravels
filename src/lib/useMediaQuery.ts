@@ -1,32 +1,38 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import { useViewportHint } from '@/components/ViewportHintContext';
 
-export type Viewport = 'mobile' | 'tablet' | 'desktop';
+// The breakpoints live in `lib/breakpoints.ts` (a plain module) so the
+// server-rendered layout can use them too; re-exported here for the callers
+// that always imported them from this file.
+export { BREAKPOINTS, type Viewport } from '@/lib/breakpoints';
+import { BREAKPOINTS } from '@/lib/breakpoints';
+import type { Viewport } from '@/lib/breakpoints';
 
-// Single source of truth for viewport breakpoints.
-// Mobile  : phones, phablets                          (< 768px)
-// Tablet  : iPad portrait, foldables, small laptops   (768 – 1023px)
-// Desktop : iPad landscape, laptops, monitors         (>= 1024px)
-export const BREAKPOINTS = {
-  tablet: 768,
-  desktop: 1024,
-} as const;
-
-export function useMediaQuery(query: string): boolean {
-  // IMPORTANT: always initialize to `false` so the first client render
-  // matches SSR output exactly. The previous approach — reading
-  // window.matchMedia in useState's initializer — produced a value on the
-  // client that differed from what the server rendered, triggering React
-  // hydration errors #425 / #418 / #423 on every mobile page load.
-  //
-  // The trade-off is a single post-hydration re-render where `matches`
-  // flips from false → true on mobile. Components that conditionally
-  // render based on viewport (MobileFooter, VehicleRemediationOverlay)
-  // were already doing this before the 2026-05-09 "sync init" change;
-  // the flicker is sub-frame and invisible because the useEffect fires
-  // in the same microtask batch as the hydration commit.
-  const [matches, setMatches] = useState(false);
+export function useMediaQuery(query: string, initial = false): boolean {
+  /*
+   * IMPORTANT: the initial value must be something the SERVER also knew. It
+   * must NOT come from `window.matchMedia` — reading that in the useState
+   * initializer produced a client value that differed from the server markup
+   * and triggered hydration errors #425 / #418 / #423 on every mobile load.
+   *
+   * `initial` is how the server's knowledge gets in: `useViewport` passes the
+   * viewport HINT the request carried as a cookie (see `lib/viewportHint.ts`),
+   * so on a reload the server renders the phone's tree and the first client
+   * render agrees with it. With no hint this is `false` — desktop first, then
+   * the post-hydration correction.
+   *
+   * That correction is NOT "sub-frame and invisible", which is what this
+   * comment used to claim. It was true for `MobileFooter`, which toggles one
+   * small element; it is false for `TripWorkspace`, which returns a different
+   * component tree per viewport, so a phone painted the two-pane desktop
+   * workspace at 430px and then unmounted it for the mobile tree — two whole
+   * trees, visibly, on every reload (2026-09-04). The hint is what makes the
+   * reload case right; the very first visit of a fresh browser still does the
+   * one swap, once.
+   */
+  const [matches, setMatches] = useState(initial);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -40,18 +46,20 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
+const MOBILE_QUERY = `(max-width: ${BREAKPOINTS.tablet - 1}px)`;
+const TABLET_QUERY = `(min-width: ${BREAKPOINTS.tablet}px) and (max-width: ${BREAKPOINTS.desktop - 1}px)`;
+const DESKTOP_QUERY = `(min-width: ${BREAKPOINTS.desktop}px)`;
+
 export function useIsMobile(): boolean {
-  return useMediaQuery(`(max-width: ${BREAKPOINTS.tablet - 1}px)`);
+  return useMediaQuery(MOBILE_QUERY, useViewportHint() === 'mobile');
 }
 
 export function useIsTablet(): boolean {
-  return useMediaQuery(
-    `(min-width: ${BREAKPOINTS.tablet}px) and (max-width: ${BREAKPOINTS.desktop - 1}px)`
-  );
+  return useMediaQuery(TABLET_QUERY, useViewportHint() === 'tablet');
 }
 
 export function useIsDesktop(): boolean {
-  return useMediaQuery(`(min-width: ${BREAKPOINTS.desktop}px)`);
+  return useMediaQuery(DESKTOP_QUERY, useViewportHint() === 'desktop');
 }
 
 export function useViewport(): Viewport {

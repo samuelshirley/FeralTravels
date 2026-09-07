@@ -8,7 +8,7 @@ import styles from '../admin.module.css';
 import {
   vehicleProfileRequiredCompletion,
 } from '@/lib/vehicleProfile';
-import { kmToMi, asUnitsPref, type UnitsPref } from '@/lib/units';
+import {  asUnitsPref, type UnitsPref, approxDistance } from '@/lib/units';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
 export const dynamic = 'force-dynamic';
@@ -31,13 +31,7 @@ function rowToProfileRecord(row: AdminVehicleListRow): Record<string, unknown> {
 }
 
 function refillSummary(km: number | null, unitsPref: string | null): string {
-  if (km == null) return '—';
-  const u = asUnitsPref(unitsPref);
-  if (u === 'imperial') {
-    const mi = kmToMi(km);
-    return mi == null ? '—' : `~${Math.round(mi)} mi`;
-  }
-  return `~${km} km`;
+  return approxDistance(km, asUnitsPref(unitsPref));
 }
 
 // Driving cadence is no longer collected (MVP). Kept as a placeholder column.

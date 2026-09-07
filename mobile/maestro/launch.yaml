@@ -38,6 +38,21 @@ appId: ${APP_ID}
       # before the app was even asked to render anything.
       location: never
 
+# A SERVER ERROR MUST FAIL HERE, not three steps later as a missing selector.
+#
+# `ErrorProvider`'s fatal modal covers the whole screen, so when the API breaks
+# every later assertion fails as "X is not visible" — which reads as a broken
+# selector and sends you into the wrong component. That is not hypothetical: a
+# stale .next cache 500'd /api/mobile/otp/send, this modal appeared over the
+# sign-in screen, and the run reported that `signin-email` was missing.
+#
+# It runs BEFORE the signin-email wait, and that ordering is the point:
+# appended at the end it never gets the chance to explain anything, because
+# the assertion it exists to pre-empt has already failed. It did exactly
+# that once.
+- assertNotVisible:
+    id: 'fatal-error-modal'
+
 # The sign-in screen is the app's first render and needs no server to draw.
 # If this times out, the app crashed on launch or never installed — check
 # `xcrun simctl diagnose` and the build log, not the flows.
@@ -48,4 +63,4 @@ appId: ${APP_ID}
 
 # Both halves of the screen, so a partial render is a failure rather than a
 # pass on one lucky node.
-- assertVisible: 'Email me a code'
+- assertVisible: 'Email me a 6-digit code'

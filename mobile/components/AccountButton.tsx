@@ -76,7 +76,7 @@ export default function AccountButton({ onPress, email, image, style }: Props) {
             accessibilityIgnoresInvertColors
           />
         ) : (
-          <AccountIcon color="#4E7AB0" size={18} />
+          <AccountIcon color={theme.muted} size={18} />
         )}
       </View>
     </Pressable>
@@ -91,10 +91,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    // src/components/AppNavbar.tsx — deliberate opaque literal, not a token.
-    // The 14%-opacity primary var washes out under iOS's button treatments.
-    // Visible behind a photo only while it loads.
-    backgroundColor: "#DFE5ED",
+    // Opaque, not the 14%-opacity primary tint, which washes out under iOS's
+    // button treatments — but a TOKEN, because the literal here was the old
+    // cream palette's `#DFE5ED` and it survived the Nocturne reskin as a pale
+    // blue-grey disc against a dark ground. Visible behind a photo only while
+    // it loads, which is why nothing caught it until a simulator screenshot.
+    backgroundColor: theme.surface,
     borderWidth: 2,
     borderColor: theme.surface,
     ...shadow.sm,

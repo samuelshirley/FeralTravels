@@ -2,6 +2,7 @@ import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
 import { ONBOARDING_SCAN_MODEL } from '@/lib/models';
 import { validateRangeKm } from '@/lib/vehicleProfile';
+import { parseDailyDriveHours } from '@/lib/onboardingForm';
 import { resolveStartDate, type ResolvedStartDate } from '@/server/parseStartDate';
 import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
 
@@ -51,8 +52,26 @@ const SCAN_TOOL: Anthropic.Tool = {
     'clearly stated. Do NOT guess.',
   input_schema: {
     type: 'object',
-    required: ['start_date_phrase', 'range_km'],
+    required: ['start_date_phrase', 'origin_place', 'daily_drive_hours', 'range_km'],
     properties: {
+      daily_drive_hours: {
+        type: ['integer', 'null'],
+        description:
+          'How many hours a day the driver said they want to DRIVE, as a whole number, ' +
+          'ONLY if explicitly stated ("5 h days" → 5, "drive about 6 hours a day" → 6, ' +
+          '"short 4-hour days" → 4). null when no daily driving time is mentioned. ' +
+          'Do NOT infer it from the trip length or the distance.',
+      },
+      origin_place: {
+        type: ['string', 'null'],
+        description:
+          'Where the trip STARTS, copied verbatim, ONLY if the driver explicitly ' +
+          'named a starting point ("Paris to Stuttgart" → "Paris", "from Girona", ' +
+          '"leaving Austin", "starting in Lyon"). A message that names only a ' +
+          'destination ("Annecy, France", "I want to go to Alaska") has NO origin — ' +
+          'return null. Never infer the origin from a destination, a nationality or ' +
+          'anything not stated.',
+      },
       start_date_phrase: {
         type: ['string', 'null'],
         description:
@@ -82,6 +101,10 @@ export interface OnboardingScanResult {
   rangeKm: number | null;
   /** The verbatim start-date phrase the model extracted (for the free-text column). */
   startDatePhrase: string | null;
+  /** Where the trip starts, verbatim, or null when the message named no origin. */
+  originPlace: string | null;
+  /** Hours of driving a day the driver asked for, in band, or null. */
+  dailyDriveHours: number | null;
 }
 
 /** An all-null scan result (no signal / no key / error). */
@@ -90,7 +113,23 @@ function emptyResult(): OnboardingScanResult {
     startDate: null,
     rangeKm: null,
     startDatePhrase: null,
+    originPlace: null,
+    dailyDriveHours: null,
   };
+}
+
+/** A place name is bounded and single-line; anything else is treated as absent. */
+const MAX_ORIGIN_CHARS = 120;
+
+/**
+ * Validate the raw origin the model returned: a non-empty single-line string
+ * of bounded length. Pure — exported for unit testing.
+ */
+export function validateScannedOrigin(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\s+/g, ' ').trim();
+  if (!t || t.length > MAX_ORIGIN_CHARS) return null;
+  return t;
 }
 
 /**
@@ -133,6 +172,9 @@ export async function scanFirstMessage(
     `- Only fill a field when the driver clearly stated it. Return null for anything ` +
     `not explicitly present — never guess, never infer from context.\n` +
     `- start_date_phrase: copy the WHEN words verbatim; do not convert to a date.\n` +
+    `- origin_place: only a STARTING point the driver named; a destination alone ` +
+    `means null.\n` +
+    `- daily_drive_hours: only an explicit hours-per-day of driving; null otherwise.\n` +
     `- ranges: only when an actual distance-per-tank or refuel distance is stated; ` +
     `convert miles to km; leave null otherwise.`;
 
@@ -181,10 +223,15 @@ export async function scanFirstMessage(
   if (!toolUse) return emptyResult();
   const input = (toolUse.input ?? {}) as {
     start_date_phrase?: unknown;
+    origin_place?: unknown;
+    daily_drive_hours?: unknown;
     range_km?: unknown;
   };
 
   const { rangeKm } = validateScannedRange(input.range_km);
+  const originPlace = validateScannedOrigin(input.origin_place);
+  // The same band the pace step itself accepts; out of band is treated as unsaid.
+  const dailyDriveHours = parseDailyDriveHours(input.daily_drive_hours);
 
   // Resolve the date phrase through the shared resolver — the scan model only
   // extracted the words; resolveStartDate (deterministic parse first, then its
@@ -202,5 +249,5 @@ export async function scanFirstMessage(
     if (!startDate) startDatePhrase = null;
   }
 
-  return { startDate, rangeKm, startDatePhrase };
+  return { startDate, rangeKm, startDatePhrase, originPlace, dailyDriveHours };
 }

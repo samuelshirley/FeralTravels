@@ -198,16 +198,6 @@ export function tripApi(tripId: string) {
         body: { alt_index: altIndex },
         ...opts,
       }),
-    /** Parse GPS coordinates / URLs pasted by the user. See /api/coords/parse. */
-    parseCoords: (input: string) =>
-      apiFetch<{
-        lat: number;
-        lng: number;
-        name?: string;
-        source?: string;
-        source_url?: string;
-      }>(`/api/coords/parse`, { body: { input } }),
-
     listTasksForLeg: (legId: string) => apiFetch(`/api/tasks`, { query: { tripId, legId } }),
     listTasksForTrip: () => apiFetch(`/api/tasks`, { query: { tripId } }),
     addTask: (payload: Record<string, unknown>) =>

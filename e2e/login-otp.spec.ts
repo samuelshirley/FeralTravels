@@ -56,9 +56,13 @@ test.describe('Email OTP login — real delivery', () => {
     await page.locator('input[name="email"]').fill(email);
     await Promise.all([
       page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
-      page.getByRole('button', { name: /email me a code/i }).click(),
+      page.getByRole('button', { name: /email me a 6-digit code/i }).click(),
     ]);
-    await expect(page.locator('text=/6-digit code/i')).toBeVisible();
+    // The verify screen's own heading. It read "6-digit code" until the
+    // sign-in rebuild retitled it "Check your email"; the URL had already
+    // changed by then, so this assertion was the only thing left proving the
+    // page actually RENDERED rather than merely routing.
+    await expect(page.getByRole('heading', { name: /check your email/i })).toBeVisible();
 
     // --- 2. Wait for the mail to actually land -----------------------------
     const message = await waitForMessage(email, { timeoutMs: 90_000 });

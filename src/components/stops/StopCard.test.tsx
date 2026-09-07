@@ -53,15 +53,17 @@ describe('StopCard', () => {
    * that product decision is ever reversed, this test is one of the places that
    * has to change, on purpose.
    */
-  it('adds the miles equivalent for an imperial user', () => {
+  it('shows miles, and no kilometres, for an imperial user', () => {
+    // The "km primary, (mi) secondary" decision this test used to pin was
+    // reversed on 2026-09-04: an imperial user sees miles and nothing else.
     render(
       <UnitsProvider initialUnits="imperial">
         <StopCard {...baseProps} />
       </UnitsProvider>
     );
     const text = screen.getByText(/from start/).textContent ?? '';
-    expect(text).toContain('62 km');
     expect(text).toContain('39 mi'); // 62 km × 0.621371 = 38.5 → 39
+    expect(text).not.toMatch(/\bkm\b/);
     expect(text).toMatch(/from start$/);
   });
 

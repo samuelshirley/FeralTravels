@@ -129,7 +129,14 @@ export default function DeleteAccountSection() {
               onPress={confirmDelete}
               style={[styles.dangerBtn, (!armed || deleting) && styles.dangerBtnDisabled]}
             >
-              <Text style={styles.dangerBtnText}>{deleting ? "Deleting…" : "Delete"}</Text>
+              <Text
+                style={[
+                  styles.dangerBtnText,
+                  (!armed || deleting) && styles.dangerBtnTextDisabled,
+                ]}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -161,7 +168,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.dangerMuted,
     borderColor: "rgba(198, 93, 74, 0.4)",
   },
-  sectionTitle: { fontSize: 16, fontFamily: font.bold, color: theme.text, marginBottom: 6 },
+  sectionTitle: { fontSize: 17, fontFamily: font.medium, color: theme.text, marginBottom: 6 },
   sectionBlurb: {
     fontFamily: font.regular,
     fontSize: 13,
@@ -195,7 +202,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 24,
   },
-  dialogTitle: { fontFamily: font.bold, fontSize: 18, color: theme.text, marginBottom: 10 },
+  dialogTitle: { fontFamily: font.medium, fontSize: 18, color: theme.text, marginBottom: 10 },
   dialogBody: {
     fontFamily: font.regular,
     fontSize: 13,
@@ -204,7 +211,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: { fontFamily: font.regular, fontSize: 13, color: theme.text, marginBottom: 6 },
-  labelStrong: { fontFamily: font.bold, color: theme.text },
+  labelStrong: { fontFamily: font.medium, color: theme.text },
   input: {
     borderWidth: 1,
     borderColor: theme.border,
@@ -218,15 +225,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   error: { fontFamily: font.regular, fontSize: 12, color: theme.danger, marginBottom: 12 },
+  /*
+   * The LAST solid fill in the app, and it stays one on both platforms. Every
+   * other action is an outline now, which is exactly what lets this read as
+   * different in kind rather than merely important.
+   */
   dangerBtn: {
     backgroundColor: theme.danger,
-    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.dangerBorder,
+    borderRadius: theme.radiusSm,
     paddingVertical: 14,
     alignItems: "center",
     marginBottom: 8,
   },
-  dangerBtnDisabled: { backgroundColor: "rgba(198, 93, 74, 0.35)" },
-  dangerBtnText: { fontFamily: font.bold, fontSize: 15, color: "#fff" },
+  dangerBtnDisabled: { backgroundColor: theme.dangerMuted },
+  dangerBtnText: { fontFamily: font.semibold, fontSize: 15, color: theme.bg },
+  /* The fill drops to a 14% tint when disarmed, so the label has to come with
+     it — `theme.bg` on that tint is dark-on-dark and vanishes. */
+  dangerBtnTextDisabled: { color: theme.danger },
   cancelBtn: { paddingVertical: 12, alignItems: "center" },
   cancelText: { fontFamily: font.regular, fontSize: 14, color: theme.muted },
 });

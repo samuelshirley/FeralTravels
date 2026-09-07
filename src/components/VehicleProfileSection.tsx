@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fetchVehicles, invalidateVehicleCache } from '@/lib/vehicleCache';
-import { kmToMi, miToKm } from '@/lib/units';
+import { kmToMi, miToKm, approxDistance } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import {
   buildVehicleProfileQuestions,
@@ -11,6 +11,7 @@ import {
   vehicleProfileGroupTitle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
+import { buttonStyle } from '@/components/ui/Button';
 
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {};
 
@@ -199,12 +200,14 @@ export default function VehicleProfileSection() {
               style={{
                 marginTop: 12,
                 width: '100%',
-                padding: '10px 14px',
-                background: 'var(--tp-primary-muted)',
-                border: '1px dashed rgba(78, 122, 176, 0.45)',
-                borderRadius: 8,
-                color: 'var(--tp-primary)',
-                fontWeight: 600,
+                padding: '11px 14px',
+                background: 'transparent',
+                // Dashed: this adds something that is not there yet, which is a
+                // different act from the solid-outlined actions around it.
+                border: '1px dashed var(--tp-primary)',
+                borderRadius: 'var(--tp-radius-md)',
+                color: 'var(--tp-accent-300)',
+                fontWeight: 500,
                 fontSize: 13,
                 cursor: 'pointer',
               }}
@@ -232,15 +235,7 @@ function VehicleCard({
   onSetDefault: () => void;
 }) {
   const { units } = useUnits();
-  const fmtRange = (km: number | null): string | null => {
-    if (km == null) return null;
-    if (units === 'imperial') {
-      const mi = kmToMi(km);
-      return mi == null ? null : `~${Math.round(mi)} mi`;
-    }
-    return `~${km} km`;
-  };
-  const refillLabel = fmtRange(vehicle.range_km);
+  const refillLabel = vehicle.range_km == null ? null : approxDistance(vehicle.range_km, units);
 
   return (
     <div
@@ -255,15 +250,18 @@ function VehicleCard({
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 15 }} data-testid="vehicle-card-name">{vehicle.name}</strong>
+          <strong style={{ fontSize: 15, fontWeight: 500 }} data-testid="vehicle-card-name">
+            {vehicle.name}
+          </strong>
           {vehicle.is_default && (
             <span
               style={{
                 fontSize: 9,
-                fontWeight: 700,
+                fontWeight: 600,
                 letterSpacing: '0.08em',
-                background: 'var(--tp-success-muted)',
-                color: 'var(--tp-success)',
+                background: 'transparent',
+                border: '1px solid var(--tp-primary)',
+                color: 'var(--tp-accent-300)',
                 padding: '2px 6px',
                 borderRadius: 3,
                 textTransform: 'uppercase',
@@ -504,7 +502,7 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
       <div
         style={{
           fontSize: 10,
-          fontWeight: 700,
+          fontWeight: 600,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
           color: 'var(--tp-muted)',
@@ -561,12 +559,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 const primaryBtn: React.CSSProperties = {
+  ...buttonStyle(),
   padding: '8px 16px',
-  background: 'var(--tp-primary)',
-  color: 'var(--tp-on-primary)',
-  border: 'none',
-  borderRadius: 6,
   fontSize: 13,
-  fontWeight: 600,
-  cursor: 'pointer',
 };

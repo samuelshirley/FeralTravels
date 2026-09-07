@@ -206,7 +206,7 @@ export default defineConfig({
             name: 'web-ui',
             use: { ...devices['Desktop Chrome'] },
             testMatch:
-              /(existing-trip|onboarding-flow|onboarding-validation|penny-plan-trip|lazy-fuel-sourcing|vehicle-crud|subscriptions)\.spec\.ts/,
+              /(existing-trip|onboarding-flow|onboarding-validation|penny-plan-trip|chat-maps-link|units-imperial|viewport-hint|lazy-fuel-sourcing|vehicle-crud|subscriptions)\.spec\.ts/,
           },
           // The announcement is GLOBAL app state — an active announcement pops
           // a modal over every signed-in user's /trips, which would block

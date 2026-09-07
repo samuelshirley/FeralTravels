@@ -1,4 +1,10 @@
 import { expect, type Page } from '@playwright/test';
+// A static import. This was `await import('./test-trip')` inside
+// signInAsNewUser, and under the runner's CJS transform that intermittently
+// threw "Cannot use import statement outside a module" — the spec then failed
+// before it had opened a page. test-trip.ts imports nothing from this file,
+// so there is no cycle to work around.
+import { seedCanonicalFixture } from './test-trip';
 
 /**
  * Signing in, the way a user does it.
@@ -111,7 +117,13 @@ export async function login(
   await page.getByPlaceholder('you@example.com').fill(email);
   await Promise.all([
     page.waitForURL(/\/login\/verify/, { timeout: 15_000 }),
-    page.getByRole('button', { name: /email me a code/i }).click(),
+    // `/email me a/i`, not the full sentence: the button reads "Email me a
+    // 6-digit code" since the sign-in rebuild, and the old
+    // `/email me a code/i` could not match across the inserted words. The
+    // click then never landed and the 15s waitForURL above rejected first,
+    // so all 36 web specs failed with a navigation timeout that said nothing
+    // about a button. Match the stable part of the label.
+    page.getByRole('button', { name: /email me a/i }).click(),
   ]);
 
   const code = await readOtpCode(page, email);
@@ -141,7 +153,6 @@ export async function signInAsNewUser(
   page: Page,
   opts: { redirectTo?: string; seedFixture?: boolean } = {},
 ): Promise<string> {
-  const { seedCanonicalFixture } = await import('./test-trip');
   const email = uniqueEmail();
   if (opts.seedFixture !== false) await seedCanonicalFixture(email);
   await login(page, email, opts.redirectTo || '/trips');

@@ -1,0 +1,141 @@
+# Location permission, in Settings — and specifically that the button reaches
+# iOS rather than merely rendering.
+#
+# WHY THIS FLOW EXISTS. A permission control is the one kind of UI that cannot
+# be checked by looking at it: a button that renders perfectly and calls
+# nothing looks identical to one that works, and the difference only appears
+# on a device. `Mobile typecheck` compiles both equally happily. So the gate
+# here is BEHAVIOURAL — tap it and assert the SYSTEM dialog appears, which can
+# only happen if the app actually asked iOS.
+#
+# WHY IT DENIES AT THE END, deliberately: granting location makes
+# DeviceLocationContext report a position and `report_position` RE-ANCHORS the
+# trip to wherever the simulator thinks it is — a Paris trip quietly becomes a
+# Californian one. `screenshots.yaml` keeps location denied for exactly this
+# reason. Proving the dialog appears is the whole assertion; accepting it would
+# corrupt the fixture for every flow that runs afterwards.
+#
+# THE PERMISSION IS NOT CLEARED BY `clearState`. It is system state held per
+# bundle id, like the keychain — so once a run answers the dialog, the app is
+# on `canAskAgain: false` on that simulator forever and this flow finds "Open
+# Settings" where it expects "Turn on". `scripts/ios-e2e-local.sh` runs
+# `simctl privacy … reset location` before every flow for that reason; without
+# it this passes exactly once per simulator.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# REACH SETTINGS FROM THE TRIPS LIST, NOT THROUGH THE TRIP.
+#
+# The obvious route — open the trip, tap the `SETTINGS` tab, as
+# `chat-keyboard.yaml` does — destroys the thing this flow exists to test. The
+# trip screen mounts `DeviceLocationProvider` WITH prompting, so it raises the
+# location dialog on mount; nothing in the flow answers it, navigating away
+# dismisses it, and iOS counts that as the one ask it allows. By the time
+# Settings renders, the app is on `canAskAgain: false` and the button reads
+# "Open Settings" — which is exactly what this failed on, and it is not a
+# state any first-run user would be in.
+#
+# The trips list never prompts, so this arrives at Settings with the dialog
+# unspent. `simctl privacy … reset location` in the runner covers the state
+# left behind by PREVIOUS runs; this covers the state this run would create.
+# (The old wording of this comment referred to a "Turn on" button; the
+# control is a switch now, and the branches below read the hint under it.)
+#
+# The avatar is matched on its accessibilityLabel, which Maestro exposes as
+# element text — hence a regex, since the label carries the fixture address.
+- tapOn: 'Account menu.*'
+# By id, not by the word on screen: the menu items are bare <Text> inside a
+# Pressable with no accessibilityRole, so iOS publishes nothing for Maestro to
+# match and `tapOn: 'Settings'` fails against a menu that is plainly open.
+- tapOn:
+    id: 'account-menu-settings'
+- assertVisible: 'Vehicle profile'
+
+# The section renders at all. It is hidden while the permission read is in
+# flight, so this also proves the read resolved.
+- assertVisible:
+    id: 'settings-location-section'
+- assertVisible: 'Location'
+
+# Location is the LAST section on the screen, so it starts below the fold on
+# every device — scroll it into view before asserting anything about it.
+#
+# `assertVisible` on the section above passes without this, which is the trap:
+# Maestro resolves an `id:` against the view hierarchy, and the hierarchy holds
+# nodes that have not been scrolled to. A TEXT assertion is the one that
+# actually needs pixels, so the flow read as "the section is there but the
+# button is missing" when the button was merely off-screen.
+# An explicit SWIPE, not `scrollUntilVisible`.
+#
+# `scrollUntilVisible` completed here without swiping once, then the text
+# assertion below failed: Maestro resolves the element against the view
+# HIERARCHY, which already contained the button at coordinates past the bottom
+# of the screen, so its "is it visible yet" test was satisfied before it
+# started. Same weak-visibility trap `chat-keyboard.yaml` documents — and the
+# reason the tap below is the real gate, since a tap only lands on something
+# genuinely on screen.
+- swipe:
+    start: 50%, 80%
+    end: 50%, 25%
+
+# WHICH BRANCH RUNS DEPENDS ON THE DEVICE, AND BOTH ASSERT SOMETHING REAL.
+#
+# The control is a SWITCH (2026-09-04), so the branch is read off the hint
+# under it rather than off a button label. The intended state for this flow
+# is "never asked": no hint, and flipping the switch must raise the iOS
+# dialog. That state could NOT be produced on an iOS 26.5 simulator: a freshly
+# ERASED device reports `{"status":"denied","canAskAgain":false}` to
+# `getForegroundPermissionsAsync` before anything has asked, and neither
+# `simctl privacy reset location` nor `simctl privacy grant location` changes
+# it — `launchctl kickstart` on locationd answers "Please switch to
+# user/foreground/com.apple.locationd (rdar://78126471)", i.e. the daemon
+# moved to a user domain that `simctl privacy` no longer writes to. Verified
+# by rendering the raw permission object into the view and reading it back
+# out of the hierarchy, not inferred.
+#
+# So the flow takes whichever branch the device offers. Neither is a skip:
+#
+#   no hint         — the real thing. Flip, and the SYSTEM dialog must appear;
+#                     that text belongs to iOS and can only be on screen if
+#                     `requestForegroundPermissionsAsync` reached it. Then
+#                     decline, so the fixture trip keeps its own coordinates —
+#                     and the hint about the Settings app appears, because
+#                     iOS has now spent its dialog.
+#
+#   "Settings app"  — the spent branch. Flipping calls `Linking.openSettings()`,
+#                     which BACKGROUNDS the app. The gate is that our own
+#                     screen goes away: only a real call into iOS can do that,
+#                     so a switch wired to nothing still fails here. This is
+#                     the branch a simulator currently takes.
+#
+# If a future runtime restores the not-determined state, the first branch
+# starts running on its own and proves the stronger property.
+- assertVisible:
+    id: 'settings-location-status'
+
+- runFlow:
+    when:
+      notVisible: '.*Settings app.*'
+    commands:
+      - tapOn:
+          id: 'settings-location-enable'
+      # iOS's own words, above its own buttons.
+      - assertVisible: '.*Allow.*'
+      # `Don.t Allow` as a REGEX — iOS renders a typographic apostrophe.
+      - tapOn: 'Don.t Allow'
+      # Spent dialog ⇒ the Settings route. The half a unit test cannot reach.
+      - assertVisible: '.*Settings app.*'
+
+- runFlow:
+    when:
+      visible: '.*Settings app.*'
+    commands:
+      - tapOn:
+          id: 'settings-location-enable'
+      # The app is no longer in front — iOS took over. A dead switch leaves
+      # this element exactly where it was and the flow fails.
+      - extendedWaitUntil:
+          notVisible:
+            id: 'settings-location-section'
+          timeout: 10000

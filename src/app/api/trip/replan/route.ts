@@ -30,7 +30,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, addLegConstraint, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -223,6 +223,13 @@ const inputSchema = z.object({
    * (the server mints one), but then idempotency degrades to best-effort.
    */
   idempotencyKey: z.string().min(8).max(100).optional(),
+  /**
+   * True for the ONE turn that ends onboarding: the stored intent fired at
+   * Penny. Persisted as kind `handoff` so neither client renders it as a
+   * user bubble — the transcript already carries that answer as a receipt —
+   * while Penny's context still reads it as the message she planned from.
+   */
+  handoff: z.boolean().optional().default(false),
 });
 
 /**
@@ -350,7 +357,7 @@ export async function POST(req: Request) {
 
     // Persist the user's bubble now so it shows in chat order immediately,
     // whether we run this turn now or queue it.
-    await addChatMessage(tripId, 'user', message || '(image only)');
+    await addChatMessage(tripId, 'user', message || '(image only)', null, body.handoff ? 'handoff' : 'ai');
     userTurnSaved = true;
 
     // Claim the trip's single execution slot. The partial unique index
@@ -649,7 +656,7 @@ async function runTurnWork(
             }
           }
 
-          // Deterministic schedule rebuild. Now that drive legs + constraints are
+          // Deterministic schedule rebuild. Now that drive legs are
           // persisted, the server takes ownership of rest-day count + leg ordering
           // so the calendar dates match what the user asked for — Penny can't
           // miscount rest days or strand one after the wrong drive. Best-effort:
@@ -1112,7 +1119,6 @@ async function dispatchAction(
         driveTimeMinutes: d.drive_time_minutes ?? null,
         terrain: d.terrain ?? null,
         overnight: d.overnight ?? null,
-        status: d.status ?? null,
         color: d.color ?? null,
         notes: Array.isArray(d.notes) ? JSON.stringify(d.notes) : null,
         sortOrder: d.sort_order ?? null,
@@ -1129,19 +1135,6 @@ async function dispatchAction(
         endLat: d.end_lat ?? null,
         endLng: d.end_lng ?? null,
       });
-
-      // Write any constraints Penny attached to this leg
-      if (d.constraints && d.constraints.length > 0) {
-        for (const c of d.constraints) {
-          await addLegConstraint({
-            legId: newLegId,
-            constraintType: c.constraint_type,
-            constraintDatetime: c.datetime ?? null,
-            bufferMinutes: c.buffer_minutes ?? 60,
-            note: c.note ?? null,
-          });
-        }
-      }
       return;
     }
 
@@ -1190,7 +1183,6 @@ async function dispatchAction(
         legUpdate.driveTimeMinutes = data.drive_time_minutes;
       if (data.terrain !== undefined) legUpdate.terrain = data.terrain;
       if (data.overnight !== undefined) legUpdate.overnight = data.overnight;
-      if (data.status !== undefined) legUpdate.status = data.status;
       if (data.color !== undefined) legUpdate.color = data.color;
       if (data.notes !== undefined)
         legUpdate.notes = Array.isArray(data.notes) ? JSON.stringify(data.notes) : null;
