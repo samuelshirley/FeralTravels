@@ -256,6 +256,35 @@ green named no layer either.
 - **`command -v java` is true on every Mac**, because of a stub at
   `/usr/bin/java` that exists only to say there is no Java.
 
+## The driver-timeout flake, and the bounded retry (2026-09-07)
+
+`iOS driver not ready in time, consider increasing timeout` has two causes
+with one message. The first is the Xcode pairing above — `xcodebuild` returns
+instantly and nothing ever listens — and it is fixed by `xcode-select`, never
+by the timeout. The second showed up on run 34101156123 with the pairing
+correct: `xcodebuild test-without-building` started, printed two
+`IDERunDestination` warnings, and then STALLED launching the runner on a
+freshly booted simulator. The runner log (`xctest_runner_*.log` in the
+artifact) is six lines and never reaches `Running tests…`; on a green run it
+reaches it in about thirty seconds. Same image (`macos-15-arm64`
+20260829.0321.1), same Maestro 2.10.0, same Xcode 26.2 as the green run three
+days earlier. A CoreSimulator flake, low frequency, and a hang — so a longer
+timeout cannot fix it either.
+
+Two things in `ci.yml` answer it. The boot step launches and terminates the
+app once before Maestro is involved, so SpringBoard's first-run work happens
+on our clock. And `launch.yaml` is retried ONCE, on that one signature only,
+after killing the stuck `xcodebuild` and rebooting the same UDID. It is scoped
+to `launch.yaml` because that flow is the harness gate: it touches no fixture
+and no network, so a retry there cannot spend an OTP or a location prompt.
+Any other failure — including a red `launch.yaml` for a reason that is not
+the driver — is not retried. The PR comment says "Harness retried once" when
+it happened, so the flake rate stays readable from the PR thread.
+
+**How to tell the two apart in a log:** look at the runner log's length. Six
+lines ending in destination warnings is the stall; a runner log that never
+exists at all (`xcodebuild` exiting at once) is the Xcode mismatch.
+
 ## Next action
 
 Push and watch the CI job. It is the only remaining unknown, and the three

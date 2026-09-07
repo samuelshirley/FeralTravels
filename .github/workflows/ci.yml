@@ -834,6 +834,24 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" mobile/ios-build/*.app
+          # ── Warm the simulator before Maestro touches it ────────────────
+          #
+          # On 2026-09-07 (run 34101156123) `xcodebuild test-without-building`
+          # launched Maestro's XCTest runner on a freshly booted simulator and
+          # STALLED: the runner log stopped after two IDERunDestination warnings
+          # and never printed "Running tests…", Maestro polled its port for the
+          # full 240s, and the job died as "iOS driver not ready in time" —
+          # before launch.yaml ran, on the same image, Maestro and Xcode as the
+          # green run three days earlier. Every green run shows the driver up
+          # ~30s after launch on a simulator that has already run a process.
+          # So launch the app once and put it down again: SpringBoard and
+          # CoreSimulator finish their first-boot work on our clock, not on the
+          # driver's. clearState in launch.yaml wipes anything this leaves.
+          # Tolerant: if the app cannot launch here, launch.yaml fails on the
+          # same thing with a screenshot attached, which is the better report.
+          xcrun simctl launch "$UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
+          sleep 5
+          xcrun simctl terminate "$UDID" com.feraltravels.ios || true
           # Passed to Maestro explicitly below rather than left to discovery.
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 
@@ -924,11 +942,47 @@ jobs:
           # below it is worth reading — a distinction this job could not make while
           # one invocation reported on all three layers at once. Same split locally,
           # for the same reason: scripts/ios-e2e-local.sh.
-          maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            --format junit \
-            --output maestro-report-launch.xml \
-            --debug-output maestro-debug
+          #
+          # RETRIED ONCE, ON ONE SIGNATURE ONLY. `iOS driver not ready in time`
+          # is Maestro giving up on its own XCTest runner ever answering — the
+          # runner never came up, so no flow ran and the app was never touched.
+          # That is a harness failure with nothing to learn from a re-run of
+          # the whole job (18 minutes to rebuild the app for a 30-second
+          # bring-up), and the fix for it is a fresh simulator: kill the stuck
+          # xcodebuild, reboot the same UDID, warm it as above, go again. Any
+          # OTHER failure of launch.yaml — an assertion, a crash on the first
+          # screen — is the app, is not retried, and fails the job as before.
+          # A generic step-retry action would retry those too, which is how a
+          # real regression becomes "flaky". `harness_retried` is surfaced in
+          # the PR comment so a bad day on the runners stays visible rather
+          # than silently green.
+          DRIVER_TIMEOUT_SIGNATURE='iOS driver not ready in time'
+          HARNESS_RETRIED=0
+          run_launch() {
+            maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
+              -e APP_ID=com.feraltravels.ios \
+              --format junit \
+              --output maestro-report-launch.xml \
+              --debug-output maestro-debug 2>&1 | tee "launch-attempt-$1.log"
+            return "${PIPESTATUS[0]}"
+          }
+          for attempt in 1 2; do
+            if run_launch "$attempt"; then break; fi
+            if [ "$attempt" = 2 ] || ! grep -q "$DRIVER_TIMEOUT_SIGNATURE" "launch-attempt-$attempt.log"; then
+              echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+            echo "::warning::launch.yaml: the XCTest driver never came up (attempt $attempt). Rebooting the simulator and retrying once."
+            HARNESS_RETRIED=1
+            pkill -f "xcodebuild test-without-building" || true
+            xcrun simctl shutdown "$SIM_UDID" || true
+            xcrun simctl boot "$SIM_UDID"
+            xcrun simctl bootstatus "$SIM_UDID" -b
+            xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || true
+            sleep 5
+            xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+          done
+          echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
 
           # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the
           # sign-in code ITSELF instead of trusting one minted before the run.
@@ -1063,6 +1117,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           OUTCOME: ${{ steps.flows.outcome }}
+          HARNESS_RETRIED: ${{ steps.flows.outputs.harness_retried }}
           ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
         with:
           script: |
@@ -1087,6 +1142,17 @@ jobs:
               lines.push(
                 '**Failed.** The recordings artifact holds a screenshot of the screen it died',
                 'on; that is the fastest way in, faster than reading the log.',
+              );
+            }
+            // Visible on green as well as red: a harness retry is a fact about
+            // the runners, and a run that needed one should not read exactly
+            // like a run that did not.
+            if (process.env.HARNESS_RETRIED === '1') {
+              lines.push(
+                '',
+                '⚠️ **Harness retried once.** The XCTest driver did not come up on the first',
+                'attempt (a simulator flake, not the app); the simulator was rebooted and the',
+                'flows ran on the second.',
               );
             }
             if (artifact) lines.push('', `[Recordings](${artifact})`);
