@@ -211,7 +211,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: { fontFamily: font.regular, fontSize: 13, color: theme.text, marginBottom: 6 },
-  labelStrong: { fontFamily: font.medium, color: theme.text },
+  /* The phrase has to stand apart from the sentence around it, because it is
+     the thing the reader has to reproduce exactly. `semibold` is the face the
+     armed Delete label uses; `medium` read as body text, and people typed
+     "delete". */
+  labelStrong: { fontFamily: font.semibold, color: theme.text },
   input: {
     borderWidth: 1,
     borderColor: theme.border,
@@ -239,11 +243,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  dangerBtnDisabled: { backgroundColor: theme.dangerMuted },
+  /* Disarmed is INERT and has to look it. A danger tint with danger text still
+     read as a button that wanted pressing, so a mismatch in the box above
+     looked like a button that was ignoring the tap. No danger colour at all
+     until the phrase matches: a plain outline in the neutral border, and the
+     label in the same subtle grey as a placeholder. */
+  dangerBtnDisabled: { backgroundColor: "transparent", borderColor: theme.border },
   dangerBtnText: { fontFamily: font.semibold, fontSize: 15, color: theme.bg },
-  /* The fill drops to a 14% tint when disarmed, so the label has to come with
-     it — `theme.bg` on that tint is dark-on-dark and vanishes. */
-  dangerBtnTextDisabled: { color: theme.danger },
+  dangerBtnTextDisabled: { color: theme.subtle },
   cancelBtn: { paddingVertical: 12, alignItems: "center" },
   cancelText: { fontFamily: font.regular, fontSize: 14, color: theme.muted },
 });

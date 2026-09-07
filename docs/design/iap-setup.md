@@ -216,10 +216,29 @@ with no packages.
 **What it looks like in this app:** the purchase sheet shows the two prices —
 `$2` and `$20`, the fallback strings from `PRODUCTS` in
 `src/server/payments/constants.ts` — with **no buy button**, under the line
-*"The App Store isn't offering these plans on this build yet."* That is
-`mode: "unavailable"` in `mobile/lib/purchaseFlow.ts`, and it is the honest
-rendering of "we asked and got nothing back". There is nothing in any log,
-because nothing failed.
+*"The App Store isn't offering these plans yet — these are the prices, not a
+checkout."* That is `mode: "unavailable"` with reason `store_empty` in
+`src/lib/purchaseMode.ts` (mirrored to the app), and it is the honest rendering
+of "we asked and got nothing back". **Since 2026-09-07 each empty-sheet cause
+has its own sentence** — `no_key` (this build has no RevenueCat key),
+`store_empty` (this section), `store_error` (the store could not be reached),
+`no_match` (the ids disagree) and `no_plans` (the server's list did not load) —
+so the sentence on screen says which of §1, §5 or §2 to open.
+
+**What the console says** (this IS in a log, contrary to what this paragraph
+used to claim): RevenueCat does not return an empty offering when StoreKit
+resolves no products, it THROWS `CONFIGURATION_ERROR` (code 23) and logs
+*"None of the products registered in the RevenueCat dashboard could be fetched
+from App Store Connect (or the StoreKit Configuration file if one is being
+used)"*. Reproduced verbatim on 2026-09-07 in the iOS 26.5 simulator with the
+real `appl_` key baked in and the `default` offering confirmed (by the REST
+API) to hold both product ids — i.e. §4 and §5 done, §1/§2 not. The app now
+records that throw as an EMPTY answer (`store_empty`), and keeps every other
+throw as `store_error`. Note the simulator is not a clean witness on its own:
+without a StoreKit configuration file it also has no products to resolve, so
+the same line appears there even once the agreement is Active. A TestFlight
+build on a device with the agreement Active is the only thing that
+distinguishes "not signed" from "simulator".
 
 Every developer hits this once and it costs a day. It is the one step here with
 a human in the loop at Apple's end, so start it now.
@@ -400,9 +419,13 @@ key (`goog_`) and the **secret** API key, which must never be in a client
 bundle.
 
 **What an unset key looks like:** the sheet renders the fallback prices with no
-buy button and says purchasing is not wired up — the same `mode: "unavailable"`
-as section 1. That is deliberate. The two failures are indistinguishable from
-inside the app, so the app says the one true thing it knows.
+buy button under *"This build isn't connected to the App Store, so nothing here
+can be bought or restored yet."* — `mode: "unavailable"` with reason `no_key`.
+It is a DIFFERENT sentence from section 1's, on purpose: the app knows
+synchronously whether it has a key, and the fix for this one is a new build
+whereas the fix for section 1 is a signature in App Store Connect. (Restore is
+still on screen — Guideline 3.1.1 — but the sentence does not promise it
+works, because with no key `restore()` refuses too.)
 
 ### What installing this did to the release pipeline
 

@@ -47,6 +47,10 @@ export const SHARED_FILES = [
   // package instead of against a copy of them.
   ['src/lib/purchaseOutcome.ts', 'mobile/shared/lib/purchaseOutcome.ts'],
   ['src/lib/entitlementPolling.ts', 'mobile/shared/lib/entitlementPolling.ts'],
+  // The purchase sheet's mode — test / store / unavailable-with-a-reason — as
+  // one pure decision. Lives in src/lib so the root vitest project can assert
+  // every reason has its own sentence; the app only renders the answer.
+  ['src/lib/purchaseMode.ts', 'mobile/shared/lib/purchaseMode.ts'],
   // The Settings -> Plan status line. Mirrored so the two clients cannot end up
   // describing the same twelve account states differently, and living in
   // src/lib for the same reason as the two above: the root vitest project is

@@ -65,8 +65,19 @@ import { font } from "@/lib/typography";
  *     is a review risk for no user benefit.
  *
  * What IS fair, and what this file does: demote it. "View plans" is the primary
- * button; Restore and Manage are quiet text links beneath. Do not delete this
- * block — it is load-bearing for the next person who has the same instinct.
+ * button; Restore is a quiet text link beneath. Do not delete this block — it
+ * is load-bearing for the next person who has the same instinct.
+ *
+ * ── Manage subscription IS conditional, and the argument above does not apply
+ *
+ * Manage deep-links to Apple's subscriptions screen, which lists what THIS
+ * Apple ID has bought from us — for a trial account that is an empty list,
+ * and a trial account is most accounts. Unlike Restore, the condition here IS
+ * one we can evaluate: the link only means something once a subscription row
+ * has existed, and `canManageAppleSubscription` (beside the state type) says
+ * exactly which states imply one. It appears the moment the fresh payload
+ * from a purchase is stored, so a subscriber never has to leave and come back
+ * to find it.
  */
 export default function SubscriptionSection() {
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
@@ -147,9 +158,9 @@ export default function SubscriptionSection() {
         </View>
 
         {/*
-          Secondary, and visually quieter than "View plans" — but always
-          present. See the note at the top of this file for why neither is
-          conditional.
+          Secondary, and visually quieter than "View plans". Restore is always
+          present; Manage only once there is something at Apple to manage. See
+          the two notes at the top of this file.
         */}
         <View style={styles.row}>
           <Pressable
@@ -165,13 +176,16 @@ export default function SubscriptionSection() {
               <Text style={styles.buttonText}>Restore purchases</Text>
             )}
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={flow.manageSubscription}
-            style={styles.button}
-          >
-            <Text style={styles.buttonText}>Manage subscription</Text>
-          </Pressable>
+          {flow.manageSubscriptionAvailable ? (
+            <Pressable
+              testID="settings-manage-subscription"
+              accessibilityRole="button"
+              onPress={flow.manageSubscription}
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>Manage subscription</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/*
