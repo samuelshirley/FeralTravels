@@ -12,3 +12,8 @@ assets in this `public/` folder. Until they ship, the loader degrades to copy +
 
 Drop the files in here with these exact names and the loader picks them up — no
 code change needed.
+
+**The native app carries its own copies** at `mobile/assets/penny-planning.{mp4,jpg}`
+(`mobile/components/chat/PennyPlanningVideo.tsx`) — Metro cannot reach
+`public/`, and the clip is bundled rather than fetched so it plays on a cold
+launch with no network. Replace all four files together when the clip changes.
