@@ -96,6 +96,19 @@ Deploy pipeline (**pull-request based** since 2026-08-13 — `main` moves via PR
 2. **Merge the PR — that IS the deploy.** The same workflow fires on the push to `main` **automatically**: it re-verifies CI was green, applies pending migrations to the PROD database, then builds + deploys to production via the Vercel CLI. No button, no second step, no ship script. **Rollback** = merge a revert PR through the same gate, or re-promote the previous production deployment from the Vercel dashboard for an instant fix; neither undoes a migration.
 3. **PR closes** → the same workflow deletes `preview/pr-<N>` so a clone of real user data isn't left sitting behind a public URL, and Neon's branch limit isn't consumed.
 
+**Only the newest preview URL works, and a stale one fails as a fake sign-out.**
+Every push drops and recreates the Neon branch and bakes the new
+`DATABASE_URL` into a NEW deployment; the previous URL keeps its old
+connection string forever, so its database is simply gone. What you see is not
+an error page — it is `/login`. `auth()` reads `sessions` from the database, and
+when that read throws, Auth.js swallows it and returns null, which every guard
+reads as "not signed in". Measured 2026-09-08 on `dpl_HvAEfoMgq2jw9VFDTCpc2LFExKS6`:
+`/admin` rendered 200 at 09:03:06 and at 09:03:07 the same deployment was
+logging `password authentication failed for user 'neondb_owner'`, having been
+recreated by a push at 09:01:18. Signing in again cannot help — the database
+that would store the new session is the one that is missing. Take the URL from
+the sticky comment, which now says this too.
+
 The deploy gate is enforced, not a convention. Because a squash/merge commit has a different SHA than anything CI tested, the gate resolves the PR the commit came from and requires the CI run for **that PR's head SHA** to be completed+green. A direct push to `main` has no CI run, so the **deploy** fails and production is left untouched — but the push itself lands; nothing on GitHub's side prevents it. Merging a PR mid-run behaves the same way: `main` moves, the deploy job refuses, and `main` sits ahead of production until CI is green and the deploy is re-run by hand (Actions -> Deploy to production -> Run workflow, the same `workflow_dispatch` documented in that file). The gate is the FIRST step of the deploy job, so a pending or red CI means **no migration runs either** — the failure mode is a stale production, not a half-migrated one.
 
 Vercel's own git auto-deploy is **disabled for every branch** in `vercel.json` (`git.deploymentEnabled: false`), so GitHub Actions owns every deployment: leaving it on would produce a second, untested preview per PR wired to whatever `DATABASE_URL` sits in the Vercel Preview env.
@@ -156,6 +169,7 @@ src/
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # Admin dashboard: users/, vehicles/, chats/, errors/, announcements/, deleted/
     login/            # OTP + Google auth flow (verify/ sub-route)
+    error.tsx         # The app's ONLY error boundary. Branches on `error.digest` so an unreachable session store says "you have not been signed out" instead of the generic line; Try again calls reset(). Before it existed every server exception rendered Next's stock "Application error" screen.
     settings/         # User settings page (Vehicle profile + the Danger zone / delete-account section)
     (legal)/          # PUBLIC pages, route group so URLs stay /privacy /terms /support.
                       # No auth() call anywhere in here — Google brand verification and
@@ -240,6 +254,7 @@ src/
       otp-email.ts    # OTP email sending
       magic-email.ts  # Magic link emails
       test-endpoints.ts # Guard for /api/test/* fixture-DATA endpoints (hard-off on prod; NO auth bypass exists)
+      sessionStore.ts   # Tells "signed out" apart from "the session store is down" — the cookie read + the reachability assert behind the `auth()` wrapper in index.ts
   types/trip.ts       # Shared TypeScript types
 middleware.ts         # Root-level edge middleware (cookie check)
 scripts/              # CLI utilities (see Scripts below)
@@ -478,6 +493,29 @@ The trust boundary is strict on purpose. Everything that crosses into the app or
 - **`users.image` is written on EVERY Google sign-in, both paths.** Native: `createSessionForEmail(email, name, image)` (`auth/otp.ts`) from the exchange's verified `picture` claim. Web: `events.signIn` in `auth/index.ts` — the Drizzle adapter only writes `image` at user *creation*, so without that hook a user who signed in by emailed code first and linked Google later never got a photo. Refreshed (not just backfilled) unlike `name`, which the user may have edited. An OTP sign-in passes no image and never wipes one. Deleted with the user row by the account-deletion flow.
 - **The address is surfaced deliberately, not baked into the avatar:** a "Signed in as" card under the web button on hover AND keyboard focus (replacing the old native `title` tooltip, which did neither well), and a "SIGNED IN AS" row atop the account menu on web, the trips list and TripHeader.
 - **Never silently swallow errors.** Every mutation must either show inline error UI or go through the global `ErrorNotifier`. No empty `catch` blocks, no `console.error`-only handling. If something fails, the user must know.
+- **A database failure is not a sign-out (2026-09-08).** `auth()` in
+  `src/server/auth/index.ts` is a WRAPPER around Auth.js's own, and the wrapper
+  is the fix: Auth.js catches an adapter throw, logs `SessionTokenError` and
+  returns `null` — the same value a signed-out visitor produces — so a Neon blip
+  presented as a silent site-wide sign-out, thirteen pages deep, via their
+  identical `if (!session?.user) redirect('/login')`. The wrapper tells the two
+  apart with evidence already on the request: no session cookie means genuinely
+  signed out; a cookie with no session means either the row is gone or the store
+  is unreachable, and `assertSessionStoreReachable` (`auth/sessionStore.ts`)
+  re-runs the exact query Auth.js failed at to find out. Unreachable throws
+  `SessionStoreUnavailableError` — **503, never 401**, because
+  `mobile/lib/api.ts` clears the keychain on 401 and would sign every iOS user
+  out of their device over a database hiccup. Pages surface it through
+  `src/app/error.tsx` (the app's only error boundary; it branches on the error's
+  `digest`, which is what survives Next's production message redaction), API
+  routes through `errorResponse`. **`rawAuth` is the unwrapped escape hatch and
+  belongs to `/login` and `/login/verify` only** — they call it purely to bounce
+  an already-signed-in visitor, and should render their form during an outage
+  rather than an error screen. `src/lib/signOutOnFailureGuard.test.ts` fails the
+  suite if anything else imports `rawAuth`, or if the bearer lookup in
+  `guards.ts` gains a `catch` that would turn its 500 into a keychain-clearing
+  401. The wrapper costs nothing on the signed-in path and one cookie read when
+  signed out; the query runs only for a cookie with no session.
 - **Every error code an API returns must have copy in every client that calls it.** `src/lib/nativeErrorCopyGuard.test.ts` scans the exchange's call chain (`oauthIdentity.ts`, `oauthReplay.ts`, the route) for thrown codes and fails if one is missing from `ERROR_COPY`/`OAUTH_ERROR_COPY` in `mobile/app/sign-in.tsx`. There is no type across an HTTP boundary that could catch this: `TokenAlreadyUsed` shipped unmapped and showed the generic "Something went wrong" for the one failure a user can fix by tapping the button again. `OAUTH_ERROR_COPY` exists because `RateLimited` means two different things — "your emailed code is already in your inbox" on the OTP path, "you are over the per-address exchange limit" on the OAuth one — so `messageFor` takes a `context` and `runOAuth` is the single call site that passes `"oauth"`.
 
 ## Working with this codebase
