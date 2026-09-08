@@ -2,7 +2,7 @@ import 'server-only';
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory } from '@/server/db/schema';
-import type { ChatKind, ChatMessage, PlanSummary } from '@/types/trip';
+import type { ChatFormMeta, ChatKind, ChatMessage, PlanSummary } from '@/types/trip';
 
 function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
   return {
@@ -14,6 +14,7 @@ function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
     kind: (r.kind as ChatKind) ?? 'ai',
     changes_made: r.changesMade,
     plan_summary: r.planSummary ?? null,
+    form_meta: r.formMeta ?? null,
     created_at: r.createdAt.toISOString(),
   };
 }
@@ -86,6 +87,12 @@ export async function addChatMessage(
    * out of the historical record. See `computePlanSummary`.
    */
   planSummary?: PlanSummary | null,
+  /**
+   * `form_answer` rows only: the answered onboarding step as a widget. Written
+   * here rather than back-filled onto the question row because this row is the
+   * first moment both halves are known — see `ChatFormMeta`.
+   */
+  formMeta?: ChatFormMeta | null,
 ): Promise<ChatMessage> {
   const [row] = await db
     .insert(chatHistory)
@@ -96,6 +103,7 @@ export async function addChatMessage(
       changesMade: changesMade ?? null,
       kind,
       planSummary: planSummary ?? null,
+      formMeta: formMeta ?? null,
     })
     .returning();
   return chatRow(row);

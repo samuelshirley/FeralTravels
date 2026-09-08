@@ -363,6 +363,7 @@ function Workspace({
           ]}
         >
           <ChatPanel
+            onOpenList={() => setTab("list")}
             tripId={tripId}
             // Mid-onboarding, ChatPanel swaps its composer for trip-setup
             // questions; it also guards on `!readonly` internally.

@@ -1,7 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatKind, ChatMessage, OnboardingState, PlanSummary } from '@/types/trip';
+import type {
+  ChatFormMeta,
+  ChatKind,
+  ChatMessage,
+  OnboardingState,
+  PlanSummary,
+} from '@/types/trip';
 import { apiFetch } from '@/lib/api';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
@@ -9,6 +15,11 @@ import { formatDate, parseISODate } from '@/lib/dates';
 import { deriveApplyOutcome } from '@/lib/penny/applyOutcome';
 import Spinner from '@/components/Spinner';
 import PennyPlanningVideo from '@/components/PennyPlanningVideo';
+import {
+  PLAN_READY_FOLLOW_UP,
+  PLAN_READY_TEXT,
+  planReadyHeadlineParts,
+} from '@/lib/planReady';
 import PurchaseSheet from '@/components/PurchaseSheet';
 import { SUPPORT_EMAIL } from '@/lib/paywallCopy';
 import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
@@ -20,13 +31,17 @@ import { PaperclipIcon, SendArrowIcon } from '@/components/icons';
 import { buttonStyle } from '@/components/ui/buttonStyle';
 import { useDeviceLocation } from '@/components/DeviceLocationContext';
 import {
+  answeredChips,
+  buildFormMeta,
+  clientRecordsAnsweredStep,
   cityFromPlace,
+  collapseOnboardingSteps,
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
   type QuestionKind,
 } from '@/lib/onboardingForm';
-import { CalendarBlank, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
+import { CalendarBlank, ListBullets, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
 
 /**
  * Terminal payload shape the server emits as the `applied` SSE event AND stores
@@ -51,6 +66,13 @@ type AppliedEvent = {
   fuelStopsChanged: boolean;
   /** Deterministic, DB-derived plan facts (source of truth for numbers). */
   planSummary?: PlanSummary | null;
+  /**
+   * The server wrote a `plan_ready` row above this reply (first full build,
+   * something actually saved). The client splices the same bubble into the same
+   * position, so the transcript watched live and the transcript after a reload
+   * are the same transcript.
+   */
+  planReady?: boolean;
   truncated: boolean;
 };
 
@@ -125,6 +147,13 @@ interface ChatPanelProps {
   onboardingState?: OnboardingState;
   onTripUpdated: () => void;
   onActivity?: (event: 'thinking' | 'response' | 'error' | 'fuel-planning') => void;
+  /**
+   * Show the itinerary. The plan-ready bubble's "list view" is a real control,
+   * not a phrase — on a phone that means switching tab, on a desktop the list
+   * is already beside the chat and this is a scroll-into-view at most. The
+   * parent owns the layout, so the parent owns what the words do.
+   */
+  onOpenList?: () => void;
   readonly?: boolean;
 }
 
@@ -203,7 +232,13 @@ const CHAT_STARTERS = [
 
 type DeliveryStatus = 'queued' | 'sending' | 'delivered' | 'read' | 'typing' | 'responded';
 
-interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
+interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary' | 'form_meta'> {
+  /**
+   * The answered onboarding step this row records. Optional HERE and required
+   * on `ChatMessage`, deliberately: the server contract should not go soft just
+   * because a dozen optimistic literals in this file don't set it.
+   */
+  form_meta?: ChatFormMeta | null;
   /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
   seq?: number;
   imageDataUrls?: string[];
@@ -267,12 +302,28 @@ interface UIMessage extends Omit<ChatMessage, 'seq' | 'plan_summary'> {
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 /** An optimistic form row (question, answer or Penny's deterministic note). */
+/**
+ * The answered-step widget for an optimistic row, or null when the server owns
+ * it. See `clientRecordsAnsweredStep` — the composite vehicle card is one
+ * client answer over two server steps, so the client records nothing for it.
+ */
+function answeredStepMeta(
+  question: { label: string; kind: QuestionKind; options?: { value: string; label: string }[] },
+  answerLabel: string,
+  rawValue: unknown,
+): ChatFormMeta | null {
+  if (!clientRecordsAnsweredStep(question.kind)) return null;
+  return buildFormMeta(question, answerLabel, rawValue);
+}
+
 function formRow(
   tripId: string,
   role: 'user' | 'assistant',
   content: string,
   kind: ChatKind,
   ts: number,
+  /** On a `form_answer`: the step's widget, so it renders answered straight away. */
+  formMeta?: ChatFormMeta | null,
 ): UIMessage {
   return {
     // Its own namespace. `optimistic-${Date.now()}` is what sendChatMessage
@@ -283,6 +334,7 @@ function formRow(
     role,
     content,
     kind,
+    form_meta: formMeta ?? null,
     changes_made: null,
     created_at: new Date().toISOString(),
   };
@@ -459,6 +511,7 @@ export default function ChatPanel({
   initialHasMore = false,
   onboardingState = 'done',
   onTripUpdated,
+  onOpenList,
   onActivity,
   readonly = false,
 }: ChatPanelProps) {
@@ -952,8 +1005,8 @@ export default function ChatPanel({
         // don't surface.
         console.warn('[Penny] validation failures:', outcome.validationFailures);
       }
-      setMessages((prev) =>
-        prev.map((m) =>
+      setMessages((prev) => {
+        const patched = prev.map((m) =>
           m.id === assistantMsgId
             ? {
                 ...m,
@@ -969,12 +1022,28 @@ export default function ChatPanel({
                 streaming: false,
               }
             : m
-        )
-      );
+        );
+        if (!ev.planReady) return patched;
+        // Idempotent: the heal path can apply the same payload a second time,
+        // and two identical confirmations would be worse than none.
+        if (patched.some((m) => m.kind === 'plan_ready')) return patched;
+        const at = patched.findIndex((m) => m.id === assistantMsgId);
+        const bubble: UIMessage = {
+          id: `plan-ready-${assistantMsgId}`,
+          trip_id: tripId,
+          role: 'assistant',
+          content: PLAN_READY_TEXT,
+          kind: 'plan_ready',
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        };
+        if (at < 0) return [...patched, bubble];
+        return [...patched.slice(0, at), bubble, ...patched.slice(at)];
+      });
       if (outcome.appliedChanges || ev.fuelStopsChanged) onTripUpdated();
       onActivity?.(outcome.applyError ? 'error' : 'response');
     },
-    [onTripUpdated, onActivity]
+    [onTripUpdated, onActivity, tripId]
   );
 
   /** Put an assistant bubble into a stable error state (mirrors failAssistant). */
@@ -1512,6 +1581,11 @@ export default function ChatPanel({
 
   async function submitOnboardingPost(questionKey: string, value: unknown) {
     if (!onboardingSnapshot?.question || onboardingSubmitting) return;
+    // Captured BEFORE the request: the response replaces the snapshot with the
+    // NEXT question, and the step we are recording is this one. Same builder
+    // the server calls when it persists the row, so the widget the driver sees
+    // now is the widget they see after a reload.
+    const askedQuestion = onboardingSnapshot.question;
     setOnboardingSubmitting(true);
     setOnboardingError(null);
     try {
@@ -1531,7 +1605,16 @@ export default function ChatPanel({
            * never rendered at all — and the intent replayed in its place.
            */
           if (result.answerLabel) {
-            additions.push(formRow(tripId, 'user', result.answerLabel, 'form_answer', ts + 1));
+            additions.push(
+              formRow(
+                tripId,
+                'user',
+                result.answerLabel,
+                'form_answer',
+                ts + 1,
+                answeredStepMeta(askedQuestion, result.answerLabel, value),
+              ),
+            );
           }
           // Surface any deterministic acknowledgment (e.g. the start-date
           // confirm / placeholder) as a Penny bubble before her real planning
@@ -1562,6 +1645,7 @@ export default function ChatPanel({
               role: 'user' as const,
               content: result.answerLabel,
               kind: 'form_answer' as const,
+              form_meta: answeredStepMeta(askedQuestion, result.answerLabel, value),
               changes_made: null,
               created_at: new Date().toISOString(),
             },
@@ -1846,7 +1930,11 @@ export default function ChatPanel({
   // submitOnboardingTextAnswer.
   const onboardingComposerDisabled = onboardingUiActive && (onboardingLoading || introTyping);
 
-  const transcript = buildTranscript(messages);
+  // Fold each answered setup step's question row into its answer row, so the
+  // step redraws as the widget it was rather than as two flat bubbles. Rows
+  // without meta — everything written before the column existed, and every
+  // ordinary chat message — pass through untouched.
+  const transcript = buildTranscript(collapseOnboardingSteps(messages));
   // The bubble the current setup question lives in — the LAST form_question
   // whose text is the question the snapshot is asking. Its chips / card render
   // inside that bubble (frames 7b–7e), so the question and its answers are one
@@ -2484,6 +2572,126 @@ export default function ChatPanel({
               >
                 {msg.content && <div className="penny-planning-copy">{msg.content}</div>}
                 <PennyPlanningVideo />
+              </div>
+            );
+          }
+          /*
+           * The deterministic plan-ready confirmation — see lib/planReady.ts.
+           * The words are server-authored and shared; the LAYOUT is here,
+           * because "head over to the list view" is only worth saying if the
+           * list view is one tap away.
+           */
+          if (msg.kind === 'plan_ready') {
+            const parts = planReadyHeadlineParts();
+            return (
+              <div
+                key={msg.id}
+                data-testid="chat-plan-ready"
+                data-message-role="assistant"
+                style={{ maxWidth: '80%', alignSelf: 'flex-start', marginTop }}
+              >
+                <div
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: bubbleRadius('assistant', gp),
+                    background: 'var(--tp-surface)',
+                    fontSize: 14,
+                    color: 'var(--tp-text)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <ListBullets
+                      size={15}
+                      weight="regular"
+                      aria-hidden
+                      style={{ flexShrink: 0, transform: 'translateY(2px)' }}
+                    />
+                    <span>
+                      {parts.before}
+                      {parts.link &&
+                        (onOpenList ? (
+                          <button
+                            type="button"
+                            data-testid="plan-ready-open-list"
+                            onClick={onOpenList}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              font: 'inherit',
+                              color: 'var(--tp-accent-300)',
+                              textDecoration: 'underline',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {parts.link}
+                          </button>
+                        ) : (
+                          parts.link
+                        ))}
+                      {parts.after}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 10 }}>{PLAN_READY_FOLLOW_UP}</div>
+                </div>
+              </div>
+            );
+          }
+          // An ANSWERED setup step. `collapseOnboardingSteps` has already
+          // dropped the question row this one carries, so it stands in the
+          // question's place and draws the whole step: what Penny asked, the
+          // options as offered, and the one the driver chose. Left-aligned like
+          // the question it replaces — the answer is inside the widget now, so
+          // a right-aligned user bubble would be saying it twice.
+          if (msg.kind === 'form_answer' && msg.form_meta) {
+            const meta = msg.form_meta;
+            return (
+              <div
+                key={msg.id}
+                data-testid="chat-answered-step"
+                data-message-role="assistant"
+                style={{ maxWidth: '94%', alignSelf: 'flex-start', marginTop }}
+              >
+                <div
+                  style={{
+                    // Same bubble as the question it stands in for — this is
+                    // still Penny asking, with the answer recorded inside it.
+                    padding: '8px 14px',
+                    borderRadius: bubbleRadius('assistant', gp),
+                    background: 'var(--tp-surface)',
+                    fontSize: 14,
+                    color: 'var(--tp-text)',
+                    lineHeight: 1.5,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div>{meta.question}</div>
+                  {answeredChips(meta).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {answeredChips(meta).map((chip) => (
+                        <span
+                          key={chip.key}
+                          data-testid={
+                            chip.selected ? 'onboarding-chip-chosen' : 'onboarding-chip-answered'
+                          }
+                          style={{
+                            ...chipStyle(chip.selected),
+                            // Answered: a record, not a control. No pointer, no
+                            // hover, nothing to tap — and the unchosen options
+                            // recede so the answer is what the eye lands on.
+                            cursor: 'default',
+                            opacity: chip.selected ? 1 : 0.45,
+                          }}
+                        >
+                          {chip.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           }

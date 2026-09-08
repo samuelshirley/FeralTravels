@@ -19,12 +19,21 @@
  *    imported by the server, rather than defined on the server and
  *    pattern-matched from memory elsewhere.
  *
- * Deliberately NOT here: receipt titles. The §7d treatment that collapsed an
- * answered step to `Check` + `Setting off · Sat 19 Sep` was built and then
- * cancelled (item 9, 2026-09-04): after the first question, onboarding is
- * ordinary chat — each question a Penny bubble, each answer a user bubble,
- * left in the transcript.
+ * 3. HOW AN ANSWERED STEP REDRAWS ITSELF. `buildFormMeta` writes the widget
+ *    down and `collapseOnboardingSteps` folds the pair of rows back into one.
+ *    Both are here rather than in either ChatPanel because the SERVER calls
+ *    the first one when it persists the answer and each CLIENT calls it again
+ *    to render the same step optimistically, before any reload — three callers
+ *    of one rule, which is the exact shape that drifted in (1) and (2).
+ *
+ * NOT the §7d treatment, which collapsed an answered step to `Check` +
+ * `Setting off · Sat 19 Sep`. That was built and cancelled (item 9,
+ * 2026-09-04). This is the third position and the current one (2026-09-08): the
+ * question keeps its OPTIONS, the chosen one rendered as chosen, so scrolling
+ * back through setup shows the form the driver actually filled in rather than a
+ * flat transcript of it.
  */
+import type { ChatFormMeta } from '@/types/trip';
 
 export type QuestionKind =
   | 'text'
@@ -58,6 +67,159 @@ export const COMPOSER_LOCKED_KINDS = ['select', 'vehicle'] as const;
 
 export function locksComposer(kind: QuestionKind): boolean {
   return (COMPOSER_LOCKED_KINDS as readonly string[]).includes(kind);
+}
+
+// ── Answered steps ─────────────────────────────────────────────────────────
+
+/** The question fields `buildFormMeta` needs — a structural subset of `Question`. */
+export interface AnsweredQuestionShape {
+  label: string;
+  kind: QuestionKind;
+  options?: { value: string; label: string }[];
+}
+
+/**
+ * Freeze an answered onboarding step into the row that records it.
+ *
+ * Called by the server when it writes the `form_answer` row, and by each client
+ * when it appends the same answer optimistically — one function so a step
+ * rendered before the reload cannot look different from the same step after it.
+ *
+ * `selected` is resolved by matching the raw submitted value against the option
+ * `value`s FIRST and the labels second. Both are needed: a chip tap submits the
+ * value, while a `chips` step keeps the composer live, so the driver can also
+ * type the exact words of a chip. Anything that matches neither is a typed
+ * answer and leaves `selected` null — which is the correct outcome, not a
+ * failure: "the second week of June" is a valid start date and no chip
+ * expresses it.
+ */
+export function buildFormMeta(
+  question: AnsweredQuestionShape,
+  answerLabel: string,
+  rawValue?: unknown
+): ChatFormMeta {
+  const options = (question.options ?? []).map((o) => ({ value: o.value, label: o.label }));
+  const raw = typeof rawValue === 'string' || typeof rawValue === 'number' ? String(rawValue) : null;
+  const norm = (v: string) => v.trim().toLowerCase();
+  const candidates = [raw, answerLabel].filter((v): v is string => !!v && v.trim().length > 0);
+
+  let selected: string | null = null;
+  for (const c of candidates) {
+    const byValue = options.find((o) => norm(o.value) === norm(c));
+    if (byValue) {
+      selected = byValue.value;
+      break;
+    }
+    const byLabel = options.find((o) => norm(o.label) === norm(c));
+    if (byLabel) {
+      selected = byLabel.value;
+      break;
+    }
+  }
+
+  return { question: question.label, kind: question.kind, options, selected, answerLabel };
+}
+
+/**
+ * Whether a CLIENT should record the answered step itself, or leave it to the
+ * server's rows.
+ *
+ * `vehicle` is the one kind where the two disagree by construction: the card
+ * carries a nickname and a range submitted together, so the client holds ONE
+ * answer ("Duncan · 500 km") while the server writes TWO steps, one per half.
+ * A client-built widget would show the range chips under a pill reading
+ * "Duncan · 500 km", and then turn into two different steps on reload. So the
+ * client stays out of it and the vehicle answer keeps the plain bubble it has
+ * always had.
+ */
+export function clientRecordsAnsweredStep(kind: QuestionKind): boolean {
+  return kind !== 'vehicle';
+}
+
+/** The row fields `collapseOnboardingSteps` reads — satisfied by ChatMessage and by
+ *  each client's UIMessage, neither of which this module should have to know about. */
+export interface CollapsibleRow {
+  kind?: string;
+  content: string;
+  form_meta?: ChatFormMeta | null;
+}
+
+/**
+ * Fold each answered onboarding step's two rows into one.
+ *
+ * A step is stored as it happened: a `form_question` row, then a `form_answer`
+ * row. Rendered literally that is a question bubble followed by a bare text
+ * bubble, and the options are nowhere. This pairs each `form_answer` that
+ * carries `form_meta` with the nearest EARLIER, still-unclaimed `form_question`
+ * naming the same label, drops that question row, and leaves the answer row
+ * standing in its place — so the widget renders exactly where the question was,
+ * and chronological order is untouched.
+ *
+ * Three properties worth stating, because each one is a bug if it goes:
+ *  - NEAREST EARLIER, not "any": the clarify path asks `trip_date` twice under
+ *    different labels, and a range_help detour returns to a question already
+ *    asked. Claiming the first match anywhere would collapse the wrong pair.
+ *  - STILL UNCLAIMED: one question row can only answer for one step.
+ *  - Rows WITHOUT meta are untouched. Every row written before the column
+ *    existed has none, so an old trip keeps rendering as the two plain bubbles
+ *    it always did rather than losing its answer.
+ */
+export function collapseOnboardingSteps<T extends CollapsibleRow>(rows: T[]): T[] {
+  const drop = new Set<number>();
+  for (let i = 0; i < rows.length; i++) {
+    const meta = rows[i].form_meta;
+    if (rows[i].kind !== 'form_answer' || !meta) continue;
+    /*
+     * A step that offered NOTHING has no widget to redraw — the opening trip
+     * description is free text, and rendering it as one enormous pill under
+     * its own question is worse than the plain question-then-answer bubbles it
+     * replaced. Those steps keep the shape they have always had.
+     */
+    if (meta.options.length === 0) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      if (drop.has(j)) continue;
+      if (rows[j].kind !== 'form_question') continue;
+      if (rows[j].content !== meta.question) continue;
+      drop.add(j);
+      break;
+    }
+  }
+  return drop.size === 0 ? rows : rows.filter((_, i) => !drop.has(i));
+}
+
+/** One chip on an answered step, as it should be drawn. */
+export interface AnsweredChip {
+  key: string;
+  label: string;
+  /** The driver's answer. Exactly one chip in the list carries this. */
+  selected: boolean;
+}
+
+/**
+ * The chips an ANSWERED step should draw, decided once for both platforms.
+ *
+ * The two clients cannot share a renderer — one emits `<button>` with inline
+ * styles, the other a `Pressable` with a StyleSheet — so what travels is the
+ * DECISION, not the markup. Otherwise "which chip is lit" would be written
+ * twice and would eventually disagree, which is the failure `TAP_TO_ANSWER_KINDS`
+ * already exists to prevent one row further up.
+ *
+ * A typed answer that matched no option is appended as its OWN lit chip rather
+ * than dropped. That case is not an edge: `chips` steps keep the composer live
+ * on purpose, so "Thu 8 Oct" on a step offering Next Saturday / In a month /
+ * Not sure yet is the ordinary path, and a step that showed three unlit chips
+ * and no answer would be a worse record than the flat bubble it replaced.
+ */
+export function answeredChips(meta: ChatFormMeta): AnsweredChip[] {
+  const chips: AnsweredChip[] = meta.options.map((o) => ({
+    key: o.value,
+    label: o.label,
+    selected: meta.selected != null && o.value === meta.selected,
+  }));
+  if (meta.selected == null && meta.answerLabel.trim().length > 0) {
+    chips.push({ key: `__typed__:${meta.answerLabel}`, label: meta.answerLabel, selected: true });
+  }
+  return chips;
 }
 
 // ── Question labels ────────────────────────────────────────────────────────
