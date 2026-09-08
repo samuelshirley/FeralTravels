@@ -376,6 +376,8 @@ jobs:
               '',
               `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
+              '⚠️ **Use this URL, not one from an earlier push.** The Neon branch is dropped and recreated on every push, so older preview deployments still point at a database that no longer exists. They fail as an apparent sign-out — you get bounced to `/login` mid-session and signing in again does not help.',
+              '',
               `Built from \`${sha}\` · [CI run](${runUrl})`,
             ].join('\n');
 

@@ -1,5 +1,5 @@
 import 'server-only';
-import NextAuth, { type DefaultSession } from 'next-auth';
+import NextAuth, { type DefaultSession, type Session } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Apple from 'next-auth/providers/apple';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
@@ -15,6 +15,7 @@ import { syncAdminFlagOnSignIn } from './admin';
 import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
+import { assertSessionStoreReachable, readSessionCookie } from './sessionStore';
 
 declare module 'next-auth' {
   interface Session {
@@ -43,7 +44,7 @@ export const isAppleSignInConfigured = Boolean(
   process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET
 );
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const { handlers, auth: rawAuth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
     usersTable: users,
     accountsTable: accounts,
@@ -232,3 +233,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+/**
+ * `auth()`, but it never reports a database failure as "signed out".
+ *
+ * WHY THIS WRAPPER EXISTS. Auth.js catches an adapter throw, logs it as
+ * `SessionTokenError` and hands back `null` — the same value a visitor with no
+ * cookie produces. Every guard in the app then reads that `null` as "not
+ * signed in" and redirects to `/login`, so a Neon blip presents to every
+ * signed-in user as a silent sign-out. That is the exact failure seen on
+ * 2026-09-08 (see `SessionStoreUnavailableError` for the log lines).
+ *
+ * WHY HERE AND NOT IN THE THIRTEEN GUARDS. `if (!session?.user)
+ * redirect('/login')` is repeated in thirteen pages and re-derived in the API
+ * guards. A fix applied there is a fix each new page can forget; applied to the
+ * export, no call site can opt out and none of them needed editing. Every
+ * caller in `src/` is a bare `await auth()`, so the signature is unchanged.
+ *
+ * COST. Nothing on the signed-in path — the wrapper returns before doing any
+ * work. One cookie read for a signed-out visitor. The query runs only in the
+ * genuinely rare case of a cookie with no resolvable session, which is the one
+ * case where the answer actually matters.
+ *
+ * Throws `SessionStoreUnavailableError` (503). API routes surface that through
+ * `errorResponse`; pages surface it through `src/app/error.tsx`.
+ */
+export const auth = async (): Promise<Session | null> => {
+  const session = await rawAuth();
+  if (session?.user) return session;
+
+  const token = await readSessionCookie();
+  // No cookie: genuinely signed out. The overwhelmingly common case, and the
+  // one that must stay free of a database round-trip.
+  if (!token) return session;
+
+  // A cookie, but no session. Either the row is gone (fine — sign them out) or
+  // the store is unreachable (not fine, and not a sign-out). Asking is the
+  // only way to tell, and it throws when the answer is the second one.
+  await assertSessionStoreReachable(token);
+  return session;
+};
+
+/**
+ * The unwrapped Auth.js `auth()`, which reports an unreachable store as `null`.
+ *
+ * For the SIGN-IN pages only (`/login`, `/login/verify`). They call `auth()`
+ * solely to bounce somebody who is already signed in, so the honest behaviour
+ * during an outage is to render the form rather than throw an error screen at
+ * a visitor who was only trying to sign in. Nowhere else may use it —
+ * `rawAuthUsage.test.ts` fails the suite if it does.
+ */
+export { handlers, signIn, signOut, rawAuth };

@@ -302,8 +302,14 @@ export function errorResponse(err: unknown): Response {
   const errorId = generateErrorId();
 
   if (err instanceof HttpError) {
-    // 4xx errors: log at warn level (expected client errors)
-    console.warn(`[${errorId}] HTTP ${err.status}: ${err.message}`);
+    /*
+     * 4xx are expected client errors and log at warn. A 5xx HttpError is not:
+     * `SessionStoreUnavailableError` is thrown when the database cannot be
+     * reached, which is the thing you most want to find in the log, and it
+     * would otherwise be filed beside every routine 401.
+     */
+    const log = err.status >= 500 ? console.error : console.warn;
+    log(`[${errorId}] HTTP ${err.status}: ${err.message}`);
     return Response.json(
       { error: err.message, errorId, ...(err.details ?? {}) },
       { status: err.status },

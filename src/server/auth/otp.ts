@@ -6,6 +6,7 @@ import { Resend } from 'resend';
 import { isFixtureRecipient } from './test-endpoints';
 import { renderOtpEmail } from './otp-email';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
+import { SECURE_SESSION_COOKIE_NAME, SESSION_COOKIE_NAME } from '@/lib/sessionCookie';
 import { syncAdminFlagOnSignIn } from './admin';
 import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { cookies } from 'next/headers';
@@ -342,9 +343,7 @@ function useSecureSessionCookies(): boolean {
 }
 
 function getSessionCookieName(): string {
-  return useSecureSessionCookies()
-    ? '__Secure-authjs.session-token'
-    : 'authjs.session-token';
+  return useSecureSessionCookies() ? SECURE_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME;
 }
 
 /**

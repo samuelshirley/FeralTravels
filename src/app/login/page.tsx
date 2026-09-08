@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { auth, signIn, isAppleSignInConfigured } from '@/server/auth';
+import { rawAuth, signIn, isAppleSignInConfigured } from '@/server/auth';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
 import { AppleMark, GoogleMark, InfoIcon } from '@/components/icons';
 
@@ -44,7 +44,14 @@ function describeError(code?: string): string | null {
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const session = await auth();
+  /*
+   * `rawAuth`, not `auth`: this page exists so somebody can sign IN, and it
+   * calls this only to bounce a visitor who already is. During a session-store
+   * outage the strict `auth()` throws, which would replace the sign-in form
+   * with an error screen for the one person the outage has not signed out.
+   * Rendering the form is the honest degraded behaviour.
+   */
+  const session = await rawAuth();
   const callbackUrl = searchParams.callbackUrl || '/trips';
   if (session?.user) redirect(callbackUrl);
 

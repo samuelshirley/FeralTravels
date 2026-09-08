@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { isPublicPath } from '@/lib/paywallPaths';
 import { GET_THE_APP_PATH, isBlockedWebPath, webAppEnabled } from '@/lib/webAccess';
-
 // Edge-safe cookie-only session check. Real auth happens in server pages /
 // API routes via `auth()` (which talks to Postgres on the Node runtime).
-// In production Auth.js prefixes the cookie with `__Secure-`.
-const SESSION_COOKIE_NAMES = ['authjs.session-token', '__Secure-authjs.session-token'];
+// In production Auth.js prefixes the cookie with `__Secure-`. Both names live
+// in `lib/sessionCookie`, which is pure so it can be imported on the edge —
+// the Node-side session guard has to find the same cookie this file checks for.
+import { SESSION_COOKIE_NAMES } from '@/lib/sessionCookie';
 
 /**
  * The public allowlist moved to `src/lib/paywallPaths.ts` — it is now shared
