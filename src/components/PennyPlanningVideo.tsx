@@ -16,6 +16,14 @@ import { useEffect, useRef, useState } from 'react';
  *
  * Degrades gracefully: reduced-motion holds the poster still frame, and a
  * missing/blocked asset renders nothing so the caption stands alone.
+ *
+ * RESUMES WHEN THE PAGE COMES BACK. A backgrounded tab (and, on iOS, a
+ * backgrounded PWA) has its media paused by the browser, and `autoPlay` is a
+ * load-time attribute — it does not fire again on return. The clip is the only
+ * thing on screen saying Penny is still working during a 2–4 minute planning
+ * turn, so a clip that comes back frozen reads as an app that has died. The
+ * native port carries the same rule for the same reason
+ * (mobile/components/chat/PennyPlanningVideo.tsx).
  */
 
 const ASSET_VERSION = '2';
@@ -52,6 +60,27 @@ export default function PennyPlanningVideo() {
         /* autoplay blocked — poster frame remains visible */
       });
     }
+  }, [reducedMotion]);
+
+  // Re-issue play() when the page becomes visible again. Reduce Motion still
+  // wins: it is a user setting, not a playback state.
+  useEffect(() => {
+    if (reducedMotion) return;
+    const resume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const v = videoRef.current;
+      if (!v || !v.paused) return;
+      const p = v.play?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('focus', resume);
+    window.addEventListener('pageshow', resume);
+    return () => {
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('pageshow', resume);
+    };
   }, [reducedMotion]);
 
   if (!mediaOk) return null;

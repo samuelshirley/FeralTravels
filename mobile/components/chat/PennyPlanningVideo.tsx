@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AccessibilityInfo, Image, StyleSheet, View } from "react-native";
+import { AccessibilityInfo, AppState, Image, StyleSheet, View } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { theme } from "@/lib/theme";
 
@@ -27,6 +27,18 @@ import { theme } from "@/lib/theme";
  *     audio alone while muted, but that is a property of the current value of
  *     a flag, not of the clip; `mixWithOthers` is the rule stated outright.
  *   - Plays at natural 1x (playbackRate pinned to 1 — never sped up).
+ *
+ * RESUMES ON FOREGROUND, and that is not belt-and-braces. expo-video's
+ * `VideoManager.onAppBackgrounded()` calls `player.ref.pause()` on every
+ * registered VideoView whose player is not `staysActiveInBackground` (ours is
+ * not, deliberately — a dog clip must not hold an audio session), and its
+ * `onAppForegrounded()` is an EMPTY function body
+ * (`expo-video@3.0.16/ios/VideoManager.swift`). So nothing anywhere restarts
+ * it: background the app once while Penny is planning and the clip comes back
+ * a frozen frame and stays that way for the rest of the turn. Since the clip is
+ * the ONLY thing on screen saying she is still working — the planning turn is
+ * routinely 2–4 minutes — a frozen clip reads as an app that has died, which is
+ * exactly what it was reported as.
  */
 
 const CLIP = require("../../assets/penny-planning.mp4");
@@ -79,6 +91,17 @@ export default function PennyPlanningVideo() {
     if (reducedMotion) player.pause();
     else player.play();
   }, [reducedMotion, player]);
+
+  // Foreground: restart the clip expo-video paused on the way out. Reduce
+  // Motion still wins — it is a user setting, not a playback state — so a
+  // driver who asked for stillness never gets a clip started behind their back.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || reducedMotion) return;
+      player.play();
+    });
+    return () => sub.remove();
+  }, [player, reducedMotion]);
 
   if (!mediaOk) return null;
 
