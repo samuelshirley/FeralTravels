@@ -58,6 +58,7 @@ export const SHARED_FILES = [
   // BECAUSE they read the same constant; the date step once drew three chips
   // that did nothing because the two lists were spelled out separately.
   ['src/lib/onboardingForm.ts', 'mobile/shared/lib/onboardingForm.ts'],
+  ['src/lib/planReady.ts', 'mobile/shared/lib/planReady.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

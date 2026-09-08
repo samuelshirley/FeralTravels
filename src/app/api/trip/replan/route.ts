@@ -18,6 +18,7 @@ import {
   NotFoundError,
 } from '@/server/auth/guards';
 import { addChatMessage } from '@/server/repos/chat';
+import { PLAN_READY_TEXT } from '@/lib/planReady';
 import {
   createTurn,
   getTurnByKey,
@@ -399,7 +400,7 @@ export async function POST(req: Request) {
           // original client closes (the function isn't cancelled on disconnect:
           // there's no vercel.json supportsCancellation flag).
           await runTurnWork(
-            { turnId: turn.id, tripId, userId, message, images: turnImages },
+            { turnId: turn.id, tripId, userId, message, images: turnImages, handoff: body.handoff },
             send,
           );
           await drainQueuedTurns(tripId);
@@ -471,10 +472,21 @@ async function runTurnWork(
     userId: string;
     message: string;
     images: PennyTurnImage[];
+    /**
+     * True only for the turn that ends onboarding — the first full build. It
+     * earns the deterministic `plan_ready` confirmation; every later turn is an
+     * edit to a plan the driver has already seen and gets none.
+     *
+     * Not read off the turn row, and not derivable from one: a DRAINED queued
+     * turn passes false, which is correct, because the handoff is always the
+     * first turn on a trip with nothing else in flight to queue behind.
+     */
+    handoff?: boolean;
   },
   send: (e: Record<string, unknown>) => void
 ): Promise<void> {
   const { turnId, tripId, userId, message, images } = ctx;
+  const isHandoff = ctx.handoff === true;
   try {
     // Message lifecycle events for the chat UX. `received` fires
     // right after the user message is persisted (≈ "delivered"),
@@ -846,6 +858,23 @@ async function runTurnWork(
               `\n\n⚠️ Correction: none of these changes could be saved — ` +
               `the app rejected them (${firstError}). Your plan is unchanged.`;
           }
+          /*
+           * The first full build gets its confirmation from the app, not from
+           * Penny — see src/lib/planReady.ts. Written BEFORE her reply so it
+           * takes the lower `seq` and sits above it on every reload; the live
+           * client is told to splice it in the same place (`planReady` on the
+           * applied payload) so what the driver watches land and what they
+           * scroll back to are the same transcript.
+           *
+           * Only when something was actually saved. A handoff turn that applied
+           * nothing has no plan to send anyone to look at, and "trip is
+           * planned" over an empty itinerary is the honest-transcript failure
+           * this repo has already shipped once.
+           */
+          const planReady = isHandoff && appliedCount > 0;
+          if (planReady) {
+            await addChatMessage(tripId, 'assistant', PLAN_READY_TEXT, null, 'plan_ready');
+          }
           await addChatMessage(
             tripId,
             'assistant',
@@ -881,6 +910,8 @@ async function runTurnWork(
             planSummary,
             retryCount: final.retryCount,
             truncated: final.truncated,
+            /** Splice the deterministic plan-ready bubble in ABOVE this reply. */
+            planReady,
           };
           send({ kind: 'applied', ...appliedPayload });
 
