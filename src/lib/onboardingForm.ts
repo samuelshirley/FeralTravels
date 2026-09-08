@@ -145,6 +145,35 @@ export interface CollapsibleRow {
 }
 
 /**
+ * Whether an answered step redraws itself as the WIDGET (question + the options
+ * as offered, the chosen one lit) instead of the plain question-then-answer
+ * bubbles.
+ *
+ * A step that offered NOTHING has no widget to redraw — the opening trip
+ * description is free text, and rendering it as one enormous pill under its own
+ * question is worse than the bubbles it replaced. Those steps keep the shape
+ * they have always had.
+ *
+ * THIS IS A PREDICATE AND NOT AN INLINE CHECK because it is asked in three
+ * places that must agree: this file's `collapseOnboardingSteps`, which decides
+ * whether the QUESTION row survives, and both ChatPanels, which decide what the
+ * ANSWER row draws. They disagreed once — collapse skipped zero-option steps
+ * while the renderers fired on `form_meta` being present at all, and the server
+ * writes meta on every `form_answer` row. The opening description therefore got
+ * the worst of both: its question bubble stayed AND its answer became the pill,
+ * so the driver's own words were no longer a user bubble anywhere. Caught by
+ * `onboarding-flow.spec.ts` on PR #28, 2026-09-08.
+ */
+/* A type guard, not a boolean: the renderers read `meta.options` on the line
+ * after asking, and a plain boolean would leave them narrowing it again by
+ * hand — which is how the two checks drifted apart in the first place. */
+export function redrawsAsAnsweredStep(
+  meta: ChatFormMeta | null | undefined
+): meta is ChatFormMeta {
+  return !!meta && meta.options.length > 0;
+}
+
+/**
  * Fold each answered onboarding step's two rows into one.
  *
  * A step is stored as it happened: a `form_question` row, then a `form_answer`
@@ -169,13 +198,9 @@ export function collapseOnboardingSteps<T extends CollapsibleRow>(rows: T[]): T[
   for (let i = 0; i < rows.length; i++) {
     const meta = rows[i].form_meta;
     if (rows[i].kind !== 'form_answer' || !meta) continue;
-    /*
-     * A step that offered NOTHING has no widget to redraw — the opening trip
-     * description is free text, and rendering it as one enormous pill under
-     * its own question is worse than the plain question-then-answer bubbles it
-     * replaced. Those steps keep the shape they have always had.
-     */
-    if (meta.options.length === 0) continue;
+    // The question row only goes away if something is going to stand in its
+    // place — the same test the renderers make about the answer row.
+    if (!redrawsAsAnsweredStep(meta)) continue;
     for (let j = i - 1; j >= 0; j--) {
       if (drop.has(j)) continue;
       if (rows[j].kind !== 'form_question') continue;

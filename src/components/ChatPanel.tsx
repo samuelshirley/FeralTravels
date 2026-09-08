@@ -36,6 +36,7 @@ import {
   clientRecordsAnsweredStep,
   cityFromPlace,
   collapseOnboardingSteps,
+  redrawsAsAnsweredStep,
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
@@ -2644,7 +2645,13 @@ export default function ChatPanel({
           // options as offered, and the one the driver chose. Left-aligned like
           // the question it replaces — the answer is inside the widget now, so
           // a right-aligned user bubble would be saying it twice.
-          if (msg.kind === 'form_answer' && msg.form_meta) {
+          //
+          // `redrawsAsAnsweredStep` and not `msg.form_meta` alone: the server
+          // writes meta on EVERY form_answer row, and a step that offered no
+          // options keeps its plain bubbles. Gating on truthiness here while
+          // collapse gated on the options made the free-text opening
+          // description a pill under a question bubble that never went away.
+          if (msg.kind === 'form_answer' && redrawsAsAnsweredStep(msg.form_meta)) {
             const meta = msg.form_meta;
             return (
               <div

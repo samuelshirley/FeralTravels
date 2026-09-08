@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   TAP_TO_ANSWER_KINDS,
+  redrawsAsAnsweredStep,
   cityFromPlace,
   intentPlaceholder,
   isTapToAnswerKind,
@@ -363,8 +364,16 @@ describe('answered steps are drawn from the shared decision, on both platforms',
     // An answered step that could be tapped would submit an answer to a
     // question that has already advanced.
     const web = read('src/components/ChatPanel.tsx');
+    // Anchored on the CURRENT condition. When this drifted, `indexOf` returned
+    // -1 and `slice(-1, n)` still produced a non-empty string, so the web half
+    // of this guard passed while guarding nothing — hence the explicit
+    // toBeGreaterThan(-1) below rather than trusting the slice's length.
+    const webStart = web.indexOf(
+      "if (msg.kind === 'form_answer' && redrawsAsAnsweredStep(msg.form_meta))"
+    );
+    expect(webStart).toBeGreaterThan(-1);
     const webBlock = web.slice(
-      web.indexOf("if (msg.kind === 'form_answer' && msg.form_meta)"),
+      webStart,
       web.indexOf("const isQueued = msg.deliveryStatus === 'queued';")
     );
     expect(webBlock.length).toBeGreaterThan(0);
@@ -372,12 +381,83 @@ describe('answered steps are drawn from the shared decision, on both platforms',
     expect(webBlock).not.toContain('onClick');
 
     const native = read('mobile/components/ChatPanel.tsx');
+    const nativeStart = native.indexOf(
+      'if (msg.kind === "form_answer" && redrawsAsAnsweredStep(msg.form_meta))'
+    );
+    expect(nativeStart).toBeGreaterThan(-1);
     const nativeBlock = native.slice(
-      native.indexOf('if (msg.kind === "form_answer" && msg.form_meta)'),
+      nativeStart,
       native.indexOf('const isUser = msg.role === "user";')
     );
     expect(nativeBlock.length).toBeGreaterThan(0);
     expect(nativeBlock).not.toContain('<Pressable');
     expect(nativeBlock).not.toContain('onPress');
+  });
+});
+
+/**
+ * The renderers and the collapse must ask the SAME question.
+ *
+ * They did not, and the free-text opening description paid for it: collapse
+ * kept its question row (nothing was going to stand in its place) while both
+ * ChatPanels drew the answered-step widget on `form_meta` being present at all.
+ * The server writes meta on every `form_answer` row, so the driver's opening
+ * words stopped being a user bubble anywhere and became a pill under a question
+ * that never went away. `onboarding-flow.spec.ts` caught it on PR #28, but only
+ * after a five-minute preview deploy — these run in milliseconds.
+ */
+describe('redrawsAsAnsweredStep', () => {
+  const meta = (options: { value: string; label: string }[]) => ({
+    question: 'Q',
+    kind: options.length ? 'chips' : 'text',
+    options,
+    selected: null,
+    answerLabel: 'A',
+  });
+
+  it('is false for a step that offered nothing, so it keeps its plain bubbles', () => {
+    expect(redrawsAsAnsweredStep(meta([]))).toBe(false);
+  });
+
+  it('is true once there is a widget to redraw', () => {
+    expect(redrawsAsAnsweredStep(meta([{ value: '6', label: '6 h' }]))).toBe(true);
+  });
+
+  it('is false for a row with no meta at all (every non-form row)', () => {
+    expect(redrawsAsAnsweredStep(null)).toBe(false);
+    expect(redrawsAsAnsweredStep(undefined)).toBe(false);
+  });
+
+  it('agrees with collapseOnboardingSteps about which questions survive', () => {
+    // The property that actually broke: a question row goes away IF AND ONLY IF
+    // its answer is going to redraw as the step.
+    const rows = [
+      { kind: 'form_question', content: 'Free text?', form_meta: null },
+      { kind: 'form_answer', content: 'my own words', form_meta: { ...meta([]), question: 'Free text?' } },
+      { kind: 'form_question', content: 'Chips?', form_meta: null },
+      {
+        kind: 'form_answer',
+        content: '6 h',
+        form_meta: { ...meta([{ value: '6', label: '6 h' }]), question: 'Chips?' },
+      },
+    ];
+    const kept = collapseOnboardingSteps(rows).map((r) => r.content);
+    expect(kept).toContain('Free text?');   // nothing replaces it
+    expect(kept).not.toContain('Chips?');   // the widget stands in its place
+    expect(kept).toContain('my own words'); // and the answer is still there
+  });
+});
+
+describe('both ChatPanels gate on the shared predicate', () => {
+  const web = readFileSync(join(__dirname, '../components/ChatPanel.tsx'), 'utf8');
+  const native = readFileSync(join(__dirname, '../../mobile/components/ChatPanel.tsx'), 'utf8');
+
+  it.each([
+    ['web', web],
+    ['native', native],
+  ])('%s draws the answered step via redrawsAsAnsweredStep', (_name, source) => {
+    expect(source).toContain('redrawsAsAnsweredStep(msg.form_meta)');
+    // The truthiness check is the bug. Either quote style, both platforms.
+    expect(source).not.toMatch(/form_answer["'] && msg\.form_meta\)/);
   });
 });

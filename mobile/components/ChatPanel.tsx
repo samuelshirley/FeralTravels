@@ -45,6 +45,7 @@ import {
   type QuestionKind,
   cityFromPlace,
   collapseOnboardingSteps,
+  redrawsAsAnsweredStep,
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
@@ -1881,7 +1882,7 @@ export default function ChatPanel({
           // options as offered, and the one the driver chose. Left-aligned like
           // the question it replaces — the answer is inside the widget now, so
           // a right-aligned user bubble would say it twice. Mirrors the web.
-          if (msg.kind === "form_answer" && msg.form_meta) {
+          if (msg.kind === "form_answer" && redrawsAsAnsweredStep(msg.form_meta)) {
             const meta = msg.form_meta;
             const chips = answeredChips(meta);
             return (
