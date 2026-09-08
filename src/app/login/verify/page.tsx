@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { auth } from '@/server/auth';
+import { rawAuth } from '@/server/auth';
 import { getResendCooldownRemainingMs, retryAfterSeconds } from '@/server/auth/otp';
 import { VerifyForm } from './verify-form';
 
@@ -14,7 +14,9 @@ interface VerifyPageProps {
 }
 
 export default async function VerifyPage({ searchParams }: VerifyPageProps) {
-  const session = await auth();
+  // `rawAuth` for the same reason as /login: the second half of signing in
+  // must still render its form when the session store is unreachable.
+  const session = await rawAuth();
   const callbackUrl = searchParams.callbackUrl || '/trips';
 
   // Already signed in — send them on their way.

@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 vi.mock('@/server/db/client', () => ({ db: {}, schema: {} }));
 
-import { paywallEnabledFromValue, PAYWALL_META_KEY } from './switch';
+import { enforcementApplies, paywallEnabledFromValue, PAYWALL_META_KEY } from './switch';
 
 /**
  * The paywall's master switch, as a rule rather than as a query.
@@ -53,5 +53,39 @@ describe('paywallEnabledFromValue', () => {
     // Pinned because two places write it: `setPaywallEnabled` and any hand fix
     // from psql when the admin page itself is the thing that is broken.
     expect(PAYWALL_META_KEY).toBe('paywall_enabled');
+  });
+});
+
+/**
+ * The two ways to be enforced, as a rule rather than as two queries.
+ *
+ * These exist because the per-account override was added for one purpose — to
+ * prove the wall works while the global switch stays off for the web demo —
+ * and every one of these cases is a way that purpose could be quietly lost.
+ */
+describe('enforcementApplies', () => {
+  it('enforces on the override alone, which is the whole point', () => {
+    // The demo case: the deployment-wide switch is off because the web app is
+    // what is being shown to people, and this one test account is walled
+    // anyway. If this ever returns false the feature has no reason to exist.
+    expect(enforcementApplies({ globalOn: false, forcedForUser: true })).toBe(true);
+  });
+
+  it('enforces on the global switch alone', () => {
+    // Launch day: the switch goes on and every account is enforced without
+    // anybody visiting a row. An AND here would mean per-account opt-in to a
+    // paywall, which is not a paywall.
+    expect(enforcementApplies({ globalOn: true, forcedForUser: false })).toBe(true);
+  });
+
+  it('enforces when both are set', () => {
+    expect(enforcementApplies({ globalOn: true, forcedForUser: true })).toBe(true);
+  });
+
+  it('enforces nobody when neither is set — the state production is in today', () => {
+    // 28 of 29 production accounts were blocked the instant the paywall
+    // deployed, none of them told a trial existed and none able to pay. This
+    // is the case that must never drift.
+    expect(enforcementApplies({ globalOn: false, forcedForUser: false })).toBe(false);
   });
 });

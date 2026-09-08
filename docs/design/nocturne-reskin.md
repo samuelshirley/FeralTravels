@@ -152,6 +152,8 @@ Labels **verbatim from `onboarding.ts:510`** — `Metric (km)` and `Imperial (ch
 
 ~~Answered steps above collapse to one-line receipts: `Check` icon in accent + 11.5px subtle text (`Trip · Lisbon`, `Setting off · Sat 19 Sep 2026`). Do this instead of leaving the full Q&A bubbles in the transcript.~~ **Superseded 2026-09-04** (`docs/bugs/mobile-web-nav-units-prompt.md` item 9): answered steps stay in the transcript as ordinary chat bubbles — a Penny bubble per question, a right-aligned user bubble per answer. Only step 1 (7b) gets the special treatment. The receipts shipped briefly and were removed.
 
+**Superseded AGAIN 2026-09-08 — this is the third position and the one that ships.** An answered step now keeps the OPTIONS it offered, with the chosen one lit and the others receded, inside the same Penny bubble the question was in; the right-aligned user bubble for that step goes away, because the answer is inside the widget. The point is the one the receipts and the plain bubbles both missed: scrolling back through setup should show the FORM the driver filled in, not a transcript of a form whose shape is gone. Two exceptions, both deliberate — a step that offered no options at all (the free-text opening description) keeps its plain question-then-answer bubbles, and so does the 7e vehicle card, which is one client answer over two server steps. Backed by `chat_history.form_meta` (migration 0034); the decision of what to draw is shared in `src/lib/onboardingForm.ts` so the two platforms cannot disagree.
+
 ### 7e — Onboarding 4/4 · `vehicle.name` + `range_km`, one card
 
 Merge the two vehicle questions into a single in-transcript form. Penny: `Last thing — what are you driving?`

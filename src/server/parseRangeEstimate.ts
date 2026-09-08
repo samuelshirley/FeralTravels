@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { anthropicApiKey } from '@/lib/anthropicKey';
 import { RANGE_ESTIMATE_MODEL } from '@/lib/models';
 import {
   FUEL_STOP_SPACING_KM_MIN,
@@ -30,8 +31,9 @@ import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const apiKey = anthropicApiKey();
+  if (!apiKey) return null;
+  if (!_client) _client = new Anthropic({ apiKey });
   return _client;
 }
 

@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicApiKey } from "@/lib/anthropicKey";
 import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
 import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
@@ -33,7 +34,19 @@ import { appendContinuationNudge } from "@/lib/penny/autoContinue";
 // no-double-user-turn invariant of the auto-continue plumbing.
 export { appendContinuationNudge };
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+/*
+ * Lazily constructed, and the laziness is the point: `anthropicApiKey()` picks
+ * the CI key on every non-production runtime, and a client built at import time
+ * would capture whatever the environment held when this module was first
+ * required — before Next has finished wiring the request's env on some paths,
+ * and impossible to exercise from a test. The other three callers already
+ * memoise the same way.
+ */
+let _client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!_client) _client = new Anthropic({ apiKey: anthropicApiKey() });
+  return _client;
+}
 
 // Single source of truth for model IDs lives in @/lib/models — update there when
 // a model is sunset.
@@ -251,6 +264,25 @@ You MAY still name PLACES and qualitative choices — which cities the route run
 
 This applies whenever you changed the schedule. Skip it for pure questions and chit-chat.
 </plan_summary_format>
+
+<handoff_turn>
+The FIRST full build — the turn right after setup, where you create the whole trip from the driver's opening description — is the one turn where the app also renders a deterministic PLAN READY card beneath your message. That card says the trip is planned, sends them to the list view, and tells them they can paste a Google Maps link to change a day's destination.
+
+So on that turn the card owns the confirmation and the next step, and your message is ONE thing only: the honest calls you made. What you dropped and why, and any real risk in the plan they would not spot from the itinerary alone (no slack, a long gravel day, a border crossing that may be slow).
+
+On that turn you MUST NOT:
+  - confirm that the plan is saved, or that anything was created — the card says so
+  - tell them to look at the list, the map, or anywhere else — the card is the link
+  - recite the route back ("Big Bend → Carlsbad → Zion → ...") — the itinerary IS that list, in order, with the days attached
+  - list the tasks you saved — they are on the trip
+  - end with an offer or a question ("Want to adjust anything?") — the card already invites them back
+  - use bullets, headings, or bold. Prose. The <style> rule already said this and it is broken most often here, on the longest message in the app.
+
+Two to four short sentences. If you genuinely made no trade-offs worth naming, say so in one sentence and stop — a short message is the correct output, not an under-delivered one.
+
+GOOD: "I left out White Sands and Joshua Tree — both pull the loop far enough west that the drive back eats more than the stops are worth. It is a tight trip with no spare day, so any weather or a slow border crossing puts you behind; if you can stretch the window I would put the extra nights at Zion and Bryce."
+BAD:  "Plan is fully saved — 5 parks in a big loop from Austin: Big Bend → Carlsbad Caverns → Zion → Bryce Canyon → Grand Canyon → home. **A few honest calls I made:** ... Want to adjust any stops?" (confirms the save, recites the route, uses bullets and bold, and closes with an offer — four things the card does or forbids)
+</handoff_turn>
 
 <units>
 The database stores all distances in kilometers. Check \`context.units_pref\` to know the user's display preference:
@@ -746,7 +778,7 @@ export async function* replanStream(
       yield { kind: "iteration_start", index: currentIteration };
       let response: Anthropic.Message;
       try {
-        response = await client.messages.create({
+        response = await getClient().messages.create({
           model: MODEL,
           max_tokens: 4096,
           system: cachedSystem,

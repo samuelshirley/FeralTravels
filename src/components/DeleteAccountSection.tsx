@@ -186,7 +186,18 @@ export default function DeleteAccountSection() {
               htmlFor="delete-account-confirm"
               style={{ display: 'block', fontSize: 13, color: 'var(--tp-text)', marginBottom: 6 }}
             >
-              Type <strong>{DELETE_CONFIRM_PHRASE}</strong> to confirm
+              Type{' '}
+              {/* The same face as the armed Delete label (600). The phrase is
+                  the thing the reader has to reproduce exactly, so it has to
+                  stand apart from the sentence around it; at body weight
+                  people typed "delete". */}
+              <strong
+                data-testid="delete-account-phrase"
+                style={{ fontWeight: 600, color: 'var(--tp-text)' }}
+              >
+                {DELETE_CONFIRM_PHRASE}
+              </strong>{' '}
+              to confirm
             </label>
             <input
               id="delete-account-confirm"
@@ -226,6 +237,7 @@ export default function DeleteAccountSection() {
               data-testid="delete-account-confirm-button"
               onClick={confirmDelete}
               disabled={!armed || deleting}
+              data-armed={armed && !deleting ? 'true' : 'false'}
               style={{
                 width: '100%',
                 fontSize: 15,
@@ -234,9 +246,14 @@ export default function DeleteAccountSection() {
                 // The LAST solid fill in the app, and it stays one. Every other
                 // action is an outline now, which is exactly what makes this
                 // one read as different in kind rather than merely important.
-                background: armed && !deleting ? 'var(--tp-danger)' : 'var(--tp-danger-muted)',
-                color: armed && !deleting ? 'var(--tp-bg)' : 'var(--tp-danger)',
-                border: '1px solid var(--tp-danger-border)',
+                //
+                // Disarmed is INERT and has to look it: no danger colour at
+                // all until the phrase matches. A danger tint with danger text
+                // still read as a button that wanted pressing, so a mismatch
+                // in the box above looked like a button ignoring the click.
+                background: armed && !deleting ? 'var(--tp-danger)' : 'transparent',
+                color: armed && !deleting ? 'var(--tp-bg)' : 'var(--tp-subtle)',
+                border: `1px solid ${armed && !deleting ? 'var(--tp-danger-border)' : 'var(--tp-border)'}`,
                 borderRadius: 'var(--tp-radius-sm)',
                 cursor: armed && !deleting ? 'pointer' : 'not-allowed',
                 marginBottom: 8,

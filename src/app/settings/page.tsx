@@ -13,7 +13,7 @@ import { UnitsProvider } from '@/components/UnitsContext';
 import ViewportHintFromCookie from '@/components/ViewportHintFromCookie';
 import UnitsToggle from '@/components/UnitsToggle';
 import { requireWebAccess } from '@/server/auth/webAccess';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 import LocationSection from '@/components/LocationSection';
 
 

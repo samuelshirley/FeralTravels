@@ -393,6 +393,11 @@ export async function getUserDetail(userId: string) {
         createdAt: users.createdAt,
         isAdmin: users.isAdmin,
         unitsPref: users.unitsPref,
+        // Both entitlement overrides, so the detail page can show why a
+        // verdict looks the way it does: `comped` exempts, `paywallEnforced`
+        // walls this one account while the global switch is off.
+        comped: users.comped,
+        paywallEnforced: users.paywallEnforced,
       })
       .from(users)
       .where(eq(users.id, userId))

@@ -66,3 +66,35 @@ export class PaymentRequiredError extends HttpError {
     super(402, message, details);
   }
 }
+
+/**
+ * 503. We could not reach the session store — so we do not know whether this
+ * person is signed in, and must not answer as though we do.
+ *
+ * THE BUG THIS EXISTS FOR. Sessions are `strategy: 'database'`, so `auth()`
+ * reads the `sessions` row through the Drizzle adapter on every request. When
+ * that read THROWS, Auth.js swallows it as `SessionTokenError` and `auth()`
+ * returns `null` — byte-for-byte what a signed-out visitor produces. Thirteen
+ * pages then do the only thing that shape permits, `redirect('/login')`, and a
+ * database blip becomes a site-wide silent sign-out. Observed in production
+ * shape on 2026-09-08: a preview's Neon branch was deleted underneath a live
+ * session and the logs read `password authentication failed for user
+ * 'neondb_owner'` on `/admin`, one second after `/admin` had rendered 200.
+ *
+ * 503 and not 401, and the difference is not cosmetic: `mobile/lib/api.ts`
+ * clears the keychain on 401. A 401 here would permanently sign every iOS user
+ * out of their device because a database hiccuped.
+ *
+ * `digest` is load-bearing. Next redacts a server component's error `message`
+ * in production but passes through a `digest` the error already carries, so
+ * this literal is the ONLY thing `src/app/error.tsx` can branch on to say
+ * "you have not been signed out" rather than something generic.
+ */
+export const SESSION_STORE_UNAVAILABLE_DIGEST = 'SESSION_STORE_UNAVAILABLE';
+
+export class SessionStoreUnavailableError extends HttpError {
+  digest = SESSION_STORE_UNAVAILABLE_DIGEST;
+  constructor(message = "We couldn't reach your account. You have not been signed out.") {
+    super(503, message);
+  }
+}

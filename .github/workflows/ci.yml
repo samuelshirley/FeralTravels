@@ -67,7 +67,31 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `labeled` is here for ONE label: `ai-tests`. See the E2E job's
+    # "Decide whether the Anthropic-spending specs run" step.
+    #
+    # WHY A LABEL AND NOT A COMMENT OR workflow_dispatch, which both read as
+    # more natural ways to say "run them now": deploy-production.yml's gate
+    # resolves the PR a merge commit came from and looks up
+    # `gh run list --workflow CI --commit <that PR's head sha> --limit 1`.
+    # Only a `pull_request` event produces a CI run keyed to the PR's head sha
+    # — an `issue_comment` or `workflow_dispatch` run is keyed to the default
+    # branch, so the gate would never find it and the label would run the tests
+    # without making the PR mergeable. A label is also the only one of the three
+    # that a re-run preserves: "Re-run all jobs" replays the `labeled` event,
+    # so the AI specs run again.
+    #
+    # `--limit 1` takes the LATEST run for the sha, so the label run supersedes
+    # the push run it followed. The corollary, stated because it is the sharp
+    # edge of this design: push again after labelling and the new commit's run
+    # is a cheap one, green, and merge-able without Penny having been asked to
+    # plan anything. The E2E PR comment says which kind of run it was.
+    #
+    # A label OTHER than `ai-tests` still triggers a full (cheap) run. That is
+    # deliberate rather than filtered out: making unrelated labels skip every
+    # job would produce a workflow run that GitHub concludes as `success`
+    # having tested nothing, and the deploy gate would happily merge on it.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 # One CI run per PR: a new push cancels the in-flight run (and its preview
 # build) rather than racing it for the same Neon branch.
@@ -376,6 +400,8 @@ jobs:
               '',
               `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
+              '⚠️ **Use this URL, not one from an earlier push.** The Neon branch is dropped and recreated on every push, so older preview deployments still point at a database that no longer exists. They fail as an apparent sign-out — you get bounced to `/login` mid-session and signing in again does not help.',
+              '',
               `Built from \`${sha}\` · [CI run](${runUrl})`,
             ].join('\n');
 
@@ -434,6 +460,32 @@ jobs:
           echo "::add-mask::$SECRET"
           echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
 
+      # The Anthropic-spending specs run ONLY when this run was started by
+      # adding the `ai-tests` label. Not "the PR carries the label" — that would
+      # put them back on every subsequent push while the label sat there, which
+      # is the thing being switched off. Remove and re-add the label (or hit
+      # "Re-run all jobs" on this run) to test again.
+      #
+      # Written to GITHUB_ENV rather than a step-level env so the later summary
+      # and PR-comment steps read it too: a green check that never asked Penny
+      # to plan anything must not look like one that did.
+      #
+      # The label name goes through env, never `${{ }}` inside the shell — a
+      # label is attacker-controllable text on a public repo, and interpolating
+      # it into a script is a command-injection hole.
+      - name: Decide whether the Anthropic-spending specs run
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: |
+          if [ "$EVENT_ACTION" = "labeled" ] && [ "$LABEL_NAME" = "ai-tests" ]; then
+            echo 'E2E_AI_SPECS=1' >> "$GITHUB_ENV"
+            echo 'Anthropic-spending specs: RUNNING (`ai-tests` label).' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'E2E_AI_SPECS=0' >> "$GITHUB_ENV"
+            echo 'Anthropic-spending specs: skipped — add the `ai-tests` label to run them.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # E2E_BASE_URL → playwright.config skips its local webServer and the
       # whole suite (fixtures included) targets the deployed preview.
       - name: Run Playwright against the preview
@@ -457,9 +509,18 @@ jobs:
           # the PR comment reported the FIRST run's 78 passes while the job was
           # red. Both are structural consequences of running the suite twice.
           E2E_BLOCKED_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
-          # Runner-side gate only (the app's own key comes from Vercel preview
-          # env): presence makes the Penny spec run instead of skip.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Runner-side gate only — the value is never used to call Anthropic;
+          # the specs test `process.env.ANTHROPIC_API_KEY` for PRESENCE and skip
+          # without it. Fed from the CI key so the production key is never on a
+          # runner at all, and so a leaked runner log costs a key that bills
+          # nothing but tests.
+          #
+          # The app's own key is separate and comes from the Vercel PREVIEW
+          # environment: set ANTHROPIC_API_KEY_CI there and `anthropicKey.ts`
+          # prefers it on every non-production runtime. Setting it on Production
+          # too is harmless — that resolver refuses to use it when
+          # VERCEL_ENV=production.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
           # The real inbox for login-otp.spec.ts — the only spec that sends an
           # actual email and reads it back. Resend Inbound, so it's the account
           # and key we already have. Absent, the spec skips (see
@@ -834,6 +895,24 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" mobile/ios-build/*.app
+          # ── Warm the simulator before Maestro touches it ────────────────
+          #
+          # On 2026-09-07 (run 34101156123) `xcodebuild test-without-building`
+          # launched Maestro's XCTest runner on a freshly booted simulator and
+          # STALLED: the runner log stopped after two IDERunDestination warnings
+          # and never printed "Running tests…", Maestro polled its port for the
+          # full 240s, and the job died as "iOS driver not ready in time" —
+          # before launch.yaml ran, on the same image, Maestro and Xcode as the
+          # green run three days earlier. Every green run shows the driver up
+          # ~30s after launch on a simulator that has already run a process.
+          # So launch the app once and put it down again: SpringBoard and
+          # CoreSimulator finish their first-boot work on our clock, not on the
+          # driver's. clearState in launch.yaml wipes anything this leaves.
+          # Tolerant: if the app cannot launch here, launch.yaml fails on the
+          # same thing with a screenshot attached, which is the better report.
+          xcrun simctl launch "$UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
+          sleep 5
+          xcrun simctl terminate "$UDID" com.feraltravels.ios || true
           # Passed to Maestro explicitly below rather than left to discovery.
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 
@@ -924,11 +1003,47 @@ jobs:
           # below it is worth reading — a distinction this job could not make while
           # one invocation reported on all three layers at once. Same split locally,
           # for the same reason: scripts/ios-e2e-local.sh.
-          maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            --format junit \
-            --output maestro-report-launch.xml \
-            --debug-output maestro-debug
+          #
+          # RETRIED ONCE, ON ONE SIGNATURE ONLY. `iOS driver not ready in time`
+          # is Maestro giving up on its own XCTest runner ever answering — the
+          # runner never came up, so no flow ran and the app was never touched.
+          # That is a harness failure with nothing to learn from a re-run of
+          # the whole job (18 minutes to rebuild the app for a 30-second
+          # bring-up), and the fix for it is a fresh simulator: kill the stuck
+          # xcodebuild, reboot the same UDID, warm it as above, go again. Any
+          # OTHER failure of launch.yaml — an assertion, a crash on the first
+          # screen — is the app, is not retried, and fails the job as before.
+          # A generic step-retry action would retry those too, which is how a
+          # real regression becomes "flaky". `harness_retried` is surfaced in
+          # the PR comment so a bad day on the runners stays visible rather
+          # than silently green.
+          DRIVER_TIMEOUT_SIGNATURE='iOS driver not ready in time'
+          HARNESS_RETRIED=0
+          run_launch() {
+            maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
+              -e APP_ID=com.feraltravels.ios \
+              --format junit \
+              --output maestro-report-launch.xml \
+              --debug-output maestro-debug 2>&1 | tee "launch-attempt-$1.log"
+            return "${PIPESTATUS[0]}"
+          }
+          for attempt in 1 2; do
+            if run_launch "$attempt"; then break; fi
+            if [ "$attempt" = 2 ] || ! grep -q "$DRIVER_TIMEOUT_SIGNATURE" "launch-attempt-$attempt.log"; then
+              echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+            echo "::warning::launch.yaml: the XCTest driver never came up (attempt $attempt). Rebooting the simulator and retrying once."
+            HARNESS_RETRIED=1
+            pkill -f "xcodebuild test-without-building" || true
+            xcrun simctl shutdown "$SIM_UDID" || true
+            xcrun simctl boot "$SIM_UDID"
+            xcrun simctl bootstatus "$SIM_UDID" -b
+            xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || true
+            sleep 5
+            xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+          done
+          echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
 
           # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the
           # sign-in code ITSELF instead of trusting one minted before the run.
@@ -1063,6 +1178,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           OUTCOME: ${{ steps.flows.outcome }}
+          HARNESS_RETRIED: ${{ steps.flows.outputs.harness_retried }}
           ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
         with:
           script: |
@@ -1087,6 +1203,17 @@ jobs:
               lines.push(
                 '**Failed.** The recordings artifact holds a screenshot of the screen it died',
                 'on; that is the fastest way in, faster than reading the log.',
+              );
+            }
+            // Visible on green as well as red: a harness retry is a fact about
+            // the runners, and a run that needed one should not read exactly
+            // like a run that did not.
+            if (process.env.HARNESS_RETRIED === '1') {
+              lines.push(
+                '',
+                '⚠️ **Harness retried once.** The XCTest driver did not come up on the first',
+                'attempt (a simulator flake, not the app); the simulator was rebooted and the',
+                'flows ran on the second.',
               );
             }
             if (artifact) lines.push('', `[Recordings](${artifact})`);

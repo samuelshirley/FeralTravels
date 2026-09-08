@@ -263,7 +263,47 @@ export interface Link {
  * not a bubble for the transcript, which already shows that answer as the
  * `Trip · …` receipt. Both clients hide it; Penny's context reads it.
  */
-export type ChatKind = 'ai' | 'form_question' | 'form_answer' | 'handoff';
+/**
+ * `plan_ready` is the deterministic confirmation written once, when the first
+ * full plan lands — see src/lib/planReady.ts for why it is not Penny's prose.
+ * It is a real, persisted row (so it survives a reload like any message) whose
+ * LAYOUT the clients own: a list icon and a tappable "list view".
+ */
+export type ChatKind = 'ai' | 'form_question' | 'form_answer' | 'handoff' | 'plan_ready';
+
+/**
+ * What an ANSWERED onboarding step needs in order to redraw itself.
+ *
+ * `chat_history` used to store only `content`, so a step that had been answered
+ * could be re-rendered as two flat bubbles and nothing else: the question, then
+ * the text of the answer. The options the driver actually chose FROM were gone
+ * the moment the step advanced, because they only ever existed on the live
+ * onboarding API response. Scrolling back through setup therefore showed a
+ * transcript of a form nobody could see the shape of.
+ *
+ * This is written on the `form_answer` row — the one row that exists only once
+ * BOTH the question and the answer are known, so there is no update-later path
+ * and no window where a half-written step could render. `question` names the
+ * `form_question` row it belongs to, and that row is collapsed into this one at
+ * render time by `collapseOnboardingSteps` (src/lib/onboardingForm.ts), which is
+ * the single definition both clients use.
+ *
+ * `selected` is null when the driver typed an answer that matched no option —
+ * legitimate on a `chips` step, where the composer stays live precisely because
+ * "the second week of June" is a valid start date no chip can express.
+ */
+export interface ChatFormMeta {
+  /** The `form_question` row's exact `content`, used to pair the two rows. */
+  question: string;
+  /** How the question was rendered, so the answered step draws the same control. */
+  kind: string;
+  /** The options as offered, in the order they were offered. Empty when there were none. */
+  options: { value: string; label: string }[];
+  /** The chosen option's `value`, or null when the answer was typed. */
+  selected: string | null;
+  /** The answer as shown to the driver — the chip label, or their own words. */
+  answerLabel: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -284,6 +324,11 @@ export interface ChatMessage {
    * on legacy rows written before this field existed. See `computePlanSummary`.
    */
   plan_summary: PlanSummary | null;
+  /**
+   * Set on `form_answer` rows only: everything needed to redraw the answered
+   * onboarding step as the widget it was, chosen option lit. See ChatFormMeta.
+   */
+  form_meta: ChatFormMeta | null;
   created_at: string;
 }
 

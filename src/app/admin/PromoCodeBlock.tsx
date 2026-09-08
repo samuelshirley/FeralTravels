@@ -137,9 +137,9 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
 
       {/*
         The same warning `TestUserBlock` carries, for the same afternoon-shaped
-        reason: with PAYWALL_ENABLED unset, `applySwitch` rewrites every verdict
-        to entitled, so a redeemed code changes nothing observable and the
-        feature reads as broken when it is working perfectly.
+        reason: with enforcement off, `applySwitch` rewrites every verdict to
+        entitled, so a redeemed code changes nothing observable and the feature
+        reads as broken when it is working perfectly.
       */}
       {!paywallOn && (
         <div
@@ -156,8 +156,9 @@ export default function PromoCodeBlock({ paywallOn }: { paywallOn: boolean }) {
         >
           <strong>The paywall is switched off here.</strong> Codes still mint and
           still redeem, but nobody is blocked in the first place, so redeeming one
-          will look like it did nothing. Set <code>PAYWALL_ENABLED=1</code> to see
-          it work.
+          will look like it did nothing. Turn enforcement on above to see it work — or, to
+          leave the rest of the deployment alone, force the paywall onto the one test
+          account from its page under <code>/admin/users</code>.
         </div>
       )}
 

@@ -215,9 +215,45 @@ let packagesByProductId = new Map<string, PurchasesPackage>();
  */
 export async function getStorePlans(): Promise<StorePlan[]> {
   if (!purchasesAvailable()) return [];
-  const offerings = await Purchases.getOfferings();
+  let offerings;
+  try {
+    offerings = await Purchases.getOfferings();
+  } catch (err) {
+    // RevenueCat does not return an empty offering when StoreKit resolves no
+    // products — it THROWS `CONFIGURATION_ERROR` (code 23) with the message
+    // "None of the products registered in the RevenueCat dashboard could be
+    // fetched from App Store Connect". Seen verbatim in the simulator console
+    // on 2026-09-07 with a valid key and a correctly configured offering: the
+    // store was reached and answered, and the answer was "nothing". That is
+    // the Paid Applications Agreement / product-metadata case (iap-setup.md
+    // §1, §2), and it is a different problem from not reaching the store at
+    // all — so it is returned as an EMPTY answer here, and everything else
+    // still throws for the caller to record as `store_error`.
+    const e = err as { code?: string; underlyingErrorMessage?: string; message?: string } | null;
+    if (e?.code === PURCHASES_ERROR_CODE.CONFIGURATION_ERROR) {
+      console.warn(
+        "[purchases] RevenueCat reached the store and StoreKit resolved none of the offering's " +
+          "products: " +
+          (e.underlyingErrorMessage || e.message || "(no detail)") +
+          " — see docs/design/iap-setup.md §1 (agreement) and §2 (product metadata) before " +
+          "suspecting the app."
+      );
+      packagesByProductId = new Map();
+      return [];
+    }
+    throw err;
+  }
   const packages = offerings.current?.availablePackages ?? [];
   packagesByProductId = new Map(packages.map((p) => [p.product.identifier, p]));
+  // Reached when the offering resolved but carries no packages — a current
+  // offering with none attached in the dashboard. Named in the console so it
+  // can be told apart from the throw above.
+  if (packages.length === 0) {
+    console.warn(
+      `[purchases] RevenueCat offering "${offerings.current?.identifier ?? "(none)"}" resolved ` +
+        "with no packages — check the offering's packages in the RevenueCat dashboard."
+    );
+  }
   return packages.map((p) => ({
     productId: p.product.identifier,
     priceLabel: p.product.priceString,

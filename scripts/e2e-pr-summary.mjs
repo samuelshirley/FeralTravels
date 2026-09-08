@@ -93,6 +93,24 @@ const out = [];
 out.push(`### ${headline} E2E results — ${parts.join(', ')}`);
 out.push('');
 
+/*
+ * WHICH KIND OF RUN THIS WAS. The two Anthropic-spending specs are dropped from
+ * `testMatch` unless the `ai-tests` label started the run, so they leave no
+ * row in the table above — not a skipped row, no row at all. Without this line
+ * the two kinds of green are indistinguishable at the exact moment somebody is
+ * deciding whether to merge, which is the whole risk the gate introduces.
+ */
+out.push(
+  process.env.E2E_AI_SPECS === '1'
+    ? '> 💸 **Penny specs ran.** `penny-plan-trip` and `chat-maps-link` made real' +
+        ' Anthropic calls against this preview — this run is the one to merge on.'
+    : '> ⏭️ **Penny specs did not run** — `penny-plan-trip` and `chat-maps-link`' +
+        ' are gated to keep the Anthropic bill off every push. Add the **`ai-tests`**' +
+        ' label to this PR before merging; the run that label triggers supersedes' +
+        ' this one for the deploy gate.'
+);
+out.push('');
+
 // Failures first — that's what you came to read.
 const ordered = [...rows].sort((a, b) => Number(a.ok) - Number(b.ok));
 out.push('| | Spec | |');

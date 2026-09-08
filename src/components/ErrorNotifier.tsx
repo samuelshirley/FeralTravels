@@ -6,7 +6,7 @@ import {
   registerGlobalErrorReporter,
 } from '@/lib/api';
 import { pickSillyError, type SillyError } from '@/lib/sillyErrors';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 
 /**
  * ErrorNotifier — single global mount that owns the toast (4xx) and the

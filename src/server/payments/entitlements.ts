@@ -5,7 +5,7 @@ import { subscriptions, users } from '@/server/db/schema';
 import type { SubscriptionSource, SubscriptionStatus } from '@/server/db/schema';
 import { anthropicMicrocentsInWindow } from './usage';
 import { resolveAccountState, trialDaysRemaining, type AccountVerdict } from './states';
-import { paywallEnabled } from './switch';
+import { enforcementApplies, paywallEnabled } from './switch';
 
 /**
  * Apply the master switch to a true verdict.
@@ -15,9 +15,23 @@ import { paywallEnabled } from './switch';
  * a switch that rewrote history would make it impossible to see who WOULD be
  * blocked before turning it on. Only the three fields that gate behaviour are
  * overridden.
+ *
+ * `forcedForUser` is the per-account override (`users.paywall_enforced`): this
+ * one account is enforced even while the global switch is off, so the wall can
+ * be walked into on a deployment where nobody else can see it. It defaults to
+ * false and is compared with `=== true`, so an absent option, an undefined
+ * column on an older row, or a failed read all mean "not enforced" — the same
+ * direction `paywallEnabled()` fails in, and for the same reason.
  */
-export async function applySwitch(verdict: AccountVerdict): Promise<AccountVerdict> {
-  if (await paywallEnabled()) return verdict;
+export async function applySwitch(
+  verdict: AccountVerdict,
+  opts?: { forcedForUser?: boolean }
+): Promise<AccountVerdict> {
+  const enforced = enforcementApplies({
+    globalOn: await paywallEnabled(),
+    forcedForUser: opts?.forcedForUser === true,
+  });
+  if (enforced) return verdict;
   return {
     ...verdict,
     enforced: false,
@@ -37,7 +51,13 @@ export async function applySwitch(verdict: AccountVerdict): Promise<AccountVerdi
 export async function getAccountVerdict(userId: string, now = new Date()): Promise<AccountVerdict> {
   const [userRows, subRows, spend] = await Promise.all([
     db
-      .select({ createdAt: users.createdAt, comped: users.comped })
+      .select({
+        createdAt: users.createdAt,
+        comped: users.comped,
+        // Read in the query that was already being made: the per-account
+        // override costs nothing on the hot path it gates.
+        paywallEnforced: users.paywallEnforced,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1),
@@ -88,7 +108,8 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
             source: subRows[0].source,
           }
         : null,
-    })
+    }),
+    { forcedForUser: user.paywallEnforced }
   );
 }
 
@@ -202,6 +223,23 @@ export async function revokeSubscription(
         updatedAt: now,
       },
     });
+}
+
+/**
+ * Turn the per-account paywall override on or off. The only writer.
+ *
+ * Admin-only, one account at a time, and deliberately not derivable from
+ * anything — no email allowlist, no "all test users", no environment variable.
+ * The whole value of this flag is that its blast radius is one row you named,
+ * on a deployment where the paywall is off for everybody else.
+ *
+ * `logUsageEvent` is the caller's job, exactly as it is for the global switch:
+ * `users` has nowhere to record who flipped it, and "who paywalled this
+ * account" is the first question asked when somebody is blocked and should not
+ * be.
+ */
+export async function setPaywallEnforcedForUser(userId: string, on: boolean): Promise<void> {
+  await db.update(users).set({ paywallEnforced: on }).where(eq(users.id, userId));
 }
 
 /** Current row as-is, for the admin panel. Not an entitlement answer. */

@@ -22,6 +22,7 @@ import {
 } from "@/shared/lib/promoCopy";
 import { fetchEntitlement, redeemPromoCode } from "@/lib/entitlement";
 import type { PurchaseFlow } from "@/lib/purchaseFlow";
+import { unavailableMessage } from "@/shared/lib/purchaseMode";
 
 /**
  * Native mirror of src/components/PurchaseSheet.tsx — the purchase sheet, and
@@ -67,7 +68,17 @@ export default function PurchaseSheet({
   onRedeemed?: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const { busy, phase, mode, plans, plansLoading, error, notice } = flow;
+  const {
+    busy,
+    phase,
+    mode,
+    unavailableReason,
+    manageSubscriptionAvailable,
+    plans,
+    plansLoading,
+    error,
+    notice,
+  } = flow;
 
   // Backdrop taps and the Android back button both dismiss — except while
   // anything is in flight, where dismissing would leave the account paid up and
@@ -168,11 +179,19 @@ export default function PurchaseSheet({
               </View>
             ) : null}
 
-            {mode === "unavailable" ? (
-              <Text style={styles.notWiredText}>
-                The App Store isn&apos;t offering these plans on this build yet — these are the
-                prices, not a checkout. If you already have a plan, Restore purchases below will
-                still find it.
+            {/*
+              One sentence per REASON, not one for the mode. "No key in this
+              build", "the App Store returned nothing" (the agreement — see
+              iap-setup.md §1), "the store could not be reached" and "the ids
+              do not match" used to render the same line, and the line was
+              read as a UI bug when it was Apple's paperwork. The copy is in
+              `purchaseMode.ts`, where a test holds every reason to its own
+              sentence. Nothing while the store is still being asked: the
+              spinner above already says so.
+            */}
+            {mode === "unavailable" && unavailableReason ? (
+              <Text testID="purchase-unavailable" style={styles.notWiredText}>
+                {unavailableMessage(unavailableReason)}
               </Text>
             ) : null}
 
@@ -199,13 +218,25 @@ export default function PurchaseSheet({
                   </Text>
                 )}
               </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={flow.manageSubscription}
-                style={styles.secondary}
-              >
-                <Text style={styles.secondaryText}>Manage subscription</Text>
-              </Pressable>
+              {/*
+                Only for an account with a subscription at Apple. The link is
+                Apple's own subscriptions screen, which for a trial account —
+                no row has ever existed — is an empty list. Guideline 3.1.2
+                wants the management screen REACHABLE for subscribers, and it
+                is: the flag is true for every state that implies an Apple
+                row, live or lapsed, and flips on the fresh payload the
+                caller stores after a purchase.
+              */}
+              {manageSubscriptionAvailable ? (
+                <Pressable
+                  testID="manage-subscription"
+                  accessibilityRole="button"
+                  onPress={flow.manageSubscription}
+                  style={styles.secondary}
+                >
+                  <Text style={styles.secondaryText}>Manage subscription</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             <View style={styles.legalRow}>

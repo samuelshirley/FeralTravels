@@ -16,6 +16,13 @@ import {
   restoreOutcomeMessage,
 } from "@/shared/lib/purchaseOutcome";
 import { nextEntitlementPoll } from "@/shared/lib/entitlementPolling";
+import {
+  manageSubscriptionAvailable,
+  resolvePurchaseMode,
+  type PurchaseMode,
+  type StoreAnswer,
+  type UnavailableReason,
+} from "@/shared/lib/purchaseMode";
 import type { PaywallProduct } from "@/shared/types/entitlement";
 
 /**
@@ -52,8 +59,9 @@ export type PurchasePhase =
   | { kind: "restoring" };
 
 /**
- * How this build can take money, decided once and rendered rather than guessed
- * at three times.
+ * How this build can take money, decided once — by `resolvePurchaseMode` in
+ * the shared module, where it is unit-tested — and rendered rather than
+ * guessed at three times.
  *
  *  `test`         the account is on the hardcoded allowlist AND
  *                 `SUBSCRIPTION_TESTING=1` — the server said so, and the route
@@ -62,18 +70,32 @@ export type PurchasePhase =
  *                 and the flag is the switch to turn off when that stops being
  *                 what you want. To exercise the real store, use any other
  *                 address.
- *  `store`        RevenueCat is configured and returned at least one package.
- *  `unavailable`  neither. The sheet shows prices and says there is nothing to
- *                 tap, because a button that cannot take money is worse than no
- *                 button.
+ *  `store`        RevenueCat is configured and returned at least one package
+ *                 whose product id the server sells.
+ *  `unavailable`  neither, and `unavailableReason` says WHICH way. The sheet
+ *                 shows prices and says there is nothing to tap, because a
+ *                 button that cannot take money is worse than no button — and
+ *                 it says why, because "no key in this build", "the agreement
+ *                 is not signed" and "the ids do not match" are fixed in three
+ *                 different places.
  */
-export type PurchaseMode = "test" | "store" | "unavailable";
+export type { PurchaseMode, UnavailableReason };
 
 export interface PurchaseFlow {
   /** What to render, in the server's order, with the store's prices. */
   plans: PaywallProduct[];
   plansLoading: boolean;
   mode: PurchaseMode;
+  /** Why `mode` is `unavailable`; null in every other mode and while loading. */
+  unavailableReason: UnavailableReason | null;
+  /**
+   * Whether Apple's subscriptions screen has anything to show this account.
+   * False for a trial (no row has ever existed) and for a promo/admin row
+   * (nothing at Apple to manage). Flips to true on the fresh payload the
+   * caller stores from `onEntitled`, so it appears in the same session as the
+   * purchase that created the row.
+   */
+  manageSubscriptionAvailable: boolean;
   phase: PurchasePhase;
   /** True while anything is in flight; the sheet must not be dismissed. */
   busy: boolean;
@@ -100,8 +122,14 @@ export function usePurchaseFlow({
    */
   onEntitled: (fresh: EntitlementPayload) => void;
 }): PurchaseFlow {
-  const [storePlans, setStorePlans] = useState<StorePlan[] | null>(null);
-  const [plansLoading, setPlansLoading] = useState(purchasesAvailable());
+  /**
+   * What the store has said so far. Starts as `no_key` when this build carries
+   * no RevenueCat key — that is known synchronously and there is nothing to
+   * wait for — and as `pending` otherwise, until the effect below hears back.
+   */
+  const [storeAnswer, setStoreAnswer] = useState<StoreAnswer>(
+    purchasesAvailable() ? { kind: "pending" } : { kind: "no_key" }
+  );
   const [phase, setPhase] = useState<PurchasePhase>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -129,24 +157,21 @@ export function usePurchaseFlow({
    * nothing.
    */
   useEffect(() => {
-    if (testMode || !purchasesAvailable()) {
-      setPlansLoading(false);
-      return;
-    }
+    if (testMode || !purchasesAvailable()) return;
     let cancelled = false;
-    setPlansLoading(true);
     void (async () => {
       try {
-        const plans = await getStorePlans();
-        if (!cancelled) setStorePlans(plans);
+        const plans: StorePlan[] = await getStorePlans();
+        if (!cancelled) setStoreAnswer({ kind: "packages", plans });
       } catch {
-        // An unreachable store is not an error to put in front of the user: the
-        // sheet falls back to the server's prices and says it cannot sell them.
-        // The diagnosis for an EMPTY offering is in docs/design/iap-setup.md and
-        // there is nothing the reader of this screen can do about it.
-        if (!cancelled) setStorePlans([]);
-      } finally {
-        if (!cancelled) setPlansLoading(false);
+        // An unreachable store is not a red error to put in front of the user:
+        // the sheet falls back to the server's prices and says the store could
+        // not be reached. Recorded as its own answer rather than as an empty
+        // offering, because "RevenueCat said nothing is for sale" (the
+        // agreement, docs/design/iap-setup.md §1) and "we never heard from
+        // RevenueCat" (network, a rejected key) are different problems that
+        // used to render the same sentence.
+        if (!cancelled) setStoreAnswer({ kind: "error" });
       }
     })();
     return () => {
@@ -156,42 +181,17 @@ export function usePurchaseFlow({
 
   /**
    * The server decides WHAT is for sale and how it reads; the store decides
-   * what it COSTS.
-   *
-   * Merged in the server's order, so the cadence ("per month"), the note
-   * ("Save $4 a year") and the ordering stay server-authored and reword-able
-   * without a TestFlight build — while `priceLabel` becomes Apple's own
-   * localized string. `constants.ts` documents its `priceLabel` as the fallback
-   * for an unreachable store, and it is: "$2" in front of somebody charged
-   * €2,49 is a Guideline 3.1.2 problem, not a cosmetic one.
-   *
-   * A server product with no matching store package is DROPPED in store mode.
-   * Apple cannot sell it, so offering it would produce a tap that can only
-   * fail — and it is the exact symptom of a product id that does not match
-   * `PRODUCTS` character for character.
+   * what it COSTS; and `resolvePurchaseMode` (shared, unit-tested) decides
+   * which of the three modes that adds up to and — when it is `unavailable` —
+   * why. The merge rules, the one-plan-surviving asymmetry and the fallback to
+   * the server's prices all live there, with the tests.
    */
-  const serverPlans = entitlement?.products ?? [];
-  const merged: PaywallProduct[] = (storePlans ?? []).length
-    ? serverPlans.flatMap((p) => {
-        const store = storePlans!.find((s) => s.productId === p.id);
-        return store ? [{ ...p, priceLabel: store.priceLabel }] : [];
-      })
-    : [];
-
-  /**
-   * NOTHING matching is a different failure from SOME matching, and it falls
-   * back rather than showing an empty sheet: the user still reads what a plan
-   * costs, roughly, and the copy under it says it cannot be bought here. An
-   * empty sheet would say nothing at all.
-   *
-   * One plan surviving where there should be two, on the other hand, is left
-   * exactly as it is — that asymmetry is diagnostic. It is what a single
-   * mistyped product id looks like, and papering over it with the fallback
-   * price would produce a tap that can only fail.
-   */
-  const plans: PaywallProduct[] = merged.length > 0 ? merged : serverPlans;
-
-  const mode: PurchaseMode = testMode ? "test" : merged.length > 0 ? "store" : "unavailable";
+  const serverPlans: PaywallProduct[] = entitlement?.products ?? [];
+  const { mode, unavailableReason, plans, plansLoading } = resolvePurchaseMode({
+    testMode,
+    storeAnswer,
+    serverPlans,
+  });
 
   /**
    * Poll until the server agrees, or until the budget runs out.
@@ -321,6 +321,8 @@ export function usePurchaseFlow({
     plans,
     plansLoading,
     mode,
+    unavailableReason,
+    manageSubscriptionAvailable: manageSubscriptionAvailable(entitlement),
     phase,
     busy: phase.kind !== "idle",
     error,

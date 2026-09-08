@@ -55,6 +55,52 @@ const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // at an already-running app, e.g. a Vercel preview URL).
 const useExternalServer = !!process.env.E2E_BASE_URL;
 
+/**
+ * THE SPECS THAT COST MONEY, and which do not run on an ordinary push.
+ *
+ * Measured 2026-09-08 from four consecutive CI runs' preview logs: a full suite
+ * made exactly FIVE `/api/trip/replan` calls — one from `penny-plan-trip`,
+ * three from `chat-maps-link`, one from `onboarding-flow`'s handoff — and cost
+ * $0.51–0.58, of which ~64% was cache-READ tokens, because a single Penny
+ * message is a tool-use loop of up to 24 model calls (×4 auto-continues) and
+ * every call re-reads a ~23,300-token system-prompt-plus-tools prefix. At the
+ * push rate this repo actually runs at (28 CI runs on 2026-09-03 alone) that is
+ * most of the Anthropic bill, spent proving something no commit changed.
+ *
+ * So these two are gated behind the `ai-tests` label — see the E2E job in
+ * ci.yml. `onboarding-flow` is deliberately NOT here even though its handoff
+ * spends one Sonnet turn: it is the wizard's only end-to-end coverage and the
+ * only thing that proves `chat_history.form_meta` survives a reload, and the
+ * owner chose to keep paying for it on every push (2026-09-08).
+ *
+ * Dropping them from `testMatch` rather than `test.skip`-ing them is
+ * deliberate: a skipped spec would trip `E2E_MAX_SKIPPED=0` in
+ * assert-e2e-ran.mjs, and raising that allowance to accommodate a routine cost
+ * decision is exactly how the allowance stopped meaning anything last time.
+ * Not running is instead asserted POSITIVELY — assert-e2e-ran.mjs fails if
+ * E2E_AI_SPECS=1 and one of these produced no result.
+ */
+export const AI_SPEC_NAMES = ['penny-plan-trip', 'chat-maps-link'] as const;
+
+/** The rest of the browser suite: no Anthropic call, or Haiku-only (~$0.0015). */
+const WEB_UI_SPEC_NAMES = [
+  'existing-trip',
+  'onboarding-flow',
+  'onboarding-validation',
+  'units-imperial',
+  'viewport-hint',
+  'lazy-fuel-sourcing',
+  'vehicle-crud',
+  'subscriptions',
+] as const;
+
+/** Set by the E2E job only when the PR carries the `ai-tests` label. */
+const runAiSpecs = process.env.E2E_AI_SPECS === '1';
+
+const webUiTestMatch = new RegExp(
+  `(${[...WEB_UI_SPEC_NAMES, ...(runAiSpecs ? AI_SPEC_NAMES : [])].join('|')})\\.spec\\.ts`
+);
+
 // Global setup resets seeded persona graphs once per run. `workers` stays 1 so
 // mid-suite playwright-* rows don't race unrelated specs until we shard DBs.
 
@@ -205,8 +251,9 @@ export default defineConfig({
           {
             name: 'web-ui',
             use: { ...devices['Desktop Chrome'] },
-            testMatch:
-              /(existing-trip|onboarding-flow|onboarding-validation|penny-plan-trip|chat-maps-link|units-imperial|viewport-hint|lazy-fuel-sourcing|vehicle-crud|subscriptions)\.spec\.ts/,
+            // Built from WEB_UI_SPEC_NAMES + AI_SPEC_NAMES at the top of this
+            // file; the AI half is present only under the `ai-tests` label.
+            testMatch: webUiTestMatch,
           },
           // The announcement is GLOBAL app state — an active announcement pops
           // a modal over every signed-in user's /trips, which would block

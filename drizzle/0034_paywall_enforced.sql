@@ -1,0 +1,15 @@
+-- Per-account paywall enforcement, so the wall can be tested while the global
+-- switch stays off (2026-09-04).
+--
+-- `app_meta.paywall_enabled` is one row for the whole deployment, and it has to
+-- stay OFF for now: the web app is the demo while the iOS build works its way
+-- to the App Store, and turning enforcement on would wall every account that is
+-- past its trial. But a switch nobody has ever seen work is not a switch you
+-- want to discover on launch day.
+--
+-- So: the inverse of `users.comped`. Comped means "the paywall never applies to
+-- this account"; this means "the paywall applies to this account even when it
+-- applies to nobody else". Default false, because an existing row must not
+-- start enforcing anything the moment this migration runs — the same
+-- fail-to-off direction `paywallEnabled()` takes when it cannot read its row.
+ALTER TABLE "users" ADD COLUMN "paywall_enforced" boolean DEFAULT false NOT NULL;

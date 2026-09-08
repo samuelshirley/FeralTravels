@@ -122,7 +122,9 @@ spacing, radii and copy are final; use tokens, never hard-coded values) and turn
   `docs/bugs/mobile-web-nav-units-prompt.md`: only step 1 gets the 7b treatment, and every
   question and answer after it stays in the transcript as ordinary chat bubbles. Mark §7d of
   `docs/design/nocturne-reskin.md` superseded on this point rather than leaving the design doc
-  contradicting what ships.
+  contradicting what ships. **Superseded again 2026-09-08:** the answered step keeps its OPTIONS
+  with the chosen one lit (not a `Check` receipt, and not two plain bubbles) — see the
+  `chat_history.form_meta` note in `CLAUDE.md`.
 - 7b's `TAP TO START, THEN EDIT` prompt rows and the location-seeded composer placeholder
   (`{city} to …`, falling back to `Where to?`) are absent.
 

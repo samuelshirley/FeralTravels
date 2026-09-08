@@ -481,6 +481,11 @@ function TripWorkspaceInner({
 
   const chatPane = (
     <ChatPanel
+      onOpenList={() => {
+        // Phone: the list is a different tab. Desktop: it is already beside the
+        // chat, so this is a no-op rather than a jump to nowhere.
+        if (viewport === 'mobile') setMobileTab('list');
+      }}
       tripId={tripId}
       initialMessages={initialChat?.messages ?? []}
       initialHasMore={initialChat?.hasMore ?? false}

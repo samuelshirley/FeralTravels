@@ -6,7 +6,7 @@ import { apiFetch } from '@/lib/api';
 import { approxDistance, formatKm } from '@/lib/units';
 import { useUnits } from '@/components/UnitsContext';
 import Spinner from '@/components/Spinner';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 
 interface Props {
   id: string;

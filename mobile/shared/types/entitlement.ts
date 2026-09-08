@@ -150,3 +150,54 @@ export interface PaywallErrorBody {
   state: AccountState;
   blockReason: BlockReason;
 }
+
+/**
+ * Whether Apple's "Manage subscription" screen has anything to show this
+ * account — i.e. whether the link to it belongs on screen at all.
+ *
+ * The link deep-links to `itms-apps://apps.apple.com/account/subscriptions`,
+ * which for an account with no subscription is an EMPTY LIST. A trial account
+ * has no subscription row anywhere — the trial is derived from
+ * `users.created_at` and never stored — so showing it there sends the reader
+ * to a screen that says nothing. `comped` is an admin boolean checked before
+ * any row is read, and is hidden for the same reason.
+ *
+ * Every other state implies a row once existed: `subscribed*`,
+ * `cancelled_in_period`, `billing_grace` (live), and `expired`, `refunded`,
+ * `revoked` (over, but Apple still lists it under Expired and it is where a
+ * lapsed subscriber goes to resubscribe). One refinement on top of the state:
+ * the ROW has to be Apple's. A `promo` or `admin` row is a subscription on
+ * our side and nothing on Apple's, so it is hidden too; `fake` is the test
+ * purchase path, which stands in for Apple and shows what Apple would.
+ *
+ * Exhaustive over `AccountState` so a thirteenth state fails `tsc` here rather
+ * than silently defaulting either way. Mirrored to the app with this file.
+ */
+export function canManageAppleSubscription(
+  state: AccountState,
+  source: SubscriptionSource | null
+): boolean {
+  switch (state) {
+    case 'trial':
+    case 'trial_spent':
+    case 'trial_expired':
+    case 'comped':
+      return false;
+    case 'subscribed':
+    case 'subscribed_watch':
+    case 'subscribed_capped':
+    case 'cancelled_in_period':
+    case 'billing_grace':
+    case 'expired':
+    case 'refunded':
+    case 'revoked':
+      // A row exists. Only an Apple (or Apple-shaped test) row is manageable
+      // at Apple; a null source on a row state should not happen, and falls
+      // through to "show" so a payload gap never hides the link from a payer.
+      return source !== 'promo' && source !== 'admin';
+    default: {
+      const exhaustive: never = state;
+      return exhaustive;
+    }
+  }
+}

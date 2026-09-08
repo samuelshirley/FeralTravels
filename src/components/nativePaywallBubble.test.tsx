@@ -172,8 +172,12 @@ describe('mobile/components/ChatPanel.tsx', () => {
     expect(source).toContain('withPaywallNotice');
     // The bubbles are drawn from `transcript`, which is built FROM the
     // derived list (receipts and the hidden handoff row are a second, later
-    // rewrite) — never from raw message state.
-    expect(source).toContain('buildTranscript(visibleMessages)');
+    // rewrite) — never from raw message state. `visibleMessages` may be
+    // wrapped on its way in (2026-09-08: `collapseOnboardingSteps`, which folds
+    // an answered setup step's two rows into one); what this pins is that the
+    // ARGUMENT is the derived list and not `messages`, which is the property
+    // the paywall bubble depends on.
+    expect(source).toMatch(/buildTranscript\([A-Za-z]*\(?visibleMessages\)?\)/);
     expect(source).toContain('transcript.map(');
     // The raw list is still the source of truth for sending and queueing, but
     // it must not be what the bubbles are drawn from.

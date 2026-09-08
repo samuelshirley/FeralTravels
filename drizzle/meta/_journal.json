@@ -239,6 +239,20 @@
       "when": 1788518454416,
       "tag": "0033_daily_drive_hours",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788524582976,
+      "tag": "0034_paywall_enforced",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788860955693,
+      "tag": "0035_chat_form_meta",
+      "breakpoints": true
     }
   ]
 }
