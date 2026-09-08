@@ -115,7 +115,7 @@ export default function PaywallScreen() {
         />
         <View style={styles.headerCopy}>
           <Text style={styles.headerName}>Penny</Text>
-          <Text style={styles.headerSub}>YOUR TRIP PLANNER</Text>
+          <Text style={styles.headerSub}>Professional Trip Plannin Bitch</Text>
         </View>
       </View>
 
