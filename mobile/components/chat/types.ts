@@ -1,4 +1,4 @@
-import type { ChatMessage, PlanSummary } from "@/shared/types/trip";
+import type { ChatFormMeta, ChatMessage, PlanSummary } from "@/shared/types/trip";
 
 /**
  * Native mirror of the chat types in src/components/ChatPanel.tsx.
@@ -31,6 +31,12 @@ export interface AppliedEvent {
   fuelStopsChanged: boolean;
   /** Deterministic, DB-derived plan facts (source of truth for numbers). */
   planSummary?: PlanSummary | null;
+  /**
+   * The server wrote a `plan_ready` row above this reply (first full build,
+   * something actually saved). The client splices the same bubble into the same
+   * position, so the transcript watched live and the one after a reload match.
+   */
+  planReady?: boolean;
   truncated: boolean;
 }
 
@@ -52,7 +58,13 @@ export type DeliveryStatus =
   | "typing"
   | "responded";
 
-export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary"> {
+export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary" | "form_meta"> {
+  /**
+   * The answered onboarding step this row records. Optional HERE and required
+   * on `ChatMessage`, deliberately: the server contract should not go soft just
+   * because the optimistic literals in ChatPanel don't set it.
+   */
+  form_meta?: ChatFormMeta | null;
   /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
   seq?: number;
   /** `data:` URIs of images the user attached to this message. */

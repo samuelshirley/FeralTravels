@@ -8,6 +8,15 @@ const userBubble = (page: Page, text: string) =>
   page.locator('[data-testid="chat-message"][data-message-role="user"]').filter({ hasText: text });
 
 /**
+ * An ANSWERED setup step: the question, still carrying the options it offered,
+ * with the driver's choice lit. Replaces the plain user bubble for any step
+ * that had options — a step with none (the free-text opening description)
+ * keeps its two bubbles, which is why `userBubble` is still used below.
+ */
+const answeredStep = (page: Page, question: string) =>
+  page.getByTestId('chat-answered-step').filter({ hasText: question });
+
+/**
  * The onboarding wizard: intent -> origin -> start date -> pace -> units -> vehicle.
  *
  * A FIRST-RUN account (`createOnboardingTrip`, deliberately not
@@ -71,12 +80,34 @@ test.describe('Onboarding wizard', () => {
     // the composer stays live for any other number.
     await expect(page.getByText(/How long do you want to drive each day/)).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: '6 h', exact: true }).click();
-    await expect(userBubble(page, '6 h a day')).toHaveCount(1);
+
+    /*
+     * THE ANSWERED STEP (2026-09-08). The answer used to land as a bare user
+     * bubble reading "6 h a day" and the options vanished with the step, so
+     * scrolling back through setup showed a transcript of a form whose shape
+     * was gone. The step now stands as one widget: the question, all three
+     * chips, and the chosen one lit.
+     */
+    const pace = answeredStep(page, 'How long do you want to drive each day');
+    await expect(pace).toHaveCount(1, { timeout: 20_000 });
+    await expect(pace.getByTestId('onboarding-chip-chosen')).toHaveText('6 h');
+    // The options NOT taken are still there — that is the record.
+    await expect(pace.getByTestId('onboarding-chip-answered')).toHaveCount(2);
+    // And the answer is not ALSO a right-aligned bubble; it lives in the step.
+    await expect(userBubble(page, '6 h a day')).toHaveCount(0);
+    // The question bubble it replaced is gone, not sitting above it.
+    await expect(page.getByText(/How long do you want to drive each day/)).toHaveCount(1);
 
     await expect(
       page.getByText('Do you want distances in metric (kilometers) or imperial (miles)?'),
     ).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: 'Metric (km)' }).click();
+
+    // A typed/tapped answer on a `select` step records the same way.
+    const units = answeredStep(page, 'metric (kilometers) or imperial');
+    await expect(units.getByTestId('onboarding-chip-chosen')).toHaveText('Metric (km)', {
+      timeout: 20_000,
+    });
 
     /*
      * The composite vehicle card (frame 7e): nickname and range on ONE card,
@@ -106,7 +137,21 @@ test.describe('Onboarding wizard', () => {
      * up top), and the vehicle answer is the last user bubble.
      */
     await expect(userBubble(page, 'Duncan · 500 km')).toHaveCount(1);
+    // The opening description offered no options, so it keeps its own bubble
+    // rather than becoming a single enormous pill.
     await expect(userBubble(page, 'Road trip to Berlin')).toHaveCount(1);
+
+    /*
+     * The answered steps survive a RELOAD, rebuilt from `chat_history.form_meta`
+     * rather than from the client state that has just been thrown away. This is
+     * the half the optimistic render cannot prove, and the half the column
+     * exists for.
+     */
+    await page.reload();
+    const paceAfter = answeredStep(page, 'How long do you want to drive each day');
+    await expect(paceAfter).toHaveCount(1, { timeout: 30_000 });
+    await expect(paceAfter.getByTestId('onboarding-chip-chosen')).toHaveText('6 h');
+    await expect(userBubble(page, '6 h a day')).toHaveCount(0);
   });
 
   test('an opening message that names both ends skips the origin step', async ({ page }) => {

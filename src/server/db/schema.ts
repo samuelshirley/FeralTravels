@@ -658,6 +658,13 @@ export const chatHistory = pgTable(
     planSummary: jsonb('plan_summary').$type<import('@/types/trip').PlanSummary | null>(),
     /** `form_question` | `form_answer` | `ai` — onboarding vs live chat. */
     kind: text('kind').default('ai').notNull(),
+    /**
+     * On `form_answer` rows: the answered onboarding step as a widget — the
+     * question it answers, the options as offered, and which one was chosen —
+     * so scrolling back through setup shows the form, not a flat transcript of
+     * it. Null on every other kind. See `ChatFormMeta`.
+     */
+    formMeta: jsonb('form_meta').$type<import('@/types/trip').ChatFormMeta | null>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({

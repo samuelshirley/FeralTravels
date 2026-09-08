@@ -33,6 +33,8 @@ import {
   cityFromPlace,
   tripOriginLabelFor,
   type QuestionKind,
+  buildFormMeta,
+  type AnsweredQuestionShape,
 } from '@/lib/onboardingForm';
 import { computeOnboardingProgress } from '@/lib/onboardingProgress';
 import { getAccountVerdict, trialDaysRemaining } from '@/server/payments';
@@ -479,7 +481,15 @@ async function runRangeHelp(
 ): Promise<SubmitAnswerResult> {
   const isImperial = unitsPref === 'imperial';
   const unit = isImperial ? 'mi' : 'km';
-  await addChatMessage(tripId, 'user', text, null, 'form_answer');
+  await addChatMessage(
+    tripId,
+    'user',
+    text,
+    null,
+    'form_answer',
+    null,
+    buildFormMeta(RANGE_HELP_QUESTION, text, text),
+  );
 
   const { km, basis } = await estimateRange(text, { userId, tripId });
 
@@ -569,6 +579,22 @@ function prefillRangeFromScan(
 
   return question;
 }
+
+/**
+ * The units step. Extracted from the snapshot builder (2026-09-08) because the
+ * answered step now records the options it was offering, and a second inline
+ * copy of them would be a second definition of what the driver was shown.
+ */
+export const UNITS_QUESTION: Question = {
+  key: UNITS_PREF_KEY,
+  kind: 'select',
+  label: UNITS_LABEL,
+  help: 'Fuel planning and the database always use kilometers; this only affects how questions are worded.',
+  options: [
+    { value: 'metric', label: 'Metric (km)' },
+    { value: 'imperial', label: 'Imperial (cheeseburgers)' },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Snapshot: returns the current onboarding question for a trip
@@ -771,16 +797,7 @@ export async function getOnboardingSnapshot(
   if (state === 'units_pick') {
     return {
       state: 'units_pick',
-      question: {
-        key: UNITS_PREF_KEY,
-        kind: 'select',
-        label: UNITS_LABEL,
-        help: 'Fuel planning and the database always use kilometers; this only affects how questions are worded.',
-        options: [
-          { value: 'metric', label: 'Metric (km)' },
-          { value: 'imperial', label: 'Imperial (cheeseburgers)' },
-        ],
-      },
+      question: UNITS_QUESTION,
       vehicles: [],
       progress: await progressFor(tripId, userId, state, scan),
     };
@@ -940,7 +957,7 @@ export async function submitAnswer(
     const scan = await scanFirstMessage(text, { userId, tripId });
 
     // Record the opening Q/A bubble.
-    await writeQA(tripId, TRIP_INTENT_QUESTION.label, text);
+    await writeQA(tripId, TRIP_INTENT_QUESTION, text, text);
 
     // Stash validated prefill-confirm fields (fuel range is a safety number — the
     // driver confirms it on the vehicle step, so it waits in onboardingScan
@@ -1026,8 +1043,8 @@ export async function submitAnswer(
       .set({ onboardingScan: stash, onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     // Record the answer under the wording the driver was actually shown.
-    const askedLabel = buildTripOriginQuestion(trip.lastKnownPlace ?? null).label;
-    await writeQA(tripId, askedLabel, origin);
+    const askedQuestion = buildTripOriginQuestion(trip.lastKnownPlace ?? null);
+    await writeQA(tripId, askedQuestion, origin, input.value);
 
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     if (afterSnapshot.state === 'done') {
@@ -1048,16 +1065,14 @@ export async function submitAnswer(
       TRIP_DATE_CLARIFY_QUESTION.label,
     );
     // Record the answer under whichever question the user was actually shown.
-    const askedLabel = clarifyAsked
-      ? TRIP_DATE_CLARIFY_QUESTION.label
-      : TRIP_DATE_QUESTION.label;
+    const askedQuestion = clarifyAsked ? TRIP_DATE_CLARIFY_QUESTION : TRIP_DATE_QUESTION;
     const { iso, assumed } = await resolveStartDate(text, { userId, tripId });
 
     // No usable date AND we haven't nudged yet → ask ONE clarifying question and
     // stay on the step. We never persist null; if they still give nothing next
     // time, the branch below falls back to starting today.
     if (iso === null && !clarifyAsked) {
-      await writeQA(tripId, askedLabel, text);
+      await writeQA(tripId, askedQuestion, text, input.value);
       await addChatMessage(
         tripId,
         'assistant',
@@ -1119,9 +1134,17 @@ export async function submitAnswer(
         : 'metric';
     const formatted = formatDate(parseISODate(finalIso), unitsForFmt);
     if (clarifyAsked) {
-      await addChatMessage(tripId, 'user', formatted, null, 'form_answer');
+      await addChatMessage(
+        tripId,
+        'user',
+        formatted,
+        null,
+        'form_answer',
+        null,
+        buildFormMeta(TRIP_DATE_CLARIFY_QUESTION, formatted, input.value),
+      );
     } else {
-      await writeQA(tripId, askedLabel, formatted);
+      await writeQA(tripId, askedQuestion, formatted, input.value);
     }
 
     // Deterministic acknowledgment — this is the JS form talking, not Penny's
@@ -1163,7 +1186,7 @@ export async function submitAnswer(
       .set({ dailyDriveHours: hours, onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     const answerLabel = `${hours} h a day`;
-    await writeQA(tripId, TRIP_PACE_LABEL, answerLabel);
+    await writeQA(tripId, TRIP_PACE_QUESTION, answerLabel, input.value);
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     if (afterSnapshot.state === 'done') {
       return completeOnboarding(tripId, answerLabel);
@@ -1184,7 +1207,7 @@ export async function submitAnswer(
       .set({ onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
     const answerLabel = raw === 'metric' ? 'Metric (kilometers)' : 'Imperial (miles)';
-    await writeQA(tripId, UNITS_LABEL, answerLabel);
+    await writeQA(tripId, UNITS_QUESTION, answerLabel, raw);
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // Returning user with vehicle already set: onboarding may jump straight
     // to 'done' after units are chosen. Complete the handoff so the client
@@ -1242,7 +1265,7 @@ export async function submitAnswer(
       } else {
         await updateVehicle(userId, vehicleForSetup.id, { name });
       }
-      await writeQA(tripId, nameQ.label, name);
+      await writeQA(tripId, nameQ, name, name);
 
       // Non-numeric range ⇒ the helper, with the name already safe.
       if (isNonNumericRangeAnswer(rawRange)) {
@@ -1266,7 +1289,7 @@ export async function submitAnswer(
       await updateVehicle(userId, vehicleForSetup.id, { range_km: km });
 
       const rangeLabel = humanizeVehicleProfileAnswer(rangeQ, shown, unitsPref);
-      await writeQA(tripId, rangeQ.label, rangeLabel);
+      await writeQA(tripId, rangeQ, rangeLabel, rawRange);
 
       const after = await getOnboardingSnapshot(tripId, userId);
       if (after.state === 'done') return completeOnboarding(tripId, `${name} · ${rangeLabel}`);
@@ -1325,7 +1348,7 @@ export async function submitAnswer(
     }
 
     const answerLabel = humanizeVehicleProfileAnswer(question, parsed, unitsPref);
-    await writeQA(tripId, question.label, answerLabel);
+    await writeQA(tripId, question, answerLabel, input.value);
 
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // If all vehicle questions are done, complete onboarding and handoff
@@ -1361,7 +1384,38 @@ export async function submitAnswer(
 
 // ---------------------------------------------------------------------------
 
-async function writeQA(tripId: string, question: string, answer: string) {
-  await addChatMessage(tripId, 'assistant', question, null, 'form_question');
-  await addChatMessage(tripId, 'user', answer, null, 'form_answer');
+/**
+ * Persist one answered onboarding step: the question row, then the answer row
+ * carrying the widget that step WAS (`ChatFormMeta`).
+ *
+ * The meta goes on the answer row and not the question row because this is the
+ * first moment both halves are known — no update-later path, no window where a
+ * half-written step could render. `collapseOnboardingSteps` folds the pair back
+ * into one widget at render time, on both clients, from the one definition in
+ * `@/lib/onboardingForm`.
+ *
+ * Callers pass the QUESTION OBJECT, not its label, wherever one exists: the
+ * options are the whole point, and a label alone records a step whose choices
+ * are gone. A bare string is still accepted for the handful of steps that
+ * genuinely offer none.
+ */
+async function writeQA(
+  tripId: string,
+  question: string | AnsweredQuestionShape,
+  answer: string,
+  /** What the driver actually submitted, so a tapped chip can be matched by value. */
+  rawValue?: unknown,
+) {
+  const shape: AnsweredQuestionShape =
+    typeof question === 'string' ? { label: question, kind: 'text' } : question;
+  await addChatMessage(tripId, 'assistant', shape.label, null, 'form_question');
+  await addChatMessage(
+    tripId,
+    'user',
+    answer,
+    null,
+    'form_answer',
+    null,
+    buildFormMeta(shape, answer, rawValue),
+  );
 }

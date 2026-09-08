@@ -1,0 +1,15 @@
+-- Answered onboarding steps redraw themselves as the widget they were.
+--
+-- `chat_history` stored only `content`, so once a step advanced the options the
+-- driver chose FROM were gone — they existed only on the live onboarding API
+-- response. Scrolling back through setup showed a flat transcript of a form
+-- nobody could see the shape of.
+--
+-- Written on `form_answer` rows only (the first row that exists once BOTH the
+-- question and the answer are known, so there is no update-later path). Null
+-- everywhere else, and null on every row written before this migration — those
+-- keep rendering as the two plain bubbles they always did.
+--
+-- Additive: nothing reads this column until the code that writes it ships, so
+-- migrate-then-deploy leaves prod running old code against a superset schema.
+ALTER TABLE "chat_history" ADD COLUMN IF NOT EXISTS "form_meta" jsonb;

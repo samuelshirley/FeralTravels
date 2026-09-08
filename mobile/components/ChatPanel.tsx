@@ -35,16 +35,26 @@ import {
 } from "@/lib/entitlement";
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import { ListIcon, PaperclipIcon, SendArrowIcon } from "@/components/icons";
 import { MagicWand, MapPinSimpleArea } from "phosphor-react-native";
 import { useDeviceLocation } from "@/lib/location";
 import {
+  answeredChips,
+  buildFormMeta,
+  clientRecordsAnsweredStep,
+  type QuestionKind,
   cityFromPlace,
+  collapseOnboardingSteps,
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
 } from "@/shared/lib/onboardingForm";
-import type { ChatKind } from "@/shared/types/trip";
+import {
+  PLAN_READY_FOLLOW_UP,
+  PLAN_READY_TEXT,
+  planReadyHeadlineParts,
+} from "@/shared/lib/planReady";
+import type { ChatFormMeta, ChatKind } from "@/shared/types/trip";
 import { Spinner } from "@/components/ui";
 import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
 import PennyPlanningVideo from "@/components/chat/PennyPlanningVideo";
@@ -103,12 +113,28 @@ const CONTINUE_PROMPT =
 const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
 
 /** An optimistic form row (question, answer or Penny's deterministic note). */
+/**
+ * The answered-step widget for an optimistic row, or null when the server owns
+ * it. See `clientRecordsAnsweredStep` — the composite vehicle card is one
+ * client answer over two server steps, so the client records nothing for it.
+ */
+function answeredStepMeta(
+  question: { label: string; kind: QuestionKind; options?: { value: string; label: string }[] },
+  answerLabel: string,
+  rawValue: unknown
+): ChatFormMeta | null {
+  if (!clientRecordsAnsweredStep(question.kind)) return null;
+  return buildFormMeta(question, answerLabel, rawValue);
+}
+
 function formRow(
   tripId: string,
   role: "user" | "assistant",
   content: string,
   kind: ChatKind,
-  ts: number
+  ts: number,
+  /** On a `form_answer`: the step's widget, so it renders answered straight away. */
+  formMeta?: ChatFormMeta | null
 ): UIMessage {
   return {
     // Its own namespace — see the web ChatPanel's formRow.
@@ -117,6 +143,7 @@ function formRow(
     role,
     content,
     kind,
+    form_meta: formMeta ?? null,
     changes_made: null,
     created_at: new Date().toISOString(),
   };
@@ -178,6 +205,12 @@ interface ChatPanelProps {
   readonly: boolean;
   onTripUpdated: () => void;
   onActivity: (kind: "thinking" | "response" | "error") => void;
+  /**
+   * Show the itinerary. The plan-ready bubble's "list view" is a real control,
+   * not a phrase, and the screen owns the tabs — so the screen owns what the
+   * words do.
+   */
+  onOpenList?: () => void;
 }
 
 /**
@@ -199,6 +232,7 @@ export default function ChatPanel({
   readonly,
   onTripUpdated,
   onActivity,
+  onOpenList,
 }: ChatPanelProps) {
   const { units } = useUnits();
   const { notify } = useErrors();
@@ -578,8 +612,8 @@ export default function ChatPanel({
         // don't surface.
         console.warn("[Penny] validation failures:", outcome.validationFailures);
       }
-      setMessages((prev) =>
-        prev.map((m) =>
+      setMessages((prev) => {
+        const patched = prev.map((m) =>
           m.id === assistantMsgId
             ? {
                 ...m,
@@ -593,12 +627,28 @@ export default function ChatPanel({
                 streaming: false,
               }
             : m
-        )
-      );
+        );
+        if (!ev.planReady) return patched;
+        // Idempotent: the heal path can apply the same payload a second time,
+        // and two identical confirmations would be worse than none.
+        if (patched.some((m) => m.kind === "plan_ready")) return patched;
+        const at = patched.findIndex((m) => m.id === assistantMsgId);
+        const bubble: UIMessage = {
+          id: `plan-ready-${assistantMsgId}`,
+          trip_id: tripId,
+          role: "assistant",
+          content: PLAN_READY_TEXT,
+          kind: "plan_ready",
+          changes_made: null,
+          created_at: new Date().toISOString(),
+        };
+        if (at < 0) return [...patched, bubble];
+        return [...patched.slice(0, at), bubble, ...patched.slice(at)];
+      });
       if (outcome.appliedChanges || ev.fuelStopsChanged) onTripUpdated();
       onActivity(outcome.applyError ? "error" : "response");
     },
-    [onTripUpdated, onActivity]
+    [onTripUpdated, onActivity, tripId]
   );
 
   /** Put an assistant bubble into a stable error state (mirrors failAssistant). */
@@ -1135,6 +1185,11 @@ export default function ChatPanel({
     value: string | number | { name: string; range_km: string },
   ) => {
     if (!onboardingSnapshot?.question || onboardingSubmitting) return;
+    // Captured BEFORE the request: the response replaces the snapshot with the
+    // NEXT question, and the step being recorded is this one. Same builder the
+    // server calls when it persists the row, so the widget on screen now is the
+    // widget after a reload.
+    const askedQuestion = onboardingSnapshot.question;
     setOnboardingSubmitting(true);
     setOnboardingError(null);
     try {
@@ -1149,7 +1204,16 @@ export default function ChatPanel({
           // The final answer gets its bubble like every other step. Mirrors
           // the web.
           if (result.answerLabel) {
-            additions.push(formRow(tripId, "user", result.answerLabel, "form_answer", ts + 1));
+            additions.push(
+              formRow(
+                tripId,
+                "user",
+                result.answerLabel,
+                "form_answer",
+                ts + 1,
+                answeredStepMeta(askedQuestion, result.answerLabel, value)
+              )
+            );
           }
           // Surface any deterministic acknowledgment (e.g. the start-date
           // confirm / placeholder) as a Penny bubble before her real response.
@@ -1174,6 +1238,7 @@ export default function ChatPanel({
               role: "user" as const,
               content: result.answerLabel,
               kind: "form_answer" as const,
+              form_meta: answeredStepMeta(askedQuestion, result.answerLabel, value),
               changes_made: null,
               created_at: new Date().toISOString(),
             },
@@ -1437,7 +1502,11 @@ export default function ChatPanel({
           ? (onboardingQuestion.placeholder ?? "Type your answer…")
           : "Ask Penny…";
 
-  const transcript = buildTranscript(visibleMessages);
+  // Fold each answered setup step's question row into its answer row, so the
+  // step redraws as the widget it was rather than as two flat bubbles. Rows
+  // without meta — everything written before the column existed, and every
+  // ordinary chat message — pass through untouched. Mirrors the web.
+  const transcript = buildTranscript(collapseOnboardingSteps(visibleMessages));
   // The bubble the current setup question lives in — the LAST form_question
   // whose text is the question the snapshot is asking. Its chips / card render
   // inside that bubble (frames 7b–7e). Mirrors the web.
@@ -1764,6 +1833,94 @@ export default function ChatPanel({
                   </View>
                 ) : null}
                 <PennyPlanningVideo />
+              </View>
+            );
+          }
+          /*
+           * The deterministic plan-ready confirmation — see shared/lib/planReady.
+           * The words are shared with the server and the web; the LAYOUT is
+           * here, because "head over to the list view" is only worth saying if
+           * the list view is one tap away.
+           */
+          if (msg.kind === "plan_ready") {
+            const parts = planReadyHeadlineParts();
+            return (
+              <View
+                key={msg.id}
+                testID="chat-plan-ready"
+                style={[styles.row, { marginTop, alignSelf: "flex-start" }]}
+              >
+                <View style={[styles.bubble, bubbleRadius("assistant", gp), styles.bubbleAssistant]}>
+                  <View style={styles.planReadyHead}>
+                    <ListIcon size={15} color={theme.text} />
+                    <Text style={[styles.bubbleText, styles.planReadyHeadText]}>
+                      {parts.before}
+                      {parts.link ? (
+                        <Text
+                          testID="plan-ready-open-list"
+                          style={styles.planReadyLink}
+                          onPress={onOpenList}
+                        >
+                          {parts.link}
+                        </Text>
+                      ) : null}
+                      {parts.after}
+                    </Text>
+                  </View>
+                  <Text style={[styles.bubbleText, styles.planReadyFollowUp]}>
+                    {PLAN_READY_FOLLOW_UP}
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+          // An ANSWERED setup step. `collapseOnboardingSteps` has already
+          // dropped the question row this one carries, so it stands in the
+          // question's place and draws the whole step: what Penny asked, the
+          // options as offered, and the one the driver chose. Left-aligned like
+          // the question it replaces — the answer is inside the widget now, so
+          // a right-aligned user bubble would say it twice. Mirrors the web.
+          if (msg.kind === "form_answer" && msg.form_meta) {
+            const meta = msg.form_meta;
+            const chips = answeredChips(meta);
+            return (
+              <View
+                key={msg.id}
+                testID="chat-answered-step"
+                style={[styles.row, styles.rowWide, { marginTop, alignSelf: "flex-start" }]}
+              >
+                <View style={[styles.bubble, bubbleRadius("assistant", gp), styles.bubbleAssistant]}>
+                  <Text style={styles.bubbleText}>{meta.question}</Text>
+                  {chips.length > 0 ? (
+                    <View style={[styles.optionsRow, styles.answeredOptionsRow]}>
+                      {chips.map((chip) => (
+                        <View
+                          key={chip.key}
+                          testID={
+                            chip.selected ? "onboarding-chip-chosen" : "onboarding-chip-answered"
+                          }
+                          style={[
+                            styles.optionChip,
+                            // Answered: a record, not a control — no Pressable
+                            // at all, so there is nothing to tap. The unchosen
+                            // options recede so the answer is what the eye
+                            // lands on.
+                            chip.selected ? styles.optionChipOn : styles.optionChipSpent,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.optionChipText,
+                              chip.selected ? styles.optionChipTextOn : null,
+                            ]}
+                          >
+                            {chip.label}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
               </View>
             );
           }
@@ -2377,6 +2534,14 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 999,
   },
+  /** Answered step: the options the driver did NOT choose, receded. */
+  planReadyHead: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  planReadyHeadText: { flex: 1 },
+  planReadyLink: { color: theme.accent300, textDecorationLine: "underline" },
+  planReadyFollowUp: { marginTop: 10 },
+  optionChipSpent: { opacity: 0.45 },
+  /** A little air between the question text and its recorded answer. */
+  answeredOptionsRow: { marginTop: 10 },
   optionChipOff: { opacity: 0.5 },
   optionChipOn: { borderColor: theme.primary, backgroundColor: theme.primaryTint },
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
