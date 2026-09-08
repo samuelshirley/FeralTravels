@@ -7,7 +7,7 @@ import { apiFetch } from '@/lib/api';
 import { LoadingOverlay } from '@/components/Spinner';
 import PullToRefresh from '@/components/PullToRefresh';
 import { PencilEditTripsIcon } from '@/components/icons';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 
 interface TripSummary {
   id: string;

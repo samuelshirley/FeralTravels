@@ -11,7 +11,7 @@ import {
   vehicleProfileGroupTitle,
   type VehicleProfileFieldKey,
 } from '@/lib/vehicleProfile';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 
 const PROFILE_FIELD_TEST_IDS: Partial<Record<VehicleProfileFieldKey, string>> = {};
 

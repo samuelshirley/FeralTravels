@@ -18,7 +18,7 @@ import {
   NavigateIcon,
   PencilRenameIcon,
 } from '@/components/icons';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 
 // Pagination tuning. The first chunk is sized so a 20-day trip fits in a
 // single render (matches the user-facing "20 days" model). Subsequent
