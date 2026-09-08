@@ -24,6 +24,23 @@ import { appendFileSync } from 'node:fs';
 const REPORT = process.env.PLAYWRIGHT_JSON_REPORT || 'playwright-results.json';
 const MAX_SKIPPED = Number(process.env.E2E_MAX_SKIPPED ?? 1);
 
+/**
+ * The Anthropic-spending specs, which playwright.config.ts drops from
+ * `testMatch` unless E2E_AI_SPECS=1 (the `ai-tests` label). Duplicated here
+ * rather than imported because this file is plain .mjs and the config is TS;
+ * `src/lib/aiSpecGateGuard.test.ts` fails the unit suite if the two lists ever
+ * disagree.
+ *
+ * The asymmetry below is the whole point. When they are gated OFF we say so
+ * loudly, because a green check that never asked Penny to plan anything must
+ * not read like one that did. When they are gated ON we FAIL if they produced
+ * no result — otherwise a typo in the label, the regex or the env plumbing
+ * would look identical to a passing run, which is the same "green but empty"
+ * shape this script was written to catch in the first place.
+ */
+const AI_SPEC_NAMES = ['penny-plan-trip', 'chat-maps-link'];
+const AI_SPECS_REQUESTED = process.env.E2E_AI_SPECS === '1';
+
 function summary(line) {
   process.stdout.write(`${line}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
@@ -107,6 +124,54 @@ if (reasons.size) {
 if (skipped > 0 && skipped <= MAX_SKIPPED) {
   summary(
     `::warning::${skipped} of ${skipped + ran} E2E tests did not run. This build is green on ${ran} test(s). The skip allowance (E2E_MAX_SKIPPED=${MAX_SKIPPED}) is a temporary concession in .github/workflows/pipeline.yml — lower it back to 1 once e2e sign-in works.`,
+  );
+}
+
+// Which spec FILES produced at least one non-skipped result. Walked from the
+// suite tree rather than report.stats, which counts but does not name.
+const filesThatRan = new Set();
+const collectFiles = (suites = [], file = '') => {
+  for (const suite of suites) {
+    const here = suite.file || file;
+    for (const spec of suite.specs ?? []) {
+      for (const t of spec.tests ?? []) {
+        const status = t.status ?? t.results?.[0]?.status;
+        if (status !== 'skipped') filesThatRan.add(here);
+      }
+    }
+    collectFiles(suite.suites, here);
+  }
+};
+try {
+  collectFiles(report.suites);
+} catch {
+  /* best-effort — the assertions below fall through to the generic checks */
+}
+
+const aiSpecsThatRan = AI_SPEC_NAMES.filter((name) =>
+  [...filesThatRan].some((f) => f.includes(name))
+);
+
+if (AI_SPECS_REQUESTED) {
+  const missing = AI_SPEC_NAMES.filter((n) => !aiSpecsThatRan.includes(n));
+  if (missing.length) {
+    summary(
+      `::error::E2E_AI_SPECS=1 asked for the Anthropic-spending specs, but ${missing
+        .map((n) => `${n}.spec.ts`)
+        .join(' and ')} produced no result. The label ran the pipeline without ` +
+        'running what the label is FOR — check E2E_AI_SPECS reached the Playwright ' +
+        'step and that the names still match AI_SPEC_NAMES in playwright.config.ts.',
+    );
+    process.exit(1);
+  }
+  summary(`\nAnthropic-spending specs ran: ${aiSpecsThatRan.join(', ')}. 💸`);
+} else {
+  summary(
+    `::warning::Penny was not asked to plan anything on this run. ${AI_SPEC_NAMES.map(
+      (n) => `${n}.spec.ts`,
+    ).join(' and ')} are gated behind the \`ai-tests\` label to keep the Anthropic ` +
+      'bill off every push — add that label to the PR before merging, and the ' +
+      'run it triggers is the one to merge on.',
   );
 }
 

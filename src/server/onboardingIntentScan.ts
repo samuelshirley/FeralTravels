@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { anthropicApiKey } from '@/lib/anthropicKey';
 import { ONBOARDING_SCAN_MODEL } from '@/lib/models';
 import { validateRangeKm } from '@/lib/vehicleProfile';
 import { parseDailyDriveHours } from '@/lib/onboardingForm';
@@ -35,8 +36,9 @@ import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
 // (unit tests, build pass). The SDK constructor throws on a missing key.
 let _client: Anthropic | null = null;
 function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const apiKey = anthropicApiKey();
+  if (!apiKey) return null;
+  if (!_client) _client = new Anthropic({ apiKey });
   return _client;
 }
 

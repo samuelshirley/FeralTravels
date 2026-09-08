@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicApiKey } from "@/lib/anthropicKey";
 import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
 import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
@@ -33,7 +34,19 @@ import { appendContinuationNudge } from "@/lib/penny/autoContinue";
 // no-double-user-turn invariant of the auto-continue plumbing.
 export { appendContinuationNudge };
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+/*
+ * Lazily constructed, and the laziness is the point: `anthropicApiKey()` picks
+ * the CI key on every non-production runtime, and a client built at import time
+ * would capture whatever the environment held when this module was first
+ * required — before Next has finished wiring the request's env on some paths,
+ * and impossible to exercise from a test. The other three callers already
+ * memoise the same way.
+ */
+let _client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!_client) _client = new Anthropic({ apiKey: anthropicApiKey() });
+  return _client;
+}
 
 // Single source of truth for model IDs lives in @/lib/models — update there when
 // a model is sunset.
@@ -765,7 +778,7 @@ export async function* replanStream(
       yield { kind: "iteration_start", index: currentIteration };
       let response: Anthropic.Message;
       try {
-        response = await client.messages.create({
+        response = await getClient().messages.create({
           model: MODEL,
           max_tokens: 4096,
           system: cachedSystem,
