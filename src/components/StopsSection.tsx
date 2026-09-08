@@ -12,7 +12,7 @@ import { useUnits } from '@/components/UnitsContext';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
 
 interface StopsSectionProps {

@@ -17,7 +17,7 @@ import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
 // id, and two hardcoded copies of it is how they quietly stop matching.
 import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
 import { PaperclipIcon, SendArrowIcon } from '@/components/icons';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 import { useDeviceLocation } from '@/components/DeviceLocationContext';
 import {
   cityFromPlace,

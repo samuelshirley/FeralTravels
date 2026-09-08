@@ -16,7 +16,7 @@ import { useNextStop } from '@/lib/useNextStop';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
-import { buttonStyle } from '@/components/ui/Button';
+import { buttonStyle } from '@/components/ui/buttonStyle';
 import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from '@/components/icons';
 
 /** Build "Route to {Type} — {Name}" label for nav buttons. */

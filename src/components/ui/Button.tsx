@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type CSSProperties, type ReactNode } from 'react';
+import { BASE, VARIANTS, type ButtonVariant } from './buttonStyle';
 
 /**
  * The web's button primitive. NEW with the Nocturne reskin.
@@ -24,7 +25,6 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
  * The designs render Delete as a neutral outline; a destructive action that
  * looks like every other action is the worse trade.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'danger';
 
 interface ButtonProps {
   children: ReactNode;
@@ -40,79 +40,6 @@ interface ButtonProps {
   title?: string;
   'aria-label'?: string;
   'data-testid'?: string;
-}
-
-const BASE: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 6,
-  border: '1px solid transparent',
-  borderRadius: 'var(--tp-radius-md)',
-  padding: '10px 16px',
-  fontFamily: 'var(--tp-font-sans)',
-  fontSize: 'var(--tp-text-base)',
-  fontWeight: 600,
-  lineHeight: 1.2,
-  cursor: 'pointer',
-  transition: 'background 0.15s, border-color 0.15s, color 0.15s',
-  WebkitAppearance: 'none',
-  appearance: 'none',
-};
-
-/** [rest, hover/active] pairs, so the hover state lives beside the rest state. */
-const VARIANTS: Record<ButtonVariant, [CSSProperties, CSSProperties]> = {
-  primary: [
-    {
-      background: 'var(--tp-primary-tint)',
-      borderColor: 'var(--tp-primary)',
-      color: 'var(--tp-accent-300)',
-    },
-    {
-      background: 'var(--tp-primary-muted)',
-      borderColor: 'var(--tp-accent-400)',
-      color: 'var(--tp-accent-300)',
-    },
-  ],
-  secondary: [
-    {
-      background: 'var(--tp-surface)',
-      borderColor: 'var(--tp-border-strong)',
-      color: 'var(--tp-text)',
-    },
-    {
-      background: 'var(--tp-surface-muted)',
-      borderColor: 'var(--tp-border-strong)',
-      color: 'var(--tp-text)',
-    },
-  ],
-  danger: [
-    {
-      background: 'var(--tp-danger-muted)',
-      borderColor: 'var(--tp-danger-border)',
-      color: 'var(--tp-danger)',
-    },
-    {
-      background: 'var(--tp-danger-muted)',
-      borderColor: 'var(--tp-danger)',
-      color: 'var(--tp-danger)',
-    },
-  ],
-};
-
-/**
- * The same recipe as a plain style object, for the actions that are LINKS
- * rather than buttons — "Open vehicle setup" and the trips-list clone pill
- * navigate, so they must stay an `<a>`/`<Link>` for middle-click, right-click
- * and the status bar. Wrapping a link in a <button> to reuse the component
- * would trade all three away for visual consistency that this export gives
- * for free.
- *
- * No hover state: a link has a stylesheet-free `:hover` problem of its own,
- * and the border already carries the affordance.
- */
-export function buttonStyle(variant: ButtonVariant = 'primary'): CSSProperties {
-  return { ...BASE, ...VARIANTS[variant][0], textDecoration: 'none' };
 }
 
 export default function Button({
