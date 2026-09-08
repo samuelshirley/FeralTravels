@@ -23,7 +23,9 @@ BOLD=$'\033[1m'; GRN=$'\033[32m'; YEL=$'\033[33m'; DIM=$'\033[2m'; OFF=$'\033[0m
 VAR=REVENUECAT_WEBHOOK_SECRET
 URL=https://www.feraltravels.com/api/webhooks/revenuecat
 
-if [ ! -f .vercel/project.json ]; then
+# Either link shape counts: `vercel link` writes project.json, `vercel link --repo`
+# writes repo.json. Checking only for the first rejected an already-linked repo.
+if [ ! -f .vercel/project.json ] && [ ! -f .vercel/repo.json ]; then
   echo "This directory is not linked to a Vercel project. Run: npx vercel link" >&2
   exit 1
 fi
