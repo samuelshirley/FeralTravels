@@ -115,7 +115,6 @@ export default function PaywallScreen() {
         />
         <View style={styles.headerCopy}>
           <Text style={styles.headerName}>Penny</Text>
-          <Text style={styles.headerSub}>Professional Trip Plannin Bitch</Text>
         </View>
       </View>
 
@@ -191,13 +190,6 @@ const styles = StyleSheet.create({
   },
   headerCopy: { minWidth: 0 },
   headerName: { fontSize: 14, fontFamily: font.bold, color: theme.text },
-  headerSub: {
-    fontFamily: font.regular,
-    fontSize: 10,
-    color: theme.subtle,
-    letterSpacing: 0.4,
-    marginTop: 2,
-  },
 
   scrollContent: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
   // Bottom-pins a short conversation, same trick as the transcript.
