@@ -1612,18 +1612,19 @@ export default function ChatPanel({
      */
     <View style={styles.root}>
       {/*
-        Penny's identity strip. The avatar was a flat primary circle standing
-        in for the web's primary→success gradient; under the mono palette those
-        two stops are the same colour, so both sides are a ring now — which
-        also stops it reading as the account avatar in the header above.
+        Penny's identity strip. The avatar was a lettered "P" circle; it is now
+        Penny herself, cut out on the same purple as the app icon and splash so
+        the three read as one identity. The ring stays: it is what stops this
+        circle reading as the account avatar in the header above.
       */}
       <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>P</Text>
-        </View>
+        <Image
+          source={require("../assets/penny-avatar.png")}
+          style={styles.avatar}
+          accessibilityLabel="Penny"
+        />
         <View style={styles.headerCopy}>
           <Text style={styles.headerName}>Penny</Text>
-          <Text style={styles.headerSub}>Feral Travels AI · plans your days</Text>
         </View>
         <View style={styles.headerStatus}>
           <View style={[styles.statusDot, pennyThinking && styles.statusDotThinking]} />
@@ -2074,22 +2075,14 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    // Shows through only while the bundled image decodes, and behind its
+    // 1px antialiased edge — the same purple the cutout sits on.
     backgroundColor: theme.accent900,
     borderWidth: 1,
     borderColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  avatarText: { color: theme.accent300, fontFamily: font.semibold, fontSize: 14 },
   headerCopy: { flex: 1, minWidth: 0 },
   headerName: { fontSize: 14, fontFamily: font.medium, color: theme.text },
-  headerSub: {
-    fontFamily: font.regular,
-    fontSize: 11,
-    color: theme.subtle,
-    letterSpacing: 0.2,
-    marginTop: 2,
-  },
   headerStatus: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
   statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.primary },
   statusDotThinking: { backgroundColor: theme.accent300 },

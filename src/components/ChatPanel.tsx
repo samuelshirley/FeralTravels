@@ -2226,10 +2226,11 @@ export default function ChatPanel({
       )}
 
       {/*
-        Penny's identity strip. The avatar was a two-hue gradient
-        (primary → success) — under the mono palette those are now the same
-        colour, so it is a ring with a soft glow instead, which is also what
-        distinguishes it from the account avatar in the header above.
+        Penny's identity strip. The avatar was a lettered "P" in a ring; it is
+        now Penny herself, cut out on the same purple as the app icon and
+        splash so the three read as one identity. The ring and glow stay —
+        they are what distinguish it from the account avatar in the header
+        above.
 
         The status on the right is the ONLY place the panel says whether Penny
         is working. It replaces nothing — before this you had to notice the
@@ -2278,7 +2279,14 @@ export default function ChatPanel({
             />
           </div>
         )}
-        <div
+        {/* Penny herself, cut out on the same purple as the app icon and
+            splash. The ring and glow stay — they are what keep this circle
+            from reading as the account avatar in the header above. */}
+        <img
+          src="/penny-avatar.png"
+          alt="Penny"
+          width={34}
+          height={34}
           style={{
             width: 34,
             height: 34,
@@ -2286,30 +2294,13 @@ export default function ChatPanel({
             background: 'var(--tp-accent-900)',
             border: '1px solid var(--tp-primary)',
             boxShadow: '0 0 12px rgba(145, 132, 217, 0.35)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--tp-accent-300)',
-            fontWeight: 600,
-            fontSize: 14,
+            objectFit: 'cover',
             flexShrink: 0,
           }}
-        >
-          P
-        </div>
+        />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--tp-text)', lineHeight: 1.1 }}>
             Penny
-          </div>
-          <div
-            style={{
-              fontSize: 11,
-              color: 'var(--tp-subtle)',
-              letterSpacing: '0.02em',
-              marginTop: 2,
-            }}
-          >
-            Feral Travels AI · plans your days
           </div>
         </div>
         <div

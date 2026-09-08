@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TypingBubble } from "@/components/chat/Indicators";
@@ -108,9 +108,11 @@ export default function PaywallScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>P</Text>
-        </View>
+        <Image
+          source={require("../assets/penny-avatar.png")}
+          style={styles.avatar}
+          accessibilityLabel="Penny"
+        />
         <View style={styles.headerCopy}>
           <Text style={styles.headerName}>Penny</Text>
           <Text style={styles.headerSub}>YOUR TRIP PLANNER</Text>
@@ -175,15 +177,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+  /* Penny herself, same cutout and same ring as the chat header — this screen
+     exists to BE that header for an account with no trip to hold one. */
   avatar: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
+    // Shows through only while the bundled image decodes, and behind its
+    // 1px antialiased edge — the same purple the cutout sits on.
+    backgroundColor: theme.accent900,
+    borderWidth: 1,
+    borderColor: theme.primary,
   },
-  avatarText: { color: theme.onPrimary, fontFamily: font.extrabold, fontSize: 13 },
   headerCopy: { minWidth: 0 },
   headerName: { fontSize: 14, fontFamily: font.bold, color: theme.text },
   headerSub: {
