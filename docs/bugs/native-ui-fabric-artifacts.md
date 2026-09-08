@@ -146,3 +146,86 @@ job in `.github/workflows/ci.yml`, `macos-15`, booting a simulator with
   which types character by character and takes the wrong branch — into
   `signin-code-0`, then assert each of `signin-code-0..5` holds exactly one
   digit. That is the assertion the current flow was rewritten to avoid making.
+
+## Reproduction results (2026-09-08, iPhone 17 Pro simulator, iOS 26.5, Release build)
+
+Driven with `scripts/ios-e2e-local.sh` against the local server, Maestro
+2.10.0, the app built from `e192933`. Every claim below is an observation.
+
+### Symptom 1 — border lag: NOT reproduced
+
+Setup: five digits pasted into the boxes, keyboard dismissed by tapping the
+title, then `tapOn: signin-code-0` under `xcrun simctl io recordVideo`. The
+recording was measured with `scripts/sim-frames.swift` (one pixel column
+through the centre of box 0, x = 193 px; the top row of the box's border colour
+against the top row of the digit "2" inside it, per frame).
+
+The keyboard rise moved box 0 from y = 885 to y = 423 (462 px) over 29
+frames, ~380 ms, 15–21 px per frame. **The glyph-to-border offset was 55 or
+56 px in every one of those frames** — ±1 px, which is compression jitter, and
+the same value it holds at rest before and after. The border did not trail the
+fill or the text by a single frame. Excerpt (`f<frame> t=<ms>`):
+
+```
+f134 t=11401 border=885 glyph=940 glyph-border=55   (at rest, keyboard down)
+f135 t=11408 border=877 glyph=933 glyph-border=56
+f140 t=11476 border=800 glyph=856 glyph-border=56
+f150 t=11588 border=659 glyph=715 glyph-border=56
+f160 t=11740 border=478 glyph=534 glyph-border=56
+f163 t=11790 border=423 glyph=478 glyph-border=55   (at rest, keyboard up)
+```
+
+The source lines cited in section 1 are all real in RN 0.81.5 on disk
+(`_borderLayer.frame = self.layer.bounds` at `RCTViewComponentView.mm:559`
+with no guard; `LayoutAnimation.configureNext` at
+`KeyboardAvoidingView.js:171`; the `useCoreAnimationBorderRendering` test at
+`:884`). What they predict — a 0.25 s implicit animation on the border layer
+while the view moves on the keyboard curve — does not happen on the
+simulator. Per the rule in this file's own prompt, that kills the hypothesis
+as stated; the `overflow: 'hidden'` A/B was not run because there is no
+divergence for it to remove. **What this does not rule out:** a real device.
+The simulator's CoreAnimation runs on the Mac's GPU at the recording's 60 Hz;
+a ProMotion iPhone at 120 Hz with UIKit's own keyboard curve is a different
+compositor, and the report came from a device. If it is still visible on a
+device, the next measurement is the same tool on a device screen recording,
+not another reading of the source.
+
+### Symptom 2 — six digits in box 0: NOT reproduced by any path the simulator offers
+
+- **Edit-menu Paste of the real six-digit code** (long-press box 0 → Paste):
+  the spread worked. Frame 252 of the recording shows `0 2 8 8 5 3` across the
+  six boxes with "Verifying…", and the code signed in. What DID hold is
+  defect (a): the keyboard stayed up through "Verifying…", because the
+  `blur()` on box 5 is a no-op (box 0 was the first responder).
+- **Edit-menu Paste of five digits** (no auto-submit, so the boxes could be
+  read back through the accessibility tree): `BOXES=[2|4|6|8|0|]`. Correct.
+- **Five digits typed at XCTest speed into box 0** (`inputText: '24680'`, the
+  per-character branch and the race `sign-in.yaml` documents): also
+  `[2|4|6|8|0|]`. The `8 0 8 8 8 _` race did not reproduce on this build.
+- **A wrong six-digit paste** was rejected by the server and the boxes cleared
+  before any readback could run (~500 ms); no intermediate state observed.
+- **The keyboard's own suggestion — the path in the report — cannot be driven
+  here.** The number pad has no QuickType bar in the simulator, and the
+  edit-menu AutoFill item offers Contact, Passwords, Credit Card and Scan Text
+  only: there is no one-time-code source (Messages or Mail) on a simulator.
+  So defect (b), the dropped JS rewrite when native has emitted a newer text
+  event, remains untested, and it is the one that fits the report — a correct
+  submit with a wrong display needs JS state right and native text stale,
+  and a single-event paste (which is what the menu produces, and what worked)
+  never puts the two out of step.
+
+**What would reproduce (b):** a real device with the code arriving by Mail or
+Messages autofill, i.e. the exact path in the report. Alternatively a unit of
+`RCTTextInputComponentView` behaviour is not reachable from JS tests.
+
+### What this means for the fix
+
+Nothing in the app has been changed. The structural fix proposed above — one
+`TextInput` owning the whole string, six `View`s rendering the digits — is
+still the right shape because it removes defect (a) (observed) and makes (b)
+and (c) impossible regardless of whether they reproduce; but landing it on the
+strength of a report that could not be reproduced is a judgement call for the
+owner, not for this write-up. The existing Maestro flow still cannot see any
+of this, and a paste-path flow needs the pasteboard set from the runner
+(`xcrun simctl pbcopy`) — the flows used here were temporary and are not
+committed.
