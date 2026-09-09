@@ -12,6 +12,9 @@ const ANTHROPIC_PRICING_PER_MTOK: Record<string, { input: number; output: number
   'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
   'claude-3-5-haiku': { input: 0.8, output: 4.0 },
   'claude-haiku-4': { input: 0.8, output: 4.0 },
+  // Measured from the Console's own billed line items 2026-09-09 (scripts/anthropic-usage-report.ts):
+  // Haiku 4.5 bills $1.00 in / $5.00 out, not the Haiku 4 price the prefix matcher was giving it.
+  'claude-haiku-4-5': { input: 1.0, output: 5.0 },
   'claude-3-opus': { input: 15.0, output: 75.0 },
   'claude-opus-4': { input: 15.0, output: 75.0 },
 };
