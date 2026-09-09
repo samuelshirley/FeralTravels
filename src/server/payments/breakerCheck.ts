@@ -6,7 +6,12 @@ import { breakerAlerts, usageEvents, users } from '@/server/db/schema';
 import { adminAlertRecipients, isOnAdminAllowlist } from '@/server/auth/admin';
 import { areTestEndpointsEnabled, isFixtureRecipient } from '@/server/auth/test-endpoints';
 import { CircuitOpenError } from '@/server/auth/errors';
-import { BREAKERS, BREAKER_CACHE_MS, MICROCENTS_PER_DOLLAR } from './constants';
+import {
+  BREAKERS,
+  BREAKER_CACHE_MS,
+  MICROCENTS_PER_DOLLAR,
+  SYNTHETIC_SPEND_PROVIDER,
+} from './constants';
 import {
   evaluateBreakers,
   evaluateGate,
@@ -83,7 +88,21 @@ async function sumAnthropicMicrocents(sinceMs: number): Promise<number> {
         // `anthropicMicrocentsInWindow` gives: the namespaced rows
         // (`anthropic:accounting-write-failed`) are real money, and they exist
         // precisely because the primary insert threw.
-        sql`${usageEvents.provider} LIKE 'anthropic%'`
+        sql`${usageEvents.provider} LIKE 'anthropic%'`,
+        /*
+         * ...except the rows `/api/test/subscription` fabricates, which are not
+         * money. A full Playwright run plants $22.70 of them to drive accounts
+         * into paywall states, against a $25/24h ceiling — so counting them
+         * lets the test suite trip a breaker and 503 the specs running beside
+         * it, intermittently, once retries push it over. Found by the breakers
+         * spec's own baseline assertion on the first run that got this far.
+         *
+         * Narrow on purpose: ONE provider, not `anthropic:e2e-%`. The breaker
+         * fixture's own rows must still count — seeding app-wide spend is
+         * precisely what that one is for. And the PER-USER cap still counts
+         * both, because fabricating a user's balance is what that fixture does.
+         */
+        sql`${usageEvents.provider} <> ${SYNTHETIC_SPEND_PROVIDER}`
       )
     );
   return Number(rows[0]?.microcents ?? 0);

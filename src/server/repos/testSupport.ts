@@ -16,6 +16,7 @@ import {
   usageAlerts,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
+import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments/constants';
 /**
  * Payments is imported through its ONE public surface, never by reaching into
  * `./entitlements` or the `subscriptions` table — the whole value of that
@@ -708,7 +709,7 @@ export async function deleteUsageByMarker(marker: string): Promise<{ deleted: nu
  * numbers, because on a preview those rows sit in a copy-on-write clone of
  * production data.
  */
-const SUBSCRIPTION_FIXTURE_PROVIDER = 'anthropic:e2e-subscription-fixture';
+const SUBSCRIPTION_FIXTURE_PROVIDER = SYNTHETIC_SPEND_PROVIDER;
 
 export interface SubscriptionFixtureInput {
   email: string;

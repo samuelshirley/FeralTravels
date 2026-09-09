@@ -231,3 +231,21 @@ export const REPLAN_USD_CAP_PER_DAY = 5;
  * same dollar rather than a second, competing limit.
  */
 export const TRIAL_REPLAN_USD_CAP_PER_DAY = 0.5;
+
+/**
+ * The provider on `usage_events` rows that `/api/test/subscription` FABRICATES
+ * to drive an account into a paywall state.
+ *
+ * It is here, in production code, because one production query has to exclude
+ * it: see `sumAnthropicMicrocents` in `breakerCheck.ts`. The rows are not money
+ * — they can only be written through `/api/test/*`, which is hard-off on
+ * production with no override — and a full Playwright run plants **$22.70** of
+ * them against a $25/24h global ceiling. Counting them would let the test suite
+ * refuse real users, which is the same mistake `payments/usage.ts` documents
+ * about Google's gross estimates: money nobody was ever billed for must not
+ * block anybody.
+ *
+ * The PER-USER cap counts them, and must: fabricating a user's 12-month balance
+ * is exactly what that fixture is for.
+ */
+export const SYNTHETIC_SPEND_PROVIDER = 'anthropic:e2e-subscription-fixture';

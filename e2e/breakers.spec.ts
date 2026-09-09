@@ -90,6 +90,10 @@ test.describe.serial('Global circuit breakers', () => {
   let tripId = '';
 
   test.beforeAll(async ({ browser }) => {
+    // Whatever a previous run or a killed spec left behind. This project runs
+    // last, after web-ui and announcement, so nothing else is in flight.
+    await clearGlobalSpend().catch(() => {});
+    await setPennyLock(false).catch(() => {});
     await seedCanonicalFixture(email);
     const page = await browser.newPage();
     await login(page, email);
@@ -106,11 +110,28 @@ test.describe.serial('Global circuit breakers', () => {
   });
 
   test('an idle app refuses nothing', async () => {
-    // The baseline the rest of the file depends on. Without it, a spec that
-    // asserts a 503 could be passing because something ELSE is refusing — and
-    // "the breaker works" and "the app is broken" would look identical.
+    /*
+     * The baseline the rest of the file depends on. Without it, a spec that
+     * asserts a 503 could be passing because something ELSE is refusing — and
+     * "the breaker works" and "the app is broken" would look identical.
+     *
+     * It has already earned its place: on its first CI run it failed with
+     * `worst: open` before this spec had done anything, because the rest of the
+     * suite plants $22.70 of fabricated spend to drive accounts into paywall
+     * states and the global 24h ceiling is $25. That is now excluded at the
+     * source (`SYNTHETIC_SPEND_PROVIDER`), and this assertion is what would
+     * notice it coming back.
+     *
+     * The message NAMES the open breakers. The first version reported only
+     * `expected "ok", received "open"`, which cost a round-trip through CI to
+     * answer the obvious next question.
+     */
     const state = await readBreakerState();
-    expect(state.worst, 'something was already tripped before this spec started').toBe('ok');
+    const tripped = state.statuses
+      .filter((s) => s.level !== 'ok')
+      .map((s) => `${s.id}=${s.level}(${s.value}/${s.stopAt ?? '-'})`)
+      .join(', ');
+    expect(state.worst, `already tripped before this spec started: ${tripped || 'none'}`).toBe('ok');
     expect(state.locked).toBe(false);
   });
 
