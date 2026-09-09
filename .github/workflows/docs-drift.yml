@@ -1,0 +1,77 @@
+# docs-drift — a REVIEWER for CLAUDE.md and docs/decisions.md, never an author.
+#
+# WHY THIS EXISTS, precisely. On 2026-07-22 commit a0c9ee6 moved Finn from OSM
+# Overpass + OSRM to Google Places + Directions. CLAUDE.md went on saying OSM,
+# "free", in ten places for seven weeks. On 2026-09-09 an assistant read that,
+# relayed it as fact, designed a fuel-sourcing cascade on the belief that the
+# calls cost nothing, and wrote the false rationale back into CLAUDE.md. The
+# same seven weeks left /privacy telling users their fuel-station data went to
+# OpenStreetMap — a false statement in a legal document.
+#
+# WHY A COMMENT AND NOT AN EDIT. An action that REWRITES CLAUDE.md on merge is
+# the same failure in a new costume: a model authoring a document nobody
+# reviews. A review comment lands where a human already is — in the PR, before
+# merge — and is refused or accepted deliberately. The DETERMINISTIC half of the
+# problem (index completeness, the size cap, register <-> tests) is guard tests
+# in src/lib/*Guard.test.ts and needs no model at all; this job covers only the
+# half that is prose and therefore cannot be checked by a machine.
+#
+# COST. One Claude call per PR push, over the diff plus ~35 KB of docs. It bills
+# the CI key, never the production one — the whole point of splitting them
+# (CLAUDE.md, "One Anthropic key was one number"). MEASURE IT in the Anthropic
+# Console after three PRs and record the number here, replacing this sentence.
+# If it is not worth what it costs, delete the job; the guard tests stay.
+name: Docs drift
+
+on:
+  pull_request:
+    # Skip when the diff is only docs: a docs-only PR is usually the FIX for
+    # drift, and asking a model whether the correction is stale is noise.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: docs-drift-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Docs drift (review comment only)
+    runs-on: ubuntu-latest
+    # A missing key must not red the PR. This job is advisory: the things that
+    # BLOCK a merge are the guard tests in the unit job.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review the diff against CLAUDE.md and the decisions register
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        env:
+          # NEVER the production key. Previews, local dev and CI bill
+          # ANTHROPIC_API_KEY_CI so the Console's per-key view stays an answer
+          # rather than a dead end.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
+        with:
+          prompt: |
+            Read the PR diff, CLAUDE.md and docs/decisions.md.
+
+            List every sentence in those two files that the diff makes false,
+            stale, or incomplete: a new route, script, Penny tool, table or
+            guard test that is not listed; a removed one still listed as though
+            it exists; a behaviour that changed but is still described the old
+            way.
+
+            Post ONE review comment with the exact lines and the replacement
+            text. Do not edit files. If nothing is stale, post nothing.
+
+            Be specific and be sparing. A comment that lists six real staleness
+            findings is read; one that also lists four stylistic preferences is
+            skimmed and then ignored, which costs more than staying silent.

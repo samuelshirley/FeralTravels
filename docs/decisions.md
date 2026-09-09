@@ -26,7 +26,7 @@ union itself — **NOT ENFORCED**.
 A2. **Removed and not coming back:** dump stations, travel style, vehicle remediation, stop
 photos, the overnight/food/rest stop finders, nightly replan, trip lifecycle
 (`draft/active/completed`), proactive emails, cron. Rebuilding any of them "helpfully" is a
-regression. *Enforced by:* **NOT ENFORCED** — `noExternalCallsGuard.test.ts` blocks the photos
+regression. *Enforced by:* `removedFeaturesGuard.test.ts` — comments are stripped before scanning, so a tombstone comment is fine and live code is not — `noExternalCallsGuard.test.ts` blocks the photos
 endpoint only.
 
 A3. **Production has no real users until the owner says "launched", in words.** Never weigh "N
@@ -56,7 +56,7 @@ type bills 3× on Sonnet; measured 2026-09-09: same plan $0.585 → $0.085). *En
 
 B6. **Every turn records `toolTrace` (tool names per model call) in `penny_turns.result_meta`.**
 The number of model calls is the cost; without the trace a 37-call turn is invisible.
-*Enforced by:* **NOT ENFORCED**.
+*Enforced by:* `toolTraceGuard.test.ts`.
 
 B7. **The "plan is ready" message is deterministic, written by the server, only when something
 was actually saved.** Penny does not recite the plan back. *Enforced by:* `planReady.test.ts`.
@@ -94,10 +94,9 @@ B15. **Ambiguous "go here" + a place → ONE clarifying question before any edit
 
 C1. **Finn's data is Google: Directions for geometry, Places (New) Text Search along-route for
 stations. There is no OSM, OSRM, or fuel-price layer.** (`a0c9ee6`, 2026-07-22.) Both are paid
-SKUs. *Enforced by:* **NOT ENFORCED** — and CLAUDE.md contradicted it for seven weeks.
+SKUs. *Enforced by:* `removedFeaturesGuard.test.ts` (no live OSM/OSRM reference anywhere in src/ or mobile/) + `googleAccountingGuard.test.ts`. It contradicted CLAUDE.md for seven weeks, and /privacy told users their fuel data went to OpenStreetMap for the same seven weeks — both fixed 2026-09-09 — and CLAUDE.md contradicted it for seven weeks.
 
-C2. **Every Google call is accounted in `usage_events`.** *Enforced by:* **NOT ENFORCED — and
-currently FALSE**: `logGooglePlacesUsage` has had no caller since 2026-06-29. Fix pending in the
+C2. **Every Google call is accounted in `usage_events`.** *Enforced by:* `googleAccountingGuard.test.ts` — was FALSE until 2026-09-09 (eleven call sites, no logging since 2026-06-29). `src/server/google/accounted.ts` is now the only way server code calls a paid Google API, logging the failure path too, and the guard forbids importing the raw clients anywhere else: `logGooglePlacesUsage` has had no caller since 2026-06-29. Fix pending in the
 fuel brief.
 
 C3. **Fuel is sourced lazily when a day is opened, cached 48 h, invalidated per affected leg —
@@ -127,7 +126,7 @@ C9. **A day that needs no stop reads as a quiet positive state on both platforms
 "no stations" warning.** *Enforced by:* `fuelEmptyStateGuard.test.ts`, `StopsSection.test.tsx`.
 
 C10. **A same-place leg (< 0.1 km) is `ready` with zero stops before any external call.**
-*Enforced by:* **NOT ENFORCED** by a named test — verify in `plan.test.ts`.
+*Enforced by:* `googleAccountingGuard.test.ts` — the trivial-leg short-circuit must PRECEDE both external calls, asserted on position rather than presence by a named test — verify in `plan.test.ts`.
 
 ## D. Auth and accounts
 
@@ -146,7 +145,7 @@ trace is an HMAC tombstone. *Enforced by:* `accountDeletion.test.ts`, `deletedUs
 
 D4. **Both sign-in paths (Auth.js events AND `createSessionForEmail`) call the same per-sign-in
 hooks** (comped flag, admin flag, promo auto-claim). Wiring only the events has broken native
-sign-in before. *Enforced by:* **NOT ENFORCED**.
+sign-in before. *Enforced by:* `signInHooksGuard.test.ts`.
 
 D5. **Native OAuth exchange refuses forged, replayed, expired, wrong-audience and wrong-issuer
 tokens, and a refusal never carries a session.** *Enforced by:* `oauthIdentity.test.ts`,
@@ -159,12 +158,12 @@ D7. **Every error code an API can return has copy in every client that calls it.
 *Enforced by:* `nativeErrorCopyGuard.test.ts`.
 
 D8. **OTP resend is throttled, and timestamps are `timestamptz`** (a `timestamp` column made the
-cooldown negative off-UTC). *Enforced by:* `otpThrottle.test.ts`; the column rule — **NOT ENFORCED**.
+cooldown negative off-UTC). *Enforced by:* `otpThrottle.test.ts`; the column rule — `schemaTimestamptzGuard.test.ts` (it found the 44th column: `user_viewport_time.updated_at`, converted in the DB by 0032 but left bare in schema.ts).
 
 ## E. Payments
 
 E1. **`src/server/payments/` is a bounded module; `hasEntitlement(userId)` is the only question
-anyone else asks.** *Enforced by:* **NOT ENFORCED** (no import guard) — `paywallCopy.test.ts`
+anyone else asks.** *Enforced by:* `paymentsBoundaryGuard.test.ts` (no import guard) — `paywallCopy.test.ts`
 already imports `payments/states` from outside the module.
 
 E2. **Twelve account states, pure, with the clock passed in.** Cancelling keeps access to period
@@ -214,7 +213,7 @@ F5. **`src/` never imports from `mobile/`; shared files are byte-identical mirro
 *Enforced by:* `noMobileImportGuard.test.ts`, `sharedMirror.test.ts`.
 
 F6. **Vercel's git auto-deploy is off; GitHub Actions owns every deployment.** *Enforced by:*
-`vercel.json` (config) — **NOT ENFORCED** by test.
+`vercel.json` (config) — `vercelConfigGuard.test.ts` by test.
 
 F7. **Previews serve a copy-on-write clone of PROD data on a public URL** (accepted; branch dies
 with the PR; `noindex`). *Enforced by:* **NOT ENFORCED**. *Decision worth re-asking before launch.*
@@ -233,10 +232,10 @@ G2. **All DB access goes through `src/server/repos/*`; no raw SQL in routes.** *
 G3. **An LLM converts, it never authors: forced tool schema in, server re-validation out.**
 *Enforced by:* `parseStartDate.test.ts`, `onboardingIntentScan.test.ts` (per call site).
 
-G4. **Migrations are additive (add → backfill → switch → drop later).** *Enforced by:* **NOT ENFORCED**.
+G4. **Migrations are additive (add → backfill → switch → drop later).** *Enforced by:* `migrationShapeGuard.test.ts` — newest migration additive unless its filename says `drop`, and every .sql must be journaled (it found three that never were).
 
 G5. **All timestamps are `timestamptz`** (migration 0032 converted 43 columns). *Enforced by:*
-**NOT ENFORCED** — a schema-text guard would catch a new `timestamp()` column.
+`schemaTimestamptzGuard.test.ts` — a schema-text guard would catch a new `timestamp()` column.
 
 G6. **"Today" is the driver's wall clock (`users.timezone`), never the server's.**
 *Enforced by:* `dates.test.ts`.
@@ -262,10 +261,10 @@ H4. **A server module never CALLS an export of a `'use client'` module.** *Enfor
 `serverClientBoundaryGuard.test.ts` (mutation-checked against `...buttonStyle()`).
 
 H5. **Exactly one Google Maps key (`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`) for browser and server;
-geocoding is Places (New) `searchText` only.** *Enforced by:* **NOT ENFORCED** — past assistants
+geocoding is Places (New) `searchText` only.** *Enforced by:* `oneGoogleKeyGuard.test.ts` — past assistants
 repeatedly proposed a server key.
 
-H6. **All client geolocation goes through `DeviceLocationContext`.** *Enforced by:* **NOT ENFORCED**.
+H6. **All client geolocation goes through `DeviceLocationContext`.** *Enforced by:* `geolocationGuard.test.ts`.
 
 H7. **The native `KeyboardAvoidingView` lives at the screen root; `ChatPanel` never adds
 `insets.bottom`.** *Enforced by:* `mobile/maestro/chat-keyboard.yaml` (real simulator; the tap on
@@ -274,7 +273,7 @@ send is the gate, not `assertVisible`).
 H8. **The viewport hint cookie makes a phone's reload render the phone tree first.**
 *Enforced by:* `e2e/viewport-hint.spec.ts`.
 
-H9. **Never silently swallow errors** — inline UI or `ErrorNotifier`. *Enforced by:* **NOT ENFORCED**.
+H9. **Never silently swallow errors** — inline UI or `ErrorNotifier`. *Enforced by:* **NOT ENFORCED** — measured 2026-09-09: 41 empty catches outside test files, the large majority deliberate fire-and-forget telemetry (`logUsageEvent(...).catch(() => {})`), a pattern this repo endorses. Enforcing it needs a `// swallow-ok: <reason>` marker on all 41 with an accurate per-site reason: an editorial pass, not a guard. One shipped with a 41-entry baseline would be decoration.
 
 H10. **The onboarding form's vocabulary (kinds, tap-to-answer list, labels, collapse rule) has
 one definition, shared by web and native.** *Enforced by:* `onboardingForm.test.ts`,
@@ -288,8 +287,38 @@ off the real manifests; `DDA9.1`/`8FFB.1` are absent on purpose.** *Enforced by:
 `privacyManifest.test.ts`.
 
 H13. **The iOS bundle id is `com.feraltravels.ios` everywhere (token audience, Maestro, product
-ids, StoreKit file); Android stays `com.feraltravels.app`.** *Enforced by:* **NOT ENFORCED**
+ids, StoreKit file); Android stays `com.feraltravels.app`.** *Enforced by:* `bundleIdGuard.test.ts`
 (`git grep com.feraltravels.app` should return only Android).
 
 H14. **Delete-account emphasis: the phrase is semibold, the disarmed button carries no danger
 colour.** *Enforced by:* `DeleteAccountSection.test.tsx`, `deleteAccountEmphasisGuard.test.ts`.
+
+
+## Machine-checked meta (added 2026-09-09)
+
+Not product decisions — the checks that keep this register and CLAUDE.md from
+becoming the next false document.
+
+M1. **Every test this register names exists, and every `src/lib/*Guard.test.ts`
+is named here.** A register pointing at a renamed test is the same failure as
+CLAUDE.md describing a data source replaced seven weeks earlier: the reader
+believes something is checked when nothing is. *Enforced by:*
+`decisionsRegisterGuard.test.ts`.
+
+M2. **CLAUDE.md's index lists are complete and name nothing deleted.** Fourteen
+scripts were missing when this was written. A tombstone ("`ship.sh` is GONE") is
+allowed and valuable; a mention that reads as though the file still exists is
+not. *Enforced by:* `claudeMdGuard.test.ts`.
+
+M3. **CLAUDE.md is under 20 KB.** *Enforced by:* `claudeMdGuard.test.ts` —
+**currently `it.skip`**, with a dated reason: the file is ~200 KB and shrinking it
+is an editorial pass, not something a test can do. The limit was deliberately NOT
+raised to match the file, because a limit moved to whatever the file weighs today
+is a guard switched off while still showing green. A separate assertion fails if
+the file grows by half again, so the skip cannot be forgotten silently.
+
+M4. **The prose half is REVIEWED by a model, never authored by one.**
+`.github/workflows/docs-drift.yml` asks Claude to list the sentences in CLAUDE.md
+and this register that a PR's diff makes false, and to post one review comment.
+It does not edit files: an action that rewrites CLAUDE.md on merge is the same
+failure as the OSM claim — a model authoring a document nobody reviews.
