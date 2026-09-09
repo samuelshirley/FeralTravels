@@ -912,6 +912,9 @@ async function runTurnWork(
             truncated: final.truncated,
             /** Splice the deterministic plan-ready bubble in ABOVE this reply. */
             planReady,
+            /** Tool names per model call — the number of prefix re-reads this turn cost. */
+            toolTrace: final.toolTrace,
+            modelCalls: final.toolTrace.length,
           };
           send({ kind: 'applied', ...appliedPayload });
 

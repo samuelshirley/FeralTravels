@@ -12,7 +12,13 @@
  */
 
 /** Penny's planning / tool-use model (chat + nightly replan). */
-export const PENNY_MODEL = 'claude-sonnet-4-6';
+// Haiku since 2026-09-09 (was claude-sonnet-4-6). Every token type bills at
+// exactly one third of Sonnet's price; the Austin 14-leg turn measured $0.585 on
+// Sonnet. The rulebook in claude.ts was written against Sonnet's mistakes, so
+// the swap is an EXPERIMENT until the same prompts have been replayed and
+// compared — `toolTrace` in penny_turns.result_meta is what makes the runs
+// comparable.
+export const PENNY_MODEL = 'claude-haiku-4-5-20251001';
 
 /**
  * Small, cheap, fast model for the onboarding date-text → ISO conversion. A

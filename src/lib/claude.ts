@@ -641,6 +641,14 @@ export interface ReplanResult {
    * gate add_leg actions — null or 'over_budget' means reject.
    */
   feasibilityVerdict: "fits" | "tight" | "over_budget" | "no_budget" | null;
+  /**
+   * One entry per MODEL CALL this turn, listing the tool names that call
+   * emitted (empty array = a text-only call, i.e. the final reply). Its length
+   * is the number of times the ~24k-token prefix was re-read, which is where
+   * the money goes — the Austin 14-leg turn (2026-09-08) was 37 calls and
+   * nothing recorded what they were. Persisted in penny_turns.result_meta.
+   */
+  toolTrace: string[][];
 }
 
 /**
@@ -724,6 +732,7 @@ export async function* replanStream(
   let totalOutputTokens = 0;
   let totalCacheCreationTokens = 0;
   let totalCacheReadTokens = 0;
+  const toolTrace: string[][] = [];
 
   // System prompt + tools as cacheable structures. Built once per replan so
   // we're not rebuilding the array on every iteration.
@@ -823,6 +832,7 @@ export async function* replanStream(
       const toolUses = response.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
+      toolTrace.push(toolUses.map((t) => t.name));
 
       // No tool calls this iteration → Penny is done. Flush the buffered
       // text to the client and break out of the loop.
@@ -1059,6 +1069,7 @@ export async function* replanStream(
         extractIntentCalled,
         feasibilityVerdict,
         fuelPlanRan,
+        toolTrace,
       },
     };
   } finally {
