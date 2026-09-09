@@ -113,6 +113,23 @@ export const users = pgTable('users', {
    * server's notion of the current day matches the driver's wall clock.
    */
   timezone: text('timezone'),
+  /**
+   * Junk messages in a row. Zeroed by any message Penny could act on, and by
+   * the lock firing. See `src/lib/strikes.ts` — including why an "adjacent"
+   * message neither strikes nor resets.
+   */
+  pennyStrikes: integer('penny_strikes').default(0).notNull(),
+  /**
+   * Penny is paused for this account until this moment. Null, or in the past,
+   * means she is not.
+   *
+   * Per-account and time-boxed, which is what makes it different from
+   * `app_meta.penny_locked` (the whole deployment, until a human clears it) and
+   * from the paywall (an entitlement, not a behaviour). Nothing here is
+   * punitive beyond the hour: no flag survives it, and the count is zeroed when
+   * it fires.
+   */
+  pennyLockedUntil: timestamp('penny_locked_until', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

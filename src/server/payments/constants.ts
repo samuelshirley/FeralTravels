@@ -205,3 +205,29 @@ export const BREAKERS: readonly BreakerSpec[] = [
  * price of not adding a database read to every request.
  */
 export const BREAKER_CACHE_MS = 30_000;
+
+// ── Per-account daily spend caps ────────────────────────────────────────────
+
+/**
+ * What one SUBSCRIBER may spend on Anthropic in a rolling day.
+ *
+ * Generous on purpose: a paying driver replanning a fortnight in Norway on a
+ * bad evening should never meet this, and at Haiku rates ($0.085 a planning
+ * turn) $5 is around sixty turns. It is a runaway-cost backstop, not a budget.
+ */
+export const REPLAN_USD_CAP_PER_DAY = 5;
+
+/**
+ * What a TRIAL account may spend in a rolling day.
+ *
+ * Ten times lower, because the money is asymmetric in a way the old single cap
+ * ignored: a subscriber has paid $2 or $20 and their spend is an argument about
+ * margin, while a trial account has paid nothing and 100 of them at $5 is $500
+ * of pure loss — which is the number this whole feature exists for.
+ *
+ * $0.50 is about six planning turns a day, which is more than enough to decide
+ * whether the app is any good; the trial's real ceiling is
+ * `TRIAL_CEILING_MICROCENTS` ($1 total), so this is the daily shape of that
+ * same dollar rather than a second, competing limit.
+ */
+export const TRIAL_REPLAN_USD_CAP_PER_DAY = 0.5;

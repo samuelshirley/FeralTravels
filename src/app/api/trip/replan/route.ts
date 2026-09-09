@@ -17,7 +17,11 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '@/server/auth/guards';
-import { assertPennyGateOpen } from '@/server/payments';
+import {
+  assertPennyGateOpen,
+  dailyReplanCapUsd,
+  REPLAN_USD_CAP_PER_DAY,
+} from '@/server/payments';
 import { assertIpAllowed } from '@/server/ipLimit';
 import { addChatMessage } from '@/server/repos/chat';
 import { PLAN_READY_TEXT } from '@/lib/planReady';
@@ -191,7 +195,14 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
 // real cost backstop. Admins (Sam) are already exempt from both (see admin.ts).
 // Note: server-side auto-continue (claude.ts) chains long plans WITHIN a single
 // replan request, so a continued plan does NOT consume extra hourly requests.
-const REPLAN_USD_CAP_PER_DAY = parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5');
+/**
+ * The SUBSCRIBER cap. A trial account gets a tenth of it — `dailyReplanCapUsd`
+ * picks, from the verdict, and the env override lowers both rather than only
+ * this one. See the reasoning on both numbers in `payments/constants.ts`.
+ */
+const SUBSCRIBER_USD_CAP_PER_DAY = parseFloat(
+  process.env.REPLAN_USD_CAP_PER_DAY || String(REPLAN_USD_CAP_PER_DAY)
+);
 const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '120', 10);
 
 export const runtime = 'nodejs';
@@ -272,7 +283,7 @@ export async function POST(req: Request) {
     // Anthropic money, so it is the one the paywall exists for. It throws a
     // 402 carrying `code`/`state`/`blockReason`, which both clients branch on
     // to render Penny's paywall message instead of a red error bubble.
-    const { id: userId, isAdmin: isAdminUser } = await requireEntitledUser();
+    const { id: userId, isAdmin: isAdminUser, verdict } = await requireEntitledUser();
     userIdForLog = userId;
     const body = inputSchema.parse(await req.json());
     tripIdForLog = body.tripId;
@@ -346,11 +357,18 @@ export async function POST(req: Request) {
           { status: 429 }
         );
       }
+      /*
+       * Which cap applies comes from the VERDICT, not from a status column
+       * re-read here: a trial account has paid nothing, and a hundred of them
+       * at the subscriber's $5 is the $500 night this whole feature exists
+       * for. `payments/` owns the question of what an account is.
+       */
+      const capUsd = dailyReplanCapUsd(verdict.state, SUBSCRIBER_USD_CAP_PER_DAY);
       const dailyUsd = microcentsToDollars(daily.microcents);
-      if (dailyUsd >= REPLAN_USD_CAP_PER_DAY) {
+      if (dailyUsd >= capUsd) {
         return Response.json(
           {
-            error: `Daily AI spend cap reached ($${REPLAN_USD_CAP_PER_DAY.toFixed(2)}). Resets in 24h.`,
+            error: `Daily AI spend cap reached ($${capUsd.toFixed(2)}). Resets in 24h.`,
           },
           { status: 429 }
         );
