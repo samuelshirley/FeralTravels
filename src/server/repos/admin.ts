@@ -398,6 +398,15 @@ export async function getUserDetail(userId: string) {
         // walls this one account while the global switch is off.
         comped: users.comped,
         paywallEnforced: users.paywallEnforced,
+        /*
+         * The message gate's strike state. On the DETAIL page rather than only
+         * the dashboard, because the dashboard answers "is anyone paused right
+         * now" and this answers the question actually asked when somebody
+         * writes in: "why is Penny ignoring ME". A count of 2 is invisible
+         * everywhere else and is the whole explanation for what happens next.
+         */
+        pennyStrikes: users.pennyStrikes,
+        pennyLockedUntil: users.pennyLockedUntil,
       })
       .from(users)
       .where(eq(users.id, userId))

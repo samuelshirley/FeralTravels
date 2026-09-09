@@ -3,6 +3,11 @@ import Link from 'next/link';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
 import { getUserDetail, getSubscriptionEventsForUser } from '@/server/repos/admin';
+import {
+  isAccountPennyLocked,
+  strikeLockMinutesRemaining,
+  STRIKES_BEFORE_LOCK,
+} from '@/lib/strikes';
 import { microcentsToDollars } from '@/server/repos/usage';
 import {
   alertAlreadyFired,
@@ -412,6 +417,47 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               globalOn={paywallGlobalOn}
             />
           </div>
+
+          {/*
+            The message gate's strike state.
+            Beside the entitlement controls because it answers the same
+            question from the other side: those say whether this account MAY
+            plan, this says whether Penny is currently answering it. A driver
+            who writes in saying "Penny is ignoring me" is describing exactly
+            one of these two, and there was previously nowhere to tell them
+            apart.
+
+            Rendered ONLY when there is something to say — a count of zero and
+            no lock is the state of every account, and a row saying so on every
+            page is the sort of filler the copy rule exists to keep out.
+          */}
+          {(detail.user.pennyStrikes > 0 ||
+            isAccountPennyLocked(detail.user.pennyLockedUntil, new Date())) && (
+            <div
+              style={{
+                marginTop: 20,
+                paddingTop: 16,
+                borderTop: '1px solid var(--tp-border)',
+                fontSize: 12,
+                color: 'var(--tp-text)',
+                lineHeight: 1.6,
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>Penny strikes</div>
+              {isAccountPennyLocked(detail.user.pennyLockedUntil, new Date()) ? (
+                <div>
+                  Paused until {fmtAbs(detail.user.pennyLockedUntil!)} —{' '}
+                  {strikeLockMinutesRemaining(detail.user.pennyLockedUntil!, new Date())} min left.
+                  Three junk messages in a row; it clears itself.
+                </div>
+              ) : (
+                <div>
+                  {detail.user.pennyStrikes} of {STRIKES_BEFORE_LOCK} — a message Penny can act on
+                  resets it.
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--tp-border)' }}>
             <RevokeAccessControl
