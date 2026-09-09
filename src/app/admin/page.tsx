@@ -32,6 +32,7 @@ import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
 import PennyLockdownBlock from './PennyLockdownBlock';
+import { recentIpLimitHits } from '@/server/ipLimit';
 import styles from './admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -110,6 +111,12 @@ export default async function AdminPage() {
    * the exact failure the switch was moved out of the environment to avoid.
    */
   const breakers = await breakerSnapshot();
+  /**
+   * Addresses that hit a per-IP limit in the last day. Reads the same counter
+   * rows the gate writes — nothing is recorded for the panel that the gate does
+   * not already need.
+   */
+  const ipHits = await recentIpLimitHits(24).catch(() => []);
 
   const [
     overview,
@@ -814,7 +821,7 @@ export default async function AdminPage() {
           is being refused.
         */}
         <section style={{ ...card, marginTop: 16 }}>
-          <PennyLockdownBlock snapshot={breakers} />
+          <PennyLockdownBlock snapshot={breakers} ipHits={ipHits} />
         </section>
 
         {/*

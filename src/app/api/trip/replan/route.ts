@@ -18,6 +18,7 @@ import {
   NotFoundError,
 } from '@/server/auth/guards';
 import { assertPennyGateOpen } from '@/server/payments';
+import { assertIpAllowed } from '@/server/ipLimit';
 import { addChatMessage } from '@/server/repos/chat';
 import { PLAN_READY_TEXT } from '@/lib/planReady';
 import {
@@ -315,6 +316,15 @@ export async function POST(req: Request) {
      * word, and this user may well have paid).
      */
     await assertPennyGateOpen(isAdminUser);
+
+    /**
+     * And the per-IP turn limit — 30 an hour, which is roughly three times what
+     * a driver replanning hard does and bounds one machine to ~$2.55 of Haiku
+     * an hour before the hourly spend breaker takes over. Throws 429 with a
+     * real `retryAfterSeconds`, because the window is fixed and the moment it
+     * lifts is known rather than guessed.
+     */
+    await assertIpAllowed('replan', { isAdmin: isAdminUser });
 
     // Soft per-user spend / request guardrails to prevent runaway cost.
     //

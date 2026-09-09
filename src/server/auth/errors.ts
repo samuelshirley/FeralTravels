@@ -128,3 +128,26 @@ export class CircuitOpenError extends HttpError {
     super(503, message, { code: CIRCUIT_OPEN_CODE, breaker, retryAfterSeconds });
   }
 }
+
+/**
+ * 429. Too many requests from this address, in this window.
+ *
+ * A real `retryAfterSeconds`, unlike the circuit breakers': the per-IP counters
+ * use fixed windows, so the moment the limit lifts is a known instant rather
+ * than a guess about which rows will age out.
+ *
+ * 429 and not 503, and the difference is who it is about: 503 says the app is
+ * closed and it is not your fault, 429 says this caller specifically is going
+ * too fast. A client can act on the second one and only wait out the first.
+ */
+export const RATE_LIMITED_CODE = 'ip_rate_limited';
+
+export class TooManyRequestsError extends HttpError {
+  constructor(
+    scope: string,
+    retryAfterSeconds: number,
+    message = 'Too many requests from this network. Try again shortly.'
+  ) {
+    super(429, message, { code: RATE_LIMITED_CODE, scope, retryAfterSeconds });
+  }
+}

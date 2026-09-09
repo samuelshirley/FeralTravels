@@ -1159,3 +1159,37 @@ export const breakerAlerts = pgTable(
     pk: primaryKey({ columns: [t.breaker, t.level] }),
   })
 );
+
+/**
+ * Per-IP request counters — one row per (scope, address, window).
+ *
+ * A COUNTER, not a log, and that is the design. A rolling count needs a row per
+ * request, which means a table that grows in proportion to the attack it exists
+ * to survive; this grows in proportion to the number of distinct addresses,
+ * which is the thing an attacker has to pay for. The cost is a fixed window
+ * rather than a rolling one, and the boundary straddle that implies — written
+ * out in `src/lib/ipLimit.ts`, where the decision lives.
+ *
+ * `ip` is the only thing stored about the caller. No user id, no address, no
+ * user agent: this table answers "how many requests came from here recently"
+ * and must not become a way to answer anything else. Rows are pruned at
+ * `IP_COUNTER_RETENTION_DAYS`.
+ */
+export const ipRequestCounters = pgTable(
+  'ip_request_counters',
+  {
+    /** An `IpScope` — `otp_send`, `signup`, `replan`. */
+    scope: text('scope').notNull(),
+    /** The client address as the edge reported it. IPv6 needs 45 characters. */
+    ip: text('ip').notNull(),
+    /** Epoch millis, floored to the scope's window, so every instance agrees. */
+    windowStart: bigint('window_start', { mode: 'number' }).notNull(),
+    count: integer('count').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.scope, t.ip, t.windowStart] }),
+    /** The prune's WHERE clause. Without it, cleanup seq-scans the table. */
+    updatedIdx: index('ip_request_counters_updated_idx').on(t.updatedAt),
+  })
+);

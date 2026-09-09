@@ -2,6 +2,8 @@ import { z, ZodError } from 'zod';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
 import { errorResponse, HttpError } from '@/server/auth/guards';
 import { assertSignupGateOpen } from '@/server/payments';
+import { assertIpAllowed } from '@/server/ipLimit';
+import { isOnAdminAllowlist } from '@/server/auth/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +30,13 @@ export async function POST(req: Request) {
      * people who must not be locked out are the ones already using the app.
      * Throws 503 `circuit_open`.
      */
+    /**
+     * Ten sign-in codes an hour from one address. Applies to EVERY send, not
+     * only new addresses: a code is a real email to a real inbox, and mailing
+     * a stranger a hundred of them is the abuse whether or not they have an
+     * account. The sign-up gate below is the narrower one.
+     */
+    await assertIpAllowed('otp_send', { isAdmin: isOnAdminAllowlist(body.email) });
     await assertSignupGateOpen(body.email);
     try {
       await sendOtpCode(body.email);

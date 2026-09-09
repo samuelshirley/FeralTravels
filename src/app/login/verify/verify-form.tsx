@@ -53,6 +53,16 @@ function describeError(code: string | undefined, retryInSeconds: number): Notice
         tone: 'info',
         text: 'New sign-ups are paused for a moment. Please try again shortly.',
       };
+    /*
+     * The per-IP send limit. "This network", not "you" — on a shared
+     * connection it may genuinely not be them, and the code they already have
+     * is probably still valid.
+     */
+    case 'TooManyRequests':
+      return {
+        tone: 'info',
+        text: 'Too many codes have been requested from this network. Your most recent code may still work.',
+      };
     default:
       return { tone: 'error', text: `Something went wrong (${code}). Please try again.` };
   }

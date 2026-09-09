@@ -32,10 +32,27 @@ export function areTestEndpointsEnabled(env: EnvLike = process.env): boolean {
 
 /** Authorize a request to a `/api/test/*` fixture endpoint. */
 export function isTestRequestAuthorized(req: Request, env: EnvLike = process.env): boolean {
+  return isTestRequestAuthorizedByHeaders((n) => req.headers.get(n), env);
+}
+
+/**
+ * The same check against a header READER rather than a `Request`.
+ *
+ * A Next server action has no `Request` — only `headers()` — and the per-IP
+ * limits need the same "this is the test runner" exemption from inside one
+ * (the Playwright and Maestro suites sign in dozens of fixture accounts from a
+ * single runner address, which is precisely the shape the limit exists to
+ * refuse). Delegating rather than duplicating keeps the three guards in one
+ * place; splitting them is how one copy quietly loses the production check.
+ */
+export function isTestRequestAuthorizedByHeaders(
+  get: (name: string) => string | null | undefined,
+  env: EnvLike = process.env
+): boolean {
   if (!areTestEndpointsEnabled(env)) return false;
   const secret = env.E2E_TEST_ENDPOINTS_SECRET?.trim();
   if (!secret) return true;
-  return req.headers.get('x-e2e-test-secret')?.trim() === secret;
+  return get('x-e2e-test-secret')?.trim() === secret;
 }
 
 /**

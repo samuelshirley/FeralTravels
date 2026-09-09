@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { areTestEndpointsEnabled, isTestRequestAuthorized, isFixtureEmail, isFixtureRecipient } from './test-endpoints';
+import { areTestEndpointsEnabled, isTestRequestAuthorized, isTestRequestAuthorizedByHeaders, isFixtureEmail, isFixtureRecipient } from './test-endpoints';
 
 function req(headers: Record<string, string> = {}): Request {
   return new Request('http://localhost/api/test/seed', { method: 'POST', headers });
@@ -107,5 +107,56 @@ describe('isFixtureRecipient', () => {
     ]) {
       expect(isFixtureRecipient('playwright-a@e2e.feraltravels.com', env)).toBe(false);
     }
+  });
+});
+
+
+/**
+ * The header-reader form, which exists because the per-IP limits need the same
+ * exemption from inside a Next server action (which has no `Request`).
+ *
+ * The exemption it grants is real: `checkIpLimit` does not count or block a
+ * caller this returns true for, because the Playwright and Maestro suites sign
+ * in dozens of fixture accounts from ONE runner address — exactly the shape the
+ * limit refuses. So the property that matters is not that it works; it is that
+ * it CANNOT work on production, whatever is set.
+ */
+describe('isTestRequestAuthorizedByHeaders', () => {
+  const reader = (h: Record<string, string>) => (name: string) => h[name] ?? null;
+
+  it('is ALWAYS false on Vercel production — no env combination can enable it', () => {
+    // The exact combination an attacker (or a misconfiguration) would want:
+    // the flag on, the secret known, the header sent.
+    for (const extra of [
+      {},
+      { E2E_TEST_ENDPOINTS: '1' },
+      { E2E_TEST_ENDPOINTS: '1', E2E_TEST_ENDPOINTS_SECRET: 's' },
+    ]) {
+      expect(
+        isTestRequestAuthorizedByHeaders(reader({ 'x-e2e-test-secret': 's' }), {
+          VERCEL_ENV: 'production',
+          ...extra,
+        })
+      ).toBe(false);
+    }
+  });
+
+  it('agrees with the Request form, which delegates to it', () => {
+    const env = { E2E_TEST_ENDPOINTS: '1', E2E_TEST_ENDPOINTS_SECRET: 'shhh' };
+    const req = new Request('https://x.test/', { headers: { 'x-e2e-test-secret': 'shhh' } });
+    expect(isTestRequestAuthorized(req, env)).toBe(true);
+    expect(isTestRequestAuthorizedByHeaders(reader({ 'x-e2e-test-secret': 'shhh' }), env)).toBe(true);
+
+    const wrong = new Request('https://x.test/', { headers: { 'x-e2e-test-secret': 'nope' } });
+    expect(isTestRequestAuthorized(wrong, env)).toBe(false);
+    expect(isTestRequestAuthorizedByHeaders(reader({ 'x-e2e-test-secret': 'nope' }), env)).toBe(false);
+  });
+
+  it('needs the flag, not just the secret', () => {
+    expect(
+      isTestRequestAuthorizedByHeaders(reader({ 'x-e2e-test-secret': 's' }), {
+        E2E_TEST_ENDPOINTS_SECRET: 's',
+      })
+    ).toBe(false);
   });
 });

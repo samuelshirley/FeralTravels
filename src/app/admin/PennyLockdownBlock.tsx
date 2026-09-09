@@ -1,6 +1,8 @@
 import { formatBreakerValue } from '@/server/payments';
 import type { BreakerSnapshot } from '@/server/payments';
 
+import { IP_LIMITS } from '@/lib/ipLimit';
+
 import PennyLockSwitch from './PennyLockSwitch';
 
 /**
@@ -16,6 +18,14 @@ import PennyLockSwitch from './PennyLockSwitch';
  * the gate acts on are the facts a human sees, rather than two implementations
  * of "how much have we spent" that can disagree.
  */
+
+const labelRow: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.15em',
+  color: 'var(--tp-subtle)',
+  marginBottom: 6,
+};
 
 const LEVEL_COLOUR: Record<string, string> = {
   ok: 'var(--tp-subtle)',
@@ -63,7 +73,20 @@ function Meter({
   );
 }
 
-export default function PennyLockdownBlock({ snapshot }: { snapshot: BreakerSnapshot }) {
+export interface IpLimitHit {
+  scope: string;
+  ip: string;
+  count: number;
+  max: number;
+}
+
+export default function PennyLockdownBlock({
+  snapshot,
+  ipHits,
+}: {
+  snapshot: BreakerSnapshot;
+  ipHits: IpLimitHit[];
+}) {
   const { statuses, facts, worst } = snapshot;
 
   return (
@@ -123,6 +146,28 @@ export default function PennyLockdownBlock({ snapshot }: { snapshot: BreakerSnap
               }
             />
           ))}
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={labelRow}>PER-IP LIMITS</div>
+        <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginBottom: 6 }}>
+          {IP_LIMITS.map((l) => `${l.label} ${l.max}/${l.windowHours}h`).join(' · ')} — per
+          address. A hint, not an identity: a household shares one and an attacker has as many
+          as they want, which is why the ceilings above are what actually bound the damage.
+        </div>
+        {ipHits.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--tp-muted)' }}>
+            Nothing has hit a limit in the last 24 hours.
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--tp-text)' }}>
+            {ipHits.map((h) => (
+              <div key={`${h.scope}:${h.ip}`} style={{ padding: '3px 0' }}>
+                <code style={{ fontSize: 11 }}>{h.ip}</code> — {h.scope} {h.count}/{h.max}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div

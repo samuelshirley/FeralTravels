@@ -18,6 +18,7 @@ import {
   type GateVerdict,
 } from './breakers';
 import { pennyLocked } from './switch';
+import { assertIpAllowed } from '@/server/ipLimit';
 
 /**
  * The database side of the circuit breakers: read the facts, cache them, ask
@@ -341,25 +342,40 @@ export async function assertPennyGateOpen(isAdmin: boolean): Promise<void> {
 }
 
 /**
- * Refuse to create an account if the sign-up gate is open — and ONLY for an
- * address that does not already have one.
+ * May this address create an account here, right now?
  *
- * This is the whole point of the breaker being about NEW accounts rather than
- * about sign-in. A flood is a thousand addresses nobody has ever seen; the
- * people it must not lock out are the ones already using the app, who are
- * exactly the ones with a `users` row. Refusing every sign-in during a flood
- * would take the app down on the attacker's behalf.
+ * TWO gates, one address lookup, and the lookup is why they are in one
+ * function rather than two calls at every route: both only apply to an address
+ * with no account yet, and asking the database twice on the sign-in path to
+ * answer the same question would be a query per sign-in for nothing.
  *
- * The existence check runs only when the gate is already open, so the normal
- * path costs nothing. If it throws, the address is treated as new and refused:
- * that is the fail-closed direction, and it is reached only when the database
- * is already failing.
+ *  1. The global sign-up circuit breaker (50/100 an hour, 100/200 a day).
+ *  2. The per-IP account-creation limit (5 a day).
+ *
+ * ── Why it is scoped to NEW addresses, which is the whole design ──
+ *
+ * A flood is a thousand addresses nobody has ever seen. The people it must not
+ * lock out are the ones already using the app, who are exactly the ones with a
+ * `users` row — and a household, an office or a university shares one public
+ * address, so a per-IP limit applied to every sign-in would refuse honest
+ * people on the second cup of coffee. Refusing every sign-in during a flood
+ * takes the app down on the attacker's behalf, which is the outcome this whole
+ * file exists to prevent.
+ *
+ * ── It lives here rather than in `ipLimit.ts` ──
+ *
+ * Because the expensive half is the breaker and the breaker is a payments
+ * decision. `ipLimit.ts` stays a general mechanism with no idea what a sign-up
+ * is; this is the one place that composes it with the money question.
+ *
+ * A failed lookup treats the address as NEW and applies both gates. That is the
+ * fail-closed direction, and it is reached only when the database is already
+ * failing — at which point sign-in was not going to work anyway.
  */
 export async function assertSignupGateOpen(email: string): Promise<void> {
   const normalized = email.trim().toLowerCase();
   if (isOnAdminAllowlist(normalized)) return;
-  const verdict = await checkBreakerGate('signup');
-  if (!verdict.blocked) return;
+
   let known = false;
   try {
     const rows = await db
@@ -372,9 +388,15 @@ export async function assertSignupGateOpen(email: string): Promise<void> {
     console.error('[payments/breakerCheck] could not check for an existing account', err);
   }
   if (known) return;
-  throw new CircuitOpenError(
-    verdict.breaker ?? 'unknown',
-    verdict.retryAfterSeconds,
-    'New sign-ups are paused for a moment. Existing accounts can still sign in.'
-  );
+
+  const verdict = await checkBreakerGate('signup');
+  if (verdict.blocked) {
+    throw new CircuitOpenError(
+      verdict.breaker ?? 'unknown',
+      verdict.retryAfterSeconds,
+      'New sign-ups are paused for a moment. Existing accounts can still sign in.'
+    );
+  }
+
+  await assertIpAllowed('signup');
 }

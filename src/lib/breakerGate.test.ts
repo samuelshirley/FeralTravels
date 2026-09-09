@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { CIRCUIT_OPEN_CODE, CircuitOpenError } from '@/server/auth/errors';
+import {
+  CIRCUIT_OPEN_CODE,
+  CircuitOpenError,
+  RATE_LIMITED_CODE,
+  TooManyRequestsError,
+} from '@/server/auth/errors';
 
 /**
  * The breakers are only worth their unit tests if they are actually CALLED, and
@@ -138,6 +143,43 @@ describe('the sign-up gate runs before an account can be created', () => {
   });
 });
 
+describe('the per-IP limits run on the paths that can be flooded', () => {
+  it('counts a Penny turn, before the model loop', () => {
+    const route = read('src/app/api/trip/replan/route.ts');
+    assertOrder(route, call('assertIpAllowed'), /\breplanStream\(/, 'replan route');
+    expect(route).toMatch(/assertIpAllowed\('replan'/);
+  });
+
+  it('counts every OTP send on all three send paths', () => {
+    /*
+     * `otp_send`, not `signup`, and on EVERY send rather than only new
+     * addresses: a code is real email to a real inbox, and mailing a stranger a
+     * hundred of them is the abuse whether or not they have an account. The
+     * narrower account-creation limit is inside `assertSignupGateOpen`.
+     */
+    for (const file of [
+      'src/app/api/mobile/otp/send/route.ts',
+      'src/app/login/page.tsx',
+      'src/app/login/verify/actions.ts',
+    ]) {
+      const src = read(file);
+      expect(src, `${file}: no per-IP send limit`).toMatch(/assertIpAllowed\('otp_send'/);
+      assertOrder(src, call('assertIpAllowed'), call('sendOtpCode'), file);
+    }
+  });
+
+  it('counts account creation inside the sign-up gate, so a returning user is never counted', () => {
+    /*
+     * The property, not the call: a per-IP limit of five a day applied to every
+     * SIGN-IN would refuse a household, an office or a university on the second
+     * cup of coffee. It must sit behind the "does this address already have an
+     * account" check.
+     */
+    const gate = read('src/server/payments/breakerCheck.ts');
+    assertOrder(gate, /if \(known\) return;/, /assertIpAllowed\('signup'\)/, 'sign-up gate');
+  });
+});
+
 describe('a tripped breaker is a 503 and says why', () => {
   it('is 503 — never 401 (the app clears the keychain) and never 402 (the paywall)', () => {
     const err = new CircuitOpenError('anthropic_spend_24h', 3600);
@@ -156,6 +198,23 @@ describe('a tripped breaker is a 503 and says why', () => {
 
   it('tells the user their account is fine, because it is', () => {
     expect(new CircuitOpenError('manual_lock', null).message).toMatch(/nothing is wrong/i);
+  });
+
+  it('is a 429 for an IP limit, which is a different fact about a different party', () => {
+    // 503 says the app is closed and it is not your fault; 429 says this caller
+    // is going too fast. A client can act on the second and only wait out the
+    // first, so they must not collapse into one code.
+    const err = new TooManyRequestsError('otp_send', 1800);
+    expect(err.status).toBe(429);
+    expect(err.details).toEqual({
+      code: RATE_LIMITED_CODE,
+      scope: 'otp_send',
+      retryAfterSeconds: 1800,
+    });
+  });
+
+  it('says "this network", never "you" — a shared address may not be them', () => {
+    expect(new TooManyRequestsError('otp_send', 60).message).toMatch(/this network/i);
   });
 });
 
