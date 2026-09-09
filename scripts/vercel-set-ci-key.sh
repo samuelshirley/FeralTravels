@@ -21,9 +21,24 @@ fi
 for env in preview development; do
   # `vercel env rm` first so a re-run replaces rather than fails on "already exists".
   npx vercel env rm ANTHROPIC_API_KEY_CI "$env" --yes >/dev/null 2>&1 || true
-  printf '%s' "$value" | npx vercel env add ANTHROPIC_API_KEY_CI "$env"
+  # TWO answers on stdin, not one, and the second is what this script got wrong
+  # until 2026-09-09: `vercel env add <name> preview` asks for the value AND
+  # THEN asks "Git branch?" ("leave empty to apply to all Preview branches").
+  # Piping only the value left that prompt at EOF, so the PREVIEW add was
+  # abandoned silently while `development` — which is never asked for a branch —
+  # succeeded. The script then printed "Now set on preview + development" and a
+  # verification line whose grep matched the unrelated ANTHROPIC_API_KEY row, so
+  # it read as a success. The empty second line answers "all preview branches".
+  printf '%s\n\n' "$value" | npx vercel env add ANTHROPIC_API_KEY_CI "$env"
 done
 echo
-echo "Now set on preview + development. Verify:"
-npx vercel env ls preview | grep ANTHROPIC || true
+echo "Verifying (this is the check, not the echo above):"
+# `grep ANTHROPIC` matched the unrelated ANTHROPIC_API_KEY row and reported
+# success while the preview add had failed. Match the exact name, and FAIL.
+if npx vercel env ls preview | grep -q 'ANTHROPIC_API_KEY_CI'; then
+  echo "  preview: ANTHROPIC_API_KEY_CI present"
+else
+  echo "  preview: ANTHROPIC_API_KEY_CI IS MISSING — the add did not take" >&2
+  exit 1
+fi
 echo "The next PR push will bill the CI key; check with: npx tsx scripts/anthropic-usage-report.ts"
