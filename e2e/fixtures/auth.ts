@@ -151,10 +151,15 @@ export async function loginViaOtp(
  */
 export async function signInAsNewUser(
   page: Page,
-  opts: { redirectTo?: string; seedFixture?: boolean } = {},
+  opts: {
+    redirectTo?: string;
+    seedFixture?: boolean;
+    /** Passed straight to {@link seedCanonicalFixture} — vehicle range, itinerary shape. */
+    fixture?: { rangeKm?: number; legPreset?: 'canonical' | 'three_long_drives' };
+  } = {},
 ): Promise<string> {
   const email = uniqueEmail();
-  if (opts.seedFixture !== false) await seedCanonicalFixture(email);
+  if (opts.seedFixture !== false) await seedCanonicalFixture(email, opts.fixture ?? {});
   await login(page, email, opts.redirectTo || '/trips');
   return email;
 }

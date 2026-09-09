@@ -102,6 +102,67 @@ const CANONICAL_TWO_LEGS = [
   },
 ] as const;
 
+/**
+ * Three consecutive 400 km drives — the shape that exposes the tank-walk bug.
+ *
+ * Against a 500 km range no single day needs a stop, but the tank does not
+ * reset overnight (see `fuelTankState.ts`): by day 3 the driver has burned
+ * 800 km on one tank. Finn must place a stop, and it can only work that out if
+ * days 1 and 2 have been sourced — which, under lazy day-open sourcing, they
+ * have not been if the driver opens day 3 first. That is exactly how trip
+ * `ab824cde` produced "beyond safe range (-1896 km)" for a station 44 km away.
+ *
+ * Real Spanish roads with real stations, so the assertion is about Finn's
+ * arithmetic rather than about whether OSM knows this corridor.
+ */
+const THREE_LONG_DRIVES = [
+  {
+    sortOrder: 0,
+    title: 'Madrid → Zaragoza',
+    label: 'Day 1',
+    startName: 'Madrid, Spain',
+    endName: 'Zaragoza, Spain',
+    startLat: 40.4168,
+    startLng: -3.7038,
+    endLat: 41.6488,
+    endLng: -0.8891,
+    distanceKm: 400,
+    driveTimeMinutes: 240,
+    status: 'planning',
+    color: '#4E7AB0',
+  },
+  {
+    sortOrder: 1,
+    title: 'Zaragoza → Barcelona',
+    label: 'Day 2',
+    startName: 'Zaragoza, Spain',
+    endName: 'Barcelona, Spain',
+    startLat: 41.6488,
+    startLng: -0.8891,
+    endLat: 41.3874,
+    endLng: 2.1686,
+    distanceKm: 400,
+    driveTimeMinutes: 240,
+    status: 'planning',
+    color: '#4A8B7A',
+  },
+  {
+    sortOrder: 2,
+    title: 'Barcelona → Valencia',
+    label: 'Day 3',
+    startName: 'Barcelona, Spain',
+    endName: 'Valencia, Spain',
+    startLat: 41.3874,
+    startLng: 2.1686,
+    endLat: 39.4699,
+    endLng: -0.3763,
+    distanceKm: 400,
+    driveTimeMinutes: 240,
+    status: 'planning',
+    color: '#B0764E',
+  },
+] as const;
+
 async function ensureUserId(email: string, name?: string): Promise<string> {
   const normalized = email.trim().toLowerCase();
   const existing = await db
@@ -210,6 +271,12 @@ export async function seedFixture(opts: {
    * the product idle.
    */
   rangeKm?: number;
+  /**
+   * Which itinerary to seed. `canonical` (default) is the two France/Germany
+   * legs every existing caller expects. `three_long_drives` is three 400 km
+   * days for the cross-day tank-state spec — see {@link THREE_LONG_DRIVES}.
+   */
+  legPreset?: 'canonical' | 'three_long_drives';
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
   assertEnabled();
   const userId = await ensureUserId(opts.email, opts.userName);
@@ -232,7 +299,9 @@ export async function seedFixture(opts: {
   // seedDates.ts for why a fixture must never carry a calendar date. The old
   // version anchored day 1 to "today", which sat on the behind/ahead boundary
   // the UTC-server-vs-driver-timezone split makes ambiguous.
-  const legDates = CANONICAL_TWO_LEGS.map((leg) => seededLegDateISO(leg.sortOrder));
+  const legPreset: readonly (typeof CANONICAL_TWO_LEGS)[number][] | readonly (typeof THREE_LONG_DRIVES)[number][] =
+    opts.legPreset === 'three_long_drives' ? THREE_LONG_DRIVES : CANONICAL_TWO_LEGS;
+  const legDates = legPreset.map((leg) => seededLegDateISO(leg.sortOrder));
 
   const trip = await createTrip({
     userId,
@@ -246,7 +315,7 @@ export async function seedFixture(opts: {
     .set({ onboardingState: 'done', status: 'planning' })
     .where(eq(trips.id, trip.id));
 
-  for (const leg of CANONICAL_TWO_LEGS) {
+  for (const leg of legPreset) {
     await addLeg({ tripId: trip.id, ...leg, dates: legDates[leg.sortOrder] ?? legDates[0] });
   }
 

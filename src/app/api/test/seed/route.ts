@@ -13,6 +13,8 @@ const bodySchema = z.object({
   tripName: z.string().min(1),
   /** Optional fixture vehicle range. Defaults to the Hilux's real 500 km. */
   rangeKm: z.number().int().min(50).max(2000).optional(),
+  /** Which itinerary to seed. Defaults to the canonical two legs. */
+  legPreset: z.enum(['canonical', 'three_long_drives']).optional(),
 });
 
 export async function POST(req: Request) {

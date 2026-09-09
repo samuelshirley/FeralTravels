@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops, trips, type GeoJSONLineString } from '@/server/db/schema';
 import { getDirections } from '@/lib/google/directions';
@@ -28,6 +28,7 @@ import {
   cumulativeDistancesKm,
   type PlacementCandidate,
 } from '@/lib/finn';
+import { legsNeedingSourcingBefore } from '@/lib/finn/sourcingOrder';
 
 /**
  * Auto fuel-stop planner — **Finn** (Google Places + deterministic placement).
@@ -159,6 +160,111 @@ function geometryToLatLngs(geom: GeoJSONLineString | null): LatLng[] {
  * have authorized `userId` against the leg's trip.
  */
 export async function planFuelStopsForLeg(
+  legId: string,
+  userId: string
+): Promise<FuelPlanResult> {
+  const blocked = await sourcePrerequisiteLegs(legId, userId);
+  if (blocked) return blocked;
+  return planOneLeg(legId, userId);
+}
+
+/**
+ * Source every earlier day this leg's tank state depends on, oldest first.
+ *
+ * Lazy day-open sourcing means an unopened day has no fuel stop, which the tank
+ * walk cannot tell apart from a day that needed none — so opening day 11 first
+ * had Finn plan it on a burn accumulated across five never-opened days (trip
+ * `ab824cde`: 2,396 km against a 500 km range). The decision of WHICH legs is
+ * pure and lives in `lib/finn/sourcingOrder.ts`.
+ *
+ * Bounded by the last refuel, so this is a dependency cascade and not the
+ * trip-wide fan-out CLAUDE.md forbids — and Finn runs on OSRM + OSM Overpass,
+ * both free, so the objection that killed the old fan-out (paid Google Places
+ * calls) does not apply.
+ *
+ * @returns a `failed` result when another request holds a leg we depend on, so
+ *   the caller stops rather than planning on a burn that is still moving; null
+ *   when the way is clear.
+ */
+async function sourcePrerequisiteLegs(
+  legId: string,
+  userId: string
+): Promise<FuelPlanResult | null> {
+  const rows = await db
+    .select({ tripId: legs.tripId, sortOrder: legs.sortOrder })
+    .from(legs)
+    .where(eq(legs.id, legId))
+    .limit(1);
+  const target = rows[0];
+  if (!target?.tripId) return null;
+
+  const preceding = await db
+    .select({
+      id: legs.id,
+      sortOrder: legs.sortOrder,
+      legType: legs.legType,
+      fuelStatus: legs.fuelStatus,
+    })
+    .from(legs)
+    .where(and(eq(legs.tripId, target.tripId), lt(legs.sortOrder, target.sortOrder)))
+    .orderBy(asc(legs.sortOrder));
+  if (preceding.length === 0) return null;
+
+  // Which of them carry a real (non-dismissed) refuel. One query, not one per
+  // leg — this runs on every day-open.
+  const fuelStopRows = await db
+    .select({ legId: stops.legId, status: stops.status, stopType: stops.stopType })
+    .from(stops)
+    .where(inArray(stops.legId, preceding.map((l) => l.id)));
+  const refuelled = new Set(
+    fuelStopRows
+      .filter((r) => r.stopType === 'fuel' && r.status !== 'dismissed' && r.legId)
+      .map((r) => r.legId as string)
+  );
+
+  const declaredRows = await db
+    .select({ declaredRangeLegId: trips.declaredRangeLegId })
+    .from(trips)
+    .where(eq(trips.id, target.tripId))
+    .limit(1);
+
+  const { toSource, blockedBy } = legsNeedingSourcingBefore(
+    preceding.map((l) => ({
+      id: l.id,
+      sortOrder: l.sortOrder,
+      legType: l.legType,
+      fuelStatus: l.fuelStatus,
+      hasFuelStop: refuelled.has(l.id),
+    })),
+    declaredRows[0]?.declaredRangeLegId ?? null
+  );
+
+  if (blockedBy.length > 0) {
+    // Another request is mid-search on a day this one depends on. Planning now
+    // would use a burn that is about to change, and planning that day ourselves
+    // would race two writers on the same leg's stops. `failed` is retryable and
+    // uncached, so the next day-open picks it up.
+    return failLeg(
+      legId,
+      target.tripId,
+      userId,
+      "An earlier day's fuel search is still running — this day will finish planning once it does."
+    );
+  }
+
+  // Oldest first: each leg's tank walk reads the answers of the ones before it.
+  for (const id of toSource) {
+    await planOneLeg(id, userId);
+  }
+  return null;
+}
+
+/**
+ * Plan ONE leg, assuming every earlier day it depends on has already been
+ * sourced. Called directly by the cascade above (never re-entering it, which
+ * would recurse); the exported [[planFuelStopsForLeg]] is cascade + this.
+ */
+async function planOneLeg(
   legId: string,
   userId: string
 ): Promise<FuelPlanResult> {
@@ -297,7 +403,22 @@ export async function planFuelStopsForLeg(
     candidates,
   });
 
-  if (plan.gap) {
+  // The tank walk produced a state that cannot be true — see
+  // [[PlacementTankStateInvalid]]. Never the remote-route warning: this is our
+  // arithmetic, not the driver's geography. `failed` is retryable and carries no
+  // 48h cache stamp, and failLeg puts it in /admin/errors. After the sourcing
+  // cascade above this should be unreachable; the log is how we find out if it
+  // is not.
+  if (plan.kind === 'tank_state_invalid') {
+    return failLeg(
+      legId,
+      leg.tripId,
+      userId,
+      `Fuel planning hit an impossible tank state: ${Math.round(plan.burnedKm)} km burned against a ${Math.round(plan.rangeKm)} km range at this day's start. Earlier days should have been sourced first. We'll retry automatically.`
+    );
+  }
+
+  if (plan.kind === 'gap') {
     // A stop is needed but the candidate list is EMPTY — zero stations in the
     // whole corridor (or all filtered out). On any leg long enough to need a
     // stop that's near-certainly a data/service anomaly (Places overload,
