@@ -264,11 +264,44 @@ async function claimAlert(
   return claimed.length > 0;
 }
 
+/**
+ * Should this deployment mail anybody at all?
+ *
+ * PRODUCTION ONLY, and this is a correction rather than a preference. An alert
+ * exists to tell the owner something about the running product; a preview's
+ * breaker state is a test artifact, and the e2e spec deliberately trips one on
+ * every CI run. Without this, every push mails the owner "CIRCUIT OPEN" about a
+ * throwaway deployment that will be deleted when the PR closes — which is how
+ * an alert channel becomes something you filter out, and then the one that
+ * mattered is filtered out with it.
+ *
+ * It also cannot say WHICH deployment it is about, which is the other half of
+ * why a preview must not send: the email has no environment in it, so a
+ * preview's alert is indistinguishable from production's.
+ *
+ * Same signal `areTestEndpointsEnabled` and the admin self-delete guard already
+ * trust. A laptop and a preview log instead; `/admin` shows the live state.
+ */
+function alertsEnabled(): boolean {
+  return process.env.VERCEL_ENV === 'production';
+}
+
 /** Never throws. See `maybeAlertThreshold` — the reasoning is identical. */
 export async function maybeAlertBreakers(statuses: readonly BreakerStatus[]): Promise<void> {
   const now = new Date();
   for (const status of statuses) {
     if (status.level === 'ok') continue;
+    /*
+     * The manual lock NEVER emails. It is open because a human went to /admin
+     * and threw it thirty seconds ago — mailing them about it is telling
+     * somebody what they just did, and it arrives on every CI run because the
+     * e2e spec throws it too. An alert is for something you do not already
+     * know.
+     *
+     * `/api/admin/penny-lock` already writes the `usage_events` row that
+     * answers "who closed the app, and when", which is the part worth keeping.
+     */
+    if (status.id === 'manual_lock') continue;
     try {
       const claimed = await claimAlert(
         status.id,
@@ -278,6 +311,12 @@ export async function maybeAlertBreakers(statuses: readonly BreakerStatus[]): Pr
         now
       );
       if (!claimed) continue;
+      if (!alertsEnabled()) {
+        console.warn(
+          `[payments/breakerCheck] ${status.level.toUpperCase()} ${status.id} = ${formatBreakerValue(status)} (no email: not production)`
+        );
+        continue;
+      }
       await sendBreakerEmail(status).catch((err) =>
         console.error('[payments/breakerCheck] send failed', err)
       );

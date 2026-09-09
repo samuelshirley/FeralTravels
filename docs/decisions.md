@@ -435,6 +435,15 @@ runs on a laptop and in CI, where no edge firewall exists at all, and those are
 the two places this is tested. *Enforced by:* **NOT ENFORCED** — re-check the
 Firewall tab before assuming it is still true.
 
+I19. **Breaker alerts are sent from PRODUCTION only, and the manual lock never
+sends one.** The owner's inbox took `[OPEN] Penny locked by hand` from a CI
+preview: the e2e spec throws that lock on every run, and the email carries no
+environment, so a preview's alert reads exactly like production's. An alert
+channel that cries wolf on every push is one you filter — and then the alert
+that mattered is filtered with it. The lock is exempt on its own merits too: it
+is open because a human threw it thirty seconds ago. The `usage_events` row
+recording who threw it stays. *Enforced by:* `breakerGate.test.ts`.
+
 I17. **A migration file the drizzle journal does not list DOES NOT RUN, and
 nothing says so.** `drizzle/meta/_journal.json` is the mechanism; the filename
 is documentation. Four migrations written by hand in this work were committed,

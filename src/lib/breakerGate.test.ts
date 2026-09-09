@@ -236,3 +236,44 @@ function grepAppFiles(re: RegExp): string[] {
   walk('src/app');
   return out.sort();
 }
+
+/**
+ * WHO THE BREAKERS ARE ALLOWED TO EMAIL.
+ *
+ * Both rules here are corrections, made after the owner's inbox received
+ * `[OPEN] Penny locked by hand: 1 (alert at 1, stop at 1)` from a CI preview.
+ * An alert channel that cries wolf on every push is one you filter, and then
+ * the alert that mattered is filtered with it.
+ */
+describe('breaker alerts', () => {
+  const SRC = read('src/server/payments/breakerCheck.ts');
+
+  it('never emails about the manual lock', () => {
+    // It is open because a human threw it thirty seconds ago. Mailing them is
+    // telling somebody what they just did — and the e2e spec throws it on
+    // every CI run, so it arrived on every push.
+    expect(SRC).toMatch(/if \(status\.id === 'manual_lock'\) continue;/);
+    assertOrder(
+      SRC,
+      /if \(status\.id === 'manual_lock'\) continue;/,
+      /sendBreakerEmail\(/,
+      'breaker alerting'
+    );
+  });
+
+  it('emails from PRODUCTION only', () => {
+    // A preview's breaker state is a test artifact, and the email carries no
+    // environment, so a preview's alert is indistinguishable from production's.
+    expect(SRC).toMatch(/function alertsEnabled\(\)[\s\S]{0,120}VERCEL_ENV === 'production'/);
+    assertOrder(SRC, /if \(!alertsEnabled\(\)\)/, /sendBreakerEmail\(/, 'breaker alerting');
+  });
+
+  it('still LOGS on a deployment that may not email, so the signal is not lost', () => {
+    expect(SRC).toMatch(/no email: not production/);
+  });
+
+  it('still records who threw the lock, which is the part worth keeping', () => {
+    // The email went away; the audit row did not.
+    expect(read('src/app/api/admin/penny-lock/route.ts')).toMatch(/admin:penny-lock/);
+  });
+});
