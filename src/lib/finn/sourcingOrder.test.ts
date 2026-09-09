@@ -91,6 +91,18 @@ describe('legsNeedingSourcingBefore', () => {
     expect(legsNeedingSourcingBefore(preceding, 'leg-2').toSource).toEqual(ids([3]));
   });
 
+  it('stops at a leg Finn warned about — the driver sorts fuel there', () => {
+    // One un-plannable day must not make every later day re-source the whole
+    // trip behind it. See `unplannableRefuelAtEnd` in fuelTankState.ts.
+    const preceding = [
+      leg(0, { fuelStatus: 'none' }),
+      leg(1, { fuelStatus: 'none' }),
+      leg(2, { fuelStatus: 'no_stations_found' }),
+      leg(3, { fuelStatus: 'none' }),
+    ];
+    expect(legsNeedingSourcingBefore(preceding).toSource).toEqual(ids([3]));
+  });
+
   it('walks back to the trip start when nothing has ever refuelled', () => {
     const preceding = [0, 1, 2].map((i) => leg(i, { fuelStatus: 'none' }));
     expect(legsNeedingSourcingBefore(preceding).toSource).toEqual(ids([0, 1, 2]));

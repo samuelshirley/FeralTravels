@@ -212,3 +212,67 @@ describe('rangeRemainingAtLegStarts', () => {
     expect(rangeRemainingAtLegStarts([leg(200), leg(200)], null)).toEqual([null, null]);
   });
 });
+
+/**
+ * One day Finn cannot plan must not poison every day after it.
+ *
+ * Found on prod trip `ab824cde` (2026-09-09) while verifying the sourcing
+ * cascade: day 4 was a GENUINE gap ("Next fuel is 110 km ahead — beyond safe
+ * range (56 km)") on a perfectly sane tank. Because it placed no stop, the burn
+ * carried straight through it and days 5, 7, 9 and 11 all came back as
+ * "impossible tank state" — one honest warning, reported five times, with the
+ * rest of the trip left unplanned.
+ */
+describe('a leg Finn warned about is a refuel anchor', () => {
+  it('stops the walk-back, so later legs are not poisoned', () => {
+    // Reverse order: nearest leg first.
+    const burned = kmBurnedSinceLastRefuel([
+      { distanceKm: 250, latestFuelDistanceKm: null },
+      { distanceKm: 560, latestFuelDistanceKm: null, unplannableRefuelAtEnd: true },
+      { distanceKm: 460, latestFuelDistanceKm: null },
+      { distanceKm: 760, latestFuelDistanceKm: null },
+    ]);
+    // Only the 250 km leg after the warned one counts.
+    expect(burned).toBe(250);
+  });
+
+  it('contributes nothing itself — the refuel is at its END', () => {
+    const burned = kmBurnedSinceLastRefuel([
+      { distanceKm: 400, latestFuelDistanceKm: null, unplannableRefuelAtEnd: true },
+      { distanceKm: 900, latestFuelDistanceKm: null },
+    ]);
+    expect(burned).toBe(0);
+  });
+
+  it('loses to a real fuel stop on the same leg', () => {
+    // A stop actually placed on the leg is better evidence than an assumption
+    // about one; the stop's position decides the burn.
+    const burned = kmBurnedSinceLastRefuel([
+      { distanceKm: 400, latestFuelDistanceKm: 300, unplannableRefuelAtEnd: true },
+    ]);
+    expect(burned).toBe(100);
+  });
+
+  it('resets the forward pass too, so the UI agrees with the planner', () => {
+    const remaining = rangeRemainingAtLegStarts(
+      [
+        { distanceKm: 400, latestFuelDistanceKm: null },
+        { distanceKm: 400, latestFuelDistanceKm: null, unplannableRefuelAtEnd: true },
+        { distanceKm: 100, latestFuelDistanceKm: null },
+      ],
+      500
+    );
+    expect(remaining[0]).toBe(500);
+    expect(remaining[1]).toBe(100); // 400 burned entering the warned leg
+    expect(remaining[2]).toBe(500); // …and refuelled by its end
+  });
+
+  it('without the flag, the burn still runs straight through (the old bug)', () => {
+    const burned = kmBurnedSinceLastRefuel([
+      { distanceKm: 250, latestFuelDistanceKm: null },
+      { distanceKm: 560, latestFuelDistanceKm: null },
+      { distanceKm: 460, latestFuelDistanceKm: null },
+    ]);
+    expect(burned).toBe(1270);
+  });
+});

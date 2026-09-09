@@ -16,7 +16,7 @@ import {
   type LegFuelHistory,
 } from '@/lib/penny/fuelTankState';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
-import { logUsageEvent } from '@/server/repos/usage';
+import { logUsageEvent, logGooglePlacesUsage } from '@/server/repos/usage';
 import {
   searchFuelAlongRoute,
   type FuelStation,
@@ -120,6 +120,8 @@ async function setFuelStatus(
  * log. Before the Google→OSM cutover, Places failures were logged via
  * `recordGooglePlacesUsage`; Finn's failures wrote only to `legs.fuel_plan_error`
  * and were invisible to /admin/errors. This restores that visibility.
+ * (Station search is Google Places Text Search again since `a0c9ee6`; the
+ * per-call accounting lives beside the call itself, in planOneLeg.)
  */
 async function failLeg(
   legId: string,
@@ -178,9 +180,11 @@ export async function planFuelStopsForLeg(
  * pure and lives in `lib/finn/sourcingOrder.ts`.
  *
  * Bounded by the last refuel, so this is a dependency cascade and not the
- * trip-wide fan-out CLAUDE.md forbids — and Finn runs on OSRM + OSM Overpass,
- * both free, so the objection that killed the old fan-out (paid Google Places
- * calls) does not apply.
+ * trip-wide fan-out CLAUDE.md forbids. It is NOT free: Finn's station search is
+ * a paid Google Places Text Search, one per leg planned (the OSM/OSRM cutover
+ * was reverted by `a0c9ee6`), so catching up N days costs N searches. That is a
+ * deliberate trade — a wrong fuel warning is worse than a few cents — and it is
+ * why every call below writes a `usage_events` row.
  *
  * @returns a `failed` result when another request holds a leg we depend on, so
  *   the caller stops rather than planning on a burn that is still moving; null
@@ -338,6 +342,16 @@ async function planOneLeg(
       );
     }
     polyline = directions.polyline_points.map(([lat, lng]) => ({ lat, lng }));
+    // A PAID Google Directions call. Only on legs with no stored geometry, so
+    // it is usually zero — which is exactly why it has to be counted rather
+    // than assumed. Never allowed to fail the plan.
+    await logUsageEvent({
+      userId,
+      tripId: leg.tripId,
+      provider: 'google-directions',
+      requests: 1,
+      success: true,
+    }).catch((e) => console.error('[finn] failed to log directions usage:', e));
   }
   const totalKm = polylineLengthKm(polyline);
   if (polyline.length < 2 || totalKm <= 0) {
@@ -370,11 +384,32 @@ async function planOneLeg(
   }
 
   // 4. Google Places corridor → eligibility filter → route projection → candidates.
+  //
+  // PAID. One Places Text Search (New) per leg planned — so the sourcing
+  // cascade above multiplies this by the number of days it has to catch up on.
+  // `logGooglePlacesUsage` had no caller at all between 2026-06-29 and
+  // 2026-09-09, which meant the cost of a day-open was invisible; it is wired
+  // on BOTH outcomes here because a failed call is billed the same as a
+  // successful one.
   let corridor: FuelStation[];
   try {
     corridor = await searchFuelAlongRoute(encodePolyline(polyline));
+    await logGooglePlacesUsage({
+      userId,
+      tripId: leg.tripId,
+      endpoint: 'text-search',
+      requests: 1,
+    }).catch((e) => console.error('[finn] failed to log Places usage:', e));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await logGooglePlacesUsage({
+      userId,
+      tripId: leg.tripId,
+      endpoint: 'text-search',
+      requests: 1,
+      success: false,
+      errorMessage: msg,
+    }).catch(() => {});
     const reason = `Couldn't reach the Google station service (${msg}). This is usually transient — try again shortly.`;
     console.error(`[finn] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${msg}`);
     return failLeg(legId, leg.tripId, userId, reason);
@@ -688,7 +723,7 @@ async function computeKmBurnedSinceLastRefuel(
   declaredAnchor?: DeclaredTankAnchor | null
 ): Promise<number> {
   const previous = await db
-    .select({ id: legs.id, distanceKm: legs.distanceKm })
+    .select({ id: legs.id, distanceKm: legs.distanceKm, fuelStatus: legs.fuelStatus })
     .from(legs)
     .where(and(eq(legs.tripId, tripId), lt(legs.sortOrder, thisLegSortOrder)))
     .orderBy(desc(legs.sortOrder));
@@ -716,16 +751,22 @@ async function computeKmBurnedSinceLastRefuel(
       .sort((a, b) => (b.distanceFromStartKm ?? 0) - (a.distanceFromStartKm ?? 0))[0];
 
     const isDeclaredAnchor = declaredAnchor != null && prev.id === declaredAnchor.legId;
+    // Finn searched this leg and found nowhere to stop, and said so. See
+    // `unplannableRefuelAtEnd` — the driver was told to arrange fuel here, so
+    // the walk stops rather than reporting the same problem on every later day.
+    const unplannable = prev.fuelStatus === 'no_stations_found';
 
     history.push({
       distanceKm: prev.distanceKm,
       latestFuelDistanceKm: latestFuel?.distanceFromStartKm ?? null,
       declaredBurnedKmAtStart: isDeclaredAnchor ? declaredAnchor.burnedKm : null,
+      unplannableRefuelAtEnd: unplannable,
     });
 
-    // Both are terminal for the walk: a fuel stop is a refuel; the declared
-    // anchor is the tank baseline (nothing before it matters).
-    if (latestFuel?.distanceFromStartKm != null || isDeclaredAnchor) break;
+    // All three are terminal for the walk: a fuel stop is a refuel; the
+    // declared anchor is the tank baseline; a warned leg is where the driver
+    // was told to sort fuel out themselves.
+    if (latestFuel?.distanceFromStartKm != null || isDeclaredAnchor || unplannable) break;
   }
 
   return kmBurnedSinceLastRefuel(history);

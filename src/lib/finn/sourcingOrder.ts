@@ -16,11 +16,12 @@
  * "beyond safe range".
  *
  * THE FIX. Before planning day N, source every unsourced DRIVE day between the
- * last real refuel and N, oldest first. Finn runs on OSRM + OSM Overpass, both
- * free, so this costs no money — CLAUDE.md's "never a trip-wide fan-out" rule
- * was about paid Google Places calls and is not a rule about dependency order.
- * This is bounded by the last refuel, not by the trip: it is a cascade, not a
- * fan-out.
+ * last real refuel and N, oldest first. CLAUDE.md's "never a trip-wide fan-out"
+ * rule is about cost, and this is bounded by the last refuel rather than by the
+ * trip — a cascade, not a fan-out. It still COSTS: Finn's station search is a
+ * paid Google Places Text Search, one per leg planned, so this function's return
+ * value is a bill as well as a plan. Keeping it short is the point of the anchor
+ * logic below.
  *
  * Pure — no I/O, no DB. The shim that loads rows and runs the cascade lives in
  * `src/server/fuel.ts`. Same split as [[fuelTankState]] / [[plan]].
@@ -82,9 +83,14 @@ export function legsNeedingSourcingBefore(
   let anchorIdx = -1;
   for (let i = 0; i < precedingInOrder.length; i++) {
     const leg = precedingInOrder[i];
-    if (leg.hasFuelStop || (declaredAnchorLegId != null && leg.id === declaredAnchorLegId)) {
-      anchorIdx = i;
-    }
+    const isAnchor =
+      leg.hasFuelStop ||
+      // A leg Finn searched and warned about is where the driver was told to
+      // arrange fuel; the tank walk stops there, so nothing before it can
+      // affect this burn either. See `unplannableRefuelAtEnd` in fuelTankState.
+      leg.fuelStatus === 'no_stations_found' ||
+      (declaredAnchorLegId != null && leg.id === declaredAnchorLegId);
+    if (isAnchor) anchorIdx = i;
   }
 
   const toSource: string[] = [];
