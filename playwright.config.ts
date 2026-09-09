@@ -265,6 +265,18 @@ export default defineConfig({
             testMatch: /announcement\.spec\.ts/,
             dependencies: ['web-ui'],
           },
+          // The circuit breakers are GLOBAL app state, in the strongest sense
+          // on this list: while the spec holds one open, every Penny turn in
+          // the deployment is refused. So it runs after the announcement,
+          // which runs after everything else — nothing is in flight while the
+          // app is shut. The spec re-opens it in an `afterAll` that runs
+          // whatever happened.
+          {
+            name: 'breakers',
+            use: { ...devices['Desktop Chrome'] },
+            testMatch: /breakers\.spec\.ts/,
+            dependencies: ['announcement'],
+          },
         ]
       : []),
   ],

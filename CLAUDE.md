@@ -314,7 +314,7 @@ api/mobile/oauth/exchange
 api/support               api/analytics/viewport-time
 api/analytics/client-error
 api/admin/test-error      api/admin/announcements
-api/admin/paywall
+api/admin/paywall         api/admin/penny-lock
 api/admin/subscription/revoke
 api/admin/test-users
 api/announcements/active  api/announcements/dismiss
@@ -323,13 +323,14 @@ api/test/seed             api/test/trip
 api/test/cleanup          api/test/announcement
 api/test/otp              api/test/deletion
 api/test/subscription     api/test/promo
+api/test/breakers
 ```
 
 **`api/test/*` are TEST-ONLY** (fixture DATA, plus `otp` which reads back a fixture address's own code and grants nothing) — guarded by `isTestRequestAuthorized()` (`auth/test-endpoints.ts`; return 404 otherwise), hard-off on Vercel production with no override. They let the E2E suite create/reset fixture DATA over HTTP (no direct DB). They can NOT mint sessions or bypass sign-in — e2e signs in via the real OTP flow, reading the code for its own fixture address from `/api/test/otp`. Backed by `repos/testSupport.ts`.
 
-### Schema (30 tables in `src/server/db/schema.ts`)
+### Schema (31 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle
+users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts
 
 **Account deletion — BUILT (migration 0024, 2026-08-20):** users can permanently delete their own account from Settings on **both** web and native. Apple guideline 5.1.1(v) requires an app that creates accounts to delete them *from inside the app*, so the native screen is the requirement and the web page is the mirror — not the other way round. **Immediate and unrecoverable by design: no grace period, no soft-delete, no undo.**
 
@@ -455,7 +456,7 @@ run-migrations.ts, dump-trip.ts, anthropic-usage-report.ts, vercel-set-ci-key.sh
 
 ### E2E Tests (`e2e/`)
 
-existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, chat-maps-link, units-imperial, lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange
+existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, chat-maps-link, units-imperial, lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange, breakers
 
 **`chat-maps-link`** (2026-09-04) plans Girona → Annecy with Penny, pastes the `maps.app.goo.gl` short link INTO CHAT and asserts it lands as an `other` stop with a source from the stops API's author enum, then moves the day's destination and asserts the leg ends `ready` WITH a fuel stop again — the only automated proof of the chat paste path (the day-card row is gone) and of the item-6 re-source. Three Penny turns a run — the most expensive spec in the repo, and **gated behind the `ai-tests` label since 2026-09-08** along with `penny-plan-trip`; it does not run on a push. **`units-imperial`** flips the preference through `PATCH /api/me/preferences`, opens the seeded trip with a 300 km range so day 1 needs a stop, and asserts the NEXT STOP row, the stop rows and the whole itinerary pane show `mi` and no `km`.
 
@@ -813,6 +814,7 @@ build.
     gone, expire them" and is wrong, because an unknown destination means the
     purchase left our system and expiring the origin would strand somebody still
     paying with nobody to hand access to.
+- **Spend defence — the global circuit breakers (2026-09-09).** Every spend gate before this one was per-account (120 replans/hour, $5/day, OTP cooldowns), and an attacker picks the number of accounts: a hundred bots at $5/day is $500 overnight with every one of them passing. `src/server/payments/breakers.ts` is the pure evaluator, `breakerCheck.ts` the DB reader + 30s cache + alerting, and **every threshold lives in `payments/constants.ts` (`BREAKERS`)** — Anthropic spend $10/$25 per 24h and $3/$8 per hour, new accounts 50/100 per hour and 100/200 per day, junk messages 100/hour alert-only, plus the manual `app_meta.penny_locked` switch thrown from /admin. A tripped breaker is **503 `circuit_open`** (never 401, which clears the iOS keychain; never 402, which is the paywall's word) and admins are exempt from the stop, never from the accounting. It **fails CLOSED** — the opposite of `paywallEnabledFromValue`, and the reasoning is written beside both. The sign-up breakers refuse only addresses with **no existing account**, so a flood never locks out the people already using the app. Max overnight loss is therefore the 24h stop plus one 30-second cache window per running instance. The full rationale is section I of `docs/decisions.md`; don't restate it here. *Enforced by:* `payments/breakers.test.ts`, `lib/breakerGate.test.ts` (the routes call the gate before any model call or OTP send), `payments/switch.test.ts` (the two switches fail in opposite directions), `e2e/breakers.spec.ts` (its own Playwright project, running last, because a global breaker is global).
 - **The paywall master switch is a DATABASE ROW, not an env var (2026-09-02).** `app_meta` key `paywall_enabled`, `'1'` for on, flipped from `/admin` through `POST /api/admin/paywall`. It was `PAYWALL_ENABLED=1` in Vercel, which had two problems that only appear at the moment you want to use it: **turning it off needed a redeploy** — the slowest control in the system, reached for exactly when the paywall is blocking people who should not be blocked — and **nothing could see it**, so the two `/admin` blocks that warn "the switch is off" were reading a prop threaded down from a page that read `process.env` itself.
   - **`paywallEnabled()` is now async and cached ~30s in-process**, and the cache is not an optimisation: it is called from `applySwitch`, which `getAccountVerdict` calls on EVERY gated request, so an uncached read is a query per Penny turn forever for a value that changes twice a year. The cache is per-instance and Vercel runs several, so worst case is ~30s after the last instance's read — fine for this, and it would not be for anything security-critical. This decides whether a TRUE verdict is ENFORCED, never what the verdict is.
   - **Fails closed, to OFF**, on a read error, and a failed read is not cached. The asymmetry is not close: answering "on" during a database blip paywalls every account until it clears, and answering "off" costs a few free Penny turns. `paywallEnabledFromValue` is the pure rule and its test pins the direction of every ambiguity — `'true'`, `'yes'`, `' 1'` and a missing row are all OFF.

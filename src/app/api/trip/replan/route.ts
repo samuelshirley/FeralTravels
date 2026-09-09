@@ -17,6 +17,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '@/server/auth/guards';
+import { assertPennyGateOpen } from '@/server/payments';
 import { addChatMessage } from '@/server/repos/chat';
 import { PLAN_READY_TEXT } from '@/lib/planReady';
 import {
@@ -298,6 +299,22 @@ export async function POST(req: Request) {
     }
 
     await assertTripOwnedByUser(tripId, userId);
+
+    /**
+     * THE GLOBAL CIRCUIT BREAKER, before anything that can reach Anthropic.
+     *
+     * The per-user caps below are the wrong tool for the threat this guards
+     * against, and it is worth being precise about why: they bound what ONE
+     * account costs, and an attacker picks the number of accounts. A hundred
+     * bots at the $5/day cap is $500 overnight with every line below passing.
+     * This one bounds the whole deployment, so the worst case of any attack is
+     * the number in `constants.ts` rather than the number of attackers.
+     *
+     * Throws a 503 carrying `code: 'circuit_open'` — never a 401 (the app
+     * clears the keychain on those) and never a 402 (that is the paywall's
+     * word, and this user may well have paid).
+     */
+    await assertPennyGateOpen(isAdminUser);
 
     // Soft per-user spend / request guardrails to prevent runaway cost.
     //

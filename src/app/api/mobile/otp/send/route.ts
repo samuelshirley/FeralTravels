@@ -1,6 +1,7 @@
 import { z, ZodError } from 'zod';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
 import { errorResponse, HttpError } from '@/server/auth/guards';
+import { assertSignupGateOpen } from '@/server/payments';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,13 @@ const sendSchema = z.object({
 export async function POST(req: Request) {
   try {
     const body = sendSchema.parse(await req.json().catch(() => ({})));
+    /**
+     * The sign-up circuit breaker, BEFORE any mail is sent. Refuses only
+     * addresses with no account yet: a flood is a thousand strangers, and the
+     * people who must not be locked out are the ones already using the app.
+     * Throws 503 `circuit_open`.
+     */
+    await assertSignupGateOpen(body.email);
     try {
       await sendOtpCode(body.email);
     } catch (err) {

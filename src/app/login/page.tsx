@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { rawAuth, signIn, isAppleSignInConfigured } from '@/server/auth';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode } from '@/server/auth/otp';
+import { assertSignupGateOpen } from '@/server/payments';
 import { AppleMark, GoogleMark, InfoIcon } from '@/components/icons';
 
 interface LoginPageProps {
@@ -38,6 +39,14 @@ function describeError(code?: string): string | null {
       return "Couldn't send your sign-in code. Try Google or Apple, or contact support.";
     case 'AccessDenied':
       return 'Access denied. If you think this is a mistake, contact support.';
+    /*
+     * The sign-up circuit breaker. It refuses only addresses with no account
+     * yet, so this line is read by someone who has never signed in — which is
+     * why it says nothing about their account and does not suggest Google or
+     * Apple, both of which go through the same gate.
+     */
+    case 'SignupsPaused':
+      return 'New sign-ups are paused for a moment. Please try again shortly.';
     default:
       return `Sign-in failed: ${code}`;
   }
@@ -238,6 +247,23 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             if (!emailRe.test(email)) {
               redirect(
                 `/login?emailError=${encodeURIComponent('InvalidEmail')}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+              );
+              return;
+            }
+
+            /*
+             * The sign-up circuit breaker, before a code is minted or mailed.
+             * Only a NEW address is refused; someone who already has an account
+             * signs in through a flood unaffected. `CircuitOpenError` is an
+             * HttpError, and this is a server action with nowhere to put a
+             * status code, so it is caught here and turned into the one thing
+             * this page can render — a notice.
+             */
+            try {
+              await assertSignupGateOpen(email);
+            } catch {
+              redirect(
+                `/login?emailError=${encodeURIComponent('SignupsPaused')}&callbackUrl=${encodeURIComponent(callbackUrl)}`
               );
               return;
             }

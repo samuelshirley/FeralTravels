@@ -2,6 +2,7 @@ import 'server-only';
 import { eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { appMeta } from '@/server/db/schema';
+import { areTestEndpointsEnabled } from '@/server/auth/test-endpoints';
 
 /**
  * The paywall's master switch. OFF unless it has been turned on deliberately.
@@ -156,4 +157,89 @@ export function enforcementApplies(input: {
   forcedForUser: boolean;
 }): boolean {
   return input.globalOn || input.forcedForUser;
+}
+
+// ── The manual Penny lock ───────────────────────────────────────────────────
+
+/**
+ * The owner's one-tap stop: `app_meta.penny_locked = '1'` and Penny goes quiet
+ * for everyone but the admin, with no deploy and no code change.
+ *
+ * Same shape as the paywall switch above and for the same reason — the control
+ * you reach for in a hurry cannot take a build — but it FAILS IN THE OPPOSITE
+ * DIRECTION, and that is the only interesting thing about it.
+ *
+ * `paywallEnabled()` fails to OFF because a blip that answered "on" would wall
+ * innocent people while a blip that answered "off" costs a few free turns. This
+ * one fails to LOCKED, because the asymmetry runs the other way: a blip that
+ * answers "unlocked" is a bypass, during exactly the minutes an attack is most
+ * likely to be the reason the database is struggling. And it costs almost
+ * nothing to be wrong that way: a Penny turn needs the database for the trip,
+ * the legs and the chat history, so a read that failed here was going to fail
+ * again a line later. Refusing early just says so honestly.
+ *
+ * That direction is asserted in `switch.test.ts`, not left to this comment.
+ */
+export const PENNY_LOCK_META_KEY = 'penny_locked';
+
+let lockCached: { value: boolean; at: number } | null = null;
+
+/** Drop the cache. Called by the writer so the admin sees their own flip. */
+export function invalidatePennyLock(): void {
+  lockCached = null;
+}
+
+/** Read the lock. FAILS CLOSED — a read that throws reports LOCKED. */
+export async function pennyLocked(now = Date.now()): Promise<boolean> {
+  /*
+   * Zero cache on a deployment with the E2E fixture endpoints on, for the same
+   * reason and with the same safety argument as `breakerCheck.ts`'s `cacheMs`:
+   * this is a staleness allowance, removing it makes the gate stricter, and
+   * `areTestEndpointsEnabled()` is hard-off on production. The paywall switch
+   * above deliberately keeps its cache — nothing needs it to be instant, and it
+   * is not in the money path.
+   */
+  const ttl = areTestEndpointsEnabled() ? 0 : CACHE_MS;
+  if (lockCached && now - lockCached.at < ttl) return lockCached.value;
+  try {
+    const [row] = await db
+      .select({ value: appMeta.value })
+      .from(appMeta)
+      .where(eq(appMeta.key, PENNY_LOCK_META_KEY))
+      .limit(1);
+    const value = pennyLockedFromValue(row?.value);
+    lockCached = { value, at: now };
+    return value;
+  } catch (err) {
+    console.error('[payments/switch] could not read the Penny lock; treating as LOCKED', err);
+    // Deliberately NOT cached: a failed read must not pin the app shut for the
+    // next thirty seconds once the database comes back.
+    return true;
+  }
+}
+
+/**
+ * Throw or clear the lock. The only writer.
+ *
+ * `flippedBy` is not stored — `app_meta` has nowhere to put it — so
+ * `/api/admin/penny-lock` writes the `usage_events` row, exactly as the paywall
+ * switch does. "Who closed the app, and when" is the first question asked
+ * afterwards.
+ */
+export async function setPennyLocked(locked: boolean): Promise<void> {
+  await db
+    .insert(appMeta)
+    .values({ key: PENNY_LOCK_META_KEY, value: locked ? '1' : '0' })
+    .onConflictDoUpdate({ target: appMeta.key, set: { value: locked ? '1' : '0' } });
+  invalidatePennyLock();
+}
+
+/**
+ * The pure rule. Anything other than exactly `'1'` is unlocked — including a
+ * missing row, which is the default state of a deployment that has never been
+ * locked. Same "one exact string" discipline as `paywallEnabledFromValue`,
+ * pointing the other way.
+ */
+export function pennyLockedFromValue(value: string | null | undefined): boolean {
+  return value === '1';
 }

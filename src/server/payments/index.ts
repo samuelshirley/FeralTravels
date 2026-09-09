@@ -55,6 +55,44 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  * — keeps the entitlement surface cheap to import.
  */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
+/**
+ * The circuit breakers. On this surface for the same reason the paywall switch
+ * is: they decide whether a request may spend money, which is this module's
+ * one job. The pure evaluator and the thresholds come out too, because the
+ * admin panel renders them and `/api/admin/penny-lock` writes the switch.
+ */
+export {
+  assertPennyGateOpen,
+  assertSignupGateOpen,
+  checkBreakerGate,
+  breakerSnapshot,
+  breakerFacts,
+  readBreakerFacts,
+  invalidateBreakerFacts,
+  maybeAlertBreakers,
+  alertCooldownMs,
+  formatBreakerValue,
+  GATE_PROVIDER,
+} from './breakerCheck';
+export type { BreakerSnapshot } from './breakerCheck';
+export {
+  evaluateBreakers,
+  evaluateGate,
+  levelFor,
+  retryAfterFor,
+  worstLevel,
+} from './breakers';
+export type {
+  BreakerFacts,
+  BreakerGate,
+  BreakerId,
+  BreakerLevel,
+  BreakerSpec,
+  BreakerStatus,
+  BreakerUnit,
+  GateVerdict,
+} from './breakers';
+export { BREAKERS, BREAKER_CACHE_MS } from './constants';
 export {
   paywallEnabled,
   setPaywallEnabled,
@@ -62,6 +100,11 @@ export {
   paywallEnabledFromValue,
   enforcementApplies,
   PAYWALL_META_KEY,
+  pennyLocked,
+  setPennyLocked,
+  invalidatePennyLock,
+  pennyLockedFromValue,
+  PENNY_LOCK_META_KEY,
 } from './switch';
 /**
  * Promo codes belong on this surface, unlike `./testAccounts`: redeeming one

@@ -1127,3 +1127,35 @@ export const usageAlerts = pgTable(
     pk: primaryKey({ columns: [t.userId, t.threshold] }),
   })
 );
+
+/**
+ * One row per (breaker, level) so a tripped circuit breaker mails the owner
+ * ONCE rather than once per request.
+ *
+ * The same job `usage_alerts` does for the per-user thresholds, and a separate
+ * table rather than an extra row shape in that one because `usage_alerts.user_id`
+ * is NOT NULL with a foreign key: these alerts are about the whole deployment
+ * and belong to nobody.
+ *
+ * The difference from `usage_alerts` is that this one RE-ARMS. A per-user
+ * lifetime cap is crossed once and stays crossed, so a permanent row is right
+ * there. A breaker measures a rolling window: it can open on Tuesday, close by
+ * Wednesday and open again on Thursday, and the third of those is news. So the
+ * claim is an upsert guarded on `fired_at` being older than the cooldown, and
+ * the row is the last-fired timestamp rather than a tombstone.
+ */
+export const breakerAlerts = pgTable(
+  'breaker_alerts',
+  {
+    /** A `BreakerId` — `anthropic_spend_24h`, `signups_1h`, … */
+    breaker: text('breaker').notNull(),
+    /** `alert` or `open`. Both are worth an email; only one of them stops anybody. */
+    level: text('level').$type<'alert' | 'open'>().notNull(),
+    /** The measured value when it fired, in the breaker's own unit. For the email and the audit. */
+    valueAtFiring: bigint('value_at_firing', { mode: 'number' }),
+    firedAt: timestamp('fired_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.breaker, t.level] }),
+  })
+);

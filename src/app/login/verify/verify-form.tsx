@@ -43,6 +43,16 @@ function describeError(code: string | undefined, retryInSeconds: number): Notice
         tone: 'error',
         text: "Couldn't send a new code. Please try again or use Google sign-in.",
       };
+    /*
+     * The sign-up circuit breaker. A notice, not an error: nothing has gone
+     * wrong with their code or their address, and it clears on its own. It does
+     * not suggest Google — that path goes through the same gate.
+     */
+    case 'SignupsPaused':
+      return {
+        tone: 'info',
+        text: 'New sign-ups are paused for a moment. Please try again shortly.',
+      };
     default:
       return { tone: 'error', text: `Something went wrong (${code}). Please try again.` };
   }
