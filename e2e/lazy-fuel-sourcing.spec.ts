@@ -90,11 +90,20 @@ test.describe('Opening a later day sources the days it depends on', () => {
     const fuelPosts: string[] = [];
     page.on('request', (req) => { if (isFuelPost(req)) fuelPosts.push(req.url()); });
 
+    // The cascade plans up to three legs server-side, each a real Places search,
+    // inside ONE request. That is comfortably longer than the default per-test
+    // budget, and a poll timeout longer than the test timeout can only ever fail
+    // as an unexplained timeout — which is exactly how this spec first failed.
+    test.setTimeout(180_000);
+
     const email = await signInAsNewUser(page, {
       fixture: { legPreset: 'three_long_drives', rangeKm: 500 },
     });
     expect(email).toBeTruthy();
     await openTrip(page);
+
+    const tripId = new URL(page.url()).pathname.split('/').pop() as string;
+    expect(tripId, 'expected to land on a trip page').toMatch(/^[0-9a-f-]{36}$/);
 
     const days = page.getByTestId('leg-card');
     await expect(days.first()).toBeVisible({ timeout: 20_000 });
@@ -104,22 +113,33 @@ test.describe('Opening a later day sources the days it depends on', () => {
     // (it is the current day), so the cascade's real work is day 2.
     await days.last().click();
 
-    // Finn runs OSRM + Overpass per leg, so give the cascade room.
+    // `GET /api/trip?tripId=` is the endpoint that returns legs. There is no GET
+    // on /api/trips/[id] — only PATCH and DELETE — and assuming there was made
+    // this poll return null on every iteration, so it died as a bare timeout
+    // saying nothing about the cause. The poll now yields a descriptive STRING
+    // for the same reason: `null` is what made the first failure unreadable.
     await expect
-      .poll(async () => {
-        const res = await page.request.get(new URL(page.url()).pathname.replace('/trips/', '/api/trips/'));
-        if (!res.ok()) return null;
-        const body = (await res.json()) as { legs?: { sort_order: number; fuel_status: string }[] };
-        return (body.legs ?? [])
-          .slice()
-          .sort((a, b) => a.sort_order - b.sort_order)
-          .map((l) => l.fuel_status)
-          .join(',');
-      }, {
-        message: 'every day up to the one opened should reach a terminal fuel status',
-        timeout: 120_000,
-        intervals: [2_000],
-      })
+      .poll(
+        async () => {
+          const res = await page.request.get(`/api/trip?tripId=${tripId}`);
+          if (!res.ok()) return `http-${res.status()}`;
+          const body = (await res.json()) as {
+            legs?: { sort_order: number; fuel_status: string }[];
+          };
+          const legs = body.legs ?? [];
+          if (legs.length === 0) return 'no-legs';
+          return legs
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((l) => l.fuel_status)
+            .join(',');
+        },
+        {
+          message: 'every day up to the one opened should reach a terminal fuel status',
+          timeout: 120_000,
+          intervals: [2_000],
+        },
+      )
       .toMatch(/^(ready|no_stations_found),(ready|no_stations_found),(ready|no_stations_found)$/);
 
     // The bug's signature: a day that needed an ordinary stop, reported as
