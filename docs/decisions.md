@@ -81,7 +81,7 @@ told** (`overriddenEdits`), and it is logged. *Enforced by:* `editOverride.test.
 B13. **One running turn per trip, DB-enforced; every send carries an idempotency key; queued
 turns drain in-request.** *Enforced by:* partial unique index `penny_turns_one_running_per_trip_idx`
 (structural, migration 0019) + `applyOutcome.test.ts` for the client heal path. No unit test on
-the promotion race — **NOT ENFORCED** beyond the index.
+the promotion race — `pennyTurns.test.ts` — the partial unique index in the schema AND the 23505→null catch that turns "someone else won" into "stay queued"; both halves are load-bearing beyond the index.
 
 B14. **Penny does not author derived fields: split-point names, drive-leg titles, `end_date`.**
 (Pending — section 3 of `docs/tasks/2026-09-09-haiku-fuel-tankwalk.md`.) Haiku wrote "Texas
@@ -204,7 +204,7 @@ the `ai-tests` label; the production key never reaches the runner.** *Enforced b
 
 F3. **Two Anthropic keys: `ANTHROPIC_API_KEY_CI` wins on every runtime except production.**
 *Enforced by:* `anthropicKey.test.ts`. That the CI key is actually SET in Vercel Preview —
-**NOT ENFORCED** (it wasn't, 2026-09-08–09; `scripts/vercel-set-ci-key.sh`).
+`scripts/check-preview-env.mjs`, which runs in CI and now requires `ANTHROPIC_API_KEY_CI`. Its absence is SILENT rather than a crash — `anthropicKey()` falls through to the production key and every preview turn bills it, which is exactly what happened until 2026-09-09 (it wasn't, 2026-09-08–09; `scripts/vercel-set-ci-key.sh`).
 
 F4. **OTA vs native build is decided by `decide-mobile-release.mjs`, fails safe to native, and
 the native build is gated.** *Enforced by:* `decideMobileRelease.test.ts`.
@@ -224,7 +224,7 @@ F8. **The migration chain cannot replay from an empty database; a fresh DB is `d
 ## G. Data and API contracts
 
 G1. **Every API route accepts exactly one Zod shape; free-text interpretation lives only at the
-boundary that owns it (onboarding).** *Enforced by:* **NOT ENFORCED** generically.
+boundary that owns it (onboarding).** *Enforced by:* `routeValidationGuard.test.ts` — every route reading a JSON body must Zod-parse it; a multipart upload (the one legitimate variant) must still validate each field through a named validator; and `PATCH /api/trips/[id]` must not import the LLM date parser generically.
 
 G2. **All DB access goes through `src/server/repos/*`; no raw SQL in routes.** *Enforced by:*
 **NOT ENFORCED** — a grep-style guard would be ~20 lines.
