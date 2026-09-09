@@ -58,6 +58,7 @@ import {
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 import { resolveLegTitle } from '@/lib/legTitle';
+import { getDirectionsAccounted } from '@/server/google/accounted';
 
 /**
  * Per-request dispatch state for one POST /api/trip/replan.
@@ -1243,7 +1244,7 @@ async function dispatchAction(
       // for these coords (24h LRU in directions.ts).
       let geometry: GeoJSONLineString | null = null;
       if (d.start_lat != null && d.start_lng != null && d.end_lat != null && d.end_lng != null) {
-        const dir = await getDirections(
+        const dir = await getDirectionsAccounted(
           { lat: d.start_lat, lng: d.start_lng },
           { lat: d.end_lat, lng: d.end_lng },
         );
@@ -1377,7 +1378,7 @@ async function dispatchAction(
         const eLat = data.end_lat ?? cur?.endLat;
         const eLng = data.end_lng ?? cur?.endLng;
         if (sLat != null && sLng != null && eLat != null && eLng != null) {
-          const dir = await getDirections({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
+          const dir = await getDirectionsAccounted({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
           if (dir.ok && dir.polyline_points.length > 0) {
             legUpdate.geometry = {
               type: 'LineString',

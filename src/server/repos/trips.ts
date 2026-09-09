@@ -11,6 +11,7 @@ import {
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import { lastDayFromSchedule } from '@/lib/tripCompletion';
 import { resolveLegTitle } from '@/lib/legTitle';
+import { getDirectionsAccounted } from '@/server/google/accounted';
 import {
   materializeSchedule,
   computeStartFixes,
@@ -1172,7 +1173,7 @@ export async function rerouteLeg(legId: string): Promise<boolean> {
   }
 
   const waypoints = await selectedWaypointsForLeg(legId);
-  const dir = await getDirections(
+  const dir = await getDirectionsAccounted(
     { lat: leg.startLat, lng: leg.startLng },
     { lat: leg.endLat, lng: leg.endLng },
     waypoints.length > 0 ? { waypoints } : {},
@@ -1395,7 +1396,7 @@ export async function repairLegContinuity(
     if (leg.endLat != null && leg.endLng != null) {
       // Preserve any drive-through waypoints when re-routing from the new origin.
       const waypoints = await selectedWaypointsForLeg(leg.id);
-      const dir = await getDirections(
+      const dir = await getDirectionsAccounted(
         { lat: target.originLat, lng: target.originLng },
         { lat: leg.endLat, lng: leg.endLng },
         waypoints.length > 0 ? { waypoints } : {},
@@ -1552,9 +1553,8 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
            * pair (`fuel_status === 'none'` → fetch), so opening any day of a
            * cloned trip fired POST /api/legs/<id>/fuel-stops, and the server —
            * seeing 'none' rather than a fresh terminal success — ran the whole
-           * search again: OSRM geometry, an Overpass corridor query, and the
-           * pricing coordinator on top. Every day, every clone, for stops that
-           * were already there.
+           * search again: route geometry and a paid Google Places corridor
+           * search. Every day, every clone, for stops that were already there.
            *
            * That is the entire point of the lazy design defeated by two missing
            * assignments, and it is invisible from the UI: the stops that come

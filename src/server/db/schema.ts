@@ -775,7 +775,9 @@ export const userViewportTime = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     viewport: text('viewport').notNull().$type<'mobile' | 'tablet' | 'desktop'>(),
     totalSeconds: bigint('total_seconds', { mode: 'number' }).notNull(),
-    updatedAt: timestamp('updated_at', { mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { mode: 'date', withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.viewport] }),

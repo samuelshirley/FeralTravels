@@ -22,6 +22,10 @@ import { geocodePlace } from "@/lib/google/geocode";
 import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
 import { reverseGeocode } from "@/lib/osm/nominatim";
 import { qualifiedPlaceName } from "@/lib/placeName";
+import {
+  getDirectionsAccounted,
+  geocodePlaceAccounted,
+} from "@/server/google/accounted";
 import { setDeclaredFuelState } from "@/server/repos/trips";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
@@ -1416,7 +1420,7 @@ async function executeResolvePlace(
   }
 
   const input = parsed.data as resolvePlaceTool.ResolvePlaceInput;
-  const result = await geocodePlace(input.query, {
+  const result = await geocodePlaceAccounted(input.query, {
     region: input.region ?? undefined,
   });
 
@@ -1500,7 +1504,7 @@ async function executeGetRoute(
   const waypoints = (input.waypoints ?? [])
     .filter((w) => w.lat != null && w.lng != null)
     .map((w) => ({ lat: w.lat, lng: w.lng }));
-  const directions = await getDirections(
+  const directions = await getDirectionsAccounted(
     { lat: input.origin_lat, lng: input.origin_lng },
     { lat: input.destination_lat, lng: input.destination_lng },
     {
