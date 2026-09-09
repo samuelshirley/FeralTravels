@@ -704,6 +704,18 @@ export const chatHistory = pgTable(
      * it. Null on every other kind. See `ChatFormMeta`.
      */
     formMeta: jsonb('form_meta').$type<import('@/types/trip').ChatFormMeta | null>(),
+    /**
+     * On user rows: which tier the message gate sorted this into (`T1`/`T2`/
+     * `T3`), and which of the three deciders decided (`allow_rule`,
+     * `deny_rule`, `classifier`, `error`). Null on every row written before the
+     * gate existed and on rows the gate does not judge.
+     *
+     * Recorded on the MESSAGE rather than only in `usage_events` because the
+     * useful question afterwards is "why did Penny answer that with a canned
+     * line", and the answer has to be beside the message it is about.
+     */
+    gateTier: text('gate_tier').$type<'T1' | 'T2' | 'T3' | null>(),
+    gateBy: text('gate_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({

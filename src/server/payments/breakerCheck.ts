@@ -400,3 +400,56 @@ export async function assertSignupGateOpen(email: string): Promise<void> {
 
   await assertIpAllowed('signup');
 }
+
+export interface GateMix {
+  tier: string;
+  decisions: number;
+}
+
+/**
+ * Gate decisions in the last N hours, by tier — the mix the deterministic
+ * layers were supposed to shift.
+ *
+ * Reads the same rows `gated_messages_1h` counts. Nothing is recorded for the
+ * admin panel that the breaker does not already need.
+ */
+export async function gateMixSince(hours = 24): Promise<GateMix[]> {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      tier: usageEvents.model,
+      decisions: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+    })
+    .from(usageEvents)
+    .where(and(eq(usageEvents.provider, GATE_PROVIDER), gte(usageEvents.createdAt, since)))
+    .groupBy(usageEvents.model);
+  return rows
+    .map((r) => ({ tier: r.tier ?? 'unknown', decisions: Number(r.decisions) }))
+    .sort((a, b) => a.tier.localeCompare(b.tier));
+}
+
+/** The accounts sending the most REFUSED messages. Five, because it is a lead, not a report. */
+export async function topGatedAccounts(
+  hours = 24,
+  limit = 5
+): Promise<Array<{ email: string | null; refused: number }>> {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      email: users.email,
+      refused: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+    })
+    .from(usageEvents)
+    .innerJoin(users, eq(usageEvents.userId, users.id))
+    .where(
+      and(
+        eq(usageEvents.provider, GATE_PROVIDER),
+        gte(usageEvents.createdAt, since),
+        sql`${usageEvents.model} IN ('T2', 'T3')`
+      )
+    )
+    .groupBy(users.email)
+    .orderBy(sql`SUM(${usageEvents.requests}) DESC`)
+    .limit(limit);
+  return rows.map((r) => ({ email: r.email, refused: Number(r.refused) }));
+}

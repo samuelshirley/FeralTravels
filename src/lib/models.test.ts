@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CLASSIFY_MODEL,
   DATE_PARSE_MODEL,
   ONBOARDING_SCAN_MODEL,
   PENNY_MODEL,
@@ -28,7 +29,15 @@ describe('model registry', () => {
     // These were never anything else — they are trivial forced-tool calls and
     // Penny's planning model would be waste. Pinned so a well-meaning
     // "use one model everywhere" tidy-up has to argue with a test.
-    for (const id of [DATE_PARSE_MODEL, RANGE_ESTIMATE_MODEL, ONBOARDING_SCAN_MODEL]) {
+    for (const id of [
+      DATE_PARSE_MODEL,
+      RANGE_ESTIMATE_MODEL,
+      ONBOARDING_SCAN_MODEL,
+      // The tier classifier most of all: it runs on messages Penny has not
+      // been paid for yet, and a gate that costs a third of the turn it is
+      // gating is not a gate.
+      CLASSIFY_MODEL,
+    ]) {
       expect(id).toMatch(/^claude-haiku-/);
     }
   });
@@ -36,7 +45,13 @@ describe('model registry', () => {
   it('pins exact dated model ids, never a floating alias', () => {
     // `claude-haiku-4-5` without the date is a moving target: the app would
     // change behaviour on Anthropic's schedule rather than on ours.
-    for (const id of [PENNY_MODEL, DATE_PARSE_MODEL, RANGE_ESTIMATE_MODEL, ONBOARDING_SCAN_MODEL]) {
+    for (const id of [
+      PENNY_MODEL,
+      DATE_PARSE_MODEL,
+      RANGE_ESTIMATE_MODEL,
+      ONBOARDING_SCAN_MODEL,
+      CLASSIFY_MODEL,
+    ]) {
       expect(id).toMatch(/-\d{8}$/);
     }
   });

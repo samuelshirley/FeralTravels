@@ -23,6 +23,8 @@ import {
   REPLAN_USD_CAP_PER_DAY,
 } from '@/server/payments';
 import { assertIpAllowed } from '@/server/ipLimit';
+import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
+import { gateMessage } from '@/server/messageGate';
 import { addChatMessage } from '@/server/repos/chat';
 import { PLAN_READY_TEXT } from '@/lib/planReady';
 import {
@@ -209,19 +211,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Anthropic calls can take >60s on complex trips
 
-/**
- * Hard cap on the size of a single chat message. The textarea has no
- * character limit on the client (deliberate — copy-paste friendliness),
- * so this is the server-side anti-spam guard. 4000 chars ≈ ~1000 tokens
- * — plenty for "plan a 14-day trip from X to Y hitting A, B, C" with
- * room for elaboration. Anything larger is almost certainly someone
- * pasting junk to burn tokens.
- *
- * Defense in depth: REPLAN_REQUESTS_PER_HOUR (40) and
- * REPLAN_USD_CAP_PER_DAY ($5) cap the total damage even if individual
- * messages slip through long.
- */
-const MAX_MESSAGE_CHARS = 4000;
+// MAX_MESSAGE_CHARS now lives in `src/lib/pennyGate.ts`, beside the other
+// deterministic rules that judge a message — it is one of them, and having the
+// gate and the schema disagree about the limit is a 400 the gate never sees.
 
 const inputSchema = z.object({
   tripId: z.string().uuid(),
@@ -271,6 +263,17 @@ function userFacingError(err: unknown): string {
     : 'Something went wrong while updating your trip. Please try again.';
 }
 
+/** One `data: {...}` frame and close. The gate's whole reply. */
+function sseFrame(event: Record<string, unknown>): Response {
+  return new Response(`data: ${JSON.stringify(event)}\n\n`, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 export async function POST(req: Request) {
   // Hoisted so the catch can attribute the failure to the right user/trip in
   // usage_events even when the failure happens mid-Anthropic-call.
@@ -278,6 +281,9 @@ export async function POST(req: Request) {
   let tripIdForLog: string | null = null;
   /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
   let userTurnSaved = false;
+  /** The gate's verdict on THIS message, recorded on the user's chat row. */
+  let gateTierForLog: 'T1' | 'T2' | 'T3' | null = null;
+  let gateByForLog: string | null = null;
   try {
     // requireEntitledUser, not requireUser: this is the route that spends
     // Anthropic money, so it is the one the paywall exists for. It throws a
@@ -375,6 +381,55 @@ export async function POST(req: Request) {
       }
     }
 
+    /**
+     * THE MESSAGE GATE — the last line before Penny, and the only one that can
+     * decide a particular message is not worth $0.085.
+     *
+     * Placed after the caps and before the turn record on purpose: a gated
+     * message must not create a `penny_turns` row, or the client's re-attach
+     * logic would poll a turn that is never going to run.
+     *
+     * NOT applied to the handoff turn, and not to an image-only message. The
+     * handoff is the wizard's stored intent fired at Penny — it was composed by
+     * our own form and gating it would mean refusing the app's own first
+     * message. An image has no text to judge, and the deterministic rules would
+     * read the empty string as junk.
+     */
+    if (message && !body.handoff) {
+      const gate = await gateMessage({
+        userId,
+        tripId,
+        message,
+        isAdmin: isAdminUser,
+      });
+      if (gate.blocked) {
+        // Both bubbles, so the transcript is honest: the driver's message is
+        // there, and the answer beside it is the one they actually got. The
+        // alternative — dropping the message — reads as the app losing it.
+        await addChatMessage(tripId, 'user', message, null, 'ai', null, null, {
+          tier: gate.tier,
+          by: gate.by,
+        });
+        await addChatMessage(tripId, 'assistant', gate.message ?? '', null, 'ai');
+        /*
+         * A one-frame SSE stream, not JSON, and the reason is the native
+         * client: it reads the reply through EventSource and cannot see a
+         * content-type, so it treats a JSON body as SILENCE and waits fifteen
+         * seconds before polling for a `penny_turns` row that a gated message
+         * never creates. One frame on the transport both clients already parse
+         * means an instant answer on each and no second code path.
+         */
+        return sseFrame({
+          kind: 'gated',
+          tier: gate.tier,
+          message: gate.message,
+          lockedUntil: gate.lockedUntil?.toISOString() ?? null,
+        });
+      }
+      gateTierForLog = gate.tier;
+      gateByForLog = gate.by;
+    }
+
     // Durable turn record — the idempotency + concurrency + re-attach anchor.
     // See docs/design/penny-turn-resilience.md.
     const idempotencyKey = body.idempotencyKey ?? crypto.randomUUID();
@@ -404,7 +459,16 @@ export async function POST(req: Request) {
 
     // Persist the user's bubble now so it shows in chat order immediately,
     // whether we run this turn now or queue it.
-    await addChatMessage(tripId, 'user', message || '(image only)', null, body.handoff ? 'handoff' : 'ai');
+    await addChatMessage(
+      tripId,
+      'user',
+      message || '(image only)',
+      null,
+      body.handoff ? 'handoff' : 'ai',
+      null,
+      null,
+      gateTierForLog ? { tier: gateTierForLog, by: gateByForLog ?? '' } : null
+    );
     userTurnSaved = true;
 
     // Claim the trip's single execution slot. The partial unique index

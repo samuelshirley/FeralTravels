@@ -75,8 +75,10 @@ export {
   alertCooldownMs,
   formatBreakerValue,
   GATE_PROVIDER,
+  gateMixSince,
+  topGatedAccounts,
 } from './breakerCheck';
-export type { BreakerSnapshot } from './breakerCheck';
+export type { BreakerSnapshot, GateMix } from './breakerCheck';
 export {
   evaluateBreakers,
   evaluateGate,

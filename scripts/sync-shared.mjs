@@ -28,6 +28,14 @@ export const SHARED_FILES = [
   ['src/lib/useNextStop.ts', 'mobile/shared/lib/useNextStop.ts'],
   ['src/lib/sillyErrors.ts', 'mobile/shared/lib/sillyErrors.ts'],
   ['src/lib/models.ts', 'mobile/shared/lib/models.ts'],
+  // The message gate and the strike rule. Both clients render the T2 line, the
+  // T3 line and the strike-lock line verbatim, so the copy and the tier union
+  // have to have exactly one definition — the same argument `promoCopy` and
+  // `paywallCopy` travel under. The DECISION travels too: a client that worked
+  // out for itself which tier a message was would be a second implementation of
+  // the thing the server just decided.
+  ['src/lib/pennyGate.ts', 'mobile/shared/lib/pennyGate.ts'],
+  ['src/lib/strikes.ts', 'mobile/shared/lib/strikes.ts'],
   ['src/lib/accountDeletion.ts', 'mobile/shared/lib/accountDeletion.ts'],
   // Both halves of the promo flow. The app must normalize a typed code exactly
   // as the server does — if the two disagreed, a user would type something the

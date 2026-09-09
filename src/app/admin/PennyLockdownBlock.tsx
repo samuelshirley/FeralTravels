@@ -80,12 +80,23 @@ export interface IpLimitHit {
   max: number;
 }
 
+export interface LockedAccount {
+  email: string | null;
+  lockedUntil: Date;
+}
+
 export default function PennyLockdownBlock({
   snapshot,
   ipHits,
+  gateMix,
+  topGated,
+  lockedOut,
 }: {
   snapshot: BreakerSnapshot;
   ipHits: IpLimitHit[];
+  gateMix: Array<{ tier: string; decisions: number }>;
+  topGated: Array<{ email: string | null; refused: number }>;
+  lockedOut: LockedAccount[];
 }) {
   const { statuses, facts, worst } = snapshot;
 
@@ -146,6 +157,40 @@ export default function PennyLockdownBlock({
               }
             />
           ))}
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={labelRow}>MESSAGE GATE, LAST 24H</div>
+        <div style={{ fontSize: 11, color: 'var(--tp-subtle)', marginBottom: 6 }}>
+          T1 goes to Penny · T2 gets one line and no model call · T3 is refused and
+          earns a strike. Three T3s in a row pause Penny for that account for an
+          hour.
+        </div>
+        {gateMix.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--tp-muted)' }}>
+            No messages have been through the gate today.
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--tp-text)', marginBottom: 6 }}>
+            {gateMix.map((g) => `${g.tier}: ${g.decisions}`).join(' · ')}
+          </div>
+        )}
+        {topGated.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--tp-muted)' }}>
+            Most refused: {topGated.map((t) => `${t.email ?? 'unknown'} (${t.refused})`).join(', ')}
+          </div>
+        )}
+        {lockedOut.length > 0 && (
+          <div style={{ fontSize: 12, color: '#b26a00', marginTop: 6 }}>
+            Paused right now:{' '}
+            {lockedOut
+              .map(
+                (l) =>
+                  `${l.email ?? 'unknown'} until ${l.lockedUntil.toISOString().slice(11, 16)}Z`
+              )
+              .join(', ')}
+          </div>
+        )}
       </div>
 
       <div style={{ marginBottom: 14 }}>

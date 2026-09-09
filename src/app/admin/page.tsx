@@ -25,6 +25,8 @@ import {
   testPurchasesArmed,
   breakerSnapshot,
   formatBreakerValue,
+  gateMixSince,
+  topGatedAccounts,
 } from '@/server/payments';
 
 import AdminErrorLog from './AdminErrorLog';
@@ -33,6 +35,7 @@ import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
 import PennyLockdownBlock from './PennyLockdownBlock';
 import { recentIpLimitHits } from '@/server/ipLimit';
+import { lockedAccounts } from '@/server/repos/users';
 import styles from './admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -117,6 +120,11 @@ export default async function AdminPage() {
    * not already need.
    */
   const ipHits = await recentIpLimitHits(24).catch(() => []);
+  const [gateMix, topGated, lockedOut] = await Promise.all([
+    gateMixSince(24).catch(() => []),
+    topGatedAccounts(24).catch(() => []),
+    lockedAccounts().catch(() => []),
+  ]);
 
   const [
     overview,
@@ -821,7 +829,13 @@ export default async function AdminPage() {
           is being refused.
         */}
         <section style={{ ...card, marginTop: 16 }}>
-          <PennyLockdownBlock snapshot={breakers} ipHits={ipHits} />
+          <PennyLockdownBlock
+            snapshot={breakers}
+            ipHits={ipHits}
+            gateMix={gateMix}
+            topGated={topGated}
+            lockedOut={lockedOut}
+          />
         </section>
 
         {/*
