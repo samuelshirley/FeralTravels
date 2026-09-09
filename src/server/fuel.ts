@@ -2,7 +2,7 @@ import 'server-only';
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops, trips, type GeoJSONLineString } from '@/server/db/schema';
-import { getDirections } from '@/lib/google/directions';
+
 import {
   encodePolyline,
   haversineKm,
@@ -16,11 +16,12 @@ import {
   type LegFuelHistory,
 } from '@/lib/penny/fuelTankState';
 import { getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
-import { logUsageEvent, logGooglePlacesUsage } from '@/server/repos/usage';
+import { logUsageEvent } from '@/server/repos/usage';
 import {
-  searchFuelAlongRoute,
-  type FuelStation,
-} from '@/lib/google/places';
+  getDirectionsAccounted,
+  searchFuelAlongRouteAccounted,
+} from '@/server/google/accounted';
+import type { FuelStation } from '@/lib/google/places';
 import {
   filterUsableStations,
   planLegFuelStops,
@@ -329,9 +330,11 @@ async function planOneLeg(
   //    only when a leg has no stored geometry yet.
   let polyline = geometryToLatLngs(leg.geometry);
   if (polyline.length < 2) {
-    const directions = await getDirections(
+    const directions = await getDirectionsAccounted(
       { lat: leg.startLat, lng: leg.startLng },
-      { lat: leg.endLat, lng: leg.endLng }
+      { lat: leg.endLat, lng: leg.endLng },
+      {},
+      { userId, tripId: leg.tripId }
     );
     if (!directions.ok) {
       return failLeg(
@@ -342,16 +345,6 @@ async function planOneLeg(
       );
     }
     polyline = directions.polyline_points.map(([lat, lng]) => ({ lat, lng }));
-    // A PAID Google Directions call. Only on legs with no stored geometry, so
-    // it is usually zero — which is exactly why it has to be counted rather
-    // than assumed. Never allowed to fail the plan.
-    await logUsageEvent({
-      userId,
-      tripId: leg.tripId,
-      provider: 'google-directions',
-      requests: 1,
-      success: true,
-    }).catch((e) => console.error('[finn] failed to log directions usage:', e));
   }
   const totalKm = polylineLengthKm(polyline);
   if (polyline.length < 2 || totalKm <= 0) {
@@ -393,23 +386,12 @@ async function planOneLeg(
   // successful one.
   let corridor: FuelStation[];
   try {
-    corridor = await searchFuelAlongRoute(encodePolyline(polyline));
-    await logGooglePlacesUsage({
+    corridor = await searchFuelAlongRouteAccounted(encodePolyline(polyline), {
       userId,
       tripId: leg.tripId,
-      endpoint: 'text-search',
-      requests: 1,
-    }).catch((e) => console.error('[finn] failed to log Places usage:', e));
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await logGooglePlacesUsage({
-      userId,
-      tripId: leg.tripId,
-      endpoint: 'text-search',
-      requests: 1,
-      success: false,
-      errorMessage: msg,
-    }).catch(() => {});
     const reason = `Couldn't reach the Google station service (${msg}). This is usually transient — try again shortly.`;
     console.error(`[finn] userId=${userId} tripId=${leg.tripId} legId=${legId}: ${msg}`);
     return failLeg(legId, leg.tripId, userId, reason);

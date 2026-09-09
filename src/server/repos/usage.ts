@@ -204,6 +204,52 @@ export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
   });
 }
 
+/**
+ * Per-call USD for the non-Places Google APIs Finn and Penny use. Same caveat as
+ * the Places table above: these are OUR estimate from Google's price page, not a
+ * bill, and each SKU has its own monthly free allowance we do not subtract here.
+ * The REQUEST COUNTS are the trustworthy number; treat the dollars as an
+ * order of magnitude until someone reconciles them against the Cloud console.
+ */
+const GOOGLE_API_PRICING_PER_CALL_USD: Record<string, number> = {
+  'google-directions': 0.005,
+  'google-geocode': 0.005,
+};
+
+/**
+ * Record one call to a paid Google API other than Places.
+ *
+ * Exists because `logGooglePlacesUsage` had NO caller between 2026-06-29 and
+ * 2026-09-09 and Directions/Geocoding never had one at all — so the app's entire
+ * Google spend was invisible in `usage_events` while CLAUDE.md was
+ * simultaneously claiming those calls were free. Counting them is what makes
+ * that claim checkable.
+ */
+export async function logGoogleApiUsage(input: {
+  provider: 'google-directions' | 'google-geocode';
+  userId?: string | null;
+  tripId?: string | null;
+  requests?: number;
+  success?: boolean;
+  errorMessage?: string | null;
+}) {
+  const requests = input.requests ?? 1;
+  if (requests <= 0) return;
+  const usd = (GOOGLE_API_PRICING_PER_CALL_USD[input.provider] ?? 0.005) * requests;
+  await db.insert(usageEvents).values({
+    userId: input.userId ?? null,
+    tripId: input.tripId ?? null,
+    provider: input.provider,
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    requests,
+    costMicrocents: dollarsToMicrocents(usd),
+    success: input.success ?? true,
+    errorMessage: input.errorMessage ?? null,
+  });
+}
+
 /** Sum cost + count requests for a user in the trailing N hours. Used for rate limiting. */
 export async function getUserUsageSummary(userId: string, hours: number) {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);

@@ -154,8 +154,12 @@ export default function PrivacyPage() {
           <strong>Vercel</strong> — hosts the website, and counts visits without cookies.
         </li>
         <li>
-          <strong>OpenStreetMap (Overpass) and OSRM</strong> — fuel stations and road
-          routing. These get coordinates and nothing that identifies you.
+          <strong>Google Maps</strong> — maps, road routing, and the fuel stations
+          along your route. These get coordinates and nothing that identifies you.
+        </li>
+        <li>
+          <strong>OpenStreetMap (Nominatim)</strong> — turns a coordinate back into a
+          place name when a driving day is split. Coordinates only.
         </li>
         <li>
           <strong>Expo</strong> — builds and delivers updates to the iOS app.
