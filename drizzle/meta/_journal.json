@@ -253,6 +253,34 @@
       "when": 1788860955693,
       "tag": "0035_chat_form_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788861015693,
+      "tag": "0036_breaker_alerts",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788861075693,
+      "tag": "0037_ip_request_counters",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788861135693,
+      "tag": "0038_penny_strikes",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788861195693,
+      "tag": "0039_chat_gate_tier",
+      "breakpoints": true
     }
   ]
 }

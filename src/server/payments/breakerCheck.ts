@@ -4,7 +4,7 @@ import { Resend } from 'resend';
 import { db } from '@/server/db/client';
 import { breakerAlerts, usageEvents, users } from '@/server/db/schema';
 import { adminAlertRecipients, isOnAdminAllowlist } from '@/server/auth/admin';
-import { areTestEndpointsEnabled } from '@/server/auth/test-endpoints';
+import { areTestEndpointsEnabled, isFixtureRecipient } from '@/server/auth/test-endpoints';
 import { CircuitOpenError } from '@/server/auth/errors';
 import { BREAKERS, BREAKER_CACHE_MS, MICROCENTS_PER_DOLLAR } from './constants';
 import {
@@ -397,6 +397,31 @@ export async function assertSignupGateOpen(email: string): Promise<void> {
       'New sign-ups are paused for a moment. Existing accounts can still sign in.'
     );
   }
+
+  /*
+   * Fixture addresses are exempt, and this is BELT AND BRACES rather than
+   * duplication.
+   *
+   * The Playwright suite creates a fresh account per spec — twelve-plus of them
+   * — from ONE runner address, against a limit of five a day. That is exactly
+   * the shape this refuses, and the suite is meant to be covered by the
+   * `x-e2e-test-secret` exemption inside `checkIpLimit`. But that exemption
+   * depends on the header reaching a Next SERVER ACTION (the web login form is
+   * one), and "the header propagates" is a property of Playwright's request
+   * plumbing rather than of this code — so it is the wrong single point of
+   * failure for "can CI sign anybody in".
+   *
+   * `isFixtureRecipient` is the second, independent belt: a hardcoded address
+   * shape on a subdomain with no MX, ANDed with `areTestEndpointsEnabled()`,
+   * which is hard-off on production with no override. Both halves are already
+   * unit-enforced in `test-endpoints.test.ts`.
+   *
+   * Deliberately NOT covering `e2e/login-otp.spec.ts`, which signs in on a real
+   * receiving domain so a real email is sent: it creates ONE account per run,
+   * comfortably inside the limit, and exempting it would mean widening the
+   * pattern to a domain that can receive mail.
+   */
+  if (isFixtureRecipient(normalized)) return;
 
   await assertIpAllowed('signup');
 }
