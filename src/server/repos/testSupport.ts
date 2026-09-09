@@ -16,7 +16,7 @@ import {
   usageAlerts,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
-import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments/constants';
+import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
 /**
  * Payments is imported through its ONE public surface, never by reaching into
  * `./entitlements` or the `subscriptions` table — the whole value of that

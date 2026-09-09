@@ -453,13 +453,15 @@ because drizzle's `.returning()` names every column in the schema. Generate
 migrations with `npm run db:generate`, which writes both halves. *Enforced by:*
 `migrationJournalGuard.test.ts`.
 
-I18. **Three legacy `.sql` files are orphaned on purpose and must stay that
-way** — `0003_add_rest_days_and_leg_type`, `0004_rename_water_to_dump_station`,
-`0005_add_pending_intent`. They predate the journal and have never run anywhere.
-Adding them would make them run, against production, years late and out of
-order; `0004` renames a column into a feature migration 0015 deleted outright.
-That is an outage, not a tidy-up. *Enforced by:* `migrationJournalGuard.test.ts`
-(the list is exact, so a NEW orphan still fails).
+I18. **The three legacy orphan `.sql` files are DELETED, not journaled.**
+`0003_add_rest_days_and_leg_type`, `0004_rename_water_to_dump_station` and
+`0005_add_pending_intent` predated the journal and had never run anywhere. They
+describe columns migrations 0014/0015 have since dropped, so "repairing the
+chain" by journaling them would run a rename into a feature that no longer
+exists. Deleting removes the invitation; pinning them as known-orphans (tried
+first, on this branch) leaves the files there for the next person to repair.
+`KNOWN_ORPHANS` is therefore empty and should stay empty. *Enforced by:*
+`migrationJournalGuard.test.ts`.
 
 ## Machine-checked meta (added 2026-09-09)
 

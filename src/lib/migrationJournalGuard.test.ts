@@ -41,24 +41,21 @@ function sqlTags(): string[] {
 }
 
 /**
- * Three `.sql` files that predate the journal and have NEVER been in it, found
- * by the first run of this guard.
+ * No orphans are tolerated. The list is empty and should stay that way.
  *
- * They are pinned rather than fixed, and the difference matters: ADDING them to
- * the journal would make them RUN, against production, years late and out of
- * order — `0004_rename_water_to_dump_station` renames a column into a feature
- * that was deleted entirely in migration 0015. That is not a tidy-up, it is an
- * outage. They stay orphaned and documented, which is also the honest shape of
- * what CLAUDE.md already records: the chain has never executed from empty
- * anywhere, and production was bootstrapped with `db:push`.
+ * Three files USED to be here — `0003_add_rest_days_and_leg_type`,
+ * `0004_rename_water_to_dump_station`, `0005_add_pending_intent` — found by the
+ * first run of this guard, predating the journal and never executed anywhere.
+ * They were pinned as known-orphans at first, on the reasoning that journaling
+ * them would run a rename into a feature migration 0015 deleted outright.
  *
- * The list is EXACT, so a new orphan fails even though these three do not.
+ * `test/enforce-decisions-register` reached the same three independently and
+ * DELETED them, which is strictly better and is what shipped: a pin leaves the
+ * files sitting there inviting the next person to "repair the chain", and the
+ * only thing they could repair it into is a fight with 0014/0015's drops.
+ * Keeping the list empty is what makes this guard say what it means.
  */
-const KNOWN_ORPHANS = [
-  '0003_add_rest_days_and_leg_type',
-  '0004_rename_water_to_dump_station',
-  '0005_add_pending_intent',
-];
+const KNOWN_ORPHANS: string[] = [];
 
 describe('the drizzle migration journal', () => {
   it('lists every .sql file in the folder', () => {

@@ -96,7 +96,7 @@ export type {
   BreakerUnit,
   GateVerdict,
 } from './breakers';
-export { BREAKERS, BREAKER_CACHE_MS } from './constants';
+export { BREAKERS, BREAKER_CACHE_MS, SYNTHETIC_SPEND_PROVIDER } from './constants';
 export {
   paywallEnabled,
   setPaywallEnabled,
