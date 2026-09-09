@@ -25,11 +25,17 @@ const baseSchema = z
      * on each leg instead of "Day 1", "Day 2".
      */
     start_date: z.string().max(100).nullish(),
-    /** Optional trip end date, same format as start_date. */
-    end_date: z.string().max(100).nullish(),
+    /**
+     * NO end_date. The trip's end is the LAST LEG'S DATE — a fact about the
+     * itinerary, derived by `syncTripEndDateFromLegs` after every apply, never
+     * authored. It was a field here until 2026-09-09, which meant Penny had to
+     * remember to send it: trip `ab824cde` has 13 legs and `end_date` NULL.
+     * An authored value also goes stale the moment a day is added or removed.
+     * `renameTrip.test.ts` fails if it comes back.
+     */
   })
-  .refine((v) => v.name !== undefined || v.start_date != null || v.end_date != null, {
-    message: 'Provide a name and/or start/end dates to update.',
+  .refine((v) => v.name !== undefined || v.start_date != null, {
+    message: 'Provide a name and/or a start date to update.',
   });
 
 export type RenameTripInput = z.infer<typeof baseSchema>;
@@ -44,7 +50,9 @@ export const tool: Anthropic.Tool = {
   description: `
 Set the trip's dates (and, only when the user explicitly asks, its name).
 
-ALWAYS set start_date when you know it — the UI uses it to show real calendar dates on each leg (e.g. "Wed 28 May") instead of generic "Day 1", "Day 2" labels. If the user said "leaving May 28" or you can infer it from constraints, set it here. Set end_date too when you know it.
+ALWAYS set start_date when you know it — the UI uses it to show real calendar dates on each leg (e.g. "Wed 28 May") instead of generic "Day 1", "Day 2" labels. If the user said "leaving May 28" or you can infer it from constraints, set it here.
+
+Do NOT try to set an end date. The trip's end is the last leg's date and the server derives it after every change; there is no field for it.
 
 You normally do NOT name the trip: the app auto-names it from its season/dates ("June '26 Trip", "Summer '26 Trip") as soon as a start_date is set. Pass name ONLY when the user explicitly asks for a specific trip name; otherwise omit it so the auto-name (or an existing name) stands.
 `.trim(),
@@ -62,11 +70,6 @@ You normally do NOT name the trip: the app auto-names it from its season/dates (
         type: 'string',
         description:
           'Trip departure date — any common format: "2026-05-28", "May 28, 2026", "Jun 1". Sets calendar dates on all legs in the itinerary. Omit only when no departure date is known.',
-      },
-      end_date: {
-        type: 'string',
-        description:
-          'Trip end/return date, same format as start_date. Omit when unknown.',
       },
     },
   },

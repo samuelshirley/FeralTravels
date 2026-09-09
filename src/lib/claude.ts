@@ -20,6 +20,8 @@ import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { geocodePlace } from "@/lib/google/geocode";
 import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
+import { reverseGeocode } from "@/lib/osm/nominatim";
+import { qualifiedPlaceName } from "@/lib/placeName";
 import { setDeclaredFuelState } from "@/server/repos/trips";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
@@ -528,6 +530,9 @@ For an accurate count + summary, in check_trip_feasibility add a constraint_chec
 - If the user asks for a plan and the trip has no legs, you MUST call extract_trip_intent first (see <intent_extraction>), then get_route for each segment, then run the <feasibility_check>, THEN emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
 - AFTER emitting all driving-day legs, also emit add_leg calls with leg_type="rest" for each non-driving day at transit stops. If the user is spending 2 nights in Innsbruck, emit 2 rest-day legs (one per day) located at Innsbruck, numbered as total trip days. This makes rest days visible in the itinerary alongside driving days.
 - Number ALL legs (driving + rest) as sequential total trip days. Day 1, Day 2, etc. Rest days get their own day numbers.
+- When you name a leg or stop from resolve_place, use its name_for_leg verbatim — the place qualified by its state or country ("Monument Valley, UT"). Not the bare label (ambiguous across states), not the full address (it carries a postcode).
+- NEVER invent a name for a split point. Each entry in get_route's suggested_split carries end_name, resolved from the coordinates by the server. Use it VERBATIM as that leg's end_name and as the next leg's start_name. Do not paraphrase it, shorten it, add a region to it, or replace it with a nearby landmark you happen to know. If end_name is null, name the leg for where it actually ends using only what the tools gave you — never a region you inferred ("Texas Panhandle" and "Albuquerque area" are exactly the invented names this rule exists to stop).
+- Do NOT pass title on add_leg or update_leg for a driving leg. The server derives it from start_name → end_name, so a title you write is discarded. Titles like "Austin → Big Bend (Day 1)" on a leg that ends in Marfa are what that produced. Rest legs still take a title.
 - The validator will reject any add_leg or update_leg whose drive_time_minutes exceeds the per-day cap (~8h × 60 = 480 min by default; a legacy vehicle may carry its own stored cap). Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
@@ -1425,6 +1430,14 @@ async function executeResolvePlace(
           lng: round5(result.match.lng),
           label: result.match.label,
           address: result.match.address ?? null,
+          /**
+           * The name to put on a leg or stop: the place, qualified by its
+           * state or country. Derived server-side from the two fields above so
+           * "Monument Valley" is not ambiguous between Utah and Arizona and the
+           * itinerary does not carry a postcode. Use it verbatim as start_name
+           * / end_name / stop name.
+           */
+          name_for_leg: qualifiedPlaceName(result.match.label, result.match.address),
           granularity: result.match.granularity,
           // Reminder so Penny applies the coarse-match rule from the tool doc.
           note:
@@ -1539,6 +1552,18 @@ async function executeGetRoute(
   // Emit a compact JSON payload for Claude to consume. Drop the raw
   // polyline (hundreds of points = thousands of tokens); send only what
   // Claude needs to plan with.
+  // Name each split point SERVER-SIDE. Penny is handed bare lat/lng and, being
+  // a language model, names them herself — trip `ab824cde` produced "Texas
+  // Panhandle" and "Albuquerque area", neither navigable. A coordinate's name
+  // is a fact, so it is ours to supply. Best-effort: a null name leaves her
+  // exactly where she was, never blocks the plan. The reverse geocoder
+  // serialises internally to respect Nominatim's 1 req/s.
+  const splitNames: (string | null)[] = suggestedSplit
+    ? await Promise.all(
+        suggestedSplit.map((leg) => reverseGeocode(leg.end_lat, leg.end_lng)),
+      )
+    : [];
+
   const payload = {
     ok: true,
     effective_avoid: input.avoid ?? null,
@@ -1552,12 +1577,18 @@ async function executeGetRoute(
     daily_cap_minutes: cap != null ? cap * 60 : null,
     min_driving_days: minDrivingDays,
     suggested_split:
-      suggestedSplit?.map((leg) => ({
+      suggestedSplit?.map((leg, i) => ({
         day_index: leg.day_index,
         start_lat: round5(leg.start_lat),
         start_lng: round5(leg.start_lng),
         end_lat: round5(leg.end_lat),
         end_lng: round5(leg.end_lng),
+        /**
+         * The real place this day ends, resolved from the coordinates. Use it
+         * VERBATIM as the leg's end_name — do not paraphrase it, shorten it, or
+         * invent a region for it. Null means we could not resolve one.
+         */
+        end_name: splitNames[i] ?? null,
         distance_km: leg.distance_km,
         drive_time_minutes: leg.drive_time_minutes,
       })) ?? null,

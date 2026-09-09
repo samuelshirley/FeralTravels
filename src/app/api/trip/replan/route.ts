@@ -31,7 +31,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -49,6 +49,7 @@ import {
 } from '@/lib/penny/editOverride';
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
+import { resolveLegTitle } from '@/lib/legTitle';
 
 /**
  * Per-request dispatch state for one POST /api/trip/replan.
@@ -746,6 +747,17 @@ async function runTurnWork(
             }
           }
 
+          // The trip's end date is the LAST leg's date — derived, never authored.
+          // `rename_trip` used to carry an end_date field, so Penny had to
+          // remember to send it and Haiku did not (trip ab824cde: 13 legs,
+          // end_date NULL). Deriving it also keeps it true after an edit that
+          // adds or removes a day. Best-effort: the legs are saved either way.
+          if (appliedCount > 0) {
+            await syncTripEndDateFromLegs(tripId).catch((e) =>
+              console.warn('[end-date] derive failed', e)
+            );
+          }
+
           // Post-dispatch leg contiguity check: a safety net that detects any gap
           // the repair above could not close (e.g. missing coords). Log so it
           // shows up in admin errors — don't block the response.
@@ -1065,10 +1077,8 @@ async function dispatchAction(
         const parsedStart = tryParseToISO(action.input.start_date);
         if (parsedStart) tripUpdate.startDateParsed = parsedStart;
       }
-      if (action.input.end_date !== undefined) {
-        tripUpdate.endDate = action.input.end_date;
-        tripUpdate.endDateParsed = tryParseToISO(action.input.end_date);
-      }
+      // No end_date branch: the trip's end is the last leg's date, derived by
+      // syncTripEndDateFromLegs after the pipeline settles. See renameTrip.ts.
       await db
         .update(trips)
         .set(tripUpdate)
@@ -1222,6 +1232,24 @@ async function dispatchAction(
         legUpdate.notes = Array.isArray(data.notes) ? JSON.stringify(data.notes) : null;
       if (data.segment_index !== undefined) legUpdate.segmentIndex = data.segment_index;
       if (data.segment_name !== undefined) legUpdate.segmentName = data.segment_name;
+
+      // A driving day's title is DERIVED from its endpoints — see lib/legTitle.
+      // Recomputed from the endpoints this update LEAVES the row with, so
+      // moving a destination renames the day, and a title Penny sent alongside
+      // it cannot contradict where the day now ends. Rest legs keep theirs.
+      {
+        const finalLegType = existingLeg?.legType ?? 'drive';
+        const finalStart =
+          data.start_name !== undefined ? data.start_name : existingLeg?.startName;
+        const finalEnd = data.end_name !== undefined ? data.end_name : existingLeg?.endName;
+        const derived = resolveLegTitle({
+          legType: finalLegType,
+          startName: finalStart,
+          endName: finalEnd,
+          fallback: (legUpdate.title as string | undefined) ?? existingLeg?.title ?? null,
+        });
+        if (derived != null) legUpdate.title = derived;
+      }
 
       // If start or end coords changed, re-fetch driving geometry so the
       // stored polyline stays in sync with the leg endpoints.
@@ -1552,7 +1580,6 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
         action: 'rename_trip',
         ...(action.input.name !== undefined ? { name: action.input.name } : {}),
         ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
-        ...(action.input.end_date ? { end_date: action.input.end_date } : {}),
       };
     case 'report_position':
       return {

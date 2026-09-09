@@ -10,6 +10,7 @@ import {
 } from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import { lastDayFromSchedule } from '@/lib/tripCompletion';
+import { resolveLegTitle } from '@/lib/legTitle';
 import {
   materializeSchedule,
   computeStartFixes,
@@ -845,7 +846,17 @@ export async function addLeg(input: {
       tripId: input.tripId,
       sortOrder,
       legType: input.legType ?? 'drive',
-      title: input.title,
+      // A driving day's title is DERIVED from its endpoints, never taken from
+      // the caller — see lib/legTitle.ts. Penny titled a leg ending in Marfa
+      // "Austin → Big Bend (Day 1)" (trip 1b1cc80b); the row already carries
+      // both endpoints, so a supplied title is a second copy free to disagree.
+      title:
+        resolveLegTitle({
+          legType: input.legType ?? 'drive',
+          startName: input.startName,
+          endName: input.endName,
+          fallback: input.title,
+        }) ?? input.title,
       label: input.label ?? null,
       startName: input.startName ?? null,
       endName: input.endName ?? null,
@@ -1192,6 +1203,70 @@ export interface ContinuityRepairOut {
   toName: string | null;
   /** False when the re-route failed and we cleared the leg's distance/time. */
   rerouted: boolean;
+}
+
+/**
+ * Re-derive `trips.end_date` / `end_date_parsed` from the legs.
+ *
+ * The end date is the LAST leg's date. It is a fact about the itinerary, so it
+ * is derived and never authored — `rename_trip` used to carry an `end_date`
+ * field, which meant Penny had to remember to send it, and Haiku did not: trip
+ * `ab824cde` (2026-09-09) has 13 legs and `end_date` NULL. Deriving it also
+ * keeps it true after an edit that adds or removes a day, which an authored
+ * value could never do.
+ *
+ * Run AFTER rebuildTripSchedule + repairLegContinuity, so it reads the settled
+ * leg dates. Best-effort by contract: the legs are already saved and a stale
+ * end date must never fail a response.
+ *
+ * @returns the ISO date written, or null when the legs carry no usable dates
+ *   (in which case nothing is written — an existing value is left alone rather
+ *   than being cleared by an incomplete plan).
+ */
+export async function syncTripEndDateFromLegs(tripId: string): Promise<string | null> {
+  const tripRows = await db
+    .select({
+      startDateParsed: trips.startDateParsed,
+      currentLegId: trips.currentLegId,
+      progressAnchorDate: trips.progressAnchorDate,
+    })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  const trip = tripRows[0];
+  if (!trip) return null;
+
+  const legRows = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legs.sortOrder));
+  if (legRows.length === 0) return null;
+
+  // `legs.dates` is NOT the source: it is null on most rows, because leg dates
+  // are computed at READ time by getTripFull rather than stored (checked
+  // against prod trips ab824cde and 1b1cc80b, both of which have 13 and 7 legs
+  // and not one stored leg date between them). Deriving from that column would
+  // have quietly written nothing forever. `lastDayFromSchedule` is the same
+  // one-day-per-leg + progress-anchor rule getTripFull itself uses, so the
+  // stored end date matches what the itinerary shows.
+  const currentLegRank = trip.currentLegId
+    ? legRows.findIndex((l) => l.id === trip.currentLegId)
+    : -1;
+
+  const last = lastDayFromSchedule({
+    startDateISO: trip.startDateParsed,
+    legCount: legRows.length,
+    currentLegRank,
+    progressAnchorISO: trip.progressAnchorDate,
+  });
+  if (!last) return null;
+
+  await db
+    .update(trips)
+    .set({ endDate: last, endDateParsed: last, updatedAt: new Date() })
+    .where(eq(trips.id, tripId));
+  return last;
 }
 
 /**
