@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, it, expect, vi } from 'vitest';
 
 // `server-only` throws outside a React Server Component, and the switch now
@@ -6,7 +9,13 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 vi.mock('@/server/db/client', () => ({ db: {}, schema: {} }));
 
-import { enforcementApplies, paywallEnabledFromValue, PAYWALL_META_KEY } from './switch';
+import {
+  enforcementApplies,
+  paywallEnabledFromValue,
+  pennyLockedFromValue,
+  PAYWALL_META_KEY,
+  PENNY_LOCK_META_KEY,
+} from './switch';
 
 /**
  * The paywall's master switch, as a rule rather than as a query.
@@ -87,5 +96,44 @@ describe('enforcementApplies', () => {
     // deployed, none of them told a trial existed and none able to pay. This
     // is the case that must never drift.
     expect(enforcementApplies({ globalOn: false, forcedForUser: false })).toBe(false);
+  });
+});
+
+
+/**
+ * The manual Penny lock. Same shape as the paywall switch, opposite fail
+ * direction, and the direction is the only thing worth a test.
+ */
+describe('pennyLockedFromValue', () => {
+  it('is LOCKED for exactly "1" and nothing else', () => {
+    expect(pennyLockedFromValue('1')).toBe(true);
+  });
+
+  it('is unlocked for every other value, including a missing row', () => {
+    // A deployment that has never been locked has no row at all, and that has
+    // to read as "open for business" — the same "one exact string" rule the
+    // paywall switch follows, pointing the other way.
+    for (const v of ['0', 'true', 'yes', 'on', ' 1', '', null, undefined]) {
+      expect(pennyLockedFromValue(v), `value ${JSON.stringify(v)}`).toBe(false);
+    }
+  });
+
+  it('reads a different app_meta row from the paywall', () => {
+    // One key/value table, two switches. Sharing a key would make throwing one
+    // of them silently throw the other.
+    expect(PENNY_LOCK_META_KEY).toBe('penny_locked');
+    expect(PENNY_LOCK_META_KEY).not.toBe(PAYWALL_META_KEY);
+  });
+});
+
+describe('the two switches fail in OPPOSITE directions, on purpose', () => {
+  it('says so in the source, beside the code that does it', () => {
+    // Not decoration. The next person to touch either read will reach for
+    // consistency, and consistency is the bug here: the paywall failing closed
+    // walls paying users, and the lock failing open is a bypass during exactly
+    // the minutes an attack is straining the database.
+    const src = readFileSync(join(__dirname, 'switch.ts'), 'utf8');
+    expect(src).toMatch(/treating as OFF/);
+    expect(src).toMatch(/treating as LOCKED/);
   });
 });

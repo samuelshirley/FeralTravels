@@ -18,6 +18,10 @@ export {
   NotFoundError,
   ConflictError,
   PaymentRequiredError,
+  CircuitOpenError,
+  CIRCUIT_OPEN_CODE,
+  TooManyRequestsError,
+  RATE_LIMITED_CODE,
 } from './errors';
 import {
   HttpError,

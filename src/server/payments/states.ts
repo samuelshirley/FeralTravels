@@ -11,9 +11,11 @@
  */
 
 import {
+  REPLAN_USD_CAP_PER_DAY,
   STOP_MICROCENTS,
   TRIAL_CEILING_MICROCENTS,
   TRIAL_DAYS,
+  TRIAL_REPLAN_USD_CAP_PER_DAY,
   WATCH_MICROCENTS,
 } from './constants';
 import type {
@@ -217,4 +219,26 @@ export function trialDaysRemaining(now: Date, createdAt: Date): number {
   const ms = trialEndsAt(createdAt).getTime() - now.getTime();
   if (ms <= 0) return 0;
   return Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
+
+/**
+ * Which daily Anthropic cap applies to this account.
+ *
+ * Pure, and taking the subscriber cap as an argument so the route's existing
+ * `REPLAN_USD_CAP_PER_DAY` env override still lowers BOTH — a deployment told
+ * to spend less should not quietly keep the trial cap where it was.
+ *
+ * `trial` is the only state this narrows. `comped` is entitled but is the
+ * author's account and the E2E fixtures, which are deliberately outside every
+ * spend rule (see `resolveAccountState`); everything else entitled has paid.
+ *
+ * `Math.min` rather than a branch, so lowering the subscriber cap below $0.50
+ * lowers the trial cap with it instead of inverting the two.
+ */
+export function dailyReplanCapUsd(
+  state: AccountState,
+  subscriberCapUsd: number = REPLAN_USD_CAP_PER_DAY
+): number {
+  if (state !== 'trial') return subscriberCapUsd;
+  return Math.min(TRIAL_REPLAN_USD_CAP_PER_DAY, subscriberCapUsd);
 }

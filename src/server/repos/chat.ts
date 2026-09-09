@@ -93,6 +93,14 @@ export async function addChatMessage(
    * first moment both halves are known — see `ChatFormMeta`.
    */
   formMeta?: ChatFormMeta | null,
+  /**
+   * User rows only: which tier the message gate sorted this into and which of
+   * the three deciders decided. Recorded on the message rather than only in
+   * `usage_events` because the question asked afterwards is "why did Penny
+   * answer that with a canned line", and the answer belongs beside the message
+   * it is about.
+   */
+  gate?: { tier: 'T1' | 'T2' | 'T3'; by: string } | null,
 ): Promise<ChatMessage> {
   const [row] = await db
     .insert(chatHistory)
@@ -104,6 +112,8 @@ export async function addChatMessage(
       kind,
       planSummary: planSummary ?? null,
       formMeta: formMeta ?? null,
+      gateTier: gate?.tier ?? null,
+      gateBy: gate?.by ?? null,
     })
     .returning();
   return chatRow(row);

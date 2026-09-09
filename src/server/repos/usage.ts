@@ -101,6 +101,13 @@ export async function logUsageEvent(input: {
   userId?: string | null;
   tripId?: string | null;
   provider: string;
+  /**
+   * The sub-kind within a provider. Used as the SKU for `google-places` rows
+   * and as the tier for `penny:gate` rows — which is what the
+   * `gated_messages_1h` circuit breaker counts, so the smoke detector and the
+   * record are the same rows rather than two things that can disagree.
+   */
+  model?: string | null;
   requests?: number;
   success?: boolean;
   errorMessage?: string | null;
@@ -109,6 +116,7 @@ export async function logUsageEvent(input: {
     userId: input.userId ?? null,
     tripId: input.tripId ?? null,
     provider: input.provider,
+    model: input.model ?? null,
     requests: input.requests ?? 1,
     success: input.success ?? true,
     errorMessage: input.errorMessage ?? null,

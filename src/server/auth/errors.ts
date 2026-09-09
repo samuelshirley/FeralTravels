@@ -98,3 +98,56 @@ export class SessionStoreUnavailableError extends HttpError {
     super(503, message);
   }
 }
+
+/**
+ * 503. A global circuit breaker is open — the app as a whole is over a spend or
+ * sign-up ceiling, so this request is refused even though the caller has done
+ * nothing wrong.
+ *
+ * WHY 503 AND NOT 401 OR 402, both of which are wrong in specific ways:
+ *
+ *  - 401 clears the iOS keychain (`mobile/lib/api.ts`), so using it here would
+ *    sign every device out because the app was busy. Same trap
+ *    `SessionStoreUnavailableError` documents.
+ *  - 402 is the paywall's word. A client that saw one here would offer the user
+ *    a subscription that would not help — they are not unentitled, the app is
+ *    closed — and the App Store review notes describe 402 as meaning one thing.
+ *
+ * 503 is the honest code: the service is temporarily unable to handle the
+ * request. `details` carries `code: 'circuit_open'`, the breaker's id and a
+ * poll interval so a client can say something better than "try again".
+ */
+export const CIRCUIT_OPEN_CODE = 'circuit_open';
+
+export class CircuitOpenError extends HttpError {
+  constructor(
+    breaker: string,
+    retryAfterSeconds: number | null,
+    message = 'Penny is paused right now. Nothing is wrong with your account.'
+  ) {
+    super(503, message, { code: CIRCUIT_OPEN_CODE, breaker, retryAfterSeconds });
+  }
+}
+
+/**
+ * 429. Too many requests from this address, in this window.
+ *
+ * A real `retryAfterSeconds`, unlike the circuit breakers': the per-IP counters
+ * use fixed windows, so the moment the limit lifts is a known instant rather
+ * than a guess about which rows will age out.
+ *
+ * 429 and not 503, and the difference is who it is about: 503 says the app is
+ * closed and it is not your fault, 429 says this caller specifically is going
+ * too fast. A client can act on the second one and only wait out the first.
+ */
+export const RATE_LIMITED_CODE = 'ip_rate_limited';
+
+export class TooManyRequestsError extends HttpError {
+  constructor(
+    scope: string,
+    retryAfterSeconds: number,
+    message = 'Too many requests from this network. Try again shortly.'
+  ) {
+    super(429, message, { code: RATE_LIMITED_CODE, scope, retryAfterSeconds });
+  }
+}

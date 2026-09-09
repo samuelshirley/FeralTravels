@@ -16,6 +16,7 @@ import {
   usageAlerts,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
+import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
 /**
  * Payments is imported through its ONE public surface, never by reaching into
  * `./entitlements` or the `subscriptions` table — the whole value of that
@@ -708,7 +709,7 @@ export async function deleteUsageByMarker(marker: string): Promise<{ deleted: nu
  * numbers, because on a preview those rows sit in a copy-on-write clone of
  * production data.
  */
-const SUBSCRIPTION_FIXTURE_PROVIDER = 'anthropic:e2e-subscription-fixture';
+const SUBSCRIPTION_FIXTURE_PROVIDER = SYNTHETIC_SPEND_PROVIDER;
 
 export interface SubscriptionFixtureInput {
   email: string;
@@ -882,4 +883,82 @@ export async function setSubscriptionFixtureState(
     subscriptionStatus: opts.subscription?.status ?? null,
     currentPeriodEnd: currentPeriodEnd?.toISOString() ?? null,
   };
+}
+
+// ── Circuit-breaker fixtures ────────────────────────────────────────────────
+
+/**
+ * The `provider` on every synthetic spend row {@link seedGlobalSpend} writes.
+ *
+ * Two constraints, one string, exactly as `SUBSCRIPTION_FIXTURE_PROVIDER`
+ * documents: it must start with `anthropic` or the breaker's
+ * `provider LIKE 'anthropic%'` sum will not see it and the spec would assert
+ * against zero — the green-but-empty failure — and it must be unmistakably
+ * synthetic to anyone reading the spend numbers, because on a preview these
+ * rows land in a copy-on-write clone of production.
+ *
+ * It also starts with `anthropic:e2e-` so `deleteUsageByMarker`'s `e2e-` rule
+ * would refuse it; cleanup therefore goes through {@link clearGlobalSpend},
+ * which hardcodes this exact string rather than accepting one.
+ */
+export const BREAKER_FIXTURE_PROVIDER = 'anthropic:e2e-breaker-fixture';
+
+/**
+ * Push the app's GLOBAL 24-hour Anthropic spend over a breaker line.
+ *
+ * Attributed to a fixture user so the row is owned and disappears with them,
+ * but what makes it work is that the breaker does not care whose it is — which
+ * is the whole point of a global ceiling, and the property the spec exists to
+ * prove.
+ *
+ * One row, not many: the breaker sums `cost_microcents`, so a single row of the
+ * right size is the same fact as a thousand small ones and leaves less to clean
+ * up if a spec dies mid-run.
+ */
+export async function seedGlobalSpend(opts: {
+  email: string;
+  microcents: number;
+}): Promise<{ id: number; microcents: number }> {
+  assertEnabled();
+  const normalized = opts.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('seedGlobalSpend: not a fixture address');
+  }
+  if (!Number.isFinite(opts.microcents) || opts.microcents <= 0) {
+    throw new Error('seedGlobalSpend: microcents must be a positive number');
+  }
+  const found = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+  if (!found[0]) throw new Error('seedGlobalSpend: no such user');
+
+  const [row] = await db
+    .insert(usageEvents)
+    .values({
+      userId: found[0].id,
+      provider: BREAKER_FIXTURE_PROVIDER,
+      model: 'e2e-breaker-fixture',
+      requests: 0,
+      costMicrocents: Math.round(opts.microcents),
+      success: true,
+    })
+    .returning({ id: usageEvents.id });
+
+  return { id: row.id, microcents: Math.round(opts.microcents) };
+}
+
+/**
+ * Remove every synthetic breaker row. Takes NO argument on purpose: a marker
+ * parameter would make this "delete every usage row for the provider you name",
+ * and on a preview that is a clone of production spend history.
+ */
+export async function clearGlobalSpend(): Promise<{ deleted: number }> {
+  assertEnabled();
+  const rows = await db
+    .delete(usageEvents)
+    .where(eq(usageEvents.provider, BREAKER_FIXTURE_PROVIDER))
+    .returning({ id: usageEvents.id });
+  return { deleted: rows.length };
 }

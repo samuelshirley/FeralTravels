@@ -1300,6 +1300,21 @@ export default function ChatPanel({
       );
     };
 
+    /**
+     * Settle the assistant bubble with a plain, final line and no error styling.
+     *
+     * Used by the message gate, whose refusals are deliberate and correct —
+     * `failAssistant` paints red and offers "try again", and both would be
+     * lies about them.
+     */
+    const resolveAssistant = (id: string, msg: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, content: msg, streaming: false, applyError: null } : m
+        )
+      );
+    };
+
     /** Produce a stable error bubble when the stream collapses. */
     const failAssistant = (msg: string) => {
       setMessages((prev) =>
@@ -1358,6 +1373,8 @@ export default function ChatPanel({
     // AppliedEvent + TurnRecord are declared at module scope (shared with the
     // reconcile/heal path).
     let appliedEvent: AppliedEvent | null = null;
+    /** True once a `gated` frame settled this bubble — see the case below. */
+    let gatedSettled = false;
 
     try {
       const res = await fetch('/api/trip/replan', {
@@ -1410,6 +1427,7 @@ export default function ChatPanel({
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.includes('text/event-stream')) {
         const data = (await res.json().catch(() => null)) as { turn?: TurnRecord | null } | null;
+
         const turn = data?.turn ?? null;
         if (!turn) {
           setDeliveryStatus('responded');
@@ -1516,10 +1534,33 @@ export default function ChatPanel({
                 failAssistant(msg);
                 break;
               }
+              /*
+               * The message gate refused this one. Penny was never called, the
+               * server has already written both bubbles, and nothing went
+               * wrong — so it settles the optimistic bubble with the same line
+               * rather than going through `failAssistant`, which paints red and
+               * offers "try again". Both would be lies about a deliberate,
+               * correct refusal.
+               *
+               * `gatedSettled` stops the no-`applied`-event heal below from
+               * treating this as a collapsed stream and polling for a turn
+               * record that a gated message never creates.
+               */
+              case 'gated': {
+                gatedSettled = true;
+                resolveAssistant(
+                  assistantMsgId,
+                  typeof ev.message === 'string' ? ev.message : ''
+                );
+                setDeliveryStatus('responded');
+                break;
+              }
             }
           }
         }
       }
+
+      if (gatedSettled) return;
 
       if (!appliedEvent) {
         // Stream ended without a terminal `applied` event. The server may still

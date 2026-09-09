@@ -913,6 +913,29 @@ jobs:
           xcrun simctl launch "$UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
           sleep 5
           xcrun simctl terminate "$UDID" com.feraltravels.ios || true
+          # ── And warm the SETTINGS app, for the same reason ──────────────
+          #
+          # `settings-location.yaml` ends by tapping a switch that calls
+          # `Linking.openSettings()` and asserting our screen goes away. That
+          # requires com.apple.Preferences to LAUNCH, and its cold first launch
+          # on a contended runner is wildly variable. Measured across four runs
+          # over the same commit range, on an identical simulator and runtime:
+          #
+          #   34241970838  passed
+          #   34353133456  FAILED  — not backgrounded inside 11s
+          #   34375663713  passed  — backgrounded in 12.3s
+          #   34387740964  FAILED  — not backgrounded inside 26s
+          #
+          # Pass, fail, pass, fail. Raising the flow's timeout was tried and did
+          # not fix it (26s was not enough either), which is what makes this the
+          # right layer: pay the launch cost here, once, on our clock, instead
+          # of guessing a number inside an assertion.
+          #
+          # Tolerant like the launch above — if Settings will not start, the
+          # flow fails with a screenshot, which is the better report.
+          xcrun simctl launch "$UDID" com.apple.Preferences || echo "::warning::Settings warm-up failed; settings-location may be slow"
+          sleep 3
+          xcrun simctl terminate "$UDID" com.apple.Preferences || true
           # Passed to Maestro explicitly below rather than left to discovery.
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 

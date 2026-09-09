@@ -2,6 +2,9 @@
 
 import { redirect } from 'next/navigation';
 import { OtpRateLimitError, retryAfterSeconds, sendOtpCode, signInWithOtp } from '@/server/auth/otp';
+import { assertSignupGateOpen } from '@/server/payments';
+import { assertIpAllowed } from '@/server/ipLimit';
+import { isOnAdminAllowlist } from '@/server/auth/admin';
 
 /**
  * Validate the submitted OTP code and sign the user in.
@@ -35,6 +38,29 @@ export async function verifyOtpAction(formData: FormData) {
 export async function resendOtpAction(formData: FormData) {
   const email = String(formData.get('email') || '').trim();
   const callbackUrl = String(formData.get('callbackUrl') || '/trips');
+
+  /*
+   * The same sign-up breaker the first send goes through. Gated here too and
+   * not only on `/login`, because a resend mints and mails a code exactly like
+   * a first send does — leaving it out would make the button a way around the
+   * gate. Its own try/catch, ahead of the one below, so a refusal cannot be
+   * mistaken for a mail failure.
+   */
+  try {
+    await assertIpAllowed('otp_send', { isAdmin: isOnAdminAllowlist(email) });
+  } catch {
+    redirect(
+      `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=TooManyRequests`
+    );
+  }
+
+  try {
+    await assertSignupGateOpen(email);
+  } catch {
+    redirect(
+      `/login/verify?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}&error=SignupsPaused`
+    );
+  }
 
   try {
     await sendOtpCode(email);

@@ -1017,6 +1017,27 @@ export default function ChatPanel({
         return;
       }
 
+      if (res.outcome === "gated") {
+        /*
+         * The message gate refused this message. Penny was never called, the
+         * server already wrote both chat rows, and this settles the optimistic
+         * bubble with the same line so the driver has an answer immediately.
+         *
+         * Deliberately NOT `failAssistant` and NOT `onActivity("error")`: this
+         * is a correct, intended refusal, and painting it red or offering "try
+         * again" would be a lie about it. There is also no turn record to poll.
+         */
+        setDeliveryStatus("responded");
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, content: res.message, streaming: false, applyError: null }
+              : m
+          )
+        );
+        return;
+      }
+
       if (res.outcome === "stream-error") {
         // The server told us the turn failed; the durable record says the same,
         // so there is nothing to heal.

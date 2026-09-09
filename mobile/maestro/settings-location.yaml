@@ -79,6 +79,17 @@ appId: ${APP_ID}
     start: 50%, 80%
     end: 50%, 25%
 
+# Settle after the swipe before anything is asserted or tapped.
+#
+# NOT the fix for the flake below, and worth saying so: Maestro logs "Element
+# is still moving (null -> Bounds(...))" on the FIRST sample of any element —
+# the `null ->` is an absent previous reading, not motion — so it appears
+# identically in the runs that pass. It was read as a mid-scroll tap and it is
+# not one. This stays because settling before a tap is right anyway, and costs
+# a second.
+- waitForAnimationToEnd:
+    timeout: 5000
+
 # WHICH BRANCH RUNS DEPENDS ON THE DEVICE, AND BOTH ASSERT SOMETHING REAL.
 #
 # The control is a SWITCH (2026-09-04), so the branch is read off the hint
@@ -135,7 +146,27 @@ appId: ${APP_ID}
           id: 'settings-location-enable'
       # The app is no longer in front — iOS took over. A dead switch leaves
       # this element exactly where it was and the flow fails.
+      #
+      # 25s, and the number is NOT the fix — the warm-up in ci.yml is.
+      #
+      # This flaked pass/fail/pass/fail across four CI runs on an identical
+      # simulator and runtime, with the app code untouched. Measured from
+      # Maestro's own logs: on the run that passed (34375663713) the app
+      # backgrounded **12.3 seconds** after the tap; on the two that failed it
+      # had not inside 11s (34353133456) and 26s (34387740964). So the switch
+      # reaches iOS — what varies is how long com.apple.Preferences takes to
+      # cold-launch on a contended runner, and raising 10s to 25s was tried and
+      # did not cover it.
+      #
+      # `ci.yml`'s boot step now launches and terminates Settings once before
+      # the flows, so that cost is paid on our clock. This timeout is headroom
+      # over the 12.3s measurement, not the mechanism.
+      #
+      # If it flakes again, do NOT raise this: the next question is whether the
+      # warm-up ran (the step emits a ::warning:: when Settings will not start),
+      # and a number large enough to hide a genuinely dead switch is worse than
+      # a red build.
       - extendedWaitUntil:
           notVisible:
             id: 'settings-location-section'
-          timeout: 10000
+          timeout: 25000
