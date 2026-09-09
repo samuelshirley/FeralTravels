@@ -79,6 +79,18 @@ appId: ${APP_ID}
     start: 50%, 80%
     end: 50%, 25%
 
+# SETTLE BEFORE TAPPING, and this is not belt-and-braces.
+#
+# Maestro's own log on the failed CI run 34353133456 read
+# "Element is still moving (null -> Bounds(x=333, y=157, ...)). Waiting for its
+# position to settle." — it aimed at the switch while the scroll was still
+# decelerating, then reported "Tap aimed via stabilised hierarchy (null settle
+# after a scroll)". The tap landed (the coordinates were dead centre of the
+# switch) but a tap delivered into a moving view is the one thing that could
+# make the branch below flaky without anything in the app being wrong.
+- waitForAnimationToEnd:
+    timeout: 5000
+
 # WHICH BRANCH RUNS DEPENDS ON THE DEVICE, AND BOTH ASSERT SOMETHING REAL.
 #
 # The control is a SWITCH (2026-09-04), so the branch is read off the hint
@@ -135,7 +147,19 @@ appId: ${APP_ID}
           id: 'settings-location-enable'
       # The app is no longer in front — iOS took over. A dead switch leaves
       # this element exactly where it was and the flow fails.
+      #
+      # 25s, RAISED FROM 10s (2026-09-09), and it does not weaken the gate.
+      # `Linking.openSettings()` hands over to the Settings app, which on a
+      # cold simulator has to launch — and a switch wired to nothing never
+      # backgrounds us at ANY timeout, so a longer wait removes only the false
+      # negative. CI run 34353133456 failed here with the app still in front
+      # after 11 seconds, on a runner that was measurably ~2x slower than the
+      # green run the day before (launch 44s -> 1m40s, chat-keyboard 1m35s ->
+      # 1m51s, this flow 1m27s -> 1m53s) — i.e. the window, not the switch.
+      #
+      # If this starts failing at 25s, do NOT raise it again: at that point the
+      # switch really is not reaching iOS, and the number is hiding it.
       - extendedWaitUntil:
           notVisible:
             id: 'settings-location-section'
-          timeout: 10000
+          timeout: 25000
