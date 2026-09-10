@@ -1,6 +1,6 @@
 import 'server-only';
 import { parseCoords, needsServerResolution, type ParsedCoords } from '@/lib/coords';
-import { geocodePlace } from '@/lib/google/geocode';
+import { geocodePlaceAccounted } from '@/server/google/accounted';
 
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_MAPS_LINKS_PER_MESSAGE = 5;
@@ -269,7 +269,7 @@ function extractPlaceNameFromHtml(html: string): string | undefined {
 
 /** Geocode a place name extracted from a resolved-but-coordless Maps page. */
 async function geocodeName(name: string, sourceUrl: string): Promise<ParsedCoords | null> {
-  const result = await geocodePlace(name);
+  const result = await geocodePlaceAccounted(name);
   if (result.status !== 'resolved') return null;
   // Only trust a precise or city-level hit — a country centroid is too coarse
   // to drop a pin on.

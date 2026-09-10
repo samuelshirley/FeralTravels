@@ -8,9 +8,11 @@
 import { requireUserId } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { normalizeRangeKm } from '@/lib/vehicleProfile';
-import { getDirections } from '@/lib/google/directions';
 import { encodePolyline, type LatLng } from '@/lib/polyline';
-import { searchFuelAlongRoute } from '@/lib/google/places';
+import {
+  getDirectionsAccounted,
+  searchFuelAlongRouteAccounted,
+} from '@/server/google/accounted';
 import { filterUsableStations } from '@/lib/finn';
 
 export const runtime = 'nodejs';
@@ -40,7 +42,7 @@ export async function GET() {
     // 2. Google Directions reachability + geometry — Barcelona → Girona (~100 km).
     let polyline: LatLng[] = [];
     try {
-      const dir = await getDirections(
+      const dir = await getDirectionsAccounted(
         { lat: 41.3851, lng: 2.1734 },
         { lat: 41.9794, lng: 2.8214 }
       );
@@ -63,7 +65,7 @@ export async function GET() {
       results['places'] = 'Skipped — no route geometry from Directions above';
     } else {
       try {
-        const corridor = await searchFuelAlongRoute(encodePolyline(polyline));
+        const corridor = await searchFuelAlongRouteAccounted(encodePolyline(polyline));
         const { kept, rejected } = filterUsableStations(corridor);
         results['places'] = {
           ok: true,

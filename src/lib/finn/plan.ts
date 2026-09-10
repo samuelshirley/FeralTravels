@@ -47,14 +47,54 @@ export interface PlacedStop {
   reason?: string;
 }
 
-export interface PlacementResult {
+/**
+ * The three things that can come back from planning one leg. A discriminated
+ * union rather than a `gap: boolean`, because the third case used to be
+ * indistinguishable from the second and that is exactly how a driver was shown
+ * "beyond safe range (-1896 km)".
+ */
+export type PlacementResult = PlacementPlanned | PlacementGap | PlacementTankStateInvalid;
+
+/** Stops placed (possibly none — the leg fits on the fuel already in the tank). */
+export interface PlacementPlanned {
+  kind: 'planned';
   stops: PlacedStop[];
-  /**
-   * True when the leg cannot be completed without running past R — a stranding
-   * risk. The caller raises the honest `no_stations_found` / gap warning.
-   */
-  gap: boolean;
-  gapDetail?: string;
+}
+
+/**
+ * The leg cannot be completed without running past R — a stranding risk, with
+ * stations that exist but sit too far apart. The caller raises the honest
+ * `no_stations_found` warning. Only reachable when the tank state is SANE, i.e.
+ * there was some range left at the leg start; see [[PlacementTankStateInvalid]].
+ */
+export interface PlacementGap {
+  kind: 'gap';
+  stops: PlacedStop[];
+  gapDetail: string;
+}
+
+/**
+ * The tank was already empty (or worse) before the leg began — `R − B <= 0`.
+ *
+ * This is NOT geography and must never be reported as such. It means the burn
+ * handed to the planner is not a fact about the world: in practice a preceding
+ * day was never opened, so lazy day-open sourcing left it with no fuel stop,
+ * and the walk-back in `fuelTankState.ts` counted its full distance as burned.
+ * Trip `ab824cde` leg 11 reached B = 2,396 km against R = 500 and told the
+ * driver "Next fuel is 44 km ahead — beyond safe range (-1896 km)" — a real
+ * station 44 km away, described as unreachable, on a full tank.
+ *
+ * The server maps this to a RETRYABLE `failed`, never the 48h-cached
+ * `no_stations_found`. After the sourcing cascade in `server/fuel.ts` it should
+ * be unreachable; it is logged so we find out if it is not.
+ */
+export interface PlacementTankStateInvalid {
+  kind: 'tank_state_invalid';
+  stops: [];
+  /** B — what the walk-back claimed was already burned, km. */
+  burnedKm: number;
+  /** R — the vehicle's range, km. */
+  rangeKm: number;
 }
 
 const EPS = 1e-6;
@@ -77,13 +117,24 @@ function choose(pool: PlacementCandidate[]): PlacementCandidate {
 export function planLegFuelStops(input: PlacementInput): PlacementResult {
   const { legLengthKm, rangeKm: R } = input;
 
+  // STRUCTURAL GUARD. Below this line every branch may assume there is fuel in
+  // the tank. `reach` is `R - burnAtAnchor`, and a negative reach makes every
+  // candidate unreachable — including one 44 km away — so the loop falls into
+  // the gap branch and describes an arithmetic failure as remote geography.
+  // Returning a distinct outcome here is what makes that sentence impossible
+  // to produce rather than merely unlikely.
+  const burnedAtStart = Math.max(0, input.kmBurnedAtStart);
+  if (R - burnedAtStart <= 0) {
+    return { kind: 'tank_state_invalid', stops: [], burnedKm: burnedAtStart, rangeKm: R };
+  }
+
   const sorted = input.candidates
     .filter((c) => c.alongKm > EPS && c.alongKm <= legLengthKm + EPS)
     .sort((a, b) => a.alongKm - b.alongKm);
 
   const stops: PlacedStop[] = [];
   let anchorKm = 0; // along-leg position of the last refuel (0 = leg start)
-  let burnAtAnchor = Math.max(0, input.kmBurnedAtStart);
+  let burnAtAnchor = burnedAtStart;
 
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     const reach = R - burnAtAnchor; // furthest drivable from the anchor
@@ -91,7 +142,7 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
 
     // End reachable on the current tank → done.
     if (distToEnd <= reach + EPS) {
-      return { stops, gap: false };
+      return { kind: 'planned', stops };
     }
 
     const ahead = sorted.filter((c) => c.alongKm > anchorKm + EPS);
@@ -102,7 +153,7 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
       const gapDetail = next
         ? `Next fuel is ${Math.round(next.alongKm - anchorKm)} km ahead — beyond safe range (${Math.round(reach)} km). Carry extra fuel or top up earlier.`
         : `No fuel stations ahead on this leg within safe range. Carry extra fuel.`;
-      return { stops, gap: true, gapDetail };
+      return { kind: 'gap', stops, gapDetail };
     }
 
     const pick = choose(safe);
@@ -126,5 +177,5 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
   }
 
   // Should never get here for a real leg; return what we have rather than loop.
-  return { stops, gap: false };
+  return { kind: 'planned', stops };
 }

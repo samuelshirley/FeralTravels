@@ -7,12 +7,14 @@ import {
   WATCH_MICROCENTS,
 } from './constants';
 import {
+  dailyReplanCapUsd,
   resolveAccountState,
   trialDaysRemaining,
   trialEndsAt,
   type AccountFacts,
   type AccountState,
 } from './states';
+import { REPLAN_USD_CAP_PER_DAY, TRIAL_REPLAN_USD_CAP_PER_DAY } from './constants';
 
 /**
  * The twelve states of docs/design/subscriptions.md, pinned.
@@ -523,5 +525,53 @@ describe('trialEndsAt', () => {
   it('is created_at plus TRIAL_DAYS', () => {
     const createdAt = new Date('2026-08-01T09:30:00.000Z');
     expect(trialEndsAt(createdAt).getTime()).toBe(createdAt.getTime() + TRIAL_DAYS * DAY_MS);
+  });
+});
+
+
+/**
+ * Which daily Anthropic cap an account gets.
+ *
+ * The asymmetry is the point and it is not close: a subscriber's spend is an
+ * argument about margin, and a trial account has paid nothing — so a hundred of
+ * them at the subscriber's $5 is the $500 night the circuit breakers exist for.
+ */
+describe('dailyReplanCapUsd', () => {
+  const ALL: AccountState[] = [
+    'trial',
+    'trial_spent',
+    'trial_expired',
+    'subscribed',
+    'subscribed_watch',
+    'subscribed_capped',
+    'cancelled_in_period',
+    'expired',
+    'billing_grace',
+    'refunded',
+    'revoked',
+    'comped',
+  ];
+
+  it('gives a trial account a tenth of the subscriber cap', () => {
+    expect(dailyReplanCapUsd('trial')).toBe(TRIAL_REPLAN_USD_CAP_PER_DAY);
+    expect(TRIAL_REPLAN_USD_CAP_PER_DAY).toBe(0.5);
+    expect(REPLAN_USD_CAP_PER_DAY).toBe(5);
+  });
+
+  it('narrows NOTHING but the trial', () => {
+    // `comped` is entitled but is the author's account and the E2E fixtures,
+    // which sit outside every spend rule by design; everything else entitled
+    // has paid. A cap that caught either would be a different feature.
+    for (const state of ALL.filter((s) => s !== 'trial')) {
+      expect(dailyReplanCapUsd(state), state).toBe(REPLAN_USD_CAP_PER_DAY);
+    }
+  });
+
+  it('lets the env override lower BOTH, never invert them', () => {
+    // A deployment told to spend less must not quietly keep the trial cap where
+    // it was — which is what a plain branch would do.
+    expect(dailyReplanCapUsd('trial', 0.1)).toBe(0.1);
+    expect(dailyReplanCapUsd('subscribed', 0.1)).toBe(0.1);
+    expect(dailyReplanCapUsd('trial', 100)).toBe(TRIAL_REPLAN_USD_CAP_PER_DAY);
   });
 });

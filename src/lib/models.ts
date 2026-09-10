@@ -12,7 +12,13 @@
  */
 
 /** Penny's planning / tool-use model (chat + nightly replan). */
-export const PENNY_MODEL = 'claude-sonnet-4-6';
+// Haiku since 2026-09-09 (was claude-sonnet-4-6). Every token type bills at
+// exactly one third of Sonnet's price; the Austin 14-leg turn measured $0.585 on
+// Sonnet. The rulebook in claude.ts was written against Sonnet's mistakes, so
+// the swap is an EXPERIMENT until the same prompts have been replayed and
+// compared — `toolTrace` in penny_turns.result_meta is what makes the runs
+// comparable.
+export const PENNY_MODEL = 'claude-haiku-4-5-20251001';
 
 /**
  * Small, cheap, fast model for the onboarding date-text → ISO conversion. A
@@ -37,3 +43,16 @@ export const RANGE_ESTIMATE_MODEL = 'claude-haiku-4-5-20251001';
  * date parser, and the LLM only converts; the server re-validates every field.
  */
 export const ONBOARDING_SCAN_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * The message-tier classifier: is this message about the trip, adjacent to it,
+ * or junk?
+ *
+ * Same trivial-extraction class as the three above — one forced tool call, a
+ * ~300-token prompt, `max_tokens: 60`, no history and no trip context beyond
+ * the trip's own names. It runs only on messages the deterministic rules could
+ * not settle, and it exists to be CHEAP: at roughly $0.0005 a call it is
+ * one-170th of the planning turn it is deciding whether to spend, which is the
+ * entire argument for having it rather than guessing with keywords.
+ */
+export const CLASSIFY_MODEL = 'claude-haiku-4-5-20251001';

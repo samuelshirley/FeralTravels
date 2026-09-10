@@ -29,11 +29,13 @@ export {
   WATCH_MICROCENTS,
   STOP_MICROCENTS,
   TRIAL_CEILING_MICROCENTS,
+  REPLAN_USD_CAP_PER_DAY,
+  TRIAL_REPLAN_USD_CAP_PER_DAY,
   isProductId,
   productById,
 } from './constants';
 export type { ProductId } from './constants';
-export { resolveAccountState, trialDaysRemaining, trialEndsAt } from './states';
+export { resolveAccountState, trialDaysRemaining, trialEndsAt, dailyReplanCapUsd } from './states';
 export type { AccountState, AccountVerdict, AccountFacts, BlockReason } from './states';
 export { applySubscriptionEvent, decideFromEvent, isKnownEventType } from './webhook';
 export type { WebhookOutcome, WebhookResult, WebhookDeps, EventDecision } from './webhook';
@@ -55,6 +57,46 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  * — keeps the entitlement surface cheap to import.
  */
 export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
+/**
+ * The circuit breakers. On this surface for the same reason the paywall switch
+ * is: they decide whether a request may spend money, which is this module's
+ * one job. The pure evaluator and the thresholds come out too, because the
+ * admin panel renders them and `/api/admin/penny-lock` writes the switch.
+ */
+export {
+  assertPennyGateOpen,
+  assertSignupGateOpen,
+  checkBreakerGate,
+  breakerSnapshot,
+  breakerFacts,
+  readBreakerFacts,
+  invalidateBreakerFacts,
+  maybeAlertBreakers,
+  alertCooldownMs,
+  formatBreakerValue,
+  GATE_PROVIDER,
+  gateMixSince,
+  topGatedAccounts,
+} from './breakerCheck';
+export type { BreakerSnapshot, GateMix } from './breakerCheck';
+export {
+  evaluateBreakers,
+  evaluateGate,
+  levelFor,
+  retryAfterFor,
+  worstLevel,
+} from './breakers';
+export type {
+  BreakerFacts,
+  BreakerGate,
+  BreakerId,
+  BreakerLevel,
+  BreakerSpec,
+  BreakerStatus,
+  BreakerUnit,
+  GateVerdict,
+} from './breakers';
+export { BREAKERS, BREAKER_CACHE_MS, SYNTHETIC_SPEND_PROVIDER } from './constants';
 export {
   paywallEnabled,
   setPaywallEnabled,
@@ -62,6 +104,11 @@ export {
   paywallEnabledFromValue,
   enforcementApplies,
   PAYWALL_META_KEY,
+  pennyLocked,
+  setPennyLocked,
+  invalidatePennyLock,
+  pennyLockedFromValue,
+  PENNY_LOCK_META_KEY,
 } from './switch';
 /**
  * Promo codes belong on this surface, unlike `./testAccounts`: redeeming one

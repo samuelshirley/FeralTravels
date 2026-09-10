@@ -20,12 +20,22 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
-import { paywallEnabled, testPurchasesArmed } from '@/server/payments';
+import {
+  paywallEnabled,
+  testPurchasesArmed,
+  breakerSnapshot,
+  formatBreakerValue,
+  gateMixSince,
+  topGatedAccounts,
+} from '@/server/payments';
 
 import AdminErrorLog from './AdminErrorLog';
 import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
+import PennyLockdownBlock from './PennyLockdownBlock';
+import { recentIpLimitHits } from '@/server/ipLimit';
+import { lockedAccounts } from '@/server/repos/users';
 import styles from './admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -96,6 +106,25 @@ export default async function AdminPage() {
    * be five reads of a value that cannot change mid-render.
    */
   const paywallOn = await paywallEnabled();
+
+  /**
+   * The live breaker reading, deliberately UNCACHED. The gate reads a
+   * thirty-second cache because it runs on every request; this page is read by
+   * one person, and showing them a value from before they threw the switch is
+   * the exact failure the switch was moved out of the environment to avoid.
+   */
+  const breakers = await breakerSnapshot();
+  /**
+   * Addresses that hit a per-IP limit in the last day. Reads the same counter
+   * rows the gate writes — nothing is recorded for the panel that the gate does
+   * not already need.
+   */
+  const ipHits = await recentIpLimitHits(24).catch(() => []);
+  const [gateMix, topGated, lockedOut] = await Promise.all([
+    gateMixSince(24).catch(() => []),
+    topGatedAccounts(24).catch(() => []),
+    lockedAccounts().catch(() => []),
+  ]);
 
   const [
     overview,
@@ -230,6 +259,44 @@ export default async function AdminPage() {
       />
 
       <main className={styles.main}>
+        {/*
+          The breaker banner, above everything including the existing Anthropic
+          health alert. That one says spend looks unhealthy; this one says
+          requests are being REFUSED right now, which is the thing somebody is
+          about to email about. `alert` gets the same banner in a calmer colour
+          because the useful moment is before the stop, not after it.
+        */}
+        {breakers.worst !== 'ok' && (
+          <div
+            data-testid="admin-breaker-banner"
+            style={{
+              background: breakers.worst === 'open' ? '#7C1D1D' : '#5B4210',
+              border: `1px solid ${breakers.worst === 'open' ? '#B91C1C' : '#A16207'}`,
+              borderRadius: 8,
+              padding: '12px 16px',
+              marginBottom: 20,
+              color: '#FEE2E2',
+              fontSize: 13,
+              lineHeight: 1.6,
+            }}
+          >
+            <strong>
+              {breakers.worst === 'open'
+                ? 'A circuit breaker is OPEN — non-admin requests are being refused.'
+                : 'A circuit breaker is over its alert line.'}
+            </strong>
+            <div style={{ marginTop: 4 }}>
+              {breakers.statuses
+                .filter((b) => b.level !== 'ok')
+                .map((b) => `${b.label}: ${formatBreakerValue(b)}`)
+                .join(' · ')}
+            </div>
+            <div style={{ marginTop: 6, opacity: 0.85 }}>
+              Details and the manual switch are in “Penny lockdown” at the bottom of
+              this page.
+            </div>
+          </div>
+        )}
         {anthropicAlert && (
           <div
             style={{
@@ -752,6 +819,22 @@ export default async function AdminPage() {
               userEmail: e.userEmail,
               userName: e.userName,
             }))}
+          />
+        </section>
+
+        {/*
+          Above the paywall tooling, because it outranks it. Those blocks hand
+          out access; this one is the only thing on the page that can stop the
+          app spending money, and the first thing worth reading when something
+          is being refused.
+        */}
+        <section style={{ ...card, marginTop: 16 }}>
+          <PennyLockdownBlock
+            snapshot={breakers}
+            ipHits={ipHits}
+            gateMix={gateMix}
+            topGated={topGated}
+            lockedOut={lockedOut}
           />
         </section>
 

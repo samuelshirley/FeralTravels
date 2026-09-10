@@ -32,6 +32,10 @@ import { readFileSync, existsSync } from 'node:fs';
  */
 const REQUIRED = [
   ['ANTHROPIC_API_KEY', 'Penny and the three onboarding calls. Without it every planning turn 500s.'],
+  [
+    'ANTHROPIC_API_KEY_CI',
+    "The key every NON-production runtime bills (src/lib/anthropicKey.ts). Missing here is not a crash — it is SILENT: anthropicKey() falls through to the PRODUCTION key and every preview turn bills it, which is exactly what happened until 2026-09-09 and why the Console could not attribute $15.36 of spend. Decision F3.",
+  ],
   ['AUTH_SECRET', 'Session signing. Nothing can sign in, so every authenticated spec dies at the door.'],
   ['AUTH_RESEND_KEY', 'Sends the OTP. login-otp.spec.ts reads a REAL delivered email back.'],
   ['AUTH_EMAIL_FROM', 'The From: address on that email.'],

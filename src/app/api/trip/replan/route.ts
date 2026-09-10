@@ -17,6 +17,14 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '@/server/auth/guards';
+import {
+  assertPennyGateOpen,
+  dailyReplanCapUsd,
+  REPLAN_USD_CAP_PER_DAY,
+} from '@/server/payments';
+import { assertIpAllowed } from '@/server/ipLimit';
+import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
+import { gateMessage } from '@/server/messageGate';
 import { addChatMessage } from '@/server/repos/chat';
 import { PLAN_READY_TEXT } from '@/lib/planReady';
 import {
@@ -31,7 +39,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { addStop, deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -49,6 +57,8 @@ import {
 } from '@/lib/penny/editOverride';
 import type { PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
+import { resolveLegTitle } from '@/lib/legTitle';
+import { getDirectionsAccounted } from '@/server/google/accounted';
 
 /**
  * Per-request dispatch state for one POST /api/trip/replan.
@@ -188,26 +198,23 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
 // real cost backstop. Admins (Sam) are already exempt from both (see admin.ts).
 // Note: server-side auto-continue (claude.ts) chains long plans WITHIN a single
 // replan request, so a continued plan does NOT consume extra hourly requests.
-const REPLAN_USD_CAP_PER_DAY = parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || '5');
+/**
+ * The SUBSCRIBER cap. A trial account gets a tenth of it — `dailyReplanCapUsd`
+ * picks, from the verdict, and the env override lowers both rather than only
+ * this one. See the reasoning on both numbers in `payments/constants.ts`.
+ */
+const SUBSCRIBER_USD_CAP_PER_DAY = parseFloat(
+  process.env.REPLAN_USD_CAP_PER_DAY || String(REPLAN_USD_CAP_PER_DAY)
+);
 const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '120', 10);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Anthropic calls can take >60s on complex trips
 
-/**
- * Hard cap on the size of a single chat message. The textarea has no
- * character limit on the client (deliberate — copy-paste friendliness),
- * so this is the server-side anti-spam guard. 4000 chars ≈ ~1000 tokens
- * — plenty for "plan a 14-day trip from X to Y hitting A, B, C" with
- * room for elaboration. Anything larger is almost certainly someone
- * pasting junk to burn tokens.
- *
- * Defense in depth: REPLAN_REQUESTS_PER_HOUR (40) and
- * REPLAN_USD_CAP_PER_DAY ($5) cap the total damage even if individual
- * messages slip through long.
- */
-const MAX_MESSAGE_CHARS = 4000;
+// MAX_MESSAGE_CHARS now lives in `src/lib/pennyGate.ts`, beside the other
+// deterministic rules that judge a message — it is one of them, and having the
+// gate and the schema disagree about the limit is a 400 the gate never sees.
 
 const inputSchema = z.object({
   tripId: z.string().uuid(),
@@ -257,6 +264,17 @@ function userFacingError(err: unknown): string {
     : 'Something went wrong while updating your trip. Please try again.';
 }
 
+/** One `data: {...}` frame and close. The gate's whole reply. */
+function sseFrame(event: Record<string, unknown>): Response {
+  return new Response(`data: ${JSON.stringify(event)}\n\n`, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 export async function POST(req: Request) {
   // Hoisted so the catch can attribute the failure to the right user/trip in
   // usage_events even when the failure happens mid-Anthropic-call.
@@ -264,12 +282,15 @@ export async function POST(req: Request) {
   let tripIdForLog: string | null = null;
   /** After the user bubble is persisted; used to add an assistant error bubble on fatal throw. */
   let userTurnSaved = false;
+  /** The gate's verdict on THIS message, recorded on the user's chat row. */
+  let gateTierForLog: 'T1' | 'T2' | 'T3' | null = null;
+  let gateByForLog: string | null = null;
   try {
     // requireEntitledUser, not requireUser: this is the route that spends
     // Anthropic money, so it is the one the paywall exists for. It throws a
     // 402 carrying `code`/`state`/`blockReason`, which both clients branch on
     // to render Penny's paywall message instead of a red error bubble.
-    const { id: userId, isAdmin: isAdminUser } = await requireEntitledUser();
+    const { id: userId, isAdmin: isAdminUser, verdict } = await requireEntitledUser();
     userIdForLog = userId;
     const body = inputSchema.parse(await req.json());
     tripIdForLog = body.tripId;
@@ -298,6 +319,31 @@ export async function POST(req: Request) {
 
     await assertTripOwnedByUser(tripId, userId);
 
+    /**
+     * THE GLOBAL CIRCUIT BREAKER, before anything that can reach Anthropic.
+     *
+     * The per-user caps below are the wrong tool for the threat this guards
+     * against, and it is worth being precise about why: they bound what ONE
+     * account costs, and an attacker picks the number of accounts. A hundred
+     * bots at the $5/day cap is $500 overnight with every line below passing.
+     * This one bounds the whole deployment, so the worst case of any attack is
+     * the number in `constants.ts` rather than the number of attackers.
+     *
+     * Throws a 503 carrying `code: 'circuit_open'` — never a 401 (the app
+     * clears the keychain on those) and never a 402 (that is the paywall's
+     * word, and this user may well have paid).
+     */
+    await assertPennyGateOpen(isAdminUser);
+
+    /**
+     * And the per-IP turn limit — 30 an hour, which is roughly three times what
+     * a driver replanning hard does and bounds one machine to ~$2.55 of Haiku
+     * an hour before the hourly spend breaker takes over. Throws 429 with a
+     * real `retryAfterSeconds`, because the window is fixed and the moment it
+     * lifts is known rather than guessed.
+     */
+    await assertIpAllowed('replan', { isAdmin: isAdminUser });
+
     // Soft per-user spend / request guardrails to prevent runaway cost.
     //
     // Admins (defined by the hardcoded allowlist in src/server/auth/admin.ts)
@@ -318,15 +364,71 @@ export async function POST(req: Request) {
           { status: 429 }
         );
       }
+      /*
+       * Which cap applies comes from the VERDICT, not from a status column
+       * re-read here: a trial account has paid nothing, and a hundred of them
+       * at the subscriber's $5 is the $500 night this whole feature exists
+       * for. `payments/` owns the question of what an account is.
+       */
+      const capUsd = dailyReplanCapUsd(verdict.state, SUBSCRIBER_USD_CAP_PER_DAY);
       const dailyUsd = microcentsToDollars(daily.microcents);
-      if (dailyUsd >= REPLAN_USD_CAP_PER_DAY) {
+      if (dailyUsd >= capUsd) {
         return Response.json(
           {
-            error: `Daily AI spend cap reached ($${REPLAN_USD_CAP_PER_DAY.toFixed(2)}). Resets in 24h.`,
+            error: `Daily AI spend cap reached ($${capUsd.toFixed(2)}). Resets in 24h.`,
           },
           { status: 429 }
         );
       }
+    }
+
+    /**
+     * THE MESSAGE GATE — the last line before Penny, and the only one that can
+     * decide a particular message is not worth $0.085.
+     *
+     * Placed after the caps and before the turn record on purpose: a gated
+     * message must not create a `penny_turns` row, or the client's re-attach
+     * logic would poll a turn that is never going to run.
+     *
+     * NOT applied to the handoff turn, and not to an image-only message. The
+     * handoff is the wizard's stored intent fired at Penny — it was composed by
+     * our own form and gating it would mean refusing the app's own first
+     * message. An image has no text to judge, and the deterministic rules would
+     * read the empty string as junk.
+     */
+    if (message && !body.handoff) {
+      const gate = await gateMessage({
+        userId,
+        tripId,
+        message,
+        isAdmin: isAdminUser,
+      });
+      if (gate.blocked) {
+        // Both bubbles, so the transcript is honest: the driver's message is
+        // there, and the answer beside it is the one they actually got. The
+        // alternative — dropping the message — reads as the app losing it.
+        await addChatMessage(tripId, 'user', message, null, 'ai', null, null, {
+          tier: gate.tier,
+          by: gate.by,
+        });
+        await addChatMessage(tripId, 'assistant', gate.message ?? '', null, 'ai');
+        /*
+         * A one-frame SSE stream, not JSON, and the reason is the native
+         * client: it reads the reply through EventSource and cannot see a
+         * content-type, so it treats a JSON body as SILENCE and waits fifteen
+         * seconds before polling for a `penny_turns` row that a gated message
+         * never creates. One frame on the transport both clients already parse
+         * means an instant answer on each and no second code path.
+         */
+        return sseFrame({
+          kind: 'gated',
+          tier: gate.tier,
+          message: gate.message,
+          lockedUntil: gate.lockedUntil?.toISOString() ?? null,
+        });
+      }
+      gateTierForLog = gate.tier;
+      gateByForLog = gate.by;
     }
 
     // Durable turn record — the idempotency + concurrency + re-attach anchor.
@@ -358,7 +460,16 @@ export async function POST(req: Request) {
 
     // Persist the user's bubble now so it shows in chat order immediately,
     // whether we run this turn now or queue it.
-    await addChatMessage(tripId, 'user', message || '(image only)', null, body.handoff ? 'handoff' : 'ai');
+    await addChatMessage(
+      tripId,
+      'user',
+      message || '(image only)',
+      null,
+      body.handoff ? 'handoff' : 'ai',
+      null,
+      null,
+      gateTierForLog ? { tier: gateTierForLog, by: gateByForLog ?? '' } : null
+    );
     userTurnSaved = true;
 
     // Claim the trip's single execution slot. The partial unique index
@@ -746,6 +857,17 @@ async function runTurnWork(
             }
           }
 
+          // The trip's end date is the LAST leg's date — derived, never authored.
+          // `rename_trip` used to carry an end_date field, so Penny had to
+          // remember to send it and Haiku did not (trip ab824cde: 13 legs,
+          // end_date NULL). Deriving it also keeps it true after an edit that
+          // adds or removes a day. Best-effort: the legs are saved either way.
+          if (appliedCount > 0) {
+            await syncTripEndDateFromLegs(tripId).catch((e) =>
+              console.warn('[end-date] derive failed', e)
+            );
+          }
+
           // Post-dispatch leg contiguity check: a safety net that detects any gap
           // the repair above could not close (e.g. missing coords). Log so it
           // shows up in admin errors — don't block the response.
@@ -912,6 +1034,9 @@ async function runTurnWork(
             truncated: final.truncated,
             /** Splice the deterministic plan-ready bubble in ABOVE this reply. */
             planReady,
+            /** Tool names per model call — the number of prefix re-reads this turn cost. */
+            toolTrace: final.toolTrace,
+            modelCalls: final.toolTrace.length,
           };
           send({ kind: 'applied', ...appliedPayload });
 
@@ -1062,10 +1187,8 @@ async function dispatchAction(
         const parsedStart = tryParseToISO(action.input.start_date);
         if (parsedStart) tripUpdate.startDateParsed = parsedStart;
       }
-      if (action.input.end_date !== undefined) {
-        tripUpdate.endDate = action.input.end_date;
-        tripUpdate.endDateParsed = tryParseToISO(action.input.end_date);
-      }
+      // No end_date branch: the trip's end is the last leg's date, derived by
+      // syncTripEndDateFromLegs after the pipeline settles. See renameTrip.ts.
       await db
         .update(trips)
         .set(tripUpdate)
@@ -1121,7 +1244,7 @@ async function dispatchAction(
       // for these coords (24h LRU in directions.ts).
       let geometry: GeoJSONLineString | null = null;
       if (d.start_lat != null && d.start_lng != null && d.end_lat != null && d.end_lng != null) {
-        const dir = await getDirections(
+        const dir = await getDirectionsAccounted(
           { lat: d.start_lat, lng: d.start_lng },
           { lat: d.end_lat, lng: d.end_lng },
         );
@@ -1220,6 +1343,24 @@ async function dispatchAction(
       if (data.segment_index !== undefined) legUpdate.segmentIndex = data.segment_index;
       if (data.segment_name !== undefined) legUpdate.segmentName = data.segment_name;
 
+      // A driving day's title is DERIVED from its endpoints — see lib/legTitle.
+      // Recomputed from the endpoints this update LEAVES the row with, so
+      // moving a destination renames the day, and a title Penny sent alongside
+      // it cannot contradict where the day now ends. Rest legs keep theirs.
+      {
+        const finalLegType = existingLeg?.legType ?? 'drive';
+        const finalStart =
+          data.start_name !== undefined ? data.start_name : existingLeg?.startName;
+        const finalEnd = data.end_name !== undefined ? data.end_name : existingLeg?.endName;
+        const derived = resolveLegTitle({
+          legType: finalLegType,
+          startName: finalStart,
+          endName: finalEnd,
+          fallback: (legUpdate.title as string | undefined) ?? existingLeg?.title ?? null,
+        });
+        if (derived != null) legUpdate.title = derived;
+      }
+
       // If start or end coords changed, re-fetch driving geometry so the
       // stored polyline stays in sync with the leg endpoints.
       const coordsChanged =
@@ -1237,7 +1378,7 @@ async function dispatchAction(
         const eLat = data.end_lat ?? cur?.endLat;
         const eLng = data.end_lng ?? cur?.endLng;
         if (sLat != null && sLng != null && eLat != null && eLng != null) {
-          const dir = await getDirections({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
+          const dir = await getDirectionsAccounted({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
           if (dir.ok && dir.polyline_points.length > 0) {
             legUpdate.geometry = {
               type: 'LineString',
@@ -1549,7 +1690,6 @@ function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> 
         action: 'rename_trip',
         ...(action.input.name !== undefined ? { name: action.input.name } : {}),
         ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
-        ...(action.input.end_date ? { end_date: action.input.end_date } : {}),
       };
     case 'report_position':
       return {

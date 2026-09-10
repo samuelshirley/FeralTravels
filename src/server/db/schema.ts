@@ -113,6 +113,23 @@ export const users = pgTable('users', {
    * server's notion of the current day matches the driver's wall clock.
    */
   timezone: text('timezone'),
+  /**
+   * Junk messages in a row. Zeroed by any message Penny could act on, and by
+   * the lock firing. See `src/lib/strikes.ts` — including why an "adjacent"
+   * message neither strikes nor resets.
+   */
+  pennyStrikes: integer('penny_strikes').default(0).notNull(),
+  /**
+   * Penny is paused for this account until this moment. Null, or in the past,
+   * means she is not.
+   *
+   * Per-account and time-boxed, which is what makes it different from
+   * `app_meta.penny_locked` (the whole deployment, until a human clears it) and
+   * from the paywall (an entitlement, not a behaviour). Nothing here is
+   * punitive beyond the hour: no flag survives it, and the count is zeroed when
+   * it fires.
+   */
+  pennyLockedUntil: timestamp('penny_locked_until', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -687,6 +704,18 @@ export const chatHistory = pgTable(
      * it. Null on every other kind. See `ChatFormMeta`.
      */
     formMeta: jsonb('form_meta').$type<import('@/types/trip').ChatFormMeta | null>(),
+    /**
+     * On user rows: which tier the message gate sorted this into (`T1`/`T2`/
+     * `T3`), and which of the three deciders decided (`allow_rule`,
+     * `deny_rule`, `classifier`, `error`). Null on every row written before the
+     * gate existed and on rows the gate does not judge.
+     *
+     * Recorded on the MESSAGE rather than only in `usage_events` because the
+     * useful question afterwards is "why did Penny answer that with a canned
+     * line", and the answer has to be beside the message it is about.
+     */
+    gateTier: text('gate_tier').$type<'T1' | 'T2' | 'T3' | null>(),
+    gateBy: text('gate_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
@@ -746,7 +775,9 @@ export const userViewportTime = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     viewport: text('viewport').notNull().$type<'mobile' | 'tablet' | 'desktop'>(),
     totalSeconds: bigint('total_seconds', { mode: 'number' }).notNull(),
-    updatedAt: timestamp('updated_at', { mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { mode: 'date', withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.viewport] }),
@@ -1125,5 +1156,71 @@ export const usageAlerts = pgTable(
   },
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.threshold] }),
+  })
+);
+
+/**
+ * One row per (breaker, level) so a tripped circuit breaker mails the owner
+ * ONCE rather than once per request.
+ *
+ * The same job `usage_alerts` does for the per-user thresholds, and a separate
+ * table rather than an extra row shape in that one because `usage_alerts.user_id`
+ * is NOT NULL with a foreign key: these alerts are about the whole deployment
+ * and belong to nobody.
+ *
+ * The difference from `usage_alerts` is that this one RE-ARMS. A per-user
+ * lifetime cap is crossed once and stays crossed, so a permanent row is right
+ * there. A breaker measures a rolling window: it can open on Tuesday, close by
+ * Wednesday and open again on Thursday, and the third of those is news. So the
+ * claim is an upsert guarded on `fired_at` being older than the cooldown, and
+ * the row is the last-fired timestamp rather than a tombstone.
+ */
+export const breakerAlerts = pgTable(
+  'breaker_alerts',
+  {
+    /** A `BreakerId` — `anthropic_spend_24h`, `signups_1h`, … */
+    breaker: text('breaker').notNull(),
+    /** `alert` or `open`. Both are worth an email; only one of them stops anybody. */
+    level: text('level').$type<'alert' | 'open'>().notNull(),
+    /** The measured value when it fired, in the breaker's own unit. For the email and the audit. */
+    valueAtFiring: bigint('value_at_firing', { mode: 'number' }),
+    firedAt: timestamp('fired_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.breaker, t.level] }),
+  })
+);
+
+/**
+ * Per-IP request counters — one row per (scope, address, window).
+ *
+ * A COUNTER, not a log, and that is the design. A rolling count needs a row per
+ * request, which means a table that grows in proportion to the attack it exists
+ * to survive; this grows in proportion to the number of distinct addresses,
+ * which is the thing an attacker has to pay for. The cost is a fixed window
+ * rather than a rolling one, and the boundary straddle that implies — written
+ * out in `src/lib/ipLimit.ts`, where the decision lives.
+ *
+ * `ip` is the only thing stored about the caller. No user id, no address, no
+ * user agent: this table answers "how many requests came from here recently"
+ * and must not become a way to answer anything else. Rows are pruned at
+ * `IP_COUNTER_RETENTION_DAYS`.
+ */
+export const ipRequestCounters = pgTable(
+  'ip_request_counters',
+  {
+    /** An `IpScope` — `otp_send`, `signup`, `replan`. */
+    scope: text('scope').notNull(),
+    /** The client address as the edge reported it. IPv6 needs 45 characters. */
+    ip: text('ip').notNull(),
+    /** Epoch millis, floored to the scope's window, so every instance agrees. */
+    windowStart: bigint('window_start', { mode: 'number' }).notNull(),
+    count: integer('count').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.scope, t.ip, t.windowStart] }),
+    /** The prune's WHERE clause. Without it, cleanup seq-scans the table. */
+    updatedIdx: index('ip_request_counters_updated_idx').on(t.updatedAt),
   })
 );

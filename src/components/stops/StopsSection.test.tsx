@@ -172,6 +172,45 @@ describe('StopsSection (refactored)', () => {
     expect(screen.queryByText(/no stops yet/i)).not.toBeInTheDocument();
   });
 
+  /**
+   * A day that needs no stop and a day that is too remote to plan one are
+   * opposite outcomes, and they must never both be on screen. Trip `ab824cde`
+   * showed the remote warning ("Next fuel is 44 km ahead — beyond safe range
+   * (-1896 km)") for a day whose real answer was an ordinary fuel stop.
+   */
+  it('shows the remote-route warning WITHOUT the reassuring line', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[]}
+        fuelStatus="no_stations_found"
+        fuelPlanError="This stretch is too remote."
+      />
+    );
+    expect(screen.getByText(/no fuel stations found/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no fuel stop needed/i)).not.toBeInTheDocument();
+  });
+
+  it('never shows the remote-route warning on a sourced, stopless day', () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[]}
+        fuelStatus="ready"
+      />
+    );
+    expect(screen.queryByText(/no fuel stations found/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/beyond safe range/i)).not.toBeInTheDocument();
+  });
+
   it('shows dismissed count in collapsed section', () => {
     render(
       <StopsSection

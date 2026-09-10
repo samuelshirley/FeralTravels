@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { APP_STORE_CTA_LABEL, blockNoticeFor, SUPPORT_EMAIL } from './paywallCopy';
 import { paywallCopy, trialWelcomeLine } from '@/server/payments/copy';
-import type { AccountVerdict } from '@/server/payments/states';
+import type { AccountVerdict } from '@/server/payments';
 import type { AccountState, BlockReason } from '@/types/entitlement';
 
 const ALL: BlockReason[] = ['trial_over', 'subscription_over', 'usage_cap', 'revoked'];

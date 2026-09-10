@@ -38,7 +38,10 @@ async function withApi<T>(fn: (ctx: APIRequestContext) => Promise<T>): Promise<T
  * `email`, creating the user row if needed. Same payload globalSetup used to
  * send for the shared persona; now each spec seeds its own fresh user.
  */
-export async function seedCanonicalFixture(email: string): Promise<void> {
+export async function seedCanonicalFixture(
+  email: string,
+  opts: { rangeKm?: number; legPreset?: 'canonical' | 'three_long_drives' } = {},
+): Promise<void> {
   await withApi(async (ctx) => {
     const res = await ctx.post('/api/test/seed', {
       data: {
@@ -46,6 +49,8 @@ export async function seedCanonicalFixture(email: string): Promise<void> {
         userName: FIXTURE_USER_NAME,
         vehicleName: FIXTURE_VEHICLE_NAME,
         tripName: FIXTURE_TRIP_NAME,
+        ...(opts.rangeKm != null ? { rangeKm: opts.rangeKm } : {}),
+        ...(opts.legPreset != null ? { legPreset: opts.legPreset } : {}),
       },
     });
     if (!res.ok()) {

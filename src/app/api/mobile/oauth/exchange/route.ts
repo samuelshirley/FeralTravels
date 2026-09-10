@@ -1,6 +1,7 @@
 import { z, ZodError } from 'zod';
 import { createSessionForEmail } from '@/server/auth/otp';
 import { errorResponse } from '@/server/auth/guards';
+import { assertSignupGateOpen } from '@/server/payments';
 import { verifyIdentityToken } from '@/server/auth/oauthIdentity';
 import { consumeIdToken, pruneExpiredTokenUses } from '@/server/auth/oauthReplay';
 
@@ -43,6 +44,14 @@ export async function POST(req: Request) {
     // hammering this route must not be able to keep going. Throws 401
     // TokenAlreadyUsed or 429 RateLimited.
     await consumeIdToken(body.idToken, identity.email, identity.expiresAt);
+
+    /**
+     * The sign-up circuit breaker, after the token is proven and before an
+     * account can be created from it. Only a NEW address is refused — a
+     * returning Google or Apple user signs in through a flood unaffected.
+     * Throws 503 `circuit_open`.
+     */
+    await assertSignupGateOpen(identity.email);
 
     const session = await createSessionForEmail(identity.email, identity.name, identity.picture);
 

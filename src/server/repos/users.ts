@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
+import { eq, gt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users } from '@/server/db/schema';
 import { asUnitsPref, type UnitsPref } from '@/lib/units';
@@ -125,4 +125,50 @@ export async function getUserIdentity(
      */
     image: sanitizeAvatarUrl(row.image),
   };
+}
+
+// ── Penny strikes ───────────────────────────────────────────────────────────
+
+/**
+ * The account's strike state, for the message gate.
+ *
+ * Two columns and no interpretation — `src/lib/strikes.ts` owns what they mean,
+ * and this must not grow a second opinion about it.
+ */
+export async function getStrikeState(
+  userId: string
+): Promise<{ strikes: number; lockedUntil: Date | null }> {
+  const [row] = await db
+    .select({ strikes: users.pennyStrikes, lockedUntil: users.pennyLockedUntil })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return { strikes: row?.strikes ?? 0, lockedUntil: row?.lockedUntil ?? null };
+}
+
+/**
+ * Write the state `nextStrikeState` computed. Both columns together, always:
+ * the count and the lock are one decision, and writing them separately leaves a
+ * window in which an account is locked with a count that says it should not be.
+ */
+export async function setStrikeState(
+  userId: string,
+  state: { strikes: number; lockedUntil: Date | null }
+): Promise<void> {
+  await db
+    .update(users)
+    .set({ pennyStrikes: state.strikes, pennyLockedUntil: state.lockedUntil })
+    .where(eq(users.id, userId));
+}
+
+/** Accounts Penny is currently paused for — the admin panel's list. */
+export async function lockedAccounts(
+  now = new Date()
+): Promise<Array<{ id: string; email: string | null; lockedUntil: Date }>> {
+  const rows = await db
+    .select({ id: users.id, email: users.email, lockedUntil: users.pennyLockedUntil })
+    .from(users)
+    .where(gt(users.pennyLockedUntil, now))
+    .limit(50);
+  return rows.flatMap((r) => (r.lockedUntil ? [{ ...r, lockedUntil: r.lockedUntil }] : []));
 }

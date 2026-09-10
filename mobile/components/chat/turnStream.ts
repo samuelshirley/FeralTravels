@@ -66,6 +66,18 @@ export type TurnStreamResult =
       status: number;
       body: Record<string, unknown> | null;
     }
+  /**
+   * The message gate refused this message. Penny was never called, the server
+   * has already written both chat rows, and `message` is the line to settle
+   * the bubble with.
+   *
+   * NOT an error, and the distinction has to survive to the caller: a gate
+   * refusal is deliberate and correct, so painting it red or offering "try
+   * again" would be a lie about it. There is also no `penny_turns` row to poll
+   * — that is the reason this arrives as a frame rather than as a JSON body,
+   * which EventSource cannot tell from silence.
+   */
+  | { outcome: "gated"; tier: "T1" | "T2" | "T3"; message: string }
   /** 200 but no SSE frames — queued turn / idempotent replay; poll the record. */
   | { outcome: "silent" }
   /** Connection died mid-turn. The server keeps going; heal from the record. */
@@ -175,6 +187,15 @@ export function startTurnStream(args: {
       case "applied":
         finish({ outcome: "applied", event: ev as unknown as AppliedEvent });
         break;
+      case "gated": {
+        const tier = ev.tier === "T2" || ev.tier === "T3" ? ev.tier : "T1";
+        finish({
+          outcome: "gated",
+          tier,
+          message: typeof ev.message === "string" ? ev.message : "",
+        });
+        break;
+      }
       case "error": {
         const raw = typeof ev.message === "string" ? ev.message : "";
         // Strip noisy stack traces / internal paths — keep the first sentence.

@@ -44,6 +44,26 @@ export interface LegFuelHistory {
    * `declare_fuel_state` Penny tool.
    */
   declaredBurnedKmAtStart?: number | null;
+  /**
+   * True when Finn searched this leg and found NO reachable station
+   * (`fuel_status = 'no_stations_found'`) — the honest "this stretch is too
+   * remote, carry extra fuel or plan a stop manually" warning.
+   *
+   * Treated as a refuel at the leg's END, and that is a deliberate modelling
+   * decision rather than an oversight. The alternative — carrying the burn
+   * straight through — makes ONE un-plannable day poison every day after it:
+   * on trip `ab824cde` a genuine gap on day 4 turned days 5, 7, 9 and 11 into
+   * "impossible tank state" errors, destroying the plan for the rest of the
+   * trip over a warning the driver had already been given once. The warning
+   * stays on the leg that owns it; the days after it get a usable plan.
+   *
+   * The safety bias still holds where it matters. This is not Finn quietly
+   * assuming a refuel nobody mentioned — it is the one case where the app has
+   * explicitly told the driver to arrange fuel here, so continuing to model
+   * them as running on fumes for the next thousand kilometres reports the same
+   * problem five more times instead of once.
+   */
+  unplannableRefuelAtEnd?: boolean | null;
 }
 
 /**
@@ -76,6 +96,12 @@ export function kmBurnedSinceLastRefuel(
       // stop is later in the leg than its start, so the tank was reset after
       // the declared baseline applied.
       kmBurned += Math.max(0, legDist - leg.latestFuelDistanceKm);
+      return kmBurned;
+    }
+    if (leg.unplannableRefuelAtEnd) {
+      // Finn warned about this leg and the driver was told to sort fuel on it.
+      // Refuel at its end → nothing before it is burned, and this leg
+      // contributes nothing either.
       return kmBurned;
     }
     if (leg.declaredBurnedKmAtStart != null) {
@@ -133,7 +159,9 @@ export function rangeRemainingAtLegStarts(
     burned =
       leg.latestFuelDistanceKm != null
         ? Math.max(0, legDist - leg.latestFuelDistanceKm)
-        : startBurn + legDist;
+        : leg.unplannableRefuelAtEnd
+          ? 0 // warned leg: assume fuel was arranged by its end. See the field doc.
+          : startBurn + legDist;
 
     return declared != null ? rangeKm - declared : remainingAtStart;
   });
