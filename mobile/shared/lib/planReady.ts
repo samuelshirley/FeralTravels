@@ -39,11 +39,53 @@ export const PLAN_READY_FOLLOW_UP =
   'place — just paste me a Google Maps link.';
 
 /**
- * The row's stored `content`: both lines, so the transcript reads correctly
- * anywhere the structured rendering is unavailable (an old client, an admin
- * view, a database dump).
+ * The longest day the plan was built around, in words.
+ *
+ * THE NUMBER THE DRIVER IS PLANNING AGAINST AND COULD NOT SEE. Every driving
+ * day is capped — at the `trip_pace` answer when the driver gave one, at
+ * `DEFAULT_MAX_DRIVE_HOURS_PER_DAY` (8) when they did not — and `get_route`
+ * splits long segments on it, so it decides how many days the trip takes. It
+ * appeared nowhere: not in Penny's prose (she must not author it), not on the
+ * plan summary, not in Settings. A driver reading "six days" had no way to
+ * learn that six was arithmetic on a number they never saw.
+ *
+ * `null` is not "unknown" — it is "never answered", which is a different
+ * sentence, because one of these two numbers is the driver's own decision and
+ * the other is ours.
  */
-export const PLAN_READY_TEXT = `${PLAN_READY_HEADLINE}\n\n${PLAN_READY_FOLLOW_UP}`;
+export function dailyPaceLine(hours: number | null, defaultHours: number): string {
+  if (hours == null) {
+    return `Days are planned at up to ${defaultHours} h of driving — the default, since you didn’t set a pace.`;
+  }
+  return `Days are planned at up to ${hours} h of driving, the pace you asked for.`;
+}
+
+/**
+ * The row's stored `content`: all three lines, so the transcript reads
+ * correctly anywhere the structured rendering is unavailable (an old client, an
+ * admin view, a database dump).
+ *
+ * A FUNCTION rather than the constant it replaced, because the middle line is
+ * per-trip. Both clients render everything after the headline FROM THE ROW
+ * rather than from a constant of their own, so a row written under one pace
+ * cannot render under another — and rows written before this existed keep
+ * rendering exactly the two lines they hold.
+ */
+export function planReadyText(hours: number | null, defaultHours: number): string {
+  return `${PLAN_READY_HEADLINE}\n\n${dailyPaceLine(hours, defaultHours)}\n\n${PLAN_READY_FOLLOW_UP}`;
+}
+
+/**
+ * Everything after the headline, as paragraphs, taken from the stored row.
+ *
+ * The clients used to render `PLAN_READY_FOLLOW_UP` — their own constant — and
+ * simply ignored the body of the message they were drawing. That was harmless
+ * while the text was fixed and is not now.
+ */
+export function planReadyBodyParagraphs(content: string): string[] {
+  const paras = content.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  return paras.slice(1);
+}
 
 /**
  * Split the headline around the tappable words. Returns the text before, the

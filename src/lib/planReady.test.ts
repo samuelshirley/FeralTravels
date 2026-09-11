@@ -3,8 +3,10 @@ import {
   LIST_VIEW_WORDS,
   PLAN_READY_FOLLOW_UP,
   PLAN_READY_HEADLINE,
-  PLAN_READY_TEXT,
+  dailyPaceLine,
+  planReadyBodyParagraphs,
   planReadyHeadlineParts,
+  planReadyText,
 } from './planReady';
 
 describe('plan-ready copy', () => {
@@ -19,15 +21,73 @@ describe('plan-ready copy', () => {
     expect(link).toBe(LIST_VIEW_WORDS);
   });
 
-  it('stores both lines, blank line between', () => {
-    expect(PLAN_READY_TEXT).toBe(`${PLAN_READY_HEADLINE}\n\n${PLAN_READY_FOLLOW_UP}`);
+  it('stores all three lines, blank line between', () => {
+    expect(planReadyText(6, 8)).toBe(
+      `${PLAN_READY_HEADLINE}\n\n${dailyPaceLine(6, 8)}\n\n${PLAN_READY_FOLLOW_UP}`,
+    );
   });
 
   it('states no plan numbers — the summary card owns those', () => {
-    // Same rule as <plan_summary_format>: a date, a day count or a distance in
-    // this copy would be a second, stale source of truth for facts the card
-    // already renders correctly.
-    expect(PLAN_READY_TEXT).not.toMatch(/\d/);
+    /*
+     * Same rule as <plan_summary_format>, and its reason is the whole of it: a
+     * date, a day count or a distance here would be a SECOND, STALE source of
+     * truth for a fact the card already renders correctly.
+     *
+     * The daily pace is the one number that is not that, which is why it was
+     * added on 2026-09-11 and why the rule is now stated as what it always
+     * meant rather than as "no digits". It is not derived from the plan — it is
+     * the INPUT the plan was built from, sitting on the trip row, and it is
+     * rendered nowhere else in the product. A driver reading "six days" had no
+     * way to learn that six was arithmetic on a number they never saw.
+     */
+    const everything = [planReadyText(6, 8), planReadyText(null, 8)].join(' ');
+    const withoutPace = everything
+      .split(/\n{2,}/)
+      .filter((p) => !p.includes('of driving'))
+      .join(' ');
+    expect(withoutPace).not.toMatch(/\d/);
+  });
+
+  describe('the daily pace line', () => {
+    it('names the driver’s own answer as theirs', () => {
+      expect(dailyPaceLine(5, 8)).toContain('5 h');
+      expect(dailyPaceLine(5, 8)).toMatch(/asked for/);
+    });
+
+    it('says out loud when the number is OURS, not theirs', () => {
+      // Presenting our default as the driver's choice is the small lie that
+      // makes the rest of the numbers untrustworthy — and it is the common
+      // case, since `trip_pace` is skipped whenever the opening message
+      // already stated a pace and never runs at all on a seeded trip.
+      const line = dailyPaceLine(null, 8);
+      expect(line).toContain('8 h');
+      expect(line).toMatch(/default/);
+      expect(line).not.toMatch(/asked for/);
+    });
+
+    it('is a real sentence for every cap the validators allow', () => {
+      for (let h = 1; h <= 8; h += 1) {
+        expect(dailyPaceLine(h, 8)).toContain(`${h} h`);
+      }
+    });
+  });
+
+  describe('planReadyBodyParagraphs', () => {
+    it('is everything after the headline, from the ROW', () => {
+      // The clients render this rather than their own constant, so a row
+      // written at one pace cannot be drawn at another.
+      expect(planReadyBodyParagraphs(planReadyText(6, 8))).toEqual([
+        dailyPaceLine(6, 8),
+        PLAN_READY_FOLLOW_UP,
+      ]);
+    });
+
+    it('renders a pre-pace row as exactly the one paragraph it holds', () => {
+      // Rows written before 2026-09-11 have two paragraphs, not three. They
+      // must keep reading correctly rather than growing a pace nobody stored.
+      const old = `${PLAN_READY_HEADLINE}\n\n${PLAN_READY_FOLLOW_UP}`;
+      expect(planReadyBodyParagraphs(old)).toEqual([PLAN_READY_FOLLOW_UP]);
+    });
   });
 
   it('tells the driver the one thing they cannot see: how to change a destination', () => {
@@ -58,7 +118,7 @@ describe('the plan-ready row is written on exactly one turn', () => {
 
   it('is written BEFORE Penny’s reply, so it takes the lower seq', () => {
     const src = route();
-    const planReadyWrite = src.indexOf("PLAN_READY_TEXT, null, 'plan_ready'");
+    const planReadyWrite = src.indexOf("'plan_ready',");
     const replyWrite = src.indexOf('persistedResponse,\n            assistantChangesMade,');
     expect(planReadyWrite).toBeGreaterThan(-1);
     expect(replyWrite).toBeGreaterThan(-1);
@@ -80,10 +140,14 @@ describe('both clients draw the shared copy', () => {
     it(`${label} ChatPanel renders it from planReady.ts, not from its own strings`, () => {
       const src = read(path);
       expect(src).toContain('planReadyHeadlineParts()');
-      expect(src).toContain('PLAN_READY_FOLLOW_UP');
+      // The BODY comes from the row, not from a client-side constant — the
+      // pace paragraph is per-trip, so a client drawing its own copy would
+      // show one number over a row that holds another.
+      expect(src).toContain('planReadyBodyParagraphs(msg.content)');
       // The words themselves must appear in NEITHER client.
       expect(src).not.toContain('Trip is planned');
       expect(src).not.toContain('Come back to me if you want');
+      expect(src).not.toContain('of driving');
     });
 
     it(`${label} ChatPanel makes the list view a control and inserts it idempotently`, () => {

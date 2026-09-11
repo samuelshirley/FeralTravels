@@ -16,10 +16,11 @@ import { deriveApplyOutcome } from '@/lib/penny/applyOutcome';
 import Spinner from '@/components/Spinner';
 import PennyPlanningVideo from '@/components/PennyPlanningVideo';
 import {
-  PLAN_READY_FOLLOW_UP,
-  PLAN_READY_TEXT,
+  planReadyText,
+  planReadyBodyParagraphs,
   planReadyHeadlineParts,
 } from '@/lib/planReady';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import PurchaseSheet from '@/components/PurchaseSheet';
 import { SUPPORT_EMAIL } from '@/lib/paywallCopy';
 import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
@@ -74,6 +75,12 @@ type AppliedEvent = {
    * are the same transcript.
    */
   planReady?: boolean;
+  /**
+   * The daily driving cap the server wrote that row at — the driver's own
+   * `trip_pace` answer, or null when they never gave one. Carried so the live
+   * splice composes the same paragraphs the stored row holds.
+   */
+  planReadyPaceHours?: number | null;
   truncated: boolean;
 };
 
@@ -1033,7 +1040,10 @@ export default function ChatPanel({
           id: `plan-ready-${assistantMsgId}`,
           trip_id: tripId,
           role: 'assistant',
-          content: PLAN_READY_TEXT,
+          // Composed with the SAME pace the server just wrote the row at, so
+          // the bubble the driver watches land and the one they scroll back to
+          // after a reload say the same thing.
+          content: planReadyText(ev.planReadyPaceHours ?? null, DEFAULT_MAX_DRIVE_HOURS_PER_DAY),
           kind: 'plan_ready',
           changes_made: null,
           created_at: new Date().toISOString(),
@@ -2675,7 +2685,18 @@ export default function ChatPanel({
                       {parts.after}
                     </span>
                   </div>
-                  <div style={{ marginTop: 10 }}>{PLAN_READY_FOLLOW_UP}</div>
+                  {/*
+                    From the ROW, not from a constant. The pace paragraph is
+                    per-trip, so a client rendering its own copy would show one
+                    number over a row that holds another — and rows written
+                    before the pace line existed still render exactly the one
+                    paragraph they carry.
+                  */}
+                  {planReadyBodyParagraphs(msg.content).map((para, i) => (
+                    <div key={i} style={{ marginTop: 10 }}>
+                      {para}
+                    </div>
+                  ))}
                 </div>
               </div>
             );

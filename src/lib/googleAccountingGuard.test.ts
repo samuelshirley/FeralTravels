@@ -116,6 +116,42 @@ describe('the usage logger the wrapper depends on', () => {
   });
 });
 
+/**
+ * A paid call made INSIDE a Penny tool must say which trip made it.
+ *
+ * `CallerRef` defaults to `{}`, so a call site that forgets the fourth argument
+ * still logs — with `trip_id` and `user_id` NULL. That is the worst shape the
+ * accounting can have: the row exists, the total is right, and the trip it
+ * belongs to cannot be found.
+ *
+ * MEASURED. `executeGetRoute` had no CallerRef, and the eight
+ * `google-directions success=false: no_results` rows behind the 2026-09-10 Zion
+ * incident were in `usage_events` the whole time — invisible to /admin/errors,
+ * to `dump-trip.ts`, and to anyone reading that trip. `server/fuel.ts:337` has
+ * always passed `{ userId, tripId: leg.tripId }`; the two Penny executors did
+ * not, and they are the ones a driver is sitting in front of.
+ */
+describe('Penny tool executors say who they are calling for', () => {
+  const claude = readFileSync(join(ROOT, 'src/lib/claude.ts'), 'utf8');
+
+  for (const [tool, call] of [
+    ['get_route', 'const directions = await getDirectionsAccounted('],
+    ['resolve_place', 'const result = await geocodePlaceAccounted('],
+  ] as const) {
+    it(`${tool} passes a CallerRef`, () => {
+      const at = claude.indexOf(call);
+      expect(at, `${tool}'s accounted call has moved`).toBeGreaterThan(-1);
+      // The whole call expression, to its closing `);`.
+      const block = claude.slice(at, claude.indexOf('\n  );', at));
+      expect(
+        block,
+        `${tool} logs its paid call with a null trip_id — the row exists and the trip it ` +
+          `belongs to cannot be found. Pass { userId, tripId: context.trip.id }.`,
+      ).toMatch(/\{\s*userId,\s*tripId:/);
+    });
+  }
+});
+
 describe('a trivial leg costs nothing (decision C10)', () => {
   const fuel = readFileSync(join(ROOT, 'src/server/fuel.ts'), 'utf8');
 

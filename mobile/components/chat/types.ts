@@ -37,6 +37,12 @@ export interface AppliedEvent {
    * position, so the transcript watched live and the one after a reload match.
    */
   planReady?: boolean;
+  /**
+   * The daily driving cap the server wrote that row at — the driver's own
+   * `trip_pace` answer, or null when they never gave one. Carried so the live
+   * splice composes the same paragraphs the stored row holds.
+   */
+  planReadyPaceHours?: number | null;
   truncated: boolean;
 }
 
