@@ -46,11 +46,12 @@ export const APP_STORE_URL =
  *
  * Lives here rather than inline in `PurchaseSheet` so there is a single place
  * to reword it and a single string for the banned-word sweep in
- * `paywallCopy.test.ts` to see. It says where the tap lands — the iPhone app —
+ * `paywallCopy.test.ts` to see. It says what the tap does — gets the app —
  * because "Continue" alone reads as "continue in this browser", which is the
- * one thing the web cannot do with a purchase.
+ * one thing the web cannot do with a purchase: there is no plan to pick until
+ * the app is on the phone.
  */
-export const APP_STORE_CTA_LABEL = 'Continue to the iPhone app';
+export const APP_STORE_CTA_LABEL = 'Download the app';
 
 /** One inbox, one human. Same address as `/support`. */
 export const SUPPORT_EMAIL = 'support@feraltravels.com';

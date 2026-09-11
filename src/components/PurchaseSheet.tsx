@@ -25,10 +25,13 @@ import type { PaywallProduct } from '@/types/entitlement';
  * SHEET_MAX_WIDTH ceiling, the viewport-capped height, and the tight vertical
  * rhythm below: every gap here is the smallest one that still separates.
  *
- * It renders prices it was handed. It does not decide who can buy, what a
- * plan costs, or whether the fake-purchase path is available — all three come
- * from `GET /api/me/entitlement`, and the server refuses the purchase again on
- * its own authority regardless of what this sheet chose to show.
+ * On the web proper it shows no prices at all: the plan is chosen in the
+ * iPhone app, so the sheet says so, offers the App Store, and offers the code
+ * field. The price rows appear only on the allowlisted fake-purchase path,
+ * where a row can actually be pressed. It does not decide who can buy, what a
+ * plan costs, or whether that path is available — all three come from
+ * `GET /api/me/entitlement`, and the server refuses the purchase again on its
+ * own authority regardless of what this sheet chose to show.
  */
 
 /**
@@ -88,7 +91,7 @@ export default function PurchaseSheet({
       data-testid="purchase-sheet-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Choose a plan"
+      aria-label={testPurchaseAllowed ? 'Choose a plan' : 'Get the app'}
       onClick={() => {
         if (!busy) onClose();
       }}
@@ -154,44 +157,47 @@ export default function PurchaseSheet({
           </button>
 
           {/* Title and subtitle are one block, not two — 2px apart, so they
-              read as a single heading and the prices start immediately. */}
+              read as a single heading and what follows starts immediately. */}
           <h2
             style={{
               fontSize: 16,
               fontWeight: 700,
               color: 'var(--tp-text, #333)',
-              margin: '0 0 2px',
+              margin: testPurchaseAllowed ? '0 0 2px' : '0 0 12px',
               paddingRight: 24,
             }}
           >
             Feral Travels
           </h2>
-          <p
-            style={{
-              fontSize: 12.5,
-              color: 'var(--tp-muted, #5C5C5C)',
-              margin: '0 0 14px',
-            }}
-          >
-            Choose a plan
-          </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {products.map((p) => (
-              <PlanRow
-                key={p.id}
-                product={p}
-                // Only an allowlisted account gets a pressable row. Everyone
-                // else reads the same prices and buys on the phone.
-                actionable={testPurchaseAllowed}
-                busy={busy}
-                pending={purchasingId === p.id}
-                onSelect={() => onPurchase(p.id)}
-              />
-            ))}
-          </div>
-
-          {onRedeemed && <PromoRedeemer busy={busy} onRedeemed={onRedeemed} />}
+          {/* The price rows exist only where a row can be pressed — the
+              allowlisted fake-purchase path. On the web proper there is
+              nothing to choose: the plan is picked in the iPhone app, so a
+              "Choose a plan" list here was two buttons that did nothing. */}
+          {testPurchaseAllowed && (
+            <>
+              <p
+                style={{
+                  fontSize: 12.5,
+                  color: 'var(--tp-muted, #5C5C5C)',
+                  margin: '0 0 14px',
+                }}
+              >
+                Choose a plan
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {products.map((p) => (
+                  <PlanRow
+                    key={p.id}
+                    product={p}
+                    busy={busy}
+                    pending={purchasingId === p.id}
+                    onSelect={() => onPurchase(p.id)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
 
           {testPurchaseAllowed ? (
             <div
@@ -216,10 +222,10 @@ export default function PurchaseSheet({
               money moves.
             </div>
           ) : (
-            <div data-testid="purchase-sheet-iphone-notice" style={{ marginTop: 12 }}>
-              {/* Small and quiet, sitting under the prices: it explains the
-                  button, it is not the pitch. The pitch already happened in
-                  Penny's message or on the block notice that opened this. */}
+            <div data-testid="purchase-sheet-iphone-notice">
+              {/* Small and quiet: it explains the button, it is not the pitch.
+                  The pitch already happened in Penny's message or on the block
+                  notice that opened this. */}
               <p
                 style={{
                   margin: '0 0 10px',
@@ -241,6 +247,7 @@ export default function PurchaseSheet({
                   alignItems: 'center',
                   justifyContent: 'center',
                   width: '100%',
+                  boxSizing: 'border-box',
                   padding: '10px 14px',
                   borderRadius: 'var(--tp-radius-sm, 8px)',
                   fontSize: 13,
@@ -254,6 +261,11 @@ export default function PurchaseSheet({
               </a>
             </div>
           )}
+
+          {/* The code field sits under the primary action on both paths: most
+              people who open this sheet are getting the app or buying, and the
+              comped few were told to look for a field, which this is. */}
+          {onRedeemed && <PromoRedeemer busy={busy} onRedeemed={onRedeemed} />}
 
           {error && (
             <div
@@ -278,16 +290,17 @@ export default function PurchaseSheet({
   );
 }
 
-/** One price. Pressable only where a purchase can actually be completed. */
+/**
+ * One price. Only ever rendered on the allowlisted fake-purchase path, so it
+ * is always a pressable button — the web proper never shows a row at all.
+ */
 function PlanRow({
   product,
-  actionable,
   busy,
   pending,
   onSelect,
 }: {
   product: PaywallProduct;
-  actionable: boolean;
   busy: boolean;
   pending: boolean;
   onSelect: () => void;
@@ -329,6 +342,10 @@ function PlanRow({
     justifyContent: 'space-between',
     gap: 10,
     width: '100%',
+    // globals.css has no universal border-box reset, so `width: 100%` plus
+    // padding and a border is 26px wider than the card — which is exactly how
+    // the rows used to poke out of the sheet's right edge on desktop.
+    boxSizing: 'border-box',
     textAlign: 'left',
     // 10/12 rather than 12/14: two rows this size sit as a list, which is what
     // a choice between two things should look like.
@@ -339,17 +356,6 @@ function PlanRow({
     background: 'var(--tp-surface-muted, #FBF8F3)',
     fontFamily: 'inherit',
   };
-
-  if (!actionable) {
-    // A div, not a disabled button: there is nothing wrong with this account,
-    // the price simply isn't purchasable on the web. A greyed-out button would
-    // read as "you can't have this".
-    return (
-      <div data-testid="purchase-sheet-plan" data-product-id={product.id} style={frame}>
-        {inner}
-      </div>
-    );
-  }
 
   return (
     <button
@@ -370,13 +376,14 @@ function PlanRow({
 }
 
 /**
- * The third way through this sheet: a code, instead of a price.
+ * The other way through this sheet: a code, instead of the app.
  *
- * It sits under the two plans rather than above them because it is the minority
- * path — most people who open this sheet are buying — but it is a peer of them,
- * not a footnote, which is why it gets a real field and a real button rather
- * than a "have a code?" link that expands into one. A disclosure triangle in
- * front of the one control a comped user was told to look for is a small cruelty.
+ * It sits under the primary action rather than above it because it is the
+ * minority path — most people who open this sheet are getting the app — but it
+ * is a peer of it, not a footnote, which is why it gets a real field and a real
+ * button rather than a "have a code?" link that expands into one. A disclosure
+ * triangle in front of the one control a comped user was told to look for is a
+ * small cruelty.
  *
  * It renders a text box and reports success upward. It does not decide what a
  * code is worth, whether this account may redeem one, or what happens next: the
@@ -459,6 +466,7 @@ function PromoRedeemer({ busy, onRedeemed }: { busy: boolean; onRedeemed: () => 
           style={{
             flex: 1,
             minWidth: 0,
+            boxSizing: 'border-box',
             padding: '9px 10px',
             borderRadius: 'var(--tp-radius-sm, 8px)',
             border: '1px solid var(--tp-border, #E6DFD4)',

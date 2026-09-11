@@ -209,16 +209,30 @@ test.describe('Subscriptions — trial', () => {
     await expect(cta).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('trip-chat-composer')).toBeDisabled();
 
-    // Both prices reachable, in the UI and not just in the payload.
+    // The sheet offers the two things the web can actually do — get the app,
+    // or redeem a code — and NO price rows. This account is not allowlisted for
+    // the fake purchase, so a row would be a button that does nothing; the
+    // plan is picked in the iPhone app. (The prices still travel in the
+    // payload — asserted on day 0 above — because Penny's bubble quotes them.)
     await cta.click();
-    const plans = page.getByTestId('purchase-sheet-plan');
-    await expect(plans).toHaveCount(2);
-    await expect(
-      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.ios.monthly"]'),
-    ).toBeVisible();
-    await expect(
-      page.locator('[data-testid="purchase-sheet-plan"][data-product-id="com.feraltravels.ios.annual"]'),
-    ).toBeVisible();
+    const sheet = page.getByTestId('purchase-sheet');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByTestId('purchase-sheet-plan')).toHaveCount(0);
+    await expect(sheet.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
+    await expect(sheet.getByTestId('promo-input')).toBeVisible();
+    await expect(sheet.getByTestId('promo-submit')).toBeVisible();
+
+    // And it fits. `width: 100%` plus padding on a content-box element was
+    // 26px wider than the card, so on desktop the button poked out of the
+    // sheet's right edge. Measured, not eyeballed: nothing inside the card
+    // may extend past the card.
+    const overflow = await sheet.evaluate((card) => {
+      const edge = card.getBoundingClientRect().right;
+      return [...card.querySelectorAll('*')]
+        .map((el) => Math.round(el.getBoundingClientRect().right - edge))
+        .filter((over) => over > 0);
+    });
+    expect(overflow).toEqual([]);
   });
 
   test('trial ceiling: $1.20 of spend ends the trial on day 3', async ({ page }) => {

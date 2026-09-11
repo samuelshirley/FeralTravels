@@ -117,12 +117,12 @@ describe('user-facing copy never says the s-word', () => {
     }
   });
 
-  it('names the destination on the one button that leaves the web', () => {
+  it('says what the one button that leaves the web does', () => {
     // "Continue" on its own reads as "continue in this browser", which is the
-    // single thing the web cannot do with a purchase. The label has to say
-    // where the tap lands, and it has to stay true on both surfaces — the web
-    // sheet points AT the iPhone app, and the phone is already in it.
-    expect(APP_STORE_CTA_LABEL).toBe('Continue to the iPhone app');
+    // single thing the web cannot do with a purchase. There is no plan to pick
+    // until the app is on the phone, so the button says the only thing the web
+    // can offer: the download.
+    expect(APP_STORE_CTA_LABEL).toBe('Download the app');
   });
 
   it('still names both prices — dropping the word must not drop the offer', () => {
