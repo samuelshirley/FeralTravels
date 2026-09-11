@@ -61,8 +61,15 @@ export type TripTab = 'list' | 'map' | 'chat';
  * that was wrong and the thing the guard tests assert. With no remembered trip
  * it still falls back to the trips index — a driver who has never opened a
  * trip has no chat to be returned to.
+ *
+ * The return type is a template literal rather than `string` so that Expo
+ * Router's typed `Href` accepts it directly. A `string` needs a cast at the
+ * call site, and the only cast that compiles there is `as '/trips'` — which is
+ * a lie about the value in every case but the fallback.
  */
-export function tripTabDestination(tab: TripTab, tripId: string | null): string {
+export type TripTabHref = '/trips' | `/trips/${string}?tab=${TripTab}`;
+
+export function tripTabDestination(tab: TripTab, tripId: string | null): TripTabHref {
   if (!tripId) return '/trips';
   return `/trips/${tripId}?tab=${tab}`;
 }

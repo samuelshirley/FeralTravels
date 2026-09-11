@@ -1212,6 +1212,10 @@ export default function ChatPanel({
    * panel was already in, and an error about a housekeeping GET would be noise.
    */
   useEffect(() => {
+    // A read-only template is not the viewer's trip, so the endpoint would 403
+    // on ownership anyway — and nobody can start a turn on it. Matches the
+    // native panel, which carries the same guard.
+    if (readonly) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -1225,6 +1229,13 @@ export default function ChatPanel({
         if (!isTurnInFlight(turn.status) || !key) return;
         // No optimistic bubble exists on a mount that did not send the turn, so
         // there is nothing to heal — what this wants is the terminal edge.
+        // Two consequences of reusing the poller, both wanted: its patch
+        // targets a bubble id that matches nothing (a no-op), and it still
+        // fires onActivity/onTripUpdated on the terminal edge — which is
+        // exactly right, because a reply landing while the driver is on
+        // another tab IS an unread message and a trip that may have changed.
+        // It also ends the run on a `timeout`, so an orphaned row clears the
+        // indicator after the deadline rather than pinning it on forever.
         await pollTurnUntilTerminal(`not-a-bubble-${key}`, key);
         endPennyRun(tripId, key);
         if (cancelled) return;
@@ -1247,7 +1258,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [tripId, pollTurnUntilTerminal]);
+  }, [tripId, readonly, pollTurnUntilTerminal]);
 
   // Shared inner engine for "user said X → Penny replies". `sendMessage`
   // is the free-text composer path (pulls from input/images state); the

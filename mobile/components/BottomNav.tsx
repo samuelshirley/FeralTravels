@@ -74,7 +74,7 @@ export default function BottomNav({
      * answer, and `tripTabDestination` owns that fallback.
      */
     if (!onChange) {
-      router.push(tripTabDestination(id, lastOpenTripId()) as "/trips");
+      router.push(tripTabDestination(id, lastOpenTripId()));
       return;
     }
     onChange(id);

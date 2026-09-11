@@ -828,6 +828,13 @@ export default function ChatPanel({
         // The bubble id is irrelevant here — this mount has no optimistic
         // bubble for a turn it did not send, so there is nothing to heal. What
         // it wants is the terminal edge, to stop the indicator and refresh.
+        // Two consequences of reusing the poller, both wanted: its patch
+        // targets a bubble id that matches nothing (a no-op), and it still
+        // fires onActivity/onTripUpdated on the terminal edge — which is
+        // exactly right, because a reply landing while the driver is on
+        // another tab IS an unread message and a trip that may have changed.
+        // It also ends the run on a `timeout`, so an orphaned row clears the
+        // indicator after the deadline rather than pinning it on forever.
         await pollTurnUntilTerminal(`not-a-bubble-${key}`, key);
         endPennyRun(tripId, key);
         if (cancelled) return;
