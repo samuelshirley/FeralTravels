@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+type Mode = 'revoke' | 'reactivate';
+
 interface Props {
   userId: string;
   userLabel: string;
@@ -13,8 +15,23 @@ interface Props {
    * the UI is supposed to argue back rather than let that happen quietly.
    */
   paidThrough: string | null;
-  /** Already revoked — the button has nothing left to do. */
+  /** The row is `revoked`. This control then points the other way. */
   alreadyRevoked: boolean;
+  /**
+   * What the account lands back on, decided SERVER-side by `planReactivation`
+   * + `reactivationLandingLine`. Null when the undo is not available.
+   *
+   * Computed there and not here on purpose: which status comes back is a
+   * payments decision, and a client that worked it out for itself would be a
+   * second implementation of the rule that decides whether somebody has paid.
+   */
+  reactivateLanding: string | null;
+  /**
+   * Why the undo is unavailable, when it is — today that is only a row revoked
+   * before `pre_revoke_status` existed. Shown instead of the button, because a
+   * disabled control with no sentence is what this whole change is fixing.
+   */
+  reactivateBlockedMessage: string | null;
 }
 
 const inputStyle: React.CSSProperties = {
@@ -30,23 +47,32 @@ const inputStyle: React.CSSProperties = {
 };
 
 /**
- * Break-glass revoke, and the argument against pressing it.
+ * Break-glass access, both directions.
  *
- * There is deliberately NO refund button anywhere near this. Apple owns the
- * money; there is no developer-initiated refund for IAP, and a button implying
- * otherwise would be a lie in the UI. This one control removes access and does
- * nothing else.
+ * The file is still named for the revoke because that is the dangerous half and
+ * the half a reader comes looking for. It grew the undo on 2026-09-10: before
+ * that the button turned into a dead "Access already revoked" and there was no
+ * route, no repo function and no UI that moved a row back out, so a misfire —
+ * or a `REFUND` webhook that turned out to be wrong — was unfixable from the
+ * product.
  *
- * The obstruction is the point, mirroring DeleteAccountSection: the reason
- * field starts empty and the destructive button stays disabled until it is
- * filled in, because a typed sentence is what turns a click into a decision
- * that is still explicable months later.
+ * There is deliberately NO refund button anywhere near either of them. Apple
+ * owns the money; there is no developer-initiated refund for IAP, and a button
+ * implying otherwise would be a lie in the UI.
+ *
+ * The obstruction is shared and the weight is not. Both directions demand a
+ * typed reason — that is what makes a click a decision still explicable months
+ * later, and both are recorded — but only the revoke wears danger styling.
+ * Restoring access is the recoverable direction, and dressing it in the same
+ * red as the one that takes a year away teaches an admin to ignore red.
  */
 export default function RevokeAccessControl({
   userId,
   userLabel,
   paidThrough,
   alreadyRevoked,
+  reactivateLanding,
+  reactivateBlockedMessage,
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -57,6 +83,7 @@ export default function RevokeAccessControl({
   // Same re-entrancy guard as the delete dialog: state is async, a ref is not.
   const inFlight = useRef(false);
 
+  const mode: Mode = alreadyRevoked ? 'reactivate' : 'revoke';
   const armed = reason.trim().length > 0;
 
   useEffect(() => {
@@ -82,24 +109,29 @@ export default function RevokeAccessControl({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/subscription/revoke', {
+      const res = await fetch(`/api/admin/subscription/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, reason: reason.trim() }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error(body?.error || `Revoke failed (${res.status})`);
+        throw new Error(body?.error || `${mode === 'revoke' ? 'Revoke' : 'Re-activation'} failed (${res.status})`);
       }
       close();
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Revoke failed');
+      setError(e instanceof Error ? e.message : 'Failed');
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
   }
+
+  // The undo is unavailable only for a row revoked before `pre_revoke_status`
+  // existed — the status it should come back to is not recorded anywhere on the
+  // row, and guessing it is how an expired account silently becomes a free one.
+  const undoBlocked = mode === 'reactivate' && reactivateBlockedMessage !== null;
 
   return (
     <>
@@ -107,28 +139,47 @@ export default function RevokeAccessControl({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          disabled={alreadyRevoked}
-          style={{
-            padding: '8px 14px',
-            fontSize: 13,
-            fontWeight: 600,
-            borderRadius: 'var(--tp-radius-sm, 8px)',
-            border: '1px solid rgba(198, 93, 74, 0.5)',
-            background: alreadyRevoked ? 'var(--tp-surface-muted)' : 'var(--tp-danger-muted)',
-            color: alreadyRevoked ? 'var(--tp-subtle)' : 'var(--tp-danger)',
-            cursor: alreadyRevoked ? 'default' : 'pointer',
-          }}
+          disabled={undoBlocked}
+          style={
+            mode === 'reactivate'
+              ? {
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  borderRadius: 'var(--tp-radius-sm, 8px)',
+                  border: '1px solid var(--tp-border)',
+                  background: undoBlocked ? 'var(--tp-surface-muted)' : 'var(--tp-surface)',
+                  color: undoBlocked ? 'var(--tp-subtle)' : 'var(--tp-text)',
+                  cursor: undoBlocked ? 'default' : 'pointer',
+                }
+              : {
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  borderRadius: 'var(--tp-radius-sm, 8px)',
+                  border: '1px solid rgba(198, 93, 74, 0.5)',
+                  background: 'var(--tp-danger-muted)',
+                  color: 'var(--tp-danger)',
+                  cursor: 'pointer',
+                }
+          }
         >
-          {alreadyRevoked ? 'Access already revoked' : 'Revoke access'}
+          {mode === 'reactivate' ? 'Re-activate access' : 'Revoke access'}
         </button>
         <span style={{ fontSize: 11, color: 'var(--tp-subtle)', maxWidth: '60ch', lineHeight: 1.5 }}>
-          Break-glass only — genuine abuse, or a REFUND webhook that never
-          arrived. This is not a refund: the money is Apple&apos;s to return and
-          nothing here moves it.{' '}
-          <strong style={{ color: 'var(--tp-muted)' }}>
-            Cancelling is not a reason to press this
-          </strong>{' '}
-          — a cancelled subscriber keeps the term they bought.
+          {mode === 'reactivate' ? (
+            reactivateBlockedMessage ?? reactivateLanding
+          ) : (
+            <>
+              Break-glass only — genuine abuse, or a REFUND webhook that never
+              arrived. This is not a refund: the money is Apple&apos;s to return and
+              nothing here moves it.{' '}
+              <strong style={{ color: 'var(--tp-muted)' }}>
+                Cancelling is not a reason to press this
+              </strong>{' '}
+              — a cancelled subscriber keeps the term they bought.
+            </>
+          )}
         </span>
       </div>
 
@@ -136,7 +187,7 @@ export default function RevokeAccessControl({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Revoke access"
+          aria-label={mode === 'reactivate' ? 'Re-activate access' : 'Revoke access'}
           onClick={(e) => {
             if (e.target === e.currentTarget && !busy) close();
           }}
@@ -163,15 +214,18 @@ export default function RevokeAccessControl({
             }}
           >
             <h3 style={{ margin: 0, marginBottom: 8, fontSize: 16, fontWeight: 700 }}>
-              Revoke access for {userLabel}?
+              {mode === 'reactivate'
+                ? `Re-activate access for ${userLabel}?`
+                : `Revoke access for ${userLabel}?`}
             </h3>
 
             {/*
               The sentence the design doc asks for, verbatim in shape:
               "This user has paid through 2027-03-14." Shown only when there IS
-              time left, so it never becomes wallpaper.
+              time left, so it never becomes wallpaper. Revoke only — on the way
+              back it is not an argument against anything.
             */}
-            {paidThrough && (
+            {mode === 'revoke' && paidThrough && (
               <p
                 style={{
                   margin: '0 0 10px',
@@ -188,11 +242,43 @@ export default function RevokeAccessControl({
               </p>
             )}
 
+            {/*
+              What they land back on, before the press rather than after it.
+              "Re-activated" is not a state: the admin is handing back a
+              specific status with a specific end date, and both are on the row
+              already.
+            */}
+            {mode === 'reactivate' && reactivateLanding && (
+              <p
+                style={{
+                  margin: '0 0 10px',
+                  padding: '8px 10px',
+                  background: 'var(--tp-surface-muted)',
+                  borderRadius: 'var(--tp-radius-sm, 8px)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--tp-text)',
+                }}
+              >
+                {reactivateLanding}
+              </p>
+            )}
+
             <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--tp-muted)', lineHeight: 1.6 }}>
-              Blocks planning and closes their existing trips immediately. It does not
-              refund anything — refunds are requested from Apple by the user, and Apple
-              decides. If they simply cancelled, close this dialog: they keep the term
-              they bought.
+              {mode === 'reactivate' ? (
+                <>
+                  Re-opens planning and their existing trips. It hands back the plan that
+                  was there when it was revoked — not a new one — so an account that had
+                  already run out comes back run out.
+                </>
+              ) : (
+                <>
+                  Blocks planning and closes their existing trips immediately. It does not
+                  refund anything — refunds are requested from Apple by the user, and Apple
+                  decides. If they simply cancelled, close this dialog: they keep the term
+                  they bought.
+                </>
+              )}
             </p>
 
             <label
@@ -206,7 +292,11 @@ export default function RevokeAccessControl({
               ref={inputRef}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. REFUND notification never arrived — refund confirmed in App Store Connect"
+              placeholder={
+                mode === 'reactivate'
+                  ? 'e.g. revoked by mistake — the REFUND was for a different account'
+                  : 'e.g. REFUND notification never arrived — refund confirmed in App Store Connect'
+              }
               disabled={busy}
               style={inputStyle}
             />
@@ -245,12 +335,23 @@ export default function RevokeAccessControl({
                   fontWeight: 700,
                   borderRadius: 'var(--tp-radius-sm, 8px)',
                   border: 'none',
-                  background: armed && !busy ? 'var(--tp-danger)' : 'var(--tp-border)',
+                  background:
+                    armed && !busy
+                      ? mode === 'reactivate'
+                        ? 'var(--tp-primary)'
+                        : 'var(--tp-danger)'
+                      : 'var(--tp-border)',
                   color: armed && !busy ? '#FFFFFF' : 'var(--tp-subtle)',
                   cursor: armed && !busy ? 'pointer' : 'default',
                 }}
               >
-                {busy ? 'Revoking…' : 'Revoke access'}
+                {mode === 'reactivate'
+                  ? busy
+                    ? 'Re-activating…'
+                    : 'Re-activate access'
+                  : busy
+                    ? 'Revoking…'
+                    : 'Revoke access'}
               </button>
             </div>
           </div>

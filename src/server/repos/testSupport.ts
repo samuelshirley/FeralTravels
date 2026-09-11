@@ -27,8 +27,11 @@ import {
   MICROCENTS_PER_DOLLAR,
   STOP_MICROCENTS,
   WATCH_MICROCENTS,
+  reactivateSubscription,
+  revokeSubscription,
   upsertSubscription,
 } from '@/server/payments';
+import type { ReactivationPlan } from '@/server/payments';
 import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
 import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
 import { seededLegDateISO, seededTripStartISO } from '@/app/api/test/seedDates';
@@ -764,6 +767,26 @@ export interface SubscriptionFixtureInput {
     /** Negative for a period that has already ended. Null means "no end date". */
     currentPeriodEndDaysFromNow?: number | null;
   } | null;
+  /**
+   * Run one of the two ADMIN break-glass actions against this fixture account,
+   * after the row above is written.
+   *
+   * It calls `revokeSubscription` / `reactivateSubscription` — the real
+   * functions the admin route calls, not a shortcut around them — because the
+   * whole substance of the undo is what those two do to `pre_revoke_status`,
+   * and a fixture that wrote the columns itself would assert nothing about it.
+   *
+   * The admin ROUTE is unreachable from CI: `isAdminEmail` requires an address
+   * on a hardcoded allowlist of one real person, and no fixture user can be on
+   * it or the suite would be one bug away from a real admin session. So the
+   * route's own half — zod, the 400s, the refusal sentences — is unit-tested
+   * (`reactivateRoute.test.ts`) and what runs here is everything below it.
+   */
+  adminAction?: {
+    action: 'revoke' | 'reactivate';
+    /** Recorded verbatim, exactly as an admin's typed reason would be. */
+    reason: string;
+  } | null;
 }
 
 export interface SubscriptionFixtureState {
@@ -773,6 +796,12 @@ export interface SubscriptionFixtureState {
   anthropicMicrocents: number;
   subscriptionStatus: SubscriptionStatus | null;
   currentPeriodEnd: string | null;
+  /**
+   * What the re-activation decided, when one was asked for. A refusal comes
+   * back as `{ ok: false, ... }` rather than throwing, so a spec can assert the
+   * refusals as well as the happy path.
+   */
+  adminActionResult?: ReactivationPlan | { ok: true; action: 'revoked' };
 }
 
 /**
@@ -869,6 +898,21 @@ export async function setSubscriptionFixtureState(
     });
   }
 
+  let adminActionResult: SubscriptionFixtureState['adminActionResult'];
+  if (opts.adminAction) {
+    // `E2E fixture` rather than a real address: these rows land in `/admin` on
+    // a preview, which is a copy-on-write clone of production, and an audit
+    // entry naming a person who did not press anything is worse than one
+    // naming the test suite.
+    const by = 'E2E fixture';
+    if (opts.adminAction.action === 'revoke') {
+      await revokeSubscription(userId, by, opts.adminAction.reason);
+      adminActionResult = { ok: true, action: 'revoked' };
+    } else {
+      adminActionResult = await reactivateSubscription(userId, by, opts.adminAction.reason);
+    }
+  }
+
   const [userRow] = await db
     .select({ createdAt: users.createdAt, comped: users.comped })
     .from(users)
@@ -882,6 +926,7 @@ export async function setSubscriptionFixtureState(
     anthropicMicrocents: microcents,
     subscriptionStatus: opts.subscription?.status ?? null,
     currentPeriodEnd: currentPeriodEnd?.toISOString() ?? null,
+    adminActionResult,
   };
 }
 

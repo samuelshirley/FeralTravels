@@ -53,6 +53,24 @@ export type SubscriptionStatus =
   | 'refunded'
   | 'revoked';
 
+/**
+ * What the row's status was immediately BEFORE an admin revoked it, so the
+ * revoke can be undone. Written by `revokeSubscription`, consumed and cleared
+ * by `reactivateSubscription`.
+ *
+ * `'none'` is the extra member and it is load-bearing: revoking an account
+ * that had no subscription row at all CREATES one, and the honest thing to
+ * restore is not a status but the absence of a row — the seven-day trial is
+ * derived from `users.created_at` and is deliberately never stored. Without
+ * this member that case is indistinguishable from a row revoked before the
+ * column existed, which is refused, and a mistakenly-revoked trial user is
+ * exactly who the undo exists for.
+ *
+ * NULL means "not recorded" — a row revoked before migration 0040. Those
+ * cannot be re-activated honestly and are refused rather than guessed at.
+ */
+export type PreRevokeStatus = SubscriptionStatus | 'none';
+
 /** Where the entitlement came from. `fake` never exists in production data. */
 export type SubscriptionSource = 'apple_iap' | 'promo' | 'admin' | 'fake';
 
@@ -134,6 +152,18 @@ export interface PaywallCopy {
   message: string;
   /** Label on the button inside her bubble. */
   buttonLabel: string;
+  /**
+   * Heading for the surfaces that HAVE one — the app's `PlanRequiredOverlay`.
+   * Penny's chat bubble has no heading and ignores it.
+   *
+   * OPTIONAL, and absent means "keep your own default". Three of the four
+   * block reasons are a pause and the overlay's own "Planning is paused" says
+   * that better than a server round-trip would; `revoked` is not a pause, and
+   * its heading carries the joke the body then explains. Sending it from the
+   * server is what lets that line be reworded without a TestFlight binary —
+   * the same reason `message` and `buttonLabel` travel.
+   */
+  heading?: string;
 }
 
 /**

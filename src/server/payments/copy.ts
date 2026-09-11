@@ -33,10 +33,22 @@ export function paywallCopy(verdict: AccountVerdict): PaywallCopy | null {
       };
 
     case 'revoked':
+      // The one funny one, and the owner's call. It is allowed to be a joke
+      // because being suspended is the one refusal that is NOT the user's
+      // doing and NOT ours either — unlike the cap above, where a gag would
+      // read as blaming somebody for our own cost regression.
+      //
+      // The joke may move; the two facts under it may not. "Temporarily
+      // suspended" tells a locked-out user they are locked out, and "email
+      // support" tells them the one thing they can do about it. A gag that
+      // leaves either ambiguous is worse than the dry sentence it replaced,
+      // so `paywallCopy.test.ts` pins both against every future rewrite.
       return {
+        heading: 'Penny has lost all her balls in the river',
         message:
-          "I can't plan on this account any more — if a refund went through, that's what " +
-          "follows it. If that looks wrong, tell us and we'll fix it.",
+          "I've lost every last ball in the river, so there's no fetching anything today. " +
+          'This account is temporarily suspended — email support and a real person will ' +
+          'pick it up.',
         buttonLabel: 'Email support',
       };
 

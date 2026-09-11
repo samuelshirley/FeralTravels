@@ -74,6 +74,17 @@ export default function PlanRequiredOverlay({
   const paragraphs = (entitlement.paywall?.message ?? FALLBACK).split(/\n{2,}/);
   const buttonLabel =
     entitlement.paywall?.buttonLabel ?? (sellable ? "Keep planning" : "Email support");
+  /**
+   * Server-authored when it needs to be, ours otherwise.
+   *
+   * "Planning is paused" is right for three of the four reasons and stays the
+   * default — a heading on the wire for a line that never changes is a round
+   * trip bought for nothing. A suspended account is the exception: it is not a
+   * pause, its heading carries the joke its body then explains, and both have
+   * to be rewordable without cutting a TestFlight binary. That is the same
+   * argument `message` and `buttonLabel` already travel under.
+   */
+  const heading = entitlement.paywall?.heading ?? "Planning is paused";
 
   return (
     <View style={styles.root}>
@@ -87,7 +98,7 @@ export default function PlanRequiredOverlay({
       />
 
       <View style={styles.card}>
-        <Text style={styles.heading}>Planning is paused</Text>
+        <Text style={styles.heading}>{heading}</Text>
 
         {paragraphs.map((para, i) => (
           <Text key={i} style={[styles.body, i > 0 ? styles.paraGap : null]}>

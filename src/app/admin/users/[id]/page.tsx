@@ -15,6 +15,8 @@ import {
   getAccountVerdict,
   getSubscriptionRow,
   paywallEnabled,
+  planReactivation,
+  reactivationLandingLine,
   MICROCENTS_PER_DOLLAR,
   STOP_MICROCENTS,
   WATCH_MICROCENTS,
@@ -161,6 +163,38 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
   const periodEnd = subscription?.currentPeriodEnd ?? null;
   const paidThrough =
     periodEnd && periodEnd.getTime() > Date.now() ? periodEnd.toISOString().slice(0, 10) : null;
+
+  /*
+   * What pressing "Re-activate" would do, decided by the payments module rather
+   * than by this page. `planReactivation` is the same pure function the route
+   * calls, so what the admin reads here and what the button does cannot drift.
+   *
+   * The landing line takes the RAW period end, not `paidThrough` above — that
+   * one is null for a date already past, and a term that expired while the
+   * account was revoked is exactly the case this sentence has to be honest
+   * about.
+   */
+  const reactivation = planReactivation(subscription ?? null);
+  const reactivateLanding = reactivationLandingLine(
+    reactivation,
+    periodEnd ? periodEnd.toISOString().slice(0, 10) : null,
+  );
+  const reactivateBlockedMessage =
+    !reactivation.ok && reactivation.reason === 'no_pre_revoke_status'
+      ? reactivation.message
+      : null;
+
+  /*
+   * The two admin actions, oldest first, so the history reads in order instead
+   * of the latest one silently replacing the last. They live in
+   * `subscription_events` rather than on the row because the row has three
+   * columns for a revoke and they only ever describe the LATEST one — a second
+   * revoke overwrites the first, and an undo clears them outright.
+   */
+  const accessActions = subEvents
+    .filter((e) => e.type === 'ADMIN_REVOKE' || e.type === 'ADMIN_REACTIVATE')
+    .slice()
+    .reverse();
 
   const lifetimeUsd = microcentsToDollars(detail.spend.lifetimeMicrocents);
   const sevenDayUsd = microcentsToDollars(detail.spend.microcents7d);
@@ -403,6 +437,53 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           )}
 
           {/*
+            Every admin action on this account's access, oldest first.
+
+            The banner above is the CURRENT state and says nothing about how it
+            got there: it disappears the moment a revoke is undone, and a second
+            revoke overwrites the first. This list is the history — an
+            append-only read of `subscription_events` — so a revoke that was
+            reversed still reads as a revoke that happened, which is the whole
+            reason clearing those three columns on an undo is safe.
+
+            Rendered only when there is something to say. Almost every account
+            has never had either button pressed, and a heading saying so on
+            every page is the filler the copy rule keeps out.
+          */}
+          {accessActions.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div
+                style={{ fontSize: 11, fontWeight: 700, color: 'var(--tp-subtle)', marginBottom: 6 }}
+              >
+                ACCESS HISTORY
+              </div>
+              {accessActions.map((e) => {
+                const p = (e.payload ?? {}) as { by?: string; reason?: string };
+                const revoke = e.type === 'ADMIN_REVOKE';
+                return (
+                  <div
+                    key={e.id}
+                    style={{
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                      color: 'var(--tp-text)',
+                      paddingLeft: 10,
+                      borderLeft: `2px solid ${revoke ? 'var(--tp-danger)' : 'var(--tp-primary)'}`,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <strong style={{ color: revoke ? 'var(--tp-danger)' : 'var(--tp-primary)' }}>
+                      {revoke ? 'Revoked' : 'Re-activated'}
+                    </strong>{' '}
+                    {fmtAbs(e.receivedAt)} by {p.by ?? '(unknown)'} —{' '}
+                    {p.reason ?? '(no reason recorded)'}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/*
             The paywall override sits ABOVE revoke deliberately: this is the
             routine one — make a test user, flip it, watch the wall — and
             revoke is break-glass. Putting the destructive control last keeps
@@ -465,6 +546,8 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               userLabel={detail.user.email || detail.user.name || detail.user.id}
               paidThrough={paidThrough}
               alreadyRevoked={subscription?.status === 'revoked'}
+              reactivateLanding={reactivateLanding}
+              reactivateBlockedMessage={reactivateBlockedMessage}
             />
           </div>
         </section>
@@ -539,10 +622,12 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
             Subscription events ({subEvents.length})
           </h2>
           <p style={{ fontSize: 11, color: 'var(--tp-subtle)', margin: '0 0 12px', lineHeight: 1.5 }}>
-            Every store notification we accepted for this account. outcome is the
-            column to read: an ignored_duplicate explains a retry, and an
-            ignored_stale next to a DID_RENEW explains a subscription that looks like it
-            should be active and is not.
+            Every store notification we accepted for this account, plus the
+            non-store rows that go through the same ledger — a promo redemption, a
+            fake purchase, and the two admin access actions summarised above.
+            outcome is the column to read: an ignored_duplicate explains a retry, and
+            an ignored_stale next to a DID_RENEW explains a subscription that looks
+            like it should be active and is not.
           </p>
           {subEvents.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--tp-subtle)' }}>

@@ -1,0 +1,21 @@
+-- The one fact that makes a break-glass revoke undoable.
+--
+-- `revokeSubscription` overwrites `subscriptions.status` in place, so the
+-- moment it runs the previous status — active, grace, cancelled, expired — is
+-- gone. `current_period_end`, `product_id` and `source` survive, and none of
+-- them can tell an active plan from an expired one, so nothing on the row said
+-- whether an undo should hand back paid time or nothing at all.
+--
+-- Values: any `SubscriptionStatus`, or the string 'none' meaning "there was no
+-- subscription row before the revoke" (revoking a trial user CREATES one, and
+-- what that undoes to is the absence of a row, not a status).
+--
+-- NULL is the pre-migration shape and stays meaningful: rows revoked before
+-- this column existed cannot be re-activated honestly, and the code refuses
+-- them with a sentence rather than guessing. There is deliberately NO backfill
+-- — the history that could inform one lives in `subscription_events` and is a
+-- decision for a human, not a DEFAULT.
+--
+-- Additive; the code half reads it as nullable, so either order of deploy is
+-- safe.
+ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "pre_revoke_status" text;

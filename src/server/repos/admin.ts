@@ -1,6 +1,7 @@
 import 'server-only';
 import { sql, desc, gte, eq, and, or, ilike, asc, inArray } from 'drizzle-orm';
 import { db } from '@/server/db/client';
+import { INTERNAL_EMAIL_PATTERNS } from '@/lib/internalAccounts';
 import {
   users,
   trips,
@@ -13,6 +14,25 @@ import {
   deletedUsers,
   subscriptionEvents,
 } from '@/server/db/schema';
+
+/**
+ * `users` rows that are ours — the test accounts we mint, and the owner's own
+ * dated signups. See `internalAccounts.ts` for the patterns and for why every
+ * one of them is tight rather than a wildcard.
+ *
+ * `~*` is Postgres's case-insensitive regex operator. It is used instead of
+ * ILIKE because LIKE has no character classes, and the owner's pattern has to
+ * say "digits and dots" — `samuelashirley+<anything>@gmail.com` is an address
+ * a stranger can sign up with, and a wildcard would hide them.
+ *
+ * Only the user-COUNT cards use this. The user list, the top-spender table and
+ * every spend figure stay unfiltered: a fixture that spent $7 still spent $7,
+ * and the list is where you go to find and delete these rows.
+ */
+const isInternalUser = or(
+  ...INTERNAL_EMAIL_PATTERNS.map((pattern) => sql`${users.email} ~* ${pattern}`)
+)!;
+const isRealUser = sql`NOT (${isInternalUser})`;
 
 export async function getAdminOverview() {
   const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -30,8 +50,9 @@ export async function getAdminOverview() {
     [{ newUsers24h }],
     [{ newUsers7d }],
     [{ totalDeletedUsers }],
+    [{ internalUsers }],
   ] = await Promise.all([
-    db.select({ totalUsers: sql<number>`COUNT(*)::int` }).from(users),
+    db.select({ totalUsers: sql<number>`COUNT(*)::int` }).from(users).where(isRealUser),
     db
       .select({ totalTrips: sql<number>`COUNT(*)::int` })
       .from(trips)
@@ -51,15 +72,26 @@ export async function getAdminOverview() {
     db
       .select({ newUsers24h: sql<number>`COUNT(*)::int` })
       .from(users)
-      .where(gte(users.createdAt, since24)),
-    db.select({ newUsers7d: sql<number>`COUNT(*)::int` }).from(users).where(gte(users.createdAt, since7d)),
+      .where(and(isRealUser, gte(users.createdAt, since24))),
+    db
+      .select({ newUsers7d: sql<number>`COUNT(*)::int` })
+      .from(users)
+      .where(and(isRealUser, gte(users.createdAt, since7d))),
     // Tombstones, not live users — `totalUsers` above counts who is still here,
     // this counts who left. Both matter and neither implies the other.
     db.select({ totalDeletedUsers: sql<number>`COUNT(*)::int` }).from(deletedUsers),
+    // Counted and SHOWN, not silently dropped. If this number ever jumps, a
+    // pattern in `internalAccounts.ts` is matching real signups — which is the
+    // one failure of that filter nobody would otherwise notice.
+    db
+      .select({ internalUsers: sql<number>`COUNT(*)::int` })
+      .from(users)
+      .where(isInternalUser),
   ]);
 
   return {
     totalUsers,
+    internalUsers,
     totalTrips,
     totalTemplates,
     totalLegs,
@@ -651,6 +683,15 @@ export async function getSubscriptionEventsForUser(userId: string, limit = 50) {
       outcome: subscriptionEvents.outcome,
       receivedAt: subscriptionEvents.receivedAt,
       eventTimeMs: subscriptionEvents.eventTimeMs,
+      /**
+       * Selected for the ADMIN_REVOKE / ADMIN_REACTIVATE rows, which carry the
+       * admin's address and their typed reason in here and nowhere else — the
+       * `subscriptions` columns only ever describe the latest revoke, and an
+       * undo clears them. A store payload is large and nothing renders it, but
+       * splitting this into a second query for fifty rows the page already
+       * fetches would be the wrong trade.
+       */
+      payload: subscriptionEvents.payload,
     })
     .from(subscriptionEvents)
     .where(eq(subscriptionEvents.userId, userId))
