@@ -123,3 +123,23 @@ export function usePennyRunning(tripId: string): boolean {
   const read = () => isPennyRunning(tripId);
   return useSyncExternalStore(subscribePennyRuns, read, read);
 }
+
+/**
+ * Is the transcript safe to replace wholesale with the server's copy?
+ *
+ * The mount-time turn check reloads the transcript when the turn it was
+ * waiting on lands. `setMessages` REPLACES the array, and an optimistic row
+ * exists only in client state — so if the driver has sent something in the
+ * meantime, a careless reload deletes their own message and the reply Penny is
+ * streaming into it, mid-answer. That is a worse bug than the one the reload
+ * exists to fix.
+ *
+ * Standing aside rather than merging, because merging an optimistic row with
+ * the persisted copy of itself is how the message appears twice. The send path
+ * refreshes the transcript itself when it lands, so nothing is lost by waiting.
+ */
+export function canReplaceTranscript(
+  rows: ReadonlyArray<{ id?: string | null; streaming?: boolean }>
+): boolean {
+  return !rows.some((m) => m.id?.startsWith('optimistic-') || m.streaming);
+}

@@ -31,6 +31,7 @@ import { PAYWALL_MESSAGE_ID } from '@/lib/paywallNotice';
 import {
   beginPennyRun,
   endPennyRun,
+  canReplaceTranscript,
   isTurnInFlight,
   reconcilePennyRun,
   usePennyRunning,
@@ -1247,8 +1248,20 @@ export default function ChatPanel({
         // Guard on the shape, the way the native trip loader does: a malformed
         // body must not blank a transcript the user is already reading. The
         // turn is over either way, which is the part that matters.
+        /*
+         * NEVER over a live send. `setMessages` REPLACES the array, and an
+         * optimistic row exists only in client state — so if the driver has
+         * sent something since this effect started, replacing the transcript
+         * would delete their own message and the reply Penny is streaming into
+         * it, mid-answer. That is a worse bug than the one this effect fixes.
+         *
+         * Skipping rather than merging, because merging an optimistic row with
+         * the persisted copy of itself is how you get the message twice. The
+         * send path refreshes the transcript itself when it lands, so nothing
+         * is lost by standing aside here.
+         */
         if (Array.isArray(fresh?.messages)) {
-          setMessages(fresh.messages);
+          setMessages((prev) => (canReplaceTranscript(prev) ? fresh.messages : prev));
           setHasMore(!!fresh.hasMore);
         }
       } catch {

@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   beginPennyRun,
+  canReplaceTranscript,
   endPennyRun,
   isPennyRunning,
   isTurnInFlight,
@@ -148,5 +149,31 @@ describe('resetPennyRuns', () => {
     resetPennyRuns();
     expect(isPennyRunning(TRIP)).toBe(false);
     expect(isPennyRunning(OTHER)).toBe(false);
+  });
+});
+
+describe('canReplaceTranscript', () => {
+  /**
+   * The mount-time turn check reloads the transcript when the turn it was
+   * waiting on lands, and `setMessages` REPLACES the array. An optimistic row
+   * exists only in client state, so replacing over a live send deletes the
+   * driver's own message and the reply Penny is streaming into it — worse than
+   * the bug the reload exists to fix.
+   */
+  it('allows the replace when nothing local is pending', () => {
+    expect(canReplaceTranscript([])).toBe(true);
+    expect(canReplaceTranscript([{ id: 'm1' }, { id: 'm2', streaming: false }])).toBe(true);
+  });
+
+  it('refuses over an optimistic row — a message the server has never seen', () => {
+    expect(canReplaceTranscript([{ id: 'm1' }, { id: 'optimistic-172' }])).toBe(false);
+  });
+
+  it('refuses over a bubble Penny is still streaming into', () => {
+    expect(canReplaceTranscript([{ id: 'm1' }, { id: 'm2', streaming: true }])).toBe(false);
+  });
+
+  it('survives rows with no id at all rather than throwing', () => {
+    expect(canReplaceTranscript([{}, { id: null }, { id: undefined }])).toBe(true);
   });
 });

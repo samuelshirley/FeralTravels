@@ -85,6 +85,20 @@ describe('the in-flight indicator is not screen state', () => {
       expect(src).toContain('reconcilePennyRun(tripId, turn)');
       expect(src).toContain('isTurnInFlight(turn.status)');
     });
+
+    /**
+     * And that the reload it does on the way out cannot delete a send made
+     * while it was waiting. `setMessages` replaces the array; an optimistic row
+     * exists only in client state. The rule is `canReplaceTranscript`, unit
+     * tested in pennyRunStore.test.ts — this pins the wiring, which is the half
+     * a pure test cannot see.
+     */
+    it(`${file} never replaces the transcript over a live send`, () => {
+      const src = code(file);
+      expect(src).toContain('canReplaceTranscript(prev)');
+      // The unguarded form, which is what a careless edit reverts to.
+      expect(src).not.toMatch(/setMessages\(fresh\.messages\)/);
+    });
   }
 });
 
