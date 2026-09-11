@@ -28,6 +28,14 @@ import {
 } from "@/server/google/accounted";
 import { setDeclaredFuelState } from "@/server/repos/trips";
 import { splitLegByDriveTime } from "@/lib/penny/split-route";
+import {
+  buildTurnTrace,
+  promptFingerprint,
+  traceToolCall,
+  type TracedModelCall,
+  type TracedToolCall,
+  type TurnTrace,
+} from "@/lib/penny/turnTrace";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
 import {
   resolveMapsLinksInMessage,
@@ -371,6 +379,8 @@ When \`vehicle_profile_blocked\` is **true** in the context JSON, the driver's s
 </vehicle_profile_gate>
 
 <routing_engine_limits>
+NEVER CHARACTERISE THE SYSTEM. You report what a tool returned; you do not diagnose the app. You have no visibility into our routing engine, our coverage, our data sources or our limits, and sentences like "this is a hard limit of the app's routing engine" or "it plans drivable paved roads correctly for most of North America" are inventions — one of those was said to a real driver about a trip that was perfectly drivable. If a lookup fails, say what failed: THIS point could not be routed to, THIS lookup is temporarily unavailable. Never generalise from one failed call to a claim about the product. The same rule you already follow for distances applies to architecture: you do not author facts the tools did not give you.
+
 Google Directions ONLY plans drivable paved routes with optional avoidance of motorways, tolls, or ferries. It does NOT "prefer gravel", guarantee dirt-only itineraries, certify forest-road legality, or replace local knowledge. When the user wants maximum off-pavement / small-road travel, acknowledge the limit honestly in one clause: Directions still optimizes what Google considers legal driving roads; gravel-first long corridors need manual waypoints (add_stop selected + distance_from_start_km), uploaded GPX, or specialist data — tease that roadmap once, don't lecture.
 </routing_engine_limits>
 
@@ -569,6 +579,11 @@ Act on the status it returns:
 - unavailable: the lookup is down. Say so honestly; do not guess.
 
 When you place a stop or leg endpoint from a resolve_place result, set source="user" (the user named it).
+
+THE place_id RULE — this is a data flow, not a capability:
+- resolve_place returns a place_id. It is an opaque handle. Never write one, edit one, or invent one; forward exactly what you were given.
+- When you route to or from that place, pass it: get_route takes origin_place_id / destination_place_id (and place_id on each waypoint). A big park's coordinate is the middle of its polygon, which can be roadless — the id routes to the real entrance, the coordinate returns no route at all.
+- get_route hands back routable_start and routable_end: the points Directions actually snapped to. Write the leg with THOSE as start_lat/lng and end_lat/lng, in preference to the coordinates you passed in. Keep the names you already had — only the coordinates change.
 </place_resolution>
 
 <maps_link_handling>
@@ -658,6 +673,17 @@ export interface ReplanResult {
    * nothing recorded what they were. Persisted in penny_turns.result_meta.
    */
   toolTrace: string[][];
+  /**
+   * The same model calls, with each tool's INPUT and the RESULT handed back.
+   *
+   * `toolTrace` answers how many times the prefix was re-read; this answers
+   * what was actually asked and what came back — the question every
+   * investigation of a bad turn starts with, and the one that previously had
+   * to be answered by re-running tools by hand and hoping the inputs matched.
+   * Persisted in `penny_turns.result_meta` and deliberately NOT sent to the
+   * browser. See lib/penny/turnTrace.ts for the truncation and hashing rules.
+   */
+  turnTrace: TurnTrace;
 }
 
 /**
@@ -742,6 +768,7 @@ export async function* replanStream(
   let totalCacheCreationTokens = 0;
   let totalCacheReadTokens = 0;
   const toolTrace: string[][] = [];
+  const tracedCalls: TracedModelCall[] = [];
 
   // System prompt + tools as cacheable structures. Built once per replan so
   // we're not rebuilding the array on every iteration.
@@ -842,6 +869,13 @@ export async function* replanStream(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
       toolTrace.push(toolUses.map((t) => t.name));
+      // Pushed here, filled in after dispatch below, so the two lists stay
+      // index-aligned even for the text-only final call (which has no tools).
+      const traceEntry: TracedModelCall = {
+        tools: toolUses.map((t) => t.name),
+        calls: [],
+      };
+      tracedCalls.push(traceEntry);
 
       // No tool calls this iteration → Penny is done. Flush the buffered
       // text to the client and break out of the loop.
@@ -977,6 +1011,17 @@ export async function* replanStream(
         }
       }
 
+      // What was sent, and what came back. Built from the SAME `toolResults`
+      // Anthropic is about to be shown, matched on tool_use_id — reading the
+      // inputs a second time from `toolUses` would be a second version of the
+      // truth and could disagree with the one that actually ran.
+      const resultById = new Map(toolResults.map((r) => [r.tool_use_id, r]));
+      traceEntry.calls = toolUses.map((tu): TracedToolCall => {
+        const r = resultById.get(tu.id);
+        const content = typeof r?.content === "string" ? r.content : JSON.stringify(r?.content ?? null);
+        return traceToolCall(tu.name, tu.input, content, r?.is_error === true);
+      });
+
       // Append the assistant turn and our tool_results so Claude can continue.
       messages.push({ role: "assistant", content: response.content });
 
@@ -1079,6 +1124,7 @@ export async function* replanStream(
         feasibilityVerdict,
         fuelPlanRan,
         toolTrace,
+        turnTrace: buildTurnTrace(promptFingerprint(SYSTEM_PROMPT, TOOLS), tracedCalls),
       },
     };
   } finally {
@@ -1134,10 +1180,10 @@ async function executeLookupTool(
   userId: string,
 ): Promise<LookupResult> {
   if (toolUse.name === resolvePlaceTool.RESOLVE_PLACE) {
-    return executeResolvePlace(toolUse, context);
+    return executeResolvePlace(toolUse, context, userId);
   }
   if (toolUse.name === getRouteTool.GET_ROUTE) {
-    return executeGetRoute(toolUse, context);
+    return executeGetRoute(toolUse, context, userId);
   }
   if (toolUse.name === extractTripIntentTool.EXTRACT_TRIP_INTENT) {
     return executeExtractTripIntent(toolUse, context);
@@ -1409,6 +1455,7 @@ async function executeExtractTripIntent(
 async function executeResolvePlace(
   toolUse: Anthropic.ToolUseBlock,
   context: PennyContext,
+  userId: string,
 ): Promise<LookupResult> {
   const schema = resolvePlaceTool.validator(context);
   const parsed = schema.safeParse(toolUse.input);
@@ -1420,9 +1467,13 @@ async function executeResolvePlace(
   }
 
   const input = parsed.data as resolvePlaceTool.ResolvePlaceInput;
-  const result = await geocodePlaceAccounted(input.query, {
-    region: input.region ?? undefined,
-  });
+  const result = await geocodePlaceAccounted(
+    input.query,
+    { region: input.region ?? undefined },
+    // Same reason as get_route's: a Penny tool's paid call must be attributable
+    // to the trip that made it, or the trip's own record cannot show it.
+    { userId, tripId: context.trip.id },
+  );
 
   switch (result.status) {
     case 'resolved':
@@ -1442,6 +1493,17 @@ async function executeResolvePlace(
            * / end_name / stop name.
            */
           name_for_leg: qualifiedPlaceName(result.match.label, result.match.address),
+          /**
+           * Google's own handle for this place. Pass it straight to get_route
+           * as origin_place_id / destination_place_id — it is what makes a
+           * large national park routable at all, since the coordinate above is
+           * the centroid of its POLYGON and for Zion that is roadless
+           * backcountry Directions returns ZERO_RESULTS for.
+           *
+           * Opaque: Penny forwards it untouched and never authors, edits or
+           * invents one. Undefined when Google did not send one.
+           */
+          place_id: result.match.place_id ?? null,
           granularity: result.match.granularity,
           // Reminder so Penny applies the coarse-match rule from the tool doc.
           note:
@@ -1451,6 +1513,7 @@ async function executeResolvePlace(
           other_candidates: result.other_candidates.map((c) => ({
             label: c.label,
             address: c.address ?? null,
+            place_id: c.place_id ?? null,
           })),
         }),
       };
@@ -1465,6 +1528,9 @@ async function executeResolvePlace(
             address: c.address ?? null,
             lat: round5(c.lat),
             lng: round5(c.lng),
+            // Carried on every candidate, not just the resolved one: once the
+            // user picks, the id has to be there to route with.
+            place_id: c.place_id ?? null,
           })),
         }),
       };
@@ -1485,9 +1551,75 @@ async function executeResolvePlace(
   }
 }
 
+/**
+ * What to do about a ZERO_RESULTS, in the order it should be tried.
+ *
+ * THE LINE THIS REPLACES, and what it cost: *"Try alternative coordinates or
+ * ask the user for a different start/end."* On 2026-09-10 a driver asked to
+ * extend an Austin loop to Zion National Park — 36 h of driving inside a
+ * fourteen-day extension, with four more national parks sitting on the
+ * corridor. Zion's Places coordinate is its polygon centroid, in roadless
+ * backcountry, so Directions refused it eight times; Penny did exactly what
+ * that string told her to, offered Moab instead, asked whether to save Zion
+ * for another trip, and wrote nothing. Twenty get_route calls, zero changes,
+ * $0.0939.
+ *
+ * The model was following the instruction. The instruction was wrong: a driver
+ * who names a real, reachable national park is not someone we are entitled to
+ * ask for a different destination. So this names the ACTUAL remedy first, and
+ * only lets her reach for the user once a real retry has failed.
+ */
+/**
+ * `NOT_FOUND` is a bad REFERENCE, not an outage — and it was being told as one.
+ *
+ * Directions returns it when a point could not be geocoded at all, which for a
+ * `place_id:` request means the id itself is unusable. Watched happen on
+ * 2026-09-11 while re-walking the incident: in one run Haiku emitted three
+ * `get_route` calls carrying ids that Google rejected outright (a second run of
+ * the identical turn made six calls, all with ids, and none failed — so it is
+ * occasional, not systematic).
+ *
+ * Before this branch existed those three fell through to the generic
+ * `api_error` line and were reported as "this lookup is temporarily
+ * unavailable" — which is untrue, unactionable, and precisely the shape of
+ * wrong answer the no_results rewrite above exists to remove. It was found by
+ * the trace this same change added, on its first real use.
+ */
+const BAD_PLACE_ID_REMEDY =
+  "Google could not resolve one of the points at all, which for a place_id means the id " +
+  "is not a real one. Do NOT retry the same call, do NOT tell the user anything is " +
+  "unavailable, and do NOT invent an id — call resolve_place for that place and use the " +
+  "place_id and coordinates it returns.";
+
+function noRouteRemedy(input: getRouteTool.GetRouteInput): string {
+  const missing: string[] = [];
+  if (!input.origin_place_id) missing.push("origin_place_id");
+  if (!input.destination_place_id) missing.push("destination_place_id");
+
+  if (missing.length > 0) {
+    return (
+      `You did not send ${missing.join(" or ")}. A large park or campus resolves to the ` +
+      `centroid of its POLYGON, which can be unreachable by road while the place itself ` +
+      `routes fine by id. Call resolve_place for that end, then call get_route again ` +
+      `passing the place_id it returns. Do NOT ask the user for a different destination ` +
+      `and do NOT substitute a nearby town — retry properly first.`
+    );
+  }
+
+  return (
+    `You already sent a place_id for both ends, so this specific pair genuinely has no ` +
+    `driving route Google will return. Now you may raise it with the user — but say ` +
+    `exactly that: THIS point could not be routed to. Do not describe it as a limit of ` +
+    `the app, the routing engine, or our coverage; you have no way to know that and it ` +
+    `is not true. Offer to try a nearby named place they choose, and if they name one, ` +
+    `resolve_place it and route again.`
+  );
+}
+
 async function executeGetRoute(
   toolUse: Anthropic.ToolUseBlock,
   context: PennyContext,
+  userId: string,
 ): Promise<LookupResult> {
   // Validate Penny's inputs through the same Zod schema as everything else
   // — this gives us bounded lat/lng before we hit the Google API.
@@ -1501,16 +1633,34 @@ async function executeGetRoute(
   }
 
   const input = parsed.data as getRouteTool.GetRouteInput;
+  // `place_id` travels with every point it was resolved for. Without it a
+  // large park's POLYGON centroid is what Directions is asked to snap to, and
+  // for Zion that centroid is roadless backcountry: ZERO_RESULTS, on a trip
+  // that is trivially drivable. See RoutePoint in lib/google/directions.ts.
   const waypoints = (input.waypoints ?? [])
     .filter((w) => w.lat != null && w.lng != null)
-    .map((w) => ({ lat: w.lat, lng: w.lng }));
+    .map((w) => ({ lat: w.lat, lng: w.lng, place_id: w.place_id ?? null }));
   const directions = await getDirectionsAccounted(
-    { lat: input.origin_lat, lng: input.origin_lng },
-    { lat: input.destination_lat, lng: input.destination_lng },
+    {
+      lat: input.origin_lat,
+      lng: input.origin_lng,
+      place_id: input.origin_place_id ?? null,
+    },
+    {
+      lat: input.destination_lat,
+      lng: input.destination_lng,
+      place_id: input.destination_place_id ?? null,
+    },
     {
       avoid: input.avoid ?? undefined,
       waypoints: waypoints.length > 0 ? waypoints : undefined,
     },
+    // WHO asked. Without this fourth argument every row this tool writes lands
+    // with a null trip_id and user_id — which is why the eight ZERO_RESULTS
+    // failures behind the Zion incident were in `usage_events` the whole time
+    // and invisible to /admin/errors, to dump-trip.ts and to anyone reading
+    // that trip. server/fuel.ts has always passed one; this did not.
+    { userId, tripId: context.trip.id },
   );
 
   if (!directions.ok) {
@@ -1518,8 +1668,10 @@ async function executeGetRoute(
       is_error: true,
       content: `get_route failed: ${directions.kind} — ${directions.message}. ${
         directions.kind === "no_results"
-          ? "Try alternative coordinates or ask the user for a different start/end."
-          : "Tell the user this lookup is temporarily unavailable; do not invent the numbers."
+          ? noRouteRemedy(input)
+          : directions.kind === "api_error" && directions.status === "NOT_FOUND"
+            ? BAD_PLACE_ID_REMEDY
+            : "Tell the user this lookup is temporarily unavailable; do not invent the numbers."
       }`,
     };
   }
@@ -1575,6 +1727,25 @@ async function executeGetRoute(
     drive_time_minutes: directions.drive_time_minutes,
     start_address: directions.start_address,
     end_address: directions.end_address,
+    /**
+     * The points Directions ACTUALLY routed between, after snapping whatever we
+     * asked with to a road. Use these as add_leg's start_lat/lng and
+     * end_lat/lng in preference to the coordinates passed in.
+     *
+     * Why it matters beyond this one call: a leg row carries no place_id, so
+     * every later re-route of that leg — continuity repair, the replan route,
+     * Finn's geometry — starts again from the stored coordinate. Persisting a
+     * snapped one means those keep working; persisting the centroid means they
+     * fail days later with no user message to explain it.
+     */
+    routable_start: {
+      lat: round5(directions.start_location.lat),
+      lng: round5(directions.start_location.lng),
+    },
+    routable_end: {
+      lat: round5(directions.end_location.lat),
+      lng: round5(directions.end_location.lng),
+    },
     warnings: directions.warnings,
     cached: directions.cached,
     exceeds_daily_cap: exceedsCap,

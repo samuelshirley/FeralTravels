@@ -94,6 +94,31 @@ Panhandle" and titled a Marfa leg "Austin → Big Bend". *Enforced by:* **NOT YE
 B15. **Ambiguous "go here" + a place → ONE clarifying question before any edit.** *Enforced by:*
 **NOT ENFORCED** (prompt).
 
+B11. **Penny never characterises the system she runs inside.** She reports what a tool returned;
+she does not diagnose the app, its routing engine, its coverage or its limits. "This is a hard
+limit of the app's routing engine" was said to a real driver about a perfectly drivable trip.
+*Enforced by:* `routablePlacesGuard.test.ts`.
+
+B12. **Every turn records what its tool calls SENT and were TOLD, not just their names.** Inputs,
+results and `is_error` per call, hard-truncated with the cut marked, plus a hash (never a copy) of
+the assembled system prompt and tool set. Stored in `penny_turns.result_meta`, never streamed to a
+client. *Enforced by:* `penny/turnTrace.test.ts`, `toolTraceGuard.test.ts`.
+
+B12a. **"Many failed lookups, nothing applied" is a shape the TRACE makes visible — it is not a new
+retry ceiling.** The Zion turn made 20 `get_route` calls across 9 model calls and applied nothing,
+and each of those 9 re-read the ~23,300-token prefix, which is where the $0.0939 went. A ceiling on
+top of `MAX_TOOL_USE_ITERATIONS` / `MAX_AUTO_CONTINUES` was considered and rejected: it would have
+made that turn CHEAPER while leaving it exactly as wrong — she would have given up sooner and still
+declined a drivable trip — and a second budget interacting with the two that already exist is a new
+way for a good turn to be cut off. The trace records `is_error` per call, so the shape is now a
+query over `penny_turns` rather than a number nobody can see. *Enforced by:* **NOT ENFORCED** —
+recorded, not alerted; an admin surface for it is a follow-up.
+
+B13. **A paid Google call inside a Penny tool names the trip that made it.** `CallerRef` defaults
+to `{}`, so a forgotten fourth argument logs a row with a null `trip_id` — the worst shape the
+accounting can have, since the total stays right and the trip cannot be found. *Enforced by:*
+`googleAccountingGuard.test.ts`.
+
 ## C. Finn (fuel) — data sources and math
 
 C1. **Finn's data is Google: Directions for geometry, Places (New) Text Search along-route for
@@ -131,6 +156,21 @@ C9. **A day that needs no stop reads as a quiet positive state on both platforms
 
 C10. **A same-place leg (< 0.1 km) is `ready` with zero stops before any external call.**
 *Enforced by:* `googleAccountingGuard.test.ts` — the trivial-leg short-circuit must PRECEDE both external calls, asserted on position rather than presence by a named test — verify in `plan.test.ts`.
+
+C11. **A place's routable identity travels with it: `place_id` INTO Directions, the snapped
+coordinate OUT.** Google's coordinate for a large park is its POLYGON centroid, which can be
+roadless — Zion's returns `ZERO_RESULTS` where `place_id:` returns a 1335 km route (measured
+2026-09-10 on the live key). `resolve_place` emits the id, `get_route` takes it, and the response's
+`start_location`/`end_location` come back as `routable_start`/`routable_end` for `add_leg` to
+persist. Both halves: a leg row carries no `place_id`, so without the harvest every LATER re-route
+of that leg fails exactly as the first one did, days later, with no user message to explain it.
+*Enforced by:* `routablePlacesGuard.test.ts`, `google/directions.test.ts` (query string, cache key,
+harvest).
+
+C12. **A `ZERO_RESULTS` means retry with the id, not ask the driver for somewhere else.** The
+deployed instruction was "Try alternative coordinates or ask the user for a different start/end",
+and Penny did exactly that to a driver who had named a real, reachable national park — 20
+`get_route` calls, nothing written, $0.0939. *Enforced by:* `routablePlacesGuard.test.ts`.
 
 ## D. Auth and accounts
 

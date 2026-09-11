@@ -32,6 +32,39 @@ export interface LatLng {
   lng: number;
 }
 
+/**
+ * A point Directions can be asked to route to.
+ *
+ * `place_id` is Google's own opaque handle for a place, carried from
+ * `resolve_place` (Places Text Search returns it on every match). When it is
+ * present we send `place_id:<id>` instead of the coordinate, and that is not a
+ * nicety — it is the difference between a route and a `ZERO_RESULTS`.
+ *
+ * WHY, with the measurement (2026-09-10, live key, Guadalupe Mountains NP →
+ * Zion NP). Google's centroid for a large park is the centroid of its POLYGON,
+ * which for Zion sits in roadless backcountry that Directions cannot snap to a
+ * road:
+ *
+ *     destination=37.2982022,-113.0263005              → ZERO_RESULTS
+ *     destination=place_id:ChIJ2fhEiNDqyoAR9VY2qhU6Lnw → OK, 1335.1 km, 774 min
+ *
+ * Big Bend's centroid happens to land near a park road, which is why half of
+ * one trip planned and half of it did not, and why this went unseen for months.
+ */
+export interface RoutePoint extends LatLng {
+  place_id?: string | null;
+}
+
+/**
+ * How a point is written into the query string.
+ *
+ * Exported for `directions.test.ts`: this one line decides whether a national
+ * park routes at all, and it is worth a test that does not need a live key.
+ */
+export function directionsPointParam(p: RoutePoint): string {
+  return p.place_id ? `place_id:${p.place_id}` : `${p.lat},${p.lng}`;
+}
+
 export interface DirectionsOptions {
   /** Travel mode. We only do driving — this is a road-trip planner. */
   mode?: 'driving';
@@ -46,7 +79,7 @@ export interface DirectionsOptions {
    * first-class instead of just decorating the handoff URL. Keep them in
    * along-route order (we do NOT pass optimize:true; the caller owns ordering).
    */
-  waypoints?: LatLng[];
+  waypoints?: RoutePoint[];
 }
 
 export interface DirectionsResult {
@@ -75,6 +108,26 @@ export interface DirectionsResult {
   end_address: string;
   /** Free-text warnings from Google (toll roads, ferries, etc.). */
   warnings: string[];
+  /**
+   * Where Directions actually STARTED and ENDED — the points it snapped our
+   * request to, straight out of `routes[0].legs[]`. With waypoints the route is
+   * split into one leg per segment, so these are the first leg's start and the
+   * LAST leg's end, never `legs[0]` for both.
+   *
+   * These are the coordinates worth persisting, and harvesting them is free —
+   * they are in a response we have already paid for. Routing Guadalupe → Zion
+   * by `place_id:` returns `end_location {37.2336032, -112.8751275}`, and that
+   * bare coordinate then routes on its own in both directions, where the
+   * Places centroid we asked with does not. A leg row carries no `place_id`, so
+   * without this every LATER re-route of that leg — continuity repair, the
+   * replan route, Finn's geometry — would fail exactly as the first one did,
+   * days later and with no user message to explain it.
+   *
+   * Falls back to the requested coordinate if Google omits the field, which
+   * leaves the caller exactly where it stood before this existed.
+   */
+  start_location: LatLng;
+  end_location: LatLng;
   /** Was this served from cache? Useful for cost tracking. */
   cached: boolean;
 }
@@ -103,15 +156,25 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(origin: LatLng, destination: LatLng, opts: DirectionsOptions): string {
-  const o = `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}`;
-  const d = `${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}`;
+/**
+ * One point's contribution to the cache key.
+ *
+ * BOTH the coordinate and the place_id, never one or the other. A request for
+ * Zion's centroid WITH its place_id and the same coordinate WITHOUT one are
+ * different requests with different answers — the first routes, the second is
+ * `ZERO_RESULTS` — so sharing an entry between them would serve whichever
+ * happened to be asked first. Keeping the coordinate in as well means two
+ * different places that somehow carried the same id cannot collide either.
+ */
+function pointKey(p: RoutePoint): string {
+  return `${p.lat.toFixed(5)},${p.lng.toFixed(5)}@${p.place_id ?? ''}`;
+}
+
+function cacheKey(origin: RoutePoint, destination: RoutePoint, opts: DirectionsOptions): string {
   const mode = opts.mode ?? 'driving';
   const avoid = canonicalDirectionsAvoid(opts.avoid ?? []).join(',');
-  const wp = (opts.waypoints ?? [])
-    .map((w) => `${w.lat.toFixed(5)},${w.lng.toFixed(5)}`)
-    .join('>');
-  return `${o}|${d}|${mode}|${avoid}|${wp}`;
+  const wp = (opts.waypoints ?? []).map(pointKey).join('>');
+  return `${pointKey(origin)}|${pointKey(destination)}|${mode}|${avoid}|${wp}`;
 }
 
 function cacheGet(key: string): DirectionsResult | null {
@@ -292,9 +355,63 @@ export function simplifyPolyline(
   return out;
 }
 
+/**
+ * Read a `{lat, lng}` off a Directions leg, falling back to what we asked with.
+ *
+ * The fallback is deliberately the request's own coordinate: if Google ever
+ * stops sending the field, callers are left exactly where they stood before
+ * this existed rather than holding a null they have to branch on.
+ */
+function snappedPoint(raw: unknown, fallback: LatLng): LatLng {
+  const p = raw as { lat?: unknown; lng?: unknown } | null | undefined;
+  const lat = p?.lat;
+  const lng = p?.lng;
+  if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
+    return { lat, lng };
+  }
+  return { lat: fallback.lat, lng: fallback.lng };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * The Directions query string, as a pure function.
+ *
+ * Split out of `getDirections` so the one decision that matters here — whether
+ * a point is sent as `place_id:<id>` or as a bare coordinate — can be tested
+ * without a live key, a network call or a paid request. `directions.test.ts`
+ * covers origin, destination and waypoints independently, because a park that
+ * only routes by place_id is a park that only routes if the field survives
+ * every one of those three paths.
+ */
+export function buildDirectionsParams(
+  origin: RoutePoint,
+  destination: RoutePoint,
+  options: DirectionsOptions,
+  key: string,
+): URLSearchParams {
+  const params = new URLSearchParams({
+    origin: directionsPointParam(origin),
+    destination: directionsPointParam(destination),
+    mode: options.mode ?? 'driving',
+    key,
+  });
+  if (options.avoid && options.avoid.length > 0) {
+    const canon = canonicalDirectionsAvoid(options.avoid);
+    if (canon.length > 0) params.set('avoid', canon.join('|'));
+  }
+  if (options.waypoints && options.waypoints.length > 0) {
+    // Pipe-separated list. `place_id:` is legal in here too, and it matters for
+    // the same reason as the destination. No "optimize:true" — caller orders.
+    params.set('waypoints', options.waypoints.map(directionsPointParam).join('|'));
+  }
+  if (options.departureTime != null) {
+    params.set('departure_time', String(options.departureTime));
+  }
+  return params;
+}
 
 /**
  * Get a driving route between two points. Returns a structured result on
@@ -305,8 +422,8 @@ export function simplifyPolyline(
  * forward them to Claude as `tool_result(is_error: true)` and let her retry.
  */
 export async function getDirections(
-  origin: LatLng,
-  destination: LatLng,
+  origin: RoutePoint,
+  destination: RoutePoint,
   options: DirectionsOptions = {}
 ): Promise<DirectionsResponse> {
   // Same Google Cloud key value used by the browser map (TripMap.tsx). Next.js
@@ -327,29 +444,7 @@ export async function getDirections(
   const hit = cacheGet(ck);
   if (hit) return { ok: true, ...hit, cached: true };
 
-  const params = new URLSearchParams({
-    origin: `${origin.lat},${origin.lng}`,
-    destination: `${destination.lat},${destination.lng}`,
-    mode: options.mode ?? 'driving',
-    key,
-  });
-  if (options.avoid && options.avoid.length > 0) {
-    const canon = canonicalDirectionsAvoid(options.avoid);
-    if (canon.length > 0) {
-      params.set('avoid', canon.join('|'));
-    }
-  }
-  if (options.waypoints && options.waypoints.length > 0) {
-    // Pipe-separated lat,lng list. No "optimize:true" — caller orders them.
-    params.set(
-      'waypoints',
-      options.waypoints.map((w) => `${w.lat},${w.lng}`).join('|'),
-    );
-  }
-  if (options.departureTime != null) {
-    params.set('departure_time', String(options.departureTime));
-  }
-
+  const params = buildDirectionsParams(origin, destination, options, key);
   let res: Response;
   try {
     res = await fetch(`${DIRECTIONS_BASE}?${params.toString()}`);
@@ -433,6 +528,11 @@ export async function getDirections(
     start_address: routeLegs[0].start_address ?? '',
     end_address: routeLegs[routeLegs.length - 1].end_address ?? '',
     warnings: Array.isArray(route.warnings) ? route.warnings.filter((w: unknown) => typeof w === 'string') : [],
+    // First leg's start, LAST leg's end — with waypoints there is one leg per
+    // segment, and reading legs[0] for both would report the first hop's end as
+    // the whole route's.
+    start_location: snappedPoint(routeLegs[0]?.start_location, origin),
+    end_location: snappedPoint(routeLegs[routeLegs.length - 1]?.end_location, destination),
     cached: false,
   };
 

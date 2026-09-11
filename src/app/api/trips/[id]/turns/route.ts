@@ -51,7 +51,16 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       return Response.json({ turn: null });
     }
 
-    return Response.json({ turn });
+    /**
+     * The stored tool trace stays on the server. It exists so a bad turn can be
+     * read out of the database later (see lib/penny/turnTrace.ts); the client
+     * reconciling a dropped stream applies the same `result_meta` the live
+     * `applied` event carried, and that event never included it.
+     */
+    const { turnTrace: _trace, ...resultMeta } = (turn.result_meta ?? {}) as Record<string, unknown>;
+    return Response.json({
+      turn: { ...turn, result_meta: turn.result_meta === null ? null : resultMeta },
+    });
   } catch (err) {
     return errorResponse(err);
   }

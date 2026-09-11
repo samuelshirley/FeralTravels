@@ -5,6 +5,7 @@
  * Run with:
  *   npx tsx scripts/dump-trip.ts "National Park Tour"
  *   npx tsx scripts/dump-trip.ts <trip-uuid> --json
+ *   npx tsx scripts/dump-trip.ts <trip-uuid> --trace   # full tool inputs/results
  *
  * DATABASE_URL comes from .env — which points at PRODUCTION. Safe against it:
  * every statement is a SELECT, and there is no write path in this file.
@@ -33,14 +34,72 @@ function oneLine(s: string, n: number) {
   return pad(s.replace(/\s+/g, ' ').trim(), n);
 }
 
+/**
+ * What a turn actually sent and was told.
+ *
+ * `result_meta.turnTrace` is written by the replan route (see
+ * src/lib/penny/turnTrace.ts). Turns recorded before it existed have no trace
+ * and print the old tool-name list instead, which is what they hold.
+ */
+function printTurnTrace(meta: Record<string, unknown> | null, verbose: boolean) {
+  if (!meta) return;
+  const trace = meta.turnTrace as
+    | {
+        prompt_hash?: string;
+        truncated?: boolean;
+        omitted_model_calls?: number;
+        calls?: Array<{
+          tools?: string[];
+          calls?: Array<{
+            name: string; input: string; result: string; is_error: boolean;
+            input_truncated?: boolean; result_truncated?: boolean;
+          }>;
+        }>;
+      }
+    | undefined;
+
+  if (!trace?.calls) {
+    const names = meta.toolTrace as string[][] | undefined;
+    if (Array.isArray(names)) {
+      console.log(`         trace: names only (pre-2026-09-11 turn), ${names.length} model calls`);
+    }
+    return;
+  }
+
+  const toolCalls = trace.calls.reduce((n, c) => n + (c.calls?.length ?? 0), 0);
+  console.log(
+    `         trace: ${trace.calls.length} model calls, ${toolCalls} tool calls, ` +
+      `prompt ${trace.prompt_hash ?? '?'}` +
+      (trace.truncated ? `  [TRUNCATED — ${trace.omitted_model_calls} model calls dropped]` : '')
+  );
+  trace.calls.forEach((call, i) => {
+    for (const c of call.calls ?? []) {
+      const flag = c.is_error ? 'ERR ' : '    ';
+      console.log(`         #${pad(i, 2)} ${flag}${c.name}`);
+      if (verbose) {
+        console.log(`              in : ${c.input}${c.input_truncated ? ' …[cut]' : ''}`);
+        console.log(`              out: ${c.result}${c.result_truncated ? ' …[cut]' : ''}`);
+      } else {
+        console.log(`              in : ${oneLine(c.input, 100)}`);
+        console.log(`              out: ${oneLine(c.result, 100)}`);
+      }
+    }
+  });
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const asJson = args.includes('--json');
+  // The trace is the point of reading a turn at all, so it prints by default —
+  // but one line per tool call, truncated. `--trace` opens the inputs and
+  // results out in full, which is what an actual investigation needs and what
+  // nobody wants on every dump.
+  const verbose = args.includes('--trace');
   const needle = args.filter((a) => !a.startsWith('--')).join(' ').trim();
 
   if (!needle) {
     throw new Error(
-      'Usage: npx tsx scripts/dump-trip.ts "<trip name or uuid>" [--json]'
+      'Usage: npx tsx scripts/dump-trip.ts "<trip name or uuid>" [--json] [--trace]'
     );
   }
   if (!process.env.DATABASE_URL) {
@@ -113,9 +172,10 @@ async function main() {
       id: string; status: string; idempotency_key: string;
       user_message: string; error_message: string | null;
       created_at: string; updated_at: string | null;
+      result_meta: Record<string, unknown> | null;
     }>(sql`
       SELECT id, status, idempotency_key, user_message, error_message,
-             created_at::text, updated_at::text
+             created_at::text, updated_at::text, result_meta
         FROM penny_turns WHERE trip_id = ${trip.id}::uuid
        ORDER BY created_at ASC
     `);
@@ -179,6 +239,7 @@ async function main() {
       );
       console.log(`         key ${t.idempotency_key}  msg: ${oneLine(t.user_message, 80)}`);
       if (t.error_message) console.log(`         error: ${t.error_message}`);
+      printTurnTrace(t.result_meta, verbose);
     }
 
     console.log(`\n=== USAGE ===`);

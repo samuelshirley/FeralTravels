@@ -26,7 +26,8 @@ import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
 import { gateMessage } from '@/server/messageGate';
 import { addChatMessage } from '@/server/repos/chat';
-import { PLAN_READY_TEXT } from '@/lib/planReady';
+import { planReadyText } from '@/lib/planReady';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
   getTurnByKey,
@@ -994,8 +995,29 @@ async function runTurnWork(
            * this repo has already shipped once.
            */
           const planReady = isHandoff && appliedCount > 0;
+          // The pace the plan was actually built at. Read off the trip row
+          // rather than recomputed: `get_route` split the days on exactly this
+          // number, and a confirmation quoting a different one would be
+          // describing a plan nobody has. Null means the driver never answered
+          // `trip_pace`, which the copy says out loud rather than presenting
+          // our default as their choice.
+          let planReadyPaceHours: number | null = null;
           if (planReady) {
-            await addChatMessage(tripId, 'assistant', PLAN_READY_TEXT, null, 'plan_ready');
+            try {
+              // One read, on the one turn per trip that reaches this branch.
+              planReadyPaceHours = (await getTripFull(tripId))?.daily_drive_hours ?? null;
+            } catch (e) {
+              // A failed read must not cost the driver their confirmation; the
+              // default is what the plan was built at anyway when this is null.
+              console.warn('[plan-ready] could not read the trip pace', e);
+            }
+            await addChatMessage(
+              tripId,
+              'assistant',
+              planReadyText(planReadyPaceHours, DEFAULT_MAX_DRIVE_HOURS_PER_DAY),
+              null,
+              'plan_ready',
+            );
           }
           await addChatMessage(
             tripId,
@@ -1034,6 +1056,12 @@ async function runTurnWork(
             truncated: final.truncated,
             /** Splice the deterministic plan-ready bubble in ABOVE this reply. */
             planReady,
+            /**
+             * The pace that bubble was written at, so the LIVE client composes
+             * the same three paragraphs the row holds. Without it the optimistic
+             * splice would show one pace and the reload another.
+             */
+            planReadyPaceHours,
             /** Tool names per model call — the number of prefix re-reads this turn cost. */
             toolTrace: final.toolTrace,
             modelCalls: final.toolTrace.length,
@@ -1046,7 +1074,15 @@ async function runTurnWork(
           // via the reconcile endpoint.
           await markTurnDone(turnId, {
             resultResponse: final.response,
-            resultMeta: appliedPayload,
+            /**
+             * The trace is stored, NOT streamed. It is the durable record of
+             * what this turn asked and was told — the thing that had to be
+             * re-derived by hand when the Zion turn went wrong — and the
+             * browser has no use for several KB of tool inputs on a heal.
+             * `GET /api/trips/[id]/turns` strips it back out for the same
+             * reason.
+             */
+            resultMeta: { ...appliedPayload, turnTrace: final.turnTrace },
           });
   } catch (err) {
     console.error('runTurnWork failed', err);

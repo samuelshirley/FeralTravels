@@ -51,10 +51,11 @@ import {
   locksComposer,
 } from "@/shared/lib/onboardingForm";
 import {
-  PLAN_READY_FOLLOW_UP,
-  PLAN_READY_TEXT,
+  planReadyText,
+  planReadyBodyParagraphs,
   planReadyHeadlineParts,
 } from "@/shared/lib/planReady";
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from "@/shared/lib/vehicleProfile";
 import type { ChatFormMeta, ChatKind } from "@/shared/types/trip";
 import { Spinner } from "@/components/ui";
 import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
@@ -638,7 +639,8 @@ export default function ChatPanel({
           id: `plan-ready-${assistantMsgId}`,
           trip_id: tripId,
           role: "assistant",
-          content: PLAN_READY_TEXT,
+          // Same pace the server just wrote the row at — see the web panel.
+          content: planReadyText(ev.planReadyPaceHours ?? null, DEFAULT_MAX_DRIVE_HOURS_PER_DAY),
           kind: "plan_ready",
           changes_made: null,
           created_at: new Date().toISOString(),
@@ -1890,9 +1892,13 @@ export default function ChatPanel({
                       {parts.after}
                     </Text>
                   </View>
-                  <Text style={[styles.bubbleText, styles.planReadyFollowUp]}>
-                    {PLAN_READY_FOLLOW_UP}
-                  </Text>
+                  {/* From the ROW, not a constant — the pace paragraph is
+                      per-trip. See the web panel for the full reasoning. */}
+                  {planReadyBodyParagraphs(msg.content).map((para, i) => (
+                    <Text key={i} style={[styles.bubbleText, styles.planReadyFollowUp]}>
+                      {para}
+                    </Text>
+                  ))}
                 </View>
               </View>
             );
