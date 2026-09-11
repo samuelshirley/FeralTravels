@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ChatIcon, ListIcon, MapIcon, SettingsIcon } from '@/components/icons';
+import { tripTabDestination, useLastOpenTripId } from '@/lib/lastOpenTrip';
 
 export type MobileTab = 'list' | 'map' | 'chat';
 
@@ -30,28 +31,38 @@ interface NavItem {
 }
 
 export default function BottomNav({ active, onChange, thinking = false, unread = 0 }: BottomNavProps) {
-  // When there's no `onChange` (e.g. mounted on /settings), the trip-tab
-  // items can't toggle a parent state — so we route them to /trips instead.
-  // The user picked "go_to_trips_index" in the design Q&A: simplest, reuses
-  // the existing trips list view as a hub.
-  const tripsHref = onChange ? undefined : '/trips';
+  /*
+   * With no `onChange` (e.g. mounted on /settings) the trip-tab items have no
+   * parent state to toggle, so they navigate. They used to navigate to
+   * `/trips`, the index — which meant tapping CHAT from Settings, with Penny
+   * mid-answer, dropped the user on a list of trips instead of back into the
+   * conversation they had just left. LIST, MAP and CHAT are tabs OF a trip.
+   *
+   * `useLastOpenTripId` is module state (see lib/lastOpenTrip) for the reason
+   * the bug existed: the component that knows which trip it is, is exactly the
+   * one not mounted here. With nothing remembered the index is still right,
+   * and `tripTabDestination` owns that fallback.
+   */
+  const lastTripId = useLastOpenTripId();
+  const hrefFor = (tab: MobileTab) =>
+    onChange ? undefined : tripTabDestination(tab, lastTripId);
 
   const items: NavItem[] = [
     {
       id: 'list',
       label: 'List',
-      href: tripsHref,
+      href: hrefFor('list'),
     },
     {
       id: 'map',
       label: 'Map',
-      href: tripsHref,
+      href: hrefFor('map'),
     },
     {
       id: 'chat',
       label: 'Chat',
       badge: thinking ? 'thinking' : unread > 0 ? unread : undefined,
-      href: tripsHref,
+      href: hrefFor('chat'),
     },
     {
       id: 'settings',

@@ -33,11 +33,58 @@ const CI = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
 const LOCAL = fs.readFileSync(path.join(ROOT, 'scripts/ios-e2e-local.sh'), 'utf8');
 
 /** The flows CI actually invokes, and the flow each one pulls in. */
-const CI_FLOWS = ['launch.yaml', 'chat-keyboard.yaml'];
+const CI_FLOWS = ['launch.yaml', 'chat-keyboard.yaml', 'chat-tab-in-flight.yaml'];
 
 /** `runFlow: x.yaml` — a subflow inherits its parent's variables. */
 function subflowsOf(source: string): string[] {
   return [...source.matchAll(/runFlow:\s*(?:\n\s*file:\s*)?([\w.-]+\.yaml)/g)].map((m) => m[1]);
+}
+
+/** `runScript: x.js` — the script sees the same injected variables. */
+function runScriptsOf(source: string): string[] {
+  return [...source.matchAll(/runScript:\s*(?:\n\s*file:\s*)?([\w.-]+\.js)/g)].map((m) => m[1]);
+}
+
+/**
+ * Identifiers a `runScript` reads that Maestro must have injected.
+ *
+ * A script sees `-e` variables as BARE globals, not as `${VAR}` — so the YAML
+ * regex above cannot see them, and `TRIP_ID` (added for seed-turn.js) would
+ * have been exactly the same class of bug this file exists for: undefined on
+ * one runner, silently failing to match, 27 minutes at a time. `read-otp.js`
+ * guards `TEST_SECRET` with `typeof`, which is still a reference to a variable
+ * a runner has to supply, so `typeof` is deliberately not an exemption.
+ *
+ * JS built-ins that happen to be all-caps are subtracted rather than matched
+ * more cleverly: the list is short, and a narrower regex is how this stops
+ * catching the next one.
+ */
+const JS_GLOBALS = new Set(['JSON', 'URL', 'URLSearchParams', 'NaN', 'Infinity']);
+
+function scriptVars(file: string): Set<string> {
+  const vars = new Set<string>();
+  const full = path.join(FLOW_DIR, file);
+  if (!fs.existsSync(full)) return vars;
+  const source = fs
+    .readFileSync(full, 'utf8')
+    // Strip comments FIRST — these files explain themselves at length, and a
+    // variable named only in a paragraph is not a reference.
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    /*
+     * And STRING LITERALS, which is not tidiness either. read-otp.js's error
+     * messages name `E2E_TEST_ENDPOINTS`, `E2E_TEST_ENDPOINTS_SECRET`, `OTP`
+     * and `HTTP` in prose aimed at whoever reads the failure. Matching those
+     * reports four variables no runner should ever supply, and a guard that
+     * cries wolf gets its expectations widened until it stops guarding.
+     */
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+  for (const m of source.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
+    if (!JS_GLOBALS.has(m[1])) vars.add(m[1]);
+  }
+  return vars;
 }
 
 /**
@@ -65,6 +112,9 @@ function varsFor(flow: string, seen = new Set<string>()): Set<string> {
   if (!fs.existsSync(file)) return vars;
   const source = live(fs.readFileSync(file, 'utf8'));
   for (const m of source.matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g)) vars.add(m[1]);
+  for (const script of runScriptsOf(source)) {
+    for (const v of scriptVars(script)) vars.add(v);
+  }
   for (const sub of subflowsOf(source)) {
     for (const v of varsFor(sub, seen)) vars.add(v);
   }

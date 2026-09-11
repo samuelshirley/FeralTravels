@@ -113,6 +113,13 @@ async function main() {
     // makes day 1 actually need a fuel stop. See seedCanonicalFixture.
     ...(arg('range-km', '') ? { rangeKm: Number(arg('range-km', '')) } : {}),
   });
+  const tripId = (() => {
+    try {
+      return JSON.parse(seeded.text || '{}').tripId ?? '';
+    } catch {
+      return '';
+    }
+  })();
   if (!seeded.ok) {
     throw new Error(
       `seed failed (${seeded.status}): ${seeded.text}\n` +
@@ -138,7 +145,7 @@ async function main() {
     if (res.ok) {
       const body = JSON.parse(res.text || '{}');
       if (body.code) {
-        emit(email, tripName);
+        emit(email, tripName, tripId);
         return;
       }
       last = 'code not written yet';
@@ -168,14 +175,21 @@ async function main() {
  * literal in ci.yml could. `src/lib/maestroFlowParams.test.ts` fails if a flow
  * ever references a variable no runner supplies.
  */
-function emit(email, tripName) {
+function emit(email, tripName, tripId) {
   process.stderr.write(`[ios-e2e] fixture ready: ${email}\n`);
   process.stderr.write('[ios-e2e] code NOT emitted — read-otp.js reads the live one in-flow\n');
   process.stdout.write(`EMAIL=${email}\n`);
   process.stdout.write(`TRIP_NAME=${tripName}\n`);
+  /*
+   * `TRIP_ID` for the same reason as `TRIP_NAME`: it comes from the thing that
+   * seeded the row rather than being looked up again by a flow. Read by
+   * seed-turn.js, which plants a `penny_turns` row against this exact trip.
+   */
+  process.stdout.write(`TRIP_ID=${tripId}\n`);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `email=${email}\n`);
     appendFileSync(process.env.GITHUB_OUTPUT, `trip_name=${tripName}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `trip_id=${tripId}\n`);
   }
 }
 

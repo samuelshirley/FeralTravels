@@ -14,6 +14,8 @@ import {
   verificationTokens,
   usageEvents,
   usageAlerts,
+  pennyTurns,
+  chatHistory,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
 import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
@@ -1006,4 +1008,91 @@ export async function clearGlobalSpend(): Promise<{ deleted: number }> {
     .where(eq(usageEvents.provider, BREAKER_FIXTURE_PROVIDER))
     .returning({ id: usageEvents.id });
   return { deleted: rows.length };
+}
+
+/**
+ * TEST-ONLY: plant a `penny_turns` row in a chosen status for a fixture user's
+ * trip, plus the user's own chat message the way the replan route writes it.
+ *
+ * ── Why this exists ───────────────────────────────────────────────────────
+ *
+ * The property under test is "a chat screen mounted while the server is
+ * mid-answer shows that it is". Producing that state honestly means asking
+ * Penny to plan something and racing her — which costs an Anthropic call per
+ * run, takes 60-90 seconds, and is a race the suite would lose the day she got
+ * faster. The `ai-tests` label exists precisely because this suite must not
+ * spend money on every push.
+ *
+ * So the turn is planted rather than run. What is NOT faked is anything the
+ * client does: it reads the real `GET /api/trips/[id]/turns`, gets the real
+ * row back, and has to decide for itself what to render. That decision is the
+ * thing that was broken.
+ *
+ * Same three guards as the rest of `/api/test/*`, plus a fixture-address check
+ * — this writes rows, so it must never be able to reach a real account's trip.
+ */
+export async function seedPennyTurn(input: {
+  email: string;
+  tripId: string;
+  status: 'queued' | 'running' | 'done' | 'error';
+  message?: string;
+  idempotencyKey?: string;
+}): Promise<{ idempotencyKey: string }> {
+  assertEnabled();
+  const normalized = input.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('seedPennyTurn: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('seedPennyTurn: no such fixture user');
+  const [trip] = await db
+    .select({ id: trips.id })
+    .from(trips)
+    .where(and(eq(trips.id, input.tripId), eq(trips.userId, user.id)))
+    .limit(1);
+  if (!trip) throw new Error('seedPennyTurn: trip does not belong to that fixture user');
+
+  const idempotencyKey = input.idempotencyKey ?? `e2e-turn-${crypto.randomUUID()}`;
+  const message = input.message ?? 'Replan the whole trip';
+
+  // The user's bubble, exactly as the replan route persists it BEFORE running
+  // the turn — so the transcript the client loads looks like a real one.
+  await db.insert(chatHistory).values({
+    tripId: trip.id,
+    role: 'user',
+    content: message,
+    kind: 'ai',
+  });
+  await db.insert(pennyTurns).values({
+    tripId: trip.id,
+    userId: user.id,
+    idempotencyKey,
+    status: input.status,
+    userMessage: message,
+  });
+  return { idempotencyKey };
+}
+
+/** TEST-ONLY: move a planted turn to a terminal status, to end a spec cleanly. */
+export async function finishPennyTurn(input: {
+  email: string;
+  idempotencyKey: string;
+  status?: 'done' | 'error';
+}): Promise<void> {
+  assertEnabled();
+  const normalized = input.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('finishPennyTurn: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('finishPennyTurn: no such fixture user');
+  await db
+    .update(pennyTurns)
+    .set({ status: input.status ?? 'done', updatedAt: new Date() })
+    .where(
+      and(
+        eq(pennyTurns.idempotencyKey, input.idempotencyKey),
+        eq(pennyTurns.userId, user.id),
+      ),
+    );
 }

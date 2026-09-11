@@ -1,0 +1,76 @@
+# THE REGRESSION FLOW for the two bugs reported on iOS, 2026-09-11. Read this
+# before changing anything here.
+#
+# 1. With Penny still generating, tapping SETTINGS and then CHAT landed on the
+#    trips LIST rather than the chat that was open. LIST/MAP/CHAT are tabs OF a
+#    trip, and the nav sent all three to `/trips` whenever it was mounted
+#    somewhere with no trip in scope.
+#
+# 2. Tapping back into the trip and then CHAT showed no thinking indicator and a
+#    header pill reading READY, with the turn still in flight. Both halves of
+#    that indicator were screen-local `useState` starting `false`, so a fresh
+#    mount could never show a turn it had not itself sent. Measured here:
+#
+#        12:51:48  penny_turns.status = running
+#        12:51:49  screenshot: header pill reads READY
+#        12:52:10  live hierarchy: text node 'READY', no 'THINKING' node
+#        12:52:11  penny_turns.status = running
+#
+# WHY THE TURN IS PLANTED AND NOT RUN: producing that state honestly means
+# asking Penny to plan something and racing her — an Anthropic call on every CI
+# run (the spend the `ai-tests` label exists to keep off a push), 60-90 seconds
+# of wall clock, and a race this flow would start losing the day she got
+# faster. seed-turn.js writes the row the server would have written. Everything
+# the APP does is real: it reads the real turns endpoint and decides for itself
+# what to render, which is the decision that was wrong.
+#
+# WHY THE ASSERTIONS ARE ON `penny-status` AND NOT ON THE TYPING BUBBLE: that
+# bubble's "Penny is typing" label sits on a <View> with no `accessible` prop,
+# so it is absent from the hierarchy entirely — asserting on it would be
+# asserting on nothing. The pill is a <Text> and really is there.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# The server is now mid-answer for the seeded trip.
+- runScript: seed-turn.js
+
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer-input'
+    timeout: 30000
+
+# The driver can see that Penny is working.
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'THINKING'
+    timeout: 20000
+
+# ── step 2 of the report: SETTINGS, then CHAT ──────────────────────────────
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Settings'
+    timeout: 20000
+- tapOn: 'CHAT'
+
+# BUG 1. This used to land on the trips list — "Your trips", with a
+# "+ New trip" button. It has to come back to the conversation that was open.
+#
+# The composer is the gate rather than the trip name: the name is in the header
+# on both screens, while a composer exists only in a chat.
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer-input'
+    timeout: 30000
+- assertNotVisible: '+ New trip'
+
+# BUG 2, on the mount that came back. This one is genuinely fresh — the trip
+# screen is pushed anew — so nothing it holds in memory could carry the answer
+# across; it has to have asked the server.
+- assertVisible:
+    id: 'penny-status'
+    text: 'THINKING'

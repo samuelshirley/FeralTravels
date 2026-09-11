@@ -355,6 +355,24 @@ ids, StoreKit file); Android stays `com.feraltravels.app`.** *Enforced by:* `bun
 H14. **Delete-account emphasis: the phrase is semibold, the disarmed button carries no danger
 colour.** *Enforced by:* `DeleteAccountSection.test.tsx`, `deleteAccountEmphasisGuard.test.ts`.
 
+H15. **"Penny is working" is owned outside the screen, keyed by trip id, and seeded from the
+server on mount — never screen `useState`.** Both halves of the indicator (the THINKING/READY pill
+and the bottom nav's dot) were `useState` that starts `false`, so any fresh mount of the chat
+screen rendered READY over a live turn. Measured on a simulator 2026-09-11: `penny_turns.status`
+read `running` at 12:51:48 and 12:52:11, and the live view hierarchy at 12:52:10 contained a text
+node `READY` and no `THINKING` node at all. The store alone is not enough — it is per-process, so a
+restart and a turn another client sent both need the server's answer. *Enforced by:*
+`inFlightIndicatorGuard.test.ts`, `pennyRunStore.test.ts`, `ChatPanel.inFlight.test.tsx`,
+`e2e/chat-tab-in-flight.spec.ts`, `mobile/maestro/chat-tab-in-flight.yaml`.
+
+H16. **LIST / MAP / CHAT return to the trip that was open, not to the trips index.** They are tabs
+OF a trip; the nav is also mounted where no trip is in scope (Settings, the trips list), and it
+used to send all three to `/trips`. So tapping CHAT mid-answer dropped the driver on a list of
+trips instead of back in the conversation. The remembered id is session-scoped module state — the
+component that knows which trip it is, is exactly the one not mounted at the moment the answer is
+needed — and with nothing remembered the index is still the right answer. *Enforced by:*
+`lastOpenTrip.test.ts`, `inFlightIndicatorGuard.test.ts`, `e2e/chat-tab-in-flight.spec.ts`.
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

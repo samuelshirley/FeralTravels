@@ -151,3 +151,40 @@ export async function countLegs(page: Page, tripId: string): Promise<number> {
   const body = (await res.json()) as { legs?: unknown[] };
   return Array.isArray(body.legs) ? body.legs.length : 0;
 }
+
+/**
+ * Plant a `penny_turns` row so a spec can open the chat screen while the server
+ * is "mid-answer", with no Anthropic call and no race against Penny's latency.
+ *
+ * Nothing about the CLIENT is faked: it reads the real
+ * `GET /api/trips/[id]/turns`, gets the real row, and has to decide for itself
+ * what to render. That decision is the thing that was broken.
+ */
+export async function seedRunningTurn(
+  email: string,
+  tripId: string,
+  status: 'queued' | 'running' = 'running',
+): Promise<string> {
+  return withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/turn', {
+      data: { action: 'seed', email, tripId, status },
+    });
+    if (!res.ok()) {
+      throw new Error(`[e2e/seedRunningTurn] ${res.status()}: ${await res.text()}`);
+    }
+    const body = (await res.json()) as { idempotencyKey: string };
+    return body.idempotencyKey;
+  });
+}
+
+/** End a planted turn, so the spec leaves nothing running behind it. */
+export async function finishSeededTurn(email: string, idempotencyKey: string): Promise<void> {
+  await withApi(async (ctx) => {
+    const res = await ctx.post('/api/test/turn', {
+      data: { action: 'finish', email, idempotencyKey },
+    });
+    if (!res.ok()) {
+      throw new Error(`[e2e/finishSeededTurn] ${res.status()}: ${await res.text()}`);
+    }
+  });
+}

@@ -323,6 +323,7 @@ api/admin/test-users
 api/announcements/active  api/announcements/dismiss
 api/debug/fuel
 api/test/seed             api/test/trip
+api/test/turn
 api/test/cleanup          api/test/announcement
 api/test/otp              api/test/deletion
 api/test/subscription     api/test/promo
