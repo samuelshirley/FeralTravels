@@ -183,7 +183,13 @@ export default async function AdminPage() {
     {
       label: 'Total users',
       value: overview.totalUsers,
-      sub: `+${overview.newUsers7d} (7d)`,
+      // The internal count is printed rather than quietly subtracted. The
+      // filter's one invisible failure is a pattern that starts matching real
+      // signups, and this is the number that would show it.
+      sub:
+        overview.internalUsers > 0
+          ? `+${overview.newUsers7d} (7d) · ${overview.internalUsers} ours, not counted`
+          : `+${overview.newUsers7d} (7d)`,
       href: '/admin/users',
     },
     {
