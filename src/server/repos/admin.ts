@@ -683,6 +683,15 @@ export async function getSubscriptionEventsForUser(userId: string, limit = 50) {
       outcome: subscriptionEvents.outcome,
       receivedAt: subscriptionEvents.receivedAt,
       eventTimeMs: subscriptionEvents.eventTimeMs,
+      /**
+       * Selected for the ADMIN_REVOKE / ADMIN_REACTIVATE rows, which carry the
+       * admin's address and their typed reason in here and nowhere else — the
+       * `subscriptions` columns only ever describe the latest revoke, and an
+       * undo clears them. A store payload is large and nothing renders it, but
+       * splitting this into a second query for fifty rows the page already
+       * fetches would be the wrong trade.
+       */
+      payload: subscriptionEvents.payload,
     })
     .from(subscriptionEvents)
     .where(eq(subscriptionEvents.userId, userId))

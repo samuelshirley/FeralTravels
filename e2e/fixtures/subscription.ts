@@ -63,6 +63,19 @@ export interface SubscriptionFixture {
     autoRenew?: boolean;
     currentPeriodEndDaysFromNow?: number | null;
   } | null;
+  /**
+   * Run an ADMIN break-glass action, after the row above is written.
+   *
+   * It calls `revokeSubscription` / `reactivateSubscription` — the real
+   * functions, so what the spec exercises is the actual `pre_revoke_status`
+   * capture and restore rather than a fixture writing the columns itself.
+   *
+   * Not the admin ROUTE: `isAdminEmail` requires an address on a hardcoded
+   * allowlist of one real person, and no fixture user can be on it. The route's
+   * own half — zod, the 400s, the refusal sentences — is unit-tested in
+   * `src/server/payments/reactivateRoute.test.ts`.
+   */
+  adminAction?: { action: 'revoke' | 'reactivate'; reason: string } | null;
 }
 
 export interface SubscriptionFixtureResult {
@@ -72,6 +85,10 @@ export interface SubscriptionFixtureResult {
   anthropicMicrocents: number;
   subscriptionStatus: string | null;
   currentPeriodEnd: string | null;
+  /** Present when `adminAction` was asked for. A refusal comes back, not throws. */
+  adminActionResult?:
+    | { ok: true; action: 'revoked' | 'restore' | 'clear_row'; status?: string }
+    | { ok: false; reason: string; message: string };
 }
 
 /**

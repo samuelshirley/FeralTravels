@@ -26,8 +26,14 @@ export const dynamic = 'force-dynamic';
  */
 const bodySchema = z.object({
   userId: z.string().min(1),
-  // `.trim()` before `.min(1)` — "   " is not a reason.
-  reason: z.string().trim().min(1, 'A reason is required'),
+  // `.trim()` before `.min(1)` — "   " is not a reason. `required_error` covers
+  // the field being ABSENT, which `.min(1)` never sees: without it a body with
+  // no `reason` at all came back with zod's bare "Required", which is the one
+  // refusal an admin reads as a broken button rather than as their mistake.
+  reason: z
+    .string({ required_error: 'A reason is required' })
+    .trim()
+    .min(1, 'A reason is required'),
 });
 
 export async function POST(request: Request) {

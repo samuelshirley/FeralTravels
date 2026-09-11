@@ -172,7 +172,13 @@ function paywallMessage(reason: AccountVerdict['blockReason']): string {
     case 'usage_cap':
       return 'Planning is paused on this account. Email support@feraltravels.com.';
     case 'revoked':
-      return 'Access to this account is closed.';
+      // Terse, and still the same two facts as Penny's version — this string
+      // is what a client that ignores `code` will show a user verbatim, so it
+      // cannot be only the joke.
+      return (
+        'Penny lost all her balls in the river. This account is temporarily suspended — ' +
+        'email support@feraltravels.com.'
+      );
     default:
       return 'Subscribe to keep planning.';
   }

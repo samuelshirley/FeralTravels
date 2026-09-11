@@ -1,8 +1,10 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
-import { subscriptions, users } from '@/server/db/schema';
+import { subscriptionEvents, subscriptions, users } from '@/server/db/schema';
 import type { SubscriptionSource, SubscriptionStatus } from '@/server/db/schema';
+import { planReactivation, preRevokeStatusFor, type ReactivationPlan } from './reactivation';
 import { anthropicMicrocentsInWindow } from './usage';
 import { resolveAccountState, trialDaysRemaining, type AccountVerdict } from './states';
 import { enforcementApplies, paywallEnabled } from './switch';
@@ -177,10 +179,14 @@ export async function upsertSubscription(input: UpsertSubscriptionInput): Promis
         originalTransactionId: input.originalTransactionId ?? null,
         autoRenew: input.autoRenew ?? true,
         // A new purchase clears any previous revocation. Someone who was
-        // revoked and later pays again is a customer, not a suspect.
+        // revoked and later pays again is a customer, not a suspect. The
+        // pre-revoke status goes with it: it is the undo's memory of a
+        // revocation that no longer exists, and a stale one on a live row
+        // would be read months later as though it meant something.
         revokedAt: null,
         revokedBy: null,
         revokedReason: null,
+        preRevokeStatus: null,
         updatedAt: now,
       },
     });
@@ -202,27 +208,180 @@ export async function revokeSubscription(
   const trimmed = reason.trim();
   if (!trimmed) throw new Error('revokeSubscription requires a reason');
   const now = new Date();
-  await db
-    .insert(subscriptions)
-    .values({
-      userId,
-      status: 'revoked',
-      source: 'admin',
-      revokedAt: now,
-      revokedBy: by,
-      revokedReason: trimmed,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: subscriptions.userId,
-      set: {
+
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ status: subscriptions.status, preRevokeStatus: subscriptions.preRevokeStatus })
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, userId))
+      .limit(1);
+
+    await tx
+      .insert(subscriptions)
+      .values({
+        userId,
         status: 'revoked',
+        source: 'admin',
+        // No row existed, so this revoke is creating one. What an undo has to
+        // restore is the ABSENCE of a row — see `preRevokeStatusFor`.
+        preRevokeStatus: 'none',
         revokedAt: now,
         revokedBy: by,
         revokedReason: trimmed,
         updatedAt: now,
-      },
+      })
+      .onConflictDoUpdate({
+        target: subscriptions.userId,
+        set: {
+          status: 'revoked',
+          /**
+           * The status this is about to overwrite, kept so the revoke can be
+           * undone — and computed in SQL against the EXISTING row rather than
+           * from the value read above, so a concurrent write cannot land
+           * between the read and this statement and get memorialised wrong.
+           *
+           * The CASE is the double-revoke rule: pressing revoke twice must not
+           * record `'revoked'` as the thing to restore, which would destroy the
+           * one field that makes the undo possible. `preRevokeStatusFor` states
+           * the same rule in TypeScript and is what the unit tests exercise;
+           * these two must agree.
+           */
+          preRevokeStatus: sql`case when ${subscriptions.status} = 'revoked'
+              then ${subscriptions.preRevokeStatus}
+              else ${subscriptions.status} end`,
+          revokedAt: now,
+          revokedBy: by,
+          revokedReason: trimmed,
+          updatedAt: now,
+        },
+      });
+
+    await recordAdminSubscriptionAction(tx, {
+      userId,
+      type: 'ADMIN_REVOKE',
+      by,
+      reason: trimmed,
+      at: now,
+      detail: { previousStatus: preRevokeStatusFor(existing[0] ?? null) },
     });
+  });
+}
+
+/**
+ * The undo. Break-glass in the recoverable direction, and the only thing that
+ * moves a row out of `revoked`.
+ *
+ * Requires a typed reason and records who pressed it, for exactly the same
+ * reason its opposite does: handing paid access back is a decision somebody
+ * has to be able to explain months later, and the two entries have to read as
+ * a pair. It is NOT the quieter half of the pair in the audit, only in the UI.
+ *
+ * Returns the plan it carried out, or the refusal — a re-activation that
+ * cannot happen must SAY so. A silent no-op is how an admin comes away
+ * believing they fixed an account that is still locked out.
+ */
+export async function reactivateSubscription(
+  userId: string,
+  by: string,
+  reason: string
+): Promise<ReactivationPlan> {
+  const trimmed = reason.trim();
+  if (!trimmed) throw new Error('reactivateSubscription requires a reason');
+  const now = new Date();
+
+  return db.transaction(async (tx) => {
+    // Locked for the length of the transaction: two admins pressing the button
+    // together must not both come away told they restored the account. The
+    // second waits, re-reads an un-revoked row and is refused with
+    // `not_revoked`, which is the truth by then.
+    const rows = await tx
+      .select({ status: subscriptions.status, preRevokeStatus: subscriptions.preRevokeStatus })
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, userId))
+      .limit(1)
+      .for('update');
+
+    const plan = planReactivation(rows[0] ?? null);
+    if (!plan.ok) return plan;
+
+    if (plan.action === 'clear_row') {
+      await tx.delete(subscriptions).where(eq(subscriptions.userId, userId));
+    } else {
+      await tx
+        .update(subscriptions)
+        .set({
+          status: plan.status,
+          // Consumed. Leaving it set would make a later revoke of this same
+          // account restore a status two revocations old.
+          preRevokeStatus: null,
+          // Cleared because the account is no longer revoked and the row must
+          // not say it is. The FACT of the revoke is not lost — it is in
+          // `subscription_events`, which is written below and never deleted,
+          // and is why clearing these is safe rather than tidy.
+          revokedAt: null,
+          revokedBy: null,
+          revokedReason: null,
+          updatedAt: now,
+        })
+        .where(eq(subscriptions.userId, userId));
+    }
+
+    await recordAdminSubscriptionAction(tx, {
+      userId,
+      type: 'ADMIN_REACTIVATE',
+      by,
+      reason: trimmed,
+      at: now,
+      detail:
+        plan.action === 'clear_row'
+          ? { restoredStatus: null, removedRow: true }
+          : { restoredStatus: plan.status },
+    });
+
+    return plan;
+  });
+}
+
+/**
+ * Both admin entitlement actions, through the same ledger a real webhook uses.
+ *
+ * The property being defended is one sentence: an admin action that changes
+ * entitlement must never leave no row saying who did it. `subscriptions` has
+ * three columns for that and they only describe the LATEST revoke — clearing
+ * them on an undo would erase the fact that a revoke ever happened, and a
+ * second revoke overwrites the first regardless. An append-only ledger is the
+ * shape that answers "what has been done to this account", which is the
+ * question actually asked when somebody writes in.
+ *
+ * `eventTimeMs` is our own clock, matching `PROMO_REDEEMED` and
+ * `FAKE_PURCHASE` — the two other non-store rows in this table. It has a
+ * consequence worth naming: `lastAppliedEventTimeMs` takes the newest applied
+ * timestamp, so a store event that was delayed in flight and carries an older
+ * one is ignored as stale afterwards. For a deliberate admin decision made
+ * seconds ago that is the behaviour we want, and it is the same trade the
+ * promo path already makes.
+ */
+async function recordAdminSubscriptionAction(
+  tx: Pick<typeof db, 'insert'>,
+  entry: {
+    userId: string;
+    type: 'ADMIN_REVOKE' | 'ADMIN_REACTIVATE';
+    by: string;
+    reason: string;
+    at: Date;
+    detail: Record<string, unknown>;
+  }
+): Promise<void> {
+  await tx.insert(subscriptionEvents).values({
+    // Not derived from anything on the row: an admin may revoke, undo and
+    // revoke the same account again, and every one of those is its own entry.
+    eventId: `admin:${entry.type.toLowerCase()}:${randomUUID()}`,
+    userId: entry.userId,
+    type: entry.type,
+    eventTimeMs: entry.at.getTime(),
+    payload: { by: entry.by, reason: entry.reason, ...entry.detail },
+    outcome: 'applied',
+  });
 }
 
 /**

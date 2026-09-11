@@ -307,7 +307,33 @@ What it gets instead:
   *"This user has paid through 2027-03-14."* **Cancelling is not a reason
   to press it** — a cancelled subscriber keeps the term they bought, and
   the button existing must not quietly turn that policy into a habit.
-- A log of `REFUND` and `CONSUMPTION_REQUEST` events per user.
+- **Re-activate access** (added 2026-09-10) — the undo, and until it existed
+  the revoke was a one-way door: the button turned into a dead "Access
+  already revoked", so a misfire, or a `REFUND` that turned out to be about
+  a different account, was unfixable from the product.
+
+  **It hands back the ROW, not TIME.** `revokeSubscription` overwrites
+  `status` in place, so the status it is about to destroy is recorded in
+  `subscriptions.pre_revoke_status` (migration 0040) and the undo consumes
+  it. An account that was already `expired` when it was revoked comes back
+  `expired`; a term that ran out *while* the account was revoked stays run
+  out, because `resolveAccountState` already treats the clock as the
+  authority over a stale status. Without that, this button would be a way
+  to mint free plans out of dead accounts.
+
+  Same typed reason as its opposite and the same record, because handing
+  paid access back is equally a decision somebody has to explain later —
+  but deliberately NOT the same danger styling, since this is the
+  recoverable direction. It says what the account lands on *before* the
+  press, since "re-activated" is not a state. `'none'` is the recorded
+  value when there was no subscription row at all (revoking a trial user
+  creates one), and the undo then deletes the row so the trial rules apply
+  again. A row revoked before the column existed is REFUSED with a
+  sentence rather than guessed at.
+- A log of `REFUND` and `CONSUMPTION_REQUEST` events per user, and of both
+  admin actions above — they go through the same `subscription_events`
+  ledger, which is what makes clearing `revoked_at`/`_by`/`_reason` on an
+  undo safe: those three columns only ever describe the LATEST revoke.
 - Consumption requests answered automatically from `usage_events`, with
   the reply recorded so a declined refund can be explained later.
 

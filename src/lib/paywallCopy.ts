@@ -123,16 +123,28 @@ const USAGE_CAP: BlockNotice = {
  * Refunded or revoked. The only case where existing trips also close, so this
  * is the one message that cannot promise the itinerary is still there.
  *
- * Says what happened without accusing anyone of anything: a refund is between
- * the user and Apple, and a revoke is rare enough that if it is wrong, we want
- * to hear about it rather than defend it.
+ * The ONE funny notice in this file, at the owner's instruction, and the joke
+ * is confined to the heading on purpose: the body still has to carry the two
+ * facts a locked-out person needs — that the suspension is temporary and that
+ * support is where it gets fixed — and a gag wrapped around either of those
+ * would be worse than the bank-letter sentence it replaced.
+ *
+ * `usage_cap` above is deliberately NOT funny and must stay that way. It fires
+ * when OUR per-trip cost regressed, so a joke about somebody's account at that
+ * moment reads as blaming them for our bug. These two being different is the
+ * reason `BlockReason` is a separate field at all, and `paywallCopy.test.ts`
+ * fails if a rewrite collapses them.
+ *
+ * Nobody is accused of anything either way: a refund is between the user and
+ * Apple, and a revoke is rare enough that if it is wrong, we want to hear
+ * about it rather than defend it.
  */
 const REVOKED: BlockNotice = {
-  eyebrow: 'ACCESS CLOSED',
-  heading: 'Access to this account is closed',
+  eyebrow: 'ACCOUNT SUSPENDED',
+  heading: 'Penny has lost all her balls in the river',
   body: [
-    'Planning and your saved trips are both unavailable here. If a refund went through on the App Store, this is what follows it.',
-    'If that looks wrong to you, email us. A real person reads it, and getting this wrong is very much a thing we would want to fix.',
+    'She cannot fetch anything on this account: it is temporarily suspended, so planning and your saved trips are both unavailable here.',
+    'Email us and a real person will pick it up. If this looks wrong to you it may well be, and that is exactly the sort of thing we want to hear about.',
   ],
   action: { label: `Email ${SUPPORT_EMAIL}`, href: `mailto:${SUPPORT_EMAIL}` },
   tone: 'apologise',

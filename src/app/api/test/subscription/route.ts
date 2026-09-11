@@ -72,6 +72,21 @@ const bodySchema = z.object({
       currentPeriodEndDaysFromNow: z.number().min(-3650).max(3650).nullish(),
     })
     .nullish(),
+  /**
+   * Drive one of the two admin break-glass actions through the REAL payments
+   * functions. See `SubscriptionFixtureInput.adminAction` for why the admin
+   * route itself cannot be reached from CI.
+   *
+   * It grants nothing this endpoint could not already grant — `subscription`
+   * above writes any status directly — and it is behind the same three guards,
+   * the fixture-address rule included.
+   */
+  adminAction: z
+    .object({
+      action: z.enum(['revoke', 'reactivate']),
+      reason: z.string().trim().min(1),
+    })
+    .nullish(),
 });
 
 export async function POST(req: Request) {

@@ -514,6 +514,136 @@ test.describe('Subscriptions — subscribed', () => {
   });
 });
 
+test.describe('Subscriptions — revoke and undo', () => {
+  test('an admin can take access away and give it back', async ({ page }) => {
+    /**
+     * The round trip. Until 2026-09-10 the second half of this did not exist:
+     * `/admin/users/[id]` could revoke and the button then turned into a dead
+     * "Access already revoked", so a misfire — or a REFUND webhook that turned
+     * out to be about a different account — was unfixable from the product.
+     *
+     * What makes it work is `pre_revoke_status`. `revokeSubscription`
+     * overwrites `status` in place, so without recording what was there the
+     * undo could only guess, and "guess active" would make this button a way to
+     * mint free plans out of dead accounts. That guard is unit-tested in
+     * `states.test.ts`; what is proved HERE is that the two real functions,
+     * against a real row, put a real signed-in user back where they were.
+     *
+     * The admin ROUTE is not reachable from CI — `isAdminEmail` wants an
+     * address on a hardcoded allowlist of one real person — so the actions are
+     * driven through the guarded fixture endpoint, which calls those same two
+     * functions. Its own half (zod, the 400s, the refusal sentences) is unit
+     * tested in `src/server/payments/reactivateRoute.test.ts`.
+     */
+    const liveAnnualPlan: SubscriptionFixture = {
+      comped: false,
+      createdAtDaysAgo: 400,
+      anthropicSpendUsd: 0,
+      subscription: {
+        status: 'active',
+        source: 'apple_iap',
+        productId: 'com.feraltravels.ios.annual',
+        currentPeriodEndDaysFromNow: 200,
+      },
+    };
+    const email = await signedInWithState(page, liveAnnualPlan);
+
+    // ── Before ──────────────────────────────────────────────────────────
+    const before = await readEntitlement(page);
+    expect(before.state).toBe('subscribed');
+    expect(before.entitled).toBe(true);
+    expect(before.plan).toBe('annual');
+    expect(before.currentPeriodEnd).not.toBeNull();
+
+    // ── Revoked ─────────────────────────────────────────────────────────
+    await setSubscriptionState(email, {
+      ...liveAnnualPlan,
+      // No `subscription` — the row is already there, and rewriting it through
+      // `upsertSubscription` would clear the revocation this is about to make.
+      subscription: null,
+      adminAction: { action: 'revoke', reason: 'e2e: refund reported, pending confirmation' },
+    });
+
+    await page.goto('/trips');
+    const revoked = await readEntitlement(page);
+    expect(revoked.state).toBe('revoked');
+    expect(revoked.entitled).toBe(false);
+    // The one state where reading stops too. The page must agree, but the
+    // server's verdict is the claim — a spec that only checked the DOM would
+    // pass against a UI that hid a button over an account still entitled.
+    expect(revoked.canViewExistingTrips).toBe(false);
+    await expect(notice(page)).toHaveAttribute('data-block-reason', 'revoked');
+    await expect(page.getByTestId('trip-card')).toHaveCount(0);
+
+    const blocked = await attemptCreateTrip(page, playwrightName('revoked'));
+    expect(blocked.status).toBe(402);
+    expect(blocked.body.code).toBe(PAYWALL_ERROR_CODE);
+
+    // ── Undone ──────────────────────────────────────────────────────────
+    const undo = await setSubscriptionState(email, {
+      ...liveAnnualPlan,
+      subscription: null,
+      adminAction: { action: 'reactivate', reason: 'e2e: refund was a different account' },
+    });
+    expect(undo.adminActionResult).toMatchObject({ ok: true, action: 'restore', status: 'active' });
+
+    await page.goto('/trips');
+    const after = await readEntitlement(page);
+    expect(after.state).toBe('subscribed');
+    expect(after.entitled).toBe(true);
+    expect(after.canViewExistingTrips).toBe(true);
+    // The SAME plan and the SAME term — not a fresh one. A revoke does not
+    // consume the period and the undo does not extend it, which is the whole
+    // difference between restoring an account and granting one.
+    expect(after.plan).toBe(before.plan);
+    expect(after.currentPeriodEnd).toBe(before.currentPeriodEnd);
+
+    // And the account works again, positively: the trip they already had is
+    // readable, and planning is allowed.
+    await expect(notice(page)).toHaveCount(0);
+    await expect(page.getByTestId('trip-card').first()).toBeVisible();
+    const created = await attemptCreateTrip(page, playwrightName('reactivated'));
+    expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
+
+    await cleanupPlaywrightFixtureData(email);
+  });
+
+  test('the undo refuses an account it cannot honestly restore', async ({ page }) => {
+    /*
+     * A refusal is never a silent no-op: an admin who comes away believing they
+     * fixed an account that is still locked out is the failure this feature
+     * exists to remove, arrived at from the other side.
+     *
+     * `not_revoked` is the reachable one from a fixture. The other two —
+     * no row at all, and a row revoked before `pre_revoke_status` existed —
+     * are covered in `reactivation.test.ts`, since neither can be manufactured
+     * here without a fixture that writes the column directly, which would be a
+     * fixture asserting against itself.
+     */
+    const email = await signedInWithState(page, {
+      comped: false,
+      createdAtDaysAgo: 400,
+      anthropicSpendUsd: 0,
+      subscription: { status: 'active', currentPeriodEndDaysFromNow: 200 },
+    });
+
+    const result = await setSubscriptionState(email, {
+      comped: false,
+      subscription: null,
+      adminAction: { action: 'reactivate', reason: 'e2e: nothing to undo' },
+    });
+    expect(result.adminActionResult).toMatchObject({ ok: false, reason: 'not_revoked' });
+
+    // And it changed nothing.
+    await page.goto('/trips');
+    const entitlement = await readEntitlement(page);
+    expect(entitlement.state).toBe('subscribed');
+    expect(entitlement.entitled).toBe(true);
+
+    await cleanupPlaywrightFixtureData(email);
+  });
+});
+
 test.describe('Subscriptions — comped', () => {
   test('comped: a dead trial and $9 of spend still means full access', async ({ page }) => {
     /**

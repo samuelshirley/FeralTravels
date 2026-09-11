@@ -18,9 +18,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
-import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
+import type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
 
-export type { SubscriptionSource, SubscriptionStatus };
+export type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus };
 
 // ── Shared JSONB types ──────────────────────────────────────────────────────
 
@@ -1082,6 +1082,18 @@ export const subscriptions = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedBy: text('revoked_by'),
     revokedReason: text('revoked_reason'),
+    /**
+     * What `status` was the moment before a revoke overwrote it — the one fact
+     * that makes the revoke undoable, since `status` is overwritten in place
+     * and `currentPeriodEnd`/`productId`/`source` cannot tell an active plan
+     * from an expired one.
+     *
+     * `'none'` records "there was no subscription row at all", which a revoke
+     * of a trial user creates one from. NULL means a revoke that predates
+     * migration 0040: `reactivateSubscription` refuses those rather than
+     * guessing a status. See `PreRevokeStatus`.
+     */
+    preRevokeStatus: text('pre_revoke_status').$type<PreRevokeStatus>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },

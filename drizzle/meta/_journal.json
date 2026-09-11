@@ -281,6 +281,13 @@
       "when": 1788861195693,
       "tag": "0039_chat_gate_tier",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788861255693,
+      "tag": "0040_pre_revoke_status",
+      "breakpoints": true
     }
   ]
 }

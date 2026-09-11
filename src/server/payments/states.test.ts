@@ -15,6 +15,8 @@ import {
   type AccountState,
 } from './states';
 import { REPLAN_USD_CAP_PER_DAY, TRIAL_REPLAN_USD_CAP_PER_DAY } from './constants';
+import { planReactivation, preRevokeStatusFor, type RevocableRow } from './reactivation';
+import type { SubscriptionStatus } from '@/types/entitlement';
 
 /**
  * The twelve states of docs/design/subscriptions.md, pinned.
@@ -573,5 +575,147 @@ describe('dailyReplanCapUsd', () => {
     expect(dailyReplanCapUsd('trial', 0.1)).toBe(0.1);
     expect(dailyReplanCapUsd('subscribed', 0.1)).toBe(0.1);
     expect(dailyReplanCapUsd('trial', 100)).toBe(TRIAL_REPLAN_USD_CAP_PER_DAY);
+  });
+});
+
+
+/**
+ * Revoke → re-activate, as a round trip through the pure halves.
+ *
+ * `revokeSubscription` and `reactivateSubscription` are two SQL statements
+ * around `preRevokeStatusFor` and `planReactivation`; those two are pure, so
+ * the whole undo can be described here instead of staged against a database —
+ * which is the same reason `resolveAccountState` takes its clock as an
+ * argument.
+ *
+ * What is being defended is one property: re-activating hands back the ROW, not
+ * TIME. That is what stops the button becoming a way to mint free plans out of
+ * dead accounts, and it is the only part of this feature that could lose money
+ * if it were wrong.
+ */
+describe('revoke → re-activate', () => {
+  /** What the row looks like after a revoke, given what it looked like before. */
+  function afterRevoke(before: RevocableRow | null): RevocableRow {
+    return { status: 'revoked', preRevokeStatus: preRevokeStatusFor(before) };
+  }
+
+  /**
+   * The status a re-activation restores, or the refusal. `'no_row'` is the
+   * plan that DELETES the row — the account goes back to having no plan, and
+   * `resolveAccountState` reads that as the trial rules.
+   */
+  function afterReactivate(row: RevocableRow): SubscriptionStatus | 'no_row' | 'refused' {
+    const plan = planReactivation(row);
+    if (!plan.ok) return 'refused';
+    return plan.action === 'clear_row' ? 'no_row' : plan.status;
+  }
+
+  it('an active plan with term left comes back entitled, same period end', () => {
+    // The happy path, and the case the button exists for: revoked by mistake,
+    // undone, and the account carries on where it left off.
+    const periodEnd = new Date(NOW.getTime() + 30 * DAY_MS);
+    const before: RevocableRow = { status: 'active', preRevokeStatus: null };
+
+    const revoked = afterRevoke(before);
+    expect(revoked.preRevokeStatus).toBe('active');
+    expect(
+      resolveAccountState(
+        facts({ subscription: { status: 'revoked', currentPeriodEnd: periodEnd, autoRenew: true } }),
+      ),
+    ).toMatchObject({ state: 'revoked', entitled: false, canViewExistingTrips: false });
+
+    const restored = afterReactivate(revoked);
+    expect(restored).toBe('active');
+
+    const verdict = resolveAccountState(
+      facts({
+        subscription: { status: 'active', currentPeriodEnd: periodEnd, autoRenew: true },
+      }),
+    );
+    expect(verdict.state).toBe('subscribed');
+    expect(verdict.entitled).toBe(true);
+    expect(verdict.canViewExistingTrips).toBe(true);
+    // The term is untouched — a revoke does not consume the period, and the
+    // undo does not extend it.
+    expect(verdict.currentPeriodEnd).toBe(periodEnd);
+  });
+
+  it('an EXPIRED plan comes back expired — the undo is not a free plan', () => {
+    /*
+     * The guard against the whole feature going wrong. `revokeSubscription`
+     * overwrites `status` in place, so without `pre_revoke_status` the only
+     * thing an undo could do is guess — and "guess active" turns this button
+     * into a subscription generator that costs real Anthropic spend.
+     */
+    const ended = new Date(NOW.getTime() - 5 * DAY_MS);
+    const revoked = afterRevoke({ status: 'expired', preRevokeStatus: null });
+    expect(afterReactivate(revoked)).toBe('expired');
+
+    const verdict = resolveAccountState(
+      facts({
+        createdAt: agedBy(400 * DAY_MS),
+        subscription: { status: 'expired', currentPeriodEnd: ended, autoRenew: false },
+      }),
+    );
+    expect(verdict.state).toBe('expired');
+    expect(verdict.entitled).toBe(false);
+    expect(verdict.blockReason).toBe('subscription_over');
+  });
+
+  it('a term that ran out WHILE revoked stays run out', () => {
+    /*
+     * The restored status is `active` and the account is still not entitled,
+     * because `resolveAccountState` already treats the clock as the authority
+     * over a stale status. That rule was written for a missing renewal webhook
+     * and it is what makes "picks up where they left off" safe: the undo hands
+     * back the row, and the row's term is simply over.
+     */
+    const endedWhileRevoked = new Date(NOW.getTime() - DAY_MS);
+    const revoked = afterRevoke({ status: 'active', preRevokeStatus: null });
+    expect(afterReactivate(revoked)).toBe('active');
+
+    const verdict = resolveAccountState(
+      facts({
+        createdAt: agedBy(400 * DAY_MS),
+        subscription: {
+          status: 'active',
+          currentPeriodEnd: endedWhileRevoked,
+          autoRenew: true,
+        },
+      }),
+    );
+    expect(verdict.state).toBe('expired');
+    expect(verdict.entitled).toBe(false);
+  });
+
+  it('a revoked TRIAL user goes back to having no plan at all', () => {
+    /*
+     * Revoking an account with no subscription row CREATES one, so the undo
+     * cannot restore a status — there was none. It deletes the row, and the
+     * account lands back under the trial rules derived from `created_at`,
+     * which is precisely where it stood a moment before the revoke.
+     */
+    const revoked = afterRevoke(null);
+    expect(revoked.preRevokeStatus).toBe('none');
+    expect(afterReactivate(revoked)).toBe('no_row');
+
+    const stillInTrial = resolveAccountState(facts({ subscription: null }));
+    expect(stillInTrial.state).toBe('trial');
+    expect(stillInTrial.entitled).toBe(true);
+
+    // And an aged one lands where it truly stands, not somewhere flattering.
+    const past = resolveAccountState(facts({ createdAt: agedBy(400 * DAY_MS), subscription: null }));
+    expect(past.state).toBe('trial_expired');
+    expect(past.entitled).toBe(false);
+  });
+
+  it('revoking twice does not destroy the thing that makes the undo possible', () => {
+    // The second press is exactly the one an admin makes when they are unsure
+    // whether the first worked. Recording `'revoked'` as the status to restore
+    // would make the account permanently unrecoverable.
+    const once = afterRevoke({ status: 'active', preRevokeStatus: null });
+    const twice = afterRevoke(once);
+    expect(twice.preRevokeStatus).toBe('active');
+    expect(afterReactivate(twice)).toBe('active');
   });
 });

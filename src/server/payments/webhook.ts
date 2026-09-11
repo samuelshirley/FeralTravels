@@ -305,9 +305,12 @@ const defaultTransferSubscription: NonNullable<WebhookDeps['transferSubscription
           autoRenew: true,
           // A transfer INTO a previously revoked account clears the revocation,
           // same reasoning as a new purchase: they hold the subscription now.
+          // `preRevokeStatus` goes with it — it is the undo's memory of a
+          // revocation this row no longer carries.
           revokedAt: null,
           revokedBy: null,
           revokedReason: null,
+          preRevokeStatus: null,
           updatedAt: at,
         },
       });

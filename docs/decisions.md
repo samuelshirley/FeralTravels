@@ -195,6 +195,24 @@ App Review signs in as a trial user and must be able to find a price. *Enforced 
 E8. **`/privacy`, `/terms`, `/support` are anonymous.** *Enforced by:* `paywallPaths.test.ts`,
 `e2e/legal-pages.spec.ts`.
 
+E9. **A revoke is undoable, and the undo hands back the ROW, not TIME.** `revokeSubscription`
+records the status it is about to overwrite in `subscriptions.pre_revoke_status` (migration 0040;
+`'none'` when there was no row at all) and `reactivateSubscription` consumes it, so an expired
+account comes back expired and a term that ran out while revoked stays run out. A double-revoke
+never clobbers the recorded status; a row revoked before 0040 is REFUSED with a sentence rather
+than guessed at. *Enforced by:* `payments/reactivation.test.ts`, `payments/states.test.ts`,
+`payments/reactivateRoute.test.ts`, `e2e/subscriptions.spec.ts`.
+
+E10. **An admin action that changes entitlement always leaves a row saying who did it.** Both
+directions demand a typed reason and write a `subscription_events` row inside the same
+transaction as the write — which is what makes clearing `revoked_at`/`_by`/`_reason` on an undo
+safe, since the three columns only ever describe the LATEST revoke. *Enforced by:*
+`adminEntitlementAuditGuard.test.ts`.
+
+E11. **The `revoked` paywall copy is the one joke, and `usage_cap` never borrows it.** The gag
+may be reworded; "temporarily suspended" and "email support" may not. `usage_cap` fires when OUR
+costs regressed and stays apologetic. *Enforced by:* `paywallCopy.test.ts`.
+
 ## F. Build, CI, deploy
 
 F1. **Merging a PR IS the deploy. The deploy job refuses unless CI for that PR's head SHA is
