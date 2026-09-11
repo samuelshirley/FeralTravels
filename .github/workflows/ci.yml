@@ -107,6 +107,45 @@ env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
+  # Is this PR documentation only? The jobs that DEPLOY something or DRIVE a
+  # browser are gated on the answer; see scripts/decide-docs-only.mjs for the
+  # rule, the fail-safe direction, and why the workflow still runs at all.
+  #
+  # NOT a `paths-ignore` on the trigger, and that is the whole design: the
+  # deploy gate in deploy-production.yml requires a CI run keyed to the PR's
+  # head sha to be completed+success, and a filtered-out trigger produces NO
+  # run for that sha — so a docs merge would leave production stale until
+  # somebody re-ran the deploy by hand. A run whose expensive jobs SKIPPED
+  # still concludes `success`, which is what the gate reads.
+  decide:
+    name: Decide scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Classify the diff
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          # The API, not `git diff`: it needs no fetch depth and no merge-base
+          # arithmetic. A failure here writes an EMPTY list, which the script
+          # reads as "could not prove it" and answers false.
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate \
+            --jq '.[].filename' > changed-files.txt || : > changed-files.txt
+          node scripts/decide-docs-only.mjs --files changed-files.txt \
+            >> "$GITHUB_OUTPUT" 2> reasons.txt || echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Scope"
+            echo '```'
+            cat reasons.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ONE job for both vitest projects, because both ARE unit tests. The
   # project split (`unit` in node, `components` in jsdom) still exists — it
   # keeps logic specs from paying for a DOM they never touch — but it is a
@@ -183,6 +222,10 @@ jobs:
   # actually needs to stop, because an OTA update ships whatever compiles.
   mobile:
     name: Mobile typecheck
+    # Skipped on a docs-only PR: no file under mobile/ changed, so there is no
+    # Expo type for tsc to have an opinion about.
+    needs: decide
+    if: needs.decide.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -202,7 +245,17 @@ jobs:
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:
     name: Deploy tested preview
-    needs: unit
+    # A docs-only PR skips the whole deployed half of this pipeline: no Neon
+    # branch cloned from production, no Vercel preview, and — because `e2e` and
+    # `ios-e2e` both `needs: preview` — no Playwright run and no simulator.
+    #
+    # `unit` is deliberately NOT gated. Markdown in this repo is not inert:
+    # claudeMdGuard, decisionsRegisterGuard, removedFeaturesGuard,
+    # googleAccountingGuard and oneGoogleKeyGuard all read CLAUDE.md or
+    # docs/decisions.md as TEXT, so a docs-only PR is exactly the kind that
+    # reds them.
+    needs: [unit, decide]
+    if: needs.decide.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:

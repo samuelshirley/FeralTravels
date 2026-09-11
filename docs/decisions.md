@@ -283,6 +283,15 @@ with the PR; `noindex`). *Enforced by:* **NOT ENFORCED**. *Decision worth re-ask
 F8. **The migration chain cannot replay from an empty database; a fresh DB is `db:push` +
 `seed-migration-journal.ts`.** *Enforced by:* **NOT ENFORCED** (documented only).
 
+F-docs. **A docs-only PR skips the deployed half of CI, and the trigger is NOT filtered.** The
+expensive jobs (`preview`, and with it `e2e` and `ios-e2e`, plus `mobile` typecheck) are gated on a
+`decide` job; `unit` is deliberately NOT gated, because markdown here is not inert — `claudeMdGuard`,
+`decisionsRegisterGuard`, `removedFeaturesGuard`, `googleAccountingGuard` and `oneGoogleKeyGuard` all
+read CLAUDE.md or this file as TEXT. A `paths-ignore` on the trigger is the trap: it produces NO CI
+run for the PR's head sha, and `deploy-production.yml` requires one to be completed+success, so a
+docs merge would leave production stale until somebody re-ran the deploy by hand. Every uncertain
+classification answers "not docs-only". *Enforced by:* `decideDocsOnly.test.ts`.
+
 ## G. Data and API contracts
 
 G1. **Every API route accepts exactly one Zod shape; free-text interpretation lives only at the
