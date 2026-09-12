@@ -8,6 +8,8 @@ import ChatPanel from '@/components/ChatPanel';
 import AppNavbar from '@/components/AppNavbar';
 import Spinner from '@/components/Spinner';
 import BottomNav, { type MobileTab } from '@/components/BottomNav';
+import { usePennyRunning } from '@/lib/pennyRunStore';
+import { rememberLastOpenTrip } from '@/lib/lastOpenTrip';
 import TripVehicleChip from '@/components/TripVehicleChip';
 import PullToRefresh from '@/components/PullToRefresh';
 import PaneLock from '@/components/PaneLock';
@@ -55,6 +57,8 @@ interface Props {
    * to Penny.
    */
   openChatOnMount?: boolean;
+  /** Force the mobile tab on mount — see the note in page.tsx. */
+  requestedTab?: MobileTab;
   /**
    * Why this account is refused, or null when it is entitled (or the paywall
    * is switched off). Resolved on the SERVER and handed down rather than
@@ -156,6 +160,7 @@ function TripWorkspaceInner({
   serverOnboardingState,
   replanFromOffRoute = false,
   openChatOnMount = false,
+  requestedTab,
   blockReason = null,
   initialTrip = null,
   initialPois,
@@ -184,8 +189,26 @@ function TripWorkspaceInner({
 
   // Lazy initial value rather than an effect, so an arrival aimed at chat never
   // flashes the itinerary first.
-  const [mobileTab, setMobileTab] = useState<MobileTab>(openChatOnMount ? 'chat' : 'list');
-  const [thinking, setThinking] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>(
+    requestedTab ?? (openChatOnMount ? 'chat' : 'list')
+  );
+  /*
+   * NOT `useState`. This drives the bottom nav's thinking dot, and it used to
+   * be screen-local: it started `false` on every mount, so coming back into a
+   * trip whose turn was still running showed no activity anywhere. Owned
+   * outside this component and keyed by trip id — see lib/pennyRunStore.
+   */
+  const thinking = usePennyRunning(tripId);
+
+  /*
+   * Remember which trip this is, for as long as the tab is open. BottomNav
+   * reads it from pages where this component is not mounted (Settings, the
+   * trips index) so its LIST/MAP/CHAT items can return here — see the note in
+   * lib/lastOpenTrip.
+   */
+  useEffect(() => {
+    if (tripId) rememberLastOpenTrip(tripId);
+  }, [tripId]);
   const [unread, setUnread] = useState(0);
   const mobileTabRef = useRef<MobileTab>(mobileTab);
   mobileTabRef.current = mobileTab;
@@ -428,7 +451,9 @@ function TripWorkspaceInner({
   const handleChatActivity = (
     evt: 'thinking' | 'response' | 'error' | 'fuel-planning'
   ) => {
-    setThinking(evt === 'thinking');
+    // `thinking` is no longer set here — the run store owns it. What is left is
+    // the unread badge, which is genuinely about THIS component: it counts what
+    // arrived while the user was looking at another tab of it.
     if (evt === 'response' || evt === 'error') {
       // Chat is permanently visible on tablet & desktop — only mobile needs an
       // unread badge, and only when the user is on a non-chat tab.

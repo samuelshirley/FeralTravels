@@ -1,4 +1,6 @@
 import * as SecureStore from "expo-secure-store";
+import { resetPennyRuns } from "@/shared/lib/pennyRunStore";
+import { forgetLastOpenTrip } from "@/shared/lib/lastOpenTrip";
 
 /**
  * Session token storage. The token is a real server-side session (same
@@ -35,6 +37,15 @@ export async function setToken(token: string): Promise<void> {
 }
 
 export async function clearToken(): Promise<void> {
+  /*
+   * Both stores are module state that outlives every screen, which is the
+   * whole point of them — and the reason they have to be emptied here. The
+   * next account to sign in on this device would otherwise inherit the
+   * previous one's "last open trip" (a trip id it cannot load, so CHAT would
+   * land on an error) and its in-flight indicator.
+   */
+  resetPennyRuns();
+  forgetLastOpenTrip();
   try {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
     await SecureStore.deleteItemAsync(EMAIL_KEY);

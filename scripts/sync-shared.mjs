@@ -37,6 +37,14 @@ export const SHARED_FILES = [
   ['src/lib/pennyGate.ts', 'mobile/shared/lib/pennyGate.ts'],
   ['src/lib/strikes.ts', 'mobile/shared/lib/strikes.ts'],
   ['src/lib/accountDeletion.ts', 'mobile/shared/lib/accountDeletion.ts'],
+  // "Penny is working" and "the trip I last had open". Both are state that has
+  // to outlive the screen reading it — the chat screen is exactly what is NOT
+  // mounted when the bottom nav needs to know where CHAT goes, and a fresh
+  // mount of it is exactly when the thinking indicator used to be lost. They
+  // are shared rather than native-only for the usual reason: the root vitest
+  // project is the only test runner, and the web has the identical bug.
+  ['src/lib/pennyRunStore.ts', 'mobile/shared/lib/pennyRunStore.ts'],
+  ['src/lib/lastOpenTrip.ts', 'mobile/shared/lib/lastOpenTrip.ts'],
   // Both halves of the promo flow. The app must normalize a typed code exactly
   // as the server does — if the two disagreed, a user would type something the
   // app accepts and the server rejects, and the error would read as a bad code

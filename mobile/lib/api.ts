@@ -372,10 +372,28 @@ export function tripApi(tripId: string) {
       apiFetch<OnboardingAnswer>(`/api/trips/${tripId}/onboarding`, {
         body: { questionKey, value },
       }),
-    /** Poll a turn by idempotency key to heal a dropped chat stream. */
+    /**
+     * Poll a turn by idempotency key to heal a dropped chat stream.
+     *
+     * The parameter is `key`. It was `idempotencyKey`, which the route's Zod
+     * schema does not accept — so every native reconcile was silently reaching
+     * the NO-KEY branch and being answered with the trip's most recent turn
+     * instead of the one it asked about. Usually the same row, which is why
+     * nothing noticed; not the same row whenever a second turn had been sent.
+     */
     getTurn: (idempotencyKey: string) =>
       apiFetch<{ turn: TurnRecord | null }>(`/api/trips/${tripId}/turns`, {
-        query: { idempotencyKey },
+        query: { key: idempotencyKey },
+        skipGlobalErrorReport: true,
+      }),
+    /**
+     * The trip's most recent turn, whoever started it. This is how a freshly
+     * mounted chat panel finds out that the server is mid-answer — the store
+     * in shared/lib/pennyRunStore is per-process and knows nothing after a
+     * restart, and nothing at all about a turn another client sent.
+     */
+    getLatestTurn: () =>
+      apiFetch<{ turn: TurnRecord | null }>(`/api/trips/${tripId}/turns`, {
         skipGlobalErrorReport: true,
       }),
   };
@@ -455,6 +473,8 @@ export interface OnboardingAnswer {
 
 export interface TurnRecord {
   status: "queued" | "running" | "done" | "error";
+  /** The client key the turn was created with — the run store is keyed on it. */
+  idempotency_key?: string | null;
   assistantMessage?: ChatMessage | null;
   error?: string | null;
 }

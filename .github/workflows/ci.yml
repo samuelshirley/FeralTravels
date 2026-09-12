@@ -1151,6 +1151,25 @@ jobs:
             --output maestro-report.xml \
             --debug-output maestro-debug
 
+          # THE REGRESSION FLOW for the two navigation/state bugs reported on
+          # 2026-09-11: CHAT from Settings landing on the trips list, and a
+          # remounted chat screen reading READY over a live turn. It plants a
+          # `penny_turns` row rather than asking Penny to plan something, so it
+          # costs no Anthropic call and races nothing — see seed-turn.js.
+          #
+          # Before settings-location.yaml, which spends the location dialog and
+          # leaves `canAskAgain` false for the rest of the install.
+          maestro --device "$SIM_UDID" test mobile/maestro/chat-tab-in-flight.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e TRIP_ID="$TRIP_ID" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-in-flight.xml \
+            --debug-output maestro-debug
+
           # A permission button is the one kind of UI that cannot be checked by
           # looking at it: one that renders perfectly and calls nothing is
           # indistinguishable from one that works, and `Mobile typecheck`

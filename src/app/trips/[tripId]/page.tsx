@@ -82,6 +82,18 @@ export default async function TripPage({ params, searchParams }: Props) {
         // this page opens on the itinerary tab, which is not where someone who
         // just clicked her name wants to land.
         openChatOnMount={searchParams.chat === '1'}
+        /*
+         * "Open on this tab." BottomNav sends it when it is mounted on a page
+         * with no trip in scope (Settings, the trips index) and has to
+         * navigate back into the last trip rather than toggle a pane.
+         */
+        requestedTab={
+          searchParams.tab === 'list' ||
+          searchParams.tab === 'map' ||
+          searchParams.tab === 'chat'
+            ? searchParams.tab
+            : undefined
+        }
         // The same verdict that decided the redirect above, handed to the
         // workspace so the map and the itinerary render already covered. This
         // is the `EntitlementNotice` argument applied to the trip page: a

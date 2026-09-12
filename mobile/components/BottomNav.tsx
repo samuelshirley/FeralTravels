@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { lastOpenTripId, tripTabDestination } from "@/shared/lib/lastOpenTrip";
 import { theme, shadow } from "@/lib/theme";
 import { ChatIcon, ListIcon, MapIcon, SettingsIcon } from "@/components/icons";
 import { font } from "@/lib/typography";
@@ -58,10 +59,22 @@ export default function BottomNav({
       router.push("/settings");
       return;
     }
-    // Without a trip context the three trip tabs can't toggle anything, so
-    // they route to the trips list as the hub (matches the web).
+    /*
+     * Without a trip in scope the three trip tabs have nothing to toggle, so
+     * they navigate. They used to navigate to `/trips`, the index — which
+     * meant that tapping CHAT from Settings, with Penny mid-answer, dropped
+     * the driver on a list of trips instead of back into the conversation
+     * they had just left. LIST, MAP and CHAT are tabs OF a trip; sending them
+     * to a list of trips answers a question nobody asked.
+     *
+     * `lastOpenTripId()` is module state (see shared/lib/lastOpenTrip) for the
+     * reason this bug existed at all: the screen that knows which trip it is
+     * is precisely the one that is not mounted here. With nothing remembered
+     * — a driver who has never opened a trip — the index is still the right
+     * answer, and `tripTabDestination` owns that fallback.
+     */
     if (!onChange) {
-      router.push("/trips");
+      router.push(tripTabDestination(id, lastOpenTripId()));
       return;
     }
     onChange(id);

@@ -57,6 +57,14 @@ import {
 } from "@/shared/lib/planReady";
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from "@/shared/lib/vehicleProfile";
 import type { ChatFormMeta, ChatKind } from "@/shared/types/trip";
+import {
+  beginPennyRun,
+  endPennyRun,
+  canReplaceTranscript,
+  isTurnInFlight,
+  reconcilePennyRun,
+  usePennyRunning,
+} from "@/shared/lib/pennyRunStore";
 import { Spinner } from "@/components/ui";
 import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
 import PennyPlanningVideo from "@/components/chat/PennyPlanningVideo";
@@ -589,7 +597,17 @@ export default function ChatPanel({
   const pennyStreamingText = messages.some(
     (m) => m.id?.startsWith("optimistic-") && m.role === "assistant" && m.streaming && !!m.content
   );
-  const replanWaiting = loading && !pennyStreamingText;
+  /*
+   * Is a turn in flight for this trip, according to anyone — including a mount
+   * of this panel that no longer exists? Module state, keyed by trip id, seeded
+   * from the server on mount. See shared/lib/pennyRunStore.
+   *
+   * This is the half `loading` cannot answer. `loading` is local to the mount
+   * that sent the message, so a panel remounted while the server was still
+   * working rendered READY over a live turn.
+   */
+  const runInFlight = usePennyRunning(tripId);
+  const replanWaiting = (loading || runInFlight) && !pennyStreamingText;
   /*
    * Whether the identity strip reads THINKING or READY. Deliberately the SAME
    * expression the transcript's TypingBubble uses, plus the streaming case —
@@ -778,6 +796,79 @@ export default function ChatPanel({
     return () => sub.remove();
   }, [reconcileTurn]);
 
+  /*
+   * ── is the server mid-answer right now? ──────────────────────────────────
+   *
+   * Asked on every mount, because a mount is exactly when this panel knows
+   * nothing. The run store is per-process and starts empty after a restart,
+   * and even within one process the turn may have been started by a mount that
+   * no longer exists — which is the bug: leaving a trip and coming back showed
+   * READY over a turn the server was still working on.
+   *
+   * `getLatestTurn` is the trip's newest turn whoever started it. If it is in
+   * flight we record it and poll to the end, then reload the transcript so
+   * Penny's reply appears without the driver having to do anything. If it is
+   * already terminal, `reconcilePennyRun` clears any stale entry a sender left
+   * behind rather than pinning the indicator on.
+   *
+   * Deliberately silent on failure: not knowing whether a turn is running is
+   * the state this panel was already in, and an error bubble about a
+   * housekeeping GET would be noise.
+   */
+  useEffect(() => {
+    if (readonly) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api.getLatestTurn();
+        const turn = data?.turn ?? null;
+        if (cancelled || !turn) return;
+        reconcilePennyRun(tripId, turn);
+        if (!isTurnInFlight(turn.status) || !turn.idempotency_key) return;
+        const key = turn.idempotency_key;
+        // The bubble id is irrelevant here — this mount has no optimistic
+        // bubble for a turn it did not send, so there is nothing to heal. What
+        // it wants is the terminal edge, to stop the indicator and refresh.
+        // Two consequences of reusing the poller, both wanted: its patch
+        // targets a bubble id that matches nothing (a no-op), and it still
+        // fires onActivity/onTripUpdated on the terminal edge — which is
+        // exactly right, because a reply landing while the driver is on
+        // another tab IS an unread message and a trip that may have changed.
+        // It also ends the run on a `timeout`, so an orphaned row clears the
+        // indicator after the deadline rather than pinning it on forever.
+        await pollTurnUntilTerminal(`not-a-bubble-${key}`, key);
+        endPennyRun(tripId, key);
+        if (cancelled) return;
+        const fresh = await api.listChat();
+        if (cancelled) return;
+        // Guard on the shape, the way loadTrip does: a malformed body must not
+        // blank a transcript the driver is already reading. The turn is over
+        // either way, which is the part that matters.
+        /*
+         * NEVER over a live send. `setMessages` REPLACES the array, and an
+         * optimistic row exists only in client state — so if the driver has
+         * sent something since this effect started, replacing the transcript
+         * would delete their own message and the reply Penny is streaming into
+         * it, mid-answer. That is a worse bug than the one this effect fixes.
+         *
+         * Skipping rather than merging, because merging an optimistic row with
+         * the persisted copy of itself is how you get the message twice. The
+         * send path refreshes the transcript itself when it lands, so nothing
+         * is lost by standing aside here.
+         */
+        if (Array.isArray(fresh?.messages)) {
+          setMessages((prev) => (canReplaceTranscript(prev) ? fresh.messages : prev));
+          setHasMore(!!fresh.hasMore);
+        }
+      } catch {
+        // Nothing to say to the user about a failed status check.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, tripId, readonly, pollTurnUntilTerminal]);
+
   /**
    * Beacon a client-only stream failure so it lands in /admin/errors, and
    * return a short user-facing code. These failures — dominated by the app
@@ -924,6 +1015,8 @@ export default function ChatPanel({
     }
 
     setLoading(true);
+    // The same fact, recorded where a later mount of this panel can read it.
+    beginPennyRun(tripId, idempotencyKey);
     onActivity("thinking");
 
     /** Append a chunk of streamed text to the in-progress assistant bubble. */
@@ -1101,6 +1194,7 @@ export default function ChatPanel({
       }
     } finally {
       setLoading(false);
+      endPennyRun(tripId, idempotencyKey);
       // Drain the queue — send the next message now that Penny is free. One at
       // a time: each call re-enters this finally block and drains the next.
       const next = messageQueueRef.current.shift();
@@ -1723,7 +1817,14 @@ export default function ChatPanel({
           <View style={[styles.statusDot, pennyThinking && styles.statusDotThinking]} />
           <Text
             style={[styles.statusText, pennyThinking && styles.statusTextThinking]}
-            testID={onboardingUiActive && onboardingSnapshot?.progress ? "onboarding-progress" : undefined}
+            // `penny-status` when it is the THINKING/READY pill, so the Maestro
+            // flow can read it without matching on copy. It keeps its
+            // onboarding-progress id while the step counter owns the slot.
+            testID={
+              onboardingUiActive && onboardingSnapshot?.progress
+                ? "onboarding-progress"
+                : "penny-status"
+            }
           >
             {onboardingUiActive && onboardingSnapshot?.progress
               ? `${onboardingSnapshot.progress.current} OF ${onboardingSnapshot.progress.total}`

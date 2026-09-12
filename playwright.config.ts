@@ -92,6 +92,9 @@ const WEB_UI_SPEC_NAMES = [
   'lazy-fuel-sourcing',
   'vehicle-crud',
   'subscriptions',
+  // Costs no Anthropic call despite being about a Penny turn: it PLANTS the
+  // turn through /api/test/turn rather than asking her to plan anything.
+  'chat-tab-in-flight',
 ] as const;
 
 /** Set by the E2E job only when the PR carries the `ai-tests` label. */

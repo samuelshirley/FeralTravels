@@ -768,6 +768,7 @@ run_flow() {
     -e BASE_URL="$API_URL" \
     -e TEST_SECRET="${E2E_TEST_ENDPOINTS_SECRET:-}" \
     -e TRIP_NAME="$TRIP_NAME" \
+    -e TRIP_ID="${TRIP_ID:-}" \
     --format junit \
     --output "$OUT/report.xml" \
     --debug-output "$OUT/maestro" \

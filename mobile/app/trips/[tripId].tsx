@@ -20,6 +20,8 @@ import { getMe, isAuthError, reportPosition, tripApi, type Me } from "@/lib/api"
 import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
 import { DeviceLocationProvider, useDeviceLocation } from "@/lib/location";
 import { useKeyboardOpen } from "@/lib/useKeyboardOpen";
+import { usePennyRunning } from "@/shared/lib/pennyRunStore";
+import { rememberLastOpenTrip } from "@/shared/lib/lastOpenTrip";
 import { theme } from "@/lib/theme";
 import type { LegWithDetails, POI, Trip } from "@/shared/types/trip";
 import { font } from "@/lib/typography";
@@ -34,6 +36,7 @@ export default function TripWorkspaceScreen() {
     tripId?: string | string[];
     replan?: string | string[];
     chat?: string | string[];
+    tab?: string | string[];
   }>();
   const tripId = Array.isArray(params.tripId) ? (params.tripId[0] ?? "") : (params.tripId ?? "");
   const replanParam = Array.isArray(params.replan) ? params.replan[0] : params.replan;
@@ -45,6 +48,15 @@ export default function TripWorkspaceScreen() {
   // behind the overlay instead of in front of Penny.
   const chatParam = Array.isArray(params.chat) ? params.chat[0] : params.chat;
   const openOnChat = chatParam === "1" || chatParam === "true";
+  /*
+   * "Open on this tab." BottomNav sends it when it is mounted somewhere with no
+   * trip in scope (Settings, the trips list) and has to navigate back into the
+   * last trip the driver had open rather than toggle a pane. Only the three
+   * real tabs are honoured; anything else falls through to the usual choice.
+   */
+  const tabParam = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+  const requestedTab: MobileTab | null =
+    tabParam === "list" || tabParam === "map" || tabParam === "chat" ? tabParam : null;
 
   const router = useRouter();
   // Memoized so a re-render doesn't hand loadTrip a fresh object identity and
@@ -82,6 +94,17 @@ export default function TripWorkspaceScreen() {
   useEffect(() => {
     void loadTrip();
   }, [loadTrip]);
+
+  /*
+   * Remember which trip this is, for as long as the app is running. BottomNav
+   * reads it from screens where this one is not mounted — see the note in
+   * shared/lib/lastOpenTrip. Recorded on arrival rather than once the trip has
+   * loaded: the id is what is needed, and a slow load must not leave CHAT
+   * pointing at the previous trip.
+   */
+  useEffect(() => {
+    if (tripId) rememberLastOpenTrip(tripId);
+  }, [tripId]);
 
   // The web knows the viewer's id server-side; native has to ask. Until it
   // answers we fall back to `is_template`, which is the only way a non-owner
@@ -155,6 +178,7 @@ export default function TripWorkspaceScreen() {
         fuelBusy={fuelBusy}
         replanFromOffRoute={replanFromOffRoute}
         openOnChat={openOnChat}
+        requestedTab={requestedTab}
         onTripUpdated={loadTrip}
       />
     </DeviceLocationProvider>
@@ -170,6 +194,7 @@ interface WorkspaceProps {
   fuelBusy: boolean;
   replanFromOffRoute: boolean;
   openOnChat: boolean;
+  requestedTab: MobileTab | null;
   onTripUpdated: () => void;
 }
 
@@ -182,6 +207,7 @@ function Workspace({
   fuelBusy,
   replanFromOffRoute,
   openOnChat,
+  requestedTab,
   onTripUpdated,
 }: WorkspaceProps) {
   const keyboardOpen = useKeyboardOpen();
@@ -193,10 +219,18 @@ function Workspace({
   //    stare at an empty itinerary.
   // A lazy initializer (rather than an effect) gives us the web's "at most once
   // per mount" semantics with no flash of the list tab first.
-  const [tab, setTab] = useState<MobileTab>(() =>
-    openOnChat || replanFromOffRoute || legs.length === 0 ? "chat" : "list"
-  );
-  const [thinking, setThinking] = useState(false);
+  const [tab, setTab] = useState<MobileTab>(() => {
+    if (requestedTab) return requestedTab;
+    return openOnChat || replanFromOffRoute || legs.length === 0 ? "chat" : "list";
+  });
+  /*
+   * NOT `useState`. This is what the bottom nav's dot reads, and it used to be
+   * screen-local: it started `false` on every mount, so coming back into a trip
+   * whose turn was still running showed no activity anywhere. The answer is
+   * owned outside this screen and keyed by trip id — see shared/lib/
+   * pennyRunStore, which also carries the measurement.
+   */
+  const thinking = usePennyRunning(tripId);
   const [unread, setUnread] = useState(0);
   const [selectedLegId, setSelectedLegId] = useState<string | null>(null);
 
@@ -277,7 +311,9 @@ function Workspace({
   }, []);
 
   const handleChatActivity = useCallback((kind: "thinking" | "response" | "error") => {
-    setThinking(kind === "thinking");
+    // `thinking` is no longer set here — the run store owns it. What is left is
+    // the unread badge, which is genuinely about THIS screen: it counts what
+    // arrived while the driver was looking at another tab of it.
     if (kind === "response" || kind === "error") {
       // Only badge what the user can't already see.
       if (tabRef.current !== "chat") setUnread((u) => u + 1);
