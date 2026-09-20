@@ -84,24 +84,20 @@ describe('CLAUDE.md size', () => {
   const bytes = Buffer.byteLength(claudeMd, 'utf8');
 
   /**
-   * SKIPPED, with a date and a reason, which the brief for this work asked for
-   * explicitly in place of raising the limit.
+   * UN-SKIPPED 2026-09-20, when the cleanup landed: 225 KB -> ~20 KB. Every
+   * section that was prose is now one sentence and a link into `docs/`, and
+   * nothing was deleted — see the table at the end of CLAUDE.md.
    *
-   * As of 2026-09-09 CLAUDE.md is ~200 KB — ten times the target. That is not a
-   * number a guard can fix: shrinking it is an editorial pass (the cleanup PR),
-   * and a limit quietly raised to whatever the file happens to weigh today is a
-   * guard that has been switched off while still looking green.
+   * The limit is 20 KB and it does not move. If a change pushes the file over,
+   * the fix is to move prose into the topic file under `docs/design/` and leave
+   * one line behind; a limit quietly raised to whatever the file happens to
+   * weigh today is a guard switched off while still looking green.
    *
-   * Un-skip this the moment the cleanup lands. If the file is still over, the
-   * honest move is to leave it failing, not to move the number.
+   * The margin is deliberately small but real (a few hundred bytes), so adding
+   * an index entry — a new route, a new script — does not fail the build, while
+   * adding a paragraph does. That is the intended shape.
    */
-  it.skip(`is under ${LIMIT_BYTES / 1024} KB (skipped 2026-09-09: file is ~${Math.round(bytes / 1024)} KB, awaiting the cleanup PR)`, () => {
+  it(`is under ${LIMIT_BYTES / 1024} KB`, () => {
     expect(bytes).toBeLessThanOrEqual(LIMIT_BYTES);
-  });
-
-  it('is at least measured, so the skip above cannot be forgotten silently', () => {
-    // Not a limit — a tripwire. If the file GROWS by half again from the point
-    // the cleanup was promised, that promise has quietly been abandoned.
-    expect(bytes).toBeLessThan(300 * 1024);
   });
 });
