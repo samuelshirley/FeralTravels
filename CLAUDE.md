@@ -2,7 +2,7 @@
 
 > **For AI assistants:** this is a **map**, not a manual — where things are and
 > what you must not break, so you can orient without scanning the codebase. It is
-> **guarded at 20 KB** (`src/lib/claudeMdGuard.test.ts`): narrative lives in
+> **guarded at 28 KB** (`src/lib/claudeMdGuard.test.ts`): narrative lives in
 > `docs/`, linked from the line that summarises it, so read that doc when your
 > task touches the area. Before adding anything here, read **Keeping this file
 > current**.
@@ -349,7 +349,7 @@ fail, restore; an unverified guard is decoration. Register any new
 
 ## Keeping this file current
 
-The guard (`src/lib/claudeMdGuard.test.ts`) enforces the 20 KB ceiling and
+The guard (`src/lib/claudeMdGuard.test.ts`) enforces the 28 KB ceiling and
 machine-checks that the index lists are complete — every script, every API route
 — because an index nobody can trust is worse than none: the reader cannot tell
 "not listed" from "does not exist".
@@ -371,7 +371,8 @@ pointing at it.** If you are adding a paragraph, you are in the wrong file.
 
 This file was 225 KB on 2026-09-20 — nearly tripled in sixteen days, because the
 old version of this section said what to update and never what not to put here.
-If a change pushes it over 20 KB, move prose out; do not raise the number.
+If a change pushes it over 28 KB, move prose out. Raise the number only for
+content the guard itself compels — an index entry, never a paragraph.
 
 Every section above links its own file, all under `docs/design/` — except
 `docs/decisions.md`, the decision register and guard-test registry.

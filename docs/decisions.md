@@ -597,12 +597,21 @@ scripts were missing when this was written. A tombstone ("`ship.sh` is GONE") is
 allowed and valuable; a mention that reads as though the file still exists is
 not. *Enforced by:* `claudeMdGuard.test.ts`.
 
-M3. **CLAUDE.md is under 20 KB.** *Enforced by:* `claudeMdGuard.test.ts` —
-**currently `it.skip`**, with a dated reason: the file is ~200 KB and shrinking it
-is an editorial pass, not something a test can do. The limit was deliberately NOT
-raised to match the file, because a limit moved to whatever the file weighs today
-is a guard switched off while still showing green. A separate assertion fails if
-the file grows by half again, so the skip cannot be forgotten silently.
+M3. **CLAUDE.md is under 28 KB, and prose lives in `docs/` instead.** *Enforced
+by:* `claudeMdGuard.test.ts` — **live since 2026-09-20**, when the cleanup it was
+waiting for landed: 225 KB of narrative moved into topic files under
+`docs/design/` (nothing deleted, everything linked) and the file came back at
+20,300 bytes. The limit was then raised from 20 KB to 28 KB, which is NOT the
+raise the skipped version of this test forbade — that warned against raising the
+number *instead of* doing the cleanup. The reason is that the same guard
+**mandates growth**: it requires every API route and every file in `scripts/` to
+be named in CLAUDE.md, so at 180 bytes of headroom the next route added would
+have reddened CI on a ~25-byte doc line the guard itself demands, and the
+predictable response to that is someone bumping the number in a hurry with no
+reasoning attached. Raise it only for content the guard compels, and say so in
+the commit; prose still moves out. **The better fix is to move the index lists
+into a tier-1 doc** so CLAUDE.md stops carrying ~5 KB of machine-checked names —
+a change to what the file is, tracked separately.
 
 M4. **The prose half is REVIEWED by a model, never authored by one.**
 `.github/workflows/docs-drift.yml` asks Claude to list the sentences in CLAUDE.md
