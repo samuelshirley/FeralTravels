@@ -35,7 +35,9 @@ which provider serves what; this has been wrong here before, expensively.
 
 - **Framework:** Next.js 14 (App Router, React 18) · **DB:** Neon Postgres via
   `postgres` + Drizzle ORM · **Email:** Resend
-- **Auth:** NextAuth v5 (beta) — OTP email + Google OAuth
+- **Auth:** NextAuth v5 (beta) — OTP email + Google OAuth. ONE address has a
+  fixed code for App Store review, armed only by `APPLE_REVIEW_SIGNIN=1` and
+  removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
   resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
 - **Maps / geo:** Google — client JS, server Directions, Places (New)
