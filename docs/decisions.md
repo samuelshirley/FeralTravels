@@ -382,6 +382,20 @@ component that knows which trip it is, is exactly the one not mounted at the mom
 needed — and with nothing remembered the index is still the right answer. *Enforced by:*
 `lastOpenTrip.test.ts`, `inFlightIndicatorGuard.test.ts`, `e2e/chat-tab-in-flight.spec.ts`.
 
+H17. **A day's nav button wraps inside the card; it never truncates and never runs off it.** A
+long station name grew the button past the card, which sets `overflow: "hidden"`, so its end was
+cut off — and on an `isNext` button the NEXT chip is what sits at that end, so the most important
+button was the one that lost its label. Measured on an iPhone SE (3rd gen) with the real name off
+a live trip, "Estación de Servicio Repsol": the card ended at x=358 and the button ran to x=363,
+rendering with its right rounded corner squared off; after the fix it ends at x=342, still two
+lines, nothing hidden. Three properties carry it — `maxWidth: "100%"` on the button (because
+`alignSelf: "flex-start"` is content-sized but UNCAPPED), `flexShrink: 1` on the label (RN's Yoga
+default is 0, not the web's 1, so the text could not give), and `flexShrink: 0` on the chip.
+`syncingPill` had the same defect and carries the same fix. The WEB copy of this affordance does
+not have the bug and was deliberately left alone: CSS `width: fit-content` is self-limiting and
+web `flex-shrink` defaults to 1 — verified in a real browser at 390px and 320px, no overflow and
+no clipping. *Enforced by:* `navButtonWrapGuard.test.ts` (all five assertions mutation-checked).
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and
