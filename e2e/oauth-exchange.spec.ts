@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { SignJWT, generateKeyPair } from 'jose';
 
 /**
@@ -12,6 +12,14 @@ import { SignJWT, generateKeyPair } from 'jose';
  * forged token is refused by the deployment's own JWKS fetch, that refusals
  * are flat error codes rather than stack traces, and that a refusal never
  * comes with a session token attached.
+ *
+ * "Refused" means 401 InvalidToken EXACTLY — see `expectForgeryRefused`. On
+ * 2026-09-21 this spec passed in a preview whose logs showed the deployment
+ * could not fetch Apple's keys at all (ERR_JOSE_GENERIC, three times), because
+ * back then "provider unreachable" and "forged token" were both 401
+ * InvalidToken. The server now answers the first with 503 ProviderUnavailable,
+ * and this spec must fail on it: a verifier with no keys has proved nothing
+ * about forgeries.
  *
  * Every token below is signed with a key pair generated in-process. It is a
  * structurally perfect JWT — right algorithm, right issuer, right audience,
@@ -63,6 +71,26 @@ async function errorCode(res: { json: () => Promise<unknown> }): Promise<string>
   return typeof body.error === 'string' ? body.error : JSON.stringify(body);
 }
 
+/**
+ * The deployment looked at the token and refused it: 401 InvalidToken, and
+ * nothing else passes. Not any 401 (EmailNotVerified would mean the signature
+ * check let a forgery through to the claims), and above all not 503
+ * ProviderUnavailable, which means the deployment never got the provider's
+ * keys and so never checked the token at all.
+ */
+async function expectForgeryRefused(res: APIResponse) {
+  const status = res.status();
+  const code = await errorCode(res);
+  expect(
+    { status, code },
+    code === 'ProviderUnavailable'
+      ? "503 ProviderUnavailable: this deployment could not obtain the provider's signing " +
+          'keys, so the forged token was never checked. Look for "ProviderUnavailable" in ' +
+          "the deployment's logs for the upstream status."
+      : 'a forged token must be refused as 401 InvalidToken and nothing else'
+  ).toEqual({ status: 401, code: 'InvalidToken' });
+}
+
 test.describe('native OAuth exchange', () => {
   test.describe('malformed requests are rejected before any verification', () => {
     const cases: Array<[string, unknown]> = [
@@ -101,8 +129,7 @@ test.describe('native OAuth exchange', () => {
     test('a string that is not a JWT', async ({ request }) => {
       const res = await exchange(request, { provider: 'apple', idToken: 'not-a-jwt' });
 
-      expect(res.status()).toBe(401);
-      expect(await errorCode(res)).toBe('InvalidToken');
+      await expectForgeryRefused(res);
     });
 
     test('a well-formed token signed with a key Apple does not publish', async ({ request }) => {
@@ -112,15 +139,14 @@ test.describe('native OAuth exchange', () => {
       const idToken = await forgeToken(appleClaims());
       const res = await exchange(request, { provider: 'apple', idToken });
 
-      expect(res.status()).toBe(401);
-      expect(await errorCode(res)).toBe('InvalidToken');
+      await expectForgeryRefused(res);
     });
 
     test('an expired token', async ({ request }) => {
       const idToken = await forgeToken(appleClaims(), '-10m');
       const res = await exchange(request, { provider: 'apple', idToken });
 
-      expect(res.status()).toBe(401);
+      await expectForgeryRefused(res);
     });
 
     test('a token with no expiry at all', async ({ request }) => {
@@ -130,14 +156,14 @@ test.describe('native OAuth exchange', () => {
       const idToken = await forgeToken(appleClaims(), null);
       const res = await exchange(request, { provider: 'apple', idToken });
 
-      expect(res.status()).toBe(401);
+      await expectForgeryRefused(res);
     });
 
     test('a token issued by somebody else entirely', async ({ request }) => {
       const idToken = await forgeToken(appleClaims({ iss: 'https://evil.example.com' }));
       const res = await exchange(request, { provider: 'apple', idToken });
 
-      expect(res.status()).toBe(401);
+      await expectForgeryRefused(res);
     });
 
     test('a token minted for a different audience', async ({ request }) => {
@@ -145,12 +171,13 @@ test.describe('native OAuth exchange', () => {
       const idToken = await forgeToken(appleClaims({ aud: 'com.someone.else.app' }));
       const res = await exchange(request, { provider: 'apple', idToken });
 
-      expect(res.status()).toBe(401);
+      await expectForgeryRefused(res);
     });
 
     test('no refusal ever carries a session token', async ({ request }) => {
       const idToken = await forgeToken(appleClaims());
       const res = await exchange(request, { provider: 'apple', idToken });
+      await expectForgeryRefused(res);
       const body = (await res.json()) as Record<string, unknown>;
 
       expect(body.token).toBeUndefined();
@@ -164,6 +191,7 @@ test.describe('native OAuth exchange', () => {
       // signature" — is not an oracle for someone probing the endpoint.
       const idToken = await forgeToken(appleClaims());
       const res = await exchange(request, { provider: 'apple', idToken });
+      await expectForgeryRefused(res);
       const raw = await res.text();
 
       expect(raw).not.toMatch(/at\s+\w+\s+\(/); // no stack frames
@@ -193,11 +221,12 @@ test.describe('native OAuth exchange', () => {
     });
     const res = await exchange(request, { provider: 'google', idToken });
 
+    const code = await errorCode(res);
     expect(
-      res.status(),
-      'expected 401 InvalidToken; 503 means AUTH_GOOGLE_IOS_CLIENT_ID is unset on this deployment'
-    ).toBe(401);
-    expect(await errorCode(res)).toBe('InvalidToken');
+      code,
+      'expected 401 InvalidToken; 503 ProviderNotConfigured means AUTH_GOOGLE_IOS_CLIENT_ID is unset on this deployment'
+    ).not.toBe('ProviderNotConfigured');
+    await expectForgeryRefused(res);
   });
 
   test('the route is POST-only', async ({ request }) => {
