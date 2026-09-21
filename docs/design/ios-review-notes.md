@@ -177,8 +177,8 @@ order.
 
 Every line above describes shipped behaviour except where this section says
 otherwise. These are the things a reviewer would hit that no code change can
-fix — they are all clicks in App Store Connect or RevenueCat, and they are in
-dependency order in `docs/design/iap-setup.md`.
+fix — they are clicks in App Store Connect, RevenueCat, Vercel or `/admin`, and
+the store-side ones are in dependency order in `docs/design/iap-setup.md`.
 
 - [ ] **Paid Applications Agreement Active.** Until it is, StoreKit returns an
       EMPTY product list with no error anywhere — the sheet shows prices with no
@@ -203,10 +203,16 @@ dependency order in `docs/design/iap-setup.md`.
       including the webhook arriving at `POST /api/webhooks/revenuecat` and the
       app flipping over. `mobile/storekit/` removes App Store Connect from that
       loop but NOT RevenueCat.
-- [ ] **`PAYWALL_ENABLED=1` on the production Vercel environment**, and a
-      redeploy. Without it `applySwitch` rewrites every verdict to entitled and
-      nothing blocks — which reads as a working app right up until a reviewer
-      wonders what the subscription is for.
+- [ ] **The global paywall switch stays OFF during review** — the `PAYWALL
+      ON/OFF` pill in the `/admin` header, which is the `app_meta.paywall_enabled`
+      row (`src/server/payments/switch.ts`). NOT an env var: `PAYWALL_ENABLED`
+      has not been read since 2026-09-02, and setting it in Vercel does nothing.
+      Off is correct here, not a gap: the reviewer is inside a seven-day trial
+      and reaches the purchase sheet through Settings → Plan → View plans (§2)
+      in every account state, and the web app is the demo while the build is in
+      review — ON would wall every account past its trial with nothing to buy.
+      To watch the wall itself work, force it onto ONE disposable account from
+      `/admin/users/[id]` ("Force the paywall on this account").
 - [ ] **`SUBSCRIPTION_TESTING` UNSET on production.** It arms the fake-purchase
       route; an allowlisted address deliberately beats the real store.
 - [ ] **A TestFlight build carrying all of it.** Build 7 (2026-08-27) was on the

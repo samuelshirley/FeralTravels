@@ -34,6 +34,7 @@ import AdminTestErrorButton from './AdminTestErrorButton';
 import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
 import PennyLockdownBlock from './PennyLockdownBlock';
+import PaywallSwitch from './PaywallSwitch';
 import { recentIpLimitHits } from '@/server/ipLimit';
 import { lockedAccounts } from '@/server/repos/users';
 import styles from './admin.module.css';
@@ -367,26 +368,7 @@ export default async function AdminPage() {
             about the running system, so it belongs where the other facts about
             the running system are.
           */}
-          <div
-            data-testid="admin-paywall-switch"
-            title={
-              paywallOn
-                ? 'Enforcement is ON — verdicts block.'
-                : 'Enforcement is OFF — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
-            }
-            style={{
-              marginLeft: 'auto',
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: '0.08em',
-              padding: '3px 8px',
-              borderRadius: 999,
-              border: '1px solid var(--tp-border-strong)',
-              color: paywallOn ? 'var(--tp-text)' : 'var(--tp-subtle)',
-            }}
-          >
-            PAYWALL {paywallOn ? 'ON' : 'OFF'}
-          </div>
+          <PaywallSwitch on={paywallOn} />
         </div>
 
         <div className={styles.statsGrid}>

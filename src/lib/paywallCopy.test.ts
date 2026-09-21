@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { APP_STORE_CTA_LABEL, blockNoticeFor, SUPPORT_EMAIL } from './paywallCopy';
-import { paywallCopy, trialWelcomeLine } from '@/server/payments/copy';
+import { paywallCopy } from '@/server/payments/copy';
+import { planningCaption } from './planningCaption';
 import type { AccountVerdict } from '@/server/payments';
 import type { AccountState, BlockReason, PaywallCopy } from '@/types/entitlement';
 
@@ -169,7 +170,9 @@ describe('user-facing copy never says the s-word', () => {
       out.push(penny.message, penny.buttonLabel);
       if (penny.heading) out.push(penny.heading);
     }
-    for (let days = 0; days <= 7; days += 1) out.push(trialWelcomeLine(days));
+    for (let days = 0; days <= 7; days += 1) {
+      out.push(planningCaption({ state: 'trial', trialDaysRemaining: days }));
+    }
     return out;
   }
 

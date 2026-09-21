@@ -50,6 +50,8 @@ import {
   isTapToAnswerKind,
   locksComposer,
 } from "@/shared/lib/onboardingForm";
+import { onboardingPhase as deriveOnboardingPhase } from "@/shared/lib/onboardingPhase";
+import { planningCaption } from "@/shared/lib/planningCaption";
 import {
   planReadyText,
   planReadyBodyParagraphs,
@@ -112,15 +114,6 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** Canned prompt behind the truncated-plan card's "Continue planning" button. */
 const CONTINUE_PROMPT =
   "Continue planning the trip from where you left off. Add the remaining legs.";
-
-/**
- * Caption Penny "sends" alongside the dog-fetch clip on the first full build.
- * Same string as the web's PLANNING_VIDEO_COPY. Until 2026-09-04 the native
- * app sent the caption ALONE — the clip had never been ported, so the one
- * turn we know will be long got a sentence where the web got a video. The
- * clip is now bundled (mobile/assets) and rendered by chat/PennyPlanningVideo.
- */
-const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
 
 /** An optimistic form row (question, answer or Penny's deterministic note). */
 /**
@@ -419,6 +412,8 @@ export default function ChatPanel({
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  /** Bumped by the load-error state's Try again, to re-run the snapshot fetch. */
+  const [onboardingAttempt, setOnboardingAttempt] = useState(0);
 
   /** Queue of messages sent while Penny is thinking — drained one at a time. */
   const messageQueueRef = useRef<Array<{ text: string; images: AttachedImage[]; msgId: string }>>(
@@ -437,11 +432,21 @@ export default function ChatPanel({
   /** False after unmount — an unmount-cancelled stream is not a real failure. */
   const mounted = useRef(true);
 
-  const onboardingUiActive =
-    isOnboarding && onboardingSnapshot !== null && onboardingSnapshot.state !== "done";
-  const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
+  /*
+   * ONE value for where setup is — see shared/lib/onboardingPhase. Anything
+   * that means "not in setup" says `onboardingPhase === "off"`; negating
+   * `onboardingUiActive` also matches "loading", which is how the first-run
+   * chat painted START HERE over itself in TestFlight build 8. Mirrors the web;
+   * src/lib/onboardingPhaseGuard.test.ts holds both panels to it.
+   */
+  const onboardingPhase = deriveOnboardingPhase({
+    isOnboarding,
+    snapshot: onboardingSnapshot,
+    error: onboardingError,
+  });
+  const onboardingUiActive = onboardingPhase === "active";
   const onboardingQuestion: OnboardingQuestion | null = onboardingUiActive
-    ? onboardingSnapshot.question
+    ? (onboardingSnapshot?.question ?? null)
     : null;
   /*
    * 'vehicle' locks the composer alongside 'select', and for a stronger
@@ -614,7 +619,18 @@ export default function ChatPanel({
    * a strip saying READY while three dots bounced would be worse than no
    * strip at all. Mirrors src/components/ChatPanel.tsx.
    */
-  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
+  /*
+   * Setup owes the transcript a question it has not drawn yet: the snapshot is
+   * still in flight, or it has landed and its bubble has not. The typing
+   * bubble fills that window so the first-run pane is never empty. Mirrors
+   * the web.
+   */
+  const lastSetupQuestion = [...messages].reverse().find((m) => m.kind === "form_question");
+  const setupQuestionPending =
+    onboardingPhase === "loading" ||
+    (onboardingQuestion !== null && lastSetupQuestion?.content !== onboardingQuestion.label);
+  const pennyThinking =
+    introTyping || replanWaiting || setupQuestionPending || !!pennyStreamingText;
 
   // ── applying / healing a turn ───────────────────────────────────────────
 
@@ -999,7 +1015,9 @@ export default function ChatPanel({
             id: `penny-planning-${Date.now() + 2}`,
             trip_id: tripId,
             role: "assistant",
-            content: PLANNING_VIDEO_COPY,
+            // The caption with the dog-fetch clip (chat/PennyPlanningVideo). Shared
+            // with the web, and carries the trial line — see planningCaption.
+            content: planningCaption(entitlement),
             kind: "ai",
             changes_made: null,
             created_at: new Date().toISOString(),
@@ -1232,7 +1250,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [api, isOnboarding]);
+  }, [api, isOnboarding, onboardingAttempt]);
 
   // Typing animation before each onboarding question, then the question lands
   // as a Penny bubble — so trip setup reads like a conversation, not a form.
@@ -1267,11 +1285,17 @@ export default function ChatPanel({
       });
     };
 
-    // The first question follows the longer greeting, so it gets 3s; every
-    // later one gets 2s.
+    // The first question is the first-run screen's headline, not a reply, so
+    // it lands the moment the snapshot does — the typing bubble has already
+    // covered the fetch (`setupQuestionPending`). Every later question keeps a
+    // 2s beat, which is what makes setup read as a conversation. Mirrors web.
     const isFirstQuestion =
       onboardingSnapshot.state === "trip_intent" && messagesRef.current.length === 0;
-    const delay = isFirstQuestion ? 3000 : 2000;
+    if (isFirstQuestion) {
+      addQuestionBubble();
+      return;
+    }
+    const delay = 2000;
     setIntroTyping(true);
     const timer = setTimeout(() => {
       setIntroTyping(false);
@@ -1638,10 +1662,16 @@ export default function ChatPanel({
       }
     }
   }
+  // The greeting opens an otherwise empty transcript. A re-asked intent
+  // question further down a conversation stays a bubble. Mirrors the web.
+  const firstRunHeadline =
+    onboardingQuestion?.key === "trip_intent" &&
+    activeQuestionId !== null &&
+    transcript[0]?.id === activeQuestionId;
 
   const onboardingCard =
     onboardingUiActive && onboardingQuestion ? (
-      <View style={styles.card} testID="onboarding-card">
+      <View style={[styles.card, firstRunHeadline ? styles.cardFirstRun : null]} testID="onboarding-card">
         {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options ? (
           <>
             {/* Only for 'select', where tapping is the ONLY way to answer.
@@ -1756,8 +1786,10 @@ export default function ChatPanel({
           name a city" invitation, and its only job is to focus the box.
         */}
         {onboardingQuestion.prompts?.length ? (
-          <View style={styles.promptsWrap}>
-            <Text style={styles.kicker}>TAP TO START, THEN EDIT</Text>
+          <View style={[styles.promptsWrap, firstRunHeadline ? styles.promptsWrapFirstRun : null]}>
+            <Text style={firstRunHeadline ? styles.starterKicker : styles.kicker}>
+              TAP TO START, THEN EDIT
+            </Text>
             <Pressable
               disabled={onboardingComposerBusy}
               testID="onboarding-prompt-city"
@@ -1778,7 +1810,11 @@ export default function ChatPanel({
                   setInput(prompt);
                   inputRef.current?.focus();
                 }}
-                style={[styles.promptRow, onboardingComposerBusy ? styles.optionChipOff : null]}
+                style={[
+                  styles.promptRow,
+                  firstRunHeadline ? styles.promptRowFirstRun : null,
+                  onboardingComposerBusy ? styles.optionChipOff : null,
+                ]}
               >
                 <Text style={styles.promptText}>{prompt}</Text>
               </Pressable>
@@ -1895,7 +1931,7 @@ export default function ChatPanel({
           The rows PREFILL the composer and focus it rather than sending: the
           examples are shapes to edit, not messages anyone wants verbatim.
         */}
-        {messages.length === 0 && !onboardingUiActive ? (
+        {messages.length === 0 && onboardingPhase === "off" ? (
           <View style={styles.starterBlock}>
             <Text style={styles.starterKicker}>START HERE</Text>
             <Text style={styles.starterHeadline}>
@@ -1913,6 +1949,24 @@ export default function ChatPanel({
                 <Text style={styles.starterText}>&ldquo;{starter}&rdquo;</Text>
               </Pressable>
             ))}
+          </View>
+        ) : null}
+
+        {/* The setup snapshot failed to load: say so and offer the retry,
+            rather than leaving START HERE standing. Mirrors the web. */}
+        {onboardingPhase === "error" ? (
+          <View testID="onboarding-load-error" style={styles.setupError}>
+            <Text style={styles.setupErrorText}>Couldn&apos;t load trip setup.</Text>
+            {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
+            <Pressable
+              onPress={() => {
+                setOnboardingError(null);
+                setOnboardingAttempt((n) => n + 1);
+              }}
+              style={styles.setupRetry}
+            >
+              <Text style={styles.starterText}>Try again</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -2051,6 +2105,19 @@ export default function ChatPanel({
                     </View>
                   ) : null}
                 </View>
+              </View>
+            );
+          }
+          // The first-run screen: Penny's greeting as a full-width headline
+          // with the prompt rows under it, on the empty state's type scale —
+          // not a 14px bubble. `trip_intent` only. Mirrors the web.
+          if (isActiveQuestion && firstRunHeadline) {
+            return (
+              <View key={msg.id} style={styles.starterBlock}>
+                <Text testID="onboarding-headline" style={styles.starterHeadline}>
+                  {msg.content}
+                </Text>
+                {onboardingCard}
               </View>
             );
           }
@@ -2209,7 +2276,7 @@ export default function ChatPanel({
         {/* Shown when Penny has "read" the message but hasn't started
             responding, and during the typing animation before each onboarding
             question. */}
-        {introTyping || replanWaiting ? <TypingBubble /> : null}
+        {introTyping || replanWaiting || setupQuestionPending ? <TypingBubble /> : null}
       </ScrollView>
 
       {/* Attachment thumbnails */}
@@ -2237,7 +2304,7 @@ export default function ChatPanel({
             Demo trip — clone it from the trips list to chat with Penny.
           </Text>
         </View>
-      ) : onboardingBlockingLoad ? (
+      ) : onboardingPhase === "loading" ? (
         <View style={styles.setupLoading}>
           <Spinner />
           <Text style={styles.setupLoadingText}>Loading setup…</Text>
@@ -2246,7 +2313,9 @@ export default function ChatPanel({
         <>
 
           <View testID="chat-composer" style={styles.composerWrap}>
-            {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
+            {onboardingError && onboardingPhase !== "error" ? (
+              <Text style={styles.composerError}>{onboardingError}</Text>
+            ) : null}
             <View style={styles.composer}>
               {attachImagesAllowed ? (
                 <Pressable
@@ -2579,6 +2648,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+  setupError: { paddingBottom: 12, gap: 8, alignItems: "flex-start" },
+  setupErrorText: { fontFamily: font.regular, fontSize: 14, color: theme.text },
+  setupRetry: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.borderStrong,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
+  },
   setupLoadingText: { fontFamily: font.regular, color: theme.muted, fontSize: 13 },
 
   progressTrack: {
@@ -2601,6 +2680,9 @@ const styles = StyleSheet.create({
   // Everything the active question needs beyond its text, INSIDE Penny's
   // bubble (frames 7b–7e).
   card: { marginTop: 10, gap: 10 },
+  // On the first-run headline the empty state's spacing takes over: the
+  // headline's own margin sits above, and rows get its 8px gap / 12px padding.
+  cardFirstRun: { marginTop: 0 },
   rowWide: { maxWidth: "94%" },
   kicker: {
     fontFamily: font.semibold,
@@ -2636,6 +2718,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   promptsWrap: { gap: 6 },
+  promptsWrapFirstRun: { gap: 8 },
+  promptRowFirstRun: { paddingVertical: 12 },
   promptRow: {
     paddingVertical: 11,
     paddingHorizontal: 14,

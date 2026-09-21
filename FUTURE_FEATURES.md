@@ -62,3 +62,18 @@ The reason this was deferred: it's a real feature, not a bug fix. Wanted to ship
 - UI: paired tick-mark / cross icons inline with each station row, vs separate filter pills above the dropdown.
 
 This was deferred because the immediate pain (one fuel station per knot, no way to swap) was solved by Feature B (top-3 candidates with a swap dropdown). Adding directional bias is a refinement on the same dropdown; it doesn't unlock new behavior, just better defaults.
+
+---
+
+## Order the OTA after the production deploy
+
+**Status:** Open. A known race in the live pipeline, not yet scheduled.
+
+**The race:** a merge to `main` that touches `mobile/**` starts two workflows from the same push, and nothing orders them:
+
+- `.github/workflows/mobile.yml` triggers on push to `main` for `mobile/**`. When the diff is JS-only it publishes with `eas update`, which its own header says reaches testers "on next launch, in seconds".
+- `.github/workflows/deploy-production.yml` triggers on push to `main` for everything, then migrates the database and runs the Vercel production build and deploy.
+
+There is no `needs:`, no `workflow_run`, and no shared concurrency group between them, so both start at once. The OTA routinely finishes before the Vercel build does. For a merge that changes both the app's JS and the API, a phone can run the new app code against the old API for as long as that build takes. If the deploy fails, that can last until the next successful deploy.
+
+**Why it is still open:** closing this race is what the one-pipeline consolidation was drafted for (`pipeline.yml.new` and `mobile-workflow.new.yml`, in history at 960a73c). Those drafts never ran. They were deleted in 4ec95a8 and stay deleted, and deleting them did not fix the race. `docs/design/deploy-pipeline.md` already states it under "Mobile releases self-start on the same merge"; this entry keeps it on the backlog.

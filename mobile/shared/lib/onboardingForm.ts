@@ -315,11 +315,13 @@ export function isTripDateLabel(label: string): boolean {
 }
 
 /**
- * The greeting can carry a trial line in front of it ("7 days free … Where
- * are we going?"), so the intent question is matched on its tail.
+ * Exact match. It was a tail match while the snapshot prefixed a trial line to
+ * the greeting; that line now rides the planning caption instead, and the
+ * prefixed label was never persisted (`writeQA` stores `TRIP_INTENT_QUESTION`),
+ * so no row in `chat_history` carries it.
  */
 export function isTripIntentLabel(label: string): boolean {
-  return label.endsWith(TRIP_INTENT_LABEL);
+  return label === TRIP_INTENT_LABEL;
 }
 
 /**

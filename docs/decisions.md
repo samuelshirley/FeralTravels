@@ -336,6 +336,13 @@ G7. **A trip is "completed" by derivation from its last leg date, never a stored
 G8. **Trip cloning copies every column it should** — a new column must be added to the clone.
 *Enforced by:* `cloneTripColumns.test.ts`.
 
+G9. **Every `/api/admin/*` route with a POST handler has a caller in `src/`.** `POST
+/api/admin/paywall` shipped 2026-09-02 as the switch that must be flippable in a hurry, and
+nothing called it — `/admin` showed an inert pill, so the only control was devtools. Admin guards
+are cookie-only, so the mobile app can never be the caller. A set relation over literal
+`fetch(`/`apiFetch(` arguments, not a grep: the path was named in comments all along.
+*Enforced by:* `adminEndpointCallerGuard.test.ts`.
+
 ## H. UI conventions
 
 H1. **Copy rule: every string tells the user something they cannot already see.**
@@ -414,6 +421,20 @@ default is 0, not the web's 1, so the text could not give), and `flexShrink: 0` 
 not have the bug and was deliberately left alone: CSS `width: fit-content` is self-limiting and
 web `flex-shrink` defaults to 1 — verified in a real browser at 390px and 320px, no overflow and
 no clipping. *Enforced by:* `navButtonWrapGuard.test.ts` (all five assertions mutation-checked).
+
+H18. **The chat's START HERE empty state renders only when setup is KNOWN to be off.** The gate
+was `!onboardingUiActive`, a boolean false both when setup was off and while its snapshot was
+still loading after mount — so every first-run trip painted START HERE, then swapped it for the
+onboarding card. Shipped to TestFlight build 8. The repro had been committed as `it.fails`, which
+reports green while the bug is present, so CI stayed green over it: **never commit an `it.fails`
+as a guard**. The fix is structural: both panels derive one `OnboardingPhase` (`'off' | 'loading'
+| 'active' | 'error'`) from the shared `onboardingPhase()`, and the empty state is gated on the
+positive `phase === 'off'`. The load window shows Penny's typing dots, the first-run greeting
+lands as a headline without the old 3 s typing delay, and a failed snapshot shows a retryable
+error instead of START HERE. *Enforced by:* `ChatPanel.onboardingFlash.test.tsx` (web, runtime),
+`onboardingPhaseGuard.test.ts` (both panels, source — the only unit-level guard `mobile/` has;
+mutation-checked on each), `onboardingPhase.test.ts`, and the Maestro flow
+`mobile/maestro/onboarding-flash.yaml`.
 
 ## I. Spend defence
 
@@ -595,7 +616,9 @@ believes something is checked when nothing is. *Enforced by:*
 M2. **CLAUDE.md's index lists are complete and name nothing deleted.** Fourteen
 scripts were missing when this was written. A tombstone ("`ship.sh` is GONE") is
 allowed and valuable; a mention that reads as though the file still exists is
-not. *Enforced by:* `claudeMdGuard.test.ts`.
+not. Routes are checked in both directions since 2026-09-21 — before that only
+"every route is listed" was, and `api/directions` stayed listed from its deletion
+on 2026-07-22 until 2026-09-20. *Enforced by:* `claudeMdGuard.test.ts`.
 
 M3. **CLAUDE.md is under 28 KB, and prose lives in `docs/` instead.** *Enforced
 by:* `claudeMdGuard.test.ts` — **live since 2026-09-20**, when the cleanup it was
@@ -618,3 +641,10 @@ M4. **The prose half is REVIEWED by a model, never authored by one.**
 and this register that a PR's diff makes false, and to post one review comment.
 It does not edit files: an action that rewrites CLAUDE.md on merge is the same
 failure as the OSM claim — a model authoring a document nobody reviews.
+
+M5. **Every `.github/workflows/<name>.yml` named in a `*.md`, `*.mjs` or `*.sh`
+exists, or is tombstoned.** A one-file `pipeline.yml` was drafted on 2026-09-11
+(`pipeline.yml.new` + `spring-clean.sh`), never run, and described as current by
+CLAUDE.md, the README, two design docs and two CI error strings for ten days.
+Same tombstone rule as M2, plus "there is no `name`" and a SUPERSEDED status
+header on archived designs. *Enforced by:* `workflowRefsGuard.test.ts`.

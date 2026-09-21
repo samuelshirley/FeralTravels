@@ -25,13 +25,17 @@ App Store build existing is not launch. TestFlight is not launch.
 The order matters: the paywall has to be proven to work before there is
 anything real to buy behind it, not after.
 
-- [ ] **`PAYWALL_ENABLED=1` on production.** Vercel → feral-travels → Settings →
-      Environment Variables → Production, then redeploy (the running deployment
-      does not pick up a new env var on its own). Without this `applySwitch`
-      rewrites every verdict to entitled and NOTHING blocks — no `/trips`
-      overlay, no trip lock, no bubble from Penny, no 402 — while the admin
-      panel still correctly reports `trial_expired`. See
-      `src/server/payments/switch.ts`.
+- [ ] **Force the paywall onto each test account below, NOT the deployment.**
+      `/admin/users/[id]` → **Force the paywall on this account**. The global
+      switch — the `app_meta.paywall_enabled` row, the `PAYWALL ON/OFF` pill in
+      the `/admin` header — stays OFF: the web app is the demo while the iOS
+      build is in review, and turning it on would wall every account past its
+      trial with nothing to buy. It is not an env var; `PAYWALL_ENABLED` has not
+      been read since 2026-09-02 and setting it in Vercel does nothing. With
+      neither the override nor the switch on, `applySwitch` rewrites every
+      verdict to entitled and NOTHING blocks — no `/trips` overlay, no trip
+      lock, no bubble from Penny, no 402 — while the admin panel still correctly
+      reports `trial_expired`. See `src/server/payments/switch.ts`.
 - [ ] Walk a `day7-trip` account end to end on **desktop**: overlay on `/trips`,
       no "+ New trip" button, trip page locked, Penny's bubble in the chat.
 - [ ] Walk the same account end to end on **iOS**.

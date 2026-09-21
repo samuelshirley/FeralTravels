@@ -75,12 +75,12 @@ launched, in words. Never weigh "this would affect N production accounts" as a
 reason to slow down or pick the cautious option. It is still live infrastructure:
 never run tests or seed fixtures against the prod database.
 
-1. **Open a PR into `main`.** One `Pipeline` workflow runs unit tests, deploys a
-   tested preview on an ephemeral Neon branch (a clone of prod), runs Playwright
-   against it, and typechecks `mobile/`.
-2. **Merge the PR — that IS the deploy.** The same workflow re-verifies CI was
-   green for the PR's head SHA, migrates prod, deploys via Vercel.
-3. **PR closes** → the preview's Neon branch is dropped.
+1. **Open a PR into `main`.** `ci.yml` runs unit tests, deploys a tested preview
+   on an ephemeral Neon branch (a clone of prod), runs Playwright against it, and
+   typechecks `mobile/`. There is no single `pipeline.yml`.
+2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
+   was green for the PR's head SHA, migrates prod, deploys via Vercel.
+3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
 - **The deploy gate is enforced; branch protection is NOT.** A direct push or a
   mid-run merge moves `main` and then fails the deploy, leaving prod stale rather
@@ -234,8 +234,8 @@ reappears in `src/`.
 ### iOS E2E (`mobile/maestro/`)
 
 `launch.yaml`, `sign-in.yaml`, `chat-keyboard.yaml`, `chat-tab-in-flight.yaml`,
-`settings-location.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
-simulator against the PR's own preview. **Start at
+`onboarding-flash.yaml`, `settings-location.yaml`, `screenshots.yaml` — Maestro
+flows driving a real iOS simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
 

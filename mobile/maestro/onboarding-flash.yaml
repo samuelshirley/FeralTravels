@@ -1,0 +1,42 @@
+# THE REGRESSION FLOW for the first-run flash, live in TestFlight build 8. Read
+# this before changing anything here.
+#
+# Tapping `+ New trip` on a first run painted the START HERE empty state — the
+# kicker, the 19px "Tell Penny where you're going…" headline and three starter
+# rows — and then swapped it for the onboarding card. A 7.0 s screen recording
+# sampled at 4 fps had START HERE on screen at 1.75–2.00 s, then 3 s of blank
+# transcript under Penny's typing dots, then the greeting at 5.50 s.
+#
+# The cause was the empty state's gate, `!onboardingUiActive`: false while
+# setup was off AND while setup's snapshot was still loading, so every first
+# render of a new trip opened it. See shared/lib/onboardingPhase.
+#
+# WHAT THIS FLOW CAN AND CANNOT PROVE. `assertNotVisible` RETRIES until the
+# element is gone, so a flash that clears itself within Maestro's timeout
+# passes it. The assertion straight after the tap therefore catches the flash
+# only when the snapshot is slow enough to still be in flight when Maestro
+# samples — likely on a cold CI preview, not guaranteed. The DETERMINISTIC
+# native guard is src/lib/onboardingPhaseGuard.test.ts, which reads this
+# panel's source. What this flow proves for certain is the end state: the
+# greeting lands as the first-run HEADLINE with the prompt rows under it, and
+# START HERE is not on screen when it does.
+#
+# The fixture account is comped and already has one trip, so `+ New trip` is
+# a plain create — no paywall, no auto-create — and a trip with no legs opens
+# on CHAT.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+- tapOn: '+ New trip'
+
+# The window the bug lived in: the trip screen is up, the snapshot is not.
+- assertNotVisible: 'START HERE'
+
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+- assertNotVisible: 'START HERE'
+- assertVisible:
+    id: 'onboarding-prompt-city'

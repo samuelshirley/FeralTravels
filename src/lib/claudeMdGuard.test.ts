@@ -77,6 +77,30 @@ describe('CLAUDE.md names nothing that has been deleted', () => {
       'CLAUDE.md names scripts that do not exist, without saying they were removed.',
     ).toEqual([]);
   });
+
+  it('every api/<path> it mentions is a real route, or is named as deleted', () => {
+    // The mirror of "names every API route" above, which only ever checked one
+    // direction: a route that exists must be listed. Nothing checked that a
+    // listed route exists, and `api/directions` sat in the index from July
+    // until 2026-09-20 after its route.ts was deleted. `api/test/*` is a
+    // prefix and passes if any route lives under it.
+    const real = new Set(routePaths(join(ROOT, 'src/app/api')));
+    const ghosts: string[] = [];
+    for (const m of claudeMd.matchAll(/\bapi\/[A-Za-z0-9_.*[\]/-]+/g)) {
+      const named = m[0].replace(/[./]+$/, '');
+      if (named.endsWith('/*')) {
+        const prefix = named.slice(0, -1);
+        if ([...real].some((r) => r.startsWith(prefix))) continue;
+      } else if (real.has(named)) continue;
+      const around = claudeMd.slice(Math.max(0, m.index - 200), m.index + 200);
+      if (/\bGONE\b|deleted|removed|does not exist|no longer|there is no\s+`/i.test(around)) continue;
+      ghosts.push(named);
+    }
+    expect(
+      [...new Set(ghosts)],
+      'CLAUDE.md names API routes that do not exist, without saying they were removed.',
+    ).toEqual([]);
+  });
 });
 
 describe('CLAUDE.md size', () => {

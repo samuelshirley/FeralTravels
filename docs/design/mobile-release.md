@@ -1,9 +1,12 @@
 # Mobile release — how a merge reaches a tester
 
-The web and mobile halves are one workflow now — `.github/workflows/pipeline.yml`
-— and the mobile jobs run `needs: deploy`, after the web deploy rather than
-racing it. Read that file's header for the mechanics; this file is the setup and
-the traps.
+The mobile release is its own workflow, `.github/workflows/mobile.yml`,
+triggered by the same push to `main` as `deploy-production.yml` — so it runs
+BESIDE the web deploy, not after it, and an OTA can reach a phone before the API
+it expects has shipped. (An earlier version of this file described one
+`pipeline.yml` with the mobile jobs on `needs: deploy`; that consolidation was
+drafted and never landed.) Read `mobile.yml`'s header for the mechanics; this
+file is the setup and the traps.
 
 ## What a merge to `main` does
 

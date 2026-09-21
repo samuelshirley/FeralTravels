@@ -21,7 +21,8 @@ Everything below is ready to paste. Character limits are Apple's, enforced by
 the form, and were measured rather than eyeballed — see §2. What is still
 outstanding is in §6, and it is now mostly Apple's paperwork rather than code.
 
-**Updated 2026-09-02.** The description gained the Guideline 3.1.2 subscription
+**Updated 2026-09-21** (promotional text, description and keywords; see §2).
+Previously updated 2026-09-02. The description gained the Guideline 3.1.2 subscription
 disclosure it was missing (§2), §3 stopped being five Cmd-S presses and became a
 command, and §4 grew two rows after the dependency audit went past
 `node_modules` into a real `pod install`. Companions: `docs/design/iap-setup.md`
@@ -48,39 +49,34 @@ command, and §4 grew two rows after the dependency audit went past
 ### Promotional text (170 max, editable without review)
 
 ```
-Trip plan with Penny, she'll create a day by day plan with google maps links and automagically finds gas stations based on your fuel range.
+Road trip plan with Penny. Tell her where you want to go; she creates a plan with gas stops and Google Maps route links. Change your mind? She takes care of the updates.
 ```
 
-(Live in ASC as of 20 Aug 2026 — Sam's own wording. The description below is
-written to match this voice: plain, spoken, no marketing register.)
+(Sam's own wording, 2026-09-21. 169/170 — his draft ran 170/170, dead on the
+cap, so the comma before "and" came out and "Google Maps" was capitalised. The
+description below is written to match this voice: leads with the searchable
+noun phrase, semicolons and commas rather than em dashes, a rhetorical question
+answered in the next sentence, plain verbs. No marketing register, and no
+compressed or clever phrasing — that reads as written by something else.)
 
 ### Description (4000 max)
 
 ```
-Tell Penny where you want to go. She'll plan the drive.
+Road trip plan with Penny. Tell her where you want to go; she creates the plan.
 
-You describe the trip the way you'd say it out loud — "Girona to Lisbon starting tomorrow, three days in Porto, three in Lisbon, no more than five hours driving a day" — and she builds the whole thing out. Day by day. Where you drive, how far, where you end up each night.
+Say it how you'd say it out loud. "Girona to Lisbon, leaving Tuesday, three days in Porto, no more than five hours driving a day." She comes back with the trip laid out day by day, with the distance and drive time on every leg.
 
-Then she finds gas stations along the route, based on how far your vehicle actually goes on a tank. Not every 300km whether you need it or not — only where you'd genuinely run low, and always before a long empty stretch. If she makes you fill up early, she tells you why.
+She adds gas stops along the route based on your vehicle's range, so you're not guessing where the next station is on a long empty stretch. Set your range once in Settings and she plans around it.
 
-Every leg and every stop has a Google Maps link, so getting moving is one tap.
+Every leg and every stop gets a Google Maps link. One tap and you're navigating.
 
-Plans change on the road, so you just tell her. "We stopped early." "Going here instead." "Add a day in Porto." Paste a Maps link, an address, or just a place name and she'll route you through it.
+Change your mind? Just tell her. "We stopped early." "Going here instead." "Add a day in Porto." Paste a Google Maps link, an address, or a place name and she'll route you through it.
 
-What you get:
-
-- A day-by-day plan from a plain description of your trip
-- Fuel stops on your actual route, sized to your range
-- A reason attached to any stop you wouldn't otherwise make
-- Google Maps links for every leg and stop
-- Add your own stops from a link, an address, or a name
-- Edit anything mid-trip by just saying so
-
-Feral Travels also runs in any browser at feraltravels.com, on the same account.
+Feral Travels also runs in a browser at feraltravels.com, on the same account.
 
 Built for overlanders, van lifers, and anyone who'd rather be driving than planning.
 
-Seven days free, then $2 a month or $20 a year. Your trips stay readable either way.
+Seven days free. Then $2 a month or $20 a year. Your trips stay readable either way.
 
 Subscription terms: Feral Travels is an auto-renewing subscription. Payment is charged to your Apple Account at confirmation of purchase. It renews automatically unless auto-renew is turned off at least 24 hours before the end of the current period, and your account is charged for renewal within 24 hours of the end of that period. Manage your subscription and turn off auto-renew in your Apple Account settings after purchase.
 
@@ -90,6 +86,23 @@ Privacy Policy: https://feraltravels.com/privacy
 
 Deliberately does NOT name Finn, does not use ALL-CAPS section headers, and does
 not claim campsite/amenity finding. It describes only what v1 actually ships.
+
+**Two claims were removed on 2026-09-21 because the app does not do them**, and
+they had been sitting in this file marked "ready to paste" since 2026-08-20:
+
+- *"where you end up each night"* — the plan has legs, stops and base days. It
+  does not pick or record accommodation.
+- *"If she makes you fill up early, she tells you why"*, and the bullet *"A
+  reason attached to any stop you wouldn't otherwise make"* — Penny writes leg
+  notes, but nothing attaches a justification to an individual fuel stop.
+
+Neither was checked against the app before it was written down. Anything added
+to the description from here gets verified against a screen or the code first —
+a metadata claim the reviewer can disprove in the app is a 2.3.1 rejection, and
+the queue costs a week.
+
+The feature bullet list is gone too: it restated the three paragraphs above it
+in worse prose, which is the shape that reads as machine-written.
 
 **The last three paragraphs are Guideline 3.1.2 and are not optional.** An
 auto-renewing subscription has to disclose price, period and renewal behaviour,
@@ -105,18 +118,23 @@ on Apple's standard EULA is fine and is the default; what is not fine is the
 Terms link above 404ing. It does not — `/terms` is public and
 `e2e/legal-pages.spec.ts` fails if that changes.
 
-**Lengths, measured rather than eyeballed** (2026-09-02): subtitle 27/30,
-promotional text 139/170, description 1990/4000, keywords 98/100. Apple's form
+**Lengths, measured rather than eyeballed** (2026-09-21): subtitle 27/30,
+promotional text 169/170, description 1550/4000, keywords 97/100. Apple's form
 truncates silently in some fields and refuses in others; both are worse to find
 out while pasting.
 
 ### Keywords (100 max, comma-separated, NO spaces after commas)
 
 ```
-road trip,route planner,overland,fuel,gas station,van life,camper,itinerary,rv,4x4,diesel,roadtrip
+road trip,trip planner,fuel,gas station,van life,campervan,camper,itinerary,rv,4x4,diesel,offroad
 ```
 
-98/100 characters. No spaces after the commas — they count. Keep "Google Maps"
+97/100 characters. No spaces after the commas — they count. **"overland" came
+out on purpose**: it is already in the subtitle, Apple indexes the name and
+subtitle alongside this field, and nine characters spent repeating it buy
+nothing. That paid for `campervan` and `offroad`. `route planner` became
+`trip planner` — higher-volume query, and `route` is the weaker standalone
+token. Keep "Google Maps"
 out of here; third-party trademarks in the keyword field get flagged.
 
 Do not repeat "Feral Travels" or "Travel" — the name and category are already indexed.
@@ -333,16 +351,19 @@ done, so this section states what is checkable today.
    dependency audit went past `node_modules` into a real `pod install`; answer
    from the table, not from memory.
 
-7. **`PAYWALL_ENABLED=1` on production.** Strictly speaking the app is
-   submittable without it — the purchase is still findable (Settings → Plan →
-   View plans) and still completes — so this is not a hard blocker the way the
-   agreement is. But leave it off and a reviewer buys a subscription that
-   visibly changes nothing, because they were already entitled, which invites
-   exactly the "what is this purchase for" question you do not want asked.
-   `docs/design/ios-review-notes.md` §4 lists it as required for that reason and
-   that is the position to work to.
+7. **The global paywall switch stays OFF through review.** It is the
+   `app_meta.paywall_enabled` row, flipped from the `PAYWALL ON/OFF` pill in the
+   `/admin` header — not an env var; `PAYWALL_ENABLED` has not been read since
+   2026-09-02. The app is submittable with it off: the purchase is still
+   findable (Settings → Plan → View plans) and still completes. The cost,
+   accepted: a reviewer inside their trial buys a subscription that visibly
+   changes nothing, because they were already entitled. The alternative is
+   worse — the web app is the demo while the build is in review, and turning
+   enforcement on would wall every account past its trial with nothing to buy.
+   To see the wall work, force it onto one disposable account from
+   `/admin/users/[id]`. `docs/design/ios-review-notes.md` §4 says the same.
 
-   Its preconditions are at the end of `docs/design/iap-setup.md`. The one that
+   Its preconditions for after review are at the end of `docs/design/iap-setup.md`. The one that
    is not negotiable: do not flip it before a build containing the purchase
    sheet is what testers actually have. A blocked user on an older binary has no
    way to pay, and an OTA cannot deliver the sheet.

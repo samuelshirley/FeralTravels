@@ -51,6 +51,8 @@ import {
   locksComposer,
   type QuestionKind,
 } from '@/lib/onboardingForm';
+import { onboardingPhase as deriveOnboardingPhase } from '@/lib/onboardingPhase';
+import { planningCaption } from '@/lib/planningCaption';
 import { CalendarBlank, ListBullets, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
 
 /**
@@ -117,9 +119,6 @@ function makeIdempotencyKey(): string {
   }
   return `k-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
-
-/** Caption Penny "sends" alongside the dog-fetch clip on the first full build. */
-const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fuel…';
 
 /**
  * Stable id for the paywall bubble appended on mount, so a re-run of the
@@ -537,6 +536,8 @@ export default function ChatPanel({
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  /** Bumped by the load-error state's Try again, to re-run the snapshot fetch. */
+  const [onboardingAttempt, setOnboardingAttempt] = useState(0);
   /*
    * The composite vehicle card owns its own two fields rather than borrowing
    * the composer. It has to: the composer is ONE input and this step has two
@@ -545,12 +546,19 @@ export default function ChatPanel({
    */
   const [vehicleName, setVehicleName] = useState('');
   const [vehicleRange, setVehicleRange] = useState('');
-  const onboardingUiActive =
-    isOnboarding &&
-    onboardingSnapshot !== null &&
-    onboardingSnapshot.state !== 'done';
-  const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
-  const onboardingQuestion = onboardingUiActive ? onboardingSnapshot.question : null;
+  /*
+   * ONE value for where setup is — see `src/lib/onboardingPhase.ts`. Anything
+   * that means "not in setup" says `onboardingPhase === 'off'`; negating
+   * `onboardingUiActive` also matches `'loading'`, which is how the first-run
+   * chat painted START HERE over itself (onboardingPhaseGuard.test.ts).
+   */
+  const onboardingPhase = deriveOnboardingPhase({
+    isOnboarding,
+    snapshot: onboardingSnapshot,
+    error: onboardingError,
+  });
+  const onboardingUiActive = onboardingPhase === 'active';
+  const onboardingQuestion = onboardingUiActive ? onboardingSnapshot?.question ?? null : null;
   /*
    * Locks the composer read-only. Which kinds do that is decided in ONE place
    * (`locksComposer`, shared with native): `select` because tapping is the
@@ -810,12 +818,24 @@ export default function ChatPanel({
   const runInFlight = usePennyRunning(tripId);
   const replanWaiting = (loading || runInFlight) && !pennyStreamingText;
   /*
+   * Setup owes the transcript a question it has not drawn yet: the snapshot is
+   * still in flight, or it has landed and its question bubble has not. Penny's
+   * typing dots fill that window, so the first-run pane is never empty — the
+   * composer says "Loading setup…" and the header says 1 OF 5, and a blank
+   * transcript between them read as broken.
+   */
+  const lastSetupQuestion = [...messages].reverse().find((m) => m.kind === 'form_question');
+  const setupQuestionPending =
+    onboardingPhase === 'loading' ||
+    (onboardingQuestion !== null && lastSetupQuestion?.content !== onboardingQuestion.label);
+  /*
    * Whether the identity strip reads THINKING or READY. Deliberately the SAME
    * expression the transcript's typing bubble uses (see its render below) plus
    * the streaming case — a strip that could say READY while three dots bounced
    * would be worse than no strip at all.
    */
-  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
+  const pennyThinking =
+    introTyping || replanWaiting || setupQuestionPending || !!pennyStreamingText;
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -941,7 +961,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [isOnboarding, tripId]);
+  }, [isOnboarding, tripId, onboardingAttempt]);
 
   useEffect(() => {
     if (!isOnboarding || onboardingLoading || !onboardingSnapshot || onboardingSnapshot.state === 'done') {
@@ -969,11 +989,17 @@ export default function ChatPanel({
       });
     };
 
-    // Show typing indicator before each onboarding question so the flow
-    // feels like a real conversation. First question gets 3s (the greeting
-    // is longer), subsequent questions get 2s.
+    // The first question is the first-run screen's headline, not a reply, so
+    // it lands the moment the snapshot does. The dots have already covered the
+    // fetch (`setupQuestionPending`); holding them another 3s on top was the
+    // longest stretch of nothing a new user sat through. Every later question
+    // keeps a 2s typing beat, which is what makes setup read as a conversation.
     const isFirstQuestion = onboardingSnapshot.state === 'trip_intent' && messages.length === 0;
-    const delay = isFirstQuestion ? 3000 : 2000;
+    if (isFirstQuestion) {
+      addQuestionBubble();
+      return;
+    }
+    const delay = 2000;
 
     setIntroTyping(true);
     const timer = setTimeout(() => {
@@ -1364,7 +1390,8 @@ export default function ChatPanel({
             id: `penny-video-${Date.now() + 2}`,
             trip_id: tripId,
             role: 'assistant',
-            content: PLANNING_VIDEO_COPY,
+            // Carries the trial line for a user on one — see planningCaption.
+            content: planningCaption(entitlement),
             kind: 'ai',
             changes_made: null,
             created_at: new Date().toISOString(),
@@ -2100,6 +2127,12 @@ export default function ChatPanel({
       }
     }
   }
+  // The greeting opens an otherwise empty transcript. A re-asked intent
+  // question further down a conversation stays a bubble.
+  const firstRunHeadline =
+    onboardingQuestion?.key === 'trip_intent' &&
+    activeQuestionId !== null &&
+    transcript[0]?.id === activeQuestionId;
 
   /** Pick a calendar day for the date step (the `Pick a date` chip). */
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -2140,7 +2173,7 @@ export default function ChatPanel({
     onboardingUiActive && onboardingQuestion ? (
       <div
         data-testid="onboarding-card"
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: firstRunHeadline ? 0 : 10 }}
         onClick={(e) => e.stopPropagation()}
       >
         {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options && (
@@ -2341,14 +2374,14 @@ export default function ChatPanel({
           city" invitation, and its only job is to put the cursor in the box.
         */}
         {onboardingQuestion.prompts?.length ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: firstRunHeadline ? 8 : 6 }}>
             <div
               style={{
                 fontSize: 9.5,
                 fontWeight: 600,
                 letterSpacing: '0.13em',
                 color: 'var(--tp-subtle)',
-                marginTop: 2,
+                marginTop: firstRunHeadline ? 0 : 2,
               }}
             >
               TAP TO START, THEN EDIT
@@ -2398,7 +2431,7 @@ export default function ChatPanel({
                   ...buttonStyle('secondary'),
                   justifyContent: 'flex-start',
                   textAlign: 'left',
-                  padding: '11px 14px',
+                  padding: firstRunHeadline ? '12px 14px' : '11px 14px',
                   fontSize: 13.5,
                   fontWeight: 400,
                   color: 'var(--tp-muted)',
@@ -2643,7 +2676,7 @@ export default function ChatPanel({
           examples are shapes to edit, not messages anyone actually wants to
           send verbatim. Same channel `+ Add to this day` uses.
         */}
-        {messages.length === 0 && !onboardingUiActive && (
+        {messages.length === 0 && onboardingPhase === 'off' && (
           <div style={{ padding: '4px 0 12px' }}>
             <div
               style={{
@@ -2691,6 +2724,34 @@ export default function ChatPanel({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/*
+          The setup snapshot failed to load. Before the phase existed this
+          left START HERE standing, which invited the user to type a trip into
+          a panel that had not started setup; now it says what happened and
+          offers the one thing that fixes it.
+        */}
+        {onboardingPhase === 'error' && (
+          <div
+            data-testid="onboarding-load-error"
+            style={{ padding: '4px 0 12px', display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <div style={{ fontSize: 14, color: 'var(--tp-text)' }}>Couldn&apos;t load trip setup.</div>
+            {onboardingError && (
+              <div style={{ fontSize: 12, color: 'var(--tp-danger)' }}>{onboardingError}</div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setOnboardingError(null);
+                setOnboardingAttempt((n) => n + 1);
+              }}
+              style={{ ...buttonStyle('secondary'), alignSelf: 'flex-start', fontSize: 13 }}
+            >
+              Try again
+            </button>
           </div>
         )}
 
@@ -2863,6 +2924,36 @@ export default function ChatPanel({
                     </div>
                   )}
                 </div>
+              </div>
+            );
+          }
+          // The first-run screen: Penny's greeting as a full-width headline
+          // with the prompt rows under it, on the empty state's type scale —
+          // not a 14px bubble. `trip_intent` only; from step 2 it is a
+          // conversation and a headline per question would be shouting.
+          if (isActiveQuestion && firstRunHeadline) {
+            return (
+              <div
+                key={msg.id}
+                data-testid="chat-message"
+                data-message-role="assistant"
+                data-onboarding-question
+                style={{ padding: '4px 0 12px', alignSelf: 'stretch' }}
+              >
+                <div
+                  data-testid="onboarding-headline"
+                  style={{
+                    fontSize: 19,
+                    fontWeight: 500,
+                    lineHeight: 1.3,
+                    color: 'var(--tp-text)',
+                    textWrap: 'pretty',
+                    marginBottom: 16,
+                  }}
+                >
+                  {msg.content}
+                </div>
+                {onboardingCard}
               </div>
             );
           }
@@ -3128,7 +3219,7 @@ export default function ChatPanel({
             the typing animation before each onboarding question. The dog-fetch
             clip for the first full build is a persistent message above, not part
             of this transient indicator. */}
-        {(introTyping || replanWaiting) && (
+        {(introTyping || replanWaiting || setupQuestionPending) && (
           <div className="typing-indicator-bubble" aria-label="Penny is typing">
             <span className="typing-indicator-dot" />
             <span className="typing-indicator-dot" />
@@ -3210,7 +3301,7 @@ export default function ChatPanel({
         </div>
       ) : (
         <>
-          {onboardingBlockingLoad ? (
+          {onboardingPhase === 'loading' ? (
             <div
               style={{
                 padding: '12px 16px',
@@ -3255,7 +3346,7 @@ export default function ChatPanel({
             e.target.value = '';
           }}
         />
-        {onboardingError && (
+        {onboardingError && onboardingPhase !== 'error' && (
           <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{onboardingError}</div>
         )}
         <div
