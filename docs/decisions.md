@@ -602,7 +602,9 @@ believes something is checked when nothing is. *Enforced by:*
 M2. **CLAUDE.md's index lists are complete and name nothing deleted.** Fourteen
 scripts were missing when this was written. A tombstone ("`ship.sh` is GONE") is
 allowed and valuable; a mention that reads as though the file still exists is
-not. *Enforced by:* `claudeMdGuard.test.ts`.
+not. Routes are checked in both directions since 2026-09-21 — before that only
+"every route is listed" was, and `api/directions` stayed listed from its deletion
+on 2026-07-22 until 2026-09-20. *Enforced by:* `claudeMdGuard.test.ts`.
 
 M3. **CLAUDE.md is under 28 KB, and prose lives in `docs/` instead.** *Enforced
 by:* `claudeMdGuard.test.ts` — **live since 2026-09-20**, when the cleanup it was
@@ -625,3 +627,10 @@ M4. **The prose half is REVIEWED by a model, never authored by one.**
 and this register that a PR's diff makes false, and to post one review comment.
 It does not edit files: an action that rewrites CLAUDE.md on merge is the same
 failure as the OSM claim — a model authoring a document nobody reviews.
+
+M5. **Every `.github/workflows/<name>.yml` named in a `*.md`, `*.mjs` or `*.sh`
+exists, or is tombstoned.** A one-file `pipeline.yml` was drafted on 2026-09-11
+(`pipeline.yml.new` + `spring-clean.sh`), never run, and described as current by
+CLAUDE.md, the README, two design docs and two CI error strings for ten days.
+Same tombstone rule as M2, plus "there is no `name`" and a SUPERSEDED status
+header on archived designs. *Enforced by:* `workflowRefsGuard.test.ts`.
