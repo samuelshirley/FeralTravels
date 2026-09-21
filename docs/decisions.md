@@ -336,6 +336,13 @@ G7. **A trip is "completed" by derivation from its last leg date, never a stored
 G8. **Trip cloning copies every column it should** — a new column must be added to the clone.
 *Enforced by:* `cloneTripColumns.test.ts`.
 
+G9. **Every `/api/admin/*` route with a POST handler has a caller in `src/`.** `POST
+/api/admin/paywall` shipped 2026-09-02 as the switch that must be flippable in a hurry, and
+nothing called it — `/admin` showed an inert pill, so the only control was devtools. Admin guards
+are cookie-only, so the mobile app can never be the caller. A set relation over literal
+`fetch(`/`apiFetch(` arguments, not a grep: the path was named in comments all along.
+*Enforced by:* `adminEndpointCallerGuard.test.ts`.
+
 ## H. UI conventions
 
 H1. **Copy rule: every string tells the user something they cannot already see.**
