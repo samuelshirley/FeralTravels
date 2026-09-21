@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import PurchaseSheet from '@/components/PurchaseSheet';
 import { blockNoticeFor, type BlockNotice } from '@/lib/paywallCopy';
-import type { BlockReason, EntitlementPayload } from '@/types/entitlement';
+import type { BlockReason } from '@/types/entitlement';
 
 /**
  * The paywall's version of a locked pane, for the trip workspace.
@@ -16,8 +16,7 @@ import type { BlockReason, EntitlementPayload } from '@/types/entitlement';
  *
  * A HOOK rather than a component because the notice is drawn inside every
  * locked pane (two of them on desktop and tablet, two tabs on mobile) while the
- * entitlement fetch, the purchase sheet and the in-flight purchase must exist
- * exactly ONCE. Returning the pieces lets the caller put the notice in each
+ * purchase sheet must exist exactly ONCE. Returning the pieces lets the caller put the notice in each
  * pane and mount the sheet once, without a context or a portal for what is
  * ultimately one boolean and one modal.
  */
@@ -32,77 +31,10 @@ export function useTripPaywallLock(blockReason: BlockReason | null): {
   const notice = blockReason ? blockNoticeFor(blockReason) : null;
   const selling = notice?.tone === 'sell';
 
-  /**
-   * Prices, fetched only when there is something to sell. The LOCK itself never
-   * waits on this: the server already decided it for this render and passed it
-   * down, so there is no window in which the panes look usable before we take
-   * them away. A failed fetch is silent — the sheet still opens and becomes
-   * what it already is for every non-allowlisted account, the prices' home
-   * address on iPhone.
-   */
-  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  // No entitlement fetch: the web sheet shows no prices (a plan is bought in
+  // the iPhone app), so there is nothing to ask the server for. It used to
+  // fetch one for the allowlisted fake purchase, removed on 2026-09-21.
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
-
-  const fetchEntitlement = useCallback(async (): Promise<EntitlementPayload | null> => {
-    try {
-      // Raw fetch, not apiFetch: not knowing the prices is not an error worth
-      // putting a toast in front of someone who has done nothing wrong.
-      const res = await fetch('/api/me/entitlement', { cache: 'no-store' });
-      if (!res.ok) return null;
-      return (await res.json()) as EntitlementPayload;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!selling) return;
-    let cancelled = false;
-    void (async () => {
-      const payload = await fetchEntitlement();
-      if (!cancelled && payload) setEntitlement(payload);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selling, fetchEntitlement]);
-
-  const runTestPurchase = useCallback(
-    async (productId: string) => {
-      setPurchasingId(productId);
-      setPurchaseError(null);
-      try {
-        const res = await fetch('/api/purchase/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(data.error ?? `Purchase failed (${res.status})`);
-        }
-        // The grant is only real once the entitlement endpoint agrees. Believing
-        // the 200 would lift the scrim on our own say-so.
-        const fresh = await fetchEntitlement();
-        if (!fresh?.entitled) {
-          setPurchaseError(
-            "That went through, but your plan hasn't switched on yet. Give it a moment and reload.",
-          );
-          return;
-        }
-        // The lock was resolved on the server for this render, so the page has
-        // to be asked again — there is no client state that could unlock it.
-        window.location.reload();
-      } catch (e: unknown) {
-        setPurchaseError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setPurchasingId(null);
-      }
-    },
-    [fetchEntitlement],
-  );
 
   return {
     locked: blockReason !== null,
@@ -111,23 +43,12 @@ export function useTripPaywallLock(blockReason: BlockReason | null): {
         notice={notice}
         blockReason={blockReason}
         selling={selling}
-        onAction={() => {
-          setPurchaseError(null);
-          setSheetOpen(true);
-        }}
-        error={purchaseError}
+        onAction={() => setSheetOpen(true)}
       />
     ) : null,
     sheet:
       sheetOpen && blockReason ? (
-        <PurchaseSheet
-          products={entitlement?.products ?? []}
-          testPurchaseAllowed={entitlement?.testPurchaseAllowed ?? false}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(id) => void runTestPurchase(id)}
-          onClose={() => setSheetOpen(false)}
-        />
+        <PurchaseSheet onClose={() => setSheetOpen(false)} />
       ) : null,
   };
 }
@@ -149,14 +70,12 @@ function LockNotice({
   blockReason,
   selling,
   onAction,
-  error,
 }: {
   notice: BlockNotice;
   /** Verbatim on the root node, so a test can assert WHICH block a pane is under. */
   blockReason: BlockReason;
   selling: boolean;
   onAction: () => void;
-  error: string | null;
 }) {
   const buttonStyle: React.CSSProperties = {
     display: 'inline-flex',
@@ -229,12 +148,6 @@ function LockNotice({
         <a href={notice.action.href} data-testid="trip-pane-lock-support" style={buttonStyle}>
           {notice.action.label}
         </a>
-      )}
-
-      {error && (
-        <p role="alert" style={{ margin: '10px 0 0', fontSize: 12, lineHeight: 1.5, color: 'var(--tp-danger)' }}>
-          {error}
-        </p>
       )}
     </section>
   );

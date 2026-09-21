@@ -5,7 +5,7 @@
  * client bundle. A `tsx` script is server code by definition — there is no
  * bundle and no browser — so the guard has nothing to protect there, and its
  * import-time throw was the reason `scripts/trial-account.ts` ended up
- * restating a regex that lives in `payments/testPurchase.ts`. Restating a
+ * restating a regex that now lives in `payments/testAccountGate.ts`. Restating a
  * security boundary so a script can run is a worse trade than shimming the
  * guard the script does not need.
  *

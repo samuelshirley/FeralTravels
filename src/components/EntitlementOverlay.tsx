@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import PurchaseSheet from '@/components/PurchaseSheet';
 import type { BlockNotice } from '@/lib/paywallCopy';
-import type { BlockReason, EntitlementPayload } from '@/types/entitlement';
+import type { BlockReason } from '@/types/entitlement';
 
 /**
  * The block, as something laid OVER the page rather than a card wedged above it.
@@ -43,68 +43,10 @@ export default function EntitlementOverlay({
 }) {
   const selling = notice.tone === 'sell';
 
-  /**
-   * The prices, fetched client-side because the sheet needs them. A failure is
-   * silent and NOT a second error message stacked on top of this one: the sheet
-   * opens either way, and with no products it becomes exactly what it already
-   * is for every non-allowlisted account — the prices' home address, on iPhone.
-   */
-  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  // No entitlement fetch: the web sheet shows no prices — a plan is bought in
+  // the iPhone app. (It fetched one for the allowlisted fake purchase, which was
+  // removed on 2026-09-21.)
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
-
-  const fetchEntitlement = useCallback(async (): Promise<EntitlementPayload | null> => {
-    try {
-      const res = await fetch('/api/me/entitlement', { cache: 'no-store' });
-      if (!res.ok) return null;
-      return (await res.json()) as EntitlementPayload;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!selling) return;
-    let cancelled = false;
-    void (async () => {
-      const payload = await fetchEntitlement();
-      if (!cancelled && payload) setEntitlement(payload);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selling, fetchEntitlement]);
-
-  async function runTestPurchase(productId: string) {
-    setPurchasingId(productId);
-    setPurchaseError(null);
-    try {
-      const res = await fetch('/api/purchase/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error ?? `Purchase failed (${res.status})`);
-      }
-      // The grant is only real once the entitlement endpoint agrees. Believing
-      // the 200 would lift the overlay on our own say-so.
-      const fresh = await fetchEntitlement();
-      if (!fresh?.entitled) {
-        setPurchaseError("That went through, but your plan hasn't switched on yet. Give it a moment and reload.");
-        return;
-      }
-      // The verdict was resolved on the server for this render, so the page has
-      // to be asked again — there is no client state that could unblock it.
-      window.location.reload();
-    } catch (e: unknown) {
-      setPurchaseError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPurchasingId(null);
-    }
-  }
 
   const quietLinkStyle: React.CSSProperties = {
     fontSize: 13,
@@ -233,29 +175,12 @@ export default function EntitlementOverlay({
           </a>
         </div>
 
-        {purchaseError && (
-          <p
-            role="alert"
-            style={{ margin: '12px 0 0', fontSize: 12.5, lineHeight: 1.5, color: 'var(--tp-danger)' }}
-          >
-            {purchaseError}
-          </p>
-        )}
       </section>
 
       {sheetOpen && (
         <PurchaseSheet
-          // No payload means no prices to show, and a sheet that says "buy this
-          // on the phone" — which is what it says to every non-allowlisted
-          // account anyway, because the web cannot take money.
-          products={entitlement?.products ?? []}
-          testPurchaseAllowed={entitlement?.testPurchaseAllowed ?? false}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(id) => void runTestPurchase(id)}
-          // Same reload as a completed purchase, for the same reason: this
-          // page's verdict was resolved on the server for this render, so there
-          // is no client state that could unblock it.
+          // A reload, because this page's verdict was resolved on the server
+          // for this render, so there is no client state that could unblock it.
           onRedeemed={() => window.location.reload()}
           onClose={() => setSheetOpen(false)}
         />

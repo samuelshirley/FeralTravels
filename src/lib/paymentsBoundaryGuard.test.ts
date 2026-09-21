@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '..', '..');
 const MODULE_DIR = 'src/server/payments';
 
-/** Internals. `index.ts` is the public surface; `copy`/`testPurchase` are UI/ops seams. */
+/** Internals. `index.ts` is the public surface; `copy`/`testAccountGate` are UI/ops seams. */
 const PRIVATE = ['payments/states', 'payments/entitlements', 'payments/constants'];
 
 function walk(dir: string, out: string[] = []): string[] {

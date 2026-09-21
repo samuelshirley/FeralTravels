@@ -180,19 +180,6 @@ export default function PurchaseSheet({
 
             {onRedeemed ? <PromoRedeemer onRedeemed={onRedeemed} /> : null}
 
-            {mode === "test" ? (
-              <View style={styles.testNotice}>
-                {/* Loud on purpose. This path grants real paid access with
-                    no payment, and the one place that must be unmistakable is a
-                    screenshot of the sheet that granted it. */}
-                <Text style={styles.testNoticeText}>
-                  <Text style={styles.testNoticeStrong}>Test purchase — no payment.</Text> Your
-                  account is allowlisted, so picking a plan grants it directly and logs a
-                  FAKE_PURCHASE event. No money moves, and the App Store is not involved.
-                </Text>
-              </View>
-            ) : null}
-
             {/*
               The customer's line says what THEY can do and never why we cannot
               sell — see `unavailableMessage`. In a dev build the reason is
@@ -543,18 +530,6 @@ const styles = StyleSheet.create({
   legalRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   legalLink: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
   legalDot: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
-
-  testNotice: {
-    marginTop: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: theme.warningMuted,
-    borderWidth: 1,
-    borderColor: "rgba(184, 149, 106, 0.45)",
-    borderRadius: theme.radiusSm,
-  },
-  testNoticeText: { fontFamily: font.regular, fontSize: 12, lineHeight: 18, color: theme.text },
-  testNoticeStrong: { fontFamily: font.bold },
 
   promoWrap: { marginTop: 14 },
   promoDivider: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },

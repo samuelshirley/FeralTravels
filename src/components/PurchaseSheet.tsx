@@ -1,10 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Spinner from '@/components/Spinner';
 import { APP_STORE_CTA_LABEL, APP_STORE_URL } from '@/lib/paywallCopy';
 import { PROMO_CTA_LABEL, PROMO_PLACEHOLDER, PROMO_PROMPT } from '@/lib/promoCopy';
-import type { PaywallProduct } from '@/types/entitlement';
 
 /**
  * The purchase sheet — and the ONLY modal in the paywall flow.
@@ -25,44 +23,24 @@ import type { PaywallProduct } from '@/types/entitlement';
  * SHEET_MAX_WIDTH ceiling, the viewport-capped height, and the tight vertical
  * rhythm below: every gap here is the smallest one that still separates.
  *
- * On the web proper it shows no prices at all: the plan is chosen in the
- * iPhone app, so the sheet says so, offers the App Store, and offers the code
- * field. The price rows appear only on the allowlisted fake-purchase path,
- * where a row can actually be pressed. It does not decide who can buy, what a
- * plan costs, or whether that path is available — all three come from
- * `GET /api/me/entitlement`, and the server refuses the purchase again on its
- * own authority regardless of what this sheet chose to show.
+ * It shows no prices at all: a plan is bought in the iPhone app, so the sheet
+ * says so, offers the App Store, and offers the code field. The web cannot
+ * take money. (Until 2026-09-21 an allowlisted account saw price rows here
+ * that granted access through a fake purchase; that path was removed with
+ * `/api/purchase/test`, because after the production wipe the RevenueCat
+ * webhook is the only thing that may grant access.)
  */
 
 /**
- * Roughly the width of Apple's own sheet, and narrow enough that the two price
- * rows read as a short list rather than as full-bleed banners. Wider than this
- * and the rows stretch, the prices drift away from their cadence labels, and
- * the whole card loses the "one small decision" shape.
+ * Roughly the width of Apple's own sheet. Wider than this and the card stops
+ * reading as a sheet and starts reading as a page.
  */
 const SHEET_MAX_WIDTH = 380;
 
 export default function PurchaseSheet({
-  products,
-  testPurchaseAllowed,
-  purchasingId,
-  error,
-  onPurchase,
   onClose,
   onRedeemed,
 }: {
-  products: PaywallProduct[];
-  /**
-   * Server's answer, never the client's guess. False means this browser is not
-   * a purchase surface at all — the sheet then shows the prices and points at
-   * the iPhone app, because a button that cannot take money is worse than no
-   * button.
-   */
-  testPurchaseAllowed: boolean;
-  /** Product id currently in flight, or null. */
-  purchasingId: string | null;
-  error: string | null;
-  onPurchase: (productId: string) => void;
   onClose: () => void;
   /**
    * Called after the server has CONFIRMED the account is entitled, not when the
@@ -73,28 +51,23 @@ export default function PurchaseSheet({
    */
   onRedeemed?: () => void;
 }) {
-  const busy = purchasingId !== null;
-
   // Escape closes, like Apple's sheet and like every other overlay the user has
-  // ever met. Skipped while a grant is in flight — dismissing mid-request would
-  // leave the account paid up and the UI still paywalled until a reload.
+  // ever met.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busy) onClose();
+      if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [busy, onClose]);
+  }, [onClose]);
 
   return (
     <div
       data-testid="purchase-sheet-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label={testPurchaseAllowed ? 'Choose a plan' : 'Get the app'}
-      onClick={() => {
-        if (!busy) onClose();
-      }}
+      aria-label="Get the app"
+      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
@@ -136,7 +109,6 @@ export default function PurchaseSheet({
         <div style={{ padding: '18px 20px 20px' }}>
           <button
             onClick={onClose}
-            disabled={busy}
             aria-label="Close"
             style={{
               position: 'absolute',
@@ -150,7 +122,7 @@ export default function PurchaseSheet({
               fontSize: 19,
               lineHeight: '26px',
               padding: 0,
-              cursor: busy ? 'default' : 'pointer',
+              cursor: 'pointer',
             }}
           >
             ×
@@ -163,215 +135,60 @@ export default function PurchaseSheet({
               fontSize: 16,
               fontWeight: 700,
               color: 'var(--tp-text, #333)',
-              margin: testPurchaseAllowed ? '0 0 2px' : '0 0 12px',
+              margin: '0 0 12px',
               paddingRight: 24,
             }}
           >
             Feral Travels
           </h2>
 
-          {/* The price rows exist only where a row can be pressed — the
-              allowlisted fake-purchase path. On the web proper there is
-              nothing to choose: the plan is picked in the iPhone app, so a
-              "Choose a plan" list here was two buttons that did nothing. */}
-          {testPurchaseAllowed && (
-            <>
-              <p
-                style={{
-                  fontSize: 12.5,
-                  color: 'var(--tp-muted, #5C5C5C)',
-                  margin: '0 0 14px',
-                }}
-              >
-                Choose a plan
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {products.map((p) => (
-                  <PlanRow
-                    key={p.id}
-                    product={p}
-                    busy={busy}
-                    pending={purchasingId === p.id}
-                    onSelect={() => onPurchase(p.id)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-
-          {testPurchaseAllowed ? (
-            <div
-              data-testid="purchase-sheet-test-notice"
+          <div data-testid="purchase-sheet-iphone-notice">
+            {/* Small and quiet: it explains the button, it is not the pitch.
+                The pitch already happened in Penny's message or on the block
+                notice that opened this. */}
+            <p
               style={{
-                marginTop: 12,
-                padding: '7px 9px',
-                background: 'rgba(212, 160, 23, 0.12)',
-                border: '1px solid rgba(212, 160, 23, 0.35)',
-                borderRadius: 'var(--tp-radius-sm, 8px)',
-                fontSize: 11,
-                lineHeight: 1.45,
-                color: 'var(--tp-text, #333)',
-              }}
-            >
-              {/* Loud on purpose. This path grants paid access with no payment,
-                  and the one place that must be unmistakable is a screenshot of
-                  the sheet that granted it. */}
-              <strong>Test purchase — no payment.</strong> Your account is
-              allowlisted, so picking a plan grants it directly and logs a{' '}
-              <code style={{ fontSize: 10.5 }}>FAKE_PURCHASE</code> event. No
-              money moves.
-            </div>
-          ) : (
-            <div data-testid="purchase-sheet-iphone-notice">
-              {/* Small and quiet: it explains the button, it is not the pitch.
-                  The pitch already happened in Penny's message or on the block
-                  notice that opened this. */}
-              <p
-                style={{
-                  margin: '0 0 10px',
-                  fontSize: 11.5,
-                  lineHeight: 1.5,
-                  color: 'var(--tp-muted, #5C5C5C)',
-                }}
-              >
-                Plans are bought in the Feral Travels app on iPhone. Everything
-                you plan there shows up here.
-              </p>
-              <a
-                data-testid="purchase-sheet-app-store-link"
-                href={APP_STORE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  padding: '10px 14px',
-                  borderRadius: 'var(--tp-radius-sm, 8px)',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  background: 'var(--tp-primary, #4E7AB0)',
-                  color: 'var(--tp-on-primary, #fff)',
-                }}
-              >
-                {APP_STORE_CTA_LABEL}
-              </a>
-            </div>
-          )}
-
-          {/* The code field sits under the primary action on both paths: most
-              people who open this sheet are getting the app or buying, and the
-              comped few were told to look for a field, which this is. */}
-          {onRedeemed && <PromoRedeemer busy={busy} onRedeemed={onRedeemed} />}
-
-          {error && (
-            <div
-              data-testid="purchase-sheet-error"
-              style={{
-                marginTop: 10,
-                padding: '7px 9px',
-                background: 'var(--tp-danger-muted, rgba(198, 93, 74, 0.12))',
-                border: '1px solid rgba(198, 93, 74, 0.35)',
-                borderRadius: 'var(--tp-radius-sm, 8px)',
+                margin: '0 0 10px',
                 fontSize: 11.5,
-                lineHeight: 1.45,
-                color: 'var(--tp-danger, #C65D4A)',
+                lineHeight: 1.5,
+                color: 'var(--tp-muted, #5C5C5C)',
               }}
             >
-              {error}
-            </div>
-          )}
+              Plans are bought in the Feral Travels app on iPhone. Everything
+              you plan there shows up here.
+            </p>
+            <a
+              data-testid="purchase-sheet-app-store-link"
+              href={APP_STORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '10px 14px',
+                borderRadius: 'var(--tp-radius-sm, 8px)',
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: 'none',
+                background: 'var(--tp-primary, #4E7AB0)',
+                color: 'var(--tp-on-primary, #fff)',
+              }}
+            >
+              {APP_STORE_CTA_LABEL}
+            </a>
+          </div>
+
+          {/* The code field sits under the primary action: most people who
+              open this sheet are getting the app, and the comped few were told
+              to look for a field, which this is. */}
+          {onRedeemed && <PromoRedeemer onRedeemed={onRedeemed} />}
+
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * One price. Only ever rendered on the allowlisted fake-purchase path, so it
- * is always a pressable button — the web proper never shows a row at all.
- */
-function PlanRow({
-  product,
-  busy,
-  pending,
-  onSelect,
-}: {
-  product: PaywallProduct;
-  busy: boolean;
-  pending: boolean;
-  onSelect: () => void;
-}) {
-  const inner = (
-    <>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--tp-text, #333)' }}>
-          {product.priceLabel}
-        </span>
-        <span style={{ fontSize: 12, color: 'var(--tp-muted, #5C5C5C)' }}>
-          {product.cadence}
-        </span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {product.note && (
-          <span
-            style={{
-              padding: '2px 7px',
-              borderRadius: 999,
-              background: 'var(--tp-success-muted, rgba(74, 139, 122, 0.14))',
-              color: 'var(--tp-success, #4A8B7A)',
-              fontSize: 10.5,
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {product.note}
-          </span>
-        )}
-        {pending && <Spinner size={12} thickness={2} color="var(--tp-primary)" />}
-      </div>
-    </>
-  );
-
-  const frame: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    width: '100%',
-    // globals.css has no universal border-box reset, so `width: 100%` plus
-    // padding and a border is 26px wider than the card — which is exactly how
-    // the rows used to poke out of the sheet's right edge on desktop.
-    boxSizing: 'border-box',
-    textAlign: 'left',
-    // 10/12 rather than 12/14: two rows this size sit as a list, which is what
-    // a choice between two things should look like.
-    padding: '10px 12px',
-    borderRadius: 'var(--tp-radius-sm, 8px)',
-    border: '1px solid var(--tp-border, #E6DFD4)',
-    // Tinted against the white card so a row reads as a target, not a divider.
-    background: 'var(--tp-surface-muted, #FBF8F3)',
-    fontFamily: 'inherit',
-  };
-
-  return (
-    <button
-      data-testid="purchase-sheet-plan"
-      data-product-id={product.id}
-      onClick={onSelect}
-      disabled={busy}
-      style={{
-        ...frame,
-        cursor: busy ? 'default' : 'pointer',
-        opacity: busy && !pending ? 0.5 : 1,
-        transition: 'border-color 120ms ease, background 120ms ease',
-      }}
-    >
-      {inner}
-    </button>
   );
 }
 
@@ -390,12 +207,12 @@ function PlanRow({
  * server refuses on its own authority, and entitlement is re-read from
  * `/api/me/entitlement` before anything is unblocked.
  */
-function PromoRedeemer({ busy, onRedeemed }: { busy: boolean; onRedeemed: () => void }) {
+function PromoRedeemer({ onRedeemed }: { onRedeemed: () => void }) {
   const [code, setCode] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const disabled = busy || pending || code.trim().length === 0;
+  const disabled = pending || code.trim().length === 0;
 
   async function submit() {
     if (disabled) return;
@@ -459,7 +276,7 @@ function PromoRedeemer({ busy, onRedeemed }: { busy: boolean; onRedeemed: () => 
           }}
           placeholder={PROMO_PLACEHOLDER}
           aria-label="Promo code"
-          disabled={busy || pending}
+          disabled={pending}
           // `characters` rather than uppercasing the value: rewriting what
           // someone is typing moves the caret and fights an iOS keyboard. The
           // server normalizes anyway, so the display form is cosmetic.

@@ -590,14 +590,12 @@ export default function ChatPanel({
    * purchase sheet itself, which stands in for Apple's StoreKit sheet.
    *
    * The component holds the whole entitlement payload rather than a boolean,
-   * because everything shown — the message, the button label, the prices,
-   * whether this browser can complete a purchase at all — is server-authored
-   * and arrives together. Nothing about the paywall is decided here.
+   * because everything shown — the message, the button label, the block
+   * reason — is server-authored and arrives together. (The web never takes
+   * money: the sheet points at the iPhone app.) Nothing about the paywall is decided here.
    */
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
   const [purchaseSheetOpen, setPurchaseSheetOpen] = useState(false);
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
 
   /** Null entitlement means "not asked yet / couldn't ask" — never a block. */
   const paywalled = entitlement !== null && !entitlement.entitled;
@@ -690,49 +688,6 @@ export default function ChatPanel({
     [fetchEntitlement, onActivity],
   );
 
-  /**
-   * The fake-purchase path, for allowlisted accounts only.
-   *
-   * It exists because StoreKit returns an EMPTY product list until the Paid
-   * Applications Agreement is active, so there is no real sheet to walk the
-   * flow against. `testPurchaseAllowed` comes from the server and the route
-   * re-checks the allowlist itself — this button existing proves nothing.
-   */
-  const runTestPurchase = useCallback(
-    async (productId: string) => {
-      setPurchasingId(productId);
-      setPurchaseError(null);
-      try {
-        const res = await fetch('/api/purchase/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(data.error ?? `Purchase failed (${res.status})`);
-        }
-        // The grant is only real once the entitlement endpoint agrees. Believing
-        // the 200 would re-open the composer on our own say-so and hand the user
-        // a second 402 on their next message.
-        const fresh = await fetchEntitlement();
-        if (!fresh?.entitled) {
-          setPurchaseError(
-            "That went through, but your plan hasn't switched on yet. Give it a moment and reload.",
-          );
-          return;
-        }
-        setEntitlement(fresh);
-        setMessages((prev) => prev.filter((m) => !m.paywall));
-        setPurchaseSheetOpen(false);
-      } catch (e: unknown) {
-        setPurchaseError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setPurchasingId(null);
-      }
-    },
-    [fetchEntitlement],
-  );
   const [input, setInput] = useState('');
   /*
    * A question's `defaultValue` is a CHIP to tap (the accented MagicWand one
@@ -3159,10 +3114,7 @@ export default function ChatPanel({
                 ) : (
                   <button
                     data-testid="paywall-cta"
-                    onClick={() => {
-                      setPurchaseError(null);
-                      setPurchaseSheetOpen(true);
-                    }}
+                    onClick={() => setPurchaseSheetOpen(true)}
                     style={{
                       ...buttonStyle(),
                       padding: '7px 14px',
@@ -3552,14 +3504,9 @@ export default function ChatPanel({
           mailto. */}
       {purchaseSheetOpen && entitlement && !paywallSupportOnly && (
         <PurchaseSheet
-          products={entitlement.products}
-          testPurchaseAllowed={entitlement.testPurchaseAllowed}
-          purchasingId={purchasingId}
-          error={purchaseError}
-          onPurchase={(productId) => void runTestPurchase(productId)}
           // The sheet has already confirmed entitlement with the server before
           // calling this; what is left is to bring THIS component's state in
-          // line — same three updates the purchase path makes. No reload: the
+          // line. No reload: the
           // transcript is client state and an in-flight stream would die with
           // it, which is the whole reason the paywall is a message and not a
           // page-level block.

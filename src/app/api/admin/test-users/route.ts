@@ -1,15 +1,7 @@
 import { z } from 'zod';
 import { requireAdmin, errorResponse } from '@/server/auth/guards';
 import { sendOtpCode } from '@/server/auth/otp';
-import {
-  assertTestAddress,
-  ageTestAccount,
-  createTestAccount,
-  deleteTestAccount,
-  listTestAccounts,
-  readTestAccountOtp,
-  resetTestAccount,
-} from '@/server/payments/testAccounts';
+import { testAccountsAvailable } from '@/server/payments/testAccountGate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +16,25 @@ export const dynamic = 'force-dynamic';
  * It hands back an address and a real sign-in code; the sign-in itself happens
  * in the browser, through /login/verify, against the real verifier. See the
  * header of `payments/testAccounts.ts` for why that line is where it is.
+ *
+ * ── Never a static import of testAccounts ──────────────────────────────────
+ *
+ * That module throws at load in production, by design (decision E13). So this
+ * route asks `testAccountsAvailable()` first — false in production whatever
+ * `SUBSCRIPTION_TESTING` says — answers 404, and only on a yes loads the
+ * generator with `await import()`. A static import here would make every
+ * request to this route a 500 in production instead of a clean 404, which
+ * `testAccountsProductionGuard.test.ts` forbids.
  */
+
+/** 404, not 403: in an environment without the generator, the route does not exist. */
+function notHere(): Response {
+  return Response.json({ error: 'Not found' }, { status: 404 });
+}
+
+async function generator() {
+  return import('@/server/payments/testAccounts');
+}
 
 const statusSchema = z.enum(['active', 'grace', 'cancelled', 'expired', 'refunded', 'revoked']);
 
@@ -48,6 +58,8 @@ const bodySchema = z.discriminatedUnion('action', [
 export async function GET() {
   try {
     await requireAdmin();
+    if (!testAccountsAvailable()) return notHere();
+    const { listTestAccounts } = await generator();
     return Response.json({ accounts: await listTestAccounts() });
   } catch (err) {
     return errorResponse(err);
@@ -57,6 +69,15 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     await requireAdmin();
+    if (!testAccountsAvailable()) return notHere();
+    const {
+      assertTestAddress,
+      ageTestAccount,
+      createTestAccount,
+      deleteTestAccount,
+      readTestAccountOtp,
+      resetTestAccount,
+    } = await generator();
     const body = bodySchema.parse(await req.json());
 
     switch (body.action) {

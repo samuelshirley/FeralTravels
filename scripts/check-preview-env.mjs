@@ -68,11 +68,12 @@ const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDP
  * URL serving a copy-on-write clone of production data. Both halves of that
  * changed: the preview database is being moved to empty-plus-migrations now
  * that `CANONICAL_TRIP` removes the need for prod rows, and the owner's point
- * stands that the switch exists precisely so automated tests can walk the
- * subscription states. The route it arms is still locked to the hardcoded
- * `sam+trial-<tag>@feraltravels.com` pattern and the admin generator behind it
- * still needs the cookie-only admin guard, the one-address allowlist, a
- * verified email and an `is_admin` row.
+ * stands that the switch exists precisely so the subscription states can be
+ * walked. What it arms (since 2026-09-21, only the admin test-account generator
+ * — the fake purchase route is gone) is locked to the hardcoded
+ * `sam+trial-<tag>@feraltravels.com` pattern, needs the cookie-only admin
+ * guard, the one-address allowlist, a verified email and an `is_admin` row, and
+ * refuses to load in production at all.
  */
 const FORBIDDEN = [];
 

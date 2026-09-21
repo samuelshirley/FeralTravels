@@ -29,8 +29,8 @@ const STORE_BOTH: StoreAnswer = {
   ],
 };
 
-function resolve(storeAnswer: StoreAnswer, serverPlans = SERVER, testMode = false) {
-  return resolvePurchaseMode({ testMode, storeAnswer, serverPlans });
+function resolve(storeAnswer: StoreAnswer, serverPlans = SERVER) {
+  return resolvePurchaseMode({ storeAnswer, serverPlans });
 }
 
 describe('resolvePurchaseMode', () => {
@@ -54,20 +54,6 @@ describe('resolvePurchaseMode', () => {
     expect(r.mode).toBe('store');
     expect(r.plans).toHaveLength(1);
     expect(r.plans[0].id).toBe(MONTHLY.id);
-  });
-
-  it('test mode wins over a store that would have sold, and never asks the store', () => {
-    const r = resolve(STORE_BOTH, SERVER, true);
-    expect(r.mode).toBe('test');
-    // Fallback prices, not the store's: the store was not consulted.
-    expect(r.plans.map((p) => p.priceLabel)).toEqual(['$2', '$20']);
-    expect(r.plansLoading).toBe(false);
-  });
-
-  it('test mode wins even while the store would still be pending', () => {
-    const r = resolve({ kind: 'pending' }, SERVER, true);
-    expect(r.mode).toBe('test');
-    expect(r.plansLoading).toBe(false);
   });
 
   it('pending: not sellable yet, loading, no reason (nothing has gone wrong)', () => {

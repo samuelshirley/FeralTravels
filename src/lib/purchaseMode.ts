@@ -2,7 +2,7 @@ import type { PaywallProduct, SubscriptionSource, AccountState } from '@/types/e
 import { canManageAppleSubscription } from '@/types/entitlement';
 
 /**
- * How the purchase sheet can take money, decided ONCE from three inputs and
+ * How the purchase sheet can take money, decided ONCE from two inputs and
  * rendered rather than re-derived by each surface.
  *
  * Pure, and mirrored into the Expo app by `scripts/sync-shared.mjs`, so the
@@ -66,7 +66,12 @@ export interface StorePlanLike {
   priceLabel: string;
 }
 
-export type PurchaseMode = 'test' | 'store' | 'unavailable';
+/**
+ * There is no `test` mode any more: the allowlisted fake purchase it rendered
+ * was removed on 2026-09-21 — after the production wipe the RevenueCat webhook
+ * is the only thing that may grant access.
+ */
+export type PurchaseMode = 'store' | 'unavailable';
 
 export type UnavailableReason =
   | 'no_key'
@@ -89,22 +94,13 @@ export interface ResolvedPurchaseMode {
 }
 
 export function resolvePurchaseMode({
-  testMode,
   storeAnswer,
   serverPlans,
 }: {
-  /** The server said this account may use the fake purchase path. */
-  testMode: boolean;
   storeAnswer: StoreAnswer;
   /** `entitlement.products`, or [] when there is no entitlement payload. */
   serverPlans: PaywallProduct[];
 }): ResolvedPurchaseMode {
-  // The allowlisted path wins over the store on purpose: that account exists
-  // precisely to walk the paywall without Apple. The store is never even asked.
-  if (testMode) {
-    return { mode: 'test', unavailableReason: null, plans: serverPlans, plansLoading: false };
-  }
-
   if (storeAnswer.kind === 'pending') {
     return { mode: 'unavailable', unavailableReason: null, plans: serverPlans, plansLoading: true };
   }

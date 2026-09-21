@@ -73,7 +73,7 @@ function testHeaders() {
  * Unique per run AND per invocation. A reused address is an AGED account
  * carrying the last run's trips and session — which is a different test from
  * the one this claims to be. Same argument as `uniqueEmail()` in the Playwright
- * fixtures and as the `sam+trial-<tag>` pattern in `payments/testPurchase.ts`.
+ * fixtures and as the `sam+trial-<tag>` pattern in `payments/testAccountGate.ts`.
  */
 function uniqueEmail() {
   const runId = (process.env.GITHUB_RUN_ID || `local${process.pid}`).toLowerCase();
