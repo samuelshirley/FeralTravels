@@ -234,8 +234,8 @@ reappears in `src/`.
 ### iOS E2E (`mobile/maestro/`)
 
 `launch.yaml`, `sign-in.yaml`, `chat-keyboard.yaml`, `chat-tab-in-flight.yaml`,
-`settings-location.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
-simulator against the PR's own preview. **Start at
+`onboarding-flash.yaml`, `settings-location.yaml`, `screenshots.yaml` — Maestro
+flows driving a real iOS simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
 

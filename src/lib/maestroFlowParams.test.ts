@@ -33,7 +33,12 @@ const CI = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
 const LOCAL = fs.readFileSync(path.join(ROOT, 'scripts/ios-e2e-local.sh'), 'utf8');
 
 /** The flows CI actually invokes, and the flow each one pulls in. */
-const CI_FLOWS = ['launch.yaml', 'chat-keyboard.yaml', 'chat-tab-in-flight.yaml'];
+const CI_FLOWS = [
+  'launch.yaml',
+  'chat-keyboard.yaml',
+  'chat-tab-in-flight.yaml',
+  'onboarding-flash.yaml',
+];
 
 /** `runFlow: x.yaml` — a subflow inherits its parent's variables. */
 function subflowsOf(source: string): string[] {

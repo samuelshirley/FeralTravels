@@ -422,6 +422,20 @@ not have the bug and was deliberately left alone: CSS `width: fit-content` is se
 web `flex-shrink` defaults to 1 — verified in a real browser at 390px and 320px, no overflow and
 no clipping. *Enforced by:* `navButtonWrapGuard.test.ts` (all five assertions mutation-checked).
 
+H18. **The chat's START HERE empty state renders only when setup is KNOWN to be off.** The gate
+was `!onboardingUiActive`, a boolean false both when setup was off and while its snapshot was
+still loading after mount — so every first-run trip painted START HERE, then swapped it for the
+onboarding card. Shipped to TestFlight build 8. The repro had been committed as `it.fails`, which
+reports green while the bug is present, so CI stayed green over it: **never commit an `it.fails`
+as a guard**. The fix is structural: both panels derive one `OnboardingPhase` (`'off' | 'loading'
+| 'active' | 'error'`) from the shared `onboardingPhase()`, and the empty state is gated on the
+positive `phase === 'off'`. The load window shows Penny's typing dots, the first-run greeting
+lands as a headline without the old 3 s typing delay, and a failed snapshot shows a retryable
+error instead of START HERE. *Enforced by:* `ChatPanel.onboardingFlash.test.tsx` (web, runtime),
+`onboardingPhaseGuard.test.ts` (both panels, source — the only unit-level guard `mobile/` has;
+mutation-checked on each), `onboardingPhase.test.ts`, and the Maestro flow
+`mobile/maestro/onboarding-flash.yaml`.
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

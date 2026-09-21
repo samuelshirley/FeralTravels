@@ -1170,6 +1170,21 @@ jobs:
             --output maestro-report-in-flight.xml \
             --debug-output maestro-debug
 
+          # THE REGRESSION FLOW for the first-run START HERE flash (TestFlight
+          # build 8): `+ New trip`, then the greeting must land as the first-run
+          # headline with START HERE never on screen. Creates one untitled trip
+          # on the fixture account; the flow below still finds TRIP_NAME.
+          # Before settings-location.yaml for the same reason as the one above.
+          maestro --device "$SIM_UDID" test mobile/maestro/onboarding-flash.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-onboarding-flash.xml \
+            --debug-output maestro-debug
+
           # A permission button is the one kind of UI that cannot be checked by
           # looking at it: one that renders perfectly and calls nothing is
           # indistinguishable from one that works, and `Mobile typecheck`

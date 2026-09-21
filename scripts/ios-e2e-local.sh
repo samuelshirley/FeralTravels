@@ -938,6 +938,7 @@ case "${1:-all}" in
     say "Layer 1 — harness"   ; run_flow launch
     say "Layer 2 — wiring"    ; run_flow sign-in
     say "Layer 3 — behaviour" ; run_flow chat-keyboard
+    say "Layer 3 — behaviour" ; run_flow onboarding-flash
     # Also layer 3, and deliberately LAST: it spends the iOS location dialog
     # for the install, and `canAskAgain` does not come back. Anything that
     # needs a fresh "never asked" state has to run before it.
