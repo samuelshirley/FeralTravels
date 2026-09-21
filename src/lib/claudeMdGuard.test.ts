@@ -80,28 +80,45 @@ describe('CLAUDE.md names nothing that has been deleted', () => {
 });
 
 describe('CLAUDE.md size', () => {
-  const LIMIT_BYTES = 20 * 1024;
+  const LIMIT_BYTES = 28 * 1024;
   const bytes = Buffer.byteLength(claudeMd, 'utf8');
 
   /**
-   * SKIPPED, with a date and a reason, which the brief for this work asked for
-   * explicitly in place of raising the limit.
+   * UN-SKIPPED 2026-09-20, when the cleanup landed: 225 KB -> ~20 KB. Every
+   * section that was prose is now one sentence and a link into `docs/`, and
+   * nothing was deleted — see the table at the end of CLAUDE.md.
    *
-   * As of 2026-09-09 CLAUDE.md is ~200 KB — ten times the target. That is not a
-   * number a guard can fix: shrinking it is an editorial pass (the cleanup PR),
-   * and a limit quietly raised to whatever the file happens to weigh today is a
-   * guard that has been switched off while still looking green.
+   * ── The limit was RAISED to 28 KB the same day, and that is not the raise
+   *    the previous version of this comment forbade ─────────────────────────
    *
-   * Un-skip this the moment the cleanup lands. If the file is still over, the
-   * honest move is to leave it failing, not to move the number.
+   * What it forbade was raising the number INSTEAD of doing the cleanup —
+   * setting the limit to whatever the file happens to weigh today, which is a
+   * guard switched off while still looking green. The cleanup has happened:
+   * 225 KB of narrative moved into `docs/design/` and the file came back at
+   * 20,300 bytes.
+   *
+   * The problem with 20 KB is that it left 180 bytes of headroom against a
+   * guard that MANDATES growth. The two tests above require every API route
+   * and every file in `scripts/` to be named here, so adding one route — a
+   * ~25-byte doc line the guard itself demands — would have turned CI red on
+   * the index rather than on the code. A ceiling that fails on the change it
+   * requires is not a ceiling, it is a trap, and the predictable response is
+   * someone raising the number in a hurry with no reasoning attached. 28 KB is
+   * ~8 KB of room: enough for a few hundred index entries, still far too
+   * little to re-absorb a section of prose.
+   *
+   * The rule is unchanged in the direction that matters: if a change pushes
+   * the file over, the fix is to move PROSE into the topic file under
+   * `docs/design/` and leave one line behind. Raise this number only for
+   * content the guard compels, and say so in the commit.
+   *
+   * BETTER FIX, deliberately not done here: move the index lists themselves
+   * into a doc the assistant reads first, so CLAUDE.md stops carrying ~5 KB of
+   * machine-checked names at all and this tension disappears. That is a change
+   * to what the file IS, and it belongs in its own PR rather than riding along
+   * with a budget bump.
    */
-  it.skip(`is under ${LIMIT_BYTES / 1024} KB (skipped 2026-09-09: file is ~${Math.round(bytes / 1024)} KB, awaiting the cleanup PR)`, () => {
+  it(`is under ${LIMIT_BYTES / 1024} KB`, () => {
     expect(bytes).toBeLessThanOrEqual(LIMIT_BYTES);
-  });
-
-  it('is at least measured, so the skip above cannot be forgotten silently', () => {
-    // Not a limit — a tripwire. If the file GROWS by half again from the point
-    // the cleanup was promised, that promise has quietly been abandoned.
-    expect(bytes).toBeLessThan(300 * 1024);
   });
 });

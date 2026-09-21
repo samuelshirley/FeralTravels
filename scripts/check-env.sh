@@ -81,6 +81,25 @@ report() {
 for key in $FATAL_KEYS; do report "$key" fatal; done
 for key in $WARN_KEYS;  do report "$key" warn;  done
 
+# ── App Store review sign-in ────────────────────────────────────────────────
+#
+# Not a required variable and not a warning when absent — absent is the normal,
+# correct state. It is announced when PRESENT, because both directions of
+# forgetting it are silent and expensive:
+#
+#   forgotten ON  — a fixed sign-in code stays live on production long after
+#                   the review that needed it, and nothing anywhere says so.
+#   forgotten OFF — the reviewer types the credentials from the Sign-In
+#                   Information field, gets "invalid code", and no log, screen
+#                   or email explains why.
+#
+# See docs/design/ios-review-notes.md §1 and the submission checklist.
+env_resolve APPLE_REVIEW_SIGNIN
+if [ "$ENV_EFFECTIVE" = "1" ]; then
+  printf '\033[1;33m  ARMED\033[0m  APPLE_REVIEW_SIGNIN=1 — appletest@feraltravels.com signs in with 000000.\n'
+  printf '          Unset it on production once App Review is approved.\n'
+fi
+
 if [ "$fatal_count" -gt 0 ]; then
   printf '\033[1;31m\nRefusing to start: %d required environment variable(s) resolve to empty.\033[0m\n' \
     "$fatal_count" >&2

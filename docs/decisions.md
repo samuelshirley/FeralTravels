@@ -204,6 +204,25 @@ D7. **Every error code an API can return has copy in every client that calls it.
 D8. **OTP resend is throttled, and timestamps are `timestamptz`** (a `timestamp` column made the
 cooldown negative off-UTC). *Enforced by:* `otpThrottle.test.ts`; the column rule — `schemaTimestamptzGuard.test.ts` (it found the 44th column: `user_viewport_time.updated_at`, converted in the DB by 0032 but left bare in schema.ts).
 
+D9. **One address has a fixed sign-in code, for App Store review, behind a switch that can only
+turn it off.** REVERSES D1's sibling decision in `docs/design/ios-review-notes.md` §1, which said
+there would deliberately be no demo account because the app is passwordless and a fixed code is
+the shape D1 forbids. App Store Connect's Sign-In Information form wants a username and a
+password, so §1 has been rewritten to describe what now exists and the condition for removing it.
+The blast radius is the whole design: `appletest@feraltravels.com` and `000000` are hardcoded
+literals in `server/auth/reviewAccount.ts` — not a pattern, not a list, not env-readable — and
+`APPLE_REVIEW_SIGNIN=1` selects nothing; unset, that address behaves like every other and `000000`
+is simply a wrong code. Three call sites, all gated on the same predicate: `verifyOtpCode` (there
+rather than `signInWithOtpCore`, so the function that answers "is this code valid" is not left
+disagreeing with the one that signs the user in), `sendOtpCode` (before the resend ladder, so a
+reviewer tapping "resend" cannot lock themselves out, and skipping the Resend transport because
+that mailbox need not exist), and `assertSignupGateOpen` (which refuses addresses with no account
+— exactly what a reviewer is on their first attempt). The account is NOT admin, NOT comped, and
+unrelated to `FIXTURE_EMAIL_PATTERN`: comping it would hide every paywall and recreate the
+"unable to locate the in-app purchases" rejection. **Remove it once review is approved** — unset
+the Vercel variable to disarm without a deploy; delete the module to retire it. *Enforced by:*
+`reviewAccountGuard.test.ts`, `reviewAccount.test.ts` (both mutation-checked).
+
 ## E. Payments
 
 E1. **`src/server/payments/` is a bounded module; `hasEntitlement(userId)` is the only question
@@ -381,6 +400,20 @@ trips instead of back in the conversation. The remembered id is session-scoped m
 component that knows which trip it is, is exactly the one not mounted at the moment the answer is
 needed — and with nothing remembered the index is still the right answer. *Enforced by:*
 `lastOpenTrip.test.ts`, `inFlightIndicatorGuard.test.ts`, `e2e/chat-tab-in-flight.spec.ts`.
+
+H17. **A day's nav button wraps inside the card; it never truncates and never runs off it.** A
+long station name grew the button past the card, which sets `overflow: "hidden"`, so its end was
+cut off — and on an `isNext` button the NEXT chip is what sits at that end, so the most important
+button was the one that lost its label. Measured on an iPhone SE (3rd gen) with the real name off
+a live trip, "Estación de Servicio Repsol": the card ended at x=358 and the button ran to x=363,
+rendering with its right rounded corner squared off; after the fix it ends at x=342, still two
+lines, nothing hidden. Three properties carry it — `maxWidth: "100%"` on the button (because
+`alignSelf: "flex-start"` is content-sized but UNCAPPED), `flexShrink: 1` on the label (RN's Yoga
+default is 0, not the web's 1, so the text could not give), and `flexShrink: 0` on the chip.
+`syncingPill` had the same defect and carries the same fix. The WEB copy of this affordance does
+not have the bug and was deliberately left alone: CSS `width: fit-content` is self-limiting and
+web `flex-shrink` defaults to 1 — verified in a real browser at 390px and 320px, no overflow and
+no clipping. *Enforced by:* `navButtonWrapGuard.test.ts` (all five assertions mutation-checked).
 
 ## I. Spend defence
 
@@ -564,12 +597,21 @@ scripts were missing when this was written. A tombstone ("`ship.sh` is GONE") is
 allowed and valuable; a mention that reads as though the file still exists is
 not. *Enforced by:* `claudeMdGuard.test.ts`.
 
-M3. **CLAUDE.md is under 20 KB.** *Enforced by:* `claudeMdGuard.test.ts` —
-**currently `it.skip`**, with a dated reason: the file is ~200 KB and shrinking it
-is an editorial pass, not something a test can do. The limit was deliberately NOT
-raised to match the file, because a limit moved to whatever the file weighs today
-is a guard switched off while still showing green. A separate assertion fails if
-the file grows by half again, so the skip cannot be forgotten silently.
+M3. **CLAUDE.md is under 28 KB, and prose lives in `docs/` instead.** *Enforced
+by:* `claudeMdGuard.test.ts` — **live since 2026-09-20**, when the cleanup it was
+waiting for landed: 225 KB of narrative moved into topic files under
+`docs/design/` (nothing deleted, everything linked) and the file came back at
+20,300 bytes. The limit was then raised from 20 KB to 28 KB, which is NOT the
+raise the skipped version of this test forbade — that warned against raising the
+number *instead of* doing the cleanup. The reason is that the same guard
+**mandates growth**: it requires every API route and every file in `scripts/` to
+be named in CLAUDE.md, so at 180 bytes of headroom the next route added would
+have reddened CI on a ~25-byte doc line the guard itself demands, and the
+predictable response to that is someone bumping the number in a hurry with no
+reasoning attached. Raise it only for content the guard compels, and say so in
+the commit; prose still moves out. **The better fix is to move the index lists
+into a tier-1 doc** so CLAUDE.md stops carrying ~5 KB of machine-checked names —
+a change to what the file is, tracked separately.
 
 M4. **The prose half is REVIEWED by a model, never authored by one.**
 `.github/workflows/docs-drift.yml` asks Claude to list the sentences in CLAUDE.md

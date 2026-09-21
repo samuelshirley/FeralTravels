@@ -4,6 +4,7 @@ import { emailOtpCodes, users, sessions, otpSendThrottle } from '@/server/db/sch
 import { eq, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { isFixtureRecipient } from './test-endpoints';
+import { REVIEW_ACCOUNT_CODE, isReviewAccountSignIn } from './reviewAccount';
 import { renderOtpEmail } from './otp-email';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { SECURE_SESSION_COOKIE_NAME, SESSION_COOKIE_NAME } from '@/lib/sessionCookie';
@@ -194,6 +195,31 @@ export async function verifyOtpCode(email: string, code: string): Promise<boolea
   const normalized = email.trim().toLowerCase();
   const submitted = code.trim();
 
+  /**
+   * The App Store review address, when `APPLE_REVIEW_SIGNIN=1`. See
+   * `./reviewAccount.ts` for the whole design and the removal condition.
+   *
+   * THIS function rather than `signInWithOtpCore`, deliberately. The question
+   * `verifyOtpCode` answers is "is this code valid for this address?", and
+   * while the flag is armed, for this one address, it genuinely is. Accepting
+   * it a layer up would leave this function returning false for a code that
+   * then signs the user in — two functions disagreeing about the same fact,
+   * which is the version that misleads whoever reads one without the other.
+   * (`signInWithOtpCore` is today the only production caller, so the choice
+   * changes no behaviour; it changes which function tells the truth.)
+   *
+   * It deliberately does not read a row. A reviewer can sit on the verify
+   * screen for an hour, so this must still work after the stored code has
+   * expired or its attempts are spent — none of the checks below run for this
+   * branch, for this address alone, and only while the flag is armed.
+   */
+  if (isReviewAccountSignIn(normalized) && submitted === REVIEW_ACCOUNT_CODE) {
+    // Reset the ladder the way a real success does, so a reviewer who tapped
+    // "resend" a few times is not left waiting on a cooldown afterwards.
+    await clearSendThrottle(normalized).catch(() => {});
+    return true;
+  }
+
   const rows = await db
     .select()
     .from(emailOtpCodes)
@@ -243,6 +269,29 @@ export async function verifyOtpCode(email: string, code: string): Promise<boolea
  */
 export async function sendOtpCode(email: string): Promise<string> {
   const normalized = email.trim().toLowerCase();
+
+  /**
+   * The App Store review address, when `APPLE_REVIEW_SIGNIN=1`.
+   *
+   * BEFORE the ladder, on purpose: a reviewer who taps "resend" — exactly what
+   * someone does when no email arrives, and none ever will here — must not be
+   * able to lock themselves out of the account they were handed. So this
+   * consumes no rung of the cooldown.
+   *
+   * The code is still STORED, so the row agrees with what the reviewer types
+   * and nothing downstream has to handle a missing row; `verifyOtpCode` does
+   * not depend on it, because the reviewer may take longer than its expiry.
+   * The Resend transport is skipped for the same reason the fixture branch
+   * below skips it: that mailbox need not exist, and bouncing mail off the
+   * domain our real sign-in email comes from is how a sending reputation gets
+   * wrecked. The template is still rendered, so a broken template is a broken
+   * test rather than a surprise during review.
+   */
+  if (isReviewAccountSignIn(normalized)) {
+    await storeOtpCode(normalized, REVIEW_ACCOUNT_CODE);
+    renderOtpEmail({ code: REVIEW_ACCOUNT_CODE, to: normalized, domain: undefined });
+    return REVIEW_ACCOUNT_CODE;
+  }
 
   // Ladder check. Claims the slot up front, before the code is minted: the
   // old check keyed off the pending code row's age, which meant a verify

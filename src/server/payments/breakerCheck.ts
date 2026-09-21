@@ -5,6 +5,7 @@ import { db } from '@/server/db/client';
 import { breakerAlerts, usageEvents, users } from '@/server/db/schema';
 import { adminAlertRecipients, isOnAdminAllowlist } from '@/server/auth/admin';
 import { areTestEndpointsEnabled, isFixtureRecipient } from '@/server/auth/test-endpoints';
+import { isReviewAccountSignIn } from '@/server/auth/reviewAccount';
 import { CircuitOpenError } from '@/server/auth/errors';
 import {
   BREAKERS,
@@ -433,6 +434,17 @@ export async function assertPennyGateOpen(isAdmin: boolean): Promise<void> {
 export async function assertSignupGateOpen(email: string): Promise<void> {
   const normalized = email.trim().toLowerCase();
   if (isOnAdminAllowlist(normalized)) return;
+
+  /**
+   * The App Store review address, when `APPLE_REVIEW_SIGNIN=1`.
+   *
+   * This gate refuses addresses with NO account yet, which is precisely what a
+   * reviewer is on their first attempt — so without this exemption, arming the
+   * flag would still leave them stuck behind a tripped sign-up breaker with
+   * "New sign-ups are paused for a moment" and no way through. One address,
+   * and only while the flag is armed.
+   */
+  if (isReviewAccountSignIn(normalized)) return;
 
   let known = false;
   try {

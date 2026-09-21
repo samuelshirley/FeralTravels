@@ -7,33 +7,76 @@ this file is only the reviewer-facing part of it.
 Two blocks go into App Store Connect:
 
 - **App Review Information → Notes** — everything under *"The text to paste"*.
-- **Sign-In Information** — left EMPTY. See the next section for why that is a
-  decision and not an omission.
+- **Sign-In Information** — the address and code in §3. This section explains
+  what that account is and what it is not.
 
 ---
 
-## 1. There is no demo account, on purpose
+## 1. There IS a demo account now, and it is one address
 
-The obvious thing to hand a reviewer is a username and a password. This app has
-neither: it is passwordless. Sign-in is a six-digit code emailed to a real
-inbox, or Google, or Apple. So "a demo account" would have to mean one of:
+**This reverses the previous decision, and the previous reasoning is kept below
+because it is still the reason this thing is shaped the way it is.**
 
-| Option | Why not |
+The app is passwordless: sign-in is a six-digit code emailed to a real inbox, or
+Google, or Apple. App Store Connect's **Sign-In Information** form wants a
+username and a password, and leaving it empty asks a reviewer to go and find the
+Notes field. So one address now has a fixed code.
+
+### What exists
+
+| | |
 |---|---|
-| An address with a **fixed code** an env var lets through | A credential that bypasses `verifyOtpCode`'s expiry and attempt limits is a backdoor whatever it is called. `src/lib/noBackdoorGuard.test.ts` fails the unit suite on anything shaped like one, and it exists because this exact class of thing was deleted once already. |
-| A **mailbox the reviewer can read** | A second credential to hand out, on a domain we send real sign-in mail from. |
-| A **pre-made account** whose code we paste in the notes | Codes are single-use and expire. It is stale before the reviewer opens the form. |
+| Address | `appletest@feraltravels.com` |
+| Code | `000000` |
+| Switch | `APPLE_REVIEW_SIGNIN=1`, production Vercel environment only |
+| Module | `src/server/auth/reviewAccount.ts` |
 
-The answer is **Sign in with Apple**. The reviewer uses their own Apple ID —
-Hide My Email works — and gets a real, complete, fully functional account in a
-seven-day trial. Nothing is faked, nothing is bypassed, and there is no
-credential to leak. This is what guideline 2.1(a) actually asks for.
+**Unset the switch and it is gone** — that address behaves exactly like every
+other address and `000000` is simply a wrong code. No deploy is needed to turn
+it off, which is the point: it can be killed from the Vercel dashboard the
+moment review is approved.
 
-**If a reviewer rejects on 2.1(a) anyway**, the fallback is an env-gated fixed
-code for one designated review address. Do NOT build it pre-emptively: it is
-backdoor-shaped, it sits directly beside the guard test that forbids that shape,
-and it contradicts the no-bypass rule the whole auth surface is built on. Build
-it if and only if a rejection makes it necessary, and delete it after.
+### Why this shape, and not a looser one
+
+The earlier version of this section was right that a fixed code is the shape
+`src/lib/noBackdoorGuard.test.ts` exists to prevent, so the whole design is
+about leaving nothing to widen:
+
+- **One hardcoded address and one hardcoded code**, both literals in source.
+  Not a pattern, not a list, not env-readable. Changing either takes a code
+  review and a deploy — the same reasoning that keeps `ADMIN_ALLOWLIST` and
+  `FIXTURE_EMAIL_PATTERN` hardcoded.
+- **The env flag can only turn it OFF.** It selects nothing. It is read as a
+  strict `=== '1'` and cannot name a different address or a different code.
+- **Three call sites, all on the same predicate**: `verifyOtpCode` accepts the
+  code (there, rather than `signInWithOtpCore`, so the function that answers
+  "is this code valid" is not left disagreeing with the one that signs the user
+  in); `sendOtpCode` stores it, skips the Resend transport and runs *before* the
+  resend ladder, so a reviewer tapping "resend" — which is what you do when no
+  mail arrives, and none ever will — cannot lock themselves out;
+  `assertSignupGateOpen` exempts it, because that gate refuses addresses with no
+  account yet, which is exactly what a reviewer is on their first attempt.
+- **Not admin, not comped, unrelated to `FIXTURE_EMAIL_PATTERN`.** It lands in
+  the ordinary seven-day trial, which §2 explains is load-bearing: comping it
+  would hide every paywall from the reviewer and recreate the "unable to locate
+  the in-app purchases" rejection. The `/api/test/*` endpoints stay hard-off on
+  production with no override; this is a separate mechanism on a separate
+  domain because the two exist for opposite environments.
+
+Guards: `src/lib/reviewAccountGuard.test.ts` and
+`src/server/auth/reviewAccount.test.ts`. Decision register: **D9**.
+
+### The removal condition
+
+**Delete this once the app is approved.** Unset `APPLE_REVIEW_SIGNIN` in Vercel
+to disarm it the same day; delete `reviewAccount.ts`, its two guards, the three
+call sites and D9 to retire it. It exists for the review queue, not for us —
+there is no other reason for a fixed credential to be in this app.
+
+**Sign in with Apple is still the recommended path** and the notes in §3 still
+lead with it: a reviewer using their own Apple ID gets a real account with
+nothing faked, which is what guideline 2.1(a) actually asks for. The fixed code
+is there so the Sign-In Information form has an answer.
 
 ---
 
@@ -61,13 +104,36 @@ price.
 
 ## 3. The text to paste
 
+### Sign-In Information
+
+Both fields are required by the form, so both are filled. The "password" is the
+six-digit code the app asks for on the second screen.
+
+```
+User name:  appletest@feraltravels.com
+Password:   000000
+```
+
+**`APPLE_REVIEW_SIGNIN=1` must be set on the production Vercel environment for
+that to work.** Without it the code is refused like any other wrong code — see
+§1, and `docs/design/launch-checklist.md` for where it sits in the submission
+order.
+
+### App Review Information → Notes
+
 > **Feral Travels plans road trips and finds cheap fuel along the route.**
 >
-> **Signing in — no demo credentials needed.**
-> This app is passwordless. On the sign-in screen, tap **Sign in with Apple** and
-> use your own Apple ID; Hide My Email works. That creates a complete, fully
-> functional account with a seven-day free trial. The "email me a code" option
-> sends a real six-digit code to a real inbox, so please use Sign in with Apple.
+> **Signing in.** This app is passwordless — there is no password field. The
+> quickest path is **Sign in with Apple** with your own Apple ID (Hide My Email
+> works), which creates a complete, fully functional account with a seven-day
+> free trial.
+>
+> If you prefer the credentials in the Sign-In Information field: enter
+> **appletest@feraltravels.com** on the sign-in screen, tap **Email me a
+> 6-digit code**, and then type **000000** into the six boxes on the next
+> screen. No email is sent to that address and the code does not expire, so you
+> can take as long as you need on that screen. Any other address sends a real
+> code to a real inbox.
 >
 > **To see the subscription and make a sandbox purchase:**
 > 1. Sign in as above. You land on the trips list; a trip is created for you and

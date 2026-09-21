@@ -1,0 +1,15 @@
+# E2E specs — what each one proves
+
+> Moved out of `CLAUDE.md` on 2026-09-20, verbatim, when that file was cut from
+> 225 KB back to a map. Nothing here was rewritten or deleted — only relocated.
+> `CLAUDE.md` links here from the one-line summary that replaced it.
+
+### E2E Tests (`e2e/`)
+
+existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, chat-maps-link, units-imperial, lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange, breakers, chat-tab-in-flight
+
+**`chat-maps-link`** (2026-09-04) plans Girona → Annecy with Penny, pastes the `maps.app.goo.gl` short link INTO CHAT and asserts it lands as an `other` stop with a source from the stops API's author enum, then moves the day's destination and asserts the leg ends `ready` WITH a fuel stop again — the only automated proof of the chat paste path (the day-card row is gone) and of the item-6 re-source. Three Penny turns a run — the most expensive spec in the repo, and **gated behind the `ai-tests` label since 2026-09-08** along with `penny-plan-trip`; it does not run on a push. **`units-imperial`** flips the preference through `PATCH /api/me/preferences`, opens the seeded trip with a 300 km range so day 1 needs a stop, and asserts the NEXT STOP row, the stop rows and the whole itinerary pane show `mi` and no `km`.
+
+**`account-deletion`** gained a database vantage point in **`POST /api/test/deletion`** (`state` / `seed-usage` / `cleanup-usage`, same three guards as the rest of `/api/test/*`). Without it the suite's strongest claim was `GET /api/trips` → 401, which only proves the SESSION died — an implementation that deleted `sessions` and left every trip, usage row and tombstone in place passed the whole file. It now asserts the tombstone's counts and provider inference, that the ciphertext decrypts back to the address (compared server-side; the plaintext never crosses the wire), that `usage_events` rows SURVIVE with `user_id` detached and `error_message` scrubbed, that the trip rows are gone by user id, and that the address can sign up again into a clean account. Two of those double as config checks and fail loudly rather than skipping: `DELETED_USER_ENC_KEY` must be set on the target environment, as must `AUTH_GOOGLE_IOS_CLIENT_ID` (see `oauth-exchange`).
+
+**`cleanupPlaywright` now requires a fixture address.** Its comment claimed "the endpoint only accepts fixture addresses"; `/api/test/cleanup` validated only `isTestRequestAuthorized` + `z.string().email()`. That gap became real when the function grew a `deleted_users` delete: on a preview — a copy-on-write clone of PROD data — a caller holding the per-run secret could erase the tombstones of a real person who had asked to be forgotten. `deleteUsageByMarker` requires an `e2e-` prefix for the same reason: without it, `{ marker: "anthropic" }` would delete the real billing history.

@@ -57,6 +57,29 @@ anything real to buy behind it, not after.
       arms the fake-purchase route and the admin test-account generator; the
       accounts it makes carry `source: 'fake'` subscriptions nobody paid for.
 
+### Before each submission
+
+- [ ] **`APPLE_REVIEW_SIGNIN=1` on production.** Vercel → feral-travels →
+      Settings → Environment Variables, **Production only**. This is what makes
+      the Sign-In Information credentials in
+      `docs/design/ios-review-notes.md` §3 work —
+      `appletest@feraltravels.com` / `000000`. Without it that code is refused
+      like any other wrong code, and the reviewer is stuck on the verify screen
+      with nothing anywhere saying why. `scripts/check-env.sh` prints whether
+      it is armed.
+- [ ] Sign in as `appletest@feraltravels.com` with `000000` on a real device
+      against production, before submitting. The flag is the kind of thing that
+      gets set on the wrong environment.
+- [ ] Sign-In Information and the Notes field in App Store Connect match §3.
+
+### After approval
+
+- [ ] **Unset `APPLE_REVIEW_SIGNIN` on production.** Same day. It disarms
+      without a deploy, and the fixed code is for the review queue only.
+- [ ] Retire the mechanism entirely when there is no upcoming submission:
+      delete `src/server/auth/reviewAccount.ts`, its two guards, the three call
+      sites and decision **D9**. §1 of the review notes has the full list.
+
 ## At launch
 
 - [ ] Sam says it, here, with a date.
