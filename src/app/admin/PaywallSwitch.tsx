@@ -13,19 +13,26 @@ import { useRouter } from 'next/navigation';
  *
  * Same shape as `users/[id]/PaywallEnforceControl.tsx` — a ref re-entrancy
  * guard, `router.refresh()` after a flip, an inline error, disabled while in
- * flight — with ONE deliberate difference: this asks for a second tap, in both
- * directions. That control needs no confirmation because the accounts it is
- * pressed on are disposable by construction. This one walls, or unwalls, every
- * account at once. The confirmation is inline rather than a browser dialog, so
- * the hurried direction (OFF, when the wall is blocking people it should not)
- * costs one extra tap and nothing more.
+ * flight — and, since 2026-09-21, the same ONE-TAP behaviour in both
+ * directions.
+ *
+ * It shipped that morning with an inline second tap, on the argument that this
+ * control walls or unwalls every account at once. Sam's call, the same day: the
+ * confirmation buys nothing worth its cost. The switch exists to be flipped in
+ * a hurry, both directions are recoverable by flipping it back, the state is
+ * legible in the pill itself the moment the refresh lands, and a confirmation
+ * step on the one control you reach for while production is wrong is a step you
+ * pay for every time to prevent a mis-click that has never happened. The
+ * destructive admin actions that DO confirm — the break-glass revoke, the test
+ * user block — confirm because they are not reversible by pressing the same
+ * button again.
  */
 export default function PaywallSwitch({ on }: { on: boolean }) {
   const router = useRouter();
-  const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // State is async, a ref is not — same re-entrancy guard the per-user control uses.
+  // State is async, a ref is not — same re-entrancy guard the per-user control
+  // uses, and the only thing standing between a double-click and two POSTs.
   const inFlight = useRef(false);
 
   async function flip() {
@@ -43,7 +50,6 @@ export default function PaywallSwitch({ on }: { on: boolean }) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Could not change the paywall switch (${res.status})`);
       }
-      setArming(false);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not change the paywall switch');
@@ -52,13 +58,6 @@ export default function PaywallSwitch({ on }: { on: boolean }) {
       setBusy(false);
     }
   }
-
-  const small: React.CSSProperties = {
-    fontSize: 11,
-    padding: '3px 8px',
-    borderRadius: 999,
-    cursor: busy ? 'default' : 'pointer',
-  };
 
   return (
     <div
@@ -71,58 +70,17 @@ export default function PaywallSwitch({ on }: { on: boolean }) {
         justifyContent: 'flex-end',
       }}
     >
-      {arming && (
-        <>
-          <span style={{ fontSize: 11, color: 'var(--tp-muted)' }}>
-            {on
-              ? 'Every account gets full access again.'
-              : 'Every account past its trial is walled.'}
-          </span>
-          <button
-            type="button"
-            onClick={() => void flip()}
-            disabled={busy}
-            data-testid="admin-paywall-switch-confirm"
-            style={{
-              ...small,
-              fontWeight: 700,
-              border: '1px solid #b3261e',
-              background: '#b3261e',
-              color: '#fff',
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            {busy ? 'Switching…' : `Turn ${on ? 'OFF' : 'ON'}`}
-          </button>
-          <button
-            type="button"
-            onClick={() => setArming(false)}
-            disabled={busy}
-            style={{
-              ...small,
-              border: '1px solid var(--tp-border)',
-              background: 'transparent',
-              color: 'var(--tp-muted)',
-            }}
-          >
-            Cancel
-          </button>
-        </>
-      )}
       <button
         type="button"
         role="switch"
         aria-checked={on}
-        onClick={() => {
-          setError(null);
-          setArming((a) => !a);
-        }}
+        onClick={() => void flip()}
         disabled={busy}
         data-testid="admin-paywall-switch"
         title={
           on
-            ? 'Enforcement is ON — verdicts block.'
-            : 'Enforcement is OFF — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone.'
+            ? 'Enforcement is ON — verdicts block. One tap turns it off for every account.'
+            : 'Enforcement is OFF — applySwitch grants every account full access. Trial and cap states are still tracked and still shown; they just cannot block anyone. One tap walls every account past its trial.'
         }
         style={{
           fontSize: 10,
@@ -134,9 +92,10 @@ export default function PaywallSwitch({ on }: { on: boolean }) {
           background: 'transparent',
           color: on ? 'var(--tp-text)' : 'var(--tp-subtle)',
           cursor: busy ? 'default' : 'pointer',
+          opacity: busy ? 0.6 : 1,
         }}
       >
-        PAYWALL {on ? 'ON' : 'OFF'}
+        {busy ? 'SWITCHING…' : `PAYWALL ${on ? 'ON' : 'OFF'}`}
       </button>
       {error && (
         <span role="alert" style={{ flexBasis: '100%', textAlign: 'right', fontSize: 12, color: 'var(--tp-danger)' }}>
