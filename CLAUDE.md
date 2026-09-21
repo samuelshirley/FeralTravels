@@ -202,7 +202,8 @@ extract-canonical-trip.ts generate-apple-client-secret.ts
 handoff-bug-campaign.sh iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh lifetime-spend.ts make-test-user.ts
 measure-message-gate.ts migrate-sqlite-to-neon.ts pick-ios-simulator.mjs
-pick-screenshot-simulator.mjs prune-branches.sh reconcile-anthropic-spend.ts
+pick-screenshot-simulator.mjs probe-oauth-providers.mjs prune-branches.sh
+reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts set-ios-oauth-client-id.mjs
 set-paywall-flag.mjs sim-frames.swift smoke-api.ts storekit-probe.sh

@@ -74,7 +74,8 @@ incident behind each one, which is the part that stops it being re-broken.
   (`src/lib/oauthExchangeRetry.ts`) before showing copy that blames the
   provider. The e2e forged-token tests assert `401 InvalidToken` exactly, so
   "the verifier had no keys" can never pass as "the verifier refused the
-  forgery" again. **The general rule:** when a
+  forgery" again; `.github/workflows/oauth-provider-probe.yml` watches both
+  JWKS endpoints and production every 15 minutes. **The general rule:** when a
   dependency fails, say so with a 5xx. Never borrow the code that means the
   caller did something wrong.
 - **Every error code an API returns must have copy in every client that calls it.** `src/lib/nativeErrorCopyGuard.test.ts` scans the exchange's call chain (`oauthIdentity.ts`, `oauthReplay.ts`, the route) for thrown codes and fails if one is missing from `ERROR_COPY`/`OAUTH_ERROR_COPY` in `mobile/app/sign-in.tsx`. There is no type across an HTTP boundary that could catch this: `TokenAlreadyUsed` shipped unmapped and showed the generic "Something went wrong" for the one failure a user can fix by tapping the button again. `OAUTH_ERROR_COPY` exists because `RateLimited` means two different things — "your emailed code is already in your inbox" on the OTP path, "you are over the per-address exchange limit" on the OAuth one — so `messageFor` takes a `context` and `runOAuth` is the single call site that passes `"oauth"`.

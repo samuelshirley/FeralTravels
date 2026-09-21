@@ -105,7 +105,7 @@ Every chat turn is a durable `penny_turns` row with an idempotency key. A partia
 
 **Merging is deploying.** `main` moves via pull requests by convention — branch protection is OFF, and what keeps untested code off production is the deploy gate (see `docs/design/deploy-pipeline.md`). A merged PR is live on production a few minutes later. There is no ship script and no button to press.
 
-Five workflows, one per trigger — there is no single `pipeline.yml`.
+Six workflows, one per trigger — there is no single `pipeline.yml`. Five are the pipeline below; the sixth, `.github/workflows/oauth-provider-probe.yml`, is a 15-minute schedule that watches what native Apple/Google sign-in depends on and opens an issue when it breaks.
 
 1. **Open a PR into `main`** → `.github/workflows/ci.yml` (workflow **CI**), re-run on every push to the PR. On a docs-only PR, the preview and both E2E jobs are skipped:
    - **Unit tests** — the full Vitest suite (logic specs in node, component specs under jsdom).

@@ -1,0 +1,109 @@
+# oauth-provider-probe — watches what native Sign in with Apple / Google
+# depends on, from outside, and files an issue when it breaks.
+#
+# WHY. On 2026-09-21 Apple's JWKS endpoint answered 404 to ~1 request in 5 and
+# real Apple sign-ins failed in production. Nobody was told: the only signal
+# was a log line, and the e2e suite passed because the server answered "could
+# not fetch Apple's keys" with the same 401 a forged token gets. The server now
+# answers that case 503 ProviderUnavailable; this probe is what looks for it.
+#
+# WHAT. scripts/probe-oauth-providers.mjs — each provider's JWKS 30 times, and
+# the production exchange 5 times with a forged Apple token (the only healthy
+# answer is 401 InvalidToken). Why those numbers, and why the forged tokens do
+# not trip the exchange's rate limiter, is in the script's header.
+#
+# COST. Nothing: public repository, so Actions minutes are free, and the probe
+# makes no paid call — Apple's and Google's key endpoints are public, and the
+# forged token is refused before any Google Maps or Anthropic code runs. No
+# third-party service; the alert is a GitHub issue.
+#
+# NOISE. One open issue at a time, labelled `oauth-provider-probe`. While it
+# stays broken the issue BODY is rewritten each run (no notification) and a
+# comment is added at most every six hours; the first healthy run after that
+# comments once that it has recovered. Closing the issue is a human decision.
+#
+# GitHub disables scheduled workflows in a public repo after 60 days with no
+# commits. If this goes quiet, check the Actions tab before assuming health.
+name: OAuth provider probe
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: oauth-provider-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe JWKS endpoints and the production exchange
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Probe
+        id: probe
+        run: node scripts/probe-oauth-providers.mjs --json probe.json
+
+      - name: Open, update or resolve the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT: ${{ steps.probe.outputs.alert }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL=oauth-provider-probe
+          gh label create "$LABEL" --color B60205 \
+            --description "Opened by .github/workflows/oauth-provider-probe.yml" 2>/dev/null || true
+
+          summary="$(node -e 'process.stdout.write(require("./probe.json").summary)')"
+          issue="$(gh issue list --label "$LABEL" --state open --limit 1 --json number -q '.[0].number // empty')"
+          now="$(date -u +%s)"
+          # Captured, not piped into `grep -q`: under pipefail an early grep exit
+          # can SIGPIPE gh and flip the test.
+          was_recovered=false
+          if [ -n "$issue" ]; then
+            old_body="$(gh issue view "$issue" --json body -q .body)"
+            case "$old_body" in "**Status: recovered"*) was_recovered=true ;; esac
+          fi
+
+          body_file="$(mktemp)"
+          {
+            if [ "$ALERT" = "true" ]; then echo "**Status: ALERTING** (latest run below)"; else echo "**Status: recovered** — latest run below is healthy. Close this when satisfied."; fi
+            echo
+            echo "$summary"
+            echo
+            echo "Latest run: $RUN_URL"
+            echo
+            echo "What each alert means and what to look at: \`scripts/probe-oauth-providers.mjs\` (header) and \`src/server/auth/jwksSource.ts\`."
+          } > "$body_file"
+
+          if [ "$ALERT" = "true" ]; then
+            if [ -z "$issue" ]; then
+              gh issue create --label "$LABEL" --title "OAuth provider probe: native sign-in dependency failing" --body-file "$body_file"
+              exit 0
+            fi
+            gh issue edit "$issue" --body-file "$body_file"
+            last="$(gh issue view "$issue" --json comments,createdAt -q '(.comments | map(.createdAt) | last) // .createdAt')"
+            last_s="$(date -u -d "$last" +%s)"
+            if [ "$was_recovered" = "true" ]; then
+              printf 'Failing again.\n\n%s\n\n%s\n' "$summary" "$RUN_URL" | gh issue comment "$issue" --body-file -
+            elif [ $(( now - last_s )) -ge 21600 ]; then
+              printf 'Still failing.\n\n%s\n\n%s\n' "$summary" "$RUN_URL" | gh issue comment "$issue" --body-file -
+            fi
+          elif [ -n "$issue" ]; then
+            if [ "$was_recovered" = "false" ]; then
+              gh issue edit "$issue" --body-file "$body_file"
+              printf 'Recovered: this run was healthy.\n\n%s\n\n%s\n' "$summary" "$RUN_URL" | gh issue comment "$issue" --body-file -
+            fi
+          fi
