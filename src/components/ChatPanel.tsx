@@ -2128,6 +2128,12 @@ export default function ChatPanel({
       }
     }
   }
+  // The greeting opens an otherwise empty transcript. A re-asked intent
+  // question further down a conversation stays a bubble.
+  const firstRunHeadline =
+    onboardingQuestion?.key === 'trip_intent' &&
+    activeQuestionId !== null &&
+    transcript[0]?.id === activeQuestionId;
 
   /** Pick a calendar day for the date step (the `Pick a date` chip). */
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -2168,7 +2174,7 @@ export default function ChatPanel({
     onboardingUiActive && onboardingQuestion ? (
       <div
         data-testid="onboarding-card"
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: firstRunHeadline ? 0 : 10 }}
         onClick={(e) => e.stopPropagation()}
       >
         {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options && (
@@ -2369,14 +2375,14 @@ export default function ChatPanel({
           city" invitation, and its only job is to put the cursor in the box.
         */}
         {onboardingQuestion.prompts?.length ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: firstRunHeadline ? 8 : 6 }}>
             <div
               style={{
                 fontSize: 9.5,
                 fontWeight: 600,
                 letterSpacing: '0.13em',
                 color: 'var(--tp-subtle)',
-                marginTop: 2,
+                marginTop: firstRunHeadline ? 0 : 2,
               }}
             >
               TAP TO START, THEN EDIT
@@ -2426,7 +2432,7 @@ export default function ChatPanel({
                   ...buttonStyle('secondary'),
                   justifyContent: 'flex-start',
                   textAlign: 'left',
-                  padding: '11px 14px',
+                  padding: firstRunHeadline ? '12px 14px' : '11px 14px',
                   fontSize: 13.5,
                   fontWeight: 400,
                   color: 'var(--tp-muted)',
@@ -2919,6 +2925,36 @@ export default function ChatPanel({
                     </div>
                   )}
                 </div>
+              </div>
+            );
+          }
+          // The first-run screen: Penny's greeting as a full-width headline
+          // with the prompt rows under it, on the empty state's type scale —
+          // not a 14px bubble. `trip_intent` only; from step 2 it is a
+          // conversation and a headline per question would be shouting.
+          if (isActiveQuestion && firstRunHeadline) {
+            return (
+              <div
+                key={msg.id}
+                data-testid="chat-message"
+                data-message-role="assistant"
+                data-onboarding-question
+                style={{ padding: '4px 0 12px', alignSelf: 'stretch' }}
+              >
+                <div
+                  data-testid="onboarding-headline"
+                  style={{
+                    fontSize: 19,
+                    fontWeight: 500,
+                    lineHeight: 1.3,
+                    color: 'var(--tp-text)',
+                    textWrap: 'pretty',
+                    marginBottom: 16,
+                  }}
+                >
+                  {msg.content}
+                </div>
+                {onboardingCard}
               </div>
             );
           }

@@ -1668,10 +1668,16 @@ export default function ChatPanel({
       }
     }
   }
+  // The greeting opens an otherwise empty transcript. A re-asked intent
+  // question further down a conversation stays a bubble. Mirrors the web.
+  const firstRunHeadline =
+    onboardingQuestion?.key === "trip_intent" &&
+    activeQuestionId !== null &&
+    transcript[0]?.id === activeQuestionId;
 
   const onboardingCard =
     onboardingUiActive && onboardingQuestion ? (
-      <View style={styles.card} testID="onboarding-card">
+      <View style={[styles.card, firstRunHeadline ? styles.cardFirstRun : null]} testID="onboarding-card">
         {isTapToAnswerKind(onboardingQuestion.kind) && onboardingQuestion.options ? (
           <>
             {/* Only for 'select', where tapping is the ONLY way to answer.
@@ -1786,8 +1792,10 @@ export default function ChatPanel({
           name a city" invitation, and its only job is to focus the box.
         */}
         {onboardingQuestion.prompts?.length ? (
-          <View style={styles.promptsWrap}>
-            <Text style={styles.kicker}>TAP TO START, THEN EDIT</Text>
+          <View style={[styles.promptsWrap, firstRunHeadline ? styles.promptsWrapFirstRun : null]}>
+            <Text style={firstRunHeadline ? styles.starterKicker : styles.kicker}>
+              TAP TO START, THEN EDIT
+            </Text>
             <Pressable
               disabled={onboardingComposerBusy}
               testID="onboarding-prompt-city"
@@ -1808,7 +1816,11 @@ export default function ChatPanel({
                   setInput(prompt);
                   inputRef.current?.focus();
                 }}
-                style={[styles.promptRow, onboardingComposerBusy ? styles.optionChipOff : null]}
+                style={[
+                  styles.promptRow,
+                  firstRunHeadline ? styles.promptRowFirstRun : null,
+                  onboardingComposerBusy ? styles.optionChipOff : null,
+                ]}
               >
                 <Text style={styles.promptText}>{prompt}</Text>
               </Pressable>
@@ -2099,6 +2111,19 @@ export default function ChatPanel({
                     </View>
                   ) : null}
                 </View>
+              </View>
+            );
+          }
+          // The first-run screen: Penny's greeting as a full-width headline
+          // with the prompt rows under it, on the empty state's type scale —
+          // not a 14px bubble. `trip_intent` only. Mirrors the web.
+          if (isActiveQuestion && firstRunHeadline) {
+            return (
+              <View key={msg.id} style={styles.starterBlock}>
+                <Text testID="onboarding-headline" style={styles.starterHeadline}>
+                  {msg.content}
+                </Text>
+                {onboardingCard}
               </View>
             );
           }
@@ -2661,6 +2686,9 @@ const styles = StyleSheet.create({
   // Everything the active question needs beyond its text, INSIDE Penny's
   // bubble (frames 7b–7e).
   card: { marginTop: 10, gap: 10 },
+  // On the first-run headline the empty state's spacing takes over: the
+  // headline's own margin sits above, and rows get its 8px gap / 12px padding.
+  cardFirstRun: { marginTop: 0 },
   rowWide: { maxWidth: "94%" },
   kicker: {
     fontFamily: font.semibold,
@@ -2696,6 +2724,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   promptsWrap: { gap: 6 },
+  promptsWrapFirstRun: { gap: 8 },
+  promptRowFirstRun: { paddingVertical: 12 },
   promptRow: {
     paddingVertical: 11,
     paddingHorizontal: 14,

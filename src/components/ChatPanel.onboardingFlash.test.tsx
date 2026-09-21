@@ -9,7 +9,7 @@
  * the bug is present; that is why CI never objected. Never `it.fails` a guard.
  *
  * It also pins what fills the window instead: Penny's typing dots from the
- * first render, the greeting the moment the snapshot lands (not
+ * first render, the greeting as a headline the moment the snapshot lands (not
  * three more seconds of dots), and a visible, retryable state when the
  * snapshot fails. `onboardingPhaseGuard.test.ts` holds the native panel, which
  * has no test runner, to the same gate at source level.
@@ -73,11 +73,12 @@ describe('first-run onboarding', () => {
     expect(screen.getByLabelText('Penny is typing')).toBeTruthy();
   });
 
-  it('lands the greeting as soon as the snapshot does', async () => {
+  it('lands the greeting as a headline as soon as the snapshot does', async () => {
     renderFirstRun();
 
     // Well under the old 3s first-question delay: the fetch is 50ms.
-    await screen.findByText(GREETING, {}, { timeout: 1000 });
+    const headline = await screen.findByTestId('onboarding-headline', {}, { timeout: 1000 });
+    expect(headline.textContent).toBe(GREETING);
     expect(screen.getByTestId('onboarding-prompt-city')).toBeTruthy();
     expect(screen.queryByLabelText('Penny is typing')).toBeNull();
     expect(screen.queryByText('START HERE')).toBeNull();
@@ -93,7 +94,7 @@ describe('first-run onboarding', () => {
     snapshotFetch.fail = false;
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    await waitFor(() => expect(screen.queryByText(GREETING)).not.toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('onboarding-headline')).not.toBeNull());
     expect(snapshotFetch.calls).toBe(2);
     expect(screen.queryByTestId('onboarding-load-error')).toBeNull();
   });
