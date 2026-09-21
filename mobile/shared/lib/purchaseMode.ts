@@ -2,7 +2,7 @@ import type { PaywallProduct, SubscriptionSource, AccountState } from '../types/
 import { canManageAppleSubscription } from '../types/entitlement';
 
 /**
- * How the purchase sheet can take money, decided ONCE from three inputs and
+ * How the purchase sheet can take money, decided ONCE from two inputs and
  * rendered rather than re-derived by each surface.
  *
  * Pure, and mirrored into the Expo app by `scripts/sync-shared.mjs`, so the
@@ -11,29 +11,37 @@ import { canManageAppleSubscription } from '../types/entitlement';
  *
  * ── Why "unavailable" carries a REASON ────────────────────────────────────
  *
- * The sheet used to collapse every way of ending up with nothing to sell into
- * one sentence — "The App Store isn't offering these plans on this build yet"
- * — and that sentence was rendered for FOUR different failures which need four
- * different fixes, three of them ours:
+ * Five different failures end in the same sheet, and four of the fixes are
+ * ours:
  *
  *   `no_key`       the build has no RevenueCat key. Nothing was asked of
  *                  anybody. Fix: `EXPO_PUBLIC_REVENUECAT_IOS_KEY` in eas.json
  *                  and a new native build (compiled in, an OTA cannot fix it).
- *   `store_empty`  RevenueCat answered with an offering that has no packages.
- *                  StoreKit could not resolve the products — in practice the
- *                  Paid Applications Agreement is not Active, or the products
- *                  are in Missing Metadata. Fix: App Store Connect, not code.
- *   `store_error`  the offerings call THREW: no network, a rejected key, a
- *                  RevenueCat outage. Fix: try again, or check the key.
+ *                  `mobile/app.config.js` refuses to make a preview or
+ *                  production EAS build without it.
+ *   `store_empty`  RevenueCat served the offering, and StoreKit resolved NONE
+ *                  of its products. `getStorePlans()` reports this both when
+ *                  the SDK throws CONFIGURATION_ERROR (what it actually does
+ *                  when every product is invalid) and when the offering has no
+ *                  packages. Fix: App Store Connect, not code —
+ *                  `scripts/storekit-probe.sh` asks StoreKit directly.
+ *   `store_error`  the offerings call THREW anything else: no network, a
+ *                  rejected key, a RevenueCat outage. Fix: try again, or check
+ *                  the key.
  *   `no_match`     RevenueCat returned packages, and not one of their product
  *                  ids matches a plan the server sells. Fix: the ids in the
  *                  RevenueCat dashboard, or `PRODUCTS` in constants.ts.
  *   `no_plans`     the SERVER gave us nothing to sell — the entitlement fetch
  *                  failed, so there is no list to intersect with. Fix: network.
  *
- * Telling the reader which one it is costs nothing and is the difference
- * between "sign the agreement" and "rebuild the app" — which was found out the
- * slow way (docs/design/iap-setup.md §1 and §5 describe the same blank sheet).
+ * ── Who is told which ─────────────────────────────────────────────────────
+ *
+ * The REASON is for us; the customer only needs to know what THEY can do.
+ * `unavailableMessage` below is the customer's copy and never names our
+ * paperwork — a sentence telling an App Review tester that the store is not
+ * selling these plans YET is a rejection. The five-way developer reading lives in
+ * `purchaseDiagnostics.ts`, which a release build does not contain at all.
+ * `purchaseCopyGuard.test.ts` holds both halves of that.
  */
 
 /** What the store said, as far as the flow has heard so far. */
@@ -58,7 +66,12 @@ export interface StorePlanLike {
   priceLabel: string;
 }
 
-export type PurchaseMode = 'test' | 'store' | 'unavailable';
+/**
+ * There is no `test` mode any more: the allowlisted fake purchase it rendered
+ * was removed on 2026-09-21 — after the production wipe the RevenueCat webhook
+ * is the only thing that may grant access.
+ */
+export type PurchaseMode = 'store' | 'unavailable';
 
 export type UnavailableReason =
   | 'no_key'
@@ -81,22 +94,13 @@ export interface ResolvedPurchaseMode {
 }
 
 export function resolvePurchaseMode({
-  testMode,
   storeAnswer,
   serverPlans,
 }: {
-  /** The server said this account may use the fake purchase path. */
-  testMode: boolean;
   storeAnswer: StoreAnswer;
   /** `entitlement.products`, or [] when there is no entitlement payload. */
   serverPlans: PaywallProduct[];
 }): ResolvedPurchaseMode {
-  // The allowlisted path wins over the store on purpose: that account exists
-  // precisely to walk the paywall without Apple. The store is never even asked.
-  if (testMode) {
-    return { mode: 'test', unavailableReason: null, plans: serverPlans, plansLoading: false };
-  }
-
   if (storeAnswer.kind === 'pending') {
     return { mode: 'unavailable', unavailableReason: null, plans: serverPlans, plansLoading: true };
   }
@@ -152,33 +156,41 @@ function unavailable(
 }
 
 /**
- * The sentence under the plan rows in `unavailable` mode, one per reason,
- * sharing no string. Each says what the reader can do — which for the three
- * that are OUR paperwork is "nothing, but Restore still works if you paid",
- * except `no_key`, where Restore cannot work either and saying it would is a
- * lie: the SDK was never configured, so `restore()` refuses too.
+ * The CUSTOMER's sentence under the plan rows in `unavailable` mode.
+ *
+ * It says what the reader can do, and nothing about why we cannot sell: the
+ * three reasons that are our own configuration (`no_key`, `store_empty`,
+ * `no_match`) deliberately share one line, because the difference between them
+ * is ours to diagnose, not theirs — see `purchaseDiagnostics.ts`, which a dev
+ * build shows beneath this line. The two the reader CAN act on (the store or
+ * our API could not be reached) say "try again".
+ *
+ * Restore is offered in every case but `no_key`, where the SDK was never
+ * configured and `restore()` refuses too; promising it would be a lie to
+ * exactly the person who paid. (`no_key` cannot reach a customer anyway —
+ * app.config.js refuses the build — but the copy stays true if it ever did.)
+ *
+ * Words a reviewer must never read here — "yet", "not a checkout", "this
+ * build", anything about App Store Connect — are listed in
+ * `purchaseCopyGuard.test.ts`.
  */
 export function unavailableMessage(reason: UnavailableReason): string {
   switch (reason) {
     case 'no_key':
       return (
-        "This build isn't connected to the App Store, so nothing here can be bought or restored " +
-        'yet. These are the prices, not a checkout.'
+        "Plans can't be bought on this device right now. Email support@feraltravels.com and " +
+        "we'll sort it out."
       );
     case 'store_empty':
+    case 'no_match':
       return (
-        "The App Store isn't offering these plans yet — these are the prices, not a checkout. " +
-        'If you already have a plan, Restore purchases will still find it.'
+        "Plans can't be bought on this device right now. If you already have a plan, Restore " +
+        'purchases will find it.'
       );
     case 'store_error':
       return (
-        "The App Store couldn't be reached just now — these are the prices, not a checkout. " +
-        'Try again in a moment, or use Restore purchases if you already have a plan.'
-      );
-    case 'no_match':
-      return (
-        'The App Store is offering different plans from the ones this app expects, so nothing ' +
-        'here can be bought. If you already have a plan, Restore purchases will still find it.'
+        "Couldn't reach the App Store. Try again in a moment, or use Restore purchases if you " +
+        'already have a plan.'
       );
     case 'no_plans':
       return (

@@ -21,8 +21,8 @@
  * would do and exit having written nothing.
  *
  * This reads DATABASE_URL from .env, which on the author's machine points at
- * PROD. That is the point of the script and also its danger, which is what the
- * guards are for: one exact email match or nothing, a hard refusal on any
+ * PROD — and since 2026-09-21 it refuses that database outright (below).
+ * Point DATABASE_URL at a preview branch instead. The other guards: one exact email match or nothing, a hard refusal on any
  * address outside the test pattern unless `--force`, and the row printed before
  * and after.
  */
@@ -32,15 +32,16 @@ import { eq } from 'drizzle-orm';
 import { db } from '../src/server/db/client';
 import { users, subscriptions, usageAlerts } from '../src/server/db/schema';
 import { TRIAL_DAYS } from '../src/server/payments/constants';
+import { TEST_ACCOUNT_EMAIL_PATTERN as TEST_PATTERN } from '../src/server/payments/testAccountGate';
+import { assertNotProduction } from '../src/server/productionGuard';
 
 /**
- * Must match TEST_PURCHASE_EMAIL_PATTERN in src/server/payments/testPurchase.ts.
- * Restated rather than imported because that module is `server-only` and this
- * is a plain node script — the test there is the thing that actually gates
- * purchases, so a drift between the two costs a confusing afternoon, not a
- * security hole.
+ * REFUSES the production database (decision E13). This script ages accounts and
+ * deletes their subscription rows; after the 2026-09-21 wipe every production
+ * row is real, so it runs against a preview branch or a local database only.
+ * Top level, before `main`, so no argument can get past it.
  */
-const TEST_PATTERN = /^sam\+trial-[a-z0-9-]{1,40}@feraltravels\.com$/i;
+assertNotProduction('scripts/trial-account.ts');
 
 function usage(): never {
   console.error('usage:');

@@ -136,7 +136,7 @@ api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
 api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
-api/promo/redeem api/purchase/test api/routes api/routes/[id]
+api/promo/redeem api/routes api/routes/[id]
 api/routes/[id]/links api/routes/[id]/select api/stops api/stops/[id]
 api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
 api/tasks/[id] api/test/announcement api/test/breakers api/test/cleanup
@@ -205,8 +205,8 @@ measure-message-gate.ts migrate-sqlite-to-neon.ts pick-ios-simulator.mjs
 pick-screenshot-simulator.mjs prune-branches.sh reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts set-ios-oauth-client-id.mjs
-set-paywall-flag.mjs sim-frames.swift smoke-api.ts sync-shared.mjs
-trial-account.ts vercel-set-ci-key.sh verify-maps-waypoints.ts
+set-paywall-flag.mjs sim-frames.swift smoke-api.ts storekit-probe.sh
+sync-shared.mjs trial-account.ts vercel-set-ci-key.sh verify-maps-waypoints.ts
 ```
 
 **Tombstones — do not recreate.** `scripts/ship.sh` and `npm run ship` are

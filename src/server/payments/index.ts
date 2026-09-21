@@ -63,7 +63,12 @@ export type { RevenueCatWebhookBody, NormalizedSubscriptionEvent } from './schem
  * `@/server/payments/testAccounts` directly — as `/api/admin/test-users` does
  * — keeps the entitlement surface cheap to import.
  */
-export { isTestPurchaseAllowed, testPurchasesArmed } from './testPurchase';
+/**
+ * Neither is `./testAccountGate` — the admin surfaces import it directly for the
+ * same reason. The fake purchase that used to be re-exported here
+ * (`isTestPurchaseAllowed`) was removed on 2026-09-21: after the production
+ * wipe the only thing that may grant access is the RevenueCat webhook.
+ */
 /**
  * The circuit breakers. On this surface for the same reason the paywall switch
  * is: they decide whether a request may spend money, which is this module's

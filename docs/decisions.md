@@ -243,9 +243,12 @@ E5. **Promo codes: bound to one address, single-use via an atomic claim, fixed 6
 from REDEMPTION, auto-claimed on sign-in, never clobber a live Apple subscription.**
 *Enforced by:* `promoCode.test.ts`, `promoTerm.test.ts`, `promoCopy.test.ts`.
 
-E6. **A fake purchase exists only for `sam+trial-<tag>@feraltravels.com` with
-`SUBSCRIPTION_TESTING=1`; the admin test-user block never mints a session.** *Enforced by:*
-`testPurchase.test.ts`, `testAccounts.test.ts`, `noBackdoorGuard.test.ts`.
+E6. **There is no fake purchase.** `POST /api/purchase/test`, `isTestPurchaseAllowed`, the
+`testPurchaseAllowed` payload field and every button that called it were REMOVED on 2026-09-21,
+before the production wipe: after it, the RevenueCat webhook is the only thing that may grant
+access (E3). The admin test-user block still never mints a session. *Enforced by:*
+`testAccountsProductionGuard.test.ts` (no route file, no caller), `testAccounts.test.ts`,
+`noBackdoorGuard.test.ts`.
 
 E7. **The purchase sheet is reachable in every account state** (Settings → Plan → View plans) —
 App Review signs in as a trial user and must be able to find a price. *Enforced by:*
@@ -271,6 +274,26 @@ safe, since the three columns only ever describe the LATEST revoke. *Enforced by
 E11. **The `revoked` paywall copy is the one joke, and `usage_cap` never borrows it.** The gag
 may be reworded; "temporarily suspended" and "email support" may not. `usage_cap` fires when OUR
 costs regressed and stays apologetic. *Enforced by:* `paywallCopy.test.ts`.
+
+E12. **A release build cannot tell anyone the store is not ready.** When the purchase sheet has
+nothing to sell, the customer reads what THEY can do (`unavailableMessage`, no "yet", no "not a
+checkout", nothing about our paperwork); the five-way developer diagnosis lives in
+`purchaseDiagnostics.ts`, which the app reaches only as `__DEV__ ? require(...) : null` so Metro
+drops it from a release bundle, and `app.config.js` refuses a preview/production EAS build with
+no RevenueCat key. Added 2026-09-21 after StoreKit returned both product ids invalid and the sheet
+said so in words a reviewer would have read. *Enforced by:* `purchaseCopyGuard.test.ts`, the
+release-bundle sentinel check in the `Mobile typecheck` CI job, and the throw in
+`mobile/app.config.js`.
+
+E13. **The trial-state test-account generator cannot run in production.** `payments/testAccounts.ts`
+writes `subscriptions` rows with `source: 'fake'` and rewrites `users.created_at`, so it calls
+`assertNotProduction()` at MODULE LOAD — production is `VERCEL_ENV=production` or a `DATABASE_URL`
+whose Neon endpoint hashes to the production one (`src/server/productionGuard.ts`; a hash because
+the repo is public). Production code never imports it statically: `/admin` and
+`/api/admin/test-users` ask `testAccountsAvailable()` first and `await import()` only on a yes, and
+the admin card is absent in production. `scripts/trial-account.ts` and `scripts/db-reset.ts` use the
+same check; the reset takes a date-stamped override. Added 2026-09-21 for the production wipe.
+*Enforced by:* `testAccountsProductionGuard.test.ts`.
 
 ## F. Build, CI, deploy
 

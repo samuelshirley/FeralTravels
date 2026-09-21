@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Linking } from "react-native";
-import { fetchEntitlement, testPurchase, type EntitlementPayload } from "@/lib/entitlement";
+import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
 import {
   getStorePlans,
   purchase,
@@ -63,16 +63,9 @@ export type PurchasePhase =
  * the shared module, where it is unit-tested — and rendered rather than
  * guessed at three times.
  *
- *  `test`         the account is on the hardcoded allowlist AND
- *                 `SUBSCRIPTION_TESTING=1` — the server said so, and the route
- *                 re-checks. This wins over `store` on purpose: an allowlisted
- *                 address exists precisely to walk the paywall without Apple,
- *                 and the flag is the switch to turn off when that stops being
- *                 what you want. To exercise the real store, use any other
- *                 address.
  *  `store`        RevenueCat is configured and returned at least one package
  *                 whose product id the server sells.
- *  `unavailable`  neither, and `unavailableReason` says WHICH way. The sheet
+ *  `unavailable`  not that, and `unavailableReason` says WHICH way. The sheet
  *                 shows prices and says there is nothing to tap, because a
  *                 button that cannot take money is worse than no button — and
  *                 it says why, because "no key in this build", "the agreement
@@ -147,17 +140,13 @@ export function usePurchaseFlow({
     };
   }, []);
 
-  const testMode = entitlement?.testPurchaseAllowed === true;
-
   /**
-   * Ask the store for prices, once, as soon as there is something to sell.
-   *
-   * Skipped entirely in test mode — that account is not buying from Apple, and
-   * an offerings call whose empty answer we would ignore is a round trip for
-   * nothing.
+   * Ask the store for prices, once, on mount. (There was a `test` mode that
+   * skipped this for allowlisted accounts; the fake purchase it served was
+   * removed on 2026-09-21. Every account buys from the App Store.)
    */
   useEffect(() => {
-    if (testMode || !purchasesAvailable()) return;
+    if (!purchasesAvailable()) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -177,7 +166,7 @@ export function usePurchaseFlow({
     return () => {
       cancelled = true;
     };
-  }, [testMode]);
+  }, []);
 
   /**
    * The server decides WHAT is for sale and how it reads; the store decides
@@ -188,7 +177,6 @@ export function usePurchaseFlow({
    */
   const serverPlans: PaywallProduct[] = entitlement?.products ?? [];
   const { mode, unavailableReason, plans, plansLoading } = resolvePurchaseMode({
-    testMode,
     storeAnswer,
     serverPlans,
   });
@@ -225,27 +213,18 @@ export function usePurchaseFlow({
 
       void (async () => {
         try {
-          if (mode === "test") {
-            // The allowlisted path. It writes a real `subscriptions` row through
-            // the same `upsertSubscription` the webhook uses, so the wait below
-            // is a formality — but it goes through the same wait anyway, because
-            // one code path that has been walked is worth more than two that
-            // have not.
-            await testPurchase(productId);
-          } else {
-            const outcome = await purchase(productId);
-            if (outcome.kind !== "purchased") {
-              const message = purchaseOutcomeMessage(outcome);
-              // `pending` (Ask to Buy) and `already_owned` are not failures.
-              // Ask to Buy in particular arrives as an SDK *error* code for a
-              // state that is working exactly as designed.
-              if (outcome.kind === "pending" || outcome.kind === "already_owned") {
-                setNotice(message);
-              } else if (message) {
-                setError(message);
-              }
-              return;
+          const outcome = await purchase(productId);
+          if (outcome.kind !== "purchased") {
+            const message = purchaseOutcomeMessage(outcome);
+            // `pending` (Ask to Buy) and `already_owned` are not failures.
+            // Ask to Buy in particular arrives as an SDK *error* code for a
+            // state that is working exactly as designed.
+            if (outcome.kind === "pending" || outcome.kind === "already_owned") {
+              setNotice(message);
+            } else if (message) {
+              setError(message);
             }
+            return;
           }
 
           if (!alive.current) return;
@@ -254,9 +233,8 @@ export function usePurchaseFlow({
           if (!alive.current) return;
           if (!ok) setNotice(PURCHASE_CONFIRM_TIMEOUT_MESSAGE);
         } catch (err) {
-          // Only the test path throws — `purchase()` returns outcomes. This is
-          // the 403 for an address that is not on the allowlist, or a network
-          // failure reaching our own API.
+          // `purchase()` returns outcomes rather than throwing, so this is the
+          // unexpected: a throw from the entitlement wait reaching our own API.
           if (alive.current) {
             setError(err instanceof Error ? err.message : "That purchase did not go through.");
           }

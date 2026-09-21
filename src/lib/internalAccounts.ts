@@ -40,8 +40,9 @@
  * unfiltered by design.
  *
  * This is deliberately NOT `isCompedEmail` / `FIXTURE_EMAIL_PATTERN` /
- * `TEST_PURCHASE_EMAIL_PATTERN`. Those are security boundaries — they decide
- * who gets free access or a fake purchase, and are kept narrow on purpose.
+ * `TEST_ACCOUNT_EMAIL_PATTERN`. Those are security boundaries — they decide
+ * who gets free access or a generated test account, and are kept narrow on
+ * purpose.
  * This is a reporting filter and is broader than all three.
  */
 

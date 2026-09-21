@@ -1,7 +1,6 @@
 import { requireUser, errorResponse } from '@/server/auth/guards';
 import { getAccountVerdict, isProductId, productById, PRODUCTS } from '@/server/payments';
 import { paywallCopy } from '@/server/payments/copy';
-import { isTestPurchaseAllowed } from '@/server/payments/testPurchase';
 import type { EntitlementPayload } from '@/types/entitlement';
 
 export const runtime = 'nodejs';
@@ -64,7 +63,6 @@ export async function GET() {
         cadence: p.cadence,
         note: p.period === 'year' ? 'Save $4 a year' : undefined,
       })),
-      testPurchaseAllowed: !verdict.entitled && isTestPurchaseAllowed(user.email),
       /**
        * Which plan, and until when — the two facts a subscriber opens Settings
        * to check, and neither of which used to be on the wire. Both were on the

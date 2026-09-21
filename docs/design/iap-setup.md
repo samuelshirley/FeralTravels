@@ -215,15 +215,40 @@ with no packages.
 
 **What it looks like in this app:** the purchase sheet shows the two prices —
 `$2` and `$20`, the fallback strings from `PRODUCTS` in
-`src/server/payments/constants.ts` — with **no buy button**, under the line
-*"The App Store isn't offering these plans yet — these are the prices, not a
-checkout."* That is `mode: "unavailable"` with reason `store_empty` in
-`src/lib/purchaseMode.ts` (mirrored to the app), and it is the honest rendering
-of "we asked and got nothing back". **Since 2026-09-07 each empty-sheet cause
-has its own sentence** — `no_key` (this build has no RevenueCat key),
-`store_empty` (this section), `store_error` (the store could not be reached),
-`no_match` (the ids disagree) and `no_plans` (the server's list did not load) —
-so the sentence on screen says which of §1, §5 or §2 to open.
+`src/server/payments/constants.ts` — with **no buy button**. That is
+`mode: "unavailable"` with reason `store_empty` in `src/lib/purchaseMode.ts`
+(mirrored to the app). Each empty-sheet cause has its own reason — `no_key`,
+`store_empty` (this section and §2), `store_error`, `no_match`, `no_plans` —
+but **since 2026-09-21 only a dev build says which**: the customer reads a
+neutral line ("Plans can't be bought on this device right now…"), and the
+five-way diagnosis is printed under it only when `__DEV__`, from a module a
+release bundle does not contain. The old per-reason customer copy told whoever
+opened the sheet that the App Store was not offering the plans *yet* — true, and
+a rejection the day an App Review tester reads it. Decision E12 in
+`docs/decisions.md`; `purchaseCopyGuard.test.ts` and a release-bundle check in
+CI hold it.
+
+**The fast way to ask StoreKit directly:** `scripts/storekit-probe.sh` (booted
+simulator, ~6 s). On 2026-09-21 it printed, with the Paid Apps agreement,
+banking and tax all Active:
+
+```
+RevenueCat offering "default": $rc_monthly -> com.feraltravels.ios.monthly,
+                               $rc_annual  -> com.feraltravels.ios.annual
+SK1 valid=[] invalid=["com.feraltravels.ios.annual", "com.feraltravels.ios.monthly"]
+storefront=USA
+SK2 resolved 0 of 2
+```
+
+So RevenueCat's half was right, and StoreKit's was empty: the agreement was
+no longer the blocker. What was still open in App Store Connect that day, any of
+which is sufficient: both subscriptions had **no Review Information screenshot**
+(so not Ready to Submit — §2), and the app record had **no Pricing and
+Availability** at all. RevenueCat's missing App Store Connect API key was ruled
+out: it only drives the dashboard's "Could not check" product status, and the
+SDK's product lookup never touches it. The simulator's negative is weaker than a
+positive (see the next paragraph), so once both are fixed, re-run the probe and,
+if it still says invalid, a TestFlight build on a device is the arbiter.
 
 **What the console says** (this IS in a log, contrary to what this paragraph
 used to claim): RevenueCat does not return an empty offering when StoreKit
@@ -567,17 +592,31 @@ Zod schema had to be taught that this one event has no `app_user_id` or it would
 have rejected every real transfer at the boundary. See `applyTransfer` in
 `webhook.ts` and the TRANSFER block in `webhook.test.ts`.
 
-**The test-purchase path is untouched and stays.** `/api/purchase/test`,
-`isTestPurchaseAllowed`, the `sam+trial-<tag>@feraltravels.com` pattern and
-`SUBSCRIPTION_TESTING=1` all still work exactly as before — the Playwright
-subscription specs run on them, and a sandbox purchase cannot replace them
-because StoreKit's sheet is system UI behind a sandbox Apple ID login that
-Playwright cannot drive.
+**The fake purchase is GONE (2026-09-21).** `POST /api/purchase/test`,
+`isTestPurchaseAllowed`, the `testPurchaseAllowed` field on
+`/api/me/entitlement`, the app's `test` purchase mode and every button that
+called the route were removed before the production database was wiped. After
+the wipe every production row is real, and the RevenueCat webhook is the only
+thing that may grant access (decisions E3, E6).
 
-In the app, `testPurchaseAllowed` **wins over the store**: an allowlisted address
-gets the fake path even with RevenueCat live, because that is what such an
-address is for. To exercise the real store, use any other address. To retire the
-path entirely, unset `SUBSCRIPTION_TESTING` — no deploy needed.
+This paragraph used to say the Playwright subscription specs "run on" that path.
+They never did: `e2e/subscriptions.spec.ts` signs in as
+`playwright-*@e2e.feraltravels.com` and writes account state through
+`/api/test/subscription` (`E2E_TEST_ENDPOINTS`, hard-off on production). It went
+15/15 before the removal and 15/15 after, against the same local server.
+
+**What remains, and cannot run in production:** the trial-state test-account
+generator (`/admin` → Test users, `npm run test-user`, `npm run trial-account`),
+still armed by `SUBSCRIPTION_TESTING=1` and still limited to
+`sam+trial-<tag>@feraltravels.com`. It writes `source: 'fake'` subscriptions, so
+`payments/testAccounts.ts` refuses to LOAD in production — `VERCEL_ENV=production`
+or a `DATABASE_URL` on the production endpoint — and the admin card is absent
+there (decision E13, `testAccountsProductionGuard.test.ts`). Use it on a preview
+or a local database.
+
+**To test a real purchase:** a TestFlight build (the production profile has the
+RevenueCat key and talks to production) with a Sandbox Apple Account — §7. Every
+account now buys from the App Store; there is no address that bypasses it.
 
 ---
 

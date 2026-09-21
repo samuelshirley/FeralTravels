@@ -46,7 +46,6 @@ describe('isBlockedWebPath', () => {
       '/api/webhooks/revenuecat',
       '/api/legs/abc/fuel-stops',
       '/api/support',
-      '/api/purchase/test',
     ]) {
       expect(isBlockedWebPath(p), `${p} must stay reachable — the app lives here`).toBe(false);
     }

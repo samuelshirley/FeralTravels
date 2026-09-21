@@ -20,9 +20,10 @@ import {
   getGoogleBillableThisMonth,
 } from '@/server/repos/usage';
 import AppNavbar from '@/components/AppNavbar';
+import { testAccountsAvailable } from '@/server/payments/testAccountGate';
+import { isProductionEnvironment } from '@/server/productionGuard';
 import {
   paywallEnabled,
-  testPurchasesArmed,
   breakerSnapshot,
   formatBreakerValue,
   gateMixSince,
@@ -829,28 +830,32 @@ export default async function AdminPage() {
         {/*
           Bottom of the page on purpose. It is a development affordance, not an
           operations one — nothing here tells you anything about the running
-          system, and it is switched off entirely in an environment without
-          SUBSCRIPTION_TESTING.
+          system. ABSENT in production, not merely switched off: the generator
+          writes `source: 'fake'` subscriptions and refuses to load there
+          (decision E13), so a card offering it would be a control that cannot
+          work. Elsewhere it is off without SUBSCRIPTION_TESTING=1.
         */}
-        <section style={{ ...card, marginTop: 16 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 4 }}>
-            Test users
-          </h2>
-          <p
-            style={{
-              fontSize: 11,
-              color: 'var(--tp-subtle)',
-              margin: '0 0 12px',
-              lineHeight: 1.5,
-            }}
-          >
-            Disposable accounts for walking the paywall. Addresses are always{' '}
-            <code style={{ fontSize: 10 }}>sam+trial-…@feraltravels.com</code> — the pattern is
-            hardcoded where no environment variable can widen it, and every action refuses anything
-            outside it.
-          </p>
-          <TestUserBlock armed={testPurchasesArmed()} paywallOn={paywallOn} />
-        </section>
+        {!isProductionEnvironment() && (
+          <section style={{ ...card, marginTop: 16 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 4 }}>
+              Test users
+            </h2>
+            <p
+              style={{
+                fontSize: 11,
+                color: 'var(--tp-subtle)',
+                margin: '0 0 12px',
+                lineHeight: 1.5,
+              }}
+            >
+              Disposable accounts for walking the paywall. Addresses are always{' '}
+              <code style={{ fontSize: 10 }}>sam+trial-…@feraltravels.com</code> — the pattern is
+              hardcoded where no environment variable can widen it, and every action refuses anything
+              outside it.
+            </p>
+            <TestUserBlock armed={testAccountsAvailable()} paywallOn={paywallOn} />
+          </section>
+        )}
 
         {/*
           Below the test accounts on purpose. Both hand out access without

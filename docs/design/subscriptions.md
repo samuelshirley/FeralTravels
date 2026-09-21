@@ -633,28 +633,24 @@ Unit, not E2E — replay real RevenueCat/ASSN payloads against the handler:
   - **BOTH admin actions now write a `subscription_events` row** naming the admin and their typed reason, inside the same transaction as the write. Neither did before. That ledger is what makes clearing `revoked_at`/`_by`/`_reason` on an undo safe — those three columns only ever describe the LATEST revoke, and an undo would otherwise erase the fact that one ever happened. `/admin/users/[id]` renders them as an ordered ACCESS HISTORY under the row. `eventTimeMs` is our own clock, matching `PROMO_REDEEMED` and `FAKE_PURCHASE`, with the known consequence that a store event delayed past an admin decision is treated as stale.
   - The decision is pure and unit-tested in `payments/reactivation.ts` (`planReactivation`, `preRevokeStatusFor`, `reactivationLandingLine`); `POST /api/admin/subscription/reactivate` mirrors the revoke route down to the ZodError branch, and a refusal is a **400 carrying its own sentence, never a silent 200**. The admin route is unreachable from CI (one hardcoded address), so `e2e/subscriptions.spec.ts` drives the same two functions through `/api/test/subscription`'s `adminAction`. *Enforced by:* `payments/reactivation.test.ts`, `payments/reactivateRoute.test.ts`, the round trip in `payments/states.test.ts`, `adminEntitlementAuditGuard.test.ts`.
 - **The `revoked` paywall copy is the ONE joke, and `usage_cap` never borrows it (2026-09-10).** A suspended account used to read like a bank letter; it now leads with Penny having lost all her balls in the river. The gag may be reworded — what may not move is "temporarily suspended" and "email support", because a locked-out person needs to know they are locked out and where to go, and a joke wrapped around either is worse than the dry version. It is `revoked` ONLY: `usage_cap` fires when OUR per-trip cost regressed, so a joke about somebody's account at that moment reads as blaming them for our bug. All three surfaces move together — `payments/copy.ts` (Penny's bubble + the app overlay), `lib/paywallCopy.ts` (the web notice), `auth/guards.ts` `paywallMessage()` (the 402 string). `PaywallCopy.heading` is new and OPTIONAL: the app overlay's hardcoded "Planning is paused" is right for the other three and wrong for a suspension, so only that one sends a heading, server-authored so it changes without a TestFlight binary. *Enforced by:* `paywallCopy.test.ts`.
-- **`POST /api/purchase/test` grants a subscription without Apple.** TWO
-  conditions, both required: the address matches
-  `sam+trial-<tag>@feraltravels.com` — hardcoded in `payments/testPurchase.ts`
-  where no env var can widen it, same argument as `FIXTURE_EMAIL_PATTERN` — AND
-  `SUBSCRIPTION_TESTING=1`, which is off by default. A PATTERN rather
-  than a list because every test run wants a NEW account: reusing one address
-  tests an aged account, not a trial, and once it carries a subscription row
-  `created_at` decides nothing. `npm run trial-account new` prints a fresh
-  address; `age` and `reset` are dry-run by default. It exists because StoreKit
-  returns an EMPTY product list until the Paid Applications Agreement is active.
-  Every grant writes `subscription_events` with `source: 'fake'`. **It is NOT
-  deleted now that StoreKit is wired up, and should not be** — the Playwright
-  subscription specs run on it, and a sandbox purchase cannot replace them
-  (StoreKit's sheet is system UI behind a sandbox Apple ID login). In the app
-  `testPurchaseAllowed` deliberately WINS over the real store: an allowlisted
-  address exists to walk the paywall without Apple. Retiring the path is
-  `SUBSCRIPTION_TESTING` unset — no deploy.
+- **There is no fake purchase (removed 2026-09-21).** `POST /api/purchase/test`
+  granted a subscription without Apple to `sam+trial-<tag>@feraltravels.com`
+  addresses while `SUBSCRIPTION_TESTING=1`; it, `isTestPurchaseAllowed`, the
+  `testPurchaseAllowed` payload field, the app's `test` purchase mode and every
+  button that called it were deleted before the production wipe. This bullet
+  used to say the Playwright subscription specs ran on it — they never did;
+  they write state through `/api/test/subscription` and went 15/15 before and
+  after the removal. The webhook is the only grant path (decision E6).
+  `npm run trial-account new` still prints a fresh address, but the script now
+  refuses the production database (decision E13).
 - **The Test users block at the bottom of `/admin` creates disposable paywall
   accounts** — `payments/testAccounts.ts` behind `POST /api/admin/test-users`,
   armed by `SUBSCRIPTION_TESTING=1`, every action refusing any address outside
   `sam+trial-<tag>@feraltravels.com`. Two one-click presets, each producing a
-  real account state. (There is no `/admin/test-users` PAGE — it was folded into
+  real account state. **It cannot run in production**: `payments/testAccounts.ts`
+  writes `source: 'fake'` subscriptions, so it refuses to LOAD there, the route
+  answers 404 from `testAccountsAvailable()` before a dynamic import, and the
+  card is absent from production `/admin` (decision E13). (There is no `/admin/test-users` PAGE — it was folded into
   the dashboard; a link to it survived the move and 404'd for two weeks.)
   **The block warns when the paywall switch is off**, because an account
   generated in that state is `trial_expired` and still walks every surface

@@ -22,8 +22,24 @@ import { seededTripStartISO } from '@/app/api/test/seedDates';
 import { TRIP_INTENT_QUESTION } from '@/server/onboarding';
 import { legDateISO } from '@/lib/dates';
 import type { SubscriptionStatus } from '@/types/entitlement';
-import { TEST_PURCHASE_EMAIL_PATTERN, testPurchasesArmed } from './testPurchase';
+import { assertNotProduction } from '@/server/productionGuard';
+import { TEST_ACCOUNT_EMAIL_PATTERN, testAccountsAvailable } from './testAccountGate';
 import { TRIAL_DAYS } from './constants';
+
+/**
+ * REFUSES TO LOAD IN PRODUCTION. Not per call — at module load, so there is no
+ * code path, forgotten flag or future caller through which production can
+ * reach anything below. This module writes `subscriptions` rows with
+ * `source: 'fake'` and rewrites `users.created_at`; after the 2026-09-21 wipe
+ * every production row is real, and a fake one would be an entitled account
+ * nobody paid for, forever.
+ *
+ * Production callers therefore never import this statically: they ask
+ * `testAccountsAvailable()` (testAccountGate.ts) first and `await import()` it
+ * only on a yes. `testAccountsProductionGuard.test.ts` fails if this line goes
+ * or a static import appears. Decision E13.
+ */
+assertNotProduction('The trial-state test-account generator (payments/testAccounts.ts)');
 
 /**
  * Disposable accounts for walking the paywall, created from /admin/test-users.
@@ -50,8 +66,8 @@ import { TRIAL_DAYS } from './constants';
  * var can widen it. The admin guard on top is cookie-only, allowlist +
  * verified email + DB flag.
  *
- * Everything here refuses any address outside that pattern, and everything is
- * additionally off unless `SUBSCRIPTION_TESTING=1`.
+ * Everything here refuses any address outside that pattern, is off unless
+ * `SUBSCRIPTION_TESTING=1`, and cannot load at all in production (below).
  */
 
 export class NotATestAccountError extends Error {
@@ -61,7 +77,7 @@ export class NotATestAccountError extends Error {
 }
 
 function assertArmed(): void {
-  if (!testPurchasesArmed()) {
+  if (!testAccountsAvailable()) {
     throw new Error('SUBSCRIPTION_TESTING is not set — test accounts are disabled here');
   }
 }
@@ -78,7 +94,7 @@ function assertArmed(): void {
  */
 export function assertTestAddress(email: string): string {
   const normalized = email.trim().toLowerCase();
-  if (!TEST_PURCHASE_EMAIL_PATTERN.test(normalized)) throw new NotATestAccountError(normalized);
+  if (!TEST_ACCOUNT_EMAIL_PATTERN.test(normalized)) throw new NotATestAccountError(normalized);
   return normalized;
 }
 

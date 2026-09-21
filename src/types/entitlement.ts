@@ -95,12 +95,6 @@ export interface EntitlementPayload {
    */
   products: PaywallProduct[];
   /**
-   * True only for accounts explicitly allowlisted for the fake purchase path.
-   * The CLIENT never decides this — if the server says false, the test button
-   * does not exist, and the endpoint refuses it anyway.
-   */
-  testPurchaseAllowed: boolean;
-  /**
    * Which plan is on the subscription row, or null when there is no row (a
    * trial) or the row carries no product (an admin comp, a promo).
    *

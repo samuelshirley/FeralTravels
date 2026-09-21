@@ -133,7 +133,9 @@ in the pipeline.
 
 Previously argued against on the grounds that preview is a public URL holding a
 clone of production data. With decision 2 taken, that objection is gone: there is
-no real data to protect. The route it arms (`/api/purchase/test`) is still locked
+no real data to protect. (Update 2026-09-21: the fake-purchase route it armed,
+`/api/purchase/test`, is deleted; the flag now arms only the admin generator,
+which refuses to load in production — decision E13.) The generator is still locked
 to the hardcoded `sam+trial-<tag>@feraltravels.com` pattern, and the admin
 generator behind it still requires the cookie-only admin guard, the hardcoded
 one-address allowlist, `emailVerified`, and `is_admin`.

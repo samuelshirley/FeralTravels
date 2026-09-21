@@ -398,7 +398,8 @@ cannot be self-served; `REFUND` stays a unit-tested path only, which is why
 
 ## 8. The exact code swap
 
-The whole point of the fake purchase path is that this section is short.
+This section was short because a fake purchase path stood in for the store
+until the store worked. That path was deleted on 2026-09-21 (below).
 
 ### Changes
 
@@ -429,11 +430,19 @@ string** — `product.priceString` off the package. Keep the constant as the
 offline fallback, but stop preferring it. A German user seeing "$2" on a
 €-charged subscription is a 3.1.2 disclosure problem, not a cosmetic one.
 
-**Delete the fake path? No.** Keep `/api/test/subscription` and the
-`testPurchaseAllowed` flag — they are behind `areTestEndpointsEnabled()`, which
-is hard-off on production, and they are what lets `sub-flag-flip` prove the
-server rather than the client is the authority. What *should* disappear is any
-route that writes `source: 'fake'` outside the allowlisted test path.
+**The fake path is deleted (2026-09-21).** `POST /api/purchase/test`,
+`isTestPurchaseAllowed` and the `testPurchaseAllowed` payload field are gone,
+with every caller in the web app and the iOS app — ahead of the production wipe,
+after which every production row is real. (This paragraph used to say keep the
+flag; it was wrong about why — `testPurchaseAllowed` was never behind
+`areTestEndpointsEnabled()`, it was on the production entitlement payload.)
+
+What stays is `/api/test/subscription`, which IS behind
+`areTestEndpointsEnabled()` (hard-off on production) and is what
+`sub-flag-flip` and the rest of `e2e/subscriptions.spec.ts` stand on; and the
+admin test-account generator, which writes `source: 'fake'` but refuses to load
+in production (decision E13). No route in production can write
+`source: 'fake'`.
 
 ---
 

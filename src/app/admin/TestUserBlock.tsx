@@ -174,9 +174,7 @@ export default function TestUserBlock({
     return (
       <p style={{ fontSize: 12, color: 'var(--tp-subtle)', margin: 0, lineHeight: 1.5 }}>
         Set <code style={mono}>SUBSCRIPTION_TESTING=1</code> in this environment to switch this on.
-        It defaults to off, and the server refuses to create an account without it. Leave it unset
-        in production once real purchases are live — the accounts this makes carry{' '}
-        <code style={mono}>source: &apos;fake&apos;</code> subscriptions nobody paid for.
+        Production never offers it, whatever the variable says.
       </p>
     );
   }

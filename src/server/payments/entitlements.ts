@@ -353,8 +353,9 @@ export async function reactivateSubscription(
  * shape that answers "what has been done to this account", which is the
  * question actually asked when somebody writes in.
  *
- * `eventTimeMs` is our own clock, matching `PROMO_REDEEMED` and
- * `FAKE_PURCHASE` — the two other non-store rows in this table. It has a
+ * `eventTimeMs` is our own clock, matching `PROMO_REDEEMED` — the other
+ * non-store row in this table (`FAKE_PURCHASE` was the third, until the fake
+ * purchase was removed on 2026-09-21). It has a
  * consequence worth naming: `lastAppliedEventTimeMs` takes the newest applied
  * timestamp, so a store event that was delayed in flight and carries an older
  * one is ignored as stale afterwards. For a deliberate admin decision made

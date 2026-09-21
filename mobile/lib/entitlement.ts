@@ -37,19 +37,6 @@ export async function fetchEntitlement(): Promise<EntitlementPayload | null> {
 }
 
 /**
- * Grant a subscription without Apple. Allowlisted server-side; the server
- * refuses if this account is not on the list, whatever the app claims.
- *
- * Exists only because StoreKit returns an EMPTY product list until the Paid
- * Applications Agreement is active, so there is no real purchase sheet to test
- * against yet. Deleting this is the last step of the RevenueCat migration —
- * docs/design/revenuecat-implementation.md.
- */
-export async function testPurchase(productId: string): Promise<void> {
-  await apiFetch("/api/purchase/test", { method: "POST", body: { productId } });
-}
-
-/**
  * Redeem a promo code for the signed-in account.
  *
  * Throws `ApiError` on refusal; the 400 body carries `error` (server-authored
