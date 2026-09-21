@@ -592,17 +592,31 @@ Zod schema had to be taught that this one event has no `app_user_id` or it would
 have rejected every real transfer at the boundary. See `applyTransfer` in
 `webhook.ts` and the TRANSFER block in `webhook.test.ts`.
 
-**The test-purchase path is untouched and stays.** `/api/purchase/test`,
-`isTestPurchaseAllowed`, the `sam+trial-<tag>@feraltravels.com` pattern and
-`SUBSCRIPTION_TESTING=1` all still work exactly as before — the Playwright
-subscription specs run on them, and a sandbox purchase cannot replace them
-because StoreKit's sheet is system UI behind a sandbox Apple ID login that
-Playwright cannot drive.
+**The fake purchase is GONE (2026-09-21).** `POST /api/purchase/test`,
+`isTestPurchaseAllowed`, the `testPurchaseAllowed` field on
+`/api/me/entitlement`, the app's `test` purchase mode and every button that
+called the route were removed before the production database was wiped. After
+the wipe every production row is real, and the RevenueCat webhook is the only
+thing that may grant access (decisions E3, E6).
 
-In the app, `testPurchaseAllowed` **wins over the store**: an allowlisted address
-gets the fake path even with RevenueCat live, because that is what such an
-address is for. To exercise the real store, use any other address. To retire the
-path entirely, unset `SUBSCRIPTION_TESTING` — no deploy needed.
+This paragraph used to say the Playwright subscription specs "run on" that path.
+They never did: `e2e/subscriptions.spec.ts` signs in as
+`playwright-*@e2e.feraltravels.com` and writes account state through
+`/api/test/subscription` (`E2E_TEST_ENDPOINTS`, hard-off on production). It went
+15/15 before the removal and 15/15 after, against the same local server.
+
+**What remains, and cannot run in production:** the trial-state test-account
+generator (`/admin` → Test users, `npm run test-user`, `npm run trial-account`),
+still armed by `SUBSCRIPTION_TESTING=1` and still limited to
+`sam+trial-<tag>@feraltravels.com`. It writes `source: 'fake'` subscriptions, so
+`payments/testAccounts.ts` refuses to LOAD in production — `VERCEL_ENV=production`
+or a `DATABASE_URL` on the production endpoint — and the admin card is absent
+there (decision E13, `testAccountsProductionGuard.test.ts`). Use it on a preview
+or a local database.
+
+**To test a real purchase:** a TestFlight build (the production profile has the
+RevenueCat key and talks to production) with a Sandbox Apple Account — §7. Every
+account now buys from the App Store; there is no address that bypasses it.
 
 ---
 

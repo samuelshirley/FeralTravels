@@ -213,8 +213,9 @@ the store-side ones are in dependency order in `docs/design/iap-setup.md`.
       review — ON would wall every account past its trial with nothing to buy.
       To watch the wall itself work, force it onto ONE disposable account from
       `/admin/users/[id]` ("Force the paywall on this account").
-- [ ] **`SUBSCRIPTION_TESTING` UNSET on production.** It arms the fake-purchase
-      route; an allowlisted address deliberately beats the real store.
+- [x] **No fake purchase exists** (removed 2026-09-21), so no address can beat
+      the real store. `SUBSCRIPTION_TESTING` now arms only the test-account
+      generator, which refuses to load in production anyway (decision E13).
 - [ ] **A TestFlight build carrying all of it.** Build 7 (2026-08-27) was on the
       OLD Apple account and is unreachable; the first build on the new team
       (2026-09-02, buildNumber 1) is a **credentials bootstrap and must not be

@@ -48,18 +48,27 @@ anything real to buy behind it, not after.
 
 ## Apple
 
-- [ ] Paid Applications Agreement active (StoreKit returns an EMPTY product
-      list until it is — that is why `POST /api/purchase/test` exists).
+- [x] Paid Applications Agreement active (verified 2026-09-21).
 - [ ] Products created in App Store Connect: `com.feraltravels.ios.monthly`,
       `com.feraltravels.ios.annual`.
 - [ ] `NEXT_PUBLIC_APP_STORE_URL` set to the real numeric listing id. Until it
       is, every "Continue to the iPhone app" button lands on an App Store
       search page.
-- [ ] RevenueCat migration — `docs/design/revenuecat-implementation.md`. Its
-      last step is deleting `POST /api/purchase/test`.
-- [ ] `SUBSCRIPTION_TESTING` UNSET on production once real purchases work. It
-      arms the fake-purchase route and the admin test-account generator; the
-      accounts it makes carry `source: 'fake'` subscriptions nobody paid for.
+- [ ] Each subscription has a Review Information screenshot, and the app
+      record has Pricing and Availability set. Until both are done, StoreKit
+      calls both product ids invalid (`scripts/storekit-probe.sh`, iap-setup §1).
+- [x] Fake purchase deleted (2026-09-21): `POST /api/purchase/test` and every
+      caller are gone; the webhook is the only grant path.
+- [x] The test-account generator cannot run in production, whatever
+      `SUBSCRIPTION_TESTING` says — it refuses to load there (decision E13).
+      Leaving the variable set on production is now harmless, but unset it
+      anyway so the environment says what it means.
+- [ ] Production database wiped AFTER the removal is merged and deployed (a
+      deploy of the old code would repopulate `source: 'fake'` rows), then
+      `drizzle-kit push`. `scripts/db-reset.ts` refuses production without its
+      single-use override — the refusal prints how. Then confirm
+      `app_meta.paywall_enabled` is off, `appletest@feraltravels.com` signs in
+      clean, and `SELECT count(*) FROM subscriptions WHERE source = 'fake'` is 0.
 
 ### Before each submission
 
