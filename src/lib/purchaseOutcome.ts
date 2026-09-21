@@ -92,9 +92,12 @@ const FAILURE_COPY: Record<PurchaseFailureReason, string> = {
   unavailable:
     "That plan isn't available from the App Store right now. That's on us, not you — get in " +
     'touch and we\'ll sort it out.',
+  // Never "this build" or "not set up": this is reachable from Restore in a
+  // release build, and a reviewer reading that the app is unfinished is a
+  // rejection (docs/decisions.md E12, purchaseCopyGuard.test.ts).
   misconfigured:
-    "Purchasing isn't set up correctly in this build. That's our bug — please tell us and " +
-    "we'll fix it.",
+    "That didn't go through, and nothing was charged. That's our bug — email " +
+    "support@feraltravels.com and we'll fix it.",
   unknown: "That didn't go through, and nothing was charged. Try again in a moment.",
 };
 

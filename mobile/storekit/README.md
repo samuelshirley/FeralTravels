@@ -30,6 +30,32 @@ So the honest description is: this removes Apple's paperwork from the loop, and
 leaves RevenueCat's dashboard in it. Section 5 of `docs/design/iap-setup.md` is
 still required before any of this shows a price.
 
+## It tests the SHEET, not the grant (checked 2026-09-21)
+
+A purchase here does **not** produce an `applied` row in production's
+`subscription_events` as the local loop stands. Three things stop it,
+and only the third is unknown:
+
+1. **The local build has no key.** `scripts/ios-e2e-local.sh build` takes
+   `EXPO_PUBLIC_REVENUECAT_IOS_KEY` from `.env`, not from `eas.json`, and
+   neither `.env` had one, so that build renders `no_key` and never asks
+   RevenueCat. (The key in `eas.json` reaches EAS builds only.)
+2. **It is signed in to a local server.** The same script bakes
+   `EXPO_PUBLIC_API_URL=http://localhost:4310`, so the `app_user_id` the SDK
+   logs in with is a `users.id` from the throwaway database. RevenueCat
+   delivers webhooks to `www.feraltravels.com`, where that id does not exist,
+   so the best case is `ignored_unknown_user`.
+3. **RevenueCat validates an Xcode StoreKit transaction only if this file's
+   public certificate is uploaded to the app's settings in RevenueCat**
+   (Editor → Save Public Certificate, then the "StoreKit testing" upload). The
+   transaction is then treated as sandbox. RevenueCat's docs do not say
+   whether it fires webhooks for these. Nobody here has tested it.
+
+So use this file for what the sheet does: prices, cancel, Ask to Buy, the
+confirming wait. To prove the webhook grants access end to end, use a TestFlight
+build (the production profile has the key and talks to production) with a
+Sandbox Apple Account. See `docs/design/iap-setup.md` §7.
+
 ## Keeping it honest
 
 `productID` must match `PRODUCTS` in `src/server/payments/constants.ts`

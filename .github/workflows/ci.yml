@@ -227,7 +227,8 @@ jobs:
     needs: decide
     if: needs.decide.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15, not 10: two Metro bundles (the E12 check) ride along with tsc.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -241,6 +242,35 @@ jobs:
         working-directory: mobile
       - run: npx tsc --noEmit
         working-directory: mobile
+      # Decision E12: a release build must not CONTAIN the purchase sheet's
+      # developer diagnostics ("the App Store isn't offering these plans yet"
+      # read by an App Review tester is a rejection). PurchaseSheet reaches
+      # them only as `__DEV__ ? require(...) : null`, which Metro folds away in
+      # a release bundle — this proves it on the actual artifact, both ways:
+      # the dev bundle must carry the sentinel (so the grep can see it) and the
+      # release bundle must not. The positive control on the customer copy
+      # proves the release grep is reading a real bundle. Plain JS, not Hermes
+      # bytecode, because Hermes stores non-ASCII strings as UTF-16.
+      - name: Release bundle carries no purchase diagnostics
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_REVENUECAT_IOS_KEY: appl_ci_bundle_check
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/bundles"; mkdir -p "$out"
+          for dev in true false; do
+            npx expo export:embed --platform ios --dev "$dev" --minify "$([ "$dev" = false ] && echo true || echo false)" \
+              --entry-file node_modules/expo-router/entry.js \
+              --bundle-output "$out/dev-$dev.js" --assets-dest "$out/assets-$dev"
+          done
+          grep -q PURCHASE_DIAGNOSTICS_DEV_ONLY "$out/dev-true.js" \
+            || { echo "::error::dev bundle lacks the sentinel — the check below would prove nothing"; exit 1; }
+          grep -q "Restore purchases will find it" "$out/dev-false.js" \
+            || { echo "::error::release bundle lacks the customer copy — not a real bundle?"; exit 1; }
+          if grep -q PURCHASE_DIAGNOSTICS_DEV_ONLY "$out/dev-false.js"; then
+            echo "::error::the RELEASE bundle contains purchaseDiagnostics — see docs/decisions.md E12"
+            exit 1
+          fi
 
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
   preview:

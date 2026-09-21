@@ -17,6 +17,27 @@ const reversedClientId = GOOGLE_IOS_CLIENT_ID
   ? GOOGLE_IOS_CLIENT_ID.split('.').reverse().join('.')
   : null;
 
+// A build a customer or App Review can install MUST be able to sell. Without
+// the RevenueCat key the SDK is never configured, the purchase sheet can only
+// say it cannot sell, and Restore refuses too — a Guideline 2.1 rejection that
+// nothing at runtime can recover from, because the key is compiled in. So an
+// EAS build for either shipping profile refuses to START, rather than producing
+// a binary that fails in a reviewer's hands. The `appl_` test is the same one
+// `lib/config.ts` applies at runtime (a placeholder or an Android/secret key
+// counts as none). Local prebuilds and the Maestro CI build set no
+// EAS_BUILD_PROFILE and are unaffected — they have no key on purpose.
+// Decision E12 in docs/decisions.md.
+if (['preview', 'production'].includes(process.env.EAS_BUILD_PROFILE ?? '')) {
+  const key = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY?.trim() ?? '';
+  if (!key.startsWith('appl_')) {
+    throw new Error(
+      `EAS build profile "${process.env.EAS_BUILD_PROFILE}" has no RevenueCat Apple key ` +
+        '(EXPO_PUBLIC_REVENUECAT_IOS_KEY must start with appl_). This build could not sell ' +
+        'anything; set the key in mobile/eas.json and build again.'
+    );
+  }
+}
+
 module.exports = {
   expo: {
     name: 'Feral Travels',

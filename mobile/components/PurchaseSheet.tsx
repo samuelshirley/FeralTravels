@@ -25,6 +25,20 @@ import type { PurchaseFlow } from "@/lib/purchaseFlow";
 import { unavailableMessage } from "@/shared/lib/purchaseMode";
 
 /**
+ * The developer's five-way reading of an unavailable sheet — dev builds ONLY.
+ *
+ * This exact shape is load-bearing: Metro inlines `__DEV__` as `false` in a
+ * release bundle and folds the dead branch away before it collects
+ * dependencies, so the module and its sentences are not in a TestFlight or App
+ * Store binary at all. A static `import` would put them back. Held by
+ * `src/lib/purchaseCopyGuard.test.ts` and by the release-bundle check in the
+ * Mobile typecheck CI job.
+ */
+const purchaseDiagnostics: typeof import("@/shared/lib/purchaseDiagnostics") | null = __DEV__
+  ? require("@/shared/lib/purchaseDiagnostics")
+  : null;
+
+/**
  * Native mirror of src/components/PurchaseSheet.tsx — the purchase sheet, and
  * the ONLY modal in the paywall flow.
  *
@@ -180,18 +194,22 @@ export default function PurchaseSheet({
             ) : null}
 
             {/*
-              One sentence per REASON, not one for the mode. "No key in this
-              build", "the App Store returned nothing" (the agreement — see
-              iap-setup.md §1), "the store could not be reached" and "the ids
-              do not match" used to render the same line, and the line was
-              read as a UI bug when it was Apple's paperwork. The copy is in
-              `purchaseMode.ts`, where a test holds every reason to its own
-              sentence. Nothing while the store is still being asked: the
-              spinner above already says so.
+              The customer's line says what THEY can do and never why we cannot
+              sell — see `unavailableMessage`. In a dev build the reason is
+              printed beneath it, because "no key in this build", "StoreKit
+              resolved nothing" (App Store Connect) and "the ids do not match"
+              are fixed in three different places. Nothing while the store is
+              still being asked: the spinner above already says so.
             */}
             {mode === "unavailable" && unavailableReason ? (
               <Text testID="purchase-unavailable" style={styles.notWiredText}>
                 {unavailableMessage(unavailableReason)}
+              </Text>
+            ) : null}
+            {purchaseDiagnostics && mode === "unavailable" && unavailableReason ? (
+              <Text testID="purchase-unavailable-diagnostic" style={styles.devDiagnosticText}>
+                {`DEV · ${purchaseDiagnostics.PURCHASE_DIAGNOSTICS_SENTINEL}\n`}
+                {purchaseDiagnostics.unavailableDiagnostic(unavailableReason)}
               </Text>
             ) : null}
 
@@ -581,6 +599,14 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12.5,
     lineHeight: 19,
+    color: theme.muted,
+  },
+  // Dev builds only. Monospace so it reads as a log line, not as copy.
+  devDiagnosticText: {
+    marginTop: 8,
+    fontFamily: "Menlo",
+    fontSize: 11,
+    lineHeight: 16,
     color: theme.muted,
   },
 

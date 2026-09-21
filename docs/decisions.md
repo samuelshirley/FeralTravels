@@ -272,6 +272,16 @@ E11. **The `revoked` paywall copy is the one joke, and `usage_cap` never borrows
 may be reworded; "temporarily suspended" and "email support" may not. `usage_cap` fires when OUR
 costs regressed and stays apologetic. *Enforced by:* `paywallCopy.test.ts`.
 
+E12. **A release build cannot tell anyone the store is not ready.** When the purchase sheet has
+nothing to sell, the customer reads what THEY can do (`unavailableMessage`, no "yet", no "not a
+checkout", nothing about our paperwork); the five-way developer diagnosis lives in
+`purchaseDiagnostics.ts`, which the app reaches only as `__DEV__ ? require(...) : null` so Metro
+drops it from a release bundle, and `app.config.js` refuses a preview/production EAS build with
+no RevenueCat key. Added 2026-09-21 after StoreKit returned both product ids invalid and the sheet
+said so in words a reviewer would have read. *Enforced by:* `purchaseCopyGuard.test.ts`, the
+release-bundle sentinel check in the `Mobile typecheck` CI job, and the throw in
+`mobile/app.config.js`.
+
 ## F. Build, CI, deploy
 
 F1. **Merging a PR IS the deploy. The deploy job refuses unless CI for that PR's head SHA is

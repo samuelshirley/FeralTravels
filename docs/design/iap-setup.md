@@ -215,15 +215,40 @@ with no packages.
 
 **What it looks like in this app:** the purchase sheet shows the two prices —
 `$2` and `$20`, the fallback strings from `PRODUCTS` in
-`src/server/payments/constants.ts` — with **no buy button**, under the line
-*"The App Store isn't offering these plans yet — these are the prices, not a
-checkout."* That is `mode: "unavailable"` with reason `store_empty` in
-`src/lib/purchaseMode.ts` (mirrored to the app), and it is the honest rendering
-of "we asked and got nothing back". **Since 2026-09-07 each empty-sheet cause
-has its own sentence** — `no_key` (this build has no RevenueCat key),
-`store_empty` (this section), `store_error` (the store could not be reached),
-`no_match` (the ids disagree) and `no_plans` (the server's list did not load) —
-so the sentence on screen says which of §1, §5 or §2 to open.
+`src/server/payments/constants.ts` — with **no buy button**. That is
+`mode: "unavailable"` with reason `store_empty` in `src/lib/purchaseMode.ts`
+(mirrored to the app). Each empty-sheet cause has its own reason — `no_key`,
+`store_empty` (this section and §2), `store_error`, `no_match`, `no_plans` —
+but **since 2026-09-21 only a dev build says which**: the customer reads a
+neutral line ("Plans can't be bought on this device right now…"), and the
+five-way diagnosis is printed under it only when `__DEV__`, from a module a
+release bundle does not contain. The old per-reason customer copy told whoever
+opened the sheet that the App Store was not offering the plans *yet* — true, and
+a rejection the day an App Review tester reads it. Decision E12 in
+`docs/decisions.md`; `purchaseCopyGuard.test.ts` and a release-bundle check in
+CI hold it.
+
+**The fast way to ask StoreKit directly:** `scripts/storekit-probe.sh` (booted
+simulator, ~6 s). On 2026-09-21 it printed, with the Paid Apps agreement,
+banking and tax all Active:
+
+```
+RevenueCat offering "default": $rc_monthly -> com.feraltravels.ios.monthly,
+                               $rc_annual  -> com.feraltravels.ios.annual
+SK1 valid=[] invalid=["com.feraltravels.ios.annual", "com.feraltravels.ios.monthly"]
+storefront=USA
+SK2 resolved 0 of 2
+```
+
+So RevenueCat's half was right, and StoreKit's was empty: the agreement was
+no longer the blocker. What was still open in App Store Connect that day, any of
+which is sufficient: both subscriptions had **no Review Information screenshot**
+(so not Ready to Submit — §2), and the app record had **no Pricing and
+Availability** at all. RevenueCat's missing App Store Connect API key was ruled
+out: it only drives the dashboard's "Could not check" product status, and the
+SDK's product lookup never touches it. The simulator's negative is weaker than a
+positive (see the next paragraph), so once both are fixed, re-run the probe and,
+if it still says invalid, a TestFlight build on a device is the arbiter.
 
 **What the console says** (this IS in a log, contrary to what this paragraph
 used to claim): RevenueCat does not return an empty offering when StoreKit

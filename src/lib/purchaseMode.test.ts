@@ -132,10 +132,20 @@ describe('unavailableMessage', () => {
     'no_plans',
   ];
 
-  it('has one sentence per reason, sharing no string', () => {
-    const messages = REASONS.map(unavailableMessage);
-    expect(new Set(messages).size).toBe(REASONS.length);
-    for (const m of messages) expect(m.length).toBeGreaterThan(40);
+  it('says something substantive for every reason', () => {
+    for (const reason of REASONS) expect(unavailableMessage(reason).length).toBeGreaterThan(40);
+  });
+
+  it('gives our own configuration failures ONE line, so the customer is not handed our diagnosis', () => {
+    // store_empty and no_match differ only in which of OUR dashboards is
+    // wrong. The five-way split is purchaseDiagnostics.ts, for dev builds.
+    expect(unavailableMessage('store_empty')).toBe(unavailableMessage('no_match'));
+  });
+
+  it('tells the reader to retry only when retrying can help', () => {
+    expect(unavailableMessage('store_error')).toMatch(/Try again/);
+    expect(unavailableMessage('no_plans')).toMatch(/reopen/);
+    expect(unavailableMessage('store_empty')).not.toMatch(/try again|reopen/i);
   });
 
   it('every reason but no_key points a payer at Restore', () => {
@@ -144,17 +154,11 @@ describe('unavailableMessage', () => {
       if (reason === 'no_key') {
         // The SDK was never configured, so `restore()` refuses too. Promising
         // it would work is a lie to exactly the person who paid.
-        expect(m).not.toMatch(/Restore purchases/);
-        expect(m).toMatch(/restored/);
+        expect(m).not.toMatch(/Restore/);
+        expect(m).toMatch(/support@feraltravels\.com/);
       } else {
         expect(m).toMatch(/Restore purchases/);
       }
-    }
-  });
-
-  it('every reason says these are prices and not a checkout, or that nothing can be bought', () => {
-    for (const reason of REASONS) {
-      expect(unavailableMessage(reason)).toMatch(/not a checkout|can be bought|reopen/);
     }
   });
 });
