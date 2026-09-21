@@ -150,7 +150,7 @@ api/webhooks/revenuecat
 **`api/test/*` are TEST-ONLY** (fixture DATA only), backed by
 `repos/testSupport.ts` — see the E2E auth note below for the three guards.
 
-### Schema (32 tables in `src/server/db/schema.ts`)
+### Schema (33 tables in `src/server/db/schema.ts`)
 
 Migration history, reasoning and traps: **`docs/design/schema.md`**. Read it
 before touching these — several carry non-obvious contracts (account deletion's
@@ -161,7 +161,7 @@ vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops,
 tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements,
 announcementDismissals, pennyTurns, deletedUsers, subscriptions,
 subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
-ipRequestCounters
+ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
 `trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`,
@@ -170,7 +170,7 @@ ipRequestCounters
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, testSupport (test-only)
+announcements, pennyTurns, accountDeletion, oauthJwks, testSupport (test-only)
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
@@ -284,7 +284,8 @@ The incident behind each — the part that stops it being re-broken — is in
 - **A database failure is not a sign-out.** `auth()` wraps Auth.js to tell
   "signed out" apart from "the session store is down", which is **503, never
   401** — `mobile/lib/api.ts` clears the keychain on 401. `rawAuth` belongs to
-  `/login` and `/login/verify` only.
+  `/login` and `/login/verify` only. Likewise, OAuth provider keys that cannot be
+  fetched are 503 `ProviderUnavailable`, never 401 `InvalidToken`.
 - **A server module never CALLS a value imported from a `'use client'` module** —
   rendering a client component is fine, calling one of its plain exports throws
   at render and is invisible to `tsc` (`serverClientBoundaryGuard.test.ts`).

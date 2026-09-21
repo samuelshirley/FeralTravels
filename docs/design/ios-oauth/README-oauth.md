@@ -157,4 +157,5 @@ If the button is there but the tap fails:
 | Browser opens, never returns | reversed-client-id URL scheme missing → `expo prebuild --clean` |
 | 401 `InvalidToken` | server `AUTH_GOOGLE_IOS_CLIENT_ID` ≠ the client the app used |
 | 503 `ProviderNotConfigured` | server `AUTH_GOOGLE_IOS_CLIENT_ID` unset on that deployment |
+| 503 `ProviderUnavailable` | the server could not get the provider's signing keys (live fetch failed after retries, no persisted set younger than 72h) — the token was never examined. The app retries this silently twice before showing it. The upstream status is in the Vercel log line `ProviderUnavailable (...)`; `src/server/auth/jwksSource.ts` |
 | 401 `EmailNotVerified` | the Google account's address is genuinely unverified |

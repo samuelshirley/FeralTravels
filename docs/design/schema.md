@@ -8,9 +8,11 @@ The authoritative list of tables is `src/server/db/schema.ts`. `CLAUDE.md` carri
 the table NAMES; this file carries the reasoning, the migration history and the
 traps that go with them.
 
-### Schema (32 tables in `src/server/db/schema.ts`)
+### Schema (33 tables in `src/server/db/schema.ts`)
 
-users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts, ipRequestCounters
+users, accounts, sessions, verificationTokens, emailOtpCodes, oauthTokenUses, vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops, tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements, announcementDismissals, pennyTurns, deletedUsers, subscriptions, subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts, ipRequestCounters, oauthProviderKeys
+
+**`oauth_provider_keys` (migration 0041, 2026-09-21):** one row per OAuth provider (`google`, `apple`) holding the last JWKS that provider served (`jwks`, verbatim) and when it was fetched live (`fetched_at`). It is the fallback the native exchange (`src/server/auth/jwksSource.ts`) verifies against when a live key fetch fails, and it exists because Apple's `/auth/keys` answered 404 to about one request in five on 2026-09-21 while every cold start began with an empty in-memory cache. **Trust:** public keys only, nothing secret — but whoever can write the row chooses what sign-ins are checked against, so it is written in exactly one place (`repos/oauthJwks.ts`, after a successful live fetch, and only forwards in time: an older set never overwrites a newer one) and honoured only while younger than `MAX_STALE_MS` (72h — the reasoning is on the constant). Not user data: account deletion has nothing to do here.
 
 **`subscriptions.pre_revoke_status` (migration 0040, 2026-09-10):** one nullable text column — the status a row held at the moment an admin revoked it, plus the sentinel `'none'` meaning there was no row at all. Column add only; table count unchanged. It exists because `revokeSubscription` overwrites `status` IN PLACE, so without it the previous state is destroyed by the write and the undo has nothing to restore. Written by the revoke (through a `CASE` in the `ON CONFLICT DO UPDATE`, so a double-revoke never records `'revoked'` over the real answer), consumed and cleared by `reactivateSubscription`. See the "A revoke is undoable" note under Subscriptions for the whole design.
 

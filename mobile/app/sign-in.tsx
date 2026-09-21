@@ -119,6 +119,11 @@ const OAUTH_ERROR_COPY: Record<string, string> = {
   TokenAlreadyUsed:
     "That sign-in has already been used. Tap the button again to start a fresh one.",
   RateLimited: "Too many sign-in attempts just now. Please wait a minute and try again.",
+  // Reached only after the app has already retried quietly (lib/oauth.ts):
+  // the server could not get the provider's keys, so it never looked at the
+  // sign-in. Say whose fault it is — not the user's.
+  ProviderUnavailable:
+    "The sign-in service isn't responding right now, so we couldn't check your sign-in. Nothing is wrong with your account. Please try again in a minute, or use your email to get a code.",
 };
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";

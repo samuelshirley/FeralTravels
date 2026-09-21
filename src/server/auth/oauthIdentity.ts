@@ -1,8 +1,9 @@
 import 'server-only';
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
 import { HttpError, UnauthorizedError } from './errors';
+import { createKeySource, KeysUnavailableError, type KeySource } from './jwksSource';
 
 /**
  * Verification of native (iOS) OAuth identity tokens.
@@ -17,13 +18,16 @@ import { HttpError, UnauthorizedError } from './errors';
  */
 
 /**
- * `createRemoteJWKSet` at module scope on purpose: it caches the key set and
- * refetches on rotation, so this costs one network round trip per cold start
- * rather than one per sign-in — and it survives Google's and Apple's periodic
- * key rollover without a deploy.
+ * At module scope on purpose: each source keeps its key set in memory between
+ * sign-ins on a warm instance. What it does when the provider's key endpoint
+ * fails — retry, fall back to a persisted set, or report the provider
+ * unavailable — is in jwksSource.ts, and why it had to exist is Apple's
+ * 2026-09-21 run of 404s.
  */
-const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
-const APPLE_JWKS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
+const KEY_SOURCES: Record<OAuthProvider, KeySource> = {
+  google: createKeySource('google', 'https://www.googleapis.com/oauth2/v3/certs'),
+  apple: createKeySource('apple', 'https://appleid.apple.com/auth/keys'),
+};
 
 /** Google issues `iss` in both forms depending on the client. Both are valid. */
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
@@ -66,28 +70,35 @@ function expiryFrom(payload: JWTPayload): Date {
   return new Date(payload.exp * 1000);
 }
 
-/** Deps seam so the tests can inject a verifier instead of hitting the network. */
+/** Deps seam so the tests can inject a verifier and a key source instead of hitting the network. */
 export interface VerifyDeps {
   verify?: (
     token: string,
-    jwks: ReturnType<typeof createRemoteJWKSet>,
+    keys: JWTVerifyGetKey,
     options: { issuer: string | string[]; audience: string; clockTolerance: number }
   ) => Promise<{ payload: JWTPayload }>;
+  keySource?: (provider: OAuthProvider) => KeySource;
 }
 
-const defaultVerify: NonNullable<VerifyDeps['verify']> = (token, jwks, options) =>
-  jwtVerify(token, jwks, options);
+const defaultVerify: NonNullable<VerifyDeps['verify']> = (token, keys, options) =>
+  jwtVerify(token, keys, options);
 
 /**
  * Why verification failed — to the SERVER LOG only.
  *
- * The client answer stays a flat `InvalidToken` on purpose: jose distinguishes
- * "no matching key" from "bad signature" from "expired", and handing that
- * difference to a caller probing the endpoint is an oracle. But flattening it
- * in the logs too means an outage and an attack look identical. A JWKS fetch
- * that never completes (`ERR_JWKS_TIMEOUT`, a DNS failure) breaks EVERY real
- * sign-in while the e2e suite stays green, because a forged token and an
- * unreachable provider both end here.
+ * The client answer stays a flat `InvalidToken` for everything that depends on
+ * the token: jose distinguishes "no matching key" from "bad signature" from
+ * "expired", and handing that difference to a caller probing the endpoint is
+ * an oracle.
+ *
+ * What is NOT in this bucket any more is "we could not get the provider's keys
+ * at all". That used to end here too, as a 401 `InvalidToken` — so on
+ * 2026-09-21, when Apple's key endpoint was 404ing one request in five, real
+ * sign-ins were told their sign-in "didn't check out" while
+ * e2e/oauth-exchange.spec.ts passed, because a forged token and an unreachable
+ * provider produced byte-identical answers. `keysFor` below now decides that
+ * case BEFORE the token is read and answers 503 `ProviderUnavailable`, which
+ * says nothing about the token and so is not an oracle.
  *
  * Codes only. Never the token — it is a live bearer credential — and never the
  * payload.
@@ -95,7 +106,26 @@ const defaultVerify: NonNullable<VerifyDeps['verify']> = (token, jwks, options) 
 function logVerificationFailure(provider: OAuthProvider, err: unknown): void {
   const code = (err as { code?: unknown } | null)?.code;
   const name = err instanceof Error ? err.name : typeof err;
-  console.error(`[oauth] ${provider} id-token verification failed: ${String(code ?? name)}`);
+  const detail = name === 'LiveFetchFailed' && err instanceof Error ? ` (${err.message})` : '';
+  console.error(`[oauth] ${provider} id-token verification failed: ${String(code ?? name)}${detail}`);
+}
+
+/**
+ * The provider's keys, or 503 `ProviderUnavailable` — decided before a single
+ * byte of the token is looked at, so the answer is the same for a real token,
+ * a forged one and an empty string. The upstream status goes to the log; the
+ * client gets only the code.
+ */
+async function keysFor(provider: OAuthProvider, deps: VerifyDeps): Promise<JWTVerifyGetKey> {
+  try {
+    return await (deps.keySource?.(provider) ?? KEY_SOURCES[provider]).keys();
+  } catch (err) {
+    if (!(err instanceof KeysUnavailableError)) throw err;
+    console.error(
+      `[oauth] ${provider} id-token verification failed: ProviderUnavailable (${err.upstream})`
+    );
+    throw new HttpError(503, 'ProviderUnavailable');
+  }
 }
 
 function claimString(payload: JWTPayload, key: string): string | null {
@@ -117,12 +147,14 @@ async function verifyGoogle(idToken: string, deps: VerifyDeps): Promise<Verified
     throw new HttpError(503, 'ProviderNotConfigured');
   }
 
+  const keys = await keysFor('google', deps);
+
   let payload: JWTPayload;
   try {
     // jwtVerify enforces the signature plus `exp` / `nbf`; issuer and audience
     // are checked here rather than after the fact, so a bad token never
     // reaches the claim-reading code below.
-    ({ payload } = await (deps.verify ?? defaultVerify)(idToken, GOOGLE_JWKS, {
+    ({ payload } = await (deps.verify ?? defaultVerify)(idToken, keys, {
       issuer: GOOGLE_ISSUERS,
       audience,
       clockTolerance: 5,
@@ -165,9 +197,11 @@ async function verifyApple(
   fullName: string | null | undefined,
   deps: VerifyDeps
 ): Promise<VerifiedIdentity> {
+  const keys = await keysFor('apple', deps);
+
   let payload: JWTPayload;
   try {
-    ({ payload } = await (deps.verify ?? defaultVerify)(idToken, APPLE_JWKS, {
+    ({ payload } = await (deps.verify ?? defaultVerify)(idToken, keys, {
       issuer: APPLE_ISSUER,
       audience: APPLE_AUDIENCE,
       clockTolerance: 5,

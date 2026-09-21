@@ -87,6 +87,10 @@ export const SHARED_FILES = [
   ['src/lib/onboardingPhase.ts', 'mobile/shared/lib/onboardingPhase.ts'],
   ['src/lib/planningCaption.ts', 'mobile/shared/lib/planningCaption.ts'],
   ['src/lib/planReady.ts', 'mobile/shared/lib/planReady.ts'],
+  // The OAuth exchange's silent-retry policy and the `ProviderUnavailable`
+  // code it keys on: the app decides when to ask again, but the test that
+  // pins that decision lives here.
+  ['src/lib/oauthExchangeRetry.ts', 'mobile/shared/lib/oauthExchangeRetry.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {
