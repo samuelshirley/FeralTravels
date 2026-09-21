@@ -73,21 +73,3 @@ export function paywallCopy(verdict: AccountVerdict): PaywallCopy | null {
       };
   }
 }
-
-/**
- * The line prepended to Penny's onboarding greeting for a user still in trial.
- *
- * Prepended rather than baked into the greeting so a paid-up user never
- * reads about a trial they are not on, and so the greeting itself stays one
- * string with one owner in `src/server/onboarding.ts`.
- */
-export function trialWelcomeLine(daysRemaining: number): string {
-  if (daysRemaining <= 0) return '';
-  if (daysRemaining === 1) return 'Welcome — this is the last day of your free trial.';
-  return `Welcome to your ${spell(daysRemaining)}-day free trial.`;
-}
-
-function spell(n: number): string {
-  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
-  return words[n] ?? String(n);
-}

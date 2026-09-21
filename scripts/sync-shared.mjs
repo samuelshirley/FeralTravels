@@ -78,9 +78,10 @@ export const SHARED_FILES = [
   // BECAUSE they read the same constant; the date step once drew three chips
   // that did nothing because the two lists were spelled out separately.
   ['src/lib/onboardingForm.ts', 'mobile/shared/lib/onboardingForm.ts'],
-  // Setup's phase: both panels gate the first-run screen through it, so they
-  // cannot disagree about when START HERE may show.
+  // Setup's phase and the planning caption: both panels gate the first-run
+  // screen and word the trial line through these, so they cannot disagree.
   ['src/lib/onboardingPhase.ts', 'mobile/shared/lib/onboardingPhase.ts'],
+  ['src/lib/planningCaption.ts', 'mobile/shared/lib/planningCaption.ts'],
   ['src/lib/planReady.ts', 'mobile/shared/lib/planReady.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.

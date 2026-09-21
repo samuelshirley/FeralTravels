@@ -52,6 +52,7 @@ import {
   type QuestionKind,
 } from '@/lib/onboardingForm';
 import { onboardingPhase as deriveOnboardingPhase } from '@/lib/onboardingPhase';
+import { planningCaption } from '@/lib/planningCaption';
 import { CalendarBlank, ListBullets, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
 
 /**
@@ -118,9 +119,6 @@ function makeIdempotencyKey(): string {
   }
   return `k-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
-
-/** Caption Penny "sends" alongside the dog-fetch clip on the first full build. */
-const PLANNING_VIDEO_COPY = 'Give me a sec — mapping your route and finding fuel…';
 
 /**
  * Stable id for the paywall bubble appended on mount, so a re-run of the
@@ -1392,7 +1390,8 @@ export default function ChatPanel({
             id: `penny-video-${Date.now() + 2}`,
             trip_id: tripId,
             role: 'assistant',
-            content: PLANNING_VIDEO_COPY,
+            // Carries the trial line for a user on one — see planningCaption.
+            content: planningCaption(entitlement),
             kind: 'ai',
             changes_made: null,
             created_at: new Date().toISOString(),

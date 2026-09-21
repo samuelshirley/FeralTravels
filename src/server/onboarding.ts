@@ -37,8 +37,6 @@ import {
   type AnsweredQuestionShape,
 } from '@/lib/onboardingForm';
 import { computeOnboardingProgress } from '@/lib/onboardingProgress';
-import { getAccountVerdict, trialDaysRemaining } from '@/server/payments';
-import { trialWelcomeLine } from '@/server/payments/copy';
 import {
   buildVehicleProfileQuestions,
   coerceVehicleProfileValue,
@@ -601,41 +599,6 @@ export const UNITS_QUESTION: Question = {
 // ---------------------------------------------------------------------------
 
 /**
- * Prepend the trial line to Penny's greeting, for users actually on a trial.
- *
- * The trial is announced by Penny, in the first thing she says, and nowhere
- * else — there is no welcome modal and no banner. A user who has already
- * subscribed, or who is comped, must never read about a trial they are not on,
- * which is why this asks the entitlement module rather than checking an age.
- *
- * Deliberately NOT baked into `TRIP_INTENT_QUESTION`: that constant is what
- * `writeQA` persists into `chat_history` when the user answers, and a
- * transcript that says "welcome to your seven-day free trial" forever, on a
- * trip they open two years later, would be a small lie of the kind this
- * codebase has had to go back and fix before. The greeting is the durable
- * thing; the trial line is true only right now.
- */
-async function withTrialWelcome(question: Question, userId: string): Promise<Question> {
-  try {
-    const verdict = await getAccountVerdict(userId);
-    if (verdict.state !== 'trial') return question;
-    const line = trialWelcomeLine(trialDaysRemaining(new Date(), addDays(verdict.trialEndsAt, -7)));
-    if (!line) return question;
-    return { ...question, label: `${line} ${question.label}` };
-  } catch {
-    // The greeting must render even if the entitlement lookup fails. A user
-    // who cannot be told about their trial is a worse outcome than a user who
-    // is not told about it.
-    return question;
-  }
-}
-
-function addDays(d: Date | null, n: number): Date {
-  const base = d ?? new Date();
-  return new Date(base.getTime() + n * 24 * 60 * 60 * 1000);
-}
-
-/**
  * The step counter for one screen. ONE derivation, shared by the snapshot and
  * submit paths — it used to be computed in three places from
  * `2 + units + vehicleQuestions.length`, and each lied differently (see
@@ -703,7 +666,7 @@ export async function getOnboardingSnapshot(
   if (state === 'trip_intent') {
     return {
       state: 'trip_intent',
-      question: await withTrialWelcome(TRIP_INTENT_QUESTION, userId),
+      question: TRIP_INTENT_QUESTION,
       vehicles: [],
       progress: await progressFor(tripId, userId, state, scan),
     };

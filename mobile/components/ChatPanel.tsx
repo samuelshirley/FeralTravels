@@ -51,6 +51,7 @@ import {
   locksComposer,
 } from "@/shared/lib/onboardingForm";
 import { onboardingPhase as deriveOnboardingPhase } from "@/shared/lib/onboardingPhase";
+import { planningCaption } from "@/shared/lib/planningCaption";
 import {
   planReadyText,
   planReadyBodyParagraphs,
@@ -113,15 +114,6 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** Canned prompt behind the truncated-plan card's "Continue planning" button. */
 const CONTINUE_PROMPT =
   "Continue planning the trip from where you left off. Add the remaining legs.";
-
-/**
- * Caption Penny "sends" alongside the dog-fetch clip on the first full build.
- * Same string as the web's PLANNING_VIDEO_COPY. Until 2026-09-04 the native
- * app sent the caption ALONE — the clip had never been ported, so the one
- * turn we know will be long got a sentence where the web got a video. The
- * clip is now bundled (mobile/assets) and rendered by chat/PennyPlanningVideo.
- */
-const PLANNING_VIDEO_COPY = "Give me a sec — mapping your route and finding fuel…";
 
 /** An optimistic form row (question, answer or Penny's deterministic note). */
 /**
@@ -1023,7 +1015,9 @@ export default function ChatPanel({
             id: `penny-planning-${Date.now() + 2}`,
             trip_id: tripId,
             role: "assistant",
-            content: PLANNING_VIDEO_COPY,
+            // The caption with the dog-fetch clip (chat/PennyPlanningVideo). Shared
+            // with the web, and carries the trial line — see planningCaption.
+            content: planningCaption(entitlement),
             kind: "ai",
             changes_made: null,
             created_at: new Date().toISOString(),
