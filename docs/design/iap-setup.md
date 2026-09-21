@@ -175,7 +175,7 @@ with nothing in any log to tell you why.
 | 5 | `EXPO_PUBLIC_REVENUECAT_IOS_KEY` in `mobile/eas.json` | The app talking to RevenueCat | you |
 | 6 | Webhook URL + `REVENUECAT_WEBHOOK_SECRET` in Vercel | Access ever being granted | you |
 | 7 | Sandbox Apple Account | Testing renewal and expiry | you |
-| 8 | `PAYWALL_ENABLED=1` | Any of it mattering | you, **last** |
+| 8 | Global paywall switch ON — the pill in the `/admin` header | Any of it mattering | you, **last, and not during review** |
 
 ---
 
@@ -528,7 +528,21 @@ to lose 362 days they paid for.
 
 ---
 
-## 8. `PAYWALL_ENABLED=1` — last, and only when all of the above is true
+## 8. The global paywall switch — last, after review, and only when all of the above is true
+
+The switch is the `app_meta.paywall_enabled` row, flipped with the `PAYWALL
+ON/OFF` pill in the `/admin` header (`POST /api/admin/paywall`, confirmed inline,
+logged to `usage_events` with who pressed it). It is not an env var:
+`PAYWALL_ENABLED` has not been read since 2026-09-02, and setting it in Vercel
+does nothing.
+
+**It stays OFF while the iOS build is in review.** The web app is the demo
+during review, and enforcement would wall every account past its trial with
+nothing to buy. The reviewer does not need it: they are inside a seven-day trial
+and reach the purchase sheet through Settings → Plan → View plans in every
+account state. To watch the wall itself work, force it onto ONE disposable
+account from `/admin/users/[id]` ("Force the paywall on this account") — that is
+the intended mechanism until launch.
 
 See "What has to be true before the paywall goes on" below. Nothing before this
 step blocks anybody; this step blocks everybody it applies to.
@@ -567,13 +581,13 @@ path entirely, unset `SUBSCRIPTION_TESTING` — no deploy needed.
 
 ---
 
-## What has to be true before `PAYWALL_ENABLED=1` on production
+## What has to be true before the paywall goes on
 
 The switch is off by default and that default is load-bearing: merging the
 paywall PR once blocked 28 of 29 production accounts in the same instant, none of
 whom had been told a trial existed and none of whom had any way to pay. Turning
-it on is an env change, not a deploy, and it is reversible with no state to
-repair — but it is the moment every one of the following stops being theoretical.
+it on is one confirmed press in `/admin`, not a deploy, and it is reversible with
+no state to repair — but it is the moment every one of the following stops being theoretical.
 
 **All of these, together:**
 
@@ -608,7 +622,7 @@ repair — but it is the moment every one of the following stops being theoretic
    `support@feraltravels.com` with nothing to buy. If nobody is reading that
    inbox, the paywall has a dead end in it.
 
-**And know what the switch does NOT cover.** `PAYWALL_ENABLED` gates
+**And know what the switch does NOT cover.** `app_meta.paywall_enabled` gates
 *enforcement*, everywhere — web, iOS and Penny — through `applySwitch` in
 `entitlements.ts`. It does not stop the trial clock, the usage metering or the
 state machine, all of which keep running and stay truthful, so `/admin` shows who

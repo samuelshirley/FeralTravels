@@ -333,16 +333,19 @@ done, so this section states what is checkable today.
    dependency audit went past `node_modules` into a real `pod install`; answer
    from the table, not from memory.
 
-7. **`PAYWALL_ENABLED=1` on production.** Strictly speaking the app is
-   submittable without it — the purchase is still findable (Settings → Plan →
-   View plans) and still completes — so this is not a hard blocker the way the
-   agreement is. But leave it off and a reviewer buys a subscription that
-   visibly changes nothing, because they were already entitled, which invites
-   exactly the "what is this purchase for" question you do not want asked.
-   `docs/design/ios-review-notes.md` §4 lists it as required for that reason and
-   that is the position to work to.
+7. **The global paywall switch stays OFF through review.** It is the
+   `app_meta.paywall_enabled` row, flipped from the `PAYWALL ON/OFF` pill in the
+   `/admin` header — not an env var; `PAYWALL_ENABLED` has not been read since
+   2026-09-02. The app is submittable with it off: the purchase is still
+   findable (Settings → Plan → View plans) and still completes. The cost,
+   accepted: a reviewer inside their trial buys a subscription that visibly
+   changes nothing, because they were already entitled. The alternative is
+   worse — the web app is the demo while the build is in review, and turning
+   enforcement on would wall every account past its trial with nothing to buy.
+   To see the wall work, force it onto one disposable account from
+   `/admin/users/[id]`. `docs/design/ios-review-notes.md` §4 says the same.
 
-   Its preconditions are at the end of `docs/design/iap-setup.md`. The one that
+   Its preconditions for after review are at the end of `docs/design/iap-setup.md`. The one that
    is not negotiable: do not flip it before a build containing the purchase
    sheet is what testers actually have. A blocked user on an older binary has no
    way to pay, and an OTA cannot deliver the sheet.
