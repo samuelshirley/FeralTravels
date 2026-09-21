@@ -59,7 +59,7 @@ const REQUIRED = [
  * project — DATABASE_URL especially, which must point at the PR's ephemeral
  * Neon branch and never at the project default.
  */
-const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET', 'PAYWALL_ENABLED', 'WEB_APP_ENABLED'];
+const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET', 'WEB_APP_ENABLED'];
 
 /**
  * Nothing is forbidden on preview any more.
