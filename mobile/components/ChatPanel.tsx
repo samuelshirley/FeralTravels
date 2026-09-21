@@ -50,6 +50,7 @@ import {
   isTapToAnswerKind,
   locksComposer,
 } from "@/shared/lib/onboardingForm";
+import { onboardingPhase as deriveOnboardingPhase } from "@/shared/lib/onboardingPhase";
 import {
   planReadyText,
   planReadyBodyParagraphs,
@@ -419,6 +420,8 @@ export default function ChatPanel({
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  /** Bumped by the load-error state's Try again, to re-run the snapshot fetch. */
+  const [onboardingAttempt, setOnboardingAttempt] = useState(0);
 
   /** Queue of messages sent while Penny is thinking — drained one at a time. */
   const messageQueueRef = useRef<Array<{ text: string; images: AttachedImage[]; msgId: string }>>(
@@ -437,11 +440,21 @@ export default function ChatPanel({
   /** False after unmount — an unmount-cancelled stream is not a real failure. */
   const mounted = useRef(true);
 
-  const onboardingUiActive =
-    isOnboarding && onboardingSnapshot !== null && onboardingSnapshot.state !== "done";
-  const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
+  /*
+   * ONE value for where setup is — see shared/lib/onboardingPhase. Anything
+   * that means "not in setup" says `onboardingPhase === "off"`; negating
+   * `onboardingUiActive` also matches "loading", which is how the first-run
+   * chat painted START HERE over itself in TestFlight build 8. Mirrors the web;
+   * src/lib/onboardingPhaseGuard.test.ts holds both panels to it.
+   */
+  const onboardingPhase = deriveOnboardingPhase({
+    isOnboarding,
+    snapshot: onboardingSnapshot,
+    error: onboardingError,
+  });
+  const onboardingUiActive = onboardingPhase === "active";
   const onboardingQuestion: OnboardingQuestion | null = onboardingUiActive
-    ? onboardingSnapshot.question
+    ? (onboardingSnapshot?.question ?? null)
     : null;
   /*
    * 'vehicle' locks the composer alongside 'select', and for a stronger
@@ -614,7 +627,18 @@ export default function ChatPanel({
    * a strip saying READY while three dots bounced would be worse than no
    * strip at all. Mirrors src/components/ChatPanel.tsx.
    */
-  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
+  /*
+   * Setup owes the transcript a question it has not drawn yet: the snapshot is
+   * still in flight, or it has landed and its bubble has not. The typing
+   * bubble fills that window so the first-run pane is never empty. Mirrors
+   * the web.
+   */
+  const lastSetupQuestion = [...messages].reverse().find((m) => m.kind === "form_question");
+  const setupQuestionPending =
+    onboardingPhase === "loading" ||
+    (onboardingQuestion !== null && lastSetupQuestion?.content !== onboardingQuestion.label);
+  const pennyThinking =
+    introTyping || replanWaiting || setupQuestionPending || !!pennyStreamingText;
 
   // ── applying / healing a turn ───────────────────────────────────────────
 
@@ -1232,7 +1256,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [api, isOnboarding]);
+  }, [api, isOnboarding, onboardingAttempt]);
 
   // Typing animation before each onboarding question, then the question lands
   // as a Penny bubble — so trip setup reads like a conversation, not a form.
@@ -1267,11 +1291,17 @@ export default function ChatPanel({
       });
     };
 
-    // The first question follows the longer greeting, so it gets 3s; every
-    // later one gets 2s.
+    // The first question is the first-run screen's headline, not a reply, so
+    // it lands the moment the snapshot does — the typing bubble has already
+    // covered the fetch (`setupQuestionPending`). Every later question keeps a
+    // 2s beat, which is what makes setup read as a conversation. Mirrors web.
     const isFirstQuestion =
       onboardingSnapshot.state === "trip_intent" && messagesRef.current.length === 0;
-    const delay = isFirstQuestion ? 3000 : 2000;
+    if (isFirstQuestion) {
+      addQuestionBubble();
+      return;
+    }
+    const delay = 2000;
     setIntroTyping(true);
     const timer = setTimeout(() => {
       setIntroTyping(false);
@@ -1895,7 +1925,7 @@ export default function ChatPanel({
           The rows PREFILL the composer and focus it rather than sending: the
           examples are shapes to edit, not messages anyone wants verbatim.
         */}
-        {messages.length === 0 && !onboardingUiActive ? (
+        {messages.length === 0 && onboardingPhase === "off" ? (
           <View style={styles.starterBlock}>
             <Text style={styles.starterKicker}>START HERE</Text>
             <Text style={styles.starterHeadline}>
@@ -1913,6 +1943,24 @@ export default function ChatPanel({
                 <Text style={styles.starterText}>&ldquo;{starter}&rdquo;</Text>
               </Pressable>
             ))}
+          </View>
+        ) : null}
+
+        {/* The setup snapshot failed to load: say so and offer the retry,
+            rather than leaving START HERE standing. Mirrors the web. */}
+        {onboardingPhase === "error" ? (
+          <View testID="onboarding-load-error" style={styles.setupError}>
+            <Text style={styles.setupErrorText}>Couldn&apos;t load trip setup.</Text>
+            {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
+            <Pressable
+              onPress={() => {
+                setOnboardingError(null);
+                setOnboardingAttempt((n) => n + 1);
+              }}
+              style={styles.setupRetry}
+            >
+              <Text style={styles.starterText}>Try again</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -2209,7 +2257,7 @@ export default function ChatPanel({
         {/* Shown when Penny has "read" the message but hasn't started
             responding, and during the typing animation before each onboarding
             question. */}
-        {introTyping || replanWaiting ? <TypingBubble /> : null}
+        {introTyping || replanWaiting || setupQuestionPending ? <TypingBubble /> : null}
       </ScrollView>
 
       {/* Attachment thumbnails */}
@@ -2237,7 +2285,7 @@ export default function ChatPanel({
             Demo trip — clone it from the trips list to chat with Penny.
           </Text>
         </View>
-      ) : onboardingBlockingLoad ? (
+      ) : onboardingPhase === "loading" ? (
         <View style={styles.setupLoading}>
           <Spinner />
           <Text style={styles.setupLoadingText}>Loading setup…</Text>
@@ -2246,7 +2294,9 @@ export default function ChatPanel({
         <>
 
           <View testID="chat-composer" style={styles.composerWrap}>
-            {onboardingError ? <Text style={styles.composerError}>{onboardingError}</Text> : null}
+            {onboardingError && onboardingPhase !== "error" ? (
+              <Text style={styles.composerError}>{onboardingError}</Text>
+            ) : null}
             <View style={styles.composer}>
               {attachImagesAllowed ? (
                 <Pressable
@@ -2578,6 +2628,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  setupError: { paddingBottom: 12, gap: 8, alignItems: "flex-start" },
+  setupErrorText: { fontFamily: font.regular, fontSize: 14, color: theme.text },
+  setupRetry: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.borderStrong,
+    borderRadius: theme.radiusMd,
+    backgroundColor: theme.surface,
   },
   setupLoadingText: { fontFamily: font.regular, color: theme.muted, fontSize: 13 },
 

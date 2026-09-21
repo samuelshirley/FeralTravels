@@ -51,6 +51,7 @@ import {
   locksComposer,
   type QuestionKind,
 } from '@/lib/onboardingForm';
+import { onboardingPhase as deriveOnboardingPhase } from '@/lib/onboardingPhase';
 import { CalendarBlank, ListBullets, MagicWand, MapPinSimpleArea } from '@phosphor-icons/react/dist/ssr';
 
 /**
@@ -537,6 +538,8 @@ export default function ChatPanel({
   const [onboardingLoading, setOnboardingLoading] = useState(isOnboarding);
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  /** Bumped by the load-error state's Try again, to re-run the snapshot fetch. */
+  const [onboardingAttempt, setOnboardingAttempt] = useState(0);
   /*
    * The composite vehicle card owns its own two fields rather than borrowing
    * the composer. It has to: the composer is ONE input and this step has two
@@ -545,12 +548,19 @@ export default function ChatPanel({
    */
   const [vehicleName, setVehicleName] = useState('');
   const [vehicleRange, setVehicleRange] = useState('');
-  const onboardingUiActive =
-    isOnboarding &&
-    onboardingSnapshot !== null &&
-    onboardingSnapshot.state !== 'done';
-  const onboardingBlockingLoad = isOnboarding && onboardingLoading && !onboardingSnapshot;
-  const onboardingQuestion = onboardingUiActive ? onboardingSnapshot.question : null;
+  /*
+   * ONE value for where setup is — see `src/lib/onboardingPhase.ts`. Anything
+   * that means "not in setup" says `onboardingPhase === 'off'`; negating
+   * `onboardingUiActive` also matches `'loading'`, which is how the first-run
+   * chat painted START HERE over itself (onboardingPhaseGuard.test.ts).
+   */
+  const onboardingPhase = deriveOnboardingPhase({
+    isOnboarding,
+    snapshot: onboardingSnapshot,
+    error: onboardingError,
+  });
+  const onboardingUiActive = onboardingPhase === 'active';
+  const onboardingQuestion = onboardingUiActive ? onboardingSnapshot?.question ?? null : null;
   /*
    * Locks the composer read-only. Which kinds do that is decided in ONE place
    * (`locksComposer`, shared with native): `select` because tapping is the
@@ -810,12 +820,24 @@ export default function ChatPanel({
   const runInFlight = usePennyRunning(tripId);
   const replanWaiting = (loading || runInFlight) && !pennyStreamingText;
   /*
+   * Setup owes the transcript a question it has not drawn yet: the snapshot is
+   * still in flight, or it has landed and its question bubble has not. Penny's
+   * typing dots fill that window, so the first-run pane is never empty — the
+   * composer says "Loading setup…" and the header says 1 OF 5, and a blank
+   * transcript between them read as broken.
+   */
+  const lastSetupQuestion = [...messages].reverse().find((m) => m.kind === 'form_question');
+  const setupQuestionPending =
+    onboardingPhase === 'loading' ||
+    (onboardingQuestion !== null && lastSetupQuestion?.content !== onboardingQuestion.label);
+  /*
    * Whether the identity strip reads THINKING or READY. Deliberately the SAME
    * expression the transcript's typing bubble uses (see its render below) plus
    * the streaming case — a strip that could say READY while three dots bounced
    * would be worse than no strip at all.
    */
-  const pennyThinking = introTyping || replanWaiting || !!pennyStreamingText;
+  const pennyThinking =
+    introTyping || replanWaiting || setupQuestionPending || !!pennyStreamingText;
 
   // Listen for "Add to this day" button clicks from rest-day LegCards.
   // Pre-fills the chat input with a contextual prompt for Penny.
@@ -941,7 +963,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [isOnboarding, tripId]);
+  }, [isOnboarding, tripId, onboardingAttempt]);
 
   useEffect(() => {
     if (!isOnboarding || onboardingLoading || !onboardingSnapshot || onboardingSnapshot.state === 'done') {
@@ -969,11 +991,17 @@ export default function ChatPanel({
       });
     };
 
-    // Show typing indicator before each onboarding question so the flow
-    // feels like a real conversation. First question gets 3s (the greeting
-    // is longer), subsequent questions get 2s.
+    // The first question is the first-run screen's headline, not a reply, so
+    // it lands the moment the snapshot does. The dots have already covered the
+    // fetch (`setupQuestionPending`); holding them another 3s on top was the
+    // longest stretch of nothing a new user sat through. Every later question
+    // keeps a 2s typing beat, which is what makes setup read as a conversation.
     const isFirstQuestion = onboardingSnapshot.state === 'trip_intent' && messages.length === 0;
-    const delay = isFirstQuestion ? 3000 : 2000;
+    if (isFirstQuestion) {
+      addQuestionBubble();
+      return;
+    }
+    const delay = 2000;
 
     setIntroTyping(true);
     const timer = setTimeout(() => {
@@ -2643,7 +2671,7 @@ export default function ChatPanel({
           examples are shapes to edit, not messages anyone actually wants to
           send verbatim. Same channel `+ Add to this day` uses.
         */}
-        {messages.length === 0 && !onboardingUiActive && (
+        {messages.length === 0 && onboardingPhase === 'off' && (
           <div style={{ padding: '4px 0 12px' }}>
             <div
               style={{
@@ -2691,6 +2719,34 @@ export default function ChatPanel({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/*
+          The setup snapshot failed to load. Before the phase existed this
+          left START HERE standing, which invited the user to type a trip into
+          a panel that had not started setup; now it says what happened and
+          offers the one thing that fixes it.
+        */}
+        {onboardingPhase === 'error' && (
+          <div
+            data-testid="onboarding-load-error"
+            style={{ padding: '4px 0 12px', display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <div style={{ fontSize: 14, color: 'var(--tp-text)' }}>Couldn&apos;t load trip setup.</div>
+            {onboardingError && (
+              <div style={{ fontSize: 12, color: 'var(--tp-danger)' }}>{onboardingError}</div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setOnboardingError(null);
+                setOnboardingAttempt((n) => n + 1);
+              }}
+              style={{ ...buttonStyle('secondary'), alignSelf: 'flex-start', fontSize: 13 }}
+            >
+              Try again
+            </button>
           </div>
         )}
 
@@ -3128,7 +3184,7 @@ export default function ChatPanel({
             the typing animation before each onboarding question. The dog-fetch
             clip for the first full build is a persistent message above, not part
             of this transient indicator. */}
-        {(introTyping || replanWaiting) && (
+        {(introTyping || replanWaiting || setupQuestionPending) && (
           <div className="typing-indicator-bubble" aria-label="Penny is typing">
             <span className="typing-indicator-dot" />
             <span className="typing-indicator-dot" />
@@ -3210,7 +3266,7 @@ export default function ChatPanel({
         </div>
       ) : (
         <>
-          {onboardingBlockingLoad ? (
+          {onboardingPhase === 'loading' ? (
             <div
               style={{
                 padding: '12px 16px',
@@ -3255,7 +3311,7 @@ export default function ChatPanel({
             e.target.value = '';
           }}
         />
-        {onboardingError && (
+        {onboardingError && onboardingPhase !== 'error' && (
           <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{onboardingError}</div>
         )}
         <div
