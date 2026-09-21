@@ -182,8 +182,9 @@ changes behaviour, because none does.
 The same doc also describes the mobile jobs living inside
 `.github/workflows/pipeline.yml` and running `needs: deploy`. There is no
 `pipeline.yml` in `.github/workflows/` — there is `ci.yml`,
-`deploy-production.yml`, `mobile.yml` and `pr-cleanup.yml`, plus untracked
-`pipeline.yml.new` and `mobile-workflow.new.yml` at the repo root. So `Mobile`
+`deploy-production.yml`, `mobile.yml` and `pr-cleanup.yml`. (The consolidation
+was drafted as `pipeline.yml.new` + `spring-clean.sh` at the repo root, never
+run, and deleted 2026-09-21.) So `Mobile`
 is currently its own workflow triggered by the push to `main`, **not** ordered
 after the web deploy. Worth knowing before an OTA reaches a phone ahead of the
 API it expects.
