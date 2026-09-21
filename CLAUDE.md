@@ -75,12 +75,12 @@ launched, in words. Never weigh "this would affect N production accounts" as a
 reason to slow down or pick the cautious option. It is still live infrastructure:
 never run tests or seed fixtures against the prod database.
 
-1. **Open a PR into `main`.** One `Pipeline` workflow runs unit tests, deploys a
-   tested preview on an ephemeral Neon branch (a clone of prod), runs Playwright
-   against it, and typechecks `mobile/`.
-2. **Merge the PR — that IS the deploy.** The same workflow re-verifies CI was
-   green for the PR's head SHA, migrates prod, deploys via Vercel.
-3. **PR closes** → the preview's Neon branch is dropped.
+1. **Open a PR into `main`.** `ci.yml` runs unit tests, deploys a tested preview
+   on an ephemeral Neon branch (a clone of prod), runs Playwright against it, and
+   typechecks `mobile/`. There is no single `pipeline.yml`.
+2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
+   was green for the PR's head SHA, migrates prod, deploys via Vercel.
+3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
 - **The deploy gate is enforced; branch protection is NOT.** A direct push or a
   mid-run merge moves `main` and then fails the deploy, leaving prod stale rather
