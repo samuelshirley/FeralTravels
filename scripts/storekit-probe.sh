@@ -46,12 +46,10 @@ BUNDLE_ID="com.feraltravels.ios"
 REBUILT_APP="mobile/ios/build/Build/Products/Release-iphonesimulator/FeralTravels.app"
 
 # The product ids come from the server's own list, so a rename cannot leave
-# this probe asking about the old ones.
-mapfile_ids() {
-  grep -oE "com\.feraltravels\.ios\.[a-z]+" src/server/payments/constants.ts | sort -u
-}
+# this probe asking about the old ones. See scripts/lib/product-ids.sh.
+. scripts/lib/product-ids.sh
 IDS=()
-while IFS= read -r id; do IDS+=("$id"); done < <(mapfile_ids)
+while IFS= read -r id; do IDS+=("$id"); done < <(product_ids)
 [ "${#IDS[@]}" -gt 0 ] || { echo "No product ids found in constants.ts" >&2; exit 1; }
 
 # The public SDK key — public by design, it is in every build (mobile/eas.json).

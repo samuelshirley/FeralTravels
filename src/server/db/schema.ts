@@ -236,6 +236,30 @@ export const otpSendThrottle = pgTable('otp_send_throttle', {
 });
 
 /**
+ * The last JSON Web Key Set each OAuth provider served us, one row per
+ * provider — the fallback `src/server/auth/jwksSource.ts` verifies against when
+ * a live fetch of the provider's keys fails.
+ *
+ * Exists because Apple's `/auth/keys` answered 404 to roughly one request in
+ * five on 2026-09-21, and a process-local cache is empty on every cold start:
+ * each new serverless instance was one unlucky fetch away from refusing a real
+ * sign-in. A table survives the cold start.
+ *
+ * Public keys only — there is nothing secret here. But whoever can write this
+ * row can choose which keys sign-ins are checked against, so it is written in
+ * exactly one place (the repo, on a successful live fetch) and read only
+ * within the staleness bound `jwksSource.ts` documents.
+ */
+export const oauthProviderKeys = pgTable('oauth_provider_keys', {
+  /** `'google'` or `'apple'`. */
+  provider: text('provider').primaryKey(),
+  /** The provider's response body, verbatim: `{ keys: JWK[] }`. */
+  jwks: jsonb('jwks').$type<{ keys: Record<string, unknown>[] }>().notNull(),
+  /** When this set was fetched live from the provider — the staleness clock. */
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+});
+
+/**
  * One row per native OAuth ID token that has been redeemed at
  * /api/mobile/oauth/exchange. Two jobs, one table:
  *

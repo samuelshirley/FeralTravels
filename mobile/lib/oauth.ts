@@ -2,7 +2,8 @@ import { Platform } from "react-native";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { exchangeOAuth, type SessionResult } from "@/lib/api";
+import { ApiError, exchangeOAuth, type SessionResult } from "@/lib/api";
+import { withExchangeRetry, type ExchangeFailure } from "@/shared/lib/oauthExchangeRetry";
 import { GOOGLE_IOS_CLIENT_ID, APPLE_SIGNIN_ENABLED } from "@/lib/config";
 
 /**
@@ -153,7 +154,7 @@ export async function signInWithGoogle(): Promise<SessionResult> {
     throw new Error("Google didn't return an ID token. Please try again.");
   }
 
-  return exchangeOAuth({ provider: "google", idToken });
+  return exchangeWithRetry({ provider: "google", idToken });
 }
 
 // ---------------------------------------------------------------------------
@@ -196,5 +197,30 @@ export async function signInWithApple(): Promise<SessionResult> {
   const parts = [credential.fullName?.givenName, credential.fullName?.familyName];
   const fullName = parts.filter(Boolean).join(" ").trim() || null;
 
-  return exchangeOAuth({ provider: "apple", idToken, fullName });
+  return exchangeWithRetry({ provider: "apple", idToken, fullName });
+}
+
+// ---------------------------------------------------------------------------
+// Exchange
+// ---------------------------------------------------------------------------
+
+function exchangeFailure(err: unknown): ExchangeFailure | null {
+  if (!(err instanceof ApiError) || err.status === 0) return null;
+  const payload =
+    err.payload && typeof err.payload === "object"
+      ? (err.payload as Record<string, unknown>)
+      : null;
+  return { status: err.status, code: typeof payload?.error === "string" ? payload.error : null };
+}
+
+/**
+ * The exchange, silently retried when the SERVER could not reach the
+ * provider's keys (503 `ProviderUnavailable`) — the user did nothing wrong and
+ * the same token is still good, because a failed verification never spends
+ * it. Only when the retries run out does the sign-in screen show anything.
+ * The policy, and why a 401 `InvalidToken` also gets one retry, is in
+ * `@/shared/lib/oauthExchangeRetry`.
+ */
+function exchangeWithRetry(payload: Parameters<typeof exchangeOAuth>[0]): Promise<SessionResult> {
+  return withExchangeRetry(() => exchangeOAuth(payload), exchangeFailure);
 }

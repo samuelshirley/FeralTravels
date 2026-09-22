@@ -119,7 +119,7 @@ test.describe('Onboarding wizard', () => {
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(composer).toHaveAttribute('readonly', /.*/);
 
-    await page.getByTestId('onboarding-vehicle-name').fill('Duncan');
+    await page.getByTestId('onboarding-vehicle-name').fill('Hilux');
     await page.getByRole('button', { name: '500 km' }).click();
     await page.getByTestId('onboarding-vehicle-submit').click();
 
@@ -136,7 +136,7 @@ test.describe('Onboarding wizard', () => {
      * rendered at all. So: the intent appears exactly once (its own answer,
      * up top), and the vehicle answer is the last user bubble.
      */
-    await expect(userBubble(page, 'Duncan · 500 km')).toHaveCount(1);
+    await expect(userBubble(page, 'Hilux · 500 km')).toHaveCount(1);
     // The opening description offered no options, so it keeps its own bubble
     // rather than becoming a single enormous pill.
     await expect(userBubble(page, 'Road trip to Berlin')).toHaveCount(1);

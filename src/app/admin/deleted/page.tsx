@@ -5,6 +5,7 @@ import { listDeletedAccounts } from '@/server/repos/accountDeletion';
 import { isEmailEncryptionConfigured } from '@/server/deletedUserCrypto';
 import AppNavbar from '@/components/AppNavbar';
 import { requireWebAccess } from '@/server/auth/webAccess';
+import { formatDayMonthYear } from '@/lib/dates';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -48,7 +49,7 @@ const td: React.CSSProperties = {
 
 function fmtDate(d: Date | null): string {
   if (!d) return '—';
-  return new Date(d).toISOString().slice(0, 10);
+  return formatDayMonthYear(new Date(d).toISOString().slice(0, 10)) ?? '—';
 }
 
 /** Whole days between signup and deletion — the "how long did they last" number. */

@@ -58,4 +58,24 @@ incident behind each one, which is the part that stops it being re-broken.
   `guards.ts` gains a `catch` that would turn its 500 into a keychain-clearing
   401. The wrapper costs nothing on the signed-in path and one cookie read when
   signed out; the query runs only for a cookie with no session.
+- **An unreachable provider is not a bad token (2026-09-21).** The same mistake
+  as the one above, one layer out. `/api/mobile/oauth/exchange` answered a failed
+  fetch of Apple's signing keys with 401 `InvalidToken`, the answer a forged
+  token gets. On 2026-09-21 Apple's `/auth/keys` was 404ing ~1 request in 5:
+  real users were told their sign-in "didn't check out", and
+  `e2e/oauth-exchange.spec.ts` passed in a preview whose log showed the failure,
+  because the two cases could not be told apart. Now the keys are obtained
+  **before** the token is read (`src/server/auth/jwksSource.ts`: retry, then a
+  persisted last-known-good set no older than 72h), and if there are none the
+  answer is **503 `ProviderUnavailable`**. That is not an oracle, because it is
+  decided without looking at the token. Everything that DOES depend on the token
+  stays a flat 401 `InvalidToken`, including a stale fallback set that lacks a
+  rotated-in key, which fails closed. The app retries the 503 silently
+  (`src/lib/oauthExchangeRetry.ts`) before showing copy that blames the
+  provider. The e2e forged-token tests assert `401 InvalidToken` exactly, so
+  "the verifier had no keys" can never pass as "the verifier refused the
+  forgery" again; `.github/workflows/oauth-provider-probe.yml` watches both
+  JWKS endpoints and production every 15 minutes. **The general rule:** when a
+  dependency fails, say so with a 5xx. Never borrow the code that means the
+  caller did something wrong.
 - **Every error code an API returns must have copy in every client that calls it.** `src/lib/nativeErrorCopyGuard.test.ts` scans the exchange's call chain (`oauthIdentity.ts`, `oauthReplay.ts`, the route) for thrown codes and fails if one is missing from `ERROR_COPY`/`OAUTH_ERROR_COPY` in `mobile/app/sign-in.tsx`. There is no type across an HTTP boundary that could catch this: `TokenAlreadyUsed` shipped unmapped and showed the generic "Something went wrong" for the one failure a user can fix by tapping the button again. `OAUTH_ERROR_COPY` exists because `RateLimited` means two different things — "your emailed code is already in your inbox" on the OTP path, "you are over the per-address exchange limit" on the OAuth one — so `messageFor` takes a `context` and `runOAuth` is the single call site that passes `"oauth"`.

@@ -30,6 +30,7 @@ const SERVER_FILES = [
   'src/app/api/mobile/oauth/exchange/route.ts',
   'src/server/auth/oauthIdentity.ts',
   'src/server/auth/oauthReplay.ts',
+  'src/server/auth/jwksSource.ts',
 ];
 
 const SIGN_IN = 'mobile/app/sign-in.tsx';
@@ -130,6 +131,28 @@ describe('native sign-in error copy', () => {
   it('tells a TokenAlreadyUsed user to try again rather than dead-ending', () => {
     const copy = copyValue(signIn, 'OAUTH_ERROR_COPY', 'TokenAlreadyUsed').toLowerCase();
     expect(copy).toContain('again');
+  });
+
+  it('blames the provider, not the user, when the provider could not be reached', () => {
+    // The incident this exists for (2026-09-21): Apple's key endpoint was
+    // 404ing, the server answered 401 InvalidToken, and people were told their
+    // sign-in "didn't check out". ProviderUnavailable is the honest code; its
+    // copy must not slide back into the user-blaming wording.
+    const unavailable = copyValue(signIn, 'OAUTH_ERROR_COPY', 'ProviderUnavailable');
+    const invalid = copyValue(signIn, 'ERROR_COPY', 'InvalidToken');
+    expect(unavailable).not.toBe(invalid);
+    expect(unavailable.toLowerCase()).not.toContain("didn't check out");
+    expect(unavailable.toLowerCase()).toContain('nothing is wrong with your account');
+  });
+
+  it('reaches the exchange only through the silent retry', () => {
+    // The copy above is the LAST resort: the app first retries quietly
+    // (src/lib/oauthExchangeRetry.ts). A second, direct exchangeOAuth call in
+    // oauth.ts would skip that and show the error on the first 503.
+    const oauth = read('mobile/lib/oauth.ts');
+    expect([...oauth.matchAll(/exchangeOAuth\(/g)]).toHaveLength(1);
+    expect(oauth).toMatch(/withExchangeRetry\(\(\) => exchangeOAuth\(payload\)/);
+    expect([...oauth.matchAll(/return exchangeWithRetry\(\{ provider: "(google|apple)"/g)]).toHaveLength(2);
   });
 
   it('routes OAuth failures through the OAuth-aware branch', () => {

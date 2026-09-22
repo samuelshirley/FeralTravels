@@ -55,7 +55,7 @@ accounts are 75% of it:
 | **all 27 other users** | **30** | **$8.66** | **84** |
 
 Real users cost **$0.29/trip**. The heaviest genuine user
-(robingockert97, 3 trips) has cost **$1.19 in three months**.
+(3 trips) has cost **$1.19 in three months**.
 
 That single dev trip at $18.46 across 157 calls is worth understanding
 before scaling anything — it has the shape of the replan loops behind the

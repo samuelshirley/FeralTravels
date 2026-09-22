@@ -20,14 +20,15 @@ import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
 import { geocodePlace } from "@/lib/google/geocode";
 import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
-import { reverseGeocode } from "@/lib/osm/nominatim";
+import { lookupPlace } from "@/lib/osm/nominatim";
 import { qualifiedPlaceName } from "@/lib/placeName";
 import {
   getDirectionsAccounted,
   geocodePlaceAccounted,
 } from "@/server/google/accounted";
 import { setDeclaredFuelState } from "@/server/repos/trips";
-import { splitLegByDriveTime } from "@/lib/penny/split-route";
+import { legsFromSplitIndices, planSplitIndices } from "@/lib/penny/split-route";
+import { nameSplitPoints } from "@/lib/penny/splitPointNames";
 import {
   buildTurnTrace,
   promptFingerprint,
@@ -1686,14 +1687,33 @@ async function executeGetRoute(
   );
   const exceedsCap = directions.drive_time_minutes > cap * 60;
 
-  let suggestedSplit: ReturnType<typeof splitLegByDriveTime> | null = null;
+  // Where the days end, as polyline indices — then the names, which may MOVE an
+  // interior split to a town within tolerance, and only then the legs, rebuilt
+  // from whatever indices survived that. See lib/penny/splitPointNames.ts for
+  // why the split point is a choice and the daily cap is the fact.
+  let suggestedSplit: ReturnType<typeof legsFromSplitIndices> | null = null;
+  let splitNames: (string | null)[] = [];
   if (exceedsCap) {
-    suggestedSplit = splitLegByDriveTime({
+    const plan = planSplitIndices({
       polyline_points: directions.polyline_points,
       total_distance_km: directions.distance_km,
       total_drive_time_minutes: directions.drive_time_minutes,
       max_drive_minutes_per_day: cap * 60,
     });
+    if (plan) {
+      // Name each split point SERVER-SIDE. Penny is handed bare lat/lng and,
+      // being a language model, names them herself — trip `ab824cde` produced
+      // "Texas Panhandle" and "Albuquerque area", neither navigable. A
+      // coordinate's name is a fact, so it is ours to supply. Best-effort: a
+      // null name leaves her exactly where she was, never blocks the plan. The
+      // reverse geocoder serialises internally to respect Nominatim's 1 req/s.
+      const named = await nameSplitPoints(plan, lookupPlace);
+      suggestedSplit = legsFromSplitIndices(
+        plan,
+        named.map((n) => n.index),
+      );
+      splitNames = named.map((n) => n.name);
+    }
   }
 
   // Minimum number of driving days this segment requires given the per-day
@@ -1708,18 +1728,6 @@ async function executeGetRoute(
   // Emit a compact JSON payload for Claude to consume. Drop the raw
   // polyline (hundreds of points = thousands of tokens); send only what
   // Claude needs to plan with.
-  // Name each split point SERVER-SIDE. Penny is handed bare lat/lng and, being
-  // a language model, names them herself — trip `ab824cde` produced "Texas
-  // Panhandle" and "Albuquerque area", neither navigable. A coordinate's name
-  // is a fact, so it is ours to supply. Best-effort: a null name leaves her
-  // exactly where she was, never blocks the plan. The reverse geocoder
-  // serialises internally to respect Nominatim's 1 req/s.
-  const splitNames: (string | null)[] = suggestedSplit
-    ? await Promise.all(
-        suggestedSplit.map((leg) => reverseGeocode(leg.end_lat, leg.end_lng)),
-      )
-    : [];
-
   const payload = {
     ok: true,
     effective_avoid: input.avoid ?? null,

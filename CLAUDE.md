@@ -82,8 +82,9 @@ never run tests or seed fixtures against the prod database.
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
 3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
-- **The deploy gate is enforced; branch protection is NOT.** A direct push or a
-  mid-run merge moves `main` and then fails the deploy, leaving prod stale rather
+- **Branch protection on `main` requires a PR plus the `Decide scope` and `Unit
+  tests` checks, up to date; force-push and deletion are blocked.** Admins can
+  bypass it; the deploy gate then fails the deploy, leaving prod stale rather
   than half-migrated. Keep migrations additive.
 - **Only the newest preview URL works** — a stale one fails as a fake sign-out
   (`/login`) because its database was dropped. Take it from the sticky comment.
@@ -114,7 +115,8 @@ src/
     google/           # geocode.ts (name -> coords), directions.ts
     finn/             # fuel-stop engine — docs/design/finn-fuel-agent.md
     penny/            # context, schedule, planSummary, sanitize, turnTrace,
-                      # contiguityGate, legPlacement, editOverride, tools/
+                      # contiguityGate, legPlacement, editOverride,
+                      # split-route, splitPointNames, tools/
   server/             # onboarding.ts onboardingIntentScan.ts parseStartDate.ts
     db/               # schema.ts (all tables), client.ts (Neon)
     repos/            # Data access layer (see Repos)
@@ -150,7 +152,7 @@ api/webhooks/revenuecat
 **`api/test/*` are TEST-ONLY** (fixture DATA only), backed by
 `repos/testSupport.ts` — see the E2E auth note below for the three guards.
 
-### Schema (32 tables in `src/server/db/schema.ts`)
+### Schema (33 tables in `src/server/db/schema.ts`)
 
 Migration history, reasoning and traps: **`docs/design/schema.md`**. Read it
 before touching these — several carry non-obvious contracts (account deletion's
@@ -161,7 +163,7 @@ vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops,
 tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements,
 announcementDismissals, pennyTurns, deletedUsers, subscriptions,
 subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
-ipRequestCounters
+ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
 `trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`,
@@ -170,7 +172,7 @@ ipRequestCounters
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, testSupport (test-only)
+announcements, pennyTurns, accountDeletion, oauthJwks, testSupport (test-only)
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
@@ -185,7 +187,10 @@ planFuelStops, declareFuelState, extractTripIntent — 21 tools, registered in
 
 **Penny does not author derived fields.** Coordinates come only from
 `resolve_place`; leg titles are derived `start → end`; `trips.end_date` is
-re-derived from the legs; `place_id` is forwarded untouched. `add_stop` is locked
+re-derived from the legs; `place_id` is forwarded untouched. **An overnight
+split is placed by the server, not by the clock** — `splitPointNames.ts` nudges
+it to the nearest town inside the daily cap so a day does not end in a hamlet;
+see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
 
@@ -195,18 +200,20 @@ What each is for and its traps: **`docs/design/scripts.md`**.
 
 ```
 anthropic-usage-report.ts assert-e2e-ran.mjs
-backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts check-env.sh
-check-preview-env.mjs claude-task.sh db-reset.ts debug-trip.ts
+backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
+capture-nominatim-fixtures.mjs check-env.sh
+check-preview-env.mjs claude-task.sh db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
-handoff-bug-campaign.sh iap-preflight.sh iap-webhook-secret.sh
+iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh lifetime-spend.ts make-test-user.ts
 measure-message-gate.ts migrate-sqlite-to-neon.ts pick-ios-simulator.mjs
-pick-screenshot-simulator.mjs prune-branches.sh reconcile-anthropic-spend.ts
+pick-screenshot-simulator.mjs probe-oauth-providers.mjs prune-branches.sh
+reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
-seed-migration-journal.ts serverOnlyStub.ts set-ios-oauth-client-id.mjs
-set-paywall-flag.mjs sim-frames.swift smoke-api.ts storekit-probe.sh
-sync-shared.mjs trial-account.ts vercel-set-ci-key.sh verify-maps-waypoints.ts
+seed-migration-journal.ts serverOnlyStub.ts
+set-paywall-flag.mjs smoke-api.ts storekit-probe.sh
+sync-shared.mjs trial-account.ts
 ```
 
 **Tombstones — do not recreate.** `scripts/ship.sh` and `npm run ship` are
@@ -284,7 +291,8 @@ The incident behind each — the part that stops it being re-broken — is in
 - **A database failure is not a sign-out.** `auth()` wraps Auth.js to tell
   "signed out" apart from "the session store is down", which is **503, never
   401** — `mobile/lib/api.ts` clears the keychain on 401. `rawAuth` belongs to
-  `/login` and `/login/verify` only.
+  `/login` and `/login/verify` only. Likewise, OAuth provider keys that cannot be
+  fetched are 503 `ProviderUnavailable`, never 401 `InvalidToken`.
 - **A server module never CALLS a value imported from a `'use client'` module** —
   rendering a client component is fine, calling one of its plain exports throws
   at render and is invisible to `tsc` (`serverClientBoundaryGuard.test.ts`).

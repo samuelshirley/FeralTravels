@@ -8,12 +8,14 @@ import { LoadingOverlay } from '@/components/Spinner';
 import PullToRefresh from '@/components/PullToRefresh';
 import { PencilEditTripsIcon } from '@/components/icons';
 import { buttonStyle } from '@/components/ui/buttonStyle';
+import { groupByStartDate, type DateGroup } from '@/lib/tripsListDates';
 
 interface TripSummary {
   id: string;
   name: string;
-  start_date: string | null;
-  end_date: string | null;
+  start_date_parsed: string;
+  /** False while the start date is still the today placeholder — no header. */
+  start_date_set: boolean;
   status: string;
   /**
    * Resolved on the server (page.tsx) against the user's own timezone. Not
@@ -125,14 +127,13 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
         </div>
       )}
 
-      <div className="card-grid">
-        {myTripsLocal.map((trip) => (
+      <DateGroups
+        groups={groupByStartDate(myTripsLocal)}
+        renderCard={(trip) => (
           <TripCard
             key={trip.id}
             id={trip.id}
             name={trip.name}
-            startDate={trip.start_date}
-            endDate={trip.end_date}
             dayCount={trip.day_count}
             totalDistanceKm={trip.total_distance_km}
             nextStop={trip.next_stop}
@@ -140,22 +141,21 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
             editMode={editMode}
             onDeleted={handleTripDeleted}
           />
-        ))}
-      </div>
+        )}
+      />
 
       {templatesLocal.length > 0 && (
         <div style={{ marginTop: 32 }}>
           <div className="page-eyebrow" style={{ marginBottom: 10 }}>
             DEMO / TEMPLATES
           </div>
-          <div className="card-grid">
-            {templatesLocal.map((trip) => (
+          <DateGroups
+            groups={groupByStartDate(templatesLocal)}
+            renderCard={(trip) => (
               <TripCard
                 key={trip.id}
                 id={trip.id}
                 name={trip.name}
-                startDate={trip.start_date}
-                endDate={trip.end_date}
                 isTemplate
                 editMode={editMode && canDeleteTemplates}
                 showClone
@@ -163,12 +163,40 @@ export default function TripsList({ myTrips, templates, canDeleteTemplates }: Pr
                 cloneBusy={cloning === trip.id}
                 onDeleted={handleTripDeleted}
               />
-            ))}
-          </div>
+            )}
+          />
         </div>
       )}
 
       {cloning != null && <LoadingOverlay message="Cloning trip…" />}
     </PullToRefresh>
+  );
+}
+
+/**
+ * A date header over each run of trips sharing a start date, then their cards
+ * (nocturne-reskin §7a). A run with no date to show — the placeholder of a
+ * trip still in onboarding — gets its cards and no header.
+ */
+function DateGroups({
+  groups,
+  renderCard,
+}: {
+  groups: DateGroup<TripSummary>[];
+  renderCard: (trip: TripSummary) => React.ReactNode;
+}) {
+  return (
+    <>
+      {groups.map((group) => (
+        <section key={group.key} className="trip-date-group" data-testid="trip-date-group">
+          {group.label && (
+            <div className="trip-date-header" data-testid="trip-date-header">
+              {group.label}
+            </div>
+          )}
+          <div className="card-grid">{group.trips.map(renderCard)}</div>
+        </section>
+      ))}
+    </>
   );
 }

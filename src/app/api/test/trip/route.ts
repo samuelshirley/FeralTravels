@@ -11,6 +11,14 @@ const bodySchema = z.object({
   email: z.string().email(),
   name: z.string().min(1),
   kind: z.enum(['blank', 'onboarding', 'vehicle_new']),
+  /**
+   * A 'blank' trip's start date, when a spec needs chosen dates (the trips-list
+   * date headers). ISO only; refused for the onboarding kinds, whose point is
+   * that the date question has not been answered.
+   */
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine((b) => b.startDate === undefined || b.kind === 'blank', {
+  message: 'startDate is only for kind=blank',
 });
 
 export async function POST(req: Request) {

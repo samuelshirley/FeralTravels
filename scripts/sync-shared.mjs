@@ -45,6 +45,9 @@ export const SHARED_FILES = [
   // project is the only test runner, and the web has the identical bug.
   ['src/lib/pennyRunStore.ts', 'mobile/shared/lib/pennyRunStore.ts'],
   ['src/lib/lastOpenTrip.ts', 'mobile/shared/lib/lastOpenTrip.ts'],
+  // The trips list's date headers: both lists must group, and hide the
+  // placeholder date, identically.
+  ['src/lib/tripsListDates.ts', 'mobile/shared/lib/tripsListDates.ts'],
   // Both halves of the promo flow. The app must normalize a typed code exactly
   // as the server does — if the two disagreed, a user would type something the
   // app accepts and the server rejects, and the error would read as a bad code
@@ -87,6 +90,10 @@ export const SHARED_FILES = [
   ['src/lib/onboardingPhase.ts', 'mobile/shared/lib/onboardingPhase.ts'],
   ['src/lib/planningCaption.ts', 'mobile/shared/lib/planningCaption.ts'],
   ['src/lib/planReady.ts', 'mobile/shared/lib/planReady.ts'],
+  // The OAuth exchange's silent-retry policy and the `ProviderUnavailable`
+  // code it keys on: the app decides when to ask again, but the test that
+  // pins that decision lives here.
+  ['src/lib/oauthExchangeRetry.ts', 'mobile/shared/lib/oauthExchangeRetry.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

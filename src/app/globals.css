@@ -207,6 +207,30 @@ img, svg, canvas { max-width: 100%; }
   margin-bottom: 4px;
   text-transform: uppercase;
 }
+/* The trips list's date header (nocturne-reskin §7a): a short accent rule and
+   the start date, above each run of trips that share it. Kicker-sized, but NOT
+   uppercased — it is a date ("16 Sep 2026"), not a label. */
+.trip-date-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--tp-subtle);
+  font-family: var(--tp-font-sans);
+  font-variant-numeric: tabular-nums;
+  margin: 18px 0 8px;
+}
+.trip-date-header::before {
+  content: '';
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--tp-primary);
+  flex: none;
+}
+.trip-date-group:first-child .trip-date-header { margin-top: 0; }
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

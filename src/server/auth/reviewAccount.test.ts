@@ -69,7 +69,7 @@ describe('what verifyOtpCode asks', () => {
       'someone@example.com',
       'appletest@gmail.com',
       'appletest@feraltravels.com.evil.com',
-      'samuelashirley@gmail.com',
+      'sam@feraltravels.com',
     ]) {
       expect(accepts(email, '000000', ARMED), email).toBe(false);
       expect(accepts(email, '000000', OFF as Record<string, string>), email).toBe(false);

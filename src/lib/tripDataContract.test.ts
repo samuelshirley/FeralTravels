@@ -178,6 +178,7 @@ describe('Trip data contract — fields required by the UI', () => {
         end_date: '2024-06-15',
         start_date_parsed: '2024-06-01',
         end_date_parsed: '2024-06-15',
+        start_date_set: true,
         status: 'active',
         trip_status: 'draft',
         onboarding_state: 'done',

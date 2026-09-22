@@ -343,7 +343,7 @@ function formRow(
   return {
     // Its own namespace. `optimistic-${Date.now()}` is what sendChatMessage
     // mints for the bubbles it appends a beat later; two rows sharing an id
-    // meant Penny's streamed text was written into the `Duncan` receipt.
+    // meant Penny's streamed text was written into the `Hilux` receipt.
     id: `optimistic-form-${ts}`,
     trip_id: tripId,
     role,

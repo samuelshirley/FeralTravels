@@ -113,7 +113,7 @@ describe('fixture addresses cannot be a real person or reach production', () => 
     const { isFixtureEmail } = await import('@/server/auth/test-endpoints');
     expect(isFixtureEmail('playwright-123-abc@e2e.feraltravels.com')).toBe(true);
     for (const impostor of [
-      'samuelashirley@gmail.com',
+      'sam@feraltravels.com',
       'playwright-1@feraltravels.com',
       'playwright-1@e2e.feraltravels.com.evil.com',
       'notplaywright-1@e2e.feraltravels.com',

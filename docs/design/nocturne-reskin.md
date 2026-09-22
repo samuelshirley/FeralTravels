@@ -116,7 +116,9 @@ Common chrome, every screen:
 
 ### 7a — Trips landing (`app/trips/index.tsx`, `TripCard.tsx`)
 
-Centred `Your trips` header + avatar; then flush-left kicker `YOUR TRIPS` over `Trips` at 26px/500, with an outlined `+ New trip` (36px tall) on the baseline. `EDIT TRIPS` pill unchanged in behaviour, restyled as a neutral outline. Trip card: 14px radius, surface fill, `--tp-shadow-sm`, name 16px/500, meta `16–17 Sep 2026 · 2 days · ~645 km` at 11.5px subtle, `CaretRight` in accent-700. Below a left-fading hairline: an accent dot + `Next: fuel at Reims Ids · in 147 km` (11px) — new, but composed from data the list already loads. Demo/templates section keeps its kicker, a borderless card (hairline only) and both actions (`View →` neutral outline, `Clone to my trips` accent outline). Empty state and clone-overlay copy unchanged.
+Centred `Your trips` header + avatar; then flush-left kicker `YOUR TRIPS` over `Trips` at 26px/500, with an outlined `+ New trip` (36px tall) on the baseline. `EDIT TRIPS` pill unchanged in behaviour, restyled as a neutral outline. Trip card: 14px radius, surface fill, `--tp-shadow-sm`, name 16px/500, ~~meta `16–17 Sep 2026 · 2 days · ~645 km` at 11.5px subtle~~ meta `2 days · ~645 km` at 11.5px subtle, `CaretRight` in accent-700. Below a left-fading hairline: an accent dot + `Next: fuel at Reims Ids · in 147 km` (11px) — new, but composed from data the list already loads. Demo/templates section keeps its kicker, a borderless card (hairline only) and both actions (`View →` neutral outline, `Clone to my trips` accent outline). Empty state and clone-overlay copy unchanged.
+
+**Superseded 2026-09-22** — the date leaves the card and becomes a header, the way the mock draws it (Sam chose the mock over the text above). Above each run of trips sharing a start date: a 16×2px accent rule and the start date as `16 Sep 2026` (`formatDayMonthYear`, lib/dates.ts), kicker-sized, subtle, not all-caps. Start date only — the end date is not on the trips list at all. The card meta is `dayCount · distance`, each dropped when unknown, and with neither there is no meta line (`No dates set` is gone). The list is ordered by start date, newest first, last activity breaking ties. The demo/templates section gets the same headers. A trip whose date is still the today placeholder (onboarding not past `trip_date`) gets no header — the mock has no state for it; see `isStartDateAnswered` in lib/tripsListDates.ts.
 
 ### 7b — Onboarding 1/4 · `trip_intent`
 
@@ -158,7 +160,7 @@ Labels **verbatim from `onboarding.ts:510`** — `Metric (km)` and `Imperial (ch
 
 Merge the two vehicle questions into a single in-transcript form. Penny: `Last thing — what are you driving?`
 
-- `NAME IT` kicker, then a 44px text field (bg = page ground, 1px accent-700 edge, 14px value, `e.g. Duncan` hint right-aligned in neutral-700). This is the only keyboard left in the flow.
+- `NAME IT` kicker, then a 44px text field (bg = page ground, 1px accent-700 edge, 14px value, `e.g. Hilux` hint right-aligned in neutral-700). This is the only keyboard left in the flow.
 - `RANGE ON A TANK` kicker + an `Info` icon carrying the existing help text (`How far you're happy to drive before you'd want to refuel…`) as a tooltip/sheet rather than body copy.
 - Range as buttons: `300 km`, `500 km`, `700 km` (42px, neutral outline; selected = accent outline + 8% tint) plus `Other…` (dashed outline → numeric keyboard).
 - Link row: `Not sure — work it out from my vehicle` (accent-300, underlined) → the existing `range_help` state. **This path is already built** (`RANGE_HELP_QUESTION`, `estimateRange` in `src/server/parseRangeEstimate.ts`); the estimator's proposal comes back as a confirm card — `FROM "2018 TOYOTA HILUX DIESEL"` / `~700 km on a tank` / `Use it` (accent outline) + `Change` (neutral outline) — instead of another free-text question.

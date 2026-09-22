@@ -5,6 +5,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { getToken } from "@/lib/auth";
 import { listTrips } from "@/lib/api";
 import { fetchEntitlement } from "@/lib/entitlement";
+import { mostRecentlyActive } from "@/shared/lib/tripsListDates";
 import { theme } from "@/lib/theme";
 
 /**
@@ -103,13 +104,13 @@ async function blockedDestination(): Promise<Href | null> {
   const trips = await listTrips().catch(() => []);
   // Filtered on `is_template` rather than on ownership: /api/trips returns the
   // caller's own trips plus the shared demo templates and nothing else, and
-  // /api/me does NOT return a user id to compare against. Ordering is
-  // most-recently-active first with templates last, so the head of this list is
-  // the trip they were last in.
-  const mine = trips.filter((t) => !t.is_template);
+  // /api/me does NOT return a user id to compare against. The list is ordered
+  // by start date, so its head is not necessarily the trip they were last in —
+  // `mostRecentlyActive` reads `last_activity_at` to find that one.
+  const last = mostRecentlyActive(trips.filter((t) => !t.is_template));
   // An account that never made a trip has no chat to be told in — chat_history
   // is trip-scoped — which is what /paywall exists for.
-  return mine[0] ? `/trips/${mine[0].id}?chat=1` : "/paywall";
+  return last ? `/trips/${last.id}?chat=1` : "/paywall";
 }
 
 const styles = StyleSheet.create({

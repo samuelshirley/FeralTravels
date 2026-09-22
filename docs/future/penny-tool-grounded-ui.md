@@ -43,7 +43,7 @@ their results in the chat panel* once they exist.
 Three reasons:
 
 1. **It's blocked on the tool-use migration finishing.** The tool-use
-   migration ([`docs/proposals/tool-use-migration.md`](../proposals/tool-use-migration.md))
+   migration
    was the prerequisite — Penny needs to be returning real `tool_use` /
    `tool_result` blocks before there's anything structured for the UI to
    render. That's now done for `get_route` and `split_leg_by_drive_time`,

@@ -7,7 +7,7 @@ export const metadata: Metadata = {
 };
 
 const UPDATED = '19 August 2026';
-const CONTACT = 'samuelashirley@gmail.com';
+const CONTACT = 'sam@feraltravels.com';
 
 export default function TermsPage() {
   return (

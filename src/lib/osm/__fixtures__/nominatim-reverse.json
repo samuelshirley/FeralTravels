@@ -1,0 +1,234 @@
+{
+  "_README": "Captured from live Nominatim on 2026-09-22 by scripts/capture-nominatim-fixtures.mjs. Do NOT hand-write entries here: the payload shape is the whole point of the file. Re-capture with `node scripts/capture-nominatim-fixtures.mjs`.",
+  "points": {
+    "tavel_fr_village": {
+      "query": {
+        "lat": 44.0119,
+        "lon": 4.6986,
+        "accept_language": "en"
+      },
+      "name": "Tavel",
+      "address": {
+        "village": "Tavel",
+        "municipality": "Nîmes",
+        "county": "Gard",
+        "ISO3166-2-lvl6": "FR-30",
+        "state": "Occitania",
+        "ISO3166-2-lvl4": "FR-OCC",
+        "region": "Metropolitan France",
+        "postcode": "30126",
+        "country": "France",
+        "country_code": "fr"
+      }
+    },
+    "annecy_fr_city": {
+      "query": {
+        "lat": 45.8992,
+        "lon": 6.1294,
+        "accept_language": "en"
+      },
+      "name": "Annecy",
+      "address": {
+        "city": "Annecy",
+        "municipality": "Annecy",
+        "county": "Upper Savoy",
+        "ISO3166-2-lvl6": "FR-74",
+        "state": "Auvergne-Rhône-Alpes",
+        "ISO3166-2-lvl4": "FR-ARA",
+        "region": "Metropolitan France",
+        "country": "France",
+        "country_code": "fr"
+      }
+    },
+    "orange_fr_town": {
+      "query": {
+        "lat": 44.1459,
+        "lon": 4.776,
+        "accept_language": "en"
+      },
+      "name": "Orange",
+      "address": {
+        "town": "Orange",
+        "municipality": "Carpentras",
+        "county": "Vaucluse",
+        "ISO3166-2-lvl6": "FR-84",
+        "state": "Provence-Alpes-Côte d'Azur",
+        "ISO3166-2-lvl4": "FR-PAC",
+        "region": "Metropolitan France",
+        "postcode": "84100",
+        "country": "France",
+        "country_code": "fr"
+      }
+    },
+    "girona_es_city": {
+      "query": {
+        "lat": 41.9794,
+        "lon": 2.8214,
+        "accept_language": "en"
+      },
+      "name": "Girona",
+      "address": {
+        "city": "Girona",
+        "county": "Gironès",
+        "state_district": "Girona",
+        "ISO3166-2-lvl6": "ES-GI",
+        "state": "Catalonia",
+        "ISO3166-2-lvl4": "ES-CT",
+        "country": "Spain",
+        "country_code": "es"
+      }
+    },
+    "girona_es_no_accept_language": {
+      "query": {
+        "lat": 41.9794,
+        "lon": 2.8214,
+        "accept_language": null
+      },
+      "name": "Girona",
+      "address": {
+        "city": "Girona",
+        "county": "Gironès",
+        "state_district": "Girona",
+        "ISO3166-2-lvl6": "ES-GI",
+        "state": "Catalunya",
+        "ISO3166-2-lvl4": "ES-CT",
+        "country": "España",
+        "country_code": "es"
+      }
+    },
+    "modena_it_city": {
+      "query": {
+        "lat": 44.6471,
+        "lon": 10.9252,
+        "accept_language": "en"
+      },
+      "name": "Modena",
+      "address": {
+        "city": "Modena",
+        "county": "Modena",
+        "ISO3166-2-lvl6": "IT-MO",
+        "state": "Emilia-Romagna",
+        "ISO3166-2-lvl4": "IT-45",
+        "country": "Italy",
+        "country_code": "it"
+      }
+    },
+    "modena_it_no_accept_language": {
+      "query": {
+        "lat": 44.6471,
+        "lon": 10.9252,
+        "accept_language": null
+      },
+      "name": "Modena",
+      "address": {
+        "city": "Modena",
+        "county": "Modena",
+        "ISO3166-2-lvl6": "IT-MO",
+        "state": "Emilia-Romagna",
+        "ISO3166-2-lvl4": "IT-45",
+        "country": "Italia",
+        "country_code": "it"
+      }
+    },
+    "amarillo_us_city": {
+      "query": {
+        "lat": 35.222,
+        "lon": -101.8313,
+        "accept_language": "en"
+      },
+      "name": "Amarillo",
+      "address": {
+        "city": "Amarillo",
+        "county": "Potter County",
+        "state": "Texas",
+        "ISO3166-2-lvl4": "US-TX",
+        "country": "United States",
+        "country_code": "us"
+      }
+    },
+    "marfa_us_town": {
+      "query": {
+        "lat": 30.3093,
+        "lon": -104.0208,
+        "accept_language": "en"
+      },
+      "name": "Marfa",
+      "address": {
+        "town": "Marfa",
+        "county": "Presidio County",
+        "state": "Texas",
+        "ISO3166-2-lvl4": "US-TX",
+        "postcode": "79843",
+        "country": "United States",
+        "country_code": "us"
+      }
+    },
+    "dortmund_de_city": {
+      "query": {
+        "lat": 51.5136,
+        "lon": 7.4653,
+        "accept_language": "en"
+      },
+      "name": "Dortmund",
+      "address": {
+        "city": "Dortmund",
+        "state": "North Rhine-Westphalia",
+        "ISO3166-2-lvl4": "DE-NW",
+        "country": "Germany",
+        "country_code": "de"
+      }
+    },
+    "bergen_no_city": {
+      "query": {
+        "lat": 60.3913,
+        "lon": 5.3221,
+        "accept_language": "en"
+      },
+      "name": "Bergen",
+      "address": {
+        "municipality": "Bergen",
+        "county": "Vestland",
+        "ISO3166-2-lvl4": "NO-46",
+        "country": "Norway",
+        "country_code": "no"
+      }
+    },
+    "monument_valley_us_remote": {
+      "query": {
+        "lat": 36.998,
+        "lon": -110.0985,
+        "accept_language": "en"
+      },
+      "name": "Navajo County",
+      "address": {
+        "county": "Navajo County",
+        "state": "Arizona",
+        "ISO3166-2-lvl4": "US-AZ",
+        "country": "United States",
+        "country_code": "us"
+      }
+    },
+    "singapore_sg": {
+      "query": {
+        "lat": 1.3521,
+        "lon": 103.8198,
+        "accept_language": "en"
+      },
+      "name": "Singapore",
+      "address": {
+        "city": "Singapore",
+        "country": "Singapore",
+        "country_code": "sg"
+      }
+    },
+    "atlantic_ocean": {
+      "query": {
+        "lat": 40.0,
+        "lon": -30.0,
+        "accept_language": "en"
+      },
+      "name": null,
+      "address": {}
+    }
+  }
+}

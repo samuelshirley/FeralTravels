@@ -6,6 +6,7 @@ import { listTripsForUser } from '@/server/repos/trips';
 import { getUnitsPref, getUserTimezone } from '@/server/repos/users';
 import { todayISOInZone } from '@/lib/dates';
 import { isTripCompleted } from '@/lib/tripCompletion';
+import { mostRecentlyActive } from '@/lib/tripsListDates';
 import AppNavbar from '@/components/AppNavbar';
 
 import { UnitsProvider } from '@/components/UnitsContext';
@@ -45,6 +46,7 @@ export default async function TripsPage() {
 
   const today = todayISOInZone(timezone);
   const myTrips = allTrips.filter((t) => t.user_id === userId);
+  const lastTrip = mostRecentlyActive(myTrips);
 
   // No auto-create when the user has zero trips. New users (and anyone who
   // just deleted their last trip) land on this list with the emphasized
@@ -85,15 +87,16 @@ export default async function TripsPage() {
           {/*
             The block is an overlay now, not a card in the flow — it covers this
             page rather than sitting above a still-usable list. `pennyHref`
-            points at the most recent trip's chat (the list arrives
-            most-recently-active first), which is where the same block is a
+            points at the chat of the trip the driver was last in — asked of
+            `mostRecentlyActive`, since the list is ordered by start date and
+            its head is no longer that trip — which is where the same block is a
             message from Penny that answers back. An account with no trip has no
             chat to be sent to: chat_history is trip-scoped.
           */}
           {verdict.blockReason && (
             <EntitlementNotice
               blockReason={verdict.blockReason}
-              pennyHref={myTrips[0] ? `/trips/${myTrips[0].id}?chat=1` : null}
+              pennyHref={lastTrip ? `/trips/${lastTrip.id}?chat=1` : null}
             />
           )}
 
@@ -106,20 +109,23 @@ export default async function TripsPage() {
           {verdict.canViewExistingTrips && (
             <TripsList
               myTrips={myTrips.map(
-                ({ id, name, start_date, end_date, status, last_day_iso }) => ({
+                ({ id, name, start_date_parsed, start_date_set, status, last_day_iso, day_count, total_distance_km, next_stop }) => ({
                   id,
                   name,
-                  start_date,
-                  end_date,
+                  start_date_parsed,
+                  start_date_set,
                   status,
+                  day_count,
+                  total_distance_km,
+                  next_stop,
                   completed: isTripCompleted(last_day_iso, today),
                 }),
               )}
-              templates={templates.map(({ id, name, start_date, end_date, status }) => ({
+              templates={templates.map(({ id, name, start_date_parsed, start_date_set, status }) => ({
                 id,
                 name,
-                start_date,
-                end_date,
+                start_date_parsed,
+                start_date_set,
                 status,
                 // Demo templates are dated in the past and are never "over" —
                 // they are something to clone, not a trip anyone drove.
