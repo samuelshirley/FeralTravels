@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
+// The geocode fallback goes through `geocodePlaceAccounted`, which writes a
+// usage_events row fire-and-forget. Unmocked, that write dialled a real
+// Postgres; with none running, its ECONNREFUSED was logged after this file's
+// worker had closed, and vitest failed the whole run with
+// `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`
+// (about 1 run in 16).
+vi.mock('@/server/repos/usage', () => ({
+  logGoogleApiUsage: vi.fn(async () => {}),
+  logGooglePlacesUsage: vi.fn(async () => {}),
+}));
 
 import {
   extractEmbeddedMapsQuery,
