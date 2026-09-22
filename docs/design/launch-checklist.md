@@ -48,7 +48,21 @@ anything real to buy behind it, not after.
 
 ## Apple
 
-- [x] Paid Applications Agreement active (verified 2026-09-21).
+- [x] Paid Applications Agreement active (verified 2026-09-21). How it was
+      signed, since it will be asked again when the details change: it does
+      not require being autónomo or a business bank account. Account Holder
+      Type **Individual**, a personal Spanish IBAN with the name exactly as the
+      bank has it (Apple states it need not match the agreement's legal
+      entity), and the non-US tax questionnaire (W-8BEN shape) with the **NIE
+      as the foreign TIN**. When the alta lands, update the Tax Forms to
+      autónomo status (and ROI/VIES if registered), and the bank account if
+      it changes.
+- [ ] **Decide the trader address.** EU DSA Articles 30/31: selling
+      subscriptions makes you a trader, and Apple **publishes** the trader
+      name, address, phone and email on the EU product page — a P.O. box or
+      the gestoría's address, not home. Verification needs 2FA on both email
+      and phone plus a document. Apps without verified trader status are
+      removed from the EU App Store.
 - [ ] Products created in App Store Connect: `com.feraltravels.ios.monthly`,
       `com.feraltravels.ios.annual`.
 - [ ] `NEXT_PUBLIC_APP_STORE_URL` set to the real numeric listing id. Until it
@@ -84,6 +98,9 @@ anything real to buy behind it, not after.
       against production, before submitting. The flag is the kind of thing that
       gets set on the wrong environment.
 - [ ] Sign-In Information and the Notes field in App Store Connect match §3.
+- [ ] Submit with **Manual release**. The alta gates taking real revenue, not
+      testing — signing the agreement and sandbox purchases move no money — so
+      release is pressed only once the alta censal is effective.
 
 ### After approval
 
