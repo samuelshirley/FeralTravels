@@ -107,6 +107,10 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  # `gh run list` in "Wait for the production deploy" reads the Deploy to
+  # production run for this commit. Once `permissions:` is set, anything not
+  # listed is `none`.
+  actions: read
 
 jobs:
   # ------------------------------------------------------------------ PR
@@ -329,6 +333,78 @@ jobs:
             for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
           ' | tee -a "$GITHUB_ENV"
 
+      # THE ORDERING GATE (issue #39). A push to main starts this workflow and
+      # deploy-production.yml at the same moment, and nothing else orders them,
+      # so an OTA used to reach phones before the API it was written against —
+      # and stayed out there if that deploy then failed its gate or migration.
+      #
+      # Why a wait here and not a `workflow_run` trigger: that payload carries
+      # no `github.event.before`, so the classifier above would get no base and
+      # answer `native` on EVERY merge — no OTA ever again, and ~30 minutes plus
+      # a build credit each time — and `workflow_run` accepts no `paths:`
+      # filter. Waiting on the one step that ships to devices keeps both.
+      #
+      # Only `completed/success` for THIS SHA publishes. Failure, cancellation,
+      # timing out, or no run at all fails the job with the reason. The ceiling
+      # is the deploy job's own 20 minutes, plus another 20 queued behind an
+      # earlier deploy in the `deploy-production` group, plus 5 of slack. A
+      # manual dispatch never reaches here: it has no base, so `decision` is
+      # never `js-only`.
+      - name: Wait for the production deploy of this commit
+        id: deploy_wait
+        if: steps.native.outputs.decision == 'js-only'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_SECONDS: '2700'
+          POLL_SECONDS: '20'
+          # Both workflows start from the same push; a run that is not listed
+          # after this long was never created.
+          GRACE_SECONDS: '300'
+        run: |
+          set -euo pipefail
+
+          deploy_state() {
+            gh run list -R "$GITHUB_REPOSITORY" --workflow 'Deploy to production' --commit "$GITHUB_SHA" \
+              --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end'
+          }
+
+          START="$(date +%s)"
+          LAST=""
+          while :; do
+            if ! STATE="$(deploy_state)"; then STATE="api-error"; fi
+            [ "$STATE" != "$LAST" ] && echo "Deploy to production for ${GITHUB_SHA:0:7}: $STATE"
+            LAST="$STATE"
+            ELAPSED=$(( $(date +%s) - START ))
+
+            case "$STATE" in
+              completed/success)
+                echo "Production is serving ${GITHUB_SHA:0:7}'s API — publishing the OTA."
+                exit 0
+                ;;
+              completed/cancelled)
+                echo "::error::Deploy to production for ${GITHUB_SHA:0:7} was cancelled, so its API may never have deployed. The OTA was NOT published. A cancelled deploy is usually one superseded in the deploy-production queue by a later merge; that merge's deploy carries this API, and the next Mobile run publishes everything under mobile/ at its own commit."
+                exit 1
+                ;;
+              completed/*)
+                echo "::error::Deploy to production for ${GITHUB_SHA:0:7} ended ${STATE#completed/}. Production is not serving this commit's API, so the OTA was NOT published. Fix the deploy first; the bundle must not reach phones before its API."
+                exit 1
+                ;;
+              none)
+                if [ "$ELAPSED" -ge "$GRACE_SECONDS" ]; then
+                  echo "::error::No Deploy to production run exists for ${GITHUB_SHA:0:7} after ${ELAPSED}s. Nothing proves its API is live, so the OTA was NOT published."
+                  exit 1
+                fi
+                ;;
+            esac
+
+            if [ "$ELAPSED" -ge "$WAIT_SECONDS" ]; then
+              echo "::error::Gave up after ${ELAPSED}s waiting for Deploy to production on ${GITHUB_SHA:0:7} (last state: $STATE). The OTA was NOT published."
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+          done
+
       - name: Publish the OTA
         id: ota
         if: steps.native.outputs.decision == 'js-only'
@@ -374,6 +450,7 @@ jobs:
         # publish it. A summary that can lie is worse than no summary.
         env:
           OTA: ${{ steps.ota.outcome }}
+          DEPLOY_WAIT: ${{ steps.deploy_wait.outcome }}
           BUILD: ${{ steps.build.outcome }}
           DECISION: ${{ steps.native.outputs.decision }}
         run: |
@@ -389,6 +466,13 @@ jobs:
                 ;;
               skipped)
                 case "${DECISION:-}" in
+                  js-only)
+                    if [ "${DEPLOY_WAIT:-}" = "failure" ]; then
+                      echo "- **OTA:** **not published** — Deploy to production did not succeed for this commit, and a bundle must not reach phones before its API. See \"Wait for the production deploy of this commit\"."
+                    else
+                      echo "- **OTA:** skipped."
+                    fi
+                    ;;
                   native)
                     echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
                     ;;

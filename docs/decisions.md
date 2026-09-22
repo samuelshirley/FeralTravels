@@ -333,6 +333,13 @@ F3. **Two Anthropic keys: `ANTHROPIC_API_KEY_CI` wins on every runtime except pr
 F4. **OTA vs native build is decided by `decide-mobile-release.mjs`, fails safe to native, and
 the native build is gated.** *Enforced by:* `decideMobileRelease.test.ts`.
 
+F4b. **An OTA never reaches phones before its API: `mobile.yml` publishes only once Deploy to
+production has concluded `success` for the same commit; failure, cancellation, no run or a 45-minute
+wait fails the job.** A wait step, not a `workflow_run` trigger, because that payload has no
+`github.event.before` and the classifier would answer `native` on every merge. The TestFlight build
+is not gated on it. *Enforced by:* `otaAfterDeployGuard.test.ts` (structure, plus the step's own
+shell run against a stub `gh`; mutation-checked).
+
 F5. **`src/` never imports from `mobile/`; shared files are byte-identical mirrors.**
 *Enforced by:* `noMobileImportGuard.test.ts`, `sharedMirror.test.ts`.
 
