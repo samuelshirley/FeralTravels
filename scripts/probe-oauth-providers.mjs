@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Probe the two things native OAuth sign-in depends on, and say whether either
-// is broken. Run by .github/workflows/oauth-provider-probe.yml on a schedule;
+// Probe what OAuth sign-in depends on — native AND web — and say whether any
+// of it is broken. Run by .github/workflows/oauth-provider-probe.yml on a schedule;
 // runnable by hand:
 //
 //   node scripts/probe-oauth-providers.mjs [--base https://www.feraltravels.com] [--json out.json]
@@ -13,6 +13,12 @@
 //
 //  1. Each provider's JWKS endpoint, JWKS_PROBES times. A failure rate at or
 //     over JWKS_ALERT_RATE alerts. Normal is zero.
+//  1b. Apple's OpenID discovery document, the same number of times at the same
+//     alert rate. WEB Sign in with Apple (Auth.js) fetches it twice per sign-in;
+//     src/server/auth/appleDiscovery.ts retries and caches it (issue #44), and
+//     this is what says when Apple starts failing it the way it failed
+//     /auth/keys. A 200 is healthy only if it parses and carries a
+//     `token_endpoint`.
 //  2. The PRODUCTION exchange route, EXCHANGE_PROBES times, with a forged
 //     Apple token. The only healthy answer is 401 InvalidToken. 503
 //     ProviderUnavailable means production could not get Apple's keys even
@@ -35,6 +41,9 @@ const PROVIDERS = {
   apple: 'https://appleid.apple.com/auth/keys',
   google: 'https://www.googleapis.com/oauth2/v3/certs',
 };
+const DISCOVERY = {
+  apple: 'https://appleid.apple.com/.well-known/openid-configuration',
+};
 const JWKS_PROBES = 30;
 const JWKS_GAP_MS = 500;
 /** 2 of 30. One miss in thirty is noise; two in one run is a pattern worth a look. */
@@ -52,7 +61,22 @@ const JSON_OUT = argValue('--json', null);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function probeJwks(url) {
+/** A JWKS endpoint: healthy is a 200 whose body has a non-empty `keys` array. */
+const probeJwks = (url) =>
+  probeEndpoint(url, (body, kids) => {
+    if (!Array.isArray(body?.keys) || body.keys.length === 0) return '200-not-a-jwks';
+    for (const k of body.keys) if (typeof k.kid === 'string') kids.add(k.kid);
+    return '200';
+  });
+
+/** A discovery document: healthy is a 200 that parses and names a `token_endpoint`. */
+const probeDiscovery = (url) =>
+  probeEndpoint(url, (body) =>
+    typeof body?.token_endpoint === 'string' ? '200' : '200-not-a-discovery-document'
+  );
+
+/** `classify` turns a 200's parsed body into an outcome; only '200' counts as healthy. */
+async function probeEndpoint(url, classify) {
   const tally = {};
   const kids = new Set();
   for (let i = 0; i < JWKS_PROBES; i++) {
@@ -65,8 +89,7 @@ async function probeJwks(url) {
       outcome = String(res.status);
       if (res.status === 200) {
         const body = await res.json().catch(() => null);
-        if (!Array.isArray(body?.keys) || body.keys.length === 0) outcome = '200-not-a-jwks';
-        else for (const k of body.keys) if (typeof k.kid === 'string') kids.add(k.kid);
+        outcome = classify(body, kids);
       } else {
         await res.body?.cancel();
       }
@@ -132,6 +155,8 @@ async function probeExchange(kid) {
 const startedAt = new Date().toISOString();
 const jwks = {};
 for (const [name, url] of Object.entries(PROVIDERS)) jwks[name] = await probeJwks(url);
+const discovery = {};
+for (const [name, url] of Object.entries(DISCOVERY)) discovery[name] = await probeDiscovery(url);
 // A kid Apple really publishes, so production takes the signature path rather
 // than an unknown-kid rotation refresh. Only if Apple served no keys at all to
 // thirty requests do we fall back to a made-up one.
@@ -143,6 +168,13 @@ for (const [name, r] of Object.entries(jwks)) {
   if (r.rate >= JWKS_ALERT_RATE) {
     alerts.push(
       `${name} JWKS failed ${r.failures}/${JWKS_PROBES} (${Math.round(r.rate * 100)}%): ${JSON.stringify(r.tally)}`
+    );
+  }
+}
+for (const [name, r] of Object.entries(discovery)) {
+  if (r.rate >= JWKS_ALERT_RATE) {
+    alerts.push(
+      `${name} discovery failed ${r.failures}/${JWKS_PROBES} (${Math.round(r.rate * 100)}%): ${JSON.stringify(r.tally)} — web sign-in retries it (appleDiscovery.ts), but a rate this high can outlast the retries`
     );
   }
 }
@@ -172,6 +204,9 @@ const summary = [
   ...Object.entries(jwks).map(
     ([name, r]) => `| ${name} JWKS × ${JWKS_PROBES} | ${JSON.stringify(r.tally)} |`
   ),
+  ...Object.entries(discovery).map(
+    ([name, r]) => `| ${name} discovery × ${JWKS_PROBES} | ${JSON.stringify(r.tally)} |`
+  ),
   `| ${BASE} exchange, forged Apple token × ${EXCHANGE_PROBES} | ${exchange.map((r) => `${r.status} ${r.code}`).join(', ')} |`,
   '',
 ].join('\n');
@@ -181,4 +216,4 @@ if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMM
 if (process.env.GITHUB_OUTPUT) {
   appendFileSync(process.env.GITHUB_OUTPUT, `alert=${alerts.length > 0}\n`);
 }
-if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify({ startedAt, alerts, jwks, exchange, summary }, null, 2));
+if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify({ startedAt, alerts, jwks, discovery, exchange, summary }, null, 2));
