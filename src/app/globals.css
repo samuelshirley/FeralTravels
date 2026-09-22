@@ -29,6 +29,12 @@
    * shape and label. `--tp-danger` is the deliberate exception — see below.
    * ------------------------------------------------------------------- */
 
+  /* Native widgets — scrollbars, <select>, form controls, the browser's own
+     pickers — draw light unless told otherwise, so every one of them rendered
+     light on this dark ground. This does not theme them to Nocturne (nothing
+     can); it stops them being white. */
+  color-scheme: dark;
+
   --tp-font-sans: var(--font-inter), Helvetica, Arial, sans-serif;
 
   /* Ground and surfaces */

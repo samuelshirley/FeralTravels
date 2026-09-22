@@ -300,7 +300,9 @@ writes `subscriptions` rows with `source: 'fake'` and rewrites `users.created_at
 whose Neon endpoint hashes to the production one (`src/server/productionGuard.ts`; a hash because
 the repo is public). Production code never imports it statically: `/admin` and
 `/api/admin/test-users` ask `testAccountsAvailable()` first and `await import()` only on a yes, and
-the admin card is absent in production. `scripts/trial-account.ts` and `scripts/db-reset.ts` use the
+in production the admin card offers no generator — it renders a short note saying why and pointing
+at the per-account "Force the paywall" control and at a preview (2026-09-22; it used to be absent,
+which read as a missing feature). `scripts/trial-account.ts` and `scripts/db-reset.ts` use the
 same check; the reset takes a date-stamped override. Added 2026-09-21 for the production wipe.
 *Enforced by:* `testAccountsProductionGuard.test.ts`.
 

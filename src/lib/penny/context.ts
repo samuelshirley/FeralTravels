@@ -34,9 +34,10 @@ export interface PennyContext {
     current_leg_id: string | null;
     current_place: string | null;
     /**
-     * Hours of driving a day the driver asked for at onboarding, or null for
-     * the flat 8h default. get_route splits long segments on it; the leg
-     * validators keep 8h as the hard ceiling regardless.
+     * Hours of driving a day the driver asked for at onboarding
+     * (1–DAILY_DRIVE_HOURS_MAX), or null for DEFAULT_MAX_DRIVE_HOURS_PER_DAY.
+     * THE per-day cap: get_route splits on it and the add_leg / update_leg
+     * validators enforce it. docs/design/drive-hours-cap.md
      */
     daily_drive_hours: number | null;
     /**

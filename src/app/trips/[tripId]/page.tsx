@@ -78,9 +78,10 @@ export default async function TripPage({ params, searchParams }: Props) {
         initialChat={initialChat}
         serverOnboardingState={trip.onboarding_state}
         replanFromOffRoute={searchParams.replan === 'true'}
-        // `?chat=1` — the paywall overlay's "Talk to Penny" link. On a phone
-        // this page opens on the itinerary tab, which is not where someone who
-        // just clicked her name wants to land.
+        // `?chat=1` — sent by the iOS app when it lands a blocked account on
+        // its latest trip (mobile/app/index.tsx, mobile/app/trips/index.tsx).
+        // On a phone this page opens on the itinerary tab, and Penny's paywall
+        // message is in the chat.
         openChatOnMount={searchParams.chat === '1'}
         /*
          * "Open on this tab." BottomNav sends it when it is mounted on a page
