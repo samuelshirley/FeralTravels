@@ -104,7 +104,7 @@ Things deliberately *not* on the list:
 
 ## Design notes for when we wire these up
 
-- **All tools should be Anthropic-native tools** (`tool_use` blocks), not text-prompted "pretend to call this function" patterns. After the migration in [`docs/proposals/tool-use-migration.md`](../proposals/tool-use-migration.md), this is just adding entries to the tools array.
+- **All tools should be Anthropic-native tools** (`tool_use` blocks), not text-prompted "pretend to call this function" patterns. After the tool-use migration, this is just adding entries to the tools array.
 - **Cache aggressively.** Routes between two specific lat/lngs don't change minute-to-minute. Geocoding is even more cacheable. Cache key: tuple of inputs. TTL: routes 24h, geocoding 30 days, weather 1h, POIs 12h.
 - **Validate tool *outputs* server-side too.** A tool returning malformed data shouldn't crash a Penny turn. Wrap each tool in a Zod parser; on parse failure, return `is_error: true` to Claude with a useful message, same as we do for input validation failures.
 - **Cost guardrails per tool.** We already have a daily $-cap on Anthropic spend (`route.ts:27`). Each external API needs its own cap. Don't let a runaway loop spend $50 on Google Directions in an hour.

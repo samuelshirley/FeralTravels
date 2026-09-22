@@ -46,6 +46,14 @@ B2. **Penny never authors coordinates.** `resolve_place` (Google Places Text Sea
 name→lat/lng path. *Enforced by:* **NOT ENFORCED** — prompt rule only; no validator checks where
 an `add_leg` coordinate came from.
 
+B2b. **A split point's NAME and its LOCATION both belong to the server, and the daily cap is the
+only fact among them.** The name is reverse-geocoded (Nominatim, English, qualified by state only
+in `us ca au br mx in` — a French `state` is a région, which shipped "Tavel, Occitania"); the point
+is then nudged along the polyline to the first city or town within 25 minutes, provided neither
+neighbouring day busts the cap, so a day does not end in a village of 1,800 people. Every test
+payload is captured from the live API — the invented one it replaced passed while the code was
+broken. *Enforced by:* `osm/nominatim.test.ts`, `penny/splitPointNames.test.ts`.
+
 B3. **The fuel range is written in onboarding and Settings only, never from chat.** A range
 statement in chat is a fuel REQUEST (→ Finn) or a declared tank state (`declare_fuel_state`), not
 a preference edit. *Enforced by:* `updateVehicle.test.ts` (range not in the tool schema),
@@ -88,8 +96,9 @@ turns drain in-request.** *Enforced by:* partial unique index `penny_turns_one_r
 the promotion race — `pennyTurns.test.ts` — the partial unique index in the schema AND the 23505→null catch that turns "someone else won" into "stay queued"; both halves are load-bearing beyond the index.
 
 B14. **Penny does not author derived fields: split-point names, drive-leg titles, `end_date`.**
-(Pending — section 3 of `docs/tasks/2026-09-09-haiku-fuel-tankwalk.md`.) Haiku wrote "Texas
-Panhandle" and titled a Marfa leg "Austin → Big Bend". *Enforced by:* **NOT YET**.
+Haiku wrote "Texas Panhandle" and titled a Marfa leg "Austin → Big Bend". *Enforced by:*
+`legTitle.test.ts` (titles are `start → end`) and `splitPointNames.test.ts` +
+`nominatim.test.ts` (a day ends in a named town, qualified by country). `end_date`: **NOT YET**.
 
 B15. **Ambiguous "go here" + a place → ONE clarifying question before any edit.** *Enforced by:*
 **NOT ENFORCED** (prompt).
@@ -299,8 +308,9 @@ same check; the reset takes a date-stamped override. Added 2026-09-21 for the pr
 
 F1. **Merging a PR IS the deploy. The deploy job refuses unless CI for that PR's head SHA is
 green; a direct push to `main` lands but never deploys.** *Enforced by:* the workflow itself.
-**Branch protection is OFF** — GitHub enforces nothing; the `gh api` block to turn it on is in
-CLAUDE.md. *Decision still open: turn it on?*
+**Branch protection is ON** (2026-09-22): a PR is required, `Decide scope` and `Unit tests` must
+pass on an up-to-date branch, force-push and deletion are blocked; admins can bypass it. The
+configuration is in `docs/design/deploy-pipeline.md`.
 
 F2. **No E2E spec may skip (`E2E_MAX_SKIPPED=0`); the two Anthropic-spending specs run only on
 the `ai-tests` label; the production key never reaches the runner.** *Enforced by:*

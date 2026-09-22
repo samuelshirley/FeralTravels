@@ -32,7 +32,7 @@ vi.mock('@/components/SupportModal', () => ({ default: () => null }));
 
 const GOOGLE_USER = {
   name: 'Sam Shirley',
-  email: 'samuelashirley@gmail.com',
+  email: 'sam@feraltravels.com',
   image: 'https://lh3.googleusercontent.com/a/photo.jpg',
 };
 
@@ -139,6 +139,6 @@ describe('AppNavbar account button', () => {
 
     expect(screen.getByText('Signed in as')).toBeInTheDocument();
     expect(screen.getByText('Sam Shirley')).toBeInTheDocument();
-    expect(screen.getByText('samuelashirley@gmail.com')).toBeInTheDocument();
+    expect(screen.getByText('sam@feraltravels.com')).toBeInTheDocument();
   });
 });
