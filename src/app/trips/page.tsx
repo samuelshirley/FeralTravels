@@ -84,18 +84,9 @@ export default async function TripsPage() {
 
           {/*
             The block is an overlay now, not a card in the flow — it covers this
-            page rather than sitting above a still-usable list. `pennyHref`
-            points at the most recent trip's chat (the list arrives
-            most-recently-active first), which is where the same block is a
-            message from Penny that answers back. An account with no trip has no
-            chat to be sent to: chat_history is trip-scoped.
+            page rather than sitting above a still-usable list.
           */}
-          {verdict.blockReason && (
-            <EntitlementNotice
-              blockReason={verdict.blockReason}
-              pennyHref={myTrips[0] ? `/trips/${myTrips[0].id}?chat=1` : null}
-            />
-          )}
+          {verdict.blockReason && <EntitlementNotice blockReason={verdict.blockReason} />}
 
           {/*
             `refunded` and `revoked` are the only states that close the trips

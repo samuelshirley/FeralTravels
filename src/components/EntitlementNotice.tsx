@@ -21,19 +21,6 @@ import type { BlockReason } from '@/types/entitlement';
  * Whether the trip list below is rendered at all is still the caller's
  * decision, because `refunded`/`revoked` close the trips themselves.
  */
-export default function EntitlementNotice({
-  blockReason,
-  pennyHref = null,
-}: {
-  blockReason: BlockReason;
-  /** Link to the chat the user should be having instead. Null when they have no trip. */
-  pennyHref?: string | null;
-}) {
-  return (
-    <EntitlementOverlay
-      blockReason={blockReason}
-      notice={blockNoticeFor(blockReason)}
-      pennyHref={pennyHref}
-    />
-  );
+export default function EntitlementNotice({ blockReason }: { blockReason: BlockReason }) {
+  return <EntitlementOverlay blockReason={blockReason} notice={blockNoticeFor(blockReason)} />;
 }

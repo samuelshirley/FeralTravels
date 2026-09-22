@@ -53,8 +53,8 @@ interface Props {
   replanFromOffRoute?: boolean;
   /**
    * Open on the chat tab (mobile viewport only — chat is always visible above
-   * it). Set by `?chat=1`, which is how the paywall overlay hands someone over
-   * to Penny.
+   * it). Set by `?chat=1`, which the iOS app sends when it lands a blocked
+   * account on its latest trip.
    */
   openChatOnMount?: boolean;
   /** Force the mobile tab on mount — see the note in page.tsx. */

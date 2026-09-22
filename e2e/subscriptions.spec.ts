@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { login, uniqueEmail } from './fixtures/auth';
 import { playwrightName } from './fixtures/constants';
 import { openTrip } from './fixtures/nav';
@@ -97,16 +97,37 @@ function notice(page: Page) {
 }
 
 /**
- * Open the user's trip the only way a blocked account still can.
+ * Prove a blocked account can still reach its own trip.
  *
  * `openTrip` clicks the card, and the card is now UNDER the overlay — that is
- * the block working, not a bug to route around. The overlay's own link to
- * Penny is the sanctioned way through, so exercising it here is also the test
- * that it exists at all.
+ * the block working, not a bug to route around. The overlay offers no way
+ * through (its old "Talk to Penny" link led to a disabled composer), so this
+ * reads the covered card's id and goes to the URL directly — the way a
+ * bookmark, or the iOS app's `?chat=1` hand-off, gets there. What is asserted
+ * is that the workspace opens instead of bouncing back to `/trips`.
  */
-async function openTripFromOverlay(page: Page) {
-  await notice(page).getByTestId('entitlement-overlay-penny').click();
+async function gotoBlockedTrip(page: Page) {
+  const id = await page.getByTestId('trip-card').first().getAttribute('data-trip-id');
+  expect(id, 'the covered trip card carries no data-trip-id').toBeTruthy();
+  await page.goto(`/trips/${id}?chat=1`);
   await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 20_000 });
+}
+
+/**
+ * Nothing inside `container` may extend past its right edge.
+ *
+ * `width: 100%` plus padding on a content-box element was 26px wider than its
+ * card, so on desktop the App Store button poked out of the sheet. Measured,
+ * not eyeballed — and applied to every container PurchaseOptions renders in.
+ */
+async function expectNoRightOverflow(container: Locator) {
+  const overflow = await container.evaluate((card) => {
+    const edge = card.getBoundingClientRect().right;
+    return [...card.querySelectorAll('*')]
+      .map((el) => Math.round(el.getBoundingClientRect().right - edge))
+      .filter((over) => over > 0);
+  });
+  expect(overflow).toEqual([]);
 }
 
 /** The button only an entitled account gets. Its absence is a courtesy, not the gate. */
@@ -195,6 +216,17 @@ test.describe('Subscriptions — trial', () => {
     await expect(newTripButton(page)).toHaveCount(0);
     await expect(page.getByTestId('trip-card')).toHaveCount(1);
 
+    // One dialog, not two: the App Store button and the code field are IN the
+    // overlay, with no button that opens a sheet on top of it — and no link to
+    // a Penny who cannot answer.
+    const card = notice(page).getByTestId('entitlement-overlay-card');
+    await expect(card.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
+    await expect(card.getByTestId('promo-input')).toBeVisible();
+    await expect(card.getByTestId('entitlement-overlay-cta')).toHaveCount(0);
+    await expect(notice(page).getByText('Talk to Penny')).toHaveCount(0);
+    await expect(page.getByTestId('purchase-sheet')).toHaveCount(0);
+    await expectNoRightOverflow(card);
+
     // The server refuses on its own authority, whatever the page drew.
     const created = await attemptCreateTrip(page, playwrightName('trial-day7'));
     expect(created.status).toBe(402);
@@ -204,7 +236,7 @@ test.describe('Subscriptions — trial', () => {
 
     // And in the workspace, Penny says it herself — a message in the
     // transcript, not a sheet thrown over the app.
-    await openTripFromOverlay(page);
+    await gotoBlockedTrip(page);
     const cta = page.getByTestId('paywall-cta');
     await expect(cta).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('trip-chat-composer')).toBeDisabled();
@@ -221,18 +253,7 @@ test.describe('Subscriptions — trial', () => {
     await expect(sheet.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
     await expect(sheet.getByTestId('promo-input')).toBeVisible();
     await expect(sheet.getByTestId('promo-submit')).toBeVisible();
-
-    // And it fits. `width: 100%` plus padding on a content-box element was
-    // 26px wider than the card, so on desktop the button poked out of the
-    // sheet's right edge. Measured, not eyeballed: nothing inside the card
-    // may extend past the card.
-    const overflow = await sheet.evaluate((card) => {
-      const edge = card.getBoundingClientRect().right;
-      return [...card.querySelectorAll('*')]
-        .map((el) => Math.round(el.getBoundingClientRect().right - edge))
-        .filter((over) => over > 0);
-    });
-    expect(overflow).toEqual([]);
+    await expectNoRightOverflow(sheet);
   });
 
   test('trial ceiling: $1.20 of spend ends the trial on day 3', async ({ page }) => {
@@ -364,6 +385,9 @@ test.describe('Subscriptions — subscribed', () => {
     // that this is the apologetic branch and not the sales one.
     await expect(notice(page)).toHaveAttribute('data-block-reason', 'usage_cap');
     await expect(notice(page).locator('a[href^="mailto:"]')).toBeVisible();
+    // Nothing to sell a capped account, so no App Store button or code field.
+    await expect(notice(page).getByTestId('purchase-sheet-app-store-link')).toHaveCount(0);
+    await expect(notice(page).getByTestId('promo-input')).toHaveCount(0);
     await expect(newTripButton(page)).toHaveCount(0);
 
     const created = await attemptCreateTrip(page, playwrightName('capped'));
@@ -374,7 +398,7 @@ test.describe('Subscriptions — subscribed', () => {
     // the workspace opens instead of bouncing back to /trips.
     expect(entitlement.canViewExistingTrips).toBe(true);
     await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    await openTripFromOverlay(page);
+    await gotoBlockedTrip(page);
     await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}/);
     await expect(page.getByTestId('leg-card')).toHaveCount(2);
 
@@ -462,15 +486,17 @@ test.describe('Subscriptions — subscribed', () => {
     // they already made are still rendered underneath — covered, not deleted.
     expect(entitlement.canViewExistingTrips).toBe(true);
     await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    // The overlay's action is the purchase sheet, the same one Penny's bubble
-    // opens. "Continue on iPhone" lives inside it, because the web cannot take
-    // money. Asserted by label rather than href: NEXT_PUBLIC_APP_STORE_URL is
-    // an env var (the numeric app id is minted at first submission), so the URL
-    // is not something a spec can assert on. The label is ours.
-    await notice(page).getByTestId('entitlement-overlay-cta').click();
-    await expect(
-      page.getByTestId('purchase-sheet').getByTestId('purchase-sheet-app-store-link'),
-    ).toBeVisible();
+    // The overlay carries the purchase sheet's contents inline — the same
+    // PurchaseOptions block Penny's bubble opens in a sheet — so there is
+    // nothing to click first and no second modal. Asserted by label rather than
+    // href: NEXT_PUBLIC_APP_STORE_URL is an env var (the numeric app id is
+    // minted at first submission), so the URL is not something a spec can
+    // assert on. The label is ours.
+    const card = notice(page).getByTestId('entitlement-overlay-card');
+    await expect(card.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
+    await expect(card.getByTestId('promo-input')).toBeVisible();
+    await expect(page.getByTestId('purchase-sheet')).toHaveCount(0);
+    await expectNoRightOverflow(card);
   });
 
   test('refunded: closed completely, including the trips already made', async ({ page }) => {
