@@ -830,32 +830,59 @@ export default async function AdminPage() {
         {/*
           Bottom of the page on purpose. It is a development affordance, not an
           operations one — nothing here tells you anything about the running
-          system. ABSENT in production, not merely switched off: the generator
-          writes `source: 'fake'` subscriptions and refuses to load there
-          (decision E13), so a card offering it would be a control that cannot
-          work. Elsewhere it is off without SUBSCRIPTION_TESTING=1.
+          system. In production the generator is NOT offered (decision E13: it
+          writes `source: 'fake'` subscriptions and rewrites users.created_at,
+          and refuses to load there), but the card still renders and says so.
+          It used to be absent outright, which read as "the feature is gone"
+          rather than "not here — go there". Elsewhere it is off without
+          SUBSCRIPTION_TESTING=1.
         */}
-        {!isProductionEnvironment() && (
-          <section style={{ ...card, marginTop: 16 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 4 }}>
-              Test users
-            </h2>
-            <p
-              style={{
-                fontSize: 11,
-                color: 'var(--tp-subtle)',
-                margin: '0 0 12px',
-                lineHeight: 1.5,
-              }}
+        <section style={{ ...card, marginTop: 16 }} data-testid="admin-test-users">
+          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 4 }}>
+            Test users
+          </h2>
+          {isProductionEnvironment() ? (
+            <div
+              data-testid="admin-test-users-production"
+              style={{ fontSize: 12, color: 'var(--tp-muted)', lineHeight: 1.55 }}
             >
-              Disposable accounts for walking the paywall. Addresses are always{' '}
-              <code style={{ fontSize: 10 }}>sam+trial-…@feraltravels.com</code> — the pattern is
-              hardcoded where no environment variable can widen it, and every action refuses anything
-              outside it.
-            </p>
-            <TestUserBlock armed={testAccountsAvailable()} paywallOn={paywallOn} />
-          </section>
-        )}
+              <p style={{ margin: '0 0 8px' }}>
+                Aged test accounts can&apos;t be generated against the production database
+                (decision E13).
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <li style={{ marginBottom: 4 }}>
+                  To walk a real wall here, open the account from{' '}
+                  <Link href="/admin/users" style={{ color: 'var(--tp-primary)' }}>
+                    Users
+                  </Link>{' '}
+                  and use <strong>Force the paywall on this account</strong>.
+                </li>
+                <li>
+                  To generate an aged account, use a preview deployment with{' '}
+                  <code style={{ fontSize: 11 }}>SUBSCRIPTION_TESTING=1</code>.
+                </li>
+              </ul>
+            </div>
+          ) : (
+            <>
+              <p
+                style={{
+                  fontSize: 11,
+                  color: 'var(--tp-subtle)',
+                  margin: '0 0 12px',
+                  lineHeight: 1.5,
+                }}
+              >
+                Disposable accounts for walking the paywall. Addresses are always{' '}
+                <code style={{ fontSize: 10 }}>sam+trial-…@feraltravels.com</code> — the pattern is
+                hardcoded where no environment variable can widen it, and every action refuses anything
+                outside it.
+              </p>
+              <TestUserBlock armed={testAccountsAvailable()} paywallOn={paywallOn} />
+            </>
+          )}
+        </section>
 
         {/*
           Below the test accounts on purpose. Both hand out access without
