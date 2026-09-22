@@ -45,6 +45,9 @@ export const SHARED_FILES = [
   // project is the only test runner, and the web has the identical bug.
   ['src/lib/pennyRunStore.ts', 'mobile/shared/lib/pennyRunStore.ts'],
   ['src/lib/lastOpenTrip.ts', 'mobile/shared/lib/lastOpenTrip.ts'],
+  // The trips list's date headers: both lists must group, and hide the
+  // placeholder date, identically.
+  ['src/lib/tripsListDates.ts', 'mobile/shared/lib/tripsListDates.ts'],
   // Both halves of the promo flow. The app must normalize a typed code exactly
   // as the server does — if the two disagreed, a user would type something the
   // app accepts and the server rejects, and the error would read as a bad code

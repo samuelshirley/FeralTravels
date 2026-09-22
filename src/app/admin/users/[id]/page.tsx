@@ -26,6 +26,7 @@ import RevokeAccessControl from './RevokeAccessControl';
 import PaywallEnforceControl from './PaywallEnforceControl';
 import styles from '../../admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
+import { formatDayMonthYear } from '@/lib/dates';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -162,7 +163,9 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
    */
   const periodEnd = subscription?.currentPeriodEnd ?? null;
   const paidThrough =
-    periodEnd && periodEnd.getTime() > Date.now() ? periodEnd.toISOString().slice(0, 10) : null;
+    periodEnd && periodEnd.getTime() > Date.now()
+      ? formatDayMonthYear(periodEnd.toISOString().slice(0, 10))
+      : null;
 
   /*
    * What pressing "Re-activate" would do, decided by the payments module rather
@@ -177,7 +180,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
   const reactivation = planReactivation(subscription ?? null);
   const reactivateLanding = reactivationLandingLine(
     reactivation,
-    periodEnd ? periodEnd.toISOString().slice(0, 10) : null,
+    periodEnd ? formatDayMonthYear(periodEnd.toISOString().slice(0, 10)) : null,
   );
   const reactivateBlockedMessage =
     !reactivation.ok && reactivation.reason === 'no_pre_revoke_status'
@@ -765,7 +768,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
                       </td>
                       <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>{t.status}</td>
                       <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
-                        {t.startDate ? `${t.startDate} → ${t.endDate ?? '?'}` : '—'}
+                        {`${formatDayMonthYear(t.startDateParsed) ?? '—'} → ${t.endDateParsed ? formatDayMonthYear(t.endDateParsed) ?? '?' : '?'}`}
                       </td>
                       <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
                         {fmtRel(t.updatedAt)}

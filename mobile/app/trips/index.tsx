@@ -35,6 +35,7 @@ import { theme, shadow } from "@/lib/theme";
 import type { Trip } from "@/shared/types/trip";
 import { todayISO } from "@/shared/lib/dates";
 import { isTripCompleted } from "@/shared/lib/tripCompletion";
+import { groupByStartDate, mostRecentlyActive } from "@/shared/lib/tripsListDates";
 import { font } from "@/lib/typography";
 
 /**
@@ -76,6 +77,7 @@ type MeWithId = Me & { id?: string };
 type Row =
   | { key: string; kind: "empty" }
   | { key: string; kind: "templatesHeader" }
+  | { key: string; kind: "dateHeader"; label: string }
   | { key: string; kind: "trip"; trip: Trip; isTemplate: boolean };
 
 export default function TripsScreen() {
@@ -195,10 +197,18 @@ export default function TripsScreen() {
 
   const rows: Row[] = [];
   if (!loading && myTrips.length === 0) rows.push({ key: "empty", kind: "empty" });
-  for (const trip of myTrips) rows.push({ key: trip.id, kind: "trip", trip, isTemplate: false });
+  // One date header per run of trips sharing a start date (nocturne-reskin
+  // §7a) — the same grouping as the web list, from the same shared function.
+  const pushGrouped = (list: Trip[], isTemplate: boolean) => {
+    for (const group of groupByStartDate(list)) {
+      if (group.label) rows.push({ key: group.key, kind: "dateHeader", label: group.label });
+      for (const trip of group.trips) rows.push({ key: trip.id, kind: "trip", trip, isTemplate });
+    }
+  };
+  pushGrouped(myTrips, false);
   if (templates.length > 0) {
     rows.push({ key: "templatesHeader", kind: "templatesHeader" });
-    for (const trip of templates) rows.push({ key: trip.id, kind: "trip", trip, isTemplate: true });
+    pushGrouped(templates, true);
   }
 
   async function onRefresh() {
@@ -335,6 +345,14 @@ export default function TripsScreen() {
                 </View>
               );
             }
+            if (item.kind === "dateHeader") {
+              return (
+                <View style={styles.dateHeader} testID="trip-date-header">
+                  <View style={styles.dateHeaderRule} />
+                  <Text style={styles.dateHeaderText}>{item.label}</Text>
+                </View>
+              );
+            }
             if (item.kind === "templatesHeader") {
               return (
                 <View style={styles.templatesHeader}>
@@ -347,8 +365,6 @@ export default function TripsScreen() {
               <TripCard
                 id={trip.id}
                 name={trip.name}
-                startDate={trip.start_date}
-                endDate={trip.end_date}
                 dayCount={trip.day_count}
                 totalDistanceKm={trip.total_distance_km}
                 nextStop={trip.next_stop}
@@ -407,7 +423,7 @@ export default function TripsScreen() {
       <PlanRequiredOverlay
         entitlement={entitlement}
         onBackToPenny={() => {
-          const latest = myTrips[0];
+          const latest = mostRecentlyActive(myTrips);
           router.replace(latest ? `/trips/${latest.id}?chat=1` : "/paywall");
         }}
         onEntitled={setEntitlement}
@@ -656,6 +672,17 @@ const styles = StyleSheet.create({
   emptyText: { fontFamily: font.regular, fontSize: 14, lineHeight: 21, color: theme.muted },
   emptyStrong: { color: theme.text, fontFamily: font.medium },
   templatesHeader: { marginTop: 20, marginBottom: 10 },
+  // Eyebrow's size and colour, with the mock's short accent rule — but not
+  // all-caps, because it is a date ("16 Sep 2026"), not a label.
+  dateHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 14, marginBottom: 8 },
+  dateHeaderRule: { width: 16, height: 2, borderRadius: 1, backgroundColor: theme.primary },
+  dateHeaderText: {
+    fontSize: 11,
+    fontFamily: font.bold,
+    letterSpacing: 0.6,
+    color: theme.subtle,
+    fontVariant: ["tabular-nums"],
+  },
   overlay: {
     flex: 1,
     // src/components/Spinner.tsx:48 (LoadingOverlay) — var(--tp-overlay)

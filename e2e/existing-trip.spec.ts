@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { signInAsNewUser } from './fixtures/auth';
 import { FIXTURE_VEHICLE_NAME } from './fixtures/constants';
 import { openTrip } from './fixtures/nav';
+import { createBlankPlanningTrip } from './fixtures/test-trip';
+import { formatDayMonthYear, legDateISO, todayISO } from '../src/lib/dates';
 
 /**
  * The core read path: a signed-in user opens their trip and sees it.
@@ -86,5 +88,64 @@ test.describe('Opening an existing trip', () => {
 
       await day.click();
     }
+  });
+});
+
+/**
+ * The trips list's date headers (nocturne-reskin §7a, superseded 2026-09-22):
+ * the start date sits in a header above each run of trips sharing it, not in
+ * the card, and the list reads newest date first.
+ *
+ * The fixtures are created OUT of date order on purpose — the sooner trip last —
+ * so that ordering by last activity (what the list used to do) puts it first
+ * and fails the order assertion, rather than passing by coincidence.
+ */
+test.describe('Trips list date headers', () => {
+  const DATE_HEADER = /^\d{2} [A-Z][a-z]{2} \d{4}$/;
+  const ANY_DATE = /\d{4}-\d{2}-\d{2}|\d{1,2} [A-Z][a-z]{2} \d{4}/;
+
+  test('headers carry the date, cards do not, one header per shared day, newest first', async ({
+    page,
+  }) => {
+    // Relative to today, never literal (seedDates.test.ts): both well past the
+    // seeded trip's near-future start, a year apart.
+    const later = legDateISO(todayISO(), 800);
+    const sooner = legDateISO(todayISO(), 400);
+    const laterLabel = formatDayMonthYear(later)!;
+    const soonerLabel = formatDayMonthYear(sooner)!;
+
+    const email = await signInAsNewUser(page);
+    const a = await createBlankPlanningTrip(email, 'dates-a', later);
+    const b = await createBlankPlanningTrip(email, 'dates-b', later);
+    const c = await createBlankPlanningTrip(email, 'dates-c', sooner);
+    await page.goto('/trips');
+
+    const headers = page.getByTestId('trip-date-header');
+    // Three dated runs: `later` (a, b), `sooner` (c), and the seeded trip's.
+    await expect(headers).toHaveCount(3);
+    const labels = (await headers.allInnerTexts()).map((s) => s.trim());
+    for (const label of labels) expect(label).toMatch(DATE_HEADER);
+    expect(labels.slice(0, 2)).toEqual([laterLabel, soonerLabel]);
+
+    // Two trips sharing a start date sit under ONE header.
+    expect(labels.filter((l) => l === laterLabel)).toHaveLength(1);
+    const shared = page.getByTestId('trip-date-group').filter({ has: page.getByText(laterLabel, { exact: true }) });
+    await expect(shared.getByTestId('trip-card')).toHaveCount(2);
+    await expect(shared.locator(`[data-trip-name="${a.name}"]`)).toHaveCount(1);
+    await expect(shared.locator(`[data-trip-name="${b.name}"]`)).toHaveCount(1);
+
+    // Descending date order, header by header and card by card.
+    const times = labels.map((l) => Date.parse(`${l} UTC`));
+    expect([...times].sort((x, y) => y - x)).toEqual(times);
+    const names = await page.getByTestId('trip-card').evaluateAll((els) =>
+      els.map((el) => el.getAttribute('data-trip-name')),
+    );
+    expect(names.indexOf(c.name)).toBeGreaterThan(Math.max(names.indexOf(a.name), names.indexOf(b.name)));
+
+    // No date inside any card. The seeded trip has legs, so it has a meta line.
+    const metas = await page.getByTestId('trip-card-meta').allInnerTexts();
+    expect(metas.length).toBeGreaterThan(0);
+    for (const meta of metas) expect(meta).not.toMatch(ANY_DATE);
+    await expect(page.getByTestId('trip-card-meta').first()).toContainText('2 days');
   });
 });

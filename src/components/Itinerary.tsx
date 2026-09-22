@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TripWithLegs } from '@/types/trip';
 import { apiFetch } from '@/lib/api';
 import { formatDate, parseISODate, behindCutoffRank, todayISO } from '@/lib/dates';
+import { formatTripDateRange } from '@/lib/tripsListDates';
 import { isTripCompleted, lastDayFromLegDates } from '@/lib/tripCompletion';
 import { effectiveLegSegment } from '@/lib/legSegmentGrouping';
 import { useUnits } from './UnitsContext';
@@ -588,7 +589,7 @@ export default function Itinerary({
           }}
         >
           {[
-            [trip.start_date, trip.end_date].filter(Boolean).join(' → '),
+            formatTripDateRange(trip),
             totalDist > 0 ? approxDistance(totalDist, units) : '',
             allLegs.length ? `${allLegs.length} day${allLegs.length === 1 ? '' : 's'}` : '',
             fuelStopCount ? `${fuelStopCount} fuel` : '',

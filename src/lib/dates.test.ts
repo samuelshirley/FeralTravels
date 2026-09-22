@@ -12,6 +12,7 @@ import {
   tryParseToISO,
   extractDateFromText,
   todayISOInZone,
+  formatDayMonthYear,
 } from './dates';
 
 describe('extractDateFromText', () => {
@@ -296,5 +297,27 @@ describe('behindCutoffRank', () => {
     expect(
       behindCutoffRank({ reportedRank: 3, legDateISOs, todayISO: '2026-06-06' }),
     ).toBe(3);
+  });
+});
+
+describe('formatDayMonthYear', () => {
+  it('formats a YYYY-MM-DD as a zero-padded "DD Mon YYYY"', () => {
+    expect(formatDayMonthYear('2026-05-02')).toBe('02 May 2026');
+    expect(formatDayMonthYear('2026-10-08')).toBe('08 Oct 2026');
+    expect(formatDayMonthYear('2026-12-31')).toBe('31 Dec 2026');
+    expect(formatDayMonthYear('2027-01-01')).toBe('01 Jan 2027');
+  });
+
+  it('does not shift a day under the process timezone (run under TZ=UTC and TZ=Pacific/Auckland)', () => {
+    // Year and month boundaries are where a UTC/local mix-up shows first.
+    expect(formatDayMonthYear('2026-01-01')).toBe('01 Jan 2026');
+    expect(formatDayMonthYear('2026-03-01')).toBe('01 Mar 2026');
+    expect(formatDayMonthYear('2028-02-29')).toBe('29 Feb 2028');
+  });
+
+  it('returns null for anything that is not a real YYYY-MM-DD, never throws', () => {
+    for (const bad of ['', 'On October 12', '2026-10-8', '2026-13-01', '2026-02-30', '2026-10-08T00:00:00Z', 'NaN-NaN-NaN']) {
+      expect(formatDayMonthYear(bad)).toBeNull();
+    }
   });
 });

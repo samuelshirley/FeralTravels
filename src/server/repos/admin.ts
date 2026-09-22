@@ -449,8 +449,10 @@ export async function getUserDetail(userId: string) {
         name: trips.name,
         status: trips.status,
         isTemplate: trips.isTemplate,
-        startDate: trips.startDate,
-        endDate: trips.endDate,
+        // The machine columns, not the free-text start_date/end_date (which
+        // hold whatever the driver typed) — formatted by the page.
+        startDateParsed: trips.startDateParsed,
+        endDateParsed: trips.endDateParsed,
         createdAt: trips.createdAt,
         updatedAt: trips.updatedAt,
       })
