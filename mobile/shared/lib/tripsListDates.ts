@@ -49,3 +49,46 @@ export function formatTripDateRange(trip: {
   const end = trip.end_date_parsed ? formatDayMonthYear(trip.end_date_parsed) : null;
   return [start, end && end !== start ? end : null].filter(Boolean).join(' → ');
 }
+
+export interface DateGroup<T> {
+  /** Stable React key for the header row. */
+  key: string;
+  /** "16 Sep 2026", or null for a run of trips with no date to show. */
+  label: string | null;
+  trips: T[];
+}
+
+/**
+ * One header per run of CONSECUTIVE trips sharing a start date — the list
+ * arrives ordered by start date already (listTripsForUser), so a run is a day.
+ * Trips whose date has not been answered form their own header-less runs.
+ */
+export function groupByStartDate<
+  T extends { id: string; start_date_parsed: string; start_date_set?: boolean },
+>(trips: T[]): DateGroup<T>[] {
+  const groups: DateGroup<T>[] = [];
+  for (const trip of trips) {
+    const label = trip.start_date_set === false ? null : formatDayMonthYear(trip.start_date_parsed);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.trips.push(trip);
+    else groups.push({ key: `date-${label ?? 'none'}-${trip.id}`, label, trips: [trip] });
+  }
+  return groups;
+}
+
+/**
+ * The trip the driver was last in. The list is ordered by start date, so its
+ * head is no longer that trip — callers that send a blocked driver back to
+ * "their" chat ask this instead. Falls back to list order when the payload
+ * carries no activity timestamp.
+ */
+export function mostRecentlyActive<T extends { last_activity_at?: string | null }>(
+  trips: T[],
+): T | undefined {
+  let best: T | undefined;
+  for (const t of trips) {
+    if (!best) best = t;
+    else if ((t.last_activity_at ?? '') > (best.last_activity_at ?? '')) best = t;
+  }
+  return best;
+}

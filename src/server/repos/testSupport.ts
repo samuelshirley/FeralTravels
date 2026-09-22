@@ -338,6 +338,8 @@ export async function createAdHocTrip(opts: {
   email: string;
   name: string;
   kind: 'blank' | 'onboarding' | 'vehicle_new';
+  /** 'blank' only — overrides the seeded future start. */
+  startDate?: string;
 }): Promise<{ tripId: string; vehicleId: string | null }> {
   assertEnabled();
   const userId = await ensureUserId(opts.email);
@@ -374,7 +376,7 @@ export async function createAdHocTrip(opts: {
     userId,
     name: opts.name,
     vehicleId,
-    startDate: opts.kind === 'blank' ? seededTripStartISO() : null,
+    startDate: opts.kind === 'blank' ? opts.startDate ?? seededTripStartISO() : null,
   });
   await db
     .update(trips)

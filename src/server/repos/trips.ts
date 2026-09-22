@@ -265,22 +265,30 @@ export const rowMappers = {
 // ---------------------------------------------------------------------------
 
 export async function listTripsForUser(userId: string) {
-  // "Last activity" for list ordering — most recently used/changed first.
-  // trips.updated_at alone is NOT enough: most edits land on legs (Penny
-  // replans, day-open fuel sourcing) or only in chat_history (a conversation
-  // with no plan change), neither of which bumps the trips row. GREATEST of
-  // all three is what "most recently used" actually means.
+  // Ordered by START DATE, newest first (2026-09-22): the list draws a date
+  // header over each run of trips sharing a start date (nocturne-reskin §7a),
+  // and ordering by activity made those headers jump around, which read as a
+  // bug. `startDateParsed` is a non-null `date`, so no NULLS LAST is needed.
+  //
+  // "Last activity" is the tie-break between trips on the same day, and is
+  // also returned as `last_activity_at` for the callers that want the trip the
+  // driver was last in rather than the head of the list (mostRecentlyActive).
+  // trips.updated_at alone is NOT enough for it: most edits land on legs
+  // (Penny replans, day-open fuel sourcing) or only in chat_history (a
+  // conversation with no plan change), neither of which bumps the trips row.
+  // GREATEST of all three is what "most recently used" actually means.
   const lastActivity = sql`GREATEST(
     ${trips.updatedAt},
     COALESCE((SELECT max(${legs.updatedAt}) FROM ${legs} WHERE ${legs.tripId} = ${trips.id}), ${trips.updatedAt}),
     COALESCE((SELECT max(${chatHistory.createdAt}) FROM ${chatHistory} WHERE ${chatHistory.tripId} = ${trips.id}), ${trips.updatedAt})
   )`;
   const rows = await db
-    .select()
+    .select({ trip: trips, lastActivity: sql<Date>`${lastActivity}`.mapWith(trips.updatedAt) })
     .from(trips)
     .where(or(eq(trips.userId, userId), eq(trips.isTemplate, true)))
-    .orderBy(asc(trips.isTemplate), desc(lastActivity), asc(trips.id));
-  const list = rows.map(tripRow);
+    .orderBy(asc(trips.isTemplate), desc(trips.startDateParsed), desc(lastActivity), asc(trips.id));
+  const lastActivityById = new Map(rows.map((r) => [r.trip.id, r.lastActivity.toISOString()]));
+  const list = rows.map((r) => tripRow(r.trip));
   if (list.length === 0) return list;
 
   // Each trip's last calendar day, so the list can tell a finished trip from a
@@ -369,6 +377,7 @@ export async function listTripsForUser(userId: string) {
       total_distance_km: totalKm > 0 ? Math.round(totalKm) : null,
       next_stop: currentLegId ? nextStopByLegId.get(currentLegId) ?? null : null,
       ...trip,
+      last_activity_at: lastActivityById.get(trip.id) ?? null,
       last_day_iso: lastDayFromSchedule({
         startDateISO: trip.start_date_parsed,
         legCount: legIds.length,

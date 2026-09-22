@@ -23,8 +23,6 @@ import { font } from "@/lib/typography";
 interface Props {
   id: string;
   name: string;
-  startDate: string | null;
-  endDate: string | null;
   /** Trip length in days, derived by listTripsForUser. */
   dayCount?: number | null;
   /** Total driving distance in km, derived by listTripsForUser. */
@@ -63,8 +61,6 @@ interface Props {
 export default function TripCard({
   id,
   name,
-  startDate,
-  endDate,
   dayCount,
   totalDistanceKm,
   nextStop,
@@ -81,18 +77,17 @@ export default function TripCard({
   const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Same expression as the web card so a half-dated trip renders identically.
+  // Same expression as the web card.
   /*
-   * "16–17 Sep 2026 · 2 days · ~645 km". Each part is dropped when it is not
-   * known rather than shown as a zero — a template carries dates and nothing
-   * else, and it should read as a date range, not as a 0 km trip.
+   * "2 days · ~645 km". No date: the list's header above the card owns it
+   * (nocturne-reskin §7a, superseded 2026-09-22). Each part is dropped when it
+   * is not known rather than shown as a zero, and when none survives there is
+   * no meta line at all.
    */
   const metaBits: string[] = [];
-  const dateRange = [startDate, endDate].filter(Boolean).join(" → ");
-  if (dateRange) metaBits.push(dateRange);
   if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? "" : "s"}`);
   if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
-  const dates = metaBits.join(" · ") || "No dates set";
+  const meta = metaBits.join(" · ");
 
   async function handleDeleteConfirm() {
     setBusy(true);
@@ -135,7 +130,7 @@ export default function TripCard({
           >
             {name}
           </Text>
-          <Text style={styles.dates}>{dates}</Text>
+          {meta ? <Text style={styles.meta}>{meta}</Text> : null}
 
           {/*
             The one added line per card, below a hairline INSIDE the card so it
@@ -269,7 +264,7 @@ const styles = StyleSheet.create({
     color: theme.muted,
   },
   name: { fontSize: 16, fontFamily: font.medium, color: theme.text },
-  dates: {
+  meta: {
     fontFamily: font.regular,
     fontSize: 11.5,
     color: theme.subtle,

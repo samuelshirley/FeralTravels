@@ -11,8 +11,6 @@ import { buttonStyle } from '@/components/ui/buttonStyle';
 interface Props {
   id: string;
   name: string;
-  startDate: string | null;
-  endDate: string | null;
   /** Trip length in days, derived by listTripsForUser. */
   dayCount?: number | null;
   /** Total driving distance in km, derived by listTripsForUser. */
@@ -51,8 +49,6 @@ interface Props {
 export default function TripCard({
   id,
   name,
-  startDate,
-  endDate,
   dayCount,
   totalDistanceKm,
   nextStop,
@@ -69,13 +65,12 @@ export default function TripCard({
   const [busy, setBusy] = useState(false);
 
   /*
-   * "16–17 Sep 2026 · 2 days · ~645 km". Each part is dropped when it is not
-   * known rather than shown as a zero — a template carries dates and nothing
-   * else, and it should read as a date range, not as a 0 km trip.
+   * "2 days · ~645 km". No date: the list's header above the card owns it
+   * (nocturne-reskin §7a, superseded 2026-09-22). Each part is dropped when it
+   * is not known rather than shown as a zero, and when none survives there is
+   * no meta line at all.
    */
   const metaBits: string[] = [];
-  const dateRange = [startDate, endDate].filter(Boolean).join(' → ');
-  if (dateRange) metaBits.push(dateRange);
   if (dayCount) metaBits.push(`${dayCount} day${dayCount === 1 ? '' : 's'}`);
   if (totalDistanceKm) metaBits.push(approxDistance(totalDistanceKm, units));
 
@@ -146,16 +141,19 @@ export default function TripCard({
           >
             {name}
           </div>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: 'var(--tp-subtle)',
-              fontVariantNumeric: 'tabular-nums',
-              marginTop: 4,
-            }}
-          >
-            {metaBits.join(' · ') || 'No dates set'}
-          </div>
+          {metaBits.length > 0 && (
+            <div
+              data-testid="trip-card-meta"
+              style={{
+                fontSize: 11.5,
+                color: 'var(--tp-subtle)',
+                fontVariantNumeric: 'tabular-nums',
+                marginTop: 4,
+              }}
+            >
+              {metaBits.join(' · ')}
+            </div>
+          )}
 
           {/*
             The one added line per card. Below a hairline INSIDE the card so it

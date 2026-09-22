@@ -112,6 +112,13 @@ export interface Trip {
    */
   last_day_iso?: string | null;
   /**
+   * When the trip was last used — the GREATEST of its own, its legs' and its
+   * chat's timestamps (ISO). List payload only, like `last_day_iso`: the list
+   * is ordered by start date, so this is how a caller finds the trip the
+   * driver was last in (`mostRecentlyActive`).
+   */
+  last_activity_at?: string | null;
+  /**
    * Trip length in days and total driving distance, derived from the legs.
    * Same contract as `last_day_iso` — list payload only, never a column.
    */

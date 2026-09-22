@@ -66,11 +66,12 @@ async function createTripFor(
   email: string,
   kind: 'blank' | 'onboarding' | 'vehicle_new',
   label: string,
+  startDate?: string,
 ): Promise<{ tripId: string; vehicleId: string | null; name: string }> {
   const name = playwrightName(label);
   return withApi(async (ctx) => {
     const res = await ctx.post('/api/test/trip', {
-      data: { email, name, kind },
+      data: { email, name, kind, ...(startDate ? { startDate } : {}) },
     });
     if (!res.ok()) {
       throw new Error(`[e2e/test-trip] create ${kind} trip failed (${res.status()}): ${await res.text()}`);
@@ -95,8 +96,10 @@ async function createTripFor(
 export async function createBlankPlanningTrip(
   email: string,
   label: string,
+  /** ISO start date; defaults to the seeded near-future start. */
+  startDate?: string,
 ): Promise<{ tripId: string; name: string }> {
-  const { tripId, name } = await createTripFor(email, 'blank', label);
+  const { tripId, name } = await createTripFor(email, 'blank', label, startDate);
   return { tripId, name };
 }
 
