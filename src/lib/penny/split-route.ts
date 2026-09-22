@@ -61,8 +61,43 @@ export interface DayLeg {
  * Returns a single-element array if the route fits in one day. Returns the
  * input unchanged (as a single leg) if the polyline is empty or the cap is
  * non-positive.
+ *
+ * Composed of the two exported halves below, because the split POINTS and the
+ * legs derived from them have different lifetimes: `lib/penny/splitPointNames.ts`
+ * moves a split point to a town a driver would actually stop in, and the legs
+ * then have to be rebuilt from the moved indices. Keeping "where do the days
+ * end" and "what are the legs" in one function meant rebuilding legs by hand at
+ * the call site, off a second copy of the uniform-speed maths.
  */
 export function splitLegByDriveTime(input: SplitInput): DayLeg[] {
+  const plan = planSplitIndices(input);
+  if (!plan) return [];
+  return legsFromSplitIndices(plan, plan.indices);
+}
+
+/** Everything `legsFromSplitIndices` needs to turn split indices back into legs. */
+export interface SplitPlan {
+  polyline_points: Array<[number, number]>;
+  /** cumulativeKm[i] = haversine km from points[0] to points[i]. */
+  cumulative_km: number[];
+  polyline_total_km: number;
+  total_distance_km: number;
+  total_drive_time_minutes: number;
+  max_drive_minutes_per_day: number;
+  /**
+   * Polyline index where each driving day ENDS. The last entry is always the
+   * final point of the route — that is the user's destination, not a split.
+   */
+  indices: number[];
+}
+
+/**
+ * Where the driving days end, as polyline indices.
+ *
+ * Null when there is not enough geometry to split anything (fewer than two
+ * points) — the caller emits no legs at all.
+ */
+export function planSplitIndices(input: SplitInput): SplitPlan | null {
   const {
     polyline_points,
     total_distance_km,
@@ -70,34 +105,81 @@ export function splitLegByDriveTime(input: SplitInput): DayLeg[] {
     max_drive_minutes_per_day,
   } = input;
 
-  // Defensive: if we don't have a polyline or sane caps, return a single leg
-  // covering the whole thing. The caller (validator) decides whether to
-  // accept that or reject.
+  if (polyline_points.length < 2) return null;
+
+  const last = polyline_points.length - 1;
+  const base = {
+    polyline_points,
+    total_distance_km,
+    total_drive_time_minutes,
+    max_drive_minutes_per_day,
+  };
+
+  // Build cumulative distance along the polyline. cumulativeKm[i] = total km
+  // from points[0] to points[i].
+  const cumulativeKm: number[] = new Array(polyline_points.length).fill(0);
+  for (let i = 1; i < polyline_points.length; i++) {
+    const [lat0, lng0] = polyline_points[i - 1];
+    const [lat1, lng1] = polyline_points[i];
+    cumulativeKm[i] = cumulativeKm[i - 1] + haversineKm(lat0, lng0, lat1, lng1);
+  }
+  const polylineTotalKm = cumulativeKm[cumulativeKm.length - 1];
+
+  // Defensive: without sane caps or a measurable polyline, one leg covering the
+  // whole thing. The caller (validator) decides whether to accept that.
   if (
-    polyline_points.length < 2 ||
     total_drive_time_minutes <= 0 ||
-    max_drive_minutes_per_day <= 0
+    max_drive_minutes_per_day <= 0 ||
+    polylineTotalKm <= 0 ||
+    total_drive_time_minutes <= max_drive_minutes_per_day
   ) {
-    if (polyline_points.length >= 2) {
-      const start = polyline_points[0];
-      const end = polyline_points[polyline_points.length - 1];
-      return [
-        {
-          day_index: 1,
-          start_lat: start[0],
-          start_lng: start[1],
-          end_lat: end[0],
-          end_lng: end[1],
-          distance_km: total_distance_km,
-          drive_time_minutes: total_drive_time_minutes,
-          fraction_along_route: 1,
-        },
-      ];
-    }
-    return [];
+    return { ...base, cumulative_km: cumulativeKm, polyline_total_km: polylineTotalKm, indices: [last] };
   }
 
-  if (total_drive_time_minutes <= max_drive_minutes_per_day) {
+  // How many days do we need?
+  const numDays = Math.ceil(total_drive_time_minutes / max_drive_minutes_per_day);
+  // Distribute time evenly so the last day isn't a sliver
+  // (e.g. 11h / 6h = 2 days, but emit 5.5h + 5.5h, not 6h + 5h).
+  const minutesPerDay = total_drive_time_minutes / numDays;
+
+  const indices: number[] = [];
+  let prevPointIdx = 0;
+  for (let d = 1; d <= numDays; d++) {
+    // Target fraction of total time at the end of this day.
+    const endTimeFraction = Math.min(1, (d * minutesPerDay) / total_drive_time_minutes);
+    // The polyline-distance fraction we want to reach by end-of-day.
+    // Uniform-speed proxy: time fraction == distance fraction.
+    const targetKm = polylineTotalKm * endTimeFraction;
+
+    let endIdx = prevPointIdx;
+    while (endIdx < cumulativeKm.length - 1 && cumulativeKm[endIdx] < targetKm) {
+      endIdx++;
+    }
+    indices.push(endIdx);
+    prevPointIdx = endIdx;
+  }
+
+  return { ...base, cumulative_km: cumulativeKm, polyline_total_km: polylineTotalKm, indices };
+}
+
+/**
+ * Turn split indices into legs, scaling polyline distance up to Google's
+ * authoritative total. Each leg's drive time is its share of the polyline
+ * length — the same uniform-speed proxy the whole module runs on, which is what
+ * lets a MOVED split point (see `splitPointNames.ts`) report an honest duration
+ * rather than the evenly-divided one it was planned at.
+ */
+export function legsFromSplitIndices(plan: SplitPlan, indices: number[]): DayLeg[] {
+  const {
+    polyline_points,
+    cumulative_km: cumulativeKm,
+    polyline_total_km: polylineTotalKm,
+    total_distance_km,
+    total_drive_time_minutes,
+  } = plan;
+
+  if (polyline_points.length < 2) return [];
+  if (polylineTotalKm <= 0 || total_drive_time_minutes <= 0) {
     const start = polyline_points[0];
     const end = polyline_points[polyline_points.length - 1];
     return [
@@ -114,79 +196,28 @@ export function splitLegByDriveTime(input: SplitInput): DayLeg[] {
     ];
   }
 
-  // Build cumulative distance along the polyline, then convert to time using
-  // the uniform-speed proxy. cumulativeKm[i] = total km from points[0] to
-  // points[i].
-  const cumulativeKm: number[] = new Array(polyline_points.length).fill(0);
-  for (let i = 1; i < polyline_points.length; i++) {
-    const [lat0, lng0] = polyline_points[i - 1];
-    const [lat1, lng1] = polyline_points[i];
-    cumulativeKm[i] = cumulativeKm[i - 1] + haversineKm(lat0, lng0, lat1, lng1);
-  }
-  const polylineTotalKm = cumulativeKm[cumulativeKm.length - 1];
-
-  // We use Google's reported total_distance_km as the truth, and the
-  // polyline's haversine-summed length as a secondary signal for
-  // *fractional* progress. They differ slightly because the polyline is
-  // simplified (step polylines DP-simplified to ~25m in directions.ts).
-  if (polylineTotalKm <= 0) {
-    return [
-      {
-        day_index: 1,
-        start_lat: polyline_points[0][0],
-        start_lng: polyline_points[0][1],
-        end_lat: polyline_points[polyline_points.length - 1][0],
-        end_lng: polyline_points[polyline_points.length - 1][1],
-        distance_km: total_distance_km,
-        drive_time_minutes: total_drive_time_minutes,
-        fraction_along_route: 1,
-      },
-    ];
-  }
-
-  // How many days do we need?
-  const numDays = Math.ceil(total_drive_time_minutes / max_drive_minutes_per_day);
-  // Distribute time evenly so the last day isn't a sliver
-  // (e.g. 11h / 6h = 2 days, but emit 5.5h + 5.5h, not 6h + 5h).
-  const minutesPerDay = total_drive_time_minutes / numDays;
-
   const legs: DayLeg[] = [];
   let prevPointIdx = 0;
-
-  for (let d = 1; d <= numDays; d++) {
-    // Target fraction of total time at the end of this day.
-    const endTimeFraction = Math.min(1, (d * minutesPerDay) / total_drive_time_minutes);
-    // The polyline-distance fraction we want to reach by end-of-day.
-    // Uniform-speed proxy: time fraction == distance fraction.
-    const targetKm = polylineTotalKm * endTimeFraction;
-
-    // Find the first polyline point at or beyond targetKm.
-    let endIdx = prevPointIdx;
-    while (endIdx < cumulativeKm.length - 1 && cumulativeKm[endIdx] < targetKm) {
-      endIdx++;
-    }
-
+  indices.forEach((endIdx, i) => {
     const dayStart = polyline_points[prevPointIdx];
     const dayEnd = polyline_points[endIdx];
+    const fraction = cumulativeKm[endIdx] / polylineTotalKm;
     const dayKmFromPolyline = cumulativeKm[endIdx] - cumulativeKm[prevPointIdx];
-    // Scale to Google's authoritative total distance.
-    const distanceKm =
-      Math.round(((dayKmFromPolyline / polylineTotalKm) * total_distance_km) * 10) / 10;
-    const driveTimeMinutes = Math.round(minutesPerDay);
+    const share = dayKmFromPolyline / polylineTotalKm;
 
     legs.push({
-      day_index: d,
+      day_index: i + 1,
       start_lat: dayStart[0],
       start_lng: dayStart[1],
       end_lat: dayEnd[0],
       end_lng: dayEnd[1],
-      distance_km: distanceKm,
-      drive_time_minutes: driveTimeMinutes,
-      fraction_along_route: endTimeFraction,
+      distance_km: Math.round(share * total_distance_km * 10) / 10,
+      drive_time_minutes: Math.round(share * total_drive_time_minutes),
+      fraction_along_route: i === indices.length - 1 ? 1 : Math.min(1, fraction),
     });
 
     prevPointIdx = endIdx;
-  }
+  });
 
   return legs;
 }

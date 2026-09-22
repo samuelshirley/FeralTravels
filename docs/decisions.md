@@ -46,6 +46,14 @@ B2. **Penny never authors coordinates.** `resolve_place` (Google Places Text Sea
 name→lat/lng path. *Enforced by:* **NOT ENFORCED** — prompt rule only; no validator checks where
 an `add_leg` coordinate came from.
 
+B2b. **A split point's NAME and its LOCATION both belong to the server, and the daily cap is the
+only fact among them.** The name is reverse-geocoded (Nominatim, English, qualified by state only
+in `us ca au br mx in` — a French `state` is a région, which shipped "Tavel, Occitania"); the point
+is then nudged along the polyline to the first city or town within 25 minutes, provided neither
+neighbouring day busts the cap, so a day does not end in a village of 1,800 people. Every test
+payload is captured from the live API — the invented one it replaced passed while the code was
+broken. *Enforced by:* `osm/nominatim.test.ts`, `penny/splitPointNames.test.ts`.
+
 B3. **The fuel range is written in onboarding and Settings only, never from chat.** A range
 statement in chat is a fuel REQUEST (→ Finn) or a declared tank state (`declare_fuel_state`), not
 a preference edit. *Enforced by:* `updateVehicle.test.ts` (range not in the tool schema),

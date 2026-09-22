@@ -115,7 +115,8 @@ src/
     google/           # geocode.ts (name -> coords), directions.ts
     finn/             # fuel-stop engine — docs/design/finn-fuel-agent.md
     penny/            # context, schedule, planSummary, sanitize, turnTrace,
-                      # contiguityGate, legPlacement, editOverride, tools/
+                      # contiguityGate, legPlacement, editOverride,
+                      # split-route, splitPointNames, tools/
   server/             # onboarding.ts onboardingIntentScan.ts parseStartDate.ts
     db/               # schema.ts (all tables), client.ts (Neon)
     repos/            # Data access layer (see Repos)
@@ -186,7 +187,10 @@ planFuelStops, declareFuelState, extractTripIntent — 21 tools, registered in
 
 **Penny does not author derived fields.** Coordinates come only from
 `resolve_place`; leg titles are derived `start → end`; `trips.end_date` is
-re-derived from the legs; `place_id` is forwarded untouched. `add_stop` is locked
+re-derived from the legs; `place_id` is forwarded untouched. **An overnight
+split is placed by the server, not by the clock** — `splitPointNames.ts` nudges
+it to the nearest town inside the daily cap so a day does not end in a hamlet;
+see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
 
@@ -196,7 +200,8 @@ What each is for and its traps: **`docs/design/scripts.md`**.
 
 ```
 anthropic-usage-report.ts assert-e2e-ran.mjs
-backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts check-env.sh
+backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
+capture-nominatim-fixtures.mjs check-env.sh
 check-preview-env.mjs claude-task.sh db-reset.ts debug-trip.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
