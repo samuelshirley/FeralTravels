@@ -37,7 +37,10 @@ CONFIG=mobile/lib/config.ts
 # ── 1. product ids, three sources ──────────────────────────────────────────
 echo "── product ids ────────────────────────────────────────────────────────"
 
-ids_constants=$(grep -oE "id: '[^']+'" "$CONSTANTS" | sed "s/id: '//;s/'//" | sort)
+# Only the PRODUCTS block — the file also holds the breakers, whose ids are not
+# products. See scripts/lib/product-ids.sh.
+. scripts/lib/product-ids.sh
+ids_constants=$(product_ids) || bad "could not read PRODUCTS from $CONSTANTS"
 ids_storekit=$(jq -r '.subscriptionGroups[].subscriptions[].productID' "$STOREKIT" | sort)
 
 printf '%sconstants.ts%s  %s\n' "$DIM" "$OFF" "$(echo "$ids_constants" | tr '\n' ' ')"
