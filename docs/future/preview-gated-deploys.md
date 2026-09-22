@@ -4,7 +4,7 @@
 
 **Last updated:** 2026-05-25 (superseded note added 2026-07-02).
 
-**Not covered here:** this doc is about gating the WEB deploy. The ordering race between `mobile.yml`'s OTA and `deploy-production.yml` is not in it; it is tracked in issue #39.
+**Not covered here:** this doc is about gating the WEB deploy. The ordering race between `mobile.yml`'s OTA and `deploy-production.yml` is not in it; it was fixed on 2026-09-22 (issue #39) by making the OTA wait for the production deploy of the same commit — see `docs/design/deploy-pipeline.md`.
 
 ---
 

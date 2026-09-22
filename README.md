@@ -166,7 +166,7 @@ See [`mobile/README.md`](mobile/README.md) and [`docs/design/ios-app-plan.md`](d
 
 **Shipping a build — OTA vs native.** A merge to `main` touching `mobile/` runs `mobile.yml`, and `scripts/decide-mobile-release.mjs` picks one outcome:
 
-- **JS-only change** → `eas update` publishes an OTA to the `production` channel. Installed builds pick it up on next launch; **no new binary is built**.
+- **JS-only change** → `eas update` publishes an OTA to the `production` channel, but only after Deploy to production has succeeded for the same commit, so a bundle never reaches phones before its API. Installed builds pick it up on next launch; **no new binary is built**.
 - **Native change** (dependencies, config, anything the classifier isn't sure of) → `eas build` + submit to TestFlight automatically.
 - **Nothing under `mobile/` changed** → no mobile release at all.
 

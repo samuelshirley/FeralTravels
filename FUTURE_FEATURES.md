@@ -65,5 +65,4 @@ This was deferred because the immediate pain (one fuel station per knot, no way 
 
 ---
 
-- **OTA can beat the production deploy** — `mobile.yml` and `deploy-production.yml` are unordered on a push to `main`; tracked in [#39](https://github.com/samuelshirley/FeralTravels/issues/39).
 - **`productionGuard.ts` fails OPEN if the production Neon endpoint moves** — its `DATABASE_URL` half recognises production by ONE known endpoint hash, so a new production endpoint reads as "not production" and `db-reset.ts` / `trial-account.ts` / `make-test-user.ts` would run against it; narrow today because `VERCEL_ENV=production` still covers the deployed server; the fail-closed shape is to refuse any `DATABASE_URL` that is not a recognised local or preview endpoint.

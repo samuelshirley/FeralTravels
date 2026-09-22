@@ -1,9 +1,10 @@
 # Mobile release — how a merge reaches a tester
 
 The mobile release is its own workflow, `.github/workflows/mobile.yml`,
-triggered by the same push to `main` as `deploy-production.yml` — so it runs
-BESIDE the web deploy, not after it, and an OTA can reach a phone before the API
-it expects has shipped. (An earlier version of this file described one
+triggered by the same push to `main` as `deploy-production.yml`. The two start
+together, but since 2026-09-22 (issue #39) the OTA publish WAITS until Deploy to
+production has succeeded for the same commit, and does not ship if it failed —
+see `docs/design/deploy-pipeline.md`. The TestFlight build does not wait. (An earlier version of this file described one
 `pipeline.yml` with the mobile jobs on `needs: deploy`; that consolidation was
 drafted and never landed.) Read `mobile.yml`'s header for the mechanics; this
 file is the setup and the traps.
