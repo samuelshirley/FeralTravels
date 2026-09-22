@@ -87,7 +87,7 @@ describe('exactly one address is accepted', () => {
       'appletest@e2e.feraltravels.com',
       'appletest+1@feraltravels.com',
       'appletest@sub.feraltravels.com',
-      'samuelashirley@gmail.com',
+      'sam@feraltravels.com',
       '',
       null,
       undefined,
