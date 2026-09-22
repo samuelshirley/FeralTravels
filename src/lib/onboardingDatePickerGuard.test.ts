@@ -110,6 +110,20 @@ describe.each(PANELS)('$rel', ({ rel, submit }) => {
     );
   });
 
+  it('points the pace step at the composer with a client-only Custom chip', () => {
+    const at = block.search(/(data-testid|testID)=["']onboarding-pace-custom["']/);
+    expect(at, `${rel}: no onboarding-pace-custom chip in the tap-to-answer block`).toBeGreaterThan(-1);
+    const gate = block.lastIndexOf('onboardingQuestion.key === ', at);
+    expect(block.slice(gate, gate + 40), `${rel}: the Custom chip is not gated on trip_pace`).toMatch(
+      /^onboardingQuestion\.key === ["']trip_pace["']/,
+    );
+    const press = block.slice(at, at + 300);
+    expect(press, `${rel}: the Custom chip must focus the composer, not submit an answer`).toMatch(
+      /on(Click|Press)=\{\(\) => (textareaRef|inputRef)\.current\?\.focus\(\)\}/,
+    );
+    expect(press, `${rel}: the Custom chip submits something`).not.toMatch(/submitOnboarding/);
+  });
+
   it('starts every new question with the calendar shut', () => {
     expect(src).toMatch(/const activeQuestionLabel = onboardingQuestion\?\.label;/);
     expect(src).toMatch(/useEffect\(\(\) => setDatePickerOpen\(false\), \[activeQuestionLabel\]\);/);

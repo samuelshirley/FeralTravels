@@ -1734,6 +1734,25 @@ export default function ChatPanel({
                   </Text>
                 </Pressable>
               ) : null}
+              {/*
+                Client-only, never a server option: a server option is
+                SUBMITTED as the answer (parseDailyDriveHours('custom') is null,
+                so it would throw the re-ask), and the answered step redraws
+                from form_meta.options, which would then carry a fourth chip.
+                The composer is already live on a 'chips' step; this points at
+                it. Mirrors the web's onboarding-pace-custom.
+              */}
+              {onboardingQuestion.key === "trip_pace" ? (
+                <Pressable
+                  disabled={onboardingComposerBusy}
+                  testID="onboarding-pace-custom"
+                  accessibilityRole="button"
+                  onPress={() => inputRef.current?.focus()}
+                  style={[styles.optionChip, onboardingComposerBusy ? styles.optionChipOff : null]}
+                >
+                  <Text style={styles.optionChipText}>Custom</Text>
+                </Pressable>
+              ) : null}
             </View>
             {/* In the flow, under the chips, inside the bubble — not a Modal
                 and not floated. The bubble lives in a scrolling transcript;
