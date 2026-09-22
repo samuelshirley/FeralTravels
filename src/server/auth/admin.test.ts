@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
@@ -69,11 +71,17 @@ describe('isAdminEmail', () => {
     expect(await isAdminEmail(ADMIN)).toBe(true);
   });
 
-  it('locks it out when ADMIN_EMAILS still names the old address', async () => {
-    // The deploy trap: ADMIN_EMAILS can only narrow the allowlist, so an env
-    // left pointing at the former address filters the new one straight out.
+  it('admits it when ADMIN_EMAILS names only the former address (the production lockout)', async () => {
+    // Production shipped 8c8becf with ADMIN_EMAILS=samuelashirley@gmail.com.
+    // An env naming nobody on the allowlist must not empty the admin set.
     process.env.ADMIN_EMAILS = FORMER_ADMIN;
-    expect(await isAdminEmail(ADMIN)).toBe(false);
+    expect(await isAdminEmail(ADMIN)).toBe(true);
+    expect(await isAdminEmail(FORMER_ADMIN)).toBe(false);
+  });
+
+  it('still narrows when ADMIN_EMAILS names an allowlisted address', async () => {
+    process.env.ADMIN_EMAILS = `${FORMER_ADMIN}, ${ADMIN}`;
+    expect(await isAdminEmail(ADMIN)).toBe(true);
     expect(await isAdminEmail(FORMER_ADMIN)).toBe(false);
   });
 
@@ -87,5 +95,22 @@ describe('isAdminEmail', () => {
   it('refuses the former address even with an admin row and a permitting env', async () => {
     process.env.ADMIN_EMAILS = `${ADMIN},${FORMER_ADMIN}`;
     expect(await isAdminEmail(FORMER_ADMIN)).toBe(false);
+  });
+});
+
+describe('.env.example ADMIN_EMAILS', () => {
+  // A developer copying .env.example must land on a working admin, not the
+  // empty intersection that locked /admin out after 8c8becf.
+  const line = readFileSync(join(process.cwd(), '.env.example'), 'utf8')
+    .split('\n')
+    .find((l) => l.startsWith('ADMIN_EMAILS='));
+  const named = (line ?? '').slice('ADMIN_EMAILS='.length).split(',').map((s) => s.trim()).filter(Boolean);
+
+  it('names at least one address', () => {
+    expect(named.length).toBeGreaterThan(0);
+  });
+
+  it('names only addresses on ADMIN_ALLOWLIST', () => {
+    for (const email of named) expect(isOnAdminAllowlist(email), email).toBe(true);
   });
 });
