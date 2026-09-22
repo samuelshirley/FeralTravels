@@ -48,6 +48,11 @@ export const SHARED_FILES = [
   // The trips list's date headers: both lists must group, and hide the
   // placeholder date, identically.
   ['src/lib/tripsListDates.ts', 'mobile/shared/lib/tripsListDates.ts'],
+  // The onboarding calendar's date maths. Both calendars draw the month and
+  // report the picked day from this one definition, so they cannot disagree
+  // about which day a cell is — off by one at a month edge, or UTC-shifted on
+  // one platform only.
+  ['src/lib/calendarGrid.ts', 'mobile/shared/lib/calendarGrid.ts'],
   // Both halves of the promo flow. The app must normalize a typed code exactly
   // as the server does — if the two disagreed, a user would type something the
   // app accepts and the server rejects, and the error would read as a bad code
