@@ -195,7 +195,11 @@ test.describe('Onboarding wizard', () => {
     await expect(calendar).toBeHidden();
     await chip.click();
     await expect(calendar).toBeVisible();
-    await page.getByText(/When are you setting off/).click();
+    // The question is a bare text node in Penny's bubble, so this locator is
+    // the whole bubble — calendar included. A plain click() lands on its
+    // centre, INSIDE the calendar, and correctly closes nothing. Click the
+    // question's own line at the bubble's top edge instead.
+    await page.getByText(/When are you setting off/).click({ position: { x: 16, y: 8 } });
     await expect(calendar).toBeHidden();
 
     // Drawn on Nocturne's surface token, not a browser default.
