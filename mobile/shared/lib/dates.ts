@@ -487,6 +487,33 @@ export function formatPlanDate(date: Date, now: Date): string {
   return date.getFullYear() === now.getFullYear() ? base : `${base} ${date.getFullYear()}`;
 }
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A calendar date the way a trip's dates are shown: "02 May 2026". Used for
+ * the trips-list date headers, the itinerary's trip range and the admin
+ * date columns — anywhere a `YYYY-MM-DD` would otherwise reach the screen.
+ *
+ * A separate function from `formatDate` and `formatPlanDate` for the same
+ * reason `formatPlanDate` gives about itself: neither is a special case of the
+ * other. `formatDate` labels a driving day (weekday, never a year) and
+ * `formatPlanDate` drops the year when it is this one; this always carries the
+ * year and never a weekday, because it names a date rather than a day.
+ *
+ * Returns null for anything that is not a real `YYYY-MM-DD` (including
+ * "2026-02-30"), so callers render nothing rather than "Invalid Date". Built
+ * on `parseISODate`, which makes a LOCAL-midnight Date, and read back with the
+ * local getters — the pair never crosses a zone boundary, so the output does
+ * not shift a day under any TZ.
+ */
+export function formatDayMonthYear(iso: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const date = parseISODate(iso);
+  const [y, m, d] = iso.split('-').map(Number);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return `${String(d).padStart(2, '0')} ${MONTHS_SHORT[m - 1]} ${y}`;
+}
+
 // ---------------------------------------------------------------------------
 // Domain logic: calendar-date assignment + constraint scheduling.
 //

@@ -61,6 +61,12 @@ export interface Trip {
    */
   start_date_parsed: string;
   end_date_parsed: string | null;
+  /**
+   * False while `start_date_parsed` is still the today placeholder — derived
+   * from the onboarding state by `isStartDateAnswered` (lib/tripsListDates),
+   * never stored. Display surfaces show no date while it is false.
+   */
+  start_date_set: boolean;
   status: string;
   /** Trip lifecycle status for nightly replan gating. */
   trip_status: TripStatus;

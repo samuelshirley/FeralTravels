@@ -24,6 +24,7 @@ import {
   PencilRenameIcon,
 } from "@/components/icons";
 import { behindCutoffRank, formatDate, parseISODate, todayISOInZone } from "@/shared/lib/dates";
+import { formatTripDateRange } from "@/shared/lib/tripsListDates";
 import { isTripCompleted, lastDayFromLegDates } from "@/shared/lib/tripCompletion";
 import { effectiveLegSegment } from "@/shared/lib/legSegmentGrouping";
 import type { LegWithDetails, Trip } from "@/shared/types/trip";
@@ -464,7 +465,7 @@ export default function Itinerary({
 
   const totalDist = allLegs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
 
-  const dateRange = [trip.start_date, trip.end_date].filter(Boolean).join(" → ");
+  const dateRange = formatTripDateRange(trip);
 
   const renderLegCard = (leg: LegWithDetails, isPast: boolean) => (
     <LegCard

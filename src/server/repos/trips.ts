@@ -10,6 +10,7 @@ import {
 } from '@/lib/dates';
 import { seasonalTripName, isPlaceholderTripName } from '@/lib/tripNaming';
 import { lastDayFromSchedule } from '@/lib/tripCompletion';
+import { isStartDateAnswered } from '@/lib/tripsListDates';
 import { resolveLegTitle } from '@/lib/legTitle';
 import { getDirectionsAccounted } from '@/server/google/accounted';
 import {
@@ -40,6 +41,7 @@ import {
 } from '@/server/db/schema';
 import type {
   Leg,
+  OnboardingScan,
   Trip,
   TripWithLegs,
   TripStatus,
@@ -69,6 +71,10 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     end_date: r.endDate,
     start_date_parsed: r.startDateParsed, // non-null invariant
     end_date_parsed: r.endDateParsed ?? null,
+    start_date_set: isStartDateAnswered(
+      r.onboardingState as Trip['onboarding_state'],
+      (r.onboardingScan ?? null) as OnboardingScan | null,
+    ),
     status: r.status,
     trip_status: (r.tripStatus as TripStatus) ?? 'draft',
     onboarding_state: r.onboardingState as Trip['onboarding_state'],
