@@ -12,7 +12,7 @@ import { users } from '@/server/db/schema';
  * also being on this list.
  */
 const ADMIN_ALLOWLIST: ReadonlyArray<string> = [
-  'samuelashirley@gmail.com',
+  'sam@feraltravels.com',
 ] as const;
 
 const ALLOWLIST_SET = new Set(ADMIN_ALLOWLIST.map((e) => e.toLowerCase()));
