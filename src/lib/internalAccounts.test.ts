@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { INTERNAL_EMAIL_PATTERNS, isInternalAccountEmail } from './internalAccounts';
 
 /**
- * A fixed corpus, not a live mirror of prod: every `users.email` that existed
- * on 2026-09-10, split by hand into "ours" and "theirs", plus the shapes CI
- * mints. Real signups keep arriving, so this list is deliberately NOT asserted
+ * A fixed corpus, not a live mirror of prod: the shapes of every `users.email`
+ * that existed on 2026-09-10, split by hand into "ours" and "theirs", plus the
+ * shapes CI mints. Other people's addresses are stand-ins on the same domains,
+ * not the real ones — this repo is public. Real signups keep arriving, so this list is deliberately NOT asserted
  * against the live row count — it is here so a change to the patterns has to
  * face every address we have actually seen.
  */
@@ -38,24 +39,23 @@ const OURS = [
   'samuelashirley+8.9.26.1@gmail.com',
 ];
 
-/** Real people. The owner's own gmail account is one of them. */
+/** Other people, on every domain real signups have used — plus the owner's own gmail account, which counts as a user. */
 const THEIRS = [
   'samuelashirley@gmail.com',
-  'alex.p.pradhan@gmail.com',
-  'completojorge@gmail.com',
-  'devereauxc4@yahoo.com',
-  'emil.kuhrt@gmail.com',
-  'gtrubio192@gmail.com',
-  'h99@live.se',
-  'ilapeikyte@gmail.com',
-  'johanned@hotmail.no',
-  'jtysonwilliams@gmail.com',
-  'kls777@dotexamdr.com',
-  'melaniepresho@hotmail.com',
-  'robingockert97@gmail.com',
-  'sandra.verbeck@gmail.com',
-  'sbolcati25@gmail.com',
-  'slrichardstx@gmail.com',
+  'someone@gmail.com',
+  'first.last@gmail.com',
+  'traveller42@gmail.com',
+  'someone@yahoo.com',
+  'someone@live.se',
+  'someone@hotmail.no',
+  'someone@hotmail.com',
+  'someone@example.com',
+  'road.tripper@gmail.com',
+  'overlander99@gmail.com',
+  'a.b.c@gmail.com',
+  'camper@gmail.com',
+  'someone25@gmail.com',
+  'vanlife@gmail.com',
 ];
 
 /**

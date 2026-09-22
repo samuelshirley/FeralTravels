@@ -49,7 +49,7 @@ describe('assertTestAddress', () => {
       'samuelashirley@gmail.com', // the author's real account
       'sam@feraltravels.com', // the real mailbox
       'sam+notes@feraltravels.com', // a different plus-tag
-      'robingockert97@gmail.com', // a real user
+      'someone@gmail.com', // an ordinary gmail user
       'sam+trial-a@feraltravels.com.evil.com', // lookalike domain
       'sam+trial-a@notferaltravels.com',
       'sam+trial-@feraltravels.com', // empty tag
