@@ -82,8 +82,9 @@ never run tests or seed fixtures against the prod database.
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
 3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
-- **The deploy gate is enforced; branch protection is NOT.** A direct push or a
-  mid-run merge moves `main` and then fails the deploy, leaving prod stale rather
+- **Branch protection on `main` requires a PR plus the `Decide scope` and `Unit
+  tests` checks, up to date; force-push and deletion are blocked.** Admins can
+  bypass it; the deploy gate then fails the deploy, leaving prod stale rather
   than half-migrated. Keep migrations additive.
 - **Only the newest preview URL works** — a stale one fails as a fake sign-out
   (`/login`) because its database was dropped. Take it from the sticky comment.

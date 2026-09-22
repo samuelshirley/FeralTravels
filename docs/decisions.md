@@ -299,8 +299,9 @@ same check; the reset takes a date-stamped override. Added 2026-09-21 for the pr
 
 F1. **Merging a PR IS the deploy. The deploy job refuses unless CI for that PR's head SHA is
 green; a direct push to `main` lands but never deploys.** *Enforced by:* the workflow itself.
-**Branch protection is OFF** — GitHub enforces nothing; the `gh api` block to turn it on is in
-CLAUDE.md. *Decision still open: turn it on?*
+**Branch protection is ON** (2026-09-22): a PR is required, `Decide scope` and `Unit tests` must
+pass on an up-to-date branch, force-push and deletion are blocked; admins can bypass it. The
+configuration is in `docs/design/deploy-pipeline.md`.
 
 F2. **No E2E spec may skip (`E2E_MAX_SKIPPED=0`); the two Anthropic-spending specs run only on
 the `ai-tests` label; the production key never reaches the runner.** *Enforced by:*
