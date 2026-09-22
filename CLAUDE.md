@@ -80,7 +80,7 @@ never run tests or seed fixtures against the prod database.
    typechecks `mobile/`. There is no single `pipeline.yml`.
 2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
-   `mobile.yml`'s OTA waits for that deploy to succeed for the same commit.
+   `mobile.yml` ships nothing to a device (OTA or TestFlight) until it has.
 3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
 - **Branch protection on `main` requires a PR plus the `Decide scope` and `Unit
