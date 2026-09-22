@@ -45,8 +45,6 @@ dead-ends is worse than no button. Set the var, rebuild, and it appears.
   `AUTH_APPLE_ID` + `AUTH_APPLE_SECRET` are both set; the /login button follows
   the same gate.
 - `scripts/generate-apple-client-secret.ts` — mints the Apple web secret JWT.
-- `scripts/set-ios-oauth-client-id.mjs` — writes the Google iOS client id into
-  `mobile/.env` and the EAS build profiles.
 
 ## 1. Google Cloud: an **iOS** OAuth client ID
 
@@ -77,16 +75,11 @@ this).
 An iOS client ID is **not a secret**: it ships inside the app binary and has no
 client secret. Committing it is fine.
 
-Set it everywhere in one shot — with the id on the clipboard, or as an
-argument:
-
-```
-node scripts/set-ios-oauth-client-id.mjs
-```
-
-That writes `mobile/.env` and the `preview` + `production` profiles in
-`mobile/eas.json` (EAS does not read an uncommitted `.env`, so cloud builds
-need it in the profile). It then prints the two things it cannot do for you.
+It must agree in three places, and the app fails differently depending on
+which one you forget: `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` in `mobile/.env` (local
+prebuild + run), the same key in the `preview` + `production` profiles of
+`mobile/eas.json` (EAS does not read an uncommitted `.env`, so cloud builds need
+it in the profile), and the server side below.
 
 ## 2. The server side, and a NEW native build
 
