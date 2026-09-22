@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
+import { tripDriveCapHours } from '@/lib/penny/driveCap';
 import {
   HEADING,
   distanceKmSchema,
@@ -16,7 +17,7 @@ import {
  * add_leg — append a new driving leg to the trip. The 21-hour-day-2 bug
  * lives here: Penny used to invent drive_time_minutes from training data,
  * the dispatcher never checked, and the leg got saved as-is. Now we cap it
- * at the vehicle's max_drive_hours_per_day and bounce back to Penny on
+ * at the trip's daily drive cap (`tripDriveCapHours`) and bounce back to Penny on
  * violation so she can call get_route + split into multiple add_leg calls.
  */
 
@@ -62,12 +63,13 @@ const baseSchema = z.object({
 export type AddLegInput = z.infer<typeof baseSchema>;
 
 /**
- * Cross-field validator factory. The per-day driving cap is a flat MVP default
- * (no travel style), so this no longer reads vehicle context — but the factory
- * signature stays uniform with the other tools' validators.
+ * Cross-field validator factory. The per-day driving cap is the TRIP's: the
+ * driver's `trip_pace` answer, or DEFAULT_MAX_DRIVE_HOURS_PER_DAY when they
+ * never gave one — the same number get_route splits on, so a split it hands
+ * Penny is one this accepts. docs/design/drive-hours-cap.md
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function validator(_ctx: PennyContext) {
+export function validator(ctx: PennyContext) {
+  const cap = tripDriveCapHours(ctx.trip);
   return baseSchema
     .refine(
       // A rest leg sits AT a location, so it must still carry both names and
@@ -96,18 +98,13 @@ export function validator(_ctx: PennyContext) {
       (d) => {
         // Rest days have no driving — skip the cap check.
         if (d.leg_type === 'rest') return true;
-        // Flat per-day driving cap (MVP — no travel style).
-        const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
         if (d.drive_time_minutes == null) return true;
         return d.drive_time_minutes <= cap * 60;
       },
-      (d) => {
-        const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
-        return {
-          message: `drive_time_minutes (${d.drive_time_minutes}) exceeds vehicle drive cap (${cap}h × 60 = ${(cap ?? 0) * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
-          path: ['drive_time_minutes'],
-        };
-      }
+      (d) => ({
+        message: `drive_time_minutes (${d.drive_time_minutes}) exceeds this trip's daily drive cap (${cap}h × 60 = ${cap * 60} min). Call get_route to get the real route, then emit one add_leg per resulting day from the split.`,
+        path: ['drive_time_minutes'],
+      })
     );
 }
 
@@ -115,7 +112,7 @@ export const tool: Anthropic.Tool = {
   name: ADD_LEG,
   description: `Add a new leg to the trip — either a driving day or a rest/stop day. ${HEADING.callOrderRule}
 
-DRIVING DAYS (leg_type: "drive" or omitted): Each driving leg represents ONE DRIVING DAY (≤ vehicle.max_drive_hours_per_day). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
+DRIVING DAYS (leg_type: "drive" or omitted): Each driving leg represents ONE DRIVING DAY (≤ the trip's daily drive cap: context.trip.daily_drive_hours, or ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY}h when null). For multi-day jumps, call get_route first then emit one add_leg per resulting day.
 
 REST DAYS (leg_type: "rest"): When the user spends one or more nights at a location (e.g. "2 nights in Innsbruck"), emit rest-day legs for each day spent there. Rest days have no drive_time_minutes or distance_km — they represent time at a location. Use the same start/end coords as the location. Title format: "Innsbruck (base day)" — the leg_type value stays "rest", but the word the user reads is "base day". Add notes about planned activities if the user mentions any.
 
@@ -162,7 +159,7 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
         minimum: 0,
         maximum: 24 * 60,
         description:
-          'Total drive time, minutes. MUST be ≤ vehicle.max_drive_hours_per_day × 60. Use the value returned by get_route or the per-day split it provides.',
+          'Total drive time, minutes. MUST be ≤ the trip\'s daily drive cap × 60 (context.trip.daily_drive_hours, or the default when null). Use the value returned by get_route or the per-day split it provides.',
       },
       terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
       overnight: { type: 'string', description: 'Optional name of the overnight stop.' },

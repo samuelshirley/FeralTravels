@@ -22,6 +22,7 @@ import {
 } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import PurchaseSheet from '@/components/PurchaseSheet';
+import CalendarPopover from '@/components/CalendarPopover';
 import { SUPPORT_EMAIL } from '@/lib/paywallCopy';
 import { PAYWALL_ERROR_CODE } from '@/types/entitlement';
 import type { EntitlementPayload, PaywallErrorBody } from '@/types/entitlement';
@@ -2089,19 +2090,18 @@ export default function ChatPanel({
     activeQuestionId !== null &&
     transcript[0]?.id === activeQuestionId;
 
-  /** Pick a calendar day for the date step (the `Pick a date` chip). */
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  const openDatePicker = () => {
-    const el = dateInputRef.current;
-    if (!el) return;
-    const withPicker = el as HTMLInputElement & { showPicker?: () => void };
-    try {
-      if (typeof withPicker.showPicker === 'function') withPicker.showPicker();
-      else el.click();
-    } catch {
-      el.click();
-    }
-  };
+  /**
+   * The date step's `Pick a date` chip opens `CalendarPopover`, drawn in the
+   * page. It used to call `showPicker()` on a hidden `<input type="date">`,
+   * which opened the browser's own calendar — white on this dark app, and
+   * invisible to Playwright.
+   */
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const pickDateChipRef = useRef<HTMLButtonElement>(null);
+  const closeDatePicker = useCallback(() => setDatePickerOpen(false), []);
+  // A new step (or the same key re-asked) starts with the calendar shut.
+  const activeQuestionLabel = onboardingQuestion?.label;
+  useEffect(() => setDatePickerOpen(false), [activeQuestionLabel]);
 
   /*
    * Everything the active question needs beyond its text, rendered INSIDE
@@ -2162,32 +2162,53 @@ export default function ChatPanel({
                 );
               })}
               {onboardingQuestion.key === 'trip_date' && (
-                <>
-                  <button
-                    type="button"
-                    disabled={onboardingComposerBusy}
-                    data-testid="onboarding-pick-date"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={openDatePicker}
-                    style={chipStyle(false)}
-                  >
-                    <CalendarBlank size={14} weight="regular" aria-hidden />
-                    Pick a date
-                  </button>
-                  <input
-                    ref={dateInputRef}
-                    type="date"
-                    aria-label="Start date"
-                    tabIndex={-1}
-                    onChange={(e) => {
-                      const iso = e.target.value;
-                      if (iso) void submitOnboardingPost(onboardingQuestion.key, iso);
-                    }}
-                    style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-                  />
-                </>
+                <button
+                  ref={pickDateChipRef}
+                  type="button"
+                  disabled={onboardingComposerBusy}
+                  data-testid="onboarding-pick-date"
+                  aria-expanded={datePickerOpen}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setDatePickerOpen((open) => !open)}
+                  style={chipStyle(datePickerOpen)}
+                >
+                  <CalendarBlank size={14} weight="regular" aria-hidden />
+                  Pick a date
+                </button>
+              )}
+              {/*
+                Client-only, never a server option: a server option is
+                SUBMITTED as the answer (parseDailyDriveHours('custom') is null,
+                so it would throw the re-ask), and the answered step redraws
+                from form_meta.options, which would then carry a fourth chip.
+                The composer is already live on a 'chips' step; this points at it.
+              */}
+              {onboardingQuestion.key === 'trip_pace' && (
+                <button
+                  type="button"
+                  disabled={onboardingComposerBusy}
+                  data-testid="onboarding-pace-custom"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => textareaRef.current?.focus()}
+                  style={chipStyle(false)}
+                >
+                  Custom
+                </button>
               )}
             </div>
+            {/* In the flow, under the chips, rather than floated: the bubble
+                sits in a scrolling transcript, and a floated calendar would be
+                clipped by it on a phone. */}
+            {onboardingQuestion.key === 'trip_date' && datePickerOpen && (
+              <CalendarPopover
+                ignoreOutside={pickDateChipRef}
+                onClose={closeDatePicker}
+                onPick={(iso) => {
+                  setDatePickerOpen(false);
+                  void submitOnboardingPost(onboardingQuestion.key, iso);
+                }}
+              />
+            )}
           </>
         )}
 

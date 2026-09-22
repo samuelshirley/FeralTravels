@@ -35,6 +35,7 @@ src/
     stops/            # StopCard, StopsSection (with tests). No paste row since 2026-09-04 — see the item 5 note under Schema.
     AnnouncementModal.tsx  # One-time announcement popup
     EntitlementNotice.tsx  # Web soft block. SERVER component (no fetch, no flash of a "+ New trip" button the account can't use) rendering the per-blockReason copy from `lib/paywallCopy`. The trips page decides separately whether the list below it still renders — `refunded`/`revoked` are the only states that close existing trips.
+    PurchaseOptions.tsx  # What the web offers a blocked account: the App Store button, then the promo field. A plain block, not a dialog — `PurchaseSheet` wraps it in a modal for Penny's bubble and the pane scrim, and `EntitlementOverlay` renders it inline, because that overlay is already a dialog and opening a sheet on it was two stacked modals (2026-09-22). One component, so the surfaces cannot drift.
     (+ AppNavbar, BottomNav, MobileFooter, Spinner, StatusBadge, etc.)
   lib/
     api.ts            # Client-side API helper

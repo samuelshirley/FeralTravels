@@ -15,8 +15,8 @@ import type { BlockReason } from '@/types/entitlement';
  * Length is a deliberate constraint here, not an accident of drafting. Each
  * notice is a paragraph the user reads while being told no; the friendliness
  * is the point, but every extra clause restating what the previous one already
- * said makes it read as an excuse. Two short paragraphs, one fact each. If a
- * rewrite grows one back to four lines, cut it again.
+ * said makes it read as an excuse. At most two short paragraphs, one fact each.
+ * If a rewrite grows one back to four lines, cut it again.
  */
 
 /**
@@ -74,15 +74,14 @@ export interface BlockNotice {
 const TRIAL_OVER: BlockNotice = {
   eyebrow: 'TRIAL ENDED',
   heading: 'Your free trial is over',
-  body: [
-    'Everything you have planned is still here — nothing has been deleted. What is paused is new trips and talking to Penny.',
-    'It is $2 a month or $20 a year, from the iPhone app. Pick one and the web carries on where you left off.',
-  ],
-  // The label has to work twice: as the button that opens the purchase sheet,
-  // and as the plain App Store link it degrades to when the entitlement call
-  // fails and there are no prices to put in a sheet. It is NOT the App Store
-  // button's own label — that one is APP_STORE_CTA_LABEL, and it says where it
-  // goes because that tap really does leave the browser.
+  // One paragraph, in the owner's words: the price, and where to get it. The
+  // overlay puts the App Store button and the code field right under it.
+  body: ['It is $2 a month or $20 a year — download the app to keep planning. Your trips are all still here.'],
+  // Read by the workspace's pane scrim, whose button opens the purchase sheet.
+  // The /trips overlay does not render it: it shows the sheet's contents
+  // inline. It is NOT the App Store button's own label — that one is
+  // APP_STORE_CTA_LABEL, and it says where it goes because that tap really does
+  // leave the browser.
   action: { label: 'Pick a plan', href: APP_STORE_URL },
   tone: 'sell',
 };

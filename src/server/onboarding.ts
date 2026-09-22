@@ -191,7 +191,8 @@ export const TRIP_PACE_QUESTION: Question = {
   key: 'trip_pace',
   kind: 'chips',
   label: TRIP_PACE_LABEL,
-  placeholder: 'Hours a day, e.g. 5',
+  // The band, because the chips stop at 8 and the answer does not.
+  placeholder: `Hours a day, ${DAILY_DRIVE_HOURS_MIN} to ${DAILY_DRIVE_HOURS_MAX}`,
   options: [
     { value: '4', label: '4 h' },
     { value: '6', label: '6 h' },

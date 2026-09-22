@@ -21,10 +21,18 @@ const REST_LEG_ID = '00000000-0000-0000-0000-00000000000a';
 const DRIVE_LEG_ID = '00000000-0000-0000-0000-00000000000b';
 
 const ctx = {
+  // Never answered the pace step: the default cap applies.
+  trip: { daily_drive_hours: null },
   legs: [
     { id: REST_LEG_ID, leg_type: 'rest' },
     { id: DRIVE_LEG_ID, leg_type: 'drive' },
   ],
+} as unknown as PennyContext;
+
+/** The same trip, with a driver who asked for 12-hour days at setup. */
+const twelveHourCtx = {
+  ...ctx,
+  trip: { daily_drive_hours: 12 },
 } as unknown as PennyContext;
 
 describe('update_leg validator — rest-leg guard', () => {
@@ -97,6 +105,26 @@ describe('update_leg validator — rest-leg guard', () => {
       data: { drive_time_minutes: 20 * 60 },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("update_leg validator — the trip's drive cap", () => {
+  const stretch = (hours: number) => ({
+    leg_id: DRIVE_LEG_ID,
+    data: { drive_time_minutes: hours * 60 },
+  });
+
+  it('rejects a 9h day on a trip with no pace answer (the default cap)', () => {
+    expect(validator(ctx).safeParse(stretch(9)).success).toBe(false);
+  });
+
+  it("honours a trip's 12h cap: 12h passes, 13h does not", () => {
+    expect(validator(twelveHourCtx).safeParse(stretch(12)).success).toBe(true);
+    const over = validator(twelveHourCtx).safeParse(stretch(13));
+    expect(over.success).toBe(false);
+    if (!over.success) {
+      expect(over.error.issues[0].message).toContain('(12h × 60 = 720 min)');
+    }
   });
 });
 

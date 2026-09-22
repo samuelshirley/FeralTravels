@@ -79,6 +79,13 @@ test.describe('Onboarding wizard', () => {
     // The pace step: how long a driving day should be. A chip again, and
     // the composer stays live for any other number.
     await expect(page.getByText(/How long do you want to drive each day/)).toBeVisible({ timeout: 20_000 });
+
+    // "Custom" is client-only: it hands the driver to the composer (for 9-12h,
+    // or any other number) and submits nothing — the step stays where it is.
+    await page.getByTestId('onboarding-pace-custom').click();
+    await expect(composer).toBeFocused();
+    await expect(page.getByTestId('onboarding-pace-custom')).toBeVisible();
+
     await page.getByRole('button', { name: '6 h', exact: true }).click();
 
     /*
@@ -152,6 +159,75 @@ test.describe('Onboarding wizard', () => {
     await expect(paceAfter).toHaveCount(1, { timeout: 30_000 });
     await expect(paceAfter.getByTestId('onboarding-chip-chosen')).toHaveText('6 h');
     await expect(userBubble(page, '6 h a day')).toHaveCount(0);
+  });
+
+  test('Pick a date opens a calendar in the page, and the day it gives is the answer', async ({ page }) => {
+    /*
+     * The chip used to call showPicker() on a hidden <input type="date">: the
+     * BROWSER's calendar, white on this dark app and invisible to this suite —
+     * which is how it shipped. The calendar is page DOM now, so it is asserted:
+     * it is drawn on the theme, it closes like an overlay, and the day picked
+     * is the date the answered step records.
+     */
+    const email = uniqueEmail();
+    const { tripId } = await createOnboardingTrip(email, 'Onboarding Date Picker');
+    await login(page, email, `/trips/${tripId}`);
+
+    const composer = page.getByTestId('trip-chat-composer');
+    await expect(page.getByText(/Where are we going\?/)).toBeVisible({ timeout: 30_000 });
+    await composer.fill('Road trip to Berlin');
+    await composer.press('Enter');
+    await expect(page.getByText(/Where are you starting from\?|Are you leaving from/)).toBeVisible({
+      timeout: 20_000,
+    });
+    await composer.fill('Girona');
+    await composer.press('Enter');
+    await expect(page.getByText(/When are you setting off/)).toBeVisible({ timeout: 20_000 });
+
+    const chip = page.getByTestId('onboarding-pick-date');
+    const calendar = page.getByTestId('onboarding-date-popover');
+    await expect(page.locator('input[type="date"]')).toHaveCount(0);
+
+    // Escape closes it; so does a click outside it.
+    await chip.click();
+    await expect(calendar).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(calendar).toBeHidden();
+    await chip.click();
+    await expect(calendar).toBeVisible();
+    // The question is a bare text node in Penny's bubble, so this locator is
+    // the whole bubble — calendar included. A plain click() lands on its
+    // centre, INSIDE the calendar, and correctly closes nothing. Click the
+    // question's own line at the bubble's top edge instead.
+    await page.getByText(/When are you setting off/).click({ position: { x: 16, y: 8 } });
+    await expect(calendar).toBeHidden();
+
+    // Drawn on Nocturne's surface token, not a browser default.
+    await chip.click();
+    const [bg, surface] = await calendar.evaluate((el) => {
+      const probe = document.createElement('div');
+      probe.style.background = 'var(--tp-surface)';
+      document.body.appendChild(probe);
+      const want = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return [getComputedStyle(el).backgroundColor, want];
+    });
+    expect(bg).toBe(surface);
+
+    // The 15th of next month: always in the future, whatever day this runs.
+    await page.getByTestId('onboarding-date-next').click();
+    const day = calendar.locator('[data-testid="onboarding-date-day"][data-iso$="-15"]');
+    const iso = await day.getAttribute('data-iso');
+    expect(iso).toMatch(/^\d{4}-\d{2}-15$/);
+    await day.click();
+
+    // The step advances, and the answered date step records that exact day in
+    // the transcript's format ("Wed 15 Oct" before units are chosen: metric).
+    await expect(page.getByText(/How long do you want to drive each day/)).toBeVisible({ timeout: 20_000 });
+    const [y, m] = iso!.split('-').map(Number);
+    const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(y, m - 1, 15));
+    const dateStep = answeredStep(page, 'When are you setting off');
+    await expect(dateStep.getByTestId('onboarding-chip-chosen')).toContainText(`15 ${month}`);
   });
 
   test('an opening message that names both ends skips the origin step', async ({ page }) => {

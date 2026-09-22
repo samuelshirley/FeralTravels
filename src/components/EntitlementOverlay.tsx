@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import PurchaseSheet from '@/components/PurchaseSheet';
+import PurchaseOptions from '@/components/PurchaseOptions';
 import type { BlockNotice } from '@/lib/paywallCopy';
 import type { BlockReason } from '@/types/entitlement';
 
@@ -20,33 +19,25 @@ import type { BlockReason } from '@/types/entitlement';
  * deliberately left alone — one of the two is now out of date and that is his
  * call, not this component's.
  *
- * Client, unlike `EntitlementNotice` which renders it, because the primary
- * action opens the purchase sheet — the same action as the button inside
- * Penny's bubble, so the two surfaces cannot drift into offering different
- * things.
+ * Client, unlike `EntitlementNotice` which renders it, because a selling block
+ * carries `PurchaseOptions` inline — the same block the purchase sheet behind
+ * Penny's bubble renders, so the two surfaces cannot drift into offering
+ * different things. Inline, not a sheet opened from a button: this card is
+ * already the dialog, and a sheet on top of it was two stacked modals.
+ *
+ * There is no link to Penny from here, for any reason. A blocked account's
+ * composer is disabled and `/api/trip/replan` 402s, so "Talk to Penny" under a
+ * body that says Penny is paused was a dead end.
  */
 export default function EntitlementOverlay({
   blockReason,
   notice,
-  pennyHref,
 }: {
   /** Verbatim on the root node — `e2e/subscriptions.spec.ts` reads it. */
   blockReason: BlockReason;
   notice: BlockNotice;
-  /**
-   * The user's most recent trip's chat, or null when they have none. This is
-   * the one route out of the overlay that isn't a purchase: Penny has the whole
-   * story and answers questions, and a block with no way to ask anything is
-   * where support tickets come from.
-   */
-  pennyHref: string | null;
 }) {
   const selling = notice.tone === 'sell';
-
-  // No entitlement fetch: the web sheet shows no prices — a plan is bought in
-  // the iPhone app. (It fetched one for the allowlisted fake purchase, which was
-  // removed on 2026-09-21.)
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   const quietLinkStyle: React.CSSProperties = {
     fontSize: 13,
@@ -55,7 +46,9 @@ export default function EntitlementOverlay({
     textDecoration: 'none',
   };
 
-  const buttonStyle: React.CSSProperties = {
+  // Only the apologetic branch draws its own button (the mailto); a selling
+  // block's primary action is the App Store link inside PurchaseOptions.
+  const supportButtonStyle: React.CSSProperties = {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -67,10 +60,9 @@ export default function EntitlementOverlay({
     fontFamily: 'inherit',
     textDecoration: 'none',
     cursor: 'pointer',
-    background: selling ? 'var(--tp-primary)' : 'transparent',
-    color: selling ? 'var(--tp-on-primary)' : 'var(--tp-primary)',
-    border: selling ? 'none' : '1px solid var(--tp-border-strong)',
-    boxShadow: selling ? 'var(--tp-shadow-sm)' : 'none',
+    background: 'transparent',
+    color: 'var(--tp-primary)',
+    border: '1px solid var(--tp-border-strong)',
   };
 
   return (
@@ -94,6 +86,7 @@ export default function EntitlementOverlay({
       }}
     >
       <section
+        data-testid="entitlement-overlay-card"
         style={{
           width: '100%',
           maxWidth: 460,
@@ -136,31 +129,24 @@ export default function EntitlementOverlay({
           </p>
         ))}
 
+        {selling && (
+          <div style={{ marginTop: 14 }}>
+            <PurchaseOptions
+              // A reload, because this page's verdict was resolved on the server
+              // for this render, so there is no client state that could unblock it.
+              onRedeemed={() => window.location.reload()}
+            />
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 14 }}>
           {/*
-            One element, whatever the fetch did. An <a> that becomes a <button>
-            when a request lands is a trap: click it in that window and the user
-            is on the App Store instead of the sheet. A capped or revoked
-            account gets the mailto instead — there is nothing to sell them.
+            A capped or revoked account gets the mailto — there is nothing to
+            sell them, so no purchase options either.
           */}
-          {selling ? (
-            <button
-              type="button"
-              data-testid="entitlement-overlay-cta"
-              onClick={() => setSheetOpen(true)}
-              style={buttonStyle}
-            >
+          {!selling && (
+            <a href={notice.action.href} data-testid="entitlement-overlay-cta" style={supportButtonStyle}>
               {notice.action.label}
-            </button>
-          ) : (
-            <a href={notice.action.href} data-testid="entitlement-overlay-cta" style={buttonStyle}>
-              {notice.action.label}
-            </a>
-          )}
-
-          {pennyHref && (
-            <a href={pennyHref} data-testid="entitlement-overlay-penny" style={quietLinkStyle}>
-              Talk to Penny
             </a>
           )}
 
@@ -174,17 +160,7 @@ export default function EntitlementOverlay({
             Account settings
           </a>
         </div>
-
       </section>
-
-      {sheetOpen && (
-        <PurchaseSheet
-          // A reload, because this page's verdict was resolved on the server
-          // for this render, so there is no client state that could unblock it.
-          onRedeemed={() => window.location.reload()}
-          onClose={() => setSheetOpen(false)}
-        />
-      )}
     </div>
   );
 }

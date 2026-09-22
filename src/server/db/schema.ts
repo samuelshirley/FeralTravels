@@ -332,8 +332,8 @@ export const vehicles = pgTable(
     // MVP vehicle profile is just name + fuel range. Travel
     // style, driving-cadence (max_consecutive_drive_days / rest_days_after_driving)
     // and dump-station tracking were all removed in the onboarding teardown; the
-    // planner caps each driving day at DEFAULT_MAX_DRIVE_HOURS_PER_DAY
-    // (vehicleProfile.ts).
+    // per-day drive cap lives on the TRIP (trips.daily_drive_hours, default
+    // DEFAULT_MAX_DRIVE_HOURS_PER_DAY in vehicleProfile.ts).
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -387,8 +387,8 @@ export const trips = pgTable(
     /**
      * Hours of driving a day the driver asked for — the onboarding `trip_pace`
      * answer (migration 0033). Null falls through to
-     * DEFAULT_MAX_DRIVE_HOURS_PER_DAY; the leg validators keep that 8h as the
-     * hard ceiling either way. Read by Penny's context and get_route's split.
+     * DEFAULT_MAX_DRIVE_HOURS_PER_DAY. It is THE per-day cap: get_route splits
+     * on it and the leg validators enforce it. docs/design/drive-hours-cap.md
      */
     dailyDriveHours: integer('daily_drive_hours'),
     // ── GPS position (device location, refreshed each time the app opens) ──

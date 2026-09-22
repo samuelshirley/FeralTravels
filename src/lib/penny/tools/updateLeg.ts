@@ -2,7 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
-import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
+import { tripDriveCapHours } from '@/lib/penny/driveCap';
 import {
   distanceKmSchema,
   driveTimeMinutesSchema,
@@ -93,11 +93,12 @@ export function restLegEditRejectionMessage(blocked: string[]): string {
 
 export function validator(ctx: PennyContext) {
   return baseSchema.superRefine((input, issueCtx) => {
-    const cap = DEFAULT_MAX_DRIVE_HOURS_PER_DAY;
+    // The trip's cap, not a flat one — see addLeg's validator.
+    const cap = tripDriveCapHours(ctx.trip);
     if (input.data.drive_time_minutes != null && input.data.drive_time_minutes > cap * 60) {
       issueCtx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `data.drive_time_minutes (${input.data.drive_time_minutes}) exceeds vehicle drive cap (${cap}h). If the route really needs more, split into separate legs via add_leg instead of growing this one.`,
+        message: `data.drive_time_minutes (${input.data.drive_time_minutes}) exceeds this trip's daily drive cap (${cap}h × 60 = ${cap * 60} min). If the route really needs more, split into separate legs via add_leg instead of growing this one.`,
         path: ['data', 'drive_time_minutes'],
       });
     }

@@ -23,6 +23,7 @@ import { rowMappers } from '@/server/repos/trips';
 import { invalidateTripFuelCache } from '@/server/fuel';
 import { parseUUID } from '@/lib/validation';
 import { tryParseToISO } from '@/lib/dates';
+import { DAILY_DRIVE_HOURS_MAX, DAILY_DRIVE_HOURS_MIN } from '@/lib/onboardingForm';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,8 +37,14 @@ const patchSchema = z.object({
   vehicle_id: z.string().uuid().nullable().optional(),
   /** Google Directions `avoid=highways` (motorways); merged into Penny get_route */
   prefer_avoid_highways: z.boolean().optional(),
-  /** Hours of driving a day (1–8), or null for the flat default. */
-  daily_drive_hours: z.number().int().min(1).max(8).nullable().optional(),
+  /** Hours of driving a day, the onboarding pace step's band, or null for the default. */
+  daily_drive_hours: z
+    .number()
+    .int()
+    .min(DAILY_DRIVE_HOURS_MIN)
+    .max(DAILY_DRIVE_HOURS_MAX)
+    .nullable()
+    .optional(),
 });
 
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
