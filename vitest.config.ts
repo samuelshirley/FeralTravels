@@ -46,6 +46,11 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['src/**/*.test.ts'],
+          // next-auth imports `next/server` with no extension, which Node's
+          // ESM loader cannot resolve against next@14's export map; let Vite
+          // resolve it instead. `appleProvider.test.ts` needs the REAL
+          // next-auth so that its `customFetch` is the runtime's own symbol.
+          server: { deps: { inline: ['next-auth'] } },
         },
       },
       {

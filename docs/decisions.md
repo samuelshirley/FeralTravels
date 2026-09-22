@@ -232,6 +232,14 @@ unrelated to `FIXTURE_EMAIL_PATTERN`: comping it would hide every paywall and re
 the Vercel variable to disarm without a deploy; delete the module to retire it. *Enforced by:*
 `reviewAccountGuard.test.ts`, `reviewAccount.test.ts` (both mutation-checked).
 
+D10. **Web Sign in with Apple fetches discovery through `appleDiscovery.ts` — retried with
+`jwksSource.ts`'s policy, cached in memory, never persisted — and the override is ASSIGNED to the
+built provider, with `customFetch` imported from `next-auth`.** Passed in `Apple({...})`'s options
+it is silently discarded (`@auth/core` `providers.js:29`, `??=` against the built-in), and the
+top-level `@auth/core` is a different copy with a different symbol; either way the built-in runs
+and an empty-body 404 throws `SyntaxError` (issue #44). *Enforced by:* `appleProvider.test.ts`
+(mutation-checked against both regressions and against removal), `appleDiscovery.test.ts`.
+
 ## E. Payments
 
 E1. **`src/server/payments/` is a bounded module; `hasEntitlement(userId)` is the only question
