@@ -7,7 +7,7 @@ import { users } from '@/server/db/schema';
  * Hardcoded list of admin email addresses. THIS is the source of truth.
  *
  * Changing this requires a code deploy — the env var `ADMIN_EMAILS` can only
- * narrow this set further, never expand it. Even if someone steals an env var
+ * narrow this set further, never expand it or empty it. Even if someone steals an env var
  * value or sets an arbitrary one in Vercel, they cannot become admin without
  * also being on this list.
  */
@@ -17,16 +17,19 @@ const ADMIN_ALLOWLIST: ReadonlyArray<string> = [
 
 const ALLOWLIST_SET = new Set(ADMIN_ALLOWLIST.map((e) => e.toLowerCase()));
 
+/**
+ * `ADMIN_EMAILS` narrowed to the allowlist. An env that names nobody on the
+ * allowlist is treated as unset: it is stale, not a deliberate lockout. When
+ * 8c8becf moved the allowlist to sam@feraltravels.com, production's
+ * ADMIN_EMAILS still named the old gmail address, the intersection was empty,
+ * and nobody could reach /admin — with no way to fix the env short of a deploy.
+ */
 function envAllowSet(): Set<string> {
-  const raw = process.env.ADMIN_EMAILS;
-  if (!raw) return ALLOWLIST_SET; // unset = use full hardcoded list
-  const set = new Set(
-    raw
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  return set;
+  const named = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((e) => ALLOWLIST_SET.has(e));
+  return named.length > 0 ? new Set(named) : ALLOWLIST_SET;
 }
 
 /**
@@ -48,7 +51,8 @@ export function isOnAdminAllowlist(email: string | null | undefined): boolean {
  * The single source of truth for whether a session principal is an admin.
  * Requires ALL of:
  *   1. email present and on the hardcoded `ADMIN_ALLOWLIST`
- *   2. email also permitted by `ADMIN_EMAILS` env (defaults to the full list)
+ *   2. email also permitted by `ADMIN_EMAILS` env (defaults to the full list,
+ *      including when it names nobody on the allowlist)
  *   3. matching DB user row exists with `emailVerified IS NOT NULL` AND `is_admin = TRUE`
  *
  * Step 3 means a magic-link sign-in attempt to an admin address still has to
