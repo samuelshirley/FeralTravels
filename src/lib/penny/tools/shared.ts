@@ -22,8 +22,9 @@ export const distanceKmSchema = z.number().positive().max(100_000);
 
 /**
  * Drive time in minutes. Static cap at 24h here so a parser error fires for
- * obvious garbage; the real per-vehicle cap (max_drive_hours_per_day) is
- * enforced as a cross-field refinement on add_leg / update_leg.
+ * obvious garbage — and so the pace step's DAILY_DRIVE_HOURS_MAX must stay
+ * under 24. The real cap is the TRIP's (`tripDriveCapHours`), enforced as a
+ * cross-field refinement on add_leg / update_leg.
  */
 export const driveTimeMinutesSchema = z.number().int().positive().max(24 * 60);
 

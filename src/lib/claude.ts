@@ -43,6 +43,7 @@ import {
 } from "@/lib/coordsResolve";
 import { PENNY_MODEL } from "@/lib/models";
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from "@/lib/vehicleProfile";
+import { tripDriveCapHours } from "@/lib/penny/driveCap";
 import { appendContinuationNudge } from "@/lib/penny/autoContinue";
 // Re-exported for unit tests (see claude.test.ts), which pin the
 // no-double-user-turn invariant of the auto-continue plumbing.
@@ -323,7 +324,7 @@ WHEN A NUMBER IS AMBIGUOUS between these categories, ASK — don't pick. One sho
 
 The one vehicle field you CAN save from chat is fuel_type: call update_vehicle when the user says what their vehicle burns ("it's a diesel" / "runs on petrol"), confirm in one sentence, and move on.
 
-Driving days are capped at context.trip.daily_drive_hours hours of driving each when the driver set one at setup (their "how long do you want to drive each day?" answer), else ~8 hours. get_route already splits long segments on that number — you never need to ask about travel style or driving cadence. If the driver says mid-trip that they want shorter or longer days, tell them that lives in the trip's setup (Settings → this trip) and plan against the current number.
+Driving days are capped at context.trip.daily_drive_hours hours of driving each when the driver set one at setup (their "how long do you want to drive each day?" answer), else ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY} hours when it is null. That is THE TRIP'S CAP — quote it from context, never assume a number. get_route already splits long segments on that number — you never need to ask about travel style or driving cadence. If the driver says mid-trip that they want shorter or longer days, tell them that lives in the trip's setup (Settings → this trip) and plan against the current number.
 
 The "I don't recognize" line from the units section is ONLY for imperial units (miles, gallons, °F, etc.). Never apply it to range preferences stated in km or miles.
 </vehicle_preference_updates>
@@ -335,7 +336,7 @@ Each turn you receive a <context>…</context> block in the user message with th
                 on app open. THIS is "my current location" / "where I am" / "plan
                 from here". Use it directly (don't ask them to type coords) when
                 present; null means GPS wasn't shared. See <reporting_progress>.
-  trip       — { id, name, start_date, end_date, status, current_leg_id, current_place, declared_fuel_state }
+  trip       — { id, name, start_date, end_date, status, current_leg_id, current_place, daily_drive_hours, declared_fuel_state }
                 current_leg_id is the leg the driver is on / about to drive next
                 (set when they report progress); legs before it are behind them.
                 current_place is where they currently are (the progress anchor YOU
@@ -346,9 +347,10 @@ Each turn you receive a <context>…</context> block in the user message with th
                 Treat it as the furthest distance you may plan between fuel
                 stops — never plan a stretch beyond it under any circumstances.
 
-                Each driving day is capped at ~8 hours of driving — a fixed
-                default, not something the vehicle configures. Split long
-                segments into ~8h driving days accordingly.
+                Each driving day is capped at trip.daily_drive_hours hours of
+                driving (the driver's setup answer), or ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY} when it is
+                null — not something the vehicle configures. get_route splits
+                long segments on that cap.
 
                 trip.declared_fuel_state — { remaining_range_km, leg_id, as_of } or
                 null. The driver's declared tank state (the declare_fuel_state
@@ -461,11 +463,11 @@ THE CARDINAL RULE — never answer a display complaint with a data write. "I can
 </route_planning_rules>
 
 <driving_defaults_summary>
-When building a NEW trip plan, split the route into driving days of up to ~8 hours each (the fixed default). Do NOT ask the user about travel style, driving cadence, or rest days — those aren't collected. The only vehicle preference you need is the fuel range.
+When building a NEW trip plan, split the route into driving days no longer than the trip's cap (context.trip.daily_drive_hours, or ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY} when null). Do NOT ask the user about travel style, driving cadence, or rest days — those aren't collected. The only vehicle preference you need is the fuel range.
 
 You CAN plan as long as the fuel range is set. If it's missing (vehicle_profile_blocked is true), point the user to set it (see <vehicle_profile_gate>) before relying on fuel planning.
 
-Get the per-day split from get_route — it returns a suggested split capped at the 8h day. Don't try to override the cap with text reasoning.
+Get the per-day split from get_route — it returns a suggested split capped at the trip's cap. Don't try to override the cap with text reasoning.
 </driving_defaults_summary>
 
 <intent_extraction>
@@ -547,7 +549,7 @@ For an accurate count + summary, in check_trip_feasibility add a constraint_chec
 - When you name a leg or stop from resolve_place, use its name_for_leg verbatim — the place qualified by its state or country ("Monument Valley, UT"). Not the bare label (ambiguous across states), not the full address (it carries a postcode).
 - NEVER invent a name for a split point. Each entry in get_route's suggested_split carries end_name, resolved from the coordinates by the server. Use it VERBATIM as that leg's end_name and as the next leg's start_name. Do not paraphrase it, shorten it, add a region to it, or replace it with a nearby landmark you happen to know. If end_name is null, name the leg for where it actually ends using only what the tools gave you — never a region you inferred ("Texas Panhandle" and "Albuquerque area" are exactly the invented names this rule exists to stop).
 - Do NOT pass title on add_leg or update_leg for a driving leg. The server derives it from start_name → end_name, so a title you write is discarded. Titles like "Austin → Big Bend (Day 1)" on a leg that ends in Marfa are what that produced. Rest legs still take a title.
-- The validator will reject any add_leg or update_leg whose drive_time_minutes exceeds the per-day cap (~8h × 60 = 480 min by default; a legacy vehicle may carry its own stored cap). Use get_route's split — don't try to override the cap with text reasoning.
+- The validator will reject any add_leg or update_leg whose drive_time_minutes exceeds the trip's per-day cap (context.trip.daily_drive_hours × 60, or ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY * 60} min when null). Use get_route's split — don't try to override the cap with text reasoning.
 - If the user gives only a destination with no origin, ask for the starting point in plain prose — do not call any tools yet.
 - Height > 2.0 m: avoid low-clearance routes. Weight > 3500 kg: avoid narrow scrub tracks.
 
@@ -1676,14 +1678,11 @@ async function executeGetRoute(
     };
   }
 
-  // The longest driving day used for route splitting: the driver's own
-  // onboarding answer (`trip.daily_drive_hours`, 1–8h) when they gave one,
-  // else the flat 8h default. Never above the default — that is the hard
-  // ceiling the leg validators enforce.
-  const cap = Math.min(
-    context.trip.daily_drive_hours ?? DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
-    DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
-  );
+  // The longest driving day used for route splitting: the trip's cap — the
+  // driver's own pace answer when they gave one, in either direction, else the
+  // default. The leg validators read the same function, so a split longer
+  // than the default is one they accept.
+  const cap = tripDriveCapHours(context.trip);
   const exceedsCap = directions.drive_time_minutes > cap * 60;
 
   let suggestedSplit: ReturnType<typeof splitLegByDriveTime> | null = null;

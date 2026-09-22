@@ -79,6 +79,13 @@ test.describe('Onboarding wizard', () => {
     // The pace step: how long a driving day should be. A chip again, and
     // the composer stays live for any other number.
     await expect(page.getByText(/How long do you want to drive each day/)).toBeVisible({ timeout: 20_000 });
+
+    // "Custom" is client-only: it hands the driver to the composer (for 9-12h,
+    // or any other number) and submits nothing — the step stays where it is.
+    await page.getByTestId('onboarding-pace-custom').click();
+    await expect(composer).toBeFocused();
+    await expect(page.getByTestId('onboarding-pace-custom')).toBeVisible();
+
     await page.getByRole('button', { name: '6 h', exact: true }).click();
 
     /*

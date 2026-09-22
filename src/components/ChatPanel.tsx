@@ -2176,6 +2176,25 @@ export default function ChatPanel({
                   Pick a date
                 </button>
               )}
+              {/*
+                Client-only, never a server option: a server option is
+                SUBMITTED as the answer (parseDailyDriveHours('custom') is null,
+                so it would throw the re-ask), and the answered step redraws
+                from form_meta.options, which would then carry a fourth chip.
+                The composer is already live on a 'chips' step; this points at it.
+              */}
+              {onboardingQuestion.key === 'trip_pace' && (
+                <button
+                  type="button"
+                  disabled={onboardingComposerBusy}
+                  data-testid="onboarding-pace-custom"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => textareaRef.current?.focus()}
+                  style={chipStyle(false)}
+                >
+                  Custom
+                </button>
+              )}
             </div>
             {/* In the flow, under the chips, rather than floated: the bubble
                 sits in a scrolling transcript, and a floated calendar would be

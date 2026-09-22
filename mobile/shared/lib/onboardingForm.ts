@@ -268,9 +268,13 @@ export const TRIP_DATE_CLARIFY_LABEL =
 
 export const TRIP_PACE_LABEL = 'How long do you want to drive each day?';
 
-/** Hours a day the pace step accepts. 8 is the hard cap the planner keeps anyway. */
+/**
+ * Hours a day the pace step accepts. The answer is the trip's real cap: route
+ * splitting and the leg validators both use it as given, so raising MAX here
+ * raises it everywhere. docs/design/drive-hours-cap.md
+ */
 export const DAILY_DRIVE_HOURS_MIN = 1;
-export const DAILY_DRIVE_HOURS_MAX = 8;
+export const DAILY_DRIVE_HOURS_MAX = 12;
 
 /**
  * The pace answer, as a whole number of hours in band — from a chip ("6"), a

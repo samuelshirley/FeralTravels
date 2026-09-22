@@ -461,3 +461,24 @@ describe('both ChatPanels gate on the shared predicate', () => {
     expect(source).not.toMatch(/form_answer["'] && msg\.form_meta\)/);
   });
 });
+
+import { DAILY_DRIVE_HOURS_MAX, parseDailyDriveHours } from './onboardingForm';
+
+describe('parseDailyDriveHours', () => {
+  it('accepts 9 to 12 hours — the band goes past the old 8h ceiling', () => {
+    expect(DAILY_DRIVE_HOURS_MAX).toBe(12);
+    for (const h of [9, 10, 11, 12]) {
+      expect(parseDailyDriveHours(h)).toBe(h);
+      expect(parseDailyDriveHours(String(h))).toBe(h);
+    }
+    expect(parseDailyDriveHours('about 10 hours')).toBe(10);
+    expect(parseDailyDriveHours('12h')).toBe(12);
+  });
+
+  it('still rejects 0 and 13', () => {
+    expect(parseDailyDriveHours(0)).toBeNull();
+    expect(parseDailyDriveHours('0')).toBeNull();
+    expect(parseDailyDriveHours(13)).toBeNull();
+    expect(parseDailyDriveHours('13 hours')).toBeNull();
+  });
+});
