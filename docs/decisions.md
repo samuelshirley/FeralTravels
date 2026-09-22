@@ -96,8 +96,9 @@ turns drain in-request.** *Enforced by:* partial unique index `penny_turns_one_r
 the promotion race — `pennyTurns.test.ts` — the partial unique index in the schema AND the 23505→null catch that turns "someone else won" into "stay queued"; both halves are load-bearing beyond the index.
 
 B14. **Penny does not author derived fields: split-point names, drive-leg titles, `end_date`.**
-(Pending — section 3 of `docs/tasks/2026-09-09-haiku-fuel-tankwalk.md`.) Haiku wrote "Texas
-Panhandle" and titled a Marfa leg "Austin → Big Bend". *Enforced by:* **NOT YET**.
+Haiku wrote "Texas Panhandle" and titled a Marfa leg "Austin → Big Bend". *Enforced by:*
+`legTitle.test.ts` (titles are `start → end`) and `splitPointNames.test.ts` +
+`nominatim.test.ts` (a day ends in a named town, qualified by country). `end_date`: **NOT YET**.
 
 B15. **Ambiguous "go here" + a place → ONE clarifying question before any edit.** *Enforced by:*
 **NOT ENFORCED** (prompt).

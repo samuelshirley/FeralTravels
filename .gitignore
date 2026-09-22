@@ -67,3 +67,8 @@ mobile/maestro/.local-run/
 
 # Scratch output from assistant sessions — never tracked.
 Claude outputs/
+
+# Claude Code briefs are throwaway prompts; they live in .claude/tasks/ (ignored
+# above). These two rules stop one being recommitted at its old address.
+docs/tasks/
+docs/bugs/*-prompt.md
