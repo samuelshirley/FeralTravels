@@ -471,6 +471,22 @@ error instead of START HERE. *Enforced by:* `ChatPanel.onboardingFlash.test.tsx`
 mutation-checked on each), `onboardingPhase.test.ts`, and the Maestro flow
 `mobile/maestro/onboarding-flash.yaml`.
 
+H19. **The onboarding date step draws its own calendar on both platforms, from one date module.**
+Web had a `Pick a date` chip opening an in-page calendar; native drew the three chips and nothing
+else, so on iOS the only way to a real calendar day was typing one. Both now render the chip
+inside the tap-to-answer block, gated on `trip_date` (so the `kind: 'text'` "not sure yet"
+follow-up gets none, on either platform), the calendar inline in Penny's bubble — never a Modal,
+never the OS picker, which the theme cannot style and neither e2e driver can see — and submit the
+picked local `YYYY-MM-DD` through the ordinary answer path. The grid, the local ISO day and the
+labels live in `src/lib/calendarGrid.ts`, mirrored to `mobile/shared/`, and neither calendar keeps
+a copy: two implementations of "which day is this" are how one platform ends up a day off.
+*Enforced by:* `onboardingDatePickerGuard.test.ts` (both panels and both calendars, source), mutation-checked five
+ways, each red naming the file — native chip removed (1 red: no `onboarding-pick-date` in the
+block); `monthGrid` re-implemented in the native calendar, then in the web one (2 red each:
+not imported, re-implemented); `DateTimePicker` swapped in (2 red); the calendar moved into a
+`<Modal>` (1 red). Also `calendarGrid.test.ts` (TZ pinned per case; the `toISOString` bug put
+back is 3 red on UTC, Los Angeles and Tokyo hosts alike) and `CalendarPopover.test.tsx`.
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

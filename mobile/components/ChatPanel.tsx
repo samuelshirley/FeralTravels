@@ -35,7 +35,8 @@ import {
 } from "@/lib/entitlement";
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { ListIcon, PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import { CalendarIcon, ListIcon, PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import CalendarPopover from "@/components/CalendarPopover";
 import { MagicWand, MapPinSimpleArea } from "phosphor-react-native";
 import { useDeviceLocation } from "@/lib/location";
 import {
@@ -1669,6 +1670,16 @@ export default function ChatPanel({
     activeQuestionId !== null &&
     transcript[0]?.id === activeQuestionId;
 
+  /**
+   * The date step's `Pick a date` chip opens `CalendarPopover`, drawn inline
+   * in Penny's bubble — the native half of the web's calendar, which it
+   * mirrors. Not the OS picker: see the header of CalendarPopover.
+   */
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  // A new step (or the same key re-asked) starts with the calendar shut.
+  const activeQuestionLabel = onboardingQuestion?.label;
+  useEffect(() => setDatePickerOpen(false), [activeQuestionLabel]);
+
   const onboardingCard =
     onboardingUiActive && onboardingQuestion ? (
       <View style={[styles.card, firstRunHeadline ? styles.cardFirstRun : null]} testID="onboarding-card">
@@ -1704,7 +1715,39 @@ export default function ChatPanel({
                   </Pressable>
                 );
               })}
+              {onboardingQuestion.key === "trip_date" ? (
+                <Pressable
+                  disabled={onboardingComposerBusy}
+                  testID="onboarding-pick-date"
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: datePickerOpen, disabled: onboardingComposerBusy }}
+                  onPress={() => setDatePickerOpen((open) => !open)}
+                  style={[
+                    styles.optionChip,
+                    datePickerOpen ? styles.optionChipOn : null,
+                    onboardingComposerBusy ? styles.optionChipOff : null,
+                  ]}
+                >
+                  <CalendarIcon color={datePickerOpen ? theme.accent300 : theme.text} />
+                  <Text style={[styles.optionChipText, datePickerOpen ? styles.optionChipTextOn : null]}>
+                    Pick a date
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
+            {/* In the flow, under the chips, inside the bubble — not a Modal
+                and not floated. The bubble lives in a scrolling transcript;
+                the web made the same call for the same reason. */}
+            {onboardingQuestion.key === "trip_date" && datePickerOpen ? (
+              <View style={styles.datePickerWrap}>
+                <CalendarPopover
+                  onPick={(iso) => {
+                    setDatePickerOpen(false);
+                    void submitOnboardingAnswer(onboardingQuestion.key, iso);
+                  }}
+                />
+              </View>
+            ) : null}
           </>
         ) : null}
 
@@ -2749,6 +2792,7 @@ const styles = StyleSheet.create({
   /** A little air between the question text and its recorded answer. */
   answeredOptionsRow: { marginTop: 10 },
   optionChipOff: { opacity: 0.5 },
+  datePickerWrap: { marginTop: 10 },
   optionChipOn: { borderColor: theme.primary, backgroundColor: theme.primaryTint },
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
 
