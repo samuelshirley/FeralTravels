@@ -202,7 +202,7 @@ describe('answeredChips', () => {
 
 describe('clientRecordsAnsweredStep', () => {
   it('lets the server own the composite vehicle card', () => {
-    // One client answer ("Duncan · 500 km") over TWO server steps. A
+    // One client answer ("Hilux · 500 km") over TWO server steps. A
     // client-built widget would show range chips under that pill and then turn
     // into two different steps on reload.
     expect(clientRecordsAnsweredStep('vehicle')).toBe(false);

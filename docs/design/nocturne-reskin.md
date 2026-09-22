@@ -158,7 +158,7 @@ Labels **verbatim from `onboarding.ts:510`** — `Metric (km)` and `Imperial (ch
 
 Merge the two vehicle questions into a single in-transcript form. Penny: `Last thing — what are you driving?`
 
-- `NAME IT` kicker, then a 44px text field (bg = page ground, 1px accent-700 edge, 14px value, `e.g. Duncan` hint right-aligned in neutral-700). This is the only keyboard left in the flow.
+- `NAME IT` kicker, then a 44px text field (bg = page ground, 1px accent-700 edge, 14px value, `e.g. Hilux` hint right-aligned in neutral-700). This is the only keyboard left in the flow.
 - `RANGE ON A TANK` kicker + an `Info` icon carrying the existing help text (`How far you're happy to drive before you'd want to refuel…`) as a tooltip/sheet rather than body copy.
 - Range as buttons: `300 km`, `500 km`, `700 km` (42px, neutral outline; selected = accent outline + 8% tint) plus `Other…` (dashed outline → numeric keyboard).
 - Link row: `Not sure — work it out from my vehicle` (accent-300, underlined) → the existing `range_help` state. **This path is already built** (`RANGE_HELP_QUESTION`, `estimateRange` in `src/server/parseRangeEstimate.ts`); the estimator's proposal comes back as a confirm card — `FROM "2018 TOYOTA HILUX DIESEL"` / `~700 km on a tank` / `Use it` (accent outline) + `Change` (neutral outline) — instead of another free-text question.

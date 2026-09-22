@@ -126,9 +126,9 @@ export function buildFormMeta(
  *
  * `vehicle` is the one kind where the two disagree by construction: the card
  * carries a nickname and a range submitted together, so the client holds ONE
- * answer ("Duncan · 500 km") while the server writes TWO steps, one per half.
+ * answer ("Hilux · 500 km") while the server writes TWO steps, one per half.
  * A client-built widget would show the range chips under a pill reading
- * "Duncan · 500 km", and then turn into two different steps on reload. So the
+ * "Hilux · 500 km", and then turn into two different steps on reload. So the
  * client stays out of it and the vehicle answer keeps the plain bubble it has
  * always had.
  */

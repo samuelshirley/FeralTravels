@@ -110,7 +110,7 @@ export function buildVehicleProfileQuestions(units: UnitsPref): VehicleProfileQu
       kind: 'text',
       group: 'identity',
       label: "What's the vehicle called? (just a nickname is fine)",
-      placeholder: 'e.g. Duncan',
+      placeholder: 'e.g. Hilux',
     },
     {
       key: 'range_km',
