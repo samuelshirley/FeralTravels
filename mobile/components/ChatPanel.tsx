@@ -2145,6 +2145,14 @@ export default function ChatPanel({
                           testID={
                             chip.selected ? "onboarding-chip-chosen" : "onboarding-chip-answered"
                           }
+                          // One element, carrying its own label: a bare View
+                          // leaves the label a SIBLING in the accessibility
+                          // tree, so VoiceOver reads the chip and its text as
+                          // two things and a test id cannot name the text
+                          // beside it. The web's testid element contains the
+                          // text; this makes the native one do the same.
+                          accessible
+                          accessibilityLabel={chip.label}
                           style={[
                             styles.optionChip,
                             // Answered: a record, not a control — no Pressable
