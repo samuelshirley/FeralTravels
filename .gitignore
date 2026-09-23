@@ -70,3 +70,7 @@ Claude outputs/
 docs/tasks/
 docs/bugs/*-prompt.md
 .handoff/
+
+# orchestrator state (local only)
+.orc/
+.orc-plan.json
