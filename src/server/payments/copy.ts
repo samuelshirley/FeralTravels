@@ -11,8 +11,10 @@ import type { PaywallCopy } from '@/types/entitlement';
  *
  * And it is SHORT. Penny is being warm about something the user did not ask
  * for, and warmth past two sentences turns into a speech. Say the one fact
- * (planning is paused), the one reassurance (nothing is gone), the one price,
- * and stop — the button underneath carries the rest.
+ * (planning is paused), the one reassurance (nothing is gone), where the
+ * plans are, and stop — the button underneath carries the rest. No number: the
+ * price is App Store Connect's and differs per storefront, and the sheet behind
+ * the button shows it in the reader's own currency.
  *
  * Served from the API rather than compiled into the app so it can be reworded
  * without cutting a TestFlight binary. The button label ships with it for the
@@ -68,7 +70,7 @@ export function paywallCopy(verdict: AccountVerdict): PaywallCopy | null {
         message:
           "That's your seven days up. Everything you've planned stays put — what's paused " +
           'is new trips and me.\n\n' +
-          "It's $2 a month, or $20 for the year, whenever you want me back.",
+          'The monthly and yearly plans are one tap below, in your currency, whenever you want me back.',
         buttonLabel: 'Keep planning',
       };
   }

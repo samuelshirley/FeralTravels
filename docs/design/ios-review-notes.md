@@ -142,9 +142,10 @@ order.
 > 3. Scroll to the **Plan** card. It shows the current plan — "Free trial — 7
 >    days left" — and a **View plans** button.
 > 4. Tap **View plans**. The sheet lists both subscriptions with the App Store's
->    own localized prices and billing periods: $2.00 per month and $20.00 per
->    year. Links to Terms of Use and the Privacy Policy, a **Restore purchases**
->    control and a **Manage subscription** link are on the same sheet.
+>    own localized prices and billing periods — in the US storefront, $2.69 per
+>    month and $22.00 per year (€2 and €20 in the eurozone). Links to Terms of
+>    Use and the Privacy Policy, a **Restore purchases** control and a **Manage
+>    subscription** link are on the same sheet.
 > 5. Tap either price to buy with your sandbox Apple Account. After the purchase
 >    the app waits for our server to be notified by RevenueCat and then switches
 >    the plan on — this normally takes a few seconds. If it takes longer than a

@@ -192,14 +192,19 @@ describe('user-facing copy never says the s-word', () => {
     expect(APP_STORE_CTA_LABEL).toBe('Download the app');
   });
 
-  it('still names both prices — dropping the word must not drop the offer', () => {
+  it('still offers both plans, and quotes no price — the store prices per country', () => {
     const sales = [
       blockNoticeFor('trial_over').body.join(' '),
       paywallCopy(refusal('trial_over'))!.message,
     ];
+    // The web and the server cannot know the reader's storefront, and a single
+    // literal was wrong for most of them: the copy said $2/$20 while the store
+    // charged $2.69/$22.00 in the US (2026-09). The plan screen shows the real,
+    // localized price; this copy only has to say that the plans exist.
     for (const text of sales) {
-      expect(text).toContain('$2');
-      expect(text).toContain('$20');
+      expect(text).toMatch(/monthly/i);
+      expect(text).toMatch(/yearly/i);
+      expect(text).not.toMatch(/[$€£]\s?\d/);
     }
   });
 });

@@ -12,7 +12,7 @@ Seven days free with no card. Then pay or stop.
 |---|---|
 | 0 | Signs up, uses everything. No paywall, no card, no mention of price |
 | 1-6 | Full access |
-| 7+ | On next open: a modal offering **$2/month** or **$19.99/year**. The app is blocked behind it |
+| 7+ | On next open: a modal offering the monthly or annual plan at the store's price. The app is blocked behind it |
 
 The trial also ends early if the account burns **$1 of Anthropic spend**
 before day 7 — see *Trial ceiling* below.
@@ -28,6 +28,24 @@ is a deliberate product position, not an oversight.
 The gate is `now() > users.created_at + interval '7 days'`.
 
 ## Pricing
+
+**The prices actually on sale (App Store Connect, read 2026-09-23).** The base
+price was set in euros from the Spanish account and Apple converted the rest:
+
+| Storefront | Monthly | Annual |
+|---|---|---|
+| United States | $2.69 | $22.00 |
+| Eurozone | €2 | €20 |
+| United Kingdom | £2 | £18 |
+| Canada | CA$3 | CA$25 |
+| Australia | A$3 | A$29 |
+| New Zealand | NZ$4 | NZ$35 |
+
+Sam kept these on 2026-09-23 rather than re-pricing to $2/$20. App Store
+Connect is the source of truth for price; copy that quotes one follows it. The
+table below was computed at $2.00/$19.99 and stays as the design basis: at the
+real US prices net revenue is higher, so every threshold derived from it (the
+$8.50 `STOP_MICROCENTS`) is conservative, not wrong.
 
 | Plan | Gross | Apple (15%, Small Business Program) | Net to us |
 |---|---|---|---|
@@ -245,7 +263,7 @@ for access we then withheld.
   and deserves both.
 
   This is not a loss. **Cancelling returns no money** — it only stops the
-  next renewal, and we keep the full $19.99. Serving the year they paid
+  next renewal, and we keep the full annual price. Serving the year they paid
   for is the transaction completing, and the marginal cost of doing so is
   bounded by the $8.50 cap and realistically about thirty cents. Keeping
   the money while withholding the product is the version that costs
@@ -285,8 +303,8 @@ keep.
 
 The "only refund if they used less than 50%" rule survives — relocated.
 It is not a gate we operate; it is the *content* of the consumption
-answer. A user who burned $9 of Anthropic and then asks for their $19.99
-back gets that reported, and Apple is materially more likely to decline.
+answer. A user who burned $9 of Anthropic and then asks for their annual
+price back gets that reported, and Apple is materially more likely to decline.
 
 ### What the admin panel can and cannot have
 
@@ -439,7 +457,8 @@ Unit, not E2E — replay real RevenueCat/ASSN payloads against the handler:
 > `CLAUDE.md` links here from the one-line summary that replaced it.
 
 **Subscriptions / paywall (migration 0026, 2026-08-26):** seven days free from
-`users.created_at`, then $2/month or $20/year through Apple IAP. Designed in
+`users.created_at`, then a monthly or annual plan through Apple IAP (priced
+per storefront — see Pricing above). Designed in
 `docs/design/subscriptions.md`; the numbers there came out of
 `scripts/lifetime-spend.ts` against production, not out of a hat.
 

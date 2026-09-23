@@ -214,7 +214,7 @@ RevenueCat turns that into `offerings.current === null` or a current offering
 with no packages.
 
 **What it looks like in this app:** the purchase sheet shows the two prices —
-`$2` and `$20`, the fallback strings from `PRODUCTS` in
+`$2.69` and `$22.00`, the `fallbackUsdLabel` strings from `PRODUCTS` in
 `src/server/payments/constants.ts` — with **no buy button**. That is
 `mode: "unavailable"` with reason `store_empty` in `src/lib/purchaseMode.ts`
 (mirrored to the app). Each empty-sheet cause has its own reason — `no_key`,
@@ -298,10 +298,18 @@ maths, and nobody can hold both.
 group. The reference name is internal; the **display name** is what the user
 sees in Manage Subscriptions, so make it "Feral Travels".
 
-| Product ID | Duration | Price | Source of truth |
+| Product ID | Duration | US price | Source of truth for the id |
 |---|---|---|---|
-| `com.feraltravels.ios.monthly` | 1 month | **$2.00** | `PRODUCTS` in `src/server/payments/constants.ts` |
-| `com.feraltravels.ios.annual` | 1 year | **$20.00** | same |
+| `com.feraltravels.ios.monthly` | 1 month | **$2.69** | `PRODUCTS` in `src/server/payments/constants.ts` |
+| `com.feraltravels.ios.annual` | 1 year | **$22.00** | same |
+
+**Price is App Store Connect's, per storefront** — as of 2026-09-23 US
+$2.69/$22.00, eurozone €2/€20, UK £2/£18, Canada CA$3/CA$25, Australia
+A$3/A$29, New Zealand NZ$4/NZ$35 (the full table is in `subscriptions.md`).
+`fallbackUsdLabel` in `constants.ts` and `displayPrice` in the `.storekit` file
+follow the US row. The web's and Penny's trial-ended copy quote no price at
+all — they cannot know the reader's storefront — and `paywallCopy.test.ts`
+fails if a literal price comes back.
 
 The ids must match `constants.ts` **character for character**. This is the
 second commonest cause of an empty offering, and in this app it has a distinct
@@ -313,7 +321,7 @@ agreement problem.
 
 **Whole-dollar prices are selectable.** Apple's December 2022 overhaul added 700
 price points and removed the requirement that prices end in `.99`. You do not
-need $1.99/$19.99. Check the international table it auto-generates — conversion
+need a `.99` ending. Check the international table it auto-generates — conversion
 produces endings like €2.49; set the even equivalents by hand per storefront if
 you care (cosmetic, not blocking).
 
@@ -538,8 +546,9 @@ wrong one is how you get stuck in a purchase loop.
 
 Create the tester at App Store Connect → Users and Access → **Sandbox**, using an
 address that has **never** been an Apple ID. Region decides the storefront, and
-therefore whether the sheet says `$2.00` or `€2,00` — which is the whole point of
-rendering `product.priceString` rather than `constants.ts`'s `"$2"`.
+therefore whether the sheet says `$2.69` or `€2,00` — which is the whole point of
+rendering `product.priceString` rather than `constants.ts`'s `fallbackUsdLabel`
+(`"$2.69"`).
 
 **TestFlight builds run against sandbox automatically** and testers are never
 charged, so basic "does the sheet appear, does access unlock" needs no sandbox

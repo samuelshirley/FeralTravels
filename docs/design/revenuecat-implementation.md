@@ -514,6 +514,9 @@ it looks identical to working until someone tries to plan a trip.
   $20.00.** The code is newer and the reasoning is better (whole-dollar price
   points exist; the net table should read $20.00 → $3.00 → $17.00, which is
   what the $8.50 cap is derived from). Fix the doc, not the code.
+  **Superseded 2026-09-23:** the store actually charges US $2.69/$22.00 and
+  €2/€20 (a euro base price, auto-converted), and Sam kept those — see
+  `subscriptions.md` → Pricing.
 - **`ios-app-plan.md` is stale on payments throughout** and should be read as
   history: it specifies one product at $10/year, a trial metered in *usage
   days* via a `user_active_days` table, promo codes, and entitlement columns on
