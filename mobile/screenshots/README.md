@@ -15,8 +15,10 @@ which account or which trip produced them.
 
 ## What is in the set
 
-Five shots, in the order §3 of `docs/design/app-store-listing.md` argues for.
+Four shots, in the order §3 of `docs/design/app-store-listing.md` argues for.
 The filenames carry that order, because App Store Connect uses upload order.
+`05-settings` is out of the set and, since 2026-09-23, out of the flow too — see
+Status.
 
 | File | Screen | Why it is in the set |
 |---|---|---|
@@ -24,22 +26,21 @@ The filenames carry that order, because App Store Connect uses upload order.
 | `02-penny-chat.png` | Penny, after a real reply | The differentiator |
 | `03-itinerary.png` | Day 1 expanded, fuel stops loaded | The product actually working |
 | `04-map.png` | Route and stop markers | The visual anchor |
-| `05-settings.png` | Vehicle profile | The fuel maths is yours to set |
 
 ## The trip in them
 
 The same canonical two legs the test flows use — **Paris → Strasbourg →
-Stuttgart**, real coordinates and real road geometry from
-`CANONICAL_TWO_LEGS` in `src/server/repos/testSupport.ts` — seeded under names a
+Stuttgart**, real coordinates and distances from `CANONICAL_TWO_LEGS` in
+`src/server/repos/testSupport.ts` (but NO road geometry — see `04-map` under
+Status) — seeded under names a
 customer could read (`Paris to Stuttgart`, `The Hilux`, `Sam`) instead of
 `E2E Fixture Trip`. Same graph, different labels; `ios-e2e-local.sh` passes the
 three names to `scripts/ios-e2e-fixture.mjs`.
 
 The account is a throwaway `playwright-…@e2e.feraltravels.com` fixture on the
-LOCAL server and local database, never production. Its address is why
-`05-settings.png` is scrolled with the vehicle card centred: that pushes the
-"Signed in as" row off the top, and a fixture address must not appear on a
-public store listing. **Check it did.**
+LOCAL server and local database, never production. Its address must not
+appear on a public store listing, which is why there is no Settings shot.
+**Check none of the four shows it.**
 
 ## Sizes, and the correction that made this necessary
 
@@ -59,7 +60,7 @@ is silently the wrong size is otherwise something you discover at upload.
 
 **Looking at them.** Nothing in the pipeline can tell a map that loaded its
 tiles from a grey rectangle where a map should be; both are the same number of
-pixels. These go on a public listing. Open all five.
+pixels. These go on a public listing. Open all four.
 
 Two things to look at in particular on the first run:
 
@@ -77,21 +78,35 @@ Two things to look at in particular on the first run:
 
 ## Status
 
-**It runs and it passes** (2026-09-02, iPhone 17 Pro Max, 1320x2868). Its first
-run was a bring-up exactly as predicted — `docs/design/ios-e2e-bringup.md` has
-the two findings, neither of them a typo in a selector.
+**Regenerated 2026-09-23** on an iPhone 17 Pro Max simulator (iOS 26.5, Xcode
+26.6, Maestro 2.10.0), 1320x2868, from `ec8986b` (origin/main at the time), with
+the status bar pinned to 9:41 / full signal / full battery by the runner. The
+2026-09-02 set it replaces was from `35d1757` and a light-themed app; 81 commits
+have touched `mobile/` since.
 
-**And then three of the five images turned out not to be shippable**, which is
-the entire argument for this directory existing. Two are fixed; one still needs
-a decision.
+The run needed one flow fix: the day row's label now carries the country
+(`WED 7 OCT, Paris, France → Strasbourg, France, 489 km, …`), so
+`.*Paris → Strasbourg.*` stopped matching and the flow died on the LIST step.
+It is `.*Paris.*→ Strasbourg.*` now, read off the hierarchy dump.
 
-| Image | Verdict |
+| Image | Verdict (what the 2026-09-23 PNG actually shows) |
 |---|---|
-| `01-trips` | Honest but thin — one trip card and a lot of empty cream. Seeding a second and third trip would sell better. |
-| `02-penny-chat` | **Good.** A real, specific answer: day 1 measured against the vehicle's range, a recommendation, and an offer to place a stop. |
-| `03-itinerary` | **Was wrong, now good.** It read *"No fuel stop needed on this day"* — day 1 is 489 km and the fixture range was 500, so Finn correctly placed nothing, and the slot meant to show the product working showed it idle. `seedCanonicalFixture` now takes an optional `rangeKm` and the runner seeds 300, so the same leg genuinely needs stops: Reims at 147 km and Station AVIA Saverne at 442 km, with their routing buttons. Still carries a "LOCATION OFF — OPEN SETTINGS" line (see below). |
-| `04-map` | **Intermittent, not broken.** The first run produced a blank grid with a route line on it — Apple Maps tiles had not loaded on a freshly booted simulator. A later run on the same warmed simulator rendered France and Germany properly, with the route and both gold fuel markers. **If it comes out blank, re-run it**; nothing in the flow can tell the two apart. |
-| `05-settings` | **REMOVED from the set, 2026-09-02.** It leaked the fixture's `playwright-…@e2e.feraltravels.com` address, twice, for two different reasons. Centring the 'Vehicle profile' heading did not push it off a 6.9" screen; centring the range stat did — until the copy-rule cleanup deleted two blurbs, the screen got shorter, and the address came back into frame. The workaround was load-bearing on the page being long. Four images is inside Apple's 3–5, so the set ships without it until the layout is fixed. |
+| `01-trips` | **Fine, still thin.** One card, "Paris to Stuttgart · 2 days · ~645 km", under a 07 Oct 2026 date rule, with "+ New trip" and "Edit trips". Two-thirds of the frame is empty. The screen also says "trips" three times (nav title, eyebrow, heading), which is the app's copy, not the flow's. Seeding more trips would sell better. |
+| `02-penny-chat` | **Good.** A real reply to "How is the fuel looking on day one?": 489 km against the Hilux's 300 km range, both placed stops named with their distances (Reims ~147 km, near Saverne ~442 km), and "you'll need both". Specific and correct against what 03 shows. Her wording varies run to run, so re-read it on every regeneration. |
+| `03-itinerary` | **Good.** Day 1 open, three stops on the timeline — Paris 0 km, fuel Reims Ids 147 km, fuel Station AVIA Saverne 442 km, Strasbourg 489 km — with a Google Maps button each, header "2 fuel". Still carries the "LOCATION OFF — OPEN SETTINGS" link (location is denied on purpose, see above). |
+| `04-map` | **Usable, with a known flaw.** Tiles loaded (dark style, France to the Netherlands), both fuel markers, the three town markers and a "Next stop · fuel — Reims Ids" card. **The route is not a road line**: `CANONICAL_TWO_LEGS` seeds no `geometry`, so `TripMap` draws its dashed straight-line fallback, faint and nowhere near the fuel markers. The 2026-09-02 set had the same line. The fix is seeding a real LineString in `testSupport.ts`, which is outside this directory. |
+| `05-settings` | **REMOVED from the set on 2026-09-02, and from the flow on 2026-09-23.** It showed the fixture's `playwright-…@e2e.feraltravels.com` address, twice, for two different reasons. Centring the 'Vehicle profile' heading did not push it off a 6.9" screen; centring the range stat did, until the copy-rule cleanup deleted two blurbs, the screen got shorter, and the address came back into frame. The workaround only held while the page was long. The step itself survived the removal, though, and the runner copies every PNG the flow takes, so each regeneration put the leaking image back in this directory. |
+
+**Things seen on the way that are NOT in this set but will be again:**
+
+- **Finn's stops vary between runs.** Two runs placed Reims + Saverne; the one
+  in between placed a single Intermarché at Clermont-en-Argonne (233 km). Both
+  are within range. The images follow whichever one it returns.
+- **The map's next-stop button overflows on a long station name.** With
+  "Intermarché station-service Clermont En Argonne" the navigate and
+  external-link icons rendered OUTSIDE the card's edges. "Reims Ids" fits, so
+  this set is clean, but the layout bug is in the app (`mobile/components/`),
+  and a different Finn result would put it on the listing.
 
 ### Getting `05-settings` back
 
