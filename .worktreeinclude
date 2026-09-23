@@ -1,0 +1,7 @@
+# Untracked files a new worktree needs from the main checkout (gitignore
+# syntax, copied before any setup runs). The Orchestrator copies these into
+# its repo worktrees at .claude/worktrees/<slug>; bb reads them for its own.
+.env*
+!.env.example
+mobile/.env*
+.claude/settings.local.json
