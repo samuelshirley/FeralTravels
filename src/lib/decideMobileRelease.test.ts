@@ -28,7 +28,9 @@
  * binary, and everything else defaults to the expensive-but-safe side.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 // Plain ESM JS with no declarations; tsconfig's allowJs infers it, and the
 // exports are narrowed to their real shapes just below. Same arrangement as
@@ -453,6 +455,49 @@ describe('.github/workflows/mobile.yml calls the classifier', () => {
       'the PR forecast no longer asks the classifier for its reasons (--json), so ' +
         'the comment cannot say WHY.'
     ).toBeGreaterThan(0);
+  });
+
+  it('the no-base path answers native in the one output downstream reads', () => {
+    // A manual dispatch, a first push or a force-push has no usable
+    // github.event.before. That path wrote `native=true` — a key nothing had
+    // read since the decision became three-way — so `decision` came out empty:
+    // no OTA, no build, and a summary claiming nothing needed building.
+    const lines = workflow.split('\n');
+    const start = lines.findIndex((l) => l.trim() === '- id: native');
+    expect(start, 'the "Did a native input move?" step is gone').toBeGreaterThan(-1);
+    let end = start + 1;
+    while (end < lines.length && !/^ {6}- /.test(lines[end])) end++;
+    const stepLines = lines.slice(start, end);
+    const at = stepLines.findIndex((l) => l === '        run: |');
+    expect(at, 'the native step has no run: | block').toBeGreaterThan(-1);
+    const script = stepLines
+      .slice(at + 1)
+      .map((l) => l.slice(10))
+      .join('\n');
+
+    // Everything downstream keys off `steps.native.outputs.decision`; any
+    // other key read from this step is the same bug in a new place.
+    const read = [...workflow.matchAll(/steps\.native\.outputs\.(\w+)/g)].map((m) => m[1]);
+    expect(new Set(read)).toEqual(new Set(['decision', 'no_base']));
+
+    const dir = mkdtempSync(path.join(tmpdir(), 'native-step-'));
+    try {
+      for (const before of ['', '0000000000000000000000000000000000000000']) {
+        const out = path.join(dir, `out-${before.length}`);
+        const r = spawnSync('bash', ['-c', script], {
+          cwd: ROOT,
+          encoding: 'utf8',
+          timeout: 10_000,
+          env: { NODE_ENV: 'test', PATH: process.env.PATH, BEFORE: before, AFTER: 'HEAD', GITHUB_OUTPUT: out },
+        });
+        expect(r.status, r.stderr).toBe(0);
+        const written = readFileSync(out, 'utf8');
+        expect(written, `BEFORE='${before}'`).toMatch(/^decision=native$/m);
+        expect(written, `BEFORE='${before}'`).toMatch(/^no_base=true$/m);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('does not classify mobile/package.json with an inline regex', () => {

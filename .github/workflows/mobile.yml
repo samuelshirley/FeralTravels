@@ -288,9 +288,15 @@ jobs:
           # A force-push, a first push, or a manual dispatch leaves no usable
           # base. Treat that as native: skipping the OTA is always safe, and
           # publishing a possibly-incompatible one is not.
+          #
+          # `decision` is the ONLY output anything downstream reads. This path
+          # used to write `native=true`, a key left over from before the
+          # three-way decision: `decision` came out empty, so neither the OTA
+          # nor the build ran and the summary said nothing needed building.
           if [ -z "${BEFORE:-}" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             echo "No usable base commit — treating as native, OTA skipped."
-            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "decision=native" >> "$GITHUB_OUTPUT"
+            echo "no_base=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -498,6 +504,7 @@ jobs:
           DEPLOY_WAIT: ${{ steps.deploy_wait.outcome }}
           BUILD: ${{ steps.build.outcome }}
           DECISION: ${{ steps.native.outputs.decision }}
+          NO_BASE: ${{ steps.native.outputs.no_base }}
         run: |
           {
             echo "### Mobile"
@@ -519,7 +526,11 @@ jobs:
                     fi
                     ;;
                   native)
-                    echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                    if [ "${NO_BASE:-}" = "true" ]; then
+                      echo "- **OTA:** skipped — there was no base commit to diff against (a manual run, a first push or a force-push), so this is treated as native: a bundle could reach a binary that cannot run it."
+                    else
+                      echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                    fi
                     ;;
                   none)
                     echo "- **OTA:** skipped — nothing under \`mobile/\` changed, so the bundle would have been identical to the one already published."
