@@ -20,6 +20,14 @@ of the PR thread — it is no longer pinned into the description, since 2026-09-
 because it changes on every push), not a local dev server — the bugs that matter here only appear on a cold production
 build.
 
+The server runs `--headless --isolated` (since 2026-09-23), so the many agent
+threads running it open no windows over Sam's screen and never touch a saved
+browser profile — every session starts signed out, in memory. That is all the
+preview needs: specs and manual repros sign in through the real OTP flow, code
+from `POST /api/test/otp`. Anything that needs Sam's real sign-ins (App Store
+Connect, Google) goes through the shared signed-in browser's CDP tools
+(`mcp__browser__*`), not this server.
+
 
 ## Reproduce, never guess
 
