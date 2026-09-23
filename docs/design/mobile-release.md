@@ -91,7 +91,7 @@ personal account, everything below breaks at once.
 GitHub → repo Settings → Secrets and variables → Actions → **Secrets** → New
 repository secret, named `EXPO_TOKEN`.
 
-### 2. App Store Connect credentials (needed only for auto-submit)
+### 2. App Store Connect credentials (needed by every build's upload)
 
 `submit.production.ios` in `eas.json` pins `ascAppId` and `appleTeamId` — but
 those are identifiers, not credentials. Interactive `eas submit` on your Mac
@@ -107,8 +107,9 @@ it doesn't carry 2FA and doesn't expire when your password changes.
 2. Easiest path: run `eas credentials` on your Mac, pick iOS → production →
    App Store Connect API Key, and let EAS store it. Then `eas.json` needs
    nothing further and CI picks it up from the EAS servers.
-3. Turn on auto-submit: GitHub → Settings → Secrets and variables → Actions →
-   **Variables** tab (not Secrets) → `EAS_AUTO_SUBMIT` = `true`.
+3. Nothing to turn on. `mobile.yml` passes `--auto-submit` on every build,
+   unconditionally; no repo variable gates it. An `EAS_AUTO_SUBMIT` variable
+   does nothing if set — see `docs/design/testflight-and-apple-setup.md`.
 
 Verify once by hand before trusting it in CI:
 
@@ -144,8 +145,11 @@ survives (it defaults to prod) but `GOOGLE_IOS_CLIENT_ID` becomes `null` and
 `APPLE_SIGNIN_ENABLED` becomes `false`, i.e. an OTA that quietly removes both
 social sign-in buttons for everyone.
 
-**A green Mobile job means "queued".** The build step is `--no-wait`. Track the
-real build on expo.dev.
+**A green Mobile job means the binary is on App Store Connect — not that it is
+installable.** The build step has no `--no-wait`: the job waits for the build and
+the submission (`mobile.yml` header, "THIS JOB WAITS"). Apple's processing, 5–15
+minutes, still follows, and ITMS-* problems (e.g. ITMS-91053) arrive by email
+after the upload. Check TestFlight and the inbox before calling a build ready.
 
 **The mobile gate is typecheck-only.** The pipeline has a `Mobile typecheck` job
 (`tsc --noEmit` in `mobile/`) and the unit project carries the mirror-drift
@@ -157,8 +161,22 @@ about what changed.
 
 ## Forcing a path by hand
 
-Actions → **Mobile** → Run workflow → `mode`:
+Actions → **Mobile** → Run workflow, or `gh workflow run Mobile --ref main`.
+There is no `mode` input — `workflow_dispatch:` takes none.
 
-- `update` — publish an OTA even though the diff looks native (rarely correct)
-- `build` — cut a binary even for a JS-only change (e.g. after changing an EAS
-  credential, or to get a fresh TestFlight build for a reviewer)
+**A manual run always cuts a binary and `--auto-submit`s it to TestFlight.** It
+has no base commit (`github.event.before` is empty), so the classifier answers
+`native` (`no_base=true`), the OTA is skipped, and the build step runs because
+its `if:` includes `|| github.event_name == 'workflow_dispatch'`. **There is no
+way to force an OTA by hand from Actions.**
+
+It still waits for Deploy to production to have succeeded for the dispatched
+commit ("Wait for the production deploy of this commit"), so dispatch from
+`main` once that deploy is green.
+
+Use it after changing an EAS credential, or to get a fresh binary for App
+Review, whose first launch runs the bundled JS, not the OTA.
+
+Corrected 2026-09-23: this section described a `mode` input that does not
+exist, Setup §2 an `EAS_AUTO_SUBMIT` variable the workflow never reads, and
+Traps a `--no-wait` build step the workflow does not use.
