@@ -54,14 +54,19 @@ export async function GET() {
        * is where a reviewer is sent and where a trial user who wants to commit
        * early goes.
        *
-       * Nothing here is a secret: two public prices already printed on the
-       * marketing site and in the App Store listing.
+       * Nothing here is a secret: two public US prices. They are a FALLBACK —
+       * the app replaces them with the store's localized prices whenever the
+       * store answers.
        */
       products: PRODUCTS.map((p) => ({
         id: p.id,
-        priceLabel: p.priceLabel,
+        priceLabel: p.fallbackUsdLabel,
         cadence: p.cadence,
-        note: p.period === 'year' ? 'Save $4 a year' : undefined,
+        period: p.period,
+        // No `note`: the saving is computed on the device from the store's own
+        // prices, in the viewer's currency. A server-authored "Save $4" was
+        // derived from these US fallbacks and contradicted the real prices
+        // beside it the moment they diverged.
       })),
       /**
        * Which plan, and until when — the two facts a subscriber opens Settings

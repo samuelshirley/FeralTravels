@@ -369,13 +369,29 @@ deprecated.** RevenueCat SDK v5+ uses StoreKit 2, and with StoreKit 2
 
 ### 4c. Entitlement, products, offering
 
-- **Entitlement identifier: `pro`.** Not negotiable and not improvised: it is
-  hardcoded as `REVENUECAT_ENTITLEMENT_ID` in `mobile/lib/config.ts` and
-  fixtured as `entitlement_ids: ['pro']` in `webhook.test.ts`. If the dashboard
-  says something else, `restorePurchases` reports **"nothing to restore"** to
-  somebody who is paying.
+- **Entitlement identifier: `feral_travels`.** Not negotiable and not
+  improvised: it is hardcoded as `REVENUECAT_ENTITLEMENT_ID` in
+  `mobile/lib/config.ts` and fixtured as `entitlement_ids: ['feral_travels']`
+  in `webhook.test.ts`. If the dashboard says something else,
+  `restorePurchases` reports **"nothing to restore"** to somebody who is
+  paying — silently: the app looks the id up in `entitlements.active` after the
+  call, so an id RevenueCat has never heard of is just an absent key, never an
+  error (`restoreOutcomeFromActive` in `src/lib/purchaseOutcome.ts`, tested).
+  That lookup gates ONLY the Restore button's answer. Access itself comes from
+  the webhook, which keys on the user and product and never reads
+  `entitlement_ids`.
+- **The rename from `pro` (2026-09).** RevenueCat cannot rename an entitlement
+  identifier (Edit has only Display Name), so it is new-alongside-old:
+  1. Create `feral_travels`, attach both products. `pro` stays, also with both.
+  2. Ship a build reading `feral_travels` *or* `pro`
+     (`REVENUECAT_LEGACY_ENTITLEMENT_ID`). It restores correctly whichever of
+     the two exists, so steps 1 and 2 can land in either order.
+  3. When no build older than step 2 is installed, delete `pro` in the
+     dashboard, then delete `REVENUECAT_LEGACY_ENTITLEMENT_ID`. Deleting `pro`
+     early costs an old build its Restore answer (the false "no plan"
+     message), not anyone's access.
 - Product Catalog → **Products** → add both product ids.
-- **Attach both to `pro`.** A product with no entitlement grants the buyer
+- **Attach both to `feral_travels`.** A product with no entitlement grants the buyer
   nothing: the purchase succeeds and the app stays locked.
 - One **Offering** (identifier `default`) with two packages, `$rc_monthly` and
   `$rc_annual`. The offering is what the app fetches to render prices — the

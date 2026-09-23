@@ -57,7 +57,7 @@ function rcBody(over: Record<string, unknown> = {}) {
       commission_percentage: 0.15,
       country_code: 'GB',
       currency: 'USD',
-      entitlement_ids: ['pro'],
+      entitlement_ids: ['feral_travels'],
       environment: 'PRODUCTION',
       event_timestamp_ms: 1_756_000_000_000,
       expiration_at_ms: 1_758_592_000_000,

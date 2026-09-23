@@ -229,11 +229,12 @@ auto-submit builds. Two `.p8` files, two purposes, both downloadable once.
 
 ### 5c. Entitlement and products
 
-- **Entitlement identifier: `pro`.** One entitlement, both products attached to
-  it. `webhook.test.ts` already fixtures `entitlement_ids: ['pro']`, so pick
-  that string and do not improvise.
+- **Entitlement identifier: `feral_travels`.** One entitlement, both products
+  attached to it; `webhook.test.ts` fixtures `entitlement_ids:
+  ['feral_travels']`. It was `pro` until 2026-09 — the rename sequence, and why
+  the app still accepts `pro` for one release, is in `iap-setup.md` §4c.
 - Product Catalog → **Products** → import or add both product ids.
-- **Attach both to `pro`.** A product not attached to an entitlement grants the
+- **Attach both to `feral_travels`.** A product not attached to an entitlement grants the
   buyer nothing — the purchase succeeds and the app stays locked.
 - Create one **Offering** (identifier `default`) with two **packages**,
   `$rc_monthly` and `$rc_annual`, pointing at the two products. The offering is
@@ -423,8 +424,9 @@ until the store worked. That path was deleted on 2026-09-21 (below).
 | Every e2e spec except `sub-purchase` | They set fixture state through `/api/test/subscription`, never through a store |
 
 **One deliberate behaviour change in the UI, and it is a downgrade of our own
-copy.** `priceLabel` in `constants.ts` (`"$2"`, `"$20"`) exists only as the
-fallback for an unreachable store; it is wrong in every currency but USD. Once
+copy.** `fallbackUsdLabel` in `constants.ts` (`"$2.69"`, `"$22.00"`; it was
+`priceLabel`, `"$2"`/`"$20"`, until 2026-09) exists only as the fallback for an
+unreachable store; it is wrong in every currency but USD. Once
 StoreKit is live the sheet must render **the store's own localized price
 string** — `product.priceString` off the package. Keep the constant as the
 offline fallback, but stop preferring it. A German user seeing "$2" on a

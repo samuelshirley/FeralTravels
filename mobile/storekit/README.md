@@ -59,7 +59,7 @@ Sandbox Apple Account. See `docs/design/iap-setup.md` §7.
 ## Keeping it honest
 
 `productID` must match `PRODUCTS` in `src/server/payments/constants.ts`
-**character for character**, and `displayPrice` should match `priceUsd`. A
+**character for character**, and `displayPrice` should match `fallbackUsdPrice` (the US storefront). A
 mismatch here does not fail — it produces the same empty offering a real
 mismatch produces, which is the failure this file is supposed to help diagnose
 rather than imitate.

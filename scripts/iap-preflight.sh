@@ -100,6 +100,11 @@ warn "entitlement id is \"$ENT\" — NOT checkable from any public API."
 printf '     %sRevenueCat → Entitlements → \"%s\" must exist with BOTH products attached.%s\n' "$DIM" "$ENT" "$OFF"
 printf '     %sIf it is missing, purchases succeed, entitlements.active[\"%s\"] stays empty,%s\n' "$DIM" "$ENT" "$OFF"
 printf '     %sand restore() reports nothing_to_restore forever.%s\n' "$DIM" "$OFF"
+LEGACY=$(grep -oE 'REVENUECAT_LEGACY_ENTITLEMENT_ID *= *"[^"]+"' "$CONFIG" | sed 's/.*"\(.*\)"/\1/')
+if [ -n "$LEGACY" ]; then
+  warn "legacy entitlement id \"$LEGACY\" is still accepted by restore() — mid-rename."
+  printf '     %sKeep \"%s\" in the dashboard until no older build is installed (iap-setup.md §4c).%s\n' "$DIM" "$LEGACY" "$OFF"
+fi
 
 # ── 3. the webhook ─────────────────────────────────────────────────────────
 echo
