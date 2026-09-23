@@ -197,7 +197,16 @@ export async function signInWithApple(): Promise<SessionResult> {
   const parts = [credential.fullName?.givenName, credential.fullName?.familyName];
   const fullName = parts.filter(Boolean).join(" ").trim() || null;
 
-  return exchangeWithRetry({ provider: "apple", idToken, fullName });
+  /**
+   * The single-use authorization code, which the server redeems for the
+   * refresh token account deletion revokes (App Review 5.1.1(v)). Null when
+   * Apple returned none; exchangeOAuth then leaves it out of the body. The
+   * server never lets its failure block sign-in, and a silent retry below may
+   * resend a code already spent — the server logs Apple's `invalid_grant`.
+   */
+  const authorizationCode = credential.authorizationCode;
+
+  return exchangeWithRetry({ provider: "apple", idToken, fullName, authorizationCode });
 }
 
 // ---------------------------------------------------------------------------

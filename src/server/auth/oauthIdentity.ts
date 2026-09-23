@@ -1,4 +1,5 @@
 import 'server-only';
+import { z } from 'zod';
 import { jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
@@ -39,10 +40,41 @@ const APPLE_ISSUER = 'https://appleid.apple.com';
  * uses a Services ID instead, but that one goes through Auth.js and never
  * reaches this route.) Overridable so a rename of the bundle id is an env
  * change, not a deploy of a new constant.
+ *
+ * Exported because it is ALSO the `client_id` for Apple's token and revoke
+ * endpoints (`appleTokens.ts`): a refresh token belongs to the client it was
+ * issued to, and two copies of this constant could drift apart.
  */
-const APPLE_AUDIENCE = process.env.APPLE_APP_BUNDLE_ID || 'com.feraltravels.ios';
+export const APPLE_AUDIENCE = process.env.APPLE_APP_BUNDLE_ID || 'com.feraltravels.ios';
 
 export type OAuthProvider = 'google' | 'apple';
+
+/**
+ * The exchange route's ONE payload. Here rather than in the route file so it
+ * can be unit-tested — a Next.js route module may only export handlers.
+ *
+ * `.strict()`: an unknown key is a 400, not silently dropped. Build 11 sends
+ * exactly provider / idToken / fullName, so nothing already shipped trips it.
+ */
+export const exchangeRequestSchema = z
+  .object({
+    provider: z.enum(['google', 'apple']),
+    idToken: z.string().min(1),
+    /** Apple only, and only on the user's first-ever authorization. */
+    fullName: z.string().max(200).nullish(),
+    /**
+     * Apple only (build 12+): the single-use authorization code, exchanged
+     * server-side for the refresh token that account deletion revokes.
+     */
+    authorizationCode: z.string().min(1).max(4096).optional(),
+  })
+  .strict()
+  .refine((body) => body.provider === 'apple' || body.authorizationCode === undefined, {
+    message: 'authorizationCode is Apple-only',
+    path: ['authorizationCode'],
+  });
+
+export type ExchangeRequest = z.infer<typeof exchangeRequestSchema>;
 
 export interface VerifiedIdentity {
   email: string;
@@ -62,6 +94,12 @@ export interface VerifiedIdentity {
    * credential is not something to be lenient about.
    */
   expiresAt: Date;
+  /**
+   * Apple only: the token's `sub`, Apple's stable per-team user id. The
+   * refresh token obtained from the authorization code must name the same
+   * `sub` before it is stored against this user — see `appleTokens.ts`.
+   */
+  subject?: string;
 }
 
 /** Shared: a token with no usable `exp` is not something to mint a session from. */
@@ -214,6 +252,12 @@ async function verifyApple(
   const email = claimString(payload, 'email');
   if (!email) throw new UnauthorizedError('InvalidToken');
 
+  // Every real Apple identity token carries `sub`. One without it is not a
+  // token to mint a session from, and would leave nothing to bind a refresh
+  // token to.
+  const subject = claimString(payload, 'sub');
+  if (!subject) throw new UnauthorizedError('InvalidToken');
+
   /**
    * Apple's `email_verified` handling, deliberately NOT symmetric with
    * Google's — but far narrower than "advisory".
@@ -242,7 +286,7 @@ async function verifyApple(
    */
   const name = fullName?.trim() || undefined;
 
-  return { email: lowered, name, expiresAt: expiryFrom(payload) };
+  return { email: lowered, name, expiresAt: expiryFrom(payload), subject };
 }
 
 export function verifyIdentityToken(

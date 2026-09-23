@@ -173,7 +173,8 @@ ipRequestCounters, oauthProviderKeys
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, oauthJwks, testSupport (test-only)
+announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, testSupport
+(test-only)
 
 ### Penny Tools (`src/lib/penny/tools/`)
 

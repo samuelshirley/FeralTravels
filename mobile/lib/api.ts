@@ -172,9 +172,16 @@ export function exchangeOAuth(payload: {
   idToken: string;
   /** Apple only: the display name, which Apple sends exactly once. */
   fullName?: string | null;
+  /**
+   * Apple only: the single-use authorization code the server redeems for the
+   * refresh token it revokes on account deletion. Sent only when present —
+   * the server's schema is strict and has no null for it.
+   */
+  authorizationCode?: string | null;
 }): Promise<SessionResult> {
+  const { authorizationCode, ...rest } = payload;
   return apiFetch("/api/mobile/oauth/exchange", {
-    body: payload,
+    body: authorizationCode ? { ...rest, authorizationCode } : rest,
     skipGlobalErrorReport: true,
   });
 }

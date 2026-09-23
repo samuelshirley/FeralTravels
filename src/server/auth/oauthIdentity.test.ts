@@ -19,7 +19,7 @@ import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet, jwtVerify } fro
 
 vi.mock('server-only', () => ({}));
 
-import { verifyIdentityToken, type VerifyDeps } from './oauthIdentity';
+import { exchangeRequestSchema, verifyIdentityToken, type VerifyDeps } from './oauthIdentity';
 import { HttpError } from './errors';
 import {
   createKeySource,
@@ -33,6 +33,7 @@ import {
 const IOS_CLIENT = '111-ios.apps.googleusercontent.com';
 const WEB_CLIENT = '222-web.apps.googleusercontent.com';
 const APPLE_AUDIENCE = 'com.feraltravels.ios';
+const APPLE_SUB = '001234.abcdef0123456789.1234';
 
 /** Far-future, fixed, so `expiresAt` assertions do not depend on the clock. */
 const EXP = 1893456000; // 2030-01-01T00:00:00Z
@@ -43,9 +44,9 @@ function verifierReturning(payload: Record<string, unknown>) {
   const calls: Array<{ issuer: string | string[]; audience: string; clockTolerance: number }> = [];
   const verify: VerifyDeps['verify'] = async (_token, _jwks, options) => {
     calls.push(options);
-    // Every real provider token carries `exp`; default it here so each test
-    // only has to state the claim it is actually about.
-    return { payload: { exp: EXP, ...payload } };
+    // Every real provider token carries `exp` and `sub`; default them here so
+    // each test only has to state the claim it is actually about.
+    return { payload: { exp: EXP, sub: APPLE_SUB, ...payload } };
   };
   return { verify, calls };
 }
@@ -174,7 +175,28 @@ describe('Apple identity tokens', () => {
       name: undefined,
       picture: undefined,
       expiresAt: EXPECTED_EXPIRY,
+      subject: APPLE_SUB,
     });
+  });
+
+  it('carries the token\'s sub, which the refresh token must match before it is stored', async () => {
+    const { verify } = verifierReturning({ email: 'a@privaterelay.appleid.com', sub: 'apple-user-7' });
+    await expect(verifyIdentityToken('apple', 'tok', null, { verify, keySource })).resolves.toMatchObject({
+      subject: 'apple-user-7',
+    });
+  });
+
+  it('refuses an Apple token with no sub', async () => {
+    // Nothing to bind a refresh token to, and not a token Apple would issue.
+    const { verify } = verifierReturning({ email: 'a@privaterelay.appleid.com', sub: undefined });
+    await expect(verifyIdentityToken('apple', 'tok', null, { verify, keySource })).rejects.toMatchObject({
+      status: 401,
+      message: 'InvalidToken',
+    });
+    const empty = verifierReturning({ email: 'a@privaterelay.appleid.com', sub: '' });
+    await expect(
+      verifyIdentityToken('apple', 'tok', null, { verify: empty.verify, keySource })
+    ).rejects.toMatchObject({ message: 'InvalidToken' });
   });
 
   it('REFUSES a real address with no email_verified claim', async () => {
@@ -427,6 +449,7 @@ describe('provider keys (retry, persisted fallback, 503 when there are none)', (
         .setProtectedHeader({ alg: 'RS256', kid })
         .setIssuer(APPLE_ISSUER)
         .setAudience(APPLE_AUDIENCE)
+        .setSubject(APPLE_SUB)
         .setIssuedAt()
         .setExpirationTime('10m')
         .sign(privateKey);
@@ -696,5 +719,37 @@ describe('provider keys (retry, persisted fallback, 503 when there are none)', (
       verifyIdentityToken('google', token, null, { keySource: () => source })
     ).resolves.toMatchObject({ email: 'sam@example.com' });
     expect(calls).toHaveLength(2);
+  });
+});
+
+/**
+ * The exchange route's payload. One optional field was added for account
+ * deletion's Apple revoke (App Review 5.1.1(v)); nothing else loosened.
+ */
+describe('exchange request schema', () => {
+  const ok = (body: unknown) => exchangeRequestSchema.safeParse(body).success;
+
+  it('accepts what build 11 sends, for both providers', () => {
+    expect(ok({ provider: 'google', idToken: 'x' })).toBe(true);
+    expect(ok({ provider: 'apple', idToken: 'x', fullName: 'Sam' })).toBe(true);
+    expect(ok({ provider: 'apple', idToken: 'x', fullName: null })).toBe(true);
+  });
+
+  it('accepts an Apple authorization code', () => {
+    expect(ok({ provider: 'apple', idToken: 'x', fullName: null, authorizationCode: 'c.abc' })).toBe(true);
+  });
+
+  it('refuses an authorization code on a Google request', () => {
+    expect(ok({ provider: 'google', idToken: 'x', authorizationCode: 'c.abc' })).toBe(false);
+  });
+
+  it('refuses an empty or oversized code, and a null one', () => {
+    expect(ok({ provider: 'apple', idToken: 'x', authorizationCode: '' })).toBe(false);
+    expect(ok({ provider: 'apple', idToken: 'x', authorizationCode: 'c'.repeat(4097) })).toBe(false);
+    expect(ok({ provider: 'apple', idToken: 'x', authorizationCode: null })).toBe(false);
+  });
+
+  it('refuses an unknown key rather than dropping it', () => {
+    expect(ok({ provider: 'apple', idToken: 'x', refreshToken: 'r.abc' })).toBe(false);
   });
 });
