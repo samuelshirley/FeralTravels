@@ -72,13 +72,17 @@ Feral Travels also runs in a browser at feraltravels.com, on the same account.
 
 Built for overlanders, van lifers, and anyone who'd rather be driving than planning.
 
-Seven days free. Then $2 a month or $20 a year. Your trips stay readable either way.
+Seven days free. Then $2.69 a month or $22.00 a year in the US; prices in other countries show in the app before you buy. Your trips stay readable either way.
 
 Subscription terms: Feral Travels is an auto-renewing subscription. Payment is charged to your Apple Account at confirmation of purchase. It renews automatically unless auto-renew is turned off at least 24 hours before the end of the current period, and your account is charged for renewal within 24 hours of the end of that period. Manage your subscription and turn off auto-renew in your Apple Account settings after purchase.
 
 Terms of Use: https://feraltravels.com/terms
 Privacy Policy: https://feraltravels.com/privacy
 ```
+
+The price line changed on 2026-09-23 because Sam kept the store's prices (€2/€20
+base; US $2.69/$22.00, the fallbacks in `src/server/payments/constants.ts`),
+not $2/$20.
 
 Deliberately does NOT name Finn, does not use ALL-CAPS section headers, and does
 not claim campsite/amenity finding. It describes only what v1 actually ships.
@@ -115,9 +119,9 @@ Terms link above 404ing. It does not — `/terms` is public and
 `e2e/legal-pages.spec.ts` fails if that changes.
 
 **Lengths, measured rather than eyeballed** (2026-09-21): subtitle 27/30,
-promotional text 169/170, description 1550/4000, keywords 97/100. Apple's form
-truncates silently in some fields and refuses in others; both are worse to find
-out while pasting.
+promotional text 169/170, keywords 97/100; description 1624/4000, re-measured
+2026-09-23. Apple's form truncates silently in some fields and refuses in
+others; both are worse to find out while pasting.
 
 ### Keywords (100 max, comma-separated, NO spaces after commas)
 
