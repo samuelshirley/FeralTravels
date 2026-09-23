@@ -94,8 +94,19 @@ export const REVENUECAT_IOS_KEY: string | null =
  *
  * Hardcoded rather than configurable because it must match three places that
  * cannot check each other: the RevenueCat dashboard, `webhook.test.ts`'s
- * fixtures (`entitlement_ids: ['pro']`), and this app. An env var would let
- * them disagree silently — and a disagreement here means `restorePurchases`
- * reports "nothing to restore" to somebody who is paying.
+ * fixtures (`entitlement_ids: ['feral_travels']`), and this app. An env var
+ * would let them disagree silently — and a disagreement here means
+ * `restorePurchases` reports "nothing to restore" to somebody who is paying.
  */
-export const REVENUECAT_ENTITLEMENT_ID = "pro";
+export const REVENUECAT_ENTITLEMENT_ID = "feral_travels";
+
+/**
+ * The identifier this entitlement had before it was renamed, still accepted by
+ * `restore()` for ONE release. RevenueCat cannot rename an entitlement, so the
+ * rename is new-alongside-old: `feral_travels` and `pro` both exist with both
+ * products attached, and this build reads either — it works whichever of the
+ * two the dashboard has when it ships. Delete this constant (and `pro` in the
+ * dashboard) once no build older than this one is installed; the sequence is
+ * in docs/design/iap-setup.md §4c.
+ */
+export const REVENUECAT_LEGACY_ENTITLEMENT_ID = "pro";

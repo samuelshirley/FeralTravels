@@ -5,11 +5,16 @@ import Purchases, {
 } from "react-native-purchases";
 import { getIdentity } from "@/lib/api";
 import { getToken, onTokenChange } from "@/lib/auth";
-import { REVENUECAT_ENTITLEMENT_ID, REVENUECAT_IOS_KEY } from "@/lib/config";
-import type {
-  PurchaseFailureReason,
-  PurchaseOutcome,
-  RestoreOutcome,
+import {
+  REVENUECAT_ENTITLEMENT_ID,
+  REVENUECAT_IOS_KEY,
+  REVENUECAT_LEGACY_ENTITLEMENT_ID,
+} from "@/lib/config";
+import {
+  restoreOutcomeFromActive,
+  type PurchaseFailureReason,
+  type PurchaseOutcome,
+  type RestoreOutcome,
 } from "@/shared/lib/purchaseOutcome";
 
 /**
@@ -311,8 +316,10 @@ export async function restore(): Promise<RestoreOutcome> {
 
   try {
     const info = await Purchases.restorePurchases();
-    const active = info.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
-    return active ? { kind: "restored" } : { kind: "nothing_to_restore" };
+    return restoreOutcomeFromActive(info.entitlements.active, [
+      REVENUECAT_ENTITLEMENT_ID,
+      REVENUECAT_LEGACY_ENTITLEMENT_ID,
+    ]);
   } catch (err) {
     const outcome = classifyPurchaseError(err);
     // A restore cannot be cancelled, deferred or already-owned; anything that

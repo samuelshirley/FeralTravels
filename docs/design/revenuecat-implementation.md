@@ -229,11 +229,12 @@ auto-submit builds. Two `.p8` files, two purposes, both downloadable once.
 
 ### 5c. Entitlement and products
 
-- **Entitlement identifier: `pro`.** One entitlement, both products attached to
-  it. `webhook.test.ts` already fixtures `entitlement_ids: ['pro']`, so pick
-  that string and do not improvise.
+- **Entitlement identifier: `feral_travels`.** One entitlement, both products
+  attached to it; `webhook.test.ts` fixtures `entitlement_ids:
+  ['feral_travels']`. It was `pro` until 2026-09 — the rename sequence, and why
+  the app still accepts `pro` for one release, is in `iap-setup.md` §4c.
 - Product Catalog → **Products** → import or add both product ids.
-- **Attach both to `pro`.** A product not attached to an entitlement grants the
+- **Attach both to `feral_travels`.** A product not attached to an entitlement grants the
   buyer nothing — the purchase succeeds and the app stays locked.
 - Create one **Offering** (identifier `default`) with two **packages**,
   `$rc_monthly` and `$rc_annual`, pointing at the two products. The offering is
