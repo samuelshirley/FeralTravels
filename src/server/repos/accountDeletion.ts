@@ -99,13 +99,20 @@ export async function deleteUserAccount(
       .from(accounts)
       .where(eq(accounts.userId, userId));
 
-    // `accounts` rows are written only by the NextAuth adapter, i.e. the WEB
-    // OAuth flow. The native flow (/api/mobile/oauth/exchange) mints a user and
-    // a session without one, so an absent row does not mean "emailed code" — it
-    // would have labelled every iOS Google/Apple user as `otp`, which is exactly
-    // the cohort this table is being built to watch. `oauth_token_uses` is the
-    // native path's own record, keyed by email, so it distinguishes the two even
-    // though it does not name the provider.
+    // `accounts` rows are written by the NextAuth adapter (the WEB OAuth flow)
+    // and, since build 12, by a native Sign in with Apple that sent its
+    // authorization code (`repos/appleTokens.ts` — the row holds the encrypted
+    // refresh token `deleteAccount.ts` revokes). Native Google, and native
+    // Apple on build 11 or earlier, still mint a user and a session with no
+    // row, so an absent row does not mean "emailed code" — it would have
+    // labelled every such iOS user as `otp`, which is exactly the cohort this
+    // table is being built to watch. `oauth_token_uses` is the native path's
+    // own record, keyed by email, so it distinguishes the two even though it
+    // does not name the provider.
+    //
+    // Deliberately NOT a place to revoke anything: the transaction must not
+    // wait on Apple. `deleteAccount.ts` reads the tokens before this runs and
+    // revokes after it commits.
     const providers = Array.from(new Set(accountRows.map((r) => r.provider)));
     let signInProviders = providers;
     if (signInProviders.length === 0 && normalizedEmail) {

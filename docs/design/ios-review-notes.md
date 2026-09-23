@@ -160,7 +160,8 @@ order.
 > → **Delete account** → type DELETE to confirm. It is immediate and permanent:
 > trips, routes, stops, fuel plans, vehicles and the whole conversation history
 > are removed. It is reachable in every account state, including from behind the
-> paywall.
+> paywall. If you signed in with Apple, the app's Sign in with Apple token is
+> revoked with Apple as part of the deletion.
 >
 > **Location** is requested for trip progress ("I'm here now") and for planning
 > fuel stops within range along the route. The app is fully usable if you decline

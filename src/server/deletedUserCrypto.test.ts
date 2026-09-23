@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import {
   decryptEmail,
+  decryptSecret,
   encryptEmail,
+  encryptSecret,
   hashEmail,
   isEmailEncryptionConfigured,
 } from './deletedUserCrypto';
@@ -123,5 +125,37 @@ describe('encryptEmail / decryptEmail', () => {
     expect(decryptEmail('not-a-payload')).toBeNull();
     expect(decryptEmail('v2:a:b:c')).toBeNull();
     expect(decryptEmail('v1:a:b')).toBeNull();
+  });
+});
+
+describe('encryptSecret / decryptSecret', () => {
+  it('preserves case and whitespace — a refresh token is not an address', () => {
+    // Apple refresh tokens are case-sensitive. Normalizing one the way
+    // encryptEmail normalizes an address would store a token Apple refuses.
+    setKey(randomBytes(32).toString('base64'));
+    const token = '  r.AbC.dEf-GH_ij  ';
+    const enc = encryptSecret(token);
+    expect(enc).toMatch(/^v1:/);
+    expect(enc).not.toContain('AbC');
+    expect(decryptSecret(enc)).toBe(token);
+  });
+
+  it('returns null with no key rather than handing back the plaintext', () => {
+    expect(encryptSecret('r.token')).toBeNull();
+    expect(decryptSecret('v1:a:b:c')).toBeNull();
+  });
+
+  it('returns null for a row written under another key', () => {
+    setKey(randomBytes(32).toString('base64'));
+    const enc = encryptSecret('r.token');
+    setKey(randomBytes(32).toString('base64'));
+    expect(decryptSecret(enc)).toBeNull();
+  });
+
+  it('shares its format with the email functions, which still normalize', () => {
+    setKey(randomBytes(32).toString('base64'));
+    // An email row is readable by decryptSecret and vice versa: one format.
+    expect(decryptSecret(encryptEmail('  Sam@Example.com '))).toBe('sam@example.com');
+    expect(decryptEmail(encryptSecret('Sam@Example.com'))).toBe('Sam@Example.com');
   });
 });

@@ -54,7 +54,7 @@ export const CAP_WINDOW_DAYS = 365;
  * The two products.
  *
  * THE REAL PRICES ARE NOT HERE. They are set per storefront in App Store
- * Connect (US $2.69 / $22.00, Europe €2 / €20, Canada CA$3 / CA$30 as of
+ * Connect (US $2.69 / $22.00, Europe €2 / €20, Canada CA$3 / CA$25 as of
  * 2026-09) and reach the app through StoreKit, localized. Changing a price is
  * an App Store Connect job and needs no code change.
  *

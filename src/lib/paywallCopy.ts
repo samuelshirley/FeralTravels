@@ -74,9 +74,12 @@ export interface BlockNotice {
 const TRIAL_OVER: BlockNotice = {
   eyebrow: 'TRIAL ENDED',
   heading: 'Your free trial is over',
-  // One paragraph, in the owner's words: the price, and where to get it. The
-  // overlay puts the App Store button and the code field right under it.
-  body: ['It is $2 a month or $20 a year — download the app to keep planning. Your trips are all still here.'],
+  // One paragraph: where the plans are, and that nothing is lost. The overlay
+  // puts the App Store button and the code field right under it. No price: it
+  // is App Store Connect's and differs per storefront (US $2.69/$22.00, €2/€20
+  // on 2026-09-23), and the web cannot know which one the reader is in. The
+  // app's plan screen shows it in their own currency.
+  body: ['Pick a monthly or yearly plan in the app, priced in your currency — download it to keep planning. Your trips are all still here.'],
   // Read by the workspace's pane scrim, whose button opens the purchase sheet.
   // The /trips overlay does not render it: it shows the sheet's contents
   // inline. It is NOT the App Store button's own label — that one is

@@ -173,7 +173,9 @@ ipRequestCounters, oauthProviderKeys
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, oauthJwks, testSupport (test-only)
+announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, testSupport
+(test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
+revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
 
 ### Penny Tools (`src/lib/penny/tools/`)
 
@@ -314,8 +316,9 @@ Account states, promo codes, revoke/undo, breakers, per-IP limits, the message
 gate: **`docs/design/subscriptions.md`** — read it before touching any spend or
 entitlement path.
 
-- Seven days free from `users.created_at`, then $2/month or $20/year via Apple
-  IAP. The **RevenueCat webhook is the ONLY thing that may grant access.**
+- Seven days free from `users.created_at`, then a monthly or annual plan via
+  Apple IAP, priced per storefront in App Store Connect (US $2.69/$22.00,
+  €2/€20). The **RevenueCat webhook is the ONLY thing that may grant access.**
 - The paywall master switch is a DATABASE ROW (`app_meta.paywall_enabled`)
   flipped from `/admin`, so turning it off needs no redeploy. It **fails closed,
   to OFF**; the breakers **fail CLOSED**; the message-gate classifier **fails
