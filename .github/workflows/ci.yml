@@ -1215,6 +1215,27 @@ jobs:
             --output maestro-report-onboarding-flash.xml \
             --debug-output maestro-debug
 
+          # THE DATE STEP'S CALENDAR and THE PACE STEP'S `Custom` CHIP. Native
+          # had neither until 2026-09-22 — the date step drew three chips and
+          # nothing else, so a specific day could only be typed. Walks a fresh
+          # trip to the date step, opens the calendar, steps a month and picks
+          # a day, asserts the step redrew carrying it, then taps `Custom` and
+          # proves the composer took focus without submitting. The walk does
+          # not depend on Penny: without a key the intent scan is all-null, and
+          # with one, "Porto" names no origin, so the path is the same. At most
+          # one intent-scan call, so NOT behind the ai-tests label.
+          # Creates one more untitled trip on the fixture account, like the
+          # flow above; before settings-location.yaml for the same reason.
+          maestro --device "$SIM_UDID" test mobile/maestro/onboarding-date-picker.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-date-picker.xml \
+            --debug-output maestro-debug
+
           # A permission button is the one kind of UI that cannot be checked by
           # looking at it: one that renders perfectly and calls nothing is
           # indistinguishable from one that works, and `Mobile typecheck`

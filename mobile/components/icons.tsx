@@ -4,8 +4,10 @@ import {
   ArrowUpIcon,
   ArrowsInLineVerticalIcon,
   ArrowsOutLineVerticalIcon,
+  CalendarBlankIcon,
   CaretDownIcon,
   CaretLeftIcon,
+  CaretRightIcon,
   CrosshairSimpleIcon,
   GasPumpIcon,
   InfoIcon as PhosphorInfoIcon,
@@ -82,6 +84,16 @@ export function SettingsIcon({ color, size = 22, weight = "regular" }: IconProps
 
 export function ChevronLeftIcon({ color, size = 14, weight = "regular" }: IconProps) {
   return <CaretLeftIcon color={color} size={size} weight={weight} />;
+}
+
+/** The onboarding calendar's next-month control. */
+export function ChevronRightIcon({ color, size = 14, weight = "regular" }: IconProps) {
+  return <CaretRightIcon color={color} size={size} weight={weight} />;
+}
+
+/** The onboarding date step's `Pick a date` chip. */
+export function CalendarIcon({ color, size = 14, weight = "regular" }: IconProps) {
+  return <CalendarBlankIcon color={color} size={size} weight={weight} />;
 }
 
 /** The pencil on the trips list's EDIT TRIPS pill. */

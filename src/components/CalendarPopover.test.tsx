@@ -6,7 +6,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRef } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import CalendarPopover, { monthGrid } from './CalendarPopover';
+import CalendarPopover from './CalendarPopover';
+import { monthGrid } from '@/lib/calendarGrid';
 
 afterEach(() => {
   cleanup();
