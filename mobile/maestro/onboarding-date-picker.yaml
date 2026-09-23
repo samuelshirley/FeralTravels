@@ -1,0 +1,133 @@
+# THE DATE STEP'S CALENDAR on iOS. Before 2026-09-22 this flow could not have
+# been written: native drew the three chips and nothing else, so the only way to
+# a specific day was typing one into the composer. Reproduced on an untouched
+# Release build before the fix — three chips, no `Pick a date`, no calendar.
+#
+# What it proves, in order: the chip is there on trip_date, it opens a calendar
+# drawn by the APP (a Maestro selector can see it, which is the whole reason
+# this is not the OS picker), the month steps, a day submits, and the step
+# redraws as an answered step carrying that day. Then, on the pace step that
+# follows, that the client-only `Custom` chip hands the driver to the composer
+# (the keyboard comes up, the composer has focus) and submits nothing.
+#
+# The day is the 15th of NEXT month — computed in date-pick.js, never hardcoded
+# — so the flow always steps a month and never lands on a month edge, where a
+# UTC slip would be ambiguous rather than wrong.
+#
+# NO ANTHROPIC KEY NEEDED: without one the intent scan returns an all-null
+# result (src/server/onboardingIntentScan.ts); with one, "Porto" names no
+# origin, so the walk is the same either way. At most one intent-scan call,
+# so this does NOT belong behind the `ai-tests` label.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+- runScript: date-pick.js
+
+- tapOn: '+ New trip'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+
+# The walk to the date step. One city names the destination, so the origin is
+# asked next; the fixture denies location, so it is the plain question.
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Porto'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Where are you starting from?'
+    timeout: 30000
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Lisbon'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'When are you setting off?'
+    timeout: 30000
+
+# The chip the web has had all along.
+- assertVisible:
+    id: 'onboarding-pick-date'
+- tapOn:
+    id: 'onboarding-pick-date'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-date-popover'
+    timeout: 10000
+
+# One month forward. The title is formatted BY THE APP (Intl on Hermes); the
+# expected string is built from plain arrays in date-pick.js, so this compares
+# the app against the calendar rather than against itself.
+- tapOn:
+    id: 'onboarding-date-next'
+- assertVisible: '${output.pickTitle}'
+
+# The day cell. Its accessibility label is the app's own long-form date, and
+# the ISO it will submit rides in the cell's value.
+- assertVisible:
+    id: 'onboarding-date-day'
+    text: '${output.pickLabel}'
+# The ISO the cell will submit, carried as the cell's accessibility VALUE.
+- assertVisible:
+    id: 'onboarding-date-day'
+    text: '${output.pickIso}'
+- tapOn:
+    id: 'onboarding-date-day'
+    text: '${output.pickLabel}'
+
+# Picking closes the calendar and submits, and the step redraws as an answered
+# step: the three options spent, the picked day lit. formatDate() writes it as
+# "Thu 15 Oct" (metric) or "Thu Oct 15" (imperial) — either is this day.
+- extendedWaitUntil:
+    notVisible:
+      id: 'onboarding-date-popover'
+    timeout: 10000
+- assertNotVisible:
+    id: 'onboarding-pick-date'
+# id AND text on ONE element: the answered chip carries `accessibilityLabel`,
+# so the label is not a loose sibling in the hierarchy. Asserting the text
+# alone would be looser — Penny's "Great — Thu 15 Oct it is." carries the same
+# day.
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-chip-chosen'
+      text: '${output.pickAnswered}'
+    timeout: 30000
+
+# THE PACE STEP'S `Custom` CHIP, which native also lacked. It is client-only:
+# it focuses the composer and submits nothing, so the step must still be
+# asking afterwards. The keyboard is DOWN here (the date went in by tap, and
+# the bottom nav is on screen), so the nav vanishing after the tap is the
+# keyboard coming up — the same gate chat-keyboard.yaml uses — and cannot be
+# left over from an earlier step.
+- extendedWaitUntil:
+    visible: 'How long do you want to drive each day\?'
+    timeout: 30000
+- assertVisible: 'CHAT'
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+- assertVisible:
+    id: 'onboarding-pace-custom'
+- tapOn:
+    id: 'onboarding-pace-custom'
+- extendedWaitUntil:
+    notVisible: 'CHAT'
+    timeout: 8000
+# FOCUS, proved by typing. Maestro's iOS hierarchy reports `focused: false` on
+# a text field even with the caret in it, so `focused: true` can never match —
+# tried, red on a screen showing the caret. `inputText` types into whatever
+# has focus, and nothing has tapped the composer: if send lights up
+# (`sendEnabled` is "the composer has text"), the chip put the caret there.
+- inputText: '5'
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: true
+# Submitted nothing: the step is still asking, its chips still live.
+- assertVisible:
+    id: 'onboarding-pace-custom'
+- assertVisible: 'How long do you want to drive each day\?'

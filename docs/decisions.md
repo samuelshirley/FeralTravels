@@ -486,6 +486,10 @@ block); `monthGrid` re-implemented in the native calendar, then in the web one (
 not imported, re-implemented); `DateTimePicker` swapped in (2 red); the calendar moved into a
 `<Modal>` (1 red). Also `calendarGrid.test.ts` (TZ pinned per case; the `toISOString` bug put
 back is 3 red on UTC, Los Angeles and Tokyo hosts alike) and `CalendarPopover.test.tsx`.
+On a real simulator, `mobile/maestro/onboarding-date-picker.yaml` (in CI's iOS job) picks the
+15th of next month and asserts the answered chip, then taps the pace step's `Custom` chip and
+proves the composer took focus. Mutation-checked twice (2026-09-23): `Custom` made a no-op is
+red on the keyboard gate; the answered chip without `accessible` is red on its id+text match.
 
 ## I. Spend defence
 
