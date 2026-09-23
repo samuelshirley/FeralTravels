@@ -1,13 +1,13 @@
 # App Store listing — Feral Travels
 
-ASC App ID **— none yet** · bundle `com.feraltravels.ios` · version **1.0.0**
+ASC App ID **6807913556** · bundle `com.feraltravels.ios` · version **1.0.0**
 
 > **The app moved to a new Apple developer account on 2026-09-02.** The old ASC
 > App ID `6802705582` and bundle `com.feraltravels.app` belong to a record on
 > the previous team and are dead — a TestFlight upload binds a bundle id to its
-> account permanently. A NEW app record has to be created on the new team before
-> any of §1's fields can be filled in. `mobile/eas.json` now carries the new
-> `appleTeamId` (`TJX3F3832H`) and `ascAppId` (`6807913556`, the record created
+> account permanently. A NEW app record was created on the new team on
+> 2026-09-03, and §1's fields go on that one. `mobile/eas.json` now carries the
+> new `appleTeamId` (`TJX3F3832H`) and `ascAppId` (`6807913556`, the record created
 > on the new team on 2026-09-03). The old `6802705582` was removed rather than
 > left pointing at a dead record. See the table at the top of
 > `docs/design/iap-setup.md`.
@@ -169,8 +169,8 @@ name, signs in through the real OTP flow, walks the app and writes the set to
 `mobile/screenshots/6.9/`. Committed, so the next release regenerates rather than
 reuses. `mobile/screenshots/README.md` has the per-image notes.
 
-The five, in upload order — the same five this section always listed, now
-produced by `mobile/maestro/screenshots.yaml` rather than by five Cmd-S presses:
+The four, in upload order, produced by `mobile/maestro/screenshots.yaml` rather
+than by Cmd-S presses:
 
 1. `01-trips` — the trips list. Shows it is a real tool with real trips.
 2. `02-penny-chat` — Penny mid-plan. The differentiator, and the only one that
@@ -181,8 +181,8 @@ produced by `mobile/maestro/screenshots.yaml` rather than by five Cmd-S presses:
    an itinerary with no fuel in it.
 4. `04-map` — the route. Taken after the day is opened, because map stops are
    lazy too.
-5. `05-settings` — the vehicle profile, scrolled to centre so the fixture email
-   address is pushed off the top.
+
+`05-settings` was dropped: it showed the account email address.
 
 **A correction this section used to contain.** It said to capture "1290 x 2796
 from the iPhone 17 Pro simulator". Those two do not go together: the iPhone 17
@@ -198,7 +198,7 @@ Only the **6.9-inch** set is mandatory. `app.config.js` sets
 
 **Nothing here can tell a good screenshot from a bad one.** The runner proves
 size and count; a map that never loaded its tiles and a map that did are the same
-number of pixels. Look at all five before uploading.
+number of pixels. Look at all four before uploading.
 
 ---
 
@@ -289,8 +289,9 @@ done, so this section states what is checkable today.
 - **Account deletion** (guideline 5.1.1(v)) — in-app on web and native,
   `POST /api/me/delete`, migration 0024, admin view at `/admin/deleted`. Covered
   by `e2e/account-deletion.spec.ts`.
-- **Sign in with Apple**, native and web — `POST /api/mobile/oauth/exchange`,
-  merged and in production.
+- **Sign in with Apple**, native only — `POST /api/mobile/oauth/exchange`,
+  merged and in production. Web Apple sign-in is not configured on production:
+  `AUTH_APPLE_ID` and `AUTH_APPLE_SECRET` are absent there.
 - **Legal URLs** — `/privacy`, `/terms`, `/support` are live and anonymous on
   `www.feraltravels.com`, guarded by `e2e/legal-pages.spec.ts`.
 - **Export compliance** — `ITSAppUsesNonExemptEncryption: false` in
@@ -311,13 +312,16 @@ done, so this section states what is checkable today.
 
 ### Actually outstanding
 
-1. **A TestFlight build that contains the OAuth work.** Builds 2 and 3 predate
-   PR #7 — their native fingerprint is `f407a3a…` against today's `ad7c05a…`.
-   Neither has the reversed-client-id URL scheme or the `usesAppleSignIn`
-   entitlement, so in those binaries the Apple button does not render and the
-   Google one dead-ends. An OTA cannot fix either: both are compiled in.
-   **Cut a native build from current `main`** — Actions → Mobile → Run workflow
-   → mode `build` — and let auto-submit carry it to TestFlight.
+1. **A TestFlight build from current `main`.** Build 11 (1.0.0, commit
+   `ec8986b`, native fingerprint `6c9e8245…`, cut 2026-09-23 by a manual Mobile
+   run) carries the OAuth scheme, the Apple Sign-in entitlement, the purchase
+   sheet, the `feral_travels` entitlement (PR #54) and the onboarding calendar /
+   Custom pace chip (PR #55) in its bundled JS. Builds 6–10 have the same native
+   fingerprint but bundle older JS, which is what a reviewer's first launch
+   runs. To cut another: Actions → Mobile → Run workflow. It takes no inputs; a
+   manual run always builds and auto-submits
+   (`gh workflow run Mobile --ref main`). Dispatch only after Deploy to
+   production is green for that commit.
 
 2. **Verify Sign in with Apple on a real device.** It cannot be exercised on the
    simulator. Include a Hide My Email run: the relay path
@@ -338,10 +342,11 @@ done, so this section states what is checkable today.
    error, not a denial, nothing in any log. `docs/design/iap-setup.md` is the
    ordered click-list and section 1 is that agreement.
 
-   Note what this does to §5's review notes: a reviewer must be able to SEE the
-   subscription. Settings → Plan → "View plans" opens the purchase sheet in every
-   account state precisely so a reviewer on a fresh trial — who is entitled, and
-   therefore sees no paywall anywhere — still has a screen with prices on it.
+   Note what this does to the review notes (`ios-review-notes.md` §3): a
+   reviewer must be able to SEE the subscription. Settings → Plan → "View
+   plans" opens the purchase sheet in every account state precisely so a
+   reviewer on a fresh trial — who is entitled, and therefore sees no paywall
+   anywhere — still has a screen with prices on it.
 
 5. **Screenshots regenerated against the build you actually submit**, and looked
    at. The command is one line now (§3); the looking is not automatable.
@@ -368,23 +373,13 @@ done, so this section states what is checkable today.
    sheet is what testers actually have. A blocked user on an older binary has no
    way to pay, and an OTA cannot deliver the sheet.
 
-### App Review Information → Notes
+### App Review Information → Sign-In Information and Notes
 
-Sign in with Apple is the answer to guideline 2.1(a): the reviewer uses their
-own Apple ID and gets a real, fully functional account — no demo credentials,
-no fixed code, no backdoor. Leave the demo username/password fields empty and
-paste:
-
-> This app is passwordless. Tap "Sign in with Apple" on the sign-in screen and
-> use your own Apple ID (Hide My Email works) — that creates a full account with
-> no demo credentials needed. The email + 6-digit code option is for users who
-> prefer email; it sends a real code to a real inbox, so please use Sign in with
-> Apple.
-
-**Fallback, only if a reviewer rejects on 2.1(a) anyway:** an env-gated fixed
-code for one designated review address. Do NOT build this pre-emptively — it is
-backdoor-shaped, it sits directly next to `noBackdoorGuard.test.ts`, and it
-contradicts the no-bypass rule the rest of the auth surface is built on.
+Both come from `docs/design/ios-review-notes.md` §3. The Sign-In Information
+fields ARE filled (`appletest@feraltravels.com` / `000000`), and the Notes are
+the "text to paste" block there. That file owns the reviewer-facing text; do not
+keep a second copy here. `APPLE_REVIEW_SIGNIN=1` must be set on the production
+Vercel environment or the code is refused (`ios-review-notes.md` §1).
 
 ---
 
@@ -410,8 +405,10 @@ running in the background while everything below happens.
    plus a real sandbox purchase all the way to a `subscription_events` row with
    `outcome = 'applied'`. Section 9 of `revenuecat-implementation.md` is that
    checklist and it does not stop at "the sheet said Success".
-4. **Regenerate the screenshots** against that build and look at all five (§3).
-5. **Attach, answer §4 and §5, paste the review notes, submit.**
+4. **Regenerate the screenshots** against that build and look at all four (§3).
+5. **Attach, answer §4 and §5, fill App Review Information from
+   `ios-review-notes.md` §3, submit.**
 
-`PAYWALL_ENABLED` is not on this list. The app is submittable with the paywall
-off, and turning it on afterwards is an env change — see §6.7.
+The paywall switch is not on this list: the app is submittable with it off, and
+turning it on afterwards is the `app_meta.paywall_enabled` row, flipped from the
+`/admin` pill with no redeploy — see §6.7.
