@@ -1,7 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 
 /**
- * Crypto for the `deleted_users` tombstone. Two different jobs, deliberately
+ * Crypto for the `deleted_users` tombstone — and, through `encryptSecret`, for
+ * the Sign in with Apple refresh tokens held in `accounts` so account deletion
+ * can revoke them. Two different jobs, deliberately
  * kept apart because they answer different questions and carry different risk.
  *
  * `hashEmail` is a one-way keyed digest. It answers "did this address ever have
@@ -83,19 +85,21 @@ export function hashEmail(email: string): string {
 }
 
 /**
- * Encrypt an address for later admin reading. Null when no key is configured,
- * which the caller stores as-is.
+ * Encrypt an arbitrary secret under the same key and format as the tombstone.
+ * Null when no key is configured — the caller decides what "no key" means for
+ * its data; it must never fall back to storing the plaintext.
  *
  * Format is `v1:<iv>:<authTag>:<ciphertext>`, all base64. The version prefix is
  * there so a future key rotation or algorithm change can be detected per-row
- * instead of guessing.
+ * instead of guessing. Unlike `encryptEmail`, the value is stored byte for byte:
+ * a Sign in with Apple refresh token is case-sensitive.
  */
-export function encryptEmail(email: string): string | null {
+export function encryptSecret(plaintext: string): string | null {
   const key = getKey();
   if (!key) return null;
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const enc = Buffer.concat([cipher.update(email.trim().toLowerCase(), 'utf8'), cipher.final()]);
+  const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return [
     VERSION,
     iv.toString('base64'),
@@ -105,12 +109,12 @@ export function encryptEmail(email: string): string | null {
 }
 
 /**
- * Reverse of `encryptEmail`. Returns null on every failure mode — no key, wrong
- * key, wrong version, malformed row, failed auth tag — because the only caller
- * is an admin list that should render "unavailable" for one bad row rather than
- * throwing and taking the whole page down.
+ * Reverse of `encryptSecret`. Returns null on every failure mode — no key,
+ * wrong key, wrong version, malformed row, failed auth tag — so one bad row is
+ * something the caller reports rather than an exception that takes the rest
+ * down with it.
  */
-export function decryptEmail(payload: string | null | undefined): string | null {
+export function decryptSecret(payload: string | null | undefined): string | null {
   if (!payload) return null;
   const key = getKey();
   if (!key) return null;
@@ -127,4 +131,22 @@ export function decryptEmail(payload: string | null | undefined): string | null 
   } catch {
     return null;
   }
+}
+
+/**
+ * Encrypt an address for later admin reading. Null when no key is configured,
+ * which the caller stores as-is. The address is normalized first (trim +
+ * lowercase); the format is `encryptSecret`'s.
+ */
+export function encryptEmail(email: string): string | null {
+  return encryptSecret(email.trim().toLowerCase());
+}
+
+/**
+ * Reverse of `encryptEmail`. Null on every failure mode, because the only
+ * caller is an admin list that should render "unavailable" for one bad row
+ * rather than throwing and taking the whole page down.
+ */
+export function decryptEmail(payload: string | null | undefined): string | null {
+  return decryptSecret(payload);
 }
