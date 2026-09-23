@@ -72,6 +72,33 @@ export type RestoreOutcome =
   | { kind: 'failed'; reason: PurchaseFailureReason };
 
 /**
+ * A finished restore → an outcome, from RevenueCat's `entitlements.active`.
+ *
+ * `active` is a plain object keyed by the identifiers of the entitlements this
+ * customer holds right now. The app never hands an identifier TO RevenueCat —
+ * it only looks one up in this map after the call — so an identifier that does
+ * not exist in the dashboard cannot throw: it is simply never a key, and the
+ * lookup reads as `nothing_to_restore`. That silence is the failure mode, and
+ * why `ids` takes more than one: during a rename it is `[new, old]`, and a
+ * build reading both is right whichever of the two the dashboard has.
+ *
+ * Here rather than in `mobile/lib/purchases.ts` so the root suite can test it;
+ * see the header for why nothing importing react-native-purchases can be.
+ */
+export function restoreOutcomeFromActive(
+  active: Readonly<Record<string, unknown>>,
+  ids: readonly string[]
+): RestoreOutcome {
+  // An own-property check rather than `active[id]`: an id like "constructor"
+  // must not be found on the prototype and read as a subscription.
+  return ids.some(
+    (id) => Object.prototype.hasOwnProperty.call(active, id) && active[id] != null
+  )
+    ? { kind: 'restored' }
+    : { kind: 'nothing_to_restore' };
+}
+
+/**
  * One line per outcome, and none of them accuses the reader.
  *
  * Same rule as `promoCopy.ts` and the `usage_cap` paywall message: when the

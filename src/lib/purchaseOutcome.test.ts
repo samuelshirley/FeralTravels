@@ -4,6 +4,7 @@ import {
   PURCHASE_CONFIRMING_MESSAGE,
   PURCHASE_CONFIRM_TIMEOUT_MESSAGE,
   purchaseOutcomeMessage,
+  restoreOutcomeFromActive,
   restoreOutcomeMessage,
   type PurchaseFailureReason,
   type PurchaseOutcome,
@@ -124,6 +125,45 @@ describe('restoreOutcomeMessage', () => {
         purchaseOutcomeMessage({ kind: 'failed', reason })
       );
     }
+  });
+});
+
+describe('restoreOutcomeFromActive', () => {
+  /** The shape RevenueCat returns: identifier → EntitlementInfo, active only. */
+  const info = { identifier: 'x', isActive: true, productIdentifier: 'com.feraltravels.ios.monthly' };
+  const RENAME = ['feral_travels', 'pro'];
+
+  it('restores on the new identifier', () => {
+    expect(restoreOutcomeFromActive({ feral_travels: info }, RENAME)).toEqual({ kind: 'restored' });
+  });
+
+  it('restores on the old identifier alone — a dashboard that has not added the new one yet', () => {
+    expect(restoreOutcomeFromActive({ pro: info }, RENAME)).toEqual({ kind: 'restored' });
+  });
+
+  it('restores during the overlap, when RevenueCat reports both', () => {
+    expect(restoreOutcomeFromActive({ feral_travels: info, pro: info }, RENAME)).toEqual({
+      kind: 'restored',
+    });
+  });
+
+  it('reads an identifier the dashboard does not have as nothing_to_restore — silently, no throw', () => {
+    /**
+     * THE failure mode the rename sequence exists to avoid. The app never
+     * sends the identifier to RevenueCat; it looks it up in `active` after the
+     * call. An identifier missing from the dashboard is never a key, so a PAYING
+     * user is told their Apple ID has no plan. Nothing throws, nothing logs.
+     */
+    expect(restoreOutcomeFromActive({ pro: info }, ['feral_travels'])).toEqual({
+      kind: 'nothing_to_restore',
+    });
+    expect(restoreOutcomeFromActive({}, RENAME)).toEqual({ kind: 'nothing_to_restore' });
+  });
+
+  it('does not find an identifier on the prototype', () => {
+    expect(restoreOutcomeFromActive({}, ['constructor', 'toString'])).toEqual({
+      kind: 'nothing_to_restore',
+    });
   });
 });
 

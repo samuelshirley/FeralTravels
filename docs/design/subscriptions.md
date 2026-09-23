@@ -517,11 +517,14 @@ Unit, not E2E — replay real RevenueCat/ASSN payloads against the handler:
     is NOT an error — the money is real and the webhook retries for hours — so
     the copy leads on the charge having gone through and points at Restore.
   - **Prices come from the store's Offerings, not `constants.ts`.**
-    `usePurchaseFlow` merges the server's plan list (order, cadence, note — all
-    still server-authored and reword-able without a build) with the store's
-    `product.priceString`. `priceLabel` in `constants.ts` is the fallback for an
-    unreachable store, as its own comment always said; "$2" in front of somebody
-    charged €2,49 is a 3.1.2 disclosure problem. A server plan with no matching
+    `usePurchaseFlow` merges the server's plan list (order, cadence, period —
+    server-authored and reword-able without a build) with the store's
+    `product.priceString`. `fallbackUsdLabel` in `constants.ts` is the fallback
+    for an unreachable store; "$2.69" in front of somebody charged €2 is a 3.1.2
+    disclosure problem. The annual plan's "Save … a year" is computed on the
+    device from the store's `price` × 12 − annual `price`, formatted in the
+    store's `currencyCode` (`annualSavingsNote`), and is absent whenever the
+    store has not answered — no sum is ever done over the fallbacks. A server plan with no matching
     store package is DROPPED — so ONE price where there should be two means a
     product id typo, not an agreement problem.
   - **Restore purchases** (Guideline 3.1.1, and the only recovery when the poll

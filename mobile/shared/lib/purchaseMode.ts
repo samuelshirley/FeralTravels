@@ -62,8 +62,12 @@ export type StoreAnswer =
  */
 export interface StorePlanLike {
   productId: string;
-  /** Apple's localized price string, e.g. "$2.00", "€2,49". */
+  /** Apple's localized price string, e.g. "$2.69", "2,00 €". For display only. */
   priceLabel: string;
+  /** The same price as a number, in `currencyCode` — what arithmetic uses. */
+  price: number;
+  /** ISO 4217, from the store: "USD", "EUR", "CAD". */
+  currencyCode: string;
 }
 
 /**
@@ -96,13 +100,21 @@ export interface ResolvedPurchaseMode {
 export function resolvePurchaseMode({
   storeAnswer,
   serverPlans,
+  locale,
 }: {
   storeAnswer: StoreAnswer;
   /** `entitlement.products`, or [] when there is no entitlement payload. */
   serverPlans: PaywallProduct[];
+  /** BCP 47 locale for the saving's formatting. Omitted = the device's own. */
+  locale?: string;
 }): ResolvedPurchaseMode {
   if (storeAnswer.kind === 'pending') {
-    return { mode: 'unavailable', unavailableReason: null, plans: serverPlans, plansLoading: true };
+    return {
+      mode: 'unavailable',
+      unavailableReason: null,
+      plans: withoutNotes(serverPlans),
+      plansLoading: true,
+    };
   }
 
   if (storeAnswer.kind === 'no_key') {
@@ -133,9 +145,21 @@ export function resolvePurchaseMode({
    * asymmetry is diagnostic (a single mistyped product id looks like this).
    * NONE surviving is a different failure and gets its own reason.
    */
-  const merged: PaywallProduct[] = serverPlans.flatMap((p) => {
-    const store = storeAnswer.plans.find((s) => s.productId === p.id);
-    return store ? [{ ...p, priceLabel: store.priceLabel }] : [];
+  const storeFor = (p: PaywallProduct) => storeAnswer.plans.find((s) => s.productId === p.id);
+  const monthly = serverPlans.find((p) => p.period === 'month');
+  const annual = serverPlans.find((p) => p.period === 'year');
+  const monthlyStore = monthly && storeFor(monthly);
+  const annualStore = annual && storeFor(annual);
+  const saving =
+    monthlyStore && annualStore ? annualSavingsNote(monthlyStore, annualStore, locale) : undefined;
+
+  // Any `note` the payload carried is dropped: only the store's own prices may
+  // produce one.
+  const merged: PaywallProduct[] = withoutNotes(serverPlans).flatMap((p) => {
+    const store = storeFor(p);
+    if (!store) return [];
+    const note = p.period === 'year' ? saving : undefined;
+    return [{ ...p, priceLabel: store.priceLabel, ...(note ? { note } : {}) }];
   });
 
   if (merged.length === 0) {
@@ -152,7 +176,65 @@ function unavailable(
   // The fallback prices are still rendered: the reader learns what a plan
   // costs, roughly, and the sentence under them says why it cannot be bought
   // here. An empty sheet would say nothing at all.
-  return { mode: 'unavailable', unavailableReason: reason, plans: serverPlans, plansLoading: false };
+  return {
+    mode: 'unavailable',
+    unavailableReason: reason,
+    plans: withoutNotes(serverPlans),
+    plansLoading: false,
+  };
+}
+
+/**
+ * No saving without the store. The server's fallback labels are US prices — a
+ * rough indication of cost, wrong in every other storefront — and a sum over
+ * them would be a precise-looking number that is not true for the reader.
+ */
+function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
+  return plans.map(({ note: _ignored, ...rest }) => {
+    void _ignored;
+    return rest;
+  });
+}
+
+/**
+ * "Save €4 a year", from the STORE's two prices: monthly × 12 − annual, in the
+ * store's currency, formatted for the viewer's locale.
+ *
+ * Every figure comes from StoreKit, so a price changed in App Store Connect is
+ * reflected here with no code change. The currency sign comes from
+ * `Intl.NumberFormat`, never from us: EUR in `en-IE` is "€4", in `de-DE`
+ * "4 €"; CAD is "CA$6" to a US-English reader and "$6" to a Canadian one,
+ * which is how each of them writes it.
+ *
+ * A whole saving drops the decimals ("€4", not "€4.00"), the way the prices
+ * themselves are advertised; anything else keeps the currency's own
+ * ("$10.28"). The cents test runs on the value rounded to cents, so float
+ * noise (2.69 × 12 is 32.279999…) cannot decide it.
+ *
+ * Returns undefined — no badge — whenever there is no honest figure: the two
+ * prices in different currencies, a price that is not a finite number, a
+ * currency code that is not ISO 4217-shaped, or an annual plan that does not
+ * actually save anything.
+ */
+export function annualSavingsNote(
+  monthly: Pick<StorePlanLike, 'price' | 'currencyCode'>,
+  annual: Pick<StorePlanLike, 'price' | 'currencyCode'>,
+  locale?: string
+): string | undefined {
+  const currency = annual.currencyCode;
+  if (monthly.currencyCode !== currency || !/^[A-Z]{3}$/.test(currency)) return undefined;
+  if (!Number.isFinite(monthly.price) || !Number.isFinite(annual.price)) return undefined;
+
+  const cents = Math.round((monthly.price * 12 - annual.price) * 100);
+  if (cents <= 0) return undefined;
+
+  const whole = cents % 100 === 0;
+  const amount = new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+  }).format(cents / 100);
+  return `Save ${amount} a year`;
 }
 
 /**
