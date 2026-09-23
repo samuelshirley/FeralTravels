@@ -173,7 +173,9 @@ ipRequestCounters, oauthProviderKeys
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, oauthJwks, testSupport (test-only)
+announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, testSupport
+(test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
+revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
 
 ### Penny Tools (`src/lib/penny/tools/`)
 

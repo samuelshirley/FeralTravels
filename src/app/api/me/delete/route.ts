@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { requireUser, errorResponse } from '@/server/auth/guards';
 import { ForbiddenError } from '@/server/auth/errors';
 import { isOnAdminAllowlist } from '@/server/auth/admin';
-import { deleteUserAccount } from '@/server/repos/accountDeletion';
+import { deleteAccount } from '@/server/deleteAccount';
 import { DELETE_CONFIRM_PHRASE, isDeleteConfirmationValid } from '@/lib/accountDeletion';
 
 export const runtime = 'nodejs';
@@ -83,7 +83,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const summary = await deleteUserAccount(user.id, 'self');
+    // Deletes, then revokes the user's Sign in with Apple tokens (5.1.1(v)).
+    // A failed revoke is logged, never returned: the account is gone either way.
+    const summary = await deleteAccount(user.id, 'self');
 
     return Response.json({ ok: true, deleted: summary });
   } catch (err) {
