@@ -11,11 +11,7 @@ ASC App ID **6807913556** · bundle `com.feraltravels.ios` · version **1.0.0**
 > on the new team on 2026-09-03). The old `6802705582` was removed rather than
 > left pointing at a dead record. See the table at the top of
 > `docs/design/iap-setup.md`.
-(no TestFlight build on the new account. Build 7 of 2026-08-27 was the last on
-the OLD one and is unreachable — it predated the in-app-purchase client, the
-Settings "View plans" control and the privacy manifest anyway, and could not
-have received any of the three over the air. The first build on the new team
-starts from 1.)
+TestFlight builds exist on the new account; §6.1 says which one to submit.
 
 Everything below is ready to paste. Character limits are Apple's, enforced by
 the form, and were measured rather than eyeballed — see §2. What is still
