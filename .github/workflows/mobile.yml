@@ -107,6 +107,10 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  # `gh run list` in "Wait for the production deploy" reads the Deploy to
+  # production run for this commit. Once `permissions:` is set, anything not
+  # listed is `none`.
+  actions: read
 
 jobs:
   # ------------------------------------------------------------------ PR
@@ -214,7 +218,11 @@ jobs:
     name: OTA, or a TestFlight build when the native surface moved
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Measured 2026-09: native runs took 84 and 74 minutes end to end, the
+    # build step nearly all of it, against the old ceiling of 90. The deploy
+    # wait can add up to 45 in front of it; a job killed mid-build leaves an
+    # EAS build nothing tracks. 45 + 90 + 15 of setup and slack.
+    timeout-minutes: 150
     concurrency:
       # Serialised rather than cancel-in-progress: a cancelled run can leave a
       # build running on EAS that nothing is tracking any more. Job-level so a
@@ -280,9 +288,15 @@ jobs:
           # A force-push, a first push, or a manual dispatch leaves no usable
           # base. Treat that as native: skipping the OTA is always safe, and
           # publishing a possibly-incompatible one is not.
+          #
+          # `decision` is the ONLY output anything downstream reads. This path
+          # used to write `native=true`, a key left over from before the
+          # three-way decision: `decision` came out empty, so neither the OTA
+          # nor the build ran and the summary said nothing needed building.
           if [ -z "${BEFORE:-}" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             echo "No usable base commit — treating as native, OTA skipped."
-            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "decision=native" >> "$GITHUB_OUTPUT"
+            echo "no_base=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -329,6 +343,119 @@ jobs:
             for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
           ' | tee -a "$GITHUB_ENV"
 
+      # THE ORDERING GATE (issue #39). A push to main starts this workflow and
+      # deploy-production.yml at the same moment, and nothing else orders them,
+      # so an OTA used to reach phones before the API it was written against —
+      # and stayed out there if that deploy then failed its gate or migration.
+      # A TestFlight binary is the same bug with a slower feedback loop, so it
+      # waits too: whatever this job ships to a device, it ships only once
+      # production serves this commit.
+      #
+      # Why a wait here and not a `workflow_run` trigger: that payload carries
+      # no `github.event.before`, so the classifier above would get no base and
+      # answer `native` on EVERY merge — no OTA ever again, and a build credit
+      # each time — and `workflow_run` accepts no `paths:` filter.
+      #
+      # WHAT PASSES: Deploy to production concluded `success` for THIS SHA; or
+      # this SHA's deploy was CANCELLED — which is what the `deploy-production`
+      # concurrency group does to a pending run when a newer merge queues behind
+      # it — and a later deploy of a main commit that CONTAINS this one
+      # succeeded. Failure, any other conclusion, no run at all, a cancellation
+      # no later deploy covers, or 45 minutes without an answer (the deploy's
+      # own 20, another 20 queued behind an earlier deploy, 5 slack) fails the
+      # job with the reason, and nothing reaches a device.
+      - name: Wait for the production deploy of this commit
+        id: deploy_wait
+        if: steps.native.outputs.decision == 'js-only' || steps.native.outputs.decision == 'native' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_SECONDS: '2700'
+          POLL_SECONDS: '20'
+          # Both workflows start from the same push; a run that is not listed
+          # after this long was never created. Also how long a cancelled deploy
+          # may go without a later one on main that contains this commit.
+          GRACE_SECONDS: '300'
+        run: |
+          set -euo pipefail
+
+          deploy_state() {
+            gh run list -R "$GITHUB_REPOSITORY" --workflow 'Deploy to production' --commit "$GITHUB_SHA" \
+              --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end'
+          }
+
+          # Deploys of LATER main commits that contain this one, one
+          # "<sha> <status>/<conclusion>" per line. `--branch main` so a deploy
+          # dispatched from a feature branch never counts.
+          later_deploys() {
+            git fetch --quiet --no-tags origin main
+            gh run list -R "$GITHUB_REPOSITORY" --workflow 'Deploy to production' --branch main \
+              --limit 20 --json headSha,status,conclusion \
+              --jq '.[] | .headSha + " " + .status + "/" + (.conclusion // "pending")' |
+            while read -r sha state; do
+              [ "$sha" = "$GITHUB_SHA" ] && continue
+              git cat-file -e "${sha}^{commit}" 2>/dev/null || continue
+              git merge-base --is-ancestor "$GITHUB_SHA" "$sha" || continue
+              echo "$sha $state"
+            done
+          }
+
+          START="$(date +%s)"
+          LAST=""
+          CANCELLED_AT=""
+          while :; do
+            ELAPSED=$(( $(date +%s) - START ))
+            if ! STATE="$(deploy_state)"; then STATE="api-error"; fi
+            SHOWN="$STATE"
+
+            case "$STATE" in
+              completed/success)
+                echo "Production is serving ${GITHUB_SHA:0:7}'s API — shipping to devices."
+                exit 0
+                ;;
+              completed/cancelled)
+                CANCELLED_AT="${CANCELLED_AT:-$ELAPSED}"
+                if LATER="$(later_deploys)"; then
+                  WON="$(printf '%s\n' "$LATER" | awk '$2 == "completed/success" { print $1; exit }')"
+                  if [ -n "$WON" ]; then
+                    echo "${GITHUB_SHA:0:7}'s deploy was cancelled (superseded), but ${WON:0:7} contains it and deployed — shipping to devices."
+                    exit 0
+                  fi
+                  if [ -z "$LATER" ]; then
+                    if [ $(( ELAPSED - CANCELLED_AT )) -ge "$GRACE_SECONDS" ]; then
+                      echo "::error::Deploy to production for ${GITHUB_SHA:0:7} was cancelled, and no later deploy on main contains it. Production is not serving this commit's API, so nothing was shipped to devices."
+                      exit 1
+                    fi
+                  elif ! printf '%s\n' "$LATER" | awk '$2 !~ /^completed\//' | grep -q .; then
+                    echo "::error::Deploy to production for ${GITHUB_SHA:0:7} was cancelled, and every later deploy that contains it ended without success: $(printf '%s\n' "$LATER" | awk '{ printf "%s %s; ", substr($1, 1, 7), $2 }'). Nothing was shipped to devices."
+                    exit 1
+                  fi
+                  SHOWN="completed/cancelled; waiting on a later deploy: $(printf '%s\n' "$LATER" | awk 'NF { printf "%s %s; ", substr($1, 1, 7), $2 }')"
+                else
+                  SHOWN="completed/cancelled; api-error listing later deploys"
+                fi
+                ;;
+              completed/*)
+                echo "::error::Deploy to production for ${GITHUB_SHA:0:7} ended ${STATE#completed/}. Production is not serving this commit's API, so nothing was shipped to devices. Fix the deploy first; neither a bundle nor a binary may reach a device before its API."
+                exit 1
+                ;;
+              none)
+                if [ "$ELAPSED" -ge "$GRACE_SECONDS" ]; then
+                  echo "::error::No Deploy to production run exists for ${GITHUB_SHA:0:7} after ${ELAPSED}s. Nothing proves its API is live, so nothing was shipped to devices."
+                  exit 1
+                fi
+                ;;
+            esac
+
+            [ "$SHOWN" != "$LAST" ] && echo "Deploy to production for ${GITHUB_SHA:0:7}: $SHOWN"
+            LAST="$SHOWN"
+            if [ "$ELAPSED" -ge "$WAIT_SECONDS" ]; then
+              echo "::error::Gave up after ${ELAPSED}s waiting for Deploy to production on ${GITHUB_SHA:0:7} (last state: $SHOWN). Nothing was shipped to devices."
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+          done
+
       - name: Publish the OTA
         id: ota
         if: steps.native.outputs.decision == 'js-only'
@@ -374,8 +501,10 @@ jobs:
         # publish it. A summary that can lie is worse than no summary.
         env:
           OTA: ${{ steps.ota.outcome }}
+          DEPLOY_WAIT: ${{ steps.deploy_wait.outcome }}
           BUILD: ${{ steps.build.outcome }}
           DECISION: ${{ steps.native.outputs.decision }}
+          NO_BASE: ${{ steps.native.outputs.no_base }}
         run: |
           {
             echo "### Mobile"
@@ -389,8 +518,19 @@ jobs:
                 ;;
               skipped)
                 case "${DECISION:-}" in
+                  js-only)
+                    if [ "${DEPLOY_WAIT:-}" = "failure" ]; then
+                      echo "- **OTA:** **not published** — Deploy to production did not succeed for this commit, and a bundle must not reach phones before its API. See \"Wait for the production deploy of this commit\"."
+                    else
+                      echo "- **OTA:** skipped."
+                    fi
+                    ;;
                   native)
-                    echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                    if [ "${NO_BASE:-}" = "true" ]; then
+                      echo "- **OTA:** skipped — there was no base commit to diff against (a manual run, a first push or a force-push), so this is treated as native: a bundle could reach a binary that cannot run it."
+                    else
+                      echo "- **OTA:** skipped — a native input moved, so a bundle could reach a binary that cannot run it."
+                    fi
                     ;;
                   none)
                     echo "- **OTA:** skipped — nothing under \`mobile/\` changed, so the bundle would have been identical to the one already published."
@@ -412,7 +552,9 @@ jobs:
                 echo "- **TestFlight:** **build or submit failed** — nothing was submitted. See the step log."
                 ;;
               skipped)
-                if [ "${DECISION:-}" = "none" ]; then
+                if [ "${DEPLOY_WAIT:-}" = "failure" ] && [ "${DECISION:-}" != "js-only" ]; then
+                  echo "- **TestFlight:** **not built** — Deploy to production did not succeed for this commit, and a binary must not reach testers before its API. See \"Wait for the production deploy of this commit\"."
+                elif [ "${DECISION:-}" = "none" ]; then
                   echo "- **TestFlight:** skipped — nothing under \`mobile/\` changed, so the binary on App Store Connect is already current."
                 else
                   echo "- **TestFlight:** skipped — nothing that can reach the binary moved, so no build credit was spent. Existing testers get this over the air. Cut a binary by hand (Actions → Mobile → Run workflow) before an App Store submission."

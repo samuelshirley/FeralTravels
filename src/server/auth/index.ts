@@ -1,5 +1,5 @@
 import 'server-only';
-import NextAuth, { type DefaultSession, type Session } from 'next-auth';
+import NextAuth, { customFetch, type DefaultSession, type Session } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Apple from 'next-auth/providers/apple';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
@@ -16,6 +16,7 @@ import { claimPromoOnSignIn, syncCompedFlagOnSignIn } from '@/server/payments';
 import { sanitizeAvatarUrl } from '@/lib/avatarUrl';
 import { isProviderEmailProven } from './emailVerification';
 import { assertSessionStoreReachable, readSessionCookie } from './sessionStore';
+import { appleDiscoveryFetch } from './appleDiscovery';
 
 declare module 'next-auth' {
   interface Session {
@@ -43,6 +44,36 @@ declare module 'next-auth' {
 export const isAppleSignInConfigured = Boolean(
   process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET
 );
+
+/**
+ * The Apple provider, with discovery going through `appleDiscovery.ts`.
+ *
+ * The override is ASSIGNED to the built provider, never passed in the options:
+ * `@auth/core`'s `lib/utils/providers.js:29` merges it as
+ * `normalized[customFetch] ??= userOptions[customFetch]`, and the Apple
+ * provider already has its own, so an option is discarded without a word.
+ * `customFetch` comes from 'next-auth' — the top-level `@auth/core` is a
+ * different copy whose symbol the runtime never reads.
+ * `appleProvider.test.ts` fails if either regresses.
+ */
+export function buildAppleProvider(): ReturnType<typeof Apple> {
+  const provider = Apple({
+    clientId: process.env.AUTH_APPLE_ID,
+    clientSecret: process.env.AUTH_APPLE_SECRET,
+    // Same reasoning as Google below: Apple verifies the address on the
+    // identity token, so linking it to an existing user with that email is
+    // correct — and refusing to would hand the user a second account with
+    // none of their trips in it.
+    //
+    // CAVEAT worth knowing before you support-ticket it: a user who picks
+    // "Hide My Email" arrives as <opaque>@privaterelay.appleid.com, which is
+    // a DIFFERENT address from their real one. There is nothing to link it
+    // to, so that is a separate account by design, not a bug.
+    allowDangerousEmailAccountLinking: true,
+  });
+  provider[customFetch] = appleDiscoveryFetch;
+  return provider;
+}
 
 const { handlers, auth: rawAuth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
@@ -79,21 +110,7 @@ const { handlers, auth: rawAuth, signIn, signOut } = NextAuth({
     // register a provider with undefined credentials and only fail at redirect.
     ...(isAppleSignInConfigured
       ? [
-          Apple({
-            clientId: process.env.AUTH_APPLE_ID,
-            clientSecret: process.env.AUTH_APPLE_SECRET,
-            // Same reasoning as Google above: Apple verifies the address on
-            // the identity token, so linking it to an existing user with that
-            // email is correct — and refusing to would hand the user a second
-            // account with none of their trips in it.
-            //
-            // CAVEAT worth knowing before you support-ticket it: a user who
-            // picks "Hide My Email" arrives as
-            // <opaque>@privaterelay.appleid.com, which is a DIFFERENT address
-            // from their real one. There is nothing to link it to, so that is
-            // a separate account by design, not a bug.
-            allowDangerousEmailAccountLinking: true,
-          }),
+          buildAppleProvider(),
         ]
       : []),
 

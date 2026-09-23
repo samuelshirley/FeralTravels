@@ -1,9 +1,11 @@
 # Mobile release — how a merge reaches a tester
 
 The mobile release is its own workflow, `.github/workflows/mobile.yml`,
-triggered by the same push to `main` as `deploy-production.yml` — so it runs
-BESIDE the web deploy, not after it, and an OTA can reach a phone before the API
-it expects has shipped. (An earlier version of this file described one
+triggered by the same push to `main` as `deploy-production.yml`. The two start
+together, but since 2026-09-22 (issue #39) nothing reaches a device — neither the
+OTA nor a TestFlight build — until production serves the commit: its own deploy
+succeeded, or a later main deploy that contains it did. See
+`docs/design/deploy-pipeline.md`. (An earlier version of this file described one
 `pipeline.yml` with the mobile jobs on `needs: deploy`; that consolidation was
 drafted and never landed.) Read `mobile.yml`'s header for the mechanics; this
 file is the setup and the traps.
@@ -22,29 +24,33 @@ paths:
 so they never appear in a diff — that's why the native list is the *inputs* to
 prebuild rather than its output.
 
-**Then it checks the OTA has somewhere to land — by fingerprint.** An OTA only
-runs on a binary built from the same native surface, and `runtimeVersion:
-appVersion` is a *promise* that the surface has not moved, kept by hand. PR #7
-broke that promise without touching `version`: it added a CFBundleURLScheme and
-the Apple Sign-in entitlement, so two pre-OAuth builds still looked like valid
-1.0.0 targets. Publishing to them would have switched both sign-in buttons ON in
-binaries that cannot complete either flow.
+**There is NO fingerprint check — this file used to say there was.** An
+earlier version described `decide` computing the native fingerprint
+(`expo-updates fingerprint:generate`) and asking EAS whether any build carried it
+before publishing an OTA. That step lived only in the workflow drafts
+(`pipeline.yml.new` / `mobile-workflow.new.yml`, committed in `960a73c`), which
+never ran and were deleted; `mobile.yml` has never computed a fingerprint
+(`git log -S fingerprint -- .github/workflows/mobile.yml` is empty). Corrected
+2026-09-22.
 
-So `decide` computes the native fingerprint (`expo-updates fingerprint:generate`
-— app.config.js, config plugins, native deps, eas.json) and asks EAS whether any
-build carries it, finished or still queued. None, or an answer it can't get, and
-the run cuts a native build instead.
+**What does protect an installed binary**, and the gap left open:
 
-That makes the pipeline self-starting AND self-correcting: a change to the native
-surface builds a binary on its own even when `version` is untouched, every
-JS-only merge after that is an OTA in seconds, and the choice never needs a
-human. The cost is about 40 seconds of `npm ci` on a JS-only merge.
-
-**Worth knowing:** `runtimeVersion: { policy: 'fingerprint' }` would move this
-guarantee into update targeting itself, so a mismatched binary could never be a
-target even for a hand-run `eas update`. It changes what reaches installed
-builds, so it is deliberately not bundled with this check — do it as its own
-change, after a release, not before one.
+- The classifier (`scripts/decide-mobile-release.mjs`) sends every merge that
+  moves a native input to a native build and **skips the OTA** for it, so a
+  native change never ships as a bundle.
+- `runtimeVersion: { policy: 'appVersion' }` (`app.config.js`) keeps an OTA off
+  binaries of a different `version` — but only when `version` is bumped. PR #7
+  broke that promise without touching `version`: a CFBundleURLScheme and the
+  Apple Sign-in entitlement, with two pre-OAuth builds still valid 1.0.0
+  targets.
+- **The gap:** a JS-only merge that lands *after* such a native change, while
+  the old binaries are still installed (or the native build never finished),
+  publishes to them. Nothing checks for it today. The two fixes are the one the
+  drafts described (fingerprint + an EAS query before `eas update`) or
+  `runtimeVersion: { policy: 'fingerprint' }`, which moves the guarantee into
+  update targeting itself — so a mismatched binary could never be a target, even
+  for a hand-run `eas update`. The latter changes what reaches installed builds,
+  so do it as its own change, after a release, not before one.
 
 ## Setup
 

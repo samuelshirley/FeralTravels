@@ -80,6 +80,7 @@ never run tests or seed fixtures against the prod database.
    typechecks `mobile/`. There is no single `pipeline.yml`.
 2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
+   `mobile.yml` ships nothing to a device (OTA or TestFlight) until it has.
 3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
 - **Branch protection on `main` requires a PR plus the `Decide scope` and `Unit
@@ -241,10 +242,11 @@ reappears in `src/`.
 ### iOS E2E (`mobile/maestro/`)
 
 `launch.yaml`, `sign-in.yaml`, `chat-keyboard.yaml`, `chat-tab-in-flight.yaml`,
-`onboarding-flash.yaml`, `settings-location.yaml`, `screenshots.yaml` — Maestro
-flows driving a real iOS simulator against the PR's own preview. **Start at
-`docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
-(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
+`onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `settings-location.yaml`,
+`screenshots.yaml` — Maestro flows driving a real iOS simulator against the PR's
+own preview. **Start at `docs/design/ios-e2e-bringup.md`**: what is proven, what
+is not, and the traps (Xcode pairing, Release-vs-Debug, the keychain, the
+software keyboard).
 
 ## Lockdown invariants (load-bearing — do not loosen)
 

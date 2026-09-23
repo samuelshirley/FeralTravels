@@ -35,7 +35,8 @@ import {
 } from "@/lib/entitlement";
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { ListIcon, PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import { CalendarIcon, ListIcon, PaperclipIcon, SendArrowIcon } from "@/components/icons";
+import CalendarPopover from "@/components/CalendarPopover";
 import { MagicWand, MapPinSimpleArea } from "phosphor-react-native";
 import { useDeviceLocation } from "@/lib/location";
 import {
@@ -1669,6 +1670,16 @@ export default function ChatPanel({
     activeQuestionId !== null &&
     transcript[0]?.id === activeQuestionId;
 
+  /**
+   * The date step's `Pick a date` chip opens `CalendarPopover`, drawn inline
+   * in Penny's bubble — the native half of the web's calendar, which it
+   * mirrors. Not the OS picker: see the header of CalendarPopover.
+   */
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  // A new step (or the same key re-asked) starts with the calendar shut.
+  const activeQuestionLabel = onboardingQuestion?.label;
+  useEffect(() => setDatePickerOpen(false), [activeQuestionLabel]);
+
   const onboardingCard =
     onboardingUiActive && onboardingQuestion ? (
       <View style={[styles.card, firstRunHeadline ? styles.cardFirstRun : null]} testID="onboarding-card">
@@ -1704,7 +1715,58 @@ export default function ChatPanel({
                   </Pressable>
                 );
               })}
+              {onboardingQuestion.key === "trip_date" ? (
+                <Pressable
+                  disabled={onboardingComposerBusy}
+                  testID="onboarding-pick-date"
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: datePickerOpen, disabled: onboardingComposerBusy }}
+                  onPress={() => setDatePickerOpen((open) => !open)}
+                  style={[
+                    styles.optionChip,
+                    datePickerOpen ? styles.optionChipOn : null,
+                    onboardingComposerBusy ? styles.optionChipOff : null,
+                  ]}
+                >
+                  <CalendarIcon color={datePickerOpen ? theme.accent300 : theme.text} />
+                  <Text style={[styles.optionChipText, datePickerOpen ? styles.optionChipTextOn : null]}>
+                    Pick a date
+                  </Text>
+                </Pressable>
+              ) : null}
+              {/*
+                Client-only, never a server option: a server option is
+                SUBMITTED as the answer (parseDailyDriveHours('custom') is null,
+                so it would throw the re-ask), and the answered step redraws
+                from form_meta.options, which would then carry a fourth chip.
+                The composer is already live on a 'chips' step; this points at
+                it. Mirrors the web's onboarding-pace-custom.
+              */}
+              {onboardingQuestion.key === "trip_pace" ? (
+                <Pressable
+                  disabled={onboardingComposerBusy}
+                  testID="onboarding-pace-custom"
+                  accessibilityRole="button"
+                  onPress={() => inputRef.current?.focus()}
+                  style={[styles.optionChip, onboardingComposerBusy ? styles.optionChipOff : null]}
+                >
+                  <Text style={styles.optionChipText}>Custom</Text>
+                </Pressable>
+              ) : null}
             </View>
+            {/* In the flow, under the chips, inside the bubble — not a Modal
+                and not floated. The bubble lives in a scrolling transcript;
+                the web made the same call for the same reason. */}
+            {onboardingQuestion.key === "trip_date" && datePickerOpen ? (
+              <View style={styles.datePickerWrap}>
+                <CalendarPopover
+                  onPick={(iso) => {
+                    setDatePickerOpen(false);
+                    void submitOnboardingAnswer(onboardingQuestion.key, iso);
+                  }}
+                />
+              </View>
+            ) : null}
           </>
         ) : null}
 
@@ -2083,6 +2145,14 @@ export default function ChatPanel({
                           testID={
                             chip.selected ? "onboarding-chip-chosen" : "onboarding-chip-answered"
                           }
+                          // One element, carrying its own label: a bare View
+                          // leaves the label a SIBLING in the accessibility
+                          // tree, so VoiceOver reads the chip and its text as
+                          // two things and a test id cannot name the text
+                          // beside it. The web's testid element contains the
+                          // text; this makes the native one do the same.
+                          accessible
+                          accessibilityLabel={chip.label}
                           style={[
                             styles.optionChip,
                             // Answered: a record, not a control — no Pressable
@@ -2749,6 +2819,7 @@ const styles = StyleSheet.create({
   /** A little air between the question text and its recorded answer. */
   answeredOptionsRow: { marginTop: 10 },
   optionChipOff: { opacity: 0.5 },
+  datePickerWrap: { marginTop: 10 },
   optionChipOn: { borderColor: theme.primary, backgroundColor: theme.primaryTint },
   optionChipText: { fontFamily: font.regular, color: theme.text, fontSize: 13 },
 

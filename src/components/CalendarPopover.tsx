@@ -2,6 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CaretLeft, CaretRight } from '@phosphor-icons/react/dist/ssr';
+import {
+  WEEKDAYS,
+  dayLabel,
+  dayNumber,
+  localIso,
+  monthGrid,
+  monthTitle,
+  stepMonth,
+  toIso,
+} from '@/lib/calendarGrid';
 
 /**
  * A month calendar drawn in the page, for the onboarding date step.
@@ -15,6 +25,10 @@ import { CaretLeft, CaretRight } from '@phosphor-icons/react/dist/ssr';
  * It knows nothing about onboarding: it reports a local `YYYY-MM-DD` and the
  * caller submits it. No minimum date — the native input had none, and a driver
  * already on the road may well answer with yesterday.
+ *
+ * The date maths — the grid, the local ISO day, the labels — lives in
+ * `@/lib/calendarGrid`, shared with the native calendar so the two cannot
+ * disagree about what a day is.
  */
 export default function CalendarPopover({
   onPick,
@@ -30,7 +44,7 @@ export default function CalendarPopover({
   ignoreOutside?: React.RefObject<HTMLElement | null>;
 }) {
   const today = new Date();
-  const todayIso = toIso(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayIso = localIso(today);
   const [view, setView] = useState({ year: today.getFullYear(), month: today.getMonth() });
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -61,15 +75,9 @@ export default function CalendarPopover({
 
   const cells = monthGrid(view.year, view.month);
   const focusIso = cells.includes(todayIso) ? todayIso : toIso(view.year, view.month, 1);
-  const title = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-    new Date(view.year, view.month, 1),
-  );
+  const title = monthTitle(view.year, view.month);
 
-  const step = (delta: number) =>
-    setView(({ year, month }) => {
-      const d = new Date(year, month + delta, 1);
-      return { year: d.getFullYear(), month: d.getMonth() };
-    });
+  const step = (delta: number) => setView((v) => stepMonth(v, delta));
 
   const navStyle: React.CSSProperties = {
     width: 30,
@@ -166,41 +174,11 @@ export default function CalendarPopover({
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--tp-primary-muted)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--tp-surface-muted)')}
             >
-              {Number(iso.slice(8))}
+              {dayNumber(iso)}
             </button>
           ),
         )}
       </div>
     </div>
   );
-}
-
-/** Monday first. */
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-
-/** A local calendar day as `YYYY-MM-DD` — never via `toISOString`, which is UTC. */
-function toIso(year: number, month: number, day: number): string {
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-/**
- * One month as grid cells, Monday first: `null` for the leading blanks, then
- * every day of the month as an ISO string. `month` is 0-based, like `Date`.
- */
-export function monthGrid(year: number, month: number): (string | null)[] {
-  const leading = (new Date(year, month, 1).getDay() + 6) % 7;
-  const days = new Date(year, month + 1, 0).getDate();
-  const cells: (string | null)[] = Array.from({ length: leading }, () => null);
-  for (let d = 1; d <= days; d += 1) cells.push(toIso(year, month, d));
-  return cells;
-}
-
-function dayLabel(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  }).format(new Date(y, m - 1, d));
 }

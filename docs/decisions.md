@@ -232,6 +232,14 @@ unrelated to `FIXTURE_EMAIL_PATTERN`: comping it would hide every paywall and re
 the Vercel variable to disarm without a deploy; delete the module to retire it. *Enforced by:*
 `reviewAccountGuard.test.ts`, `reviewAccount.test.ts` (both mutation-checked).
 
+D10. **Web Sign in with Apple fetches discovery through `appleDiscovery.ts` — retried with
+`jwksSource.ts`'s policy, cached in memory, never persisted — and the override is ASSIGNED to the
+built provider, with `customFetch` imported from `next-auth`.** Passed in `Apple({...})`'s options
+it is silently discarded (`@auth/core` `providers.js:29`, `??=` against the built-in), and the
+top-level `@auth/core` is a different copy with a different symbol; either way the built-in runs
+and an empty-body 404 throws `SyntaxError` (issue #44). *Enforced by:* `appleProvider.test.ts`
+(mutation-checked against both regressions and against removal), `appleDiscovery.test.ts`.
+
 ## E. Payments
 
 E1. **`src/server/payments/` is a bounded module; `hasEntitlement(userId)` is the only question
@@ -324,6 +332,14 @@ F3. **Two Anthropic keys: `ANTHROPIC_API_KEY_CI` wins on every runtime except pr
 
 F4. **OTA vs native build is decided by `decide-mobile-release.mjs`, fails safe to native, and
 the native build is gated.** *Enforced by:* `decideMobileRelease.test.ts`.
+
+F4b. **Nothing reaches a device before its API: `mobile.yml` publishes an OTA or builds for
+TestFlight only once production serves the commit — its own Deploy to production concluded
+`success`, or it was cancelled (superseded) and a later `main` deploy containing it succeeded.
+Failure, no run, an uncovered cancellation or a 45-minute wait fails the job.** A wait step, not a
+`workflow_run` trigger, because that payload has no `github.event.before` and the classifier would
+answer `native` on every merge. *Enforced by:* `otaAfterDeployGuard.test.ts` (structure and
+timeouts, plus the step's own shell run against a stub `gh` and a real git origin; mutation-checked).
 
 F5. **`src/` never imports from `mobile/`; shared files are byte-identical mirrors.**
 *Enforced by:* `noMobileImportGuard.test.ts`, `sharedMirror.test.ts`.
@@ -470,6 +486,26 @@ error instead of START HERE. *Enforced by:* `ChatPanel.onboardingFlash.test.tsx`
 `onboardingPhaseGuard.test.ts` (both panels, source — the only unit-level guard `mobile/` has;
 mutation-checked on each), `onboardingPhase.test.ts`, and the Maestro flow
 `mobile/maestro/onboarding-flash.yaml`.
+
+H19. **The onboarding date step draws its own calendar on both platforms, from one date module.**
+Web had a `Pick a date` chip opening an in-page calendar; native drew the three chips and nothing
+else, so on iOS the only way to a real calendar day was typing one. Both now render the chip
+inside the tap-to-answer block, gated on `trip_date` (so the `kind: 'text'` "not sure yet"
+follow-up gets none, on either platform), the calendar inline in Penny's bubble — never a Modal,
+never the OS picker, which the theme cannot style and neither e2e driver can see — and submit the
+picked local `YYYY-MM-DD` through the ordinary answer path. The grid, the local ISO day and the
+labels live in `src/lib/calendarGrid.ts`, mirrored to `mobile/shared/`, and neither calendar keeps
+a copy: two implementations of "which day is this" are how one platform ends up a day off.
+*Enforced by:* `onboardingDatePickerGuard.test.ts` (both panels and both calendars, source), mutation-checked five
+ways, each red naming the file — native chip removed (1 red: no `onboarding-pick-date` in the
+block); `monthGrid` re-implemented in the native calendar, then in the web one (2 red each:
+not imported, re-implemented); `DateTimePicker` swapped in (2 red); the calendar moved into a
+`<Modal>` (1 red). Also `calendarGrid.test.ts` (TZ pinned per case; the `toISOString` bug put
+back is 3 red on UTC, Los Angeles and Tokyo hosts alike) and `CalendarPopover.test.tsx`.
+On a real simulator, `mobile/maestro/onboarding-date-picker.yaml` (in CI's iOS job) picks the
+15th of next month and asserts the answered chip, then taps the pace step's `Custom` chip and
+proves the composer took focus. Mutation-checked twice (2026-09-23): `Custom` made a no-op is
+red on the keyboard gate; the answered chip without `accessible` is red on its id+text match.
 
 ## I. Spend defence
 

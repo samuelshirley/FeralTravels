@@ -1,5 +1,5 @@
-# oauth-provider-probe — watches what native Sign in with Apple / Google
-# depends on, from outside, and files an issue when it breaks.
+# oauth-provider-probe — watches what Sign in with Apple / Google depends on,
+# native and web, from outside, and files an issue when it breaks.
 #
 # WHY. On 2026-09-21 Apple's JWKS endpoint answered 404 to ~1 request in 5 and
 # real Apple sign-ins failed in production. Nobody was told: the only signal
@@ -7,13 +7,14 @@
 # not fetch Apple's keys" with the same 401 a forged token gets. The server now
 # answers that case 503 ProviderUnavailable; this probe is what looks for it.
 #
-# WHAT. scripts/probe-oauth-providers.mjs — each provider's JWKS 30 times, and
-# the production exchange 5 times with a forged Apple token (the only healthy
+# WHAT. scripts/probe-oauth-providers.mjs — each provider's JWKS 30 times,
+# Apple's OpenID discovery document 30 times (web Sign in with Apple fetches it
+# twice per sign-in; issue #44), and the production exchange 5 times with a forged Apple token (the only healthy
 # answer is 401 InvalidToken). Why those numbers, and why the forged tokens do
 # not trip the exchange's rate limiter, is in the script's header.
 #
 # COST. Nothing: public repository, so Actions minutes are free, and the probe
-# makes no paid call — Apple's and Google's key endpoints are public, and the
+# makes no paid call — Apple's and Google's key and discovery endpoints are public, and the
 # forged token is refused before any Google Maps or Anthropic code runs. No
 # third-party service; the alert is a GitHub issue.
 #
@@ -85,12 +86,12 @@ jobs:
             echo
             echo "Latest run: $RUN_URL"
             echo
-            echo "What each alert means and what to look at: \`scripts/probe-oauth-providers.mjs\` (header) and \`src/server/auth/jwksSource.ts\`."
+            echo "What each alert means and what to look at: \`scripts/probe-oauth-providers.mjs\` (header), \`src/server/auth/jwksSource.ts\` (native keys) and \`src/server/auth/appleDiscovery.ts\` (web discovery)."
           } > "$body_file"
 
           if [ "$ALERT" = "true" ]; then
             if [ -z "$issue" ]; then
-              gh issue create --label "$LABEL" --title "OAuth provider probe: native sign-in dependency failing" --body-file "$body_file"
+              gh issue create --label "$LABEL" --title "OAuth provider probe: a sign-in dependency is failing" --body-file "$body_file"
               exit 0
             fi
             gh issue edit "$issue" --body-file "$body_file"
