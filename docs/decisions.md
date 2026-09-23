@@ -240,6 +240,18 @@ top-level `@auth/core` is a different copy with a different symbol; either way t
 and an empty-body 404 throws `SyntaxError` (issue #44). *Enforced by:* `appleProvider.test.ts`
 (mutation-checked against both regressions and against removal), `appleDiscovery.test.ts`.
 
+D11. **Every account deletion revokes the user's Sign in with Apple token, after the delete
+commits, and a failed revoke never un-deletes anyone.** App Review 5.1.1(v). Native Apple
+sign-in (build 12+) sends the authorization code; the server redeems it, checks the `sub`, and
+stores the refresh token encrypted in `accounts` (never plaintext; no key → not stored, logged).
+`deleteAccount.ts` reads the tokens, calls `deleteUserAccount`, then revokes; failures go to
+`/admin/errors` as `apple:revoke` / `apple:token-exchange`, and neither sign-in nor deletion ever
+fails on Apple's account. The way to lose this is a second delete path calling
+`deleteUserAccount` directly, which silently erases the only copy of the token. *Enforced by:*
+`appleRevokeGuard.test.ts` (mutation-checked: route calling `deleteUserAccount` directly, revoke
+removed, revoke moved before the delete, app no longer sending the code),
+`deleteAccount.test.ts`, `appleTokens.test.ts`.
+
 ## E. Payments
 
 E1. **`src/server/payments/` is a bounded module; `hasEntitlement(userId)` is the only question
