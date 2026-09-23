@@ -424,8 +424,9 @@ until the store worked. That path was deleted on 2026-09-21 (below).
 | Every e2e spec except `sub-purchase` | They set fixture state through `/api/test/subscription`, never through a store |
 
 **One deliberate behaviour change in the UI, and it is a downgrade of our own
-copy.** `priceLabel` in `constants.ts` (`"$2"`, `"$20"`) exists only as the
-fallback for an unreachable store; it is wrong in every currency but USD. Once
+copy.** `fallbackUsdLabel` in `constants.ts` (`"$2.69"`, `"$22.00"`; it was
+`priceLabel`, `"$2"`/`"$20"`, until 2026-09) exists only as the fallback for an
+unreachable store; it is wrong in every currency but USD. Once
 StoreKit is live the sheet must render **the store's own localized price
 string** — `product.priceString` off the package. Keep the constant as the
 offline fallback, but stop preferring it. A German user seeing "$2" on a

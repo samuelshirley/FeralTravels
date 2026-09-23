@@ -194,15 +194,22 @@ export class PurchaserUnknownError extends Error {
  *
  * `priceLabel` is `product.priceString` — Apple's own localized string for the
  * user's storefront, including the currency sign. It is not derived from
- * `priceUsd` and must not be: `constants.ts` documents its `priceLabel` as the
- * fallback for an unreachable store, and "$2" shown to somebody charged €2,49
+ * `fallbackUsdLabel` and must not be: `constants.ts` documents that as the
+ * fallback for an unreachable store, and "$2.69" shown to somebody charged €2
  * is a Guideline 3.1.2 disclosure problem, not a cosmetic one.
+ *
+ * `price` and `currencyCode` are the same price as numbers, for the one sum the
+ * sheet does (the annual saving). Same storefront, same source.
  */
 export interface StorePlan {
   /** The App Store product id — matches `PRODUCTS` in constants.ts. */
   productId: string;
-  /** Apple's localized price string, e.g. "$2.00", "€2,49", "£1.79". */
+  /** Apple's localized price string, e.g. "$2.69", "2,00 €", "CA$3.00". */
   priceLabel: string;
+  /** The same price as a number, in `currencyCode`. */
+  price: number;
+  /** ISO 4217, e.g. "USD", "EUR", "CAD". */
+  currencyCode: string;
 }
 
 /** Packages held by product id so `purchase()` can find the one to buy. */
@@ -262,6 +269,8 @@ export async function getStorePlans(): Promise<StorePlan[]> {
   return packages.map((p) => ({
     productId: p.product.identifier,
     priceLabel: p.product.priceString,
+    price: p.product.price,
+    currencyCode: p.product.currencyCode,
   }));
 }
 

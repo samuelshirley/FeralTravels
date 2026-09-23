@@ -207,7 +207,7 @@ test.describe('Subscriptions — trial', () => {
       'com.feraltravels.ios.annual',
       'com.feraltravels.ios.monthly',
     ]);
-    expect(entitlement.products.map((p) => p.priceLabel).sort()).toEqual(['$2', '$20']);
+    expect(entitlement.products.map((p) => p.priceLabel).sort()).toEqual(['$2.69', '$22.00']);
 
     // The web soft block: the notice appears, the button does not, and the
     // trips themselves stay readable — reading costs no Anthropic call and

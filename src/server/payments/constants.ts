@@ -51,31 +51,34 @@ export const STOP_MICROCENTS = dollars(8.5);
 export const CAP_WINDOW_DAYS = 365;
 
 /**
- * The two products, priced in whole dollars on purpose.
+ * The two products.
  *
- * Apple's December 2022 pricing overhaul added 700+ price points including
- * ones that do not end in .99, so $2.00 and $20.00 are both selectable in App
- * Store Connect. The annual is cheaper than 12× monthly ($20.00 vs $24.00) —
- * the normal discount for paying up front.
+ * THE REAL PRICES ARE NOT HERE. They are set per storefront in App Store
+ * Connect (US $2.69 / $22.00, Europe €2 / €20, Canada CA$3 / CA$30 as of
+ * 2026-09) and reach the app through StoreKit, localized. Changing a price is
+ * an App Store Connect job and needs no code change.
  *
- * `priceLabel` is what the purchase sheet renders when the store is
- * unreachable. Once StoreKit is live the sheet shows the store's own localized
- * price string instead, because these strings are wrong in every currency but
- * USD. See docs/design/revenuecat-implementation.md.
+ * `fallbackUsdPrice` / `fallbackUsdLabel` are the US prices, kept only so the
+ * purchase sheet has a rough indication of cost when the store cannot be
+ * reached. They are wrong in every other storefront, and they are never a
+ * basis for arithmetic: the "Save … a year" badge is computed from the store's
+ * numbers and is not shown at all without them (`annualSavingsNote` in
+ * src/lib/purchaseMode.ts). Keep them in step with the US storefront, and
+ * `displayPrice` in mobile/storekit/FeralTravels.storekit with them.
  */
 export const PRODUCTS = [
   {
     id: 'com.feraltravels.ios.monthly',
     period: 'month',
-    priceUsd: 2,
-    priceLabel: '$2',
+    fallbackUsdPrice: 2.69,
+    fallbackUsdLabel: '$2.69',
     cadence: 'per month',
   },
   {
     id: 'com.feraltravels.ios.annual',
     period: 'year',
-    priceUsd: 20,
-    priceLabel: '$20',
+    fallbackUsdPrice: 22.0,
+    fallbackUsdLabel: '$22.00',
     cadence: 'per year',
   },
 ] as const;

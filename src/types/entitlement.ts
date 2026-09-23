@@ -133,11 +133,17 @@ export interface EntitlementPayload {
 
 export interface PaywallProduct {
   id: string;
-  /** e.g. "$2" */
+  /** e.g. "$2.69" — the US fallback from the server, or the store's own string. */
   priceLabel: string;
   /** e.g. "per month" */
   cadence: string;
-  /** Set on the annual plan only: "Save $4 a year". */
+  /** Which plan this is, so the client can compare the two without matching ids. */
+  period: 'month' | 'year';
+  /**
+   * The annual plan's saving, e.g. "Save €4 a year". Never sent by the server:
+   * `resolvePurchaseMode` computes it from the STORE's prices, and only when it
+   * has them — see `annualSavingsNote`.
+   */
   note?: string;
 }
 
