@@ -69,8 +69,18 @@ describe('isBlockedWebPath', () => {
     expect(isBlockedWebPath('/get-the-app')).toBe(false);
   });
 
+  /**
+   * `/` is the public landing page, and it is allowed by EXACT match. A `/`
+   * prefix would unblock every path there is — which is why the app screens
+   * below include the old root `/signin` and an arbitrary `/x`.
+   */
+  it('never blocks the landing page or what it loads', () => {
+    expect(isBlockedWebPath('/'), '/ is the public landing page').toBe(false);
+    expect(isBlockedWebPath('/landing/penny.jpg'), 'the landing page loads this image').toBe(false);
+  });
+
   it('blocks every actual app screen', () => {
-    for (const p of ['/', '/trips', '/trips/abc-123', '/settings', '/vehicle-setup', '/admin', '/admin/users']) {
+    for (const p of ['/signin', '/trips', '/trips/abc-123', '/settings', '/vehicle-setup', '/admin', '/admin/users', '/x']) {
       expect(isBlockedWebPath(p), `${p} should show the download screen`).toBe(true);
     }
   });

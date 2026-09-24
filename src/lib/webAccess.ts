@@ -67,6 +67,8 @@ export const WEB_ALWAYS_ALLOWED = [
   '/terms',
   '/support',
   '/legal/',
+  // What the public landing page at `/` loads (see WEB_ALWAYS_ALLOWED_EXACT).
+  '/landing/',
   '/login',
   GET_THE_APP_PATH,
   '/_next',
@@ -75,6 +77,21 @@ export const WEB_ALWAYS_ALLOWED = [
   '/icon-',
   '/sw.js',
 ] as const;
+
+/**
+ * Paths allowed by EXACT match only, never as a prefix.
+ *
+ * `/` is the public landing page (2026-09-24): the App Store listing's own
+ * URL, what a stranger, a crawler and a reviewer all land on. It cannot go in
+ * the prefix list above — every path starts with `/`, so that one entry would
+ * switch the whole gate off without a single test noticing a page it let in.
+ *
+ * The middleware that calls this is not compiled today (it sits beside `src/`,
+ * not in it), so the in-page `requireWebAccess()` is the live gate. This is for
+ * the day it is revived: without it, the landing page and its images would be
+ * swapped for the download screen.
+ */
+export const WEB_ALWAYS_ALLOWED_EXACT = ['/'] as const;
 
 /**
  * True for a browser PAGE that the download screen should replace.
@@ -86,6 +103,7 @@ export const WEB_ALWAYS_ALLOWED = [
  */
 export function isBlockedWebPath(pathname: string): boolean {
   if (pathname.startsWith('/api/') || pathname === '/api') return false;
+  if (WEB_ALWAYS_ALLOWED_EXACT.some((p) => pathname === p)) return false;
   if (WEB_ALWAYS_ALLOWED.some((p) => pathname.startsWith(p))) return false;
   return true;
 }
