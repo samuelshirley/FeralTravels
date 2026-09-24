@@ -11,6 +11,13 @@
   color: inherit;
 }
 
+/* Widths below include their padding, so max-width is the width the eye sees. */
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
 /* ---- Hero ---- */
 
 .hero {
