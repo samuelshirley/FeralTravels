@@ -1,7 +1,8 @@
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import type { StopType } from "@/shared/types/trip";
+import type { ForcedStopReason, StopType } from "@/shared/types/trip";
 import { buildGoHereUrl } from "@/shared/lib/maps";
 import { formatKm } from "@/shared/lib/units";
+import { forcedStopLine } from "@/shared/lib/forcedStopReason";
 import { useUnits } from "@/lib/units";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
@@ -19,6 +20,8 @@ export interface StopCardProps {
   lng?: number | null;
   /** When true, dims the card and shows a spinner overlay. */
   loading?: boolean;
+  /** Why Finn forced this fuel stop; renders one line under the distance. */
+  forcedReason?: ForcedStopReason | null;
 }
 
 /**
@@ -57,10 +60,12 @@ export default function StopCard({
   lat,
   lng,
   loading = false,
+  forcedReason,
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
 
   const { units } = useUnits();
+  const forcedLine = forcedStopLine(stopType, forcedReason, units);
   // Directions from the device to the stop — never a dropped pin.
   const href = googleMapsUri ?? buildGoHereUrl(lat, lng);
 
@@ -79,6 +84,7 @@ export default function StopCard({
             {formatKm(distanceFromStartKm, units)} from start
           </Text>
         ) : null}
+        {forcedLine ? <Text style={styles.forced}>{forcedLine}</Text> : null}
       </View>
       {href ? <Text style={styles.openGlyph}>↗</Text> : null}
     </View>
@@ -137,6 +143,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     marginTop: 1,
   },
+  forced: { fontFamily: font.regular, fontSize: 10.5, color: theme.subtle, marginTop: 1 },
   openGlyph: { fontFamily: font.regular, fontSize: 14, color: theme.subtle },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

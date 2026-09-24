@@ -33,6 +33,7 @@ vi.mock('@/lib/fuelPlanErrorSemantics', () => ({
 
 // Must import StopsSection after mocks are set up
 import StopsSection from '../StopsSection';
+import { UnitsProvider } from '@/components/UnitsContext';
 
 afterEach(cleanup);
 
@@ -54,6 +55,7 @@ const mockFuelStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
+  forced_reason: null,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
 };
@@ -76,6 +78,7 @@ const mockUserStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
+  forced_reason: null,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
 };
@@ -95,6 +98,35 @@ beforeEach(() => {
 });
 
 describe('StopsSection (refactored)', () => {
+  /**
+   * The forced-stop reason lives on the TIMELINE ROW, which is where an active
+   * fuel stop is drawn — StopCard only draws dismissed ones. Only the stop Finn
+   * forced carries the line.
+   */
+  it("shows Finn's forced-stop reason on the forced fuel stop's row only", () => {
+    render(
+      <UnitsProvider initialUnits="imperial">
+        <StopsSection
+          tripId="00000000-0000-0000-0000-000000000001"
+          legId="00000000-0000-0000-0000-000000000010"
+          legStartName="Burgos"
+          legEndName="León"
+          legEndCoords={{ lat: 42.6, lng: -5.57 }}
+          initialStops={[
+            { ...mockFuelStop, forced_reason: { kind: 'next_fuel_far', gap_km: 412 } },
+            { ...mockUserStop, forced_reason: { kind: 'next_fuel_far', gap_km: 412 } },
+          ]}
+        />
+      </UnitsProvider>
+    );
+    const lines = screen.getAllByText(/^Top up here/);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].textContent).toBe('Top up here: next fuel is 256 mi away');
+    expect(lines[0].closest('[data-testid="stop-row"]')?.textContent).toContain(
+      'Repsol Burgos Norte'
+    );
+  });
+
   it('renders stop cards for active stops', () => {
     render(
       <StopsSection

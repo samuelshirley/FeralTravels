@@ -11,6 +11,18 @@
 > (range math, tank state, greedy placer, `no_stations_found` safety warning)
 > is unchanged. See `docs/plans/google-only-teardown.md`.
 
+> **Update 2026-09-24: the forced-stop reason is shown to the driver.** A forced
+> stop's reason is now data, `stops.forced_reason` jsonb
+> (`{ kind: 'next_fuel_far', gap_km }`, whole km; migration 0042, column add
+> only, table count unchanged), set by `planLegFuelStops` and written by
+> `server/fuel.ts`. Both clients word it through `forcedStopLine`
+> (`src/lib/forcedStopReason.ts`, mirrored) in the user's units: "Top up here:
+> next fuel is 412 km away" / "…256 mi away", one quiet line on the fuel stop's
+> timeline row and on `StopCard`. It used to exist only as English in `notes`,
+> baked in km and rendered nowhere; `notes` still carries that sentence, in km,
+> for Penny's context. Rows written before 0042 are **not** parsed out of
+> `notes`: they show no line until their leg is re-sourced.
+
 **Status:** Proposed
 **Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display)
 **Deciders:** Sam

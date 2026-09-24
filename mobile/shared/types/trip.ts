@@ -452,6 +452,13 @@ export interface StopAlternative {
   distance_km: number;
 }
 
+/**
+ * Why Finn forced a fuel stop, as data rather than a sentence, so each client
+ * words it in the user's units (`forcedStopLine` in src/lib/forcedStopReason.ts).
+ * `gap_km` is the fuel-free stretch after the stop, whole km.
+ */
+export type ForcedStopReason = { kind: 'next_fuel_far'; gap_km: number };
+
 export interface Stop {
   id: string;
   leg_id: string;
@@ -474,6 +481,8 @@ export interface Stop {
   place_id: string | null;
   /** Direct Google Maps link — persisted at planning time. */
   google_maps_uri: string | null;
+  /** Set by Finn on a forced fuel stop; null otherwise and on older rows. */
+  forced_reason: ForcedStopReason | null;
   created_at: string;
   updated_at: string;
 }

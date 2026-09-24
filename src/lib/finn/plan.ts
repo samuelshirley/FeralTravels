@@ -15,6 +15,8 @@
  * See docs/design/finn-fuel-agent.md → "The selection algorithm".
  */
 
+import type { ForcedStopReason } from '@/types/trip';
+
 export interface PlacementCandidate {
   /** Stable id (Google place id). */
   id: string;
@@ -42,9 +44,10 @@ export interface PlacedStop {
   /**
    * Mandatory when geography forces a top-up the driver wouldn't otherwise make
    * (a long dry stretch ahead). A forced stop *with* a reason reads as smart;
-   * without one it reads as broken. See CLAUDE.md Finn contract.
+   * without one it reads as broken. See CLAUDE.md Finn contract. Structured, so
+   * the client can word it in the user's units.
    */
-  reason?: string;
+  reason?: ForcedStopReason;
 }
 
 /**
@@ -162,9 +165,9 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
     // long run) is far enough that skipping this station risks running dry.
     const nextAfter = sorted.find((c) => c.alongKm > pick.alongKm + EPS);
     const gapAfterKm = (nextAfter ? nextAfter.alongKm : legLengthKm) - pick.alongKm;
-    let reason: string | undefined;
+    let reason: ForcedStopReason | undefined;
     if (nextAfter && gapAfterKm > R) {
-      reason = `next fuel is ${Math.round(gapAfterKm)} km away`;
+      reason = { kind: 'next_fuel_far', gap_km: Math.round(gapAfterKm) };
     }
 
     stops.push({

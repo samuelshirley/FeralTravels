@@ -502,9 +502,12 @@ async function planOneLeg(
         sourceUrl: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
         placeId: station.placeId,
         googleMapsUri: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
+        // Canonical km: `notes` is Penny's context, never rendered. The UI
+        // words `forcedReason` itself, in the user's units.
         notes: placed.reason
-          ? `Top up here — ${placed.reason}.`
+          ? `Top up here — next fuel is ${placed.reason.gap_km} km away.`
           : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
+        forcedReason: placed.reason ?? null,
         alternatives: null,
       });
     }

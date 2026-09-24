@@ -99,6 +99,9 @@ export const SHARED_FILES = [
   // code it keys on: the app decides when to ask again, but the test that
   // pins that decision lives here.
   ['src/lib/oauthExchangeRetry.ts', 'mobile/shared/lib/oauthExchangeRetry.ts'],
+  // The forced-fuel-stop line: both stop cards word Finn's reason through this
+  // one function, so the two clients cannot disagree on it or on its units.
+  ['src/lib/forcedStopReason.ts', 'mobile/shared/lib/forcedStopReason.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

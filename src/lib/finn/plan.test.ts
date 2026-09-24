@@ -83,7 +83,7 @@ describe('planLegFuelStops', () => {
     });
     // Tops up at 200 (350 km void to the next fuel) with an honest reason…
     expect(r.stops[0].candidate.id).toBe('b');
-    expect(r.stops[0].reason).toMatch(/350 km away/);
+    expect(r.stops[0].reason).toEqual({ kind: 'next_fuel_far', gap_km: 350 });
     // …and the 350 km hop past the 300 km range is a genuine gap warning.
     expect(r.kind).toBe('gap');
     if (r.kind !== 'gap') throw new Error('expected a gap');
