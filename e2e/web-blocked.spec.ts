@@ -51,8 +51,9 @@ import { testEndpointHeaders } from './fixtures/constants';
  *   → /login        ordinary auth redirect    → the gate is off
  *
  * INTENT comes from the project name. ci.yml runs this spec twice: once in the
- * `api` project against the ordinary preview, and once in `web-blocked` against
- * a second deployment of the same build carrying WEB_APP_ENABLED=0. So project
+ * `api` project against the ordinary preview (deployed with WEB_APP_ENABLED=1),
+ * and once in `web-blocked` against a second deployment of the same build with
+ * WEB_APP_ENABLED not passed at all — unset, as in production. So project
  * -> deployment -> flag is one chain with nothing to keep in step by hand.
  *
  * Observed and intended are then compared, and a mismatch is the most valuable
@@ -88,7 +89,7 @@ let WEB_ON = true;
 test.beforeAll(async ({}, testInfo) => {
   // The project's OWN baseURL, not the ambient env var. The `web-blocked`
   // project points at a second deployment of the same build with
-  // WEB_APP_ENABLED=0; reading E2E_BASE_URL here would have probed the open one
+  // WEB_APP_ENABLED unset; reading E2E_BASE_URL here would have probed the open one
   // and then asserted the blocked contract against it.
   const ctx = await playwrightRequest.newContext({
     baseURL:
