@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LANDING_POSTER, LANDING_VIDEO_RATE } from './config';
 
 /**
@@ -8,8 +8,14 @@ import { LANDING_POSTER, LANDING_VIDEO_RATE } from './config';
  *
  * Mounted only after hydration, and only without Reduce Motion, so the video
  * never competes with first paint: the poster <img> is the LCP element and the
- * clip is laid over it, carrying the same poster until its first frame. A reduced-motion visitor never
- * downloads it at all — hiding it with CSS alone would still fetch the file.
+ * clip is laid over it, carrying the same poster until its first frame. A
+ * reduced-motion visitor never downloads it at all — hiding it with CSS alone
+ * would still fetch the file.
+ *
+ * RESUMES ON FOREGROUND, the lesson PennyPlanningVideo learned (architecture.md):
+ * browsers pause a backgrounded video, and `autoPlay` is a load-time attribute
+ * that never fires twice. Without this, switching tabs and back leaves a frozen
+ * frame behind the headline.
  */
 export default function HeroVideo({
   src,
@@ -23,15 +29,35 @@ export default function HeroVideo({
   className: string;
 }) {
   const [motionOk, setMotionOk] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setMotionOk(!window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }, []);
 
+  // Reduce Motion still wins: with it on there is no video to resume.
+  useEffect(() => {
+    if (!motionOk) return;
+    const resume = () => {
+      if (document.visibilityState !== 'visible') return;
+      const v = videoRef.current;
+      if (!v || !v.paused) return;
+      // Decoration: a refused play() leaves the poster, which is fine.
+      v.play().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('pageshow', resume);
+    return () => {
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('pageshow', resume);
+    };
+  }, [motionOk]);
+
   if (!motionOk) return null;
 
   return (
     <video
+      ref={videoRef}
       className={className}
       autoPlay
       muted
