@@ -16,15 +16,20 @@ import { PUBLIC_PATH_PREFIXES } from './paywallPaths';
  * and the first report is a reviewer or a user.
  */
 describe('webAppEnabled', () => {
-  it('defaults ON, so a missing env var is a working app and not a blank site', () => {
-    expect(webAppEnabled({})).toBe(true);
-    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(true);
+  /**
+   * The bug this default fixes: production never had the variable set, so an
+   * ON-by-default switch left the web open to anyone who signed up (2026-09-24).
+   */
+  it('defaults OFF, so a missing env var is a locked web and not an open one', () => {
+    expect(webAppEnabled({})).toBe(false);
+    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(false);
   });
 
-  it('is off only for the exact string "0"', () => {
-    expect(webAppEnabled({ WEB_APP_ENABLED: '0' })).toBe(false);
-    expect(webAppEnabled({ WEB_APP_ENABLED: 'false' })).toBe(true);
-    expect(webAppEnabled({ WEB_APP_ENABLED: '' })).toBe(true);
+  it('is on only for the exact string "1"', () => {
+    expect(webAppEnabled({ WEB_APP_ENABLED: '1' })).toBe(true);
+    for (const v of ['0', 'false', '', 'true', ' 1']) {
+      expect(webAppEnabled({ WEB_APP_ENABLED: v }), `WEB_APP_ENABLED=${JSON.stringify(v)}`).toBe(false);
+    }
   });
 });
 
