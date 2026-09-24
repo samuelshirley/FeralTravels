@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // this file need its real pattern rather than a copy that could drift from it.
 vi.mock('server-only', () => ({}));
 import { isBlockedWebPath, webAppEnabled, WEB_ALWAYS_ALLOWED } from './webAccess';
-import { PUBLIC_PATH_PREFIXES } from './paywallPaths';
+import { PUBLIC_EXACT_PATHS, PUBLIC_PATH_PREFIXES } from './paywallPaths';
 
 /**
  * The web-off switch, and the paths it must never take with it.
@@ -107,6 +107,9 @@ describe('isBlockedWebPath', () => {
         isBlockedWebPath(probe),
         `${p} is in PUBLIC_PATH_PREFIXES but WEB_ALWAYS_ALLOWED does not cover it`
       ).toBe(false);
+    }
+    for (const p of PUBLIC_EXACT_PATHS) {
+      expect(isBlockedWebPath(p), `${p} is in PUBLIC_EXACT_PATHS but the web gate blocks it`).toBe(false);
     }
   });
 

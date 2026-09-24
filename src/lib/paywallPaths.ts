@@ -52,12 +52,23 @@ export const PUBLIC_PATH_PREFIXES = [
   // image to the reviewer fetching the page. One prefix instead of one entry
   // per file: put assets referenced by these pages in public/legal/.
   '/legal/',
+  // What the public landing page at `/` loads (see PUBLIC_EXACT_PATHS).
+  '/landing/',
   '/_next',
   '/favicon.ico',
   '/manifest.json',
   '/icon-',
   '/sw.js',
 ] as const;
+
+/**
+ * Reachable with no session by EXACT match only, never as a prefix.
+ *
+ * `/` is the public landing page (2026-09-24). In the prefix list above it
+ * would match every path there is and quietly make the whole app public.
+ * Mirrors `WEB_ALWAYS_ALLOWED_EXACT` in `webAccess.ts`.
+ */
+export const PUBLIC_EXACT_PATHS = ['/'] as const;
 
 /**
  * Paths a signed-in but unentitled user keeps.
@@ -84,12 +95,16 @@ function matches(prefixes: readonly string[], pathname: string): boolean {
   return prefixes.some((p) => pathname.startsWith(p));
 }
 
+function isPublicExact(pathname: string): boolean {
+  return PUBLIC_EXACT_PATHS.some((p) => pathname === p);
+}
+
 /** Reachable with no session. */
 export function isPublicPath(pathname: string): boolean {
-  return matches(PUBLIC_PATH_PREFIXES, pathname);
+  return isPublicExact(pathname) || matches(PUBLIC_PATH_PREFIXES, pathname);
 }
 
 /** Reachable by a signed-in user the paywall would otherwise refuse. */
 export function isPaywallExempt(pathname: string): boolean {
-  return matches(PAYWALL_EXEMPT_PREFIXES, pathname);
+  return isPublicExact(pathname) || matches(PAYWALL_EXEMPT_PREFIXES, pathname);
 }
