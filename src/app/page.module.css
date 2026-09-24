@@ -1,0 +1,282 @@
+/* The landing page. Nocturne tokens only (globals.css); no palette of its own. */
+
+.page {
+  --landing-gutter: clamp(20px, 5vw, 56px);
+  background: var(--tp-bg);
+  color: var(--tp-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page a {
+  color: inherit;
+}
+
+/* ---- Hero ---- */
+
+.hero {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--tp-bg);
+}
+
+.heroMedia {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The dark grey overlay, fading into the page ground so the hero has no hard edge. */
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(18, 18, 20, 0.55) 0%, rgba(18, 18, 20, 0.5) 55%, var(--tp-bg) 100%);
+}
+
+.bar {
+  position: relative;
+  z-index: 1;
+  padding: 20px var(--landing-gutter);
+}
+
+.wordmark {
+  font-size: var(--tp-text-sm);
+  font-weight: 600;
+  letter-spacing: 0.15em;
+}
+
+.heroBody {
+  position: relative;
+  z-index: 1;
+  margin: auto 0;
+  padding: 0 var(--landing-gutter) 12vh;
+  max-width: 760px;
+}
+
+.headline {
+  font-size: clamp(34px, 6vw, 60px);
+  line-height: 1.08;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0 0 18px;
+}
+
+.lede {
+  font-size: clamp(16px, 2vw, 19px);
+  line-height: 1.55;
+  color: var(--tp-text);
+  opacity: 0.88;
+  margin: 0 0 28px;
+  max-width: 34em;
+}
+
+.badge {
+  display: inline-block;
+  line-height: 0;
+  border-radius: var(--tp-radius-md);
+}
+
+.badge:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus-ring);
+}
+
+/* ---- Sections ---- */
+
+.section {
+  padding: 72px var(--landing-gutter);
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: var(--tp-accent-400);
+  text-transform: uppercase;
+  margin: 0 0 12px;
+}
+
+.h2 {
+  font-size: clamp(24px, 3.2vw, 34px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0 0 32px;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.step {
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius-lg);
+  padding: 22px;
+}
+
+.stepNumber {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--tp-accent-900);
+  color: var(--tp-accent-400);
+  font-size: var(--tp-text-sm);
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.h3 {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+
+.stepBody {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--tp-muted);
+  margin: 0;
+}
+
+.prompts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+/* A chat bubble, tail bottom-left like one of the user's own messages. */
+.bubble {
+  background: var(--tp-primary-tint);
+  border: 1px solid var(--tp-accent-700);
+  border-radius: 18px 18px 18px 4px;
+  padding: 16px 18px;
+  font-size: 15.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.shots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.shot {
+  width: 100%;
+  height: auto;
+  border-radius: 34px;
+  border: 1px solid var(--tp-border-strong);
+}
+
+.dogs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 260px));
+  gap: 28px;
+}
+
+.dog {
+  margin: 0;
+}
+
+.dogPhoto {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--tp-radius-lg);
+  display: block;
+}
+
+.dogName {
+  display: block;
+  font-weight: 500;
+  font-size: 17px;
+  margin: 14px 0 4px;
+}
+
+.dogRole {
+  color: var(--tp-muted);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.countries {
+  columns: 4;
+  column-gap: 24px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 14.5px;
+  color: var(--tp-muted);
+  line-height: 2;
+}
+
+.footer {
+  border-top: 1px solid var(--tp-border);
+  padding: 28px var(--landing-gutter);
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  font-size: var(--tp-text-sm);
+  color: var(--tp-subtle);
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.footer a {
+  text-decoration: none;
+  color: var(--tp-muted);
+}
+
+.footer a:hover {
+  color: var(--tp-text);
+}
+
+.footerName {
+  margin-left: auto;
+}
+
+@media (max-width: 760px) {
+  .section {
+    padding: 56px 20px;
+  }
+
+  .steps,
+  .prompts {
+    grid-template-columns: 1fr;
+  }
+
+  .shots {
+    grid-template-columns: repeat(3, 70%);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+
+  .shot {
+    scroll-snap-align: start;
+  }
+
+  .dogs {
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .countries {
+    columns: 2;
+  }
+}

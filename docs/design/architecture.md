@@ -15,6 +15,8 @@ src/
     api/              # REST endpoints (see API Routes below)
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # Admin dashboard: users/, vehicles/, chats/, errors/, announcements/, deleted/
+    page.tsx          # PUBLIC landing page (2026-09-24): hero video, how it works, example prompts, the dogs, the 32 countries. No auth() — ungated in webAccessCoverage.test.ts. Its pieces (video env vars + 0.6x rate, screenshot list, country list) live in components/landing/; the clip is on Vercel Blob, never in git.
+    signin/           # What `/` used to be: requireWebAccess(), then /login or /trips. The PWA manifest's start_url.
     login/            # OTP + Google auth flow (verify/ sub-route)
     error.tsx         # The app's ONLY error boundary. Branches on `error.digest` so an unreachable session store says "you have not been signed out" instead of the generic line; Try again calls reset(). Before it existed every server exception rendered Next's stock "Application error" screen.
     settings/         # User settings page (Vehicle profile + the Danger zone / delete-account section)

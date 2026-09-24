@@ -42,6 +42,7 @@ function pageRoutes(dir: string, acc: string[] = []): string[] {
  * App Store Connect and the Google Cloud console.
  */
 const UNGATED: Record<string, string> = {
+  'src/app/page.tsx': 'the public landing page — strangers, crawlers and reviewers land here; the app moved to /signin',
   'src/app/(legal)/privacy/page.tsx': 'submitted to Apple App Review and Google brand verification; fetched anonymously',
   'src/app/(legal)/terms/page.tsx': 'same — the URL is in App Store Connect',
   'src/app/(legal)/support/page.tsx': 'the contact route a reviewer uses',
@@ -71,6 +72,18 @@ describe('web-off gate covers every page', () => {
         `session cookie. Add \`await requireWebAccess()\` as the first statement, or add ` +
         `the route to UNGATED in this file with the reason it must stay open.`
     ).toEqual([]);
+  });
+
+  /**
+   * `/signin` is where `/` used to send the app. It is a gate by definition —
+   * it hands a stranger to /login and the admin to /trips — so if it ever lands
+   * on the list above, the web-off switch has a hole at the front door.
+   */
+  it('/signin, the old root, is gated', () => {
+    const r = 'src/app/signin/page.tsx';
+    expect(routes).toContain(r);
+    expect(r in UNGATED).toBe(false);
+    expect(readFileSync(join(ROOT, r), 'utf8')).toContain('await requireWebAccess()');
   });
 
   it('the ungated list has no stale entries', () => {
