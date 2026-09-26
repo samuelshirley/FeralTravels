@@ -17,7 +17,6 @@ import {
   usageAlerts,
   pennyTurns,
   chatHistory,
-  stops,
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
