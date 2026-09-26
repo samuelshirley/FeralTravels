@@ -10,16 +10,25 @@ import type { ForcedStopReason, StopType } from '../types/trip';
 import { formatKm, type UnitsPref } from '../lib/units';
 
 /**
- * "Top up here: next fuel is 412 km away" / "…256 mi away", or null when there
- * is nothing to say: not a fuel stop, not forced, or a reason this client does
- * not know how to word (a newer server's kind is hidden, not mis-rendered).
+ * "Top up here: next fuel is 412 km away" / "…256 mi away" — with ", on the
+ * next day's drive" when the stop is for tomorrow's first stretch — or null
+ * when there is nothing to say: not a fuel stop, not forced, or a reason this
+ * client does not know how to word (a newer server's kind is hidden, not
+ * mis-rendered).
  */
 export function forcedStopLine(
   stopType: StopType,
   reason: ForcedStopReason | null | undefined,
   units: UnitsPref
 ): string | null {
-  if (stopType !== 'fuel' || !reason) return null;
-  if (reason.kind !== 'next_fuel_far' || !Number.isFinite(reason.gap_km)) return null;
-  return `Top up here: next fuel is ${formatKm(reason.gap_km, units)} away`;
+  if (stopType !== 'fuel' || !reason || !Number.isFinite(reason.gap_km)) return null;
+  const line = `Top up here: next fuel is ${formatKm(reason.gap_km, units)} away`;
+  switch (reason.kind) {
+    case 'next_fuel_far':
+      return line;
+    case 'next_day_fuel_far':
+      return `${line}, on the next day's drive`;
+    default:
+      return null;
+  }
 }

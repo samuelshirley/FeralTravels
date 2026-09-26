@@ -12,16 +12,21 @@
 > is unchanged. See `docs/plans/google-only-teardown.md`.
 
 > **Update 2026-09-24: the forced-stop reason is shown to the driver.** A forced
-> stop's reason is now data, `stops.forced_reason` jsonb
-> (`{ kind: 'next_fuel_far', gap_km }`, whole km; migration 0042, column add
-> only, table count unchanged), set by `planLegFuelStops` and written by
-> `server/fuel.ts`. Both clients word it through `forcedStopLine`
+> stop's reason is now data, `stops.forced_reason` jsonb (migration 0042, column
+> add only, table count unchanged), set by `planLegFuelStops` and written by
+> `server/fuel.ts`. Two kinds, `gap_km` in whole km:
+> `{ kind: 'next_fuel_far', gap_km }` — the next station on this day is beyond
+> range; `{ kind: 'next_day_fuel_far', gap_km }` — the stop is for the next
+> drive day's first stretch (§2b below), `gap_km` running
+> to that day's first station. Both clients word it through `forcedStopLine`
 > (`src/lib/forcedStopReason.ts`, mirrored) in the user's units: "Top up here:
-> next fuel is 412 km away" / "…256 mi away", one quiet line on the fuel stop's
-> timeline row and on `StopCard`. It used to exist only as English in `notes`,
-> baked in km and rendered nowhere; `notes` still carries that sentence, in km,
-> for Penny's context. Rows written before 0042 are **not** parsed out of
-> `notes`: they show no line until their leg is re-sourced.
+> next fuel is 412 km away" / "…256 mi away", plus ", on the next day's drive"
+> for the second kind — one quiet line on the fuel stop's timeline row and on
+> `StopCard`. A kind the client does not know shows no line. It used to exist
+> only as English in `notes`, baked in km and rendered nowhere; `notes` still
+> carries the equivalent sentence, in km, for Penny's context. Rows written
+> before 0042 are **not** parsed out of `notes`: they show no line until their
+> leg is re-sourced.
 
 **Status:** Proposed
 **Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display)
@@ -135,8 +140,9 @@ this was not the lazy-order bug `sourcingOrder.ts` fixed.
 **The rule now.** Planning a day also reads the NEXT drive day's stations and
 makes sure the tank arrives with enough to reach that day's first one
 (`fuelNeededAtLegStartKm` → `planLegFuelStops({ arrivalReserveKm })`). A stop
-placed only for that carries the reason *"next fuel is N km away, on the next
-day's drive"*. If no station left on the day can make it, the day is still
+placed only for that carries the reason `{ kind: 'next_day_fuel_far', gap_km }`,
+shown as *"Top up here: next fuel is N km away, on the next day's drive"* in the
+driver's units. If no station left on the day can make it, the day is still
 planned (it is drivable) and the next day raises its own warning; that
 shortfall is its geography.
 
