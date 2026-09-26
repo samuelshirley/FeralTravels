@@ -83,14 +83,12 @@ export default function LandingPage() {
           priority
           sizes="100vw"
         />
-        {LANDING_VIDEO_URL && (
-          <HeroVideo
-            className={styles.heroMedia}
-            src={LANDING_VIDEO_URL}
-            smallSrc={LANDING_VIDEO_URL_SMALL}
-            type={LANDING_VIDEO_TYPE}
-          />
-        )}
+        <HeroVideo
+          className={styles.heroMedia}
+          src={LANDING_VIDEO_URL}
+          smallSrc={LANDING_VIDEO_URL_SMALL}
+          type={LANDING_VIDEO_TYPE}
+        />
         <div className={styles.bar}>
           <span className={styles.wordmark}>FERAL TRAVELS</span>
         </div>
