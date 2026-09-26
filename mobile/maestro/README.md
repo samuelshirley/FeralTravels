@@ -14,6 +14,7 @@ prove you can see it while typing, which is exactly the bug that shipped
 | `launch.yaml` | harness | The driver came up, the build installed, the app renders its first screen. No network. |
 | `sign-in.yaml` | wiring | The real OTP sign-in, end to end, against the API. |
 | `chat-keyboard.yaml` | behaviour | The regression: composer reachable and operable **while the keyboard is up**. |
+| `maps-link-stop.yaml` | behaviour | A real Google share link (fetched live) lands as a stop on the Porto → Lisbon day. Seeds via `seed-maps-link-stop.js`; no Anthropic call. |
 
 **Read that table top to bottom when a run is red.** The three layers fail with
 very different causes and, until this split existed, with the same message: an
