@@ -5,6 +5,7 @@ import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
 import { buildGoHereUrl } from "@/shared/lib/maps";
 import { formatKm } from "@/shared/lib/units";
+import { forcedStopLine } from "@/shared/lib/forcedStopReason";
 import { useUnits } from "@/lib/units";
 import StopCard from "@/components/StopCard";
 import { useStopActions } from "@/components/useStopActions";
@@ -136,6 +137,8 @@ export default function StopsSection({
       isEndpoint: boolean;
       href: string | null;
       stop: Stop | null;
+      /** Finn's forced-stop reason, worded in the user's units; null otherwise. */
+      forcedLine: string | null;
     };
 
     const rows: Row[] = [];
@@ -152,6 +155,7 @@ export default function StopsSection({
         isEndpoint: true,
         href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
         stop: null,
+        forcedLine: null,
       });
     }
 
@@ -167,6 +171,7 @@ export default function StopsSection({
         isEndpoint: false,
         href: mapsHref(stop.lat, stop.lng),
         stop,
+        forcedLine: forcedStopLine(stop.stop_type, stop.forced_reason, units),
       });
     }
 
@@ -181,11 +186,12 @@ export default function StopsSection({
         isEndpoint: true,
         href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
         stop: null,
+        forcedLine: null,
       });
     }
 
     return rows;
-  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops]);
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units]);
 
   return (
     <>
@@ -294,6 +300,9 @@ export default function StopsSection({
                   <Text style={styles.timelineName} numberOfLines={1}>
                     {row.name}
                   </Text>
+                  {row.forcedLine ? (
+                    <Text style={styles.timelineForced}>{row.forcedLine}</Text>
+                  ) : null}
                 </View>
 
                 <Text style={styles.timelineDistance}>
@@ -374,6 +383,7 @@ export default function StopsSection({
                     stopType={stop.stop_type}
                     name={stop.name}
                     distanceFromStartKm={stop.distance_from_start_km}
+                    forcedReason={stop.forced_reason}
                     lat={stop.lat}
                     lng={stop.lng}
                   />
@@ -477,6 +487,7 @@ const styles = StyleSheet.create({
     color: theme.subtle,
   },
   timelineName: { fontSize: 13.5, fontFamily: font.medium, color: theme.text },
+  timelineForced: { fontSize: 10.5, fontFamily: font.regular, color: theme.subtle, marginTop: 1 },
   timelineDistance: {
     fontSize: 10.5,
     fontFamily: font.regular,

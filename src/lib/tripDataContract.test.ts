@@ -79,6 +79,7 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
     alternatives: null,
     place_id: 'ChIJ_test_place_id',
     google_maps_uri: 'https://www.google.com/maps/place/?q=place_id:ChIJ_test_place_id',
+    forced_reason: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
     ...overrides,
@@ -152,6 +153,15 @@ describe('Trip data contract — fields required by the UI', () => {
       });
       expect(stop.place_id).toBeNull();
       expect(stop.google_maps_uri).toBeNull();
+    });
+
+    it('carries forced_reason as data, so each client words it in its own units', () => {
+      const stop = makeStop({ forced_reason: { kind: 'next_fuel_far', gap_km: 412 } });
+      expect(JSON.parse(JSON.stringify(stop)).forced_reason).toEqual({
+        kind: 'next_fuel_far',
+        gap_km: 412,
+      });
+      expect(makeStop()).toHaveProperty('forced_reason', null);
     });
   });
 
