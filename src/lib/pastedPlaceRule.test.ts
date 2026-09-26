@@ -36,6 +36,16 @@ describe('<pasted_place_disambiguation>', () => {
     expect(rule).toMatch(/already been added as a stop is not a second candidate/);
   });
 
+  // Second failure mode, same spec (run 36244591299, 2 of 3 attempts): Penny
+  // knew the place but still asked "I'm assuming you want to make that your
+  // overnight spot. Is that right?" instead of calling update_leg.
+  it('applies an explicit day end at an already-resolved place without confirming', () => {
+    expect(rule).toMatch(/EXPLICIT END \+ KNOWN PLACE → APPLY, DON'T CONFIRM/);
+    expect(rule).toMatch(/Make the edit in this turn: update_leg on that day's DRIVE leg/);
+    expect(rule).toMatch(/Do NOT ask them to confirm/);
+    expect(rule).toMatch(/BAD: "I'm assuming you want to make that your overnight spot\. Is that right\?"/);
+  });
+
   it('keeps the question for genuinely several candidates', () => {
     expect(rule).toMatch(/Ask which place only when there are genuinely several different candidates/);
   });

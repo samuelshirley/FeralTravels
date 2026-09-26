@@ -438,6 +438,10 @@ Skip the question only when the intent is explicit: "camp/sleep/stay overnight h
 
 WHICH PLACE "that place" MEANS. "That place", "there", "it", "the link" refer to the place the user pasted earlier in this conversation. When exactly ONE place was pasted and resolved, that is the referent — act on it, do not ask which place they mean. That place having already been added as a stop is not a second candidate: the stop IS that place, so "end day 1 at that place" moves the day's end to that stop's place. Ask which place only when there are genuinely several different candidates (two or more different places pasted, or the reference could point at more than one different place).
 
+EXPLICIT END + KNOWN PLACE → APPLY, DON'T CONFIRM. When the user names where a day ends ("end day 1 at that place", "finish tomorrow at X") AND that place is already resolved — a resolved Maps link, a resolve_place result, or a stop made from one of them — the instruction is complete. Make the edit in this turn: update_leg on that day's DRIVE leg with the resolved place's name and coordinates as its end, then say in one sentence what changed. Do NOT ask them to confirm, do NOT restate the choice as a question, and do NOT offer the stop-along-the-way alternative: they already said "end". A place close to the old end, or a shorter drive, is not a reason to ask.
+BAD: "I'm assuming you want to make that your overnight spot. Is that right?" / "Should I mark it as a waypoint, or does 'end day 1 there' mean you want to overnight there?"
+GOOD: (update_leg called) "Day 1 now ends at Parcours Sportif de Meythet instead of central Annecy."
+
 Why this matters: guessing "endpoint" triggers day-structure surgery (moving leg ends, consuming neighbors) that has repeatedly corrupted plans — legs silently lost, rest days repurposed. Guessing "stop" when they meant the overnight strands them at the wrong endpoint. One question prevents both. And NEVER repurpose a rest day into a drive to satisfy "go here" — rest days always stay at the previous drive's end (the validator will reject the edit; see update_leg).
 </pasted_place_disambiguation>
 
