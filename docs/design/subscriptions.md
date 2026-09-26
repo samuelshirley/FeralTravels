@@ -206,7 +206,7 @@ Web is subscription-gated, with the App Store as the only way in.
 
 | State | Web gets |
 |---|---|
-| Signed out | Marketing landing page, App Store link, sign-in. **Not** a bare wall |
+| Signed out | The landing page at `/` (`src/app/page.tsx`, exists since 2026-09-24): App Store badge, sign-in in the footer (`/signin`). **Not** a bare wall |
 | Signed in, in trial | Full access |
 | Signed in, subscribed | Full access |
 | Signed in, trial expired / unsubscribed | Soft block: "Continue on iPhone" + App Store link. Existing trips readable |
@@ -417,7 +417,7 @@ bypass anywhere in this codebase.
 | `sub-refunded` | `REFUND` notification processed | Blocked immediately, including existing trips |
 | `sub-refund-requested` | `CONSUMPTION_REQUEST` received, no `REFUND` | **Still full access.** Consumption answered from `usage_events`. Revoking here would cut off a customer whose refund Apple may decline |
 | `sub-comped` | Fixture/allowlist account | No paywall, no cap, `usage_events` still written |
-| `sub-web-signed-out` | No session | Landing page + App Store link. **Not** a bare wall |
+| `sub-web-signed-out` | No session | `/` is the landing page (`src/app/page.tsx`, exists since 2026-09-24): 200, App Store badge, no notice. `/signin` and `/trips` end at `/login` or `/get-the-app` per the web switch. **Not** a bare wall |
 | `sub-web-unsubscribed` | Signed in, expired | "Continue on iPhone", trips readable |
 | `sub-legal-still-public` | Paywall enabled | `/privacy`, `/terms`, `/support` return 200 signed out |
 

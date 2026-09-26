@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // this file need its real pattern rather than a copy that could drift from it.
 vi.mock('server-only', () => ({}));
 import { isBlockedWebPath, webAppEnabled, WEB_ALWAYS_ALLOWED } from './webAccess';
-import { PUBLIC_PATH_PREFIXES } from './paywallPaths';
+import { PUBLIC_EXACT_PATHS, PUBLIC_PATH_PREFIXES } from './paywallPaths';
 
 /**
  * The web-off switch, and the paths it must never take with it.
@@ -16,15 +16,20 @@ import { PUBLIC_PATH_PREFIXES } from './paywallPaths';
  * and the first report is a reviewer or a user.
  */
 describe('webAppEnabled', () => {
-  it('defaults ON, so a missing env var is a working app and not a blank site', () => {
-    expect(webAppEnabled({})).toBe(true);
-    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(true);
+  /**
+   * The bug this default fixes: production never had the variable set, so an
+   * ON-by-default switch left the web open to anyone who signed up (2026-09-24).
+   */
+  it('defaults OFF, so a missing env var is a locked web and not an open one', () => {
+    expect(webAppEnabled({})).toBe(false);
+    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(false);
   });
 
-  it('is off only for the exact string "0"', () => {
-    expect(webAppEnabled({ WEB_APP_ENABLED: '0' })).toBe(false);
-    expect(webAppEnabled({ WEB_APP_ENABLED: 'false' })).toBe(true);
-    expect(webAppEnabled({ WEB_APP_ENABLED: '' })).toBe(true);
+  it('is on only for the exact string "1"', () => {
+    expect(webAppEnabled({ WEB_APP_ENABLED: '1' })).toBe(true);
+    for (const v of ['0', 'false', '', 'true', ' 1']) {
+      expect(webAppEnabled({ WEB_APP_ENABLED: v }), `WEB_APP_ENABLED=${JSON.stringify(v)}`).toBe(false);
+    }
   });
 });
 
@@ -64,8 +69,18 @@ describe('isBlockedWebPath', () => {
     expect(isBlockedWebPath('/get-the-app')).toBe(false);
   });
 
+  /**
+   * `/` is the public landing page, and it is allowed by EXACT match. A `/`
+   * prefix would unblock every path there is — which is why the app screens
+   * below include the old root `/signin` and an arbitrary `/x`.
+   */
+  it('never blocks the landing page or what it loads', () => {
+    expect(isBlockedWebPath('/'), '/ is the public landing page').toBe(false);
+    expect(isBlockedWebPath('/landing/penny.jpg'), 'the landing page loads this image').toBe(false);
+  });
+
   it('blocks every actual app screen', () => {
-    for (const p of ['/', '/trips', '/trips/abc-123', '/settings', '/vehicle-setup', '/admin', '/admin/users']) {
+    for (const p of ['/signin', '/trips', '/trips/abc-123', '/settings', '/vehicle-setup', '/admin', '/admin/users', '/x']) {
       expect(isBlockedWebPath(p), `${p} should show the download screen`).toBe(true);
     }
   });
@@ -92,6 +107,9 @@ describe('isBlockedWebPath', () => {
         isBlockedWebPath(probe),
         `${p} is in PUBLIC_PATH_PREFIXES but WEB_ALWAYS_ALLOWED does not cover it`
       ).toBe(false);
+    }
+    for (const p of PUBLIC_EXACT_PATHS) {
+      expect(isBlockedWebPath(p), `${p} is in PUBLIC_EXACT_PATHS but the web gate blocks it`).toBe(false);
     }
   });
 

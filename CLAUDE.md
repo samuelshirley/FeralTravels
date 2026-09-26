@@ -103,6 +103,7 @@ Annotated tree — what each piece is for, and the bug that shaped it:
 ```
 src/
   app/
+    page.tsx          # PUBLIC landing (/), no auth; signin/ = the old root redirect
     api/              # REST endpoints (see API Routes)
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # users/ vehicles/ chats/ errors/ announcements/ deleted/
