@@ -49,6 +49,12 @@ interface StopsSectionProps {
    * the scroll target. Null = nothing highlighted.
    */
   highlightStopId?: string | null;
+  /**
+   * The owning leg is a base day (`leg_type: 'rest'`). Fuel does not apply, so
+   * no fuel status or empty-state copy is drawn, and a day with no stops draws
+   * nothing at all; its stops render as ordinary timeline rows.
+   */
+  restDay?: boolean;
 }
 
 /*
@@ -92,6 +98,7 @@ export default function StopsSection({
   onChanged,
   readonly = false,
   highlightStopId = null,
+  restDay = false,
 }: StopsSectionProps) {
   const {
     activeStops,
@@ -111,6 +118,7 @@ export default function StopsSection({
   // A past day never shows fuel planning as running — even if the leg was left
   // in a stale 'computing'/'pending' state, we don't re-plan history.
   const fuelPlanning =
+    !restDay &&
     !isPast &&
     (fuelLoading || fuelStatus === 'computing' || fuelStatus === 'pending');
   const pathname = usePathname();
@@ -204,6 +212,10 @@ export default function StopsSection({
     return rows;
   }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units]);
 
+  if (restDay && activeStops.length === 0 && dismissedStops.length === 0) return null;
+  // A base day is never fuel-planned; whatever fuel state it carries is not news.
+  const fuelUi = !restDay;
+
   return (
     <>
       {/* STOPS */}
@@ -219,7 +231,7 @@ export default function StopsSection({
         )}
 
         {/* Fuel error: vehicle profile */}
-        {!readonly && fuelStatus === 'failed' && fuelErrorCategory === 'user_vehicle_profile' && (
+        {fuelUi && !readonly && fuelStatus === 'failed' && fuelErrorCategory === 'user_vehicle_profile' && (
           <div
             style={{
               marginBottom: 8,
@@ -249,7 +261,7 @@ export default function StopsSection({
         )}
 
         {/* Fuel error: platform */}
-        {!readonly && fuelStatus === 'failed' && fuelErrorCategory !== 'user_vehicle_profile' && (
+        {fuelUi && !readonly && fuelStatus === 'failed' && fuelErrorCategory !== 'user_vehicle_profile' && (
           <div
             style={{
               marginBottom: 8,
@@ -278,7 +290,7 @@ export default function StopsSection({
             not a failure. Penny couldn't auto-plan a stop because the route is
             genuinely too remote; the user must carry extra fuel or plan a stop
             manually. Shown in readonly too — it's a safety signal. */}
-        {fuelStatus === 'no_stations_found' && (
+        {fuelUi && fuelStatus === 'no_stations_found' && (
           <div
             style={{
               marginBottom: 8,
@@ -488,7 +500,8 @@ export default function StopsSection({
           })}
         </div>
 
-        {sortedStops.length === 0 &&
+        {fuelUi &&
+          sortedStops.length === 0 &&
           !fuelPlanning &&
           fuelStatus !== 'failed' &&
           fuelStatus !== 'no_stations_found' && (

@@ -374,3 +374,52 @@ describe('stop rows navigate', () => {
     expect(new URL(link.getAttribute('href') ?? '').pathname).toBe('/maps/dir/');
   });
 });
+
+describe('StopsSection in restDay mode (a base day)', () => {
+  const base = {
+    tripId: '00000000-0000-0000-0000-000000000001',
+    legId: '00000000-0000-0000-0000-000000000010',
+    legStartName: null,
+    legEndName: null,
+    restDay: true,
+  };
+
+  it('renders nothing when the day has no stops', () => {
+    const { container } = render(<StopsSection {...base} initialStops={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows no fuel UI even when handed a fuel status', () => {
+    for (const fuelStatus of ['computing', 'failed', 'no_stations_found'] as const) {
+      render(
+        <StopsSection
+          {...base}
+          initialStops={[mockUserStop]}
+          fuelStatus={fuelStatus}
+          fuelPlanError="Places API error"
+          fuelLoading
+        />
+      );
+      expect(screen.getByText('Camping Ciudad de León')).toBeInTheDocument();
+      expect(screen.queryByText('Planning fuel stops…')).toBeNull();
+      expect(screen.queryByText(/Fuel planning/)).toBeNull();
+      expect(screen.queryByText(/No fuel stations found/)).toBeNull();
+      expect(screen.queryByText(/Places API error/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('renders nothing for an empty day even with a failed fuel status', () => {
+    const { container } = render(
+      <StopsSection {...base} initialStops={[]} fuelStatus="failed" fuelLoading />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows no fuel empty-state copy when every stop is dismissed', () => {
+    render(<StopsSection {...base} initialStops={[{ ...mockUserStop, status: 'dismissed' }]} />);
+    expect(screen.getByText('1 DISMISSED')).toBeInTheDocument();
+    expect(screen.queryByText(/fuel stops appear here/)).toBeNull();
+    expect(screen.queryByText(/No stops/)).toBeNull();
+  });
+});

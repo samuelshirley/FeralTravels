@@ -398,6 +398,19 @@ export default function LegCard({
             </View>
           ) : null}
 
+          <StopsSection
+            restDay
+            tripId={tripId}
+            legId={leg.id}
+            legStartName={null}
+            legEndName={null}
+            initialStops={leg.stops}
+            isPast={isPast}
+            onChanged={onChanged}
+            readonly={readonly}
+            highlightStopId={highlightStopId}
+          />
+
           {/* Add to this day button — hands Penny the context for this rest day */}
           {!readonly ? (
             <Pressable
