@@ -8,6 +8,10 @@
  * `R − B` (the vehicle's fuel range, never crossed). It walks the leg placing
  * the fewest safe stops.
  *
+ * A leg's end is not a destination to arrive at empty: tomorrow's drive has to
+ * reach ITS first station on what is left. `arrivalReserveKm` carries that
+ * distance in, and the walk treats the leg as ending that much further on.
+ *
  * Pure + dependency-light: no I/O, no LLM. The server layer (`server/fuel.ts`)
  * feeds it candidates already projected onto the route and filtered for
  * eligibility (`stationFilter.ts`); this module only decides *which* and *where*.
@@ -33,6 +37,22 @@ export interface PlacementInput {
   kmBurnedAtStart: number;
   /** Eligible, route-projected candidates (any order). */
   candidates: PlacementCandidate[];
+  /**
+   * Fuel the tank must still hold when this leg ends, km: how far the NEXT
+   * drive day runs before its first station ([[fuelNeededAtLegStartKm]]).
+   * 0 / absent when there is no next drive day.
+   *
+   * Without it the greedy walk stopped the moment the leg END was in reach, so
+   * a day could finish on fumes. Spain trip `da203241` (2026-09-24): Monzón →
+   * Cabrales arrived with 20 km left and the next day's first station was 27 km
+   * in ("beyond safe range (20 km)"); Madrid → Isla Mayor topped up at km 3,
+   * drove 549 of 550 km, and handed the next day an "impossible tank state".
+   *
+   * Best effort: if no station on this leg can make the reserve, the leg is
+   * still planned (it can be finished) and the NEXT day raises its own honest
+   * warning — the shortfall is that day's geography, not this one's.
+   */
+  arrivalReserveKm?: number;
 }
 
 export interface PlacedStop {
@@ -82,11 +102,15 @@ export interface PlacementGap {
  * and the walk-back in `fuelTankState.ts` counted its full distance as burned.
  * Trip `ab824cde` leg 11 reached B = 2,396 km against R = 500 and told the
  * driver "Next fuel is 44 km ahead — beyond safe range (-1896 km)" — a real
- * station 44 km away, described as unreachable, on a full tank.
+ * station 44 km away, described as unreachable, on a full tank. The other
+ * way in was a day planned to arrive with 0 km to spare (Spain trip
+ * `da203241`, "550 km burned against a 550 km range"), closed by
+ * `arrivalReserveKm`.
  *
  * The server maps this to a RETRYABLE `failed`, never the 48h-cached
- * `no_stations_found`. After the sourcing cascade in `server/fuel.ts` it should
- * be unreachable; it is logged so we find out if it is not.
+ * `no_stations_found`. After the sourcing cascade and the next-day look-ahead
+ * in `server/fuel.ts` it should be unreachable; it is logged so we find out if
+ * it is not.
  */
 export interface PlacementTankStateInvalid {
   kind: 'tank_state_invalid';
@@ -110,12 +134,52 @@ function choose(pool: PlacementCandidate[]): PlacementCandidate {
 }
 
 /**
+ * A station's along-route position, in the km the tank walk reads back.
+ *
+ * The walk (`fuelTankState.ts`) measures a leg by `legs.distance_km` and a stop
+ * by its stored whole-km `distance_from_start_km`; projection measures along
+ * the decoded polyline, which runs ~0.3% short of the Directions distance. When
+ * the planner used one set of numbers and the walk read back the other, a day
+ * that arrived with 0–1 km to spare came back 1–2 km over range the next day.
+ * Planning on exactly what will be read back makes the two agree to the km.
+ */
+export function alongKmOnLeg(
+  polylineAlongKm: number,
+  polylineLengthKm: number,
+  legLengthKm: number
+): number {
+  if (!(polylineLengthKm > 0)) return Math.round(polylineAlongKm);
+  return Math.round((polylineAlongKm * legLengthKm) / polylineLengthKm);
+}
+
+/**
+ * How much fuel a drive day needs in the tank when it starts, km: enough to
+ * reach its first station, or its end if there is none before it. Capped at R —
+ * a full tank is the most the day before can hand over.
+ *
+ * Measured with the same filter [[planLegFuelStops]] applies, so a station the
+ * planner would not use does not count as "fuel ahead" here either.
+ */
+export function fuelNeededAtLegStartKm(
+  legLengthKm: number,
+  candidates: PlacementCandidate[],
+  rangeKm: number
+): number {
+  let first = legLengthKm;
+  for (const c of candidates) {
+    if (c.alongKm > EPS && c.alongKm < first) first = c.alongKm;
+  }
+  return Math.max(0, Math.min(first, rangeKm));
+}
+
+/**
  * Plan the fuel stops for one leg. Greedy: from each refuel anchor, take the
- * farthest stop within range, refuel, and repeat until the leg end is
- * reachable.
+ * farthest stop within range, refuel, and repeat until the leg end — plus the
+ * next day's first stretch, `arrivalReserveKm` — is reachable.
  */
 export function planLegFuelStops(input: PlacementInput): PlacementResult {
   const { legLengthKm, rangeKm: R } = input;
+  const reserve = Math.max(0, input.arrivalReserveKm ?? 0);
 
   // STRUCTURAL GUARD. Below this line every branch may assume there is fuel in
   // the tank. `reach` is `R - burnAtAnchor`, and a negative reach makes every
@@ -140,15 +204,20 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
     const reach = R - burnAtAnchor; // furthest drivable from the anchor
     const distToEnd = legLengthKm - anchorKm;
 
-    // End reachable on the current tank → done.
-    if (distToEnd <= reach + EPS) {
+    // End reachable on the current tank, with the next day's first stretch
+    // still in it → done.
+    if (distToEnd + reserve <= reach + EPS) {
       return { kind: 'planned', stops };
     }
+    const endReachable = distToEnd <= reach + EPS;
 
     const ahead = sorted.filter((c) => c.alongKm > anchorKm + EPS);
     const safe = ahead.filter((c) => c.alongKm - anchorKm <= reach + EPS);
 
     if (safe.length === 0) {
+      // Only the reserve is out of reach, and nothing left on this leg can
+      // help: finish the leg; the next day warns about its own dry start.
+      if (endReachable) return { kind: 'planned', stops };
       const next = ahead[0];
       const gapDetail = next
         ? `Next fuel is ${Math.round(next.alongKm - anchorKm)} km ahead — beyond safe range (${Math.round(reach)} km). Carry extra fuel or top up earlier.`
@@ -165,6 +234,11 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
     let reason: string | undefined;
     if (nextAfter && gapAfterKm > R) {
       reason = `next fuel is ${Math.round(gapAfterKm)} km away`;
+    } else if (endReachable) {
+      // Today alone would not need this stop; tomorrow's first fuel does. The
+      // leg end was in reach, so every station left on the leg was too and
+      // this is the last one — the next fuel is on the next day's drive.
+      reason = `next fuel is ${Math.round(gapAfterKm + reserve)} km away, on the next day's drive`;
     }
 
     stops.push({
