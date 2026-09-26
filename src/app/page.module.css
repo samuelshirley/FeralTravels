@@ -82,13 +82,24 @@
   max-width: 34em;
 }
 
-.badge {
+.page .cta {
   display: inline-block;
-  line-height: 0;
+  padding: 14px 24px;
   border-radius: var(--tp-radius-md);
+  background: var(--tp-primary);
+  color: var(--tp-on-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: background 0.15s ease;
 }
 
-.badge:focus-visible {
+.page .cta:hover {
+  background: var(--tp-primary-hover);
+}
+
+.page .cta:focus-visible {
   outline: none;
   box-shadow: var(--tp-focus-ring);
 }

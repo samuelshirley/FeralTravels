@@ -97,9 +97,9 @@ export default function LandingPage() {
         <div className={styles.heroBody}>
           <h1 className={styles.headline}>Tell Penny where you&apos;re going. She plans the drive.</h1>
           <p className={styles.lede}>{DESCRIPTION}</p>
-          <a href={APP_STORE_URL} className={styles.badge}>
-            {/* Apple's badge artwork; the image is the whole label. */}
-            <Image src="/landing/app-store-badge.svg" alt="Download on the App Store" width={162} height={54} />
+          {/* Text, not Apple's logo: the logo is only allowed inside the official badge. */}
+          <a href={APP_STORE_URL} className={styles.cta}>
+            Get the app
           </a>
         </div>
       </header>
@@ -201,7 +201,6 @@ export default function LandingPage() {
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
         <Link href="/support">Support</Link>
-        <Link href="/signin">Sign in</Link>
         <span className={styles.footerName}>Feral Travels</span>
       </footer>
     </div>
