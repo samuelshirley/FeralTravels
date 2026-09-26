@@ -3,12 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { APP_STORE_URL } from '@/lib/paywallCopy';
 import HeroVideo from '@/components/landing/HeroVideo';
-import {
-  LANDING_POSTER,
-  LANDING_VIDEO_TYPE,
-  LANDING_VIDEO_URL,
-  LANDING_VIDEO_URL_SMALL,
-} from '@/components/landing/config';
+import { LANDING_POSTER, LANDING_POSTER_HEIGHT, LANDING_POSTER_WIDTH } from '@/components/landing/config';
 import { LANDING_COUNTRIES } from '@/components/landing/countries';
 import { LANDING_SCREENSHOTS } from '@/components/landing/screenshots';
 import styles from './page.module.css';
@@ -38,7 +33,14 @@ export const metadata: Metadata = {
     description: DESCRIPTION,
     siteName: 'Feral Travels',
     type: 'website',
-    images: [{ url: LANDING_POSTER, width: 1280, height: 720, alt: 'Penny running down a forest track' }],
+    images: [
+      {
+        url: LANDING_POSTER,
+        width: LANDING_POSTER_WIDTH,
+        height: LANDING_POSTER_HEIGHT,
+        alt: 'Penny running down a forest track',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
@@ -83,12 +85,7 @@ export default function LandingPage() {
           priority
           sizes="100vw"
         />
-        <HeroVideo
-          className={styles.heroMedia}
-          src={LANDING_VIDEO_URL}
-          smallSrc={LANDING_VIDEO_URL_SMALL}
-          type={LANDING_VIDEO_TYPE}
-        />
+        <HeroVideo className={styles.heroMedia} />
         <div className={styles.bar}>
           <span className={styles.wordmark}>FERAL TRAVELS</span>
         </div>

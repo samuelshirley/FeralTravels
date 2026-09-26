@@ -1,37 +1,69 @@
 /**
  * The landing page's hero video, read in one place.
  *
- * The clip IS in the repo (Sam, 2026-09-26): public/landing/hero-1920.mp4
- * (1080p) and hero-1280.mp4 (720p), 3.9 s of Penny at normal speed, muted, no
- * audio track, metadata stripped. They are encoded at 1x on purpose;
- * LANDING_VIDEO_RATE below slows the loop to ~6.5 s in the browser.
+ * TWO SOURCES, one switch — `NEXT_PUBLIC_LANDING_VIDEO_BASE_URL`:
  *
- * Three optional variables override the committed files, e.g. with a
- * higher-resolution copy on Vercel Blob:
+ * - UNSET (the default): the clip committed in public/landing/ (Sam,
+ *   2026-09-26). hero-1920.mp4 (1080p) and hero-1280.mp4 (720p), 3.9 s of
+ *   Penny at NORMAL speed, muted, no audio track, metadata stripped. Played at
+ *   0.6x, a ~6.5 s loop.
+ * - SET: the 4K copy on the Vercel Blob store `feral-travels-media`, e.g.
+ *   https://x4hcb3okuf17fqdz.public.blob.vercel-storage.com/hero/v1/ (with
+ *   or without the trailing slash). A 6.17 s seamless loop, ALREADY slowed to
+ *   0.6x at a true 30 fps, so it plays at 1x. Built by a script outside git; to
+ *   change it, upload hero/v2/ and point the variable there.
  *
- *   NEXT_PUBLIC_LANDING_VIDEO_URL        replaces hero-1920.mp4
- *   NEXT_PUBLIC_LANDING_VIDEO_URL_SMALL  replaces hero-1280.mp4, served to
- *                                        screens ≤900px wide via <source media>
- *   NEXT_PUBLIC_LANDING_VIDEO_TYPE       MIME type for both sources; the
- *                                        committed clip is mp4, the default
+ * THE RATE FOLLOWS THE SOURCE. It is chosen with the sources in
+ * `landingVideo()` and never set on its own: the Blob files at 0.6x would play
+ * Penny at 0.36x, the committed ones at 1x would race.
  *
- * A visitor with Reduce Motion gets the poster image alone and never
- * downloads the clip.
+ * WHY BLOB IS OPT-IN: the Vercel Hobby plan caps Blob transfer at 10 GB a
+ * month (about 560 desktop plays), and past that Blob is locked for 30 days.
+ * The committed clip is served by the normal CDN with no such cap.
  *
- * NEXT_PUBLIC_ values are inlined at build time, so each is referenced by its
- * literal name — `process.env[name]` would read undefined in the browser.
+ * A visitor with Reduce Motion gets the poster alone and downloads neither.
  */
-export const LANDING_VIDEO_URL = process.env.NEXT_PUBLIC_LANDING_VIDEO_URL || '/landing/hero-1920.mp4';
 
-export const LANDING_VIDEO_URL_SMALL = process.env.NEXT_PUBLIC_LANDING_VIDEO_URL_SMALL || '/landing/hero-1280.mp4';
+export type LandingVideoSource = { src: string; type: string; media?: string };
+export type LandingVideo = { sources: readonly LandingVideoSource[]; rate: number };
 
-export const LANDING_VIDEO_TYPE = process.env.NEXT_PUBLIC_LANDING_VIDEO_TYPE || 'video/mp4';
+/** Phones and small screens take the first source; everything else falls through. */
+const SMALL_SCREEN = '(max-width: 1080px)';
+
+const COMMITTED: LandingVideo = {
+  sources: [
+    { media: SMALL_SCREEN, src: '/landing/hero-1280.mp4', type: 'video/mp4' },
+    { src: '/landing/hero-1920.mp4', type: 'video/mp4' },
+  ],
+  rate: 0.6,
+};
 
 /**
- * A still of Penny from the clip, not its first frame (the clip fades up from
- * black); the whole hero under Reduce Motion.
+ * Pure, so the choice is unit-tested (config.test.ts). The codec strings on the
+ * Blob sources let a browser that cannot decode HEVC skip it without
+ * downloading any of it and fall to the 2160p h264.
+ */
+export function landingVideo(baseUrl: string | undefined): LandingVideo {
+  const base = baseUrl?.trim().replace(/\/+$/, '');
+  if (!base) return COMMITTED;
+  return {
+    sources: [
+      { media: SMALL_SCREEN, src: `${base}/hero-1080p-h264.mp4`, type: 'video/mp4; codecs="avc1.640029"' },
+      { src: `${base}/hero-2160p-hevc.mp4`, type: 'video/mp4; codecs="hvc1.2.4.L150.B0"' },
+      { src: `${base}/hero-2160p-h264.mp4`, type: 'video/mp4; codecs="avc1.640033"' },
+    ],
+    rate: 1,
+  };
+}
+
+// NEXT_PUBLIC_ values are inlined at build time, so the variable is referenced
+// by its literal name — `process.env[name]` would read undefined in the browser.
+export const LANDING_VIDEO = landingVideo(process.env.NEXT_PUBLIC_LANDING_VIDEO_BASE_URL);
+
+/**
+ * The first bright frame of the loop (Penny far down the track), so the poster
+ * hands over to the video without a jump. The whole hero under Reduce Motion.
  */
 export const LANDING_POSTER = '/landing/hero-poster.jpg';
-
-/** Penny runs at 0.6x: at full speed the loop reads as a jittery GIF behind the headline. */
-export const LANDING_VIDEO_RATE = 0.6;
+export const LANDING_POSTER_WIDTH = 1920;
+export const LANDING_POSTER_HEIGHT = 1080;

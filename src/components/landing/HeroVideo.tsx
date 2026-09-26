@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { LANDING_POSTER, LANDING_VIDEO_RATE } from './config';
+import { LANDING_POSTER, LANDING_VIDEO } from './config';
 
 /**
  * The looping clip behind the hero, layered over the server-rendered poster.
@@ -17,17 +17,7 @@ import { LANDING_POSTER, LANDING_VIDEO_RATE } from './config';
  * that never fires twice. Without this, switching tabs and back leaves a frozen
  * frame behind the headline.
  */
-export default function HeroVideo({
-  src,
-  smallSrc,
-  type,
-  className,
-}: {
-  src: string;
-  smallSrc: string | null;
-  type: string;
-  className: string;
-}) {
+export default function HeroVideo({ className }: { className: string }) {
   const [motionOk, setMotionOk] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -69,12 +59,15 @@ export default function HeroVideo({
       onLoadedMetadata={(e) => {
         const v = e.currentTarget;
         // Safari resets playbackRate to defaultPlaybackRate on load; set both.
-        v.defaultPlaybackRate = LANDING_VIDEO_RATE;
-        v.playbackRate = LANDING_VIDEO_RATE;
+        // The rate belongs to the source (config.ts): 0.6 committed, 1 Blob.
+        v.defaultPlaybackRate = LANDING_VIDEO.rate;
+        v.playbackRate = LANDING_VIDEO.rate;
       }}
     >
-      {smallSrc && smallSrc !== src && <source src={smallSrc} type={type} media="(max-width: 900px)" />}
-      <source src={src} type={type} />
+      {/* In order: the browser plays the first source it can. */}
+      {LANDING_VIDEO.sources.map((s) => (
+        <source key={s.src} src={s.src} type={s.type} media={s.media} />
+      ))}
     </video>
   );
 }
