@@ -51,6 +51,12 @@ interface StopsSectionProps {
    * card gets a highlight outline. Null = nothing highlighted.
    */
   highlightStopId?: string | null;
+  /**
+   * The owning leg is a base day (`leg_type: 'rest'`). Fuel does not apply, so
+   * no fuel status or empty-state copy is drawn, and a day with no stops draws
+   * nothing at all; its stops render as ordinary timeline rows.
+   */
+  restDay?: boolean;
 }
 
 const TYPE_ORDER: StopType[] = ["fuel", "other"];
@@ -78,6 +84,7 @@ export default function StopsSection({
   onChanged,
   readonly = false,
   highlightStopId = null,
+  restDay = false,
 }: StopsSectionProps) {
   const router = useRouter();
   const { units } = useUnits();
@@ -102,7 +109,7 @@ export default function StopsSection({
   // A past day never shows fuel planning as running — even if the leg was left
   // in a stale 'computing'/'pending' state, we don't re-plan history.
   const fuelPlanning =
-    !isPast && (fuelLoading || fuelStatus === "computing" || fuelStatus === "pending");
+    !restDay && !isPast && (fuelLoading || fuelStatus === "computing" || fuelStatus === "pending");
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
 
   // --- Sort stops for display: by distance from start, then type ---
@@ -187,6 +194,10 @@ export default function StopsSection({
     return rows;
   }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops]);
 
+  if (restDay && activeStops.length === 0 && dismissedStops.length === 0) return null;
+  // A base day is never fuel-planned; whatever fuel state it carries is not news.
+  const fuelUi = !restDay;
+
   return (
     <>
       {/* STOPS */}
@@ -205,7 +216,7 @@ export default function StopsSection({
             Hand-rolled rather than <Banner> because the copy is one flowing
             sentence with a bold lead-in; Banner splits title and body onto
             separate lines. */}
-        {!readonly && fuelStatus === "failed" && fuelErrorCategory === "user_vehicle_profile" ? (
+        {fuelUi && !readonly && fuelStatus === "failed" && fuelErrorCategory === "user_vehicle_profile" ? (
           <View style={[styles.notice, styles.noticeInfo]}>
             <Text style={styles.noticeText}>
               <Text style={styles.noticeStrongInfo}>Finish your vehicle profile</Text> so we
@@ -225,7 +236,7 @@ export default function StopsSection({
         ) : null}
 
         {/* Fuel error: platform */}
-        {!readonly && fuelStatus === "failed" && fuelErrorCategory !== "user_vehicle_profile" ? (
+        {fuelUi && !readonly && fuelStatus === "failed" && fuelErrorCategory !== "user_vehicle_profile" ? (
           <View style={[styles.notice, styles.noticeDanger]}>
             <Text style={[styles.noticeText, styles.noticeTextDanger]}>
               <Text style={styles.noticeStrongDanger}>
@@ -243,7 +254,7 @@ export default function StopsSection({
             not a failure. Penny couldn't auto-plan a stop because the route is
             genuinely too remote; the user must carry extra fuel or plan a stop
             manually. Shown in readonly too — it's a safety signal. */}
-        {fuelStatus === "no_stations_found" ? (
+        {fuelUi && fuelStatus === "no_stations_found" ? (
           <View style={[styles.notice, styles.noticeWarning]}>
             <Text style={styles.noticeText}>
               <Text style={styles.noticeStrongWarning}>
@@ -341,7 +352,8 @@ export default function StopsSection({
           })}
         </View>
 
-        {sortedStops.length === 0 &&
+        {fuelUi &&
+        sortedStops.length === 0 &&
         !fuelPlanning &&
         fuelStatus !== "failed" &&
         fuelStatus !== "no_stations_found" ? (
