@@ -103,6 +103,7 @@ Annotated tree — what each piece is for, and the bug that shaped it:
 ```
 src/
   app/
+    page.tsx          # PUBLIC landing (/), no auth; signin/ = the old root redirect
     api/              # REST endpoints (see API Routes)
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # users/ vehicles/ chats/ errors/ announcements/ deleted/
@@ -143,11 +144,11 @@ api/promo/redeem api/routes api/routes/[id]
 api/routes/[id]/links api/routes/[id]/select api/stops api/stops/[id]
 api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
 api/tasks/[id] api/test/announcement api/test/breakers api/test/cleanup
-api/test/deletion api/test/otp api/test/promo api/test/seed
-api/test/subscription api/test/trip api/test/turn api/trip api/trip/replan
-api/trips api/trips/[id] api/trips/[id]/clone api/trips/[id]/onboarding
-api/trips/[id]/position api/trips/[id]/turns api/vehicles api/vehicles/[id]
-api/webhooks/revenuecat
+api/test/deletion api/test/maps-link-stop api/test/otp api/test/promo
+api/test/seed api/test/subscription api/test/trip api/test/turn api/trip
+api/trip/replan api/trips api/trips/[id] api/trips/[id]/clone
+api/trips/[id]/onboarding api/trips/[id]/position api/trips/[id]/turns
+api/vehicles api/vehicles/[id] api/webhooks/revenuecat
 ```
 
 **`api/test/*` are TEST-ONLY** (fixture DATA only), backed by
@@ -244,11 +245,11 @@ reappears in `src/`.
 ### iOS E2E (`mobile/maestro/`)
 
 `launch.yaml`, `sign-in.yaml`, `chat-keyboard.yaml`, `chat-tab-in-flight.yaml`,
-`onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `settings-location.yaml`,
-`screenshots.yaml` — Maestro flows driving a real iOS simulator against the PR's
-own preview. **Start at `docs/design/ios-e2e-bringup.md`**: what is proven, what
-is not, and the traps (Xcode pairing, Release-vs-Debug, the keychain, the
-software keyboard).
+`onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `maps-link-stop.yaml`,
+`settings-location.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
+simulator against the PR's own preview. **Start at
+`docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
+(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
 
 ## Lockdown invariants (load-bearing — do not loosen)
 

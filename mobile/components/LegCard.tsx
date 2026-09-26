@@ -303,7 +303,7 @@ export default function LegCard({
         selected && styles.cardSelected,
       ]}
     >
-      <Pressable onPress={onToggle} style={styles.headerRow}>
+      <Pressable onPress={onToggle} style={styles.headerRow} testID={`leg-card-${leg.id}`}>
         <View
           style={[
             styles.dot,
@@ -397,6 +397,19 @@ export default function LegCard({
               ))}
             </View>
           ) : null}
+
+          <StopsSection
+            restDay
+            tripId={tripId}
+            legId={leg.id}
+            legStartName={null}
+            legEndName={null}
+            initialStops={leg.stops}
+            isPast={isPast}
+            onChanged={onChanged}
+            readonly={readonly}
+            highlightStopId={highlightStopId}
+          />
 
           {/* Add to this day button — hands Penny the context for this rest day */}
           {!readonly ? (

@@ -519,6 +519,17 @@ On a real simulator, `mobile/maestro/onboarding-date-picker.yaml` (in CI's iOS j
 proves the composer took focus. Mutation-checked twice (2026-09-23): `Custom` made a no-op is
 red on the keyboard gate; the answered chip without `accessible` is red on its id+text match.
 
+H20. **A base day (`leg_type: 'rest'`) lists its stops, on both platforms, with no fuel UI.**
+`getTrip` always returned a rest leg's stops and both maps plotted them, but the card's rest-day
+branch never rendered StopsSection (web since it first appeared, iOS since the `480074e` port), so
+a stop put on a base day was saved and never listed. The rest branch now renders
+`<StopsSection restDay>`: the same timeline rows as a drive day's `other` stops, no START /
+DESTINATION rows (LOCATION already names the place), no fuel status or fuel empty-state copy, and
+nothing at all when the day has no stops. *Enforced by:* `restDayStopsGuard.test.ts` (native,
+source), mutation-checked three ways — StopsSection removed from the native rest branch, the
+`restDay` flag dropped from it, the empty-day null gate removed (1 red each); also
+`LegCard.restDayStops.test.tsx` and `StopsSection.test.tsx` (web, jsdom, the real StopsSection).
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

@@ -33,6 +33,7 @@ vi.mock('@/lib/fuelPlanErrorSemantics', () => ({
 
 // Must import StopsSection after mocks are set up
 import StopsSection from '../StopsSection';
+import { UnitsProvider } from '@/components/UnitsContext';
 
 afterEach(cleanup);
 
@@ -54,6 +55,7 @@ const mockFuelStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
+  forced_reason: null,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
 };
@@ -76,6 +78,7 @@ const mockUserStop: Stop = {
   alternatives: null,
   place_id: null,
   google_maps_uri: null,
+  forced_reason: null,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
 };
@@ -95,6 +98,35 @@ beforeEach(() => {
 });
 
 describe('StopsSection (refactored)', () => {
+  /**
+   * The forced-stop reason lives on the TIMELINE ROW, which is where an active
+   * fuel stop is drawn — StopCard only draws dismissed ones. Only the stop Finn
+   * forced carries the line.
+   */
+  it("shows Finn's forced-stop reason on the forced fuel stop's row only", () => {
+    render(
+      <UnitsProvider initialUnits="imperial">
+        <StopsSection
+          tripId="00000000-0000-0000-0000-000000000001"
+          legId="00000000-0000-0000-0000-000000000010"
+          legStartName="Burgos"
+          legEndName="León"
+          legEndCoords={{ lat: 42.6, lng: -5.57 }}
+          initialStops={[
+            { ...mockFuelStop, forced_reason: { kind: 'next_fuel_far', gap_km: 412 } },
+            { ...mockUserStop, forced_reason: { kind: 'next_fuel_far', gap_km: 412 } },
+          ]}
+        />
+      </UnitsProvider>
+    );
+    const lines = screen.getAllByText(/^Top up here/);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].textContent).toBe('Top up here: next fuel is 256 mi away');
+    expect(lines[0].closest('[data-testid="stop-row"]')?.textContent).toContain(
+      'Repsol Burgos Norte'
+    );
+  });
+
   it('renders stop cards for active stops', () => {
     render(
       <StopsSection
@@ -340,5 +372,54 @@ describe('stop rows navigate', () => {
     );
     const link = screen.getByRole('link', { name: /León in Google Maps/i });
     expect(new URL(link.getAttribute('href') ?? '').pathname).toBe('/maps/dir/');
+  });
+});
+
+describe('StopsSection in restDay mode (a base day)', () => {
+  const base = {
+    tripId: '00000000-0000-0000-0000-000000000001',
+    legId: '00000000-0000-0000-0000-000000000010',
+    legStartName: null,
+    legEndName: null,
+    restDay: true,
+  };
+
+  it('renders nothing when the day has no stops', () => {
+    const { container } = render(<StopsSection {...base} initialStops={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows no fuel UI even when handed a fuel status', () => {
+    for (const fuelStatus of ['computing', 'failed', 'no_stations_found'] as const) {
+      render(
+        <StopsSection
+          {...base}
+          initialStops={[mockUserStop]}
+          fuelStatus={fuelStatus}
+          fuelPlanError="Places API error"
+          fuelLoading
+        />
+      );
+      expect(screen.getByText('Camping Ciudad de León')).toBeInTheDocument();
+      expect(screen.queryByText('Planning fuel stops…')).toBeNull();
+      expect(screen.queryByText(/Fuel planning/)).toBeNull();
+      expect(screen.queryByText(/No fuel stations found/)).toBeNull();
+      expect(screen.queryByText(/Places API error/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('renders nothing for an empty day even with a failed fuel status', () => {
+    const { container } = render(
+      <StopsSection {...base} initialStops={[]} fuelStatus="failed" fuelLoading />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows no fuel empty-state copy when every stop is dismissed', () => {
+    render(<StopsSection {...base} initialStops={[{ ...mockUserStop, status: 'dismissed' }]} />);
+    expect(screen.getByText('1 DISMISSED')).toBeInTheDocument();
+    expect(screen.queryByText(/fuel stops appear here/)).toBeNull();
+    expect(screen.queryByText(/No stops/)).toBeNull();
   });
 });

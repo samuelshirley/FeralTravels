@@ -1,0 +1,55 @@
+# THE REGRESSION FLOW for the Maps share link that would not resolve,
+# 2026-09-26. Read this before changing anything here.
+#
+# Pasting `https://maps.app.goo.gl/ys3PKbHMPZbQq8o29?g_st=ic` into Penny's chat
+# on iOS ("Add this overnight location for my stop in Lisbon") got "The Maps
+# link couldn't be resolved". Google now 302s that link three times to
+# `www.google.com/maps?q=<address>` and serves a page whose only coordinates
+# are in the og:image staticmap; the resolver read none of it.
+#
+# seed-maps-link-stop.js seeds the canonical trip, then drives the real link
+# through Penny's own add_stop path server-side (no model, no Anthropic call —
+# see the script). It throws, naming the resolver's `stage`, if the link does
+# not resolve to Praça do Comércio. This flow then proves the stop is what the
+# DRIVER sees: the Porto → Lisbon day card lists it.
+#
+# LIVE GOOGLE: the link is fetched live, on purpose. One free redirect walk,
+# zero paid Places calls on today's page. If Google changes the page again,
+# this goes red with the stage in the error — which is the point.
+#
+# WHY THE DAY IS OPENED BY ID and not "expand every day": only the Porto →
+# Lisbon card is opened. The seed stamps every sourced leg's fuel cache fresh,
+# so opening it re-sources nothing; opening an UNSOURCED day (Lisbon → Madrid
+# area) would run a paid Finn search.
+appId: ${APP_ID}
+---
+- runScript: seed-maps-link-stop.js
+
+- runFlow: sign-in.yaml
+
+- tapOn:
+    text: '.*${output.tripName}.*'
+
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+
+- scrollUntilVisible:
+    element:
+      id: 'leg-card-${output.legId}'
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: 'leg-card-${output.legId}'
+
+# The stop row's accessible label is "<name> in Google Maps"; its text is the
+# name. Either matches. `.` stands in for ç and é so an encoding difference in
+# the hierarchy cannot fail a correct render.
+- scrollUntilVisible:
+    element:
+      text: '.*Pra.a do Com.rcio.*'
+    direction: DOWN
+    timeout: 30000
+- assertVisible:
+    text: '.*Pra.a do Com.rcio.*'

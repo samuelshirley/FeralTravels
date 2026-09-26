@@ -19,6 +19,7 @@ import {
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
 import type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
+import type { ForcedStopReason } from '@/types/trip';
 
 export type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus };
 
@@ -654,6 +655,8 @@ export const stops = pgTable(
     googleMapsUri: text('google_maps_uri'),
     /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
     photos: jsonb('photos').$type<StopPhoto[]>(),
+    /** Why Finn forced this fuel stop (null when not forced). Migration 0042. */
+    forcedReason: jsonb('forced_reason').$type<ForcedStopReason>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
