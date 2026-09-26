@@ -733,7 +733,8 @@ test.describe('Subscriptions — the public edge', () => {
      * of someone who has never had an account is just a closed door.
      *
      * `/` is the landing page the design doc specifies (src/app/page.tsx,
-     * 2026-09-24): public, with the App Store badge as its one button. What
+     * 2026-09-24): public, with "Get the app" (to the App Store) as its one
+     * button and no sign-in link — no web signup while the web is locked. What
      * used to live at `/` — gate, then /login or /trips — is `/signin`, so the
      * sign-in half of this test starts there. Where a stranger lands from
      * `/signin` depends on the web switch, so it is asked, not assumed.
@@ -743,9 +744,10 @@ test.describe('Subscriptions — the public edge', () => {
     const res = await page.goto('/');
     expect(res?.status()).toBe(200);
     expect(new URL(page.url()).pathname, '/ must not redirect a stranger').toBe('/');
-    await expect(
-      page.getByRole('link').filter({ has: page.getByAltText('Download on the App Store') })
-    ).toBeVisible();
+    const getTheApp = page.getByRole('link', { name: 'Get the app' });
+    await expect(getTheApp).toBeVisible();
+    // The listing or, until it exists, the App Store search: either way Apple's.
+    expect(await getTheApp.getAttribute('href')).toMatch(/^https:\/\/apps\.apple\.com\//);
     // And no block notice anywhere — signed out is not a blocked state.
     await expect(notice(page)).toHaveCount(0);
 

@@ -254,12 +254,15 @@ test.describe('web app off', () => {
     await expect(
       page.getByRole('heading', { level: 1, name: "Tell Penny where you're going. She plans the drive." })
     ).toBeVisible();
-    await expect(
-      page.getByRole('link').filter({ has: page.getByAltText('Download on the App Store') })
-    ).toBeVisible();
+    const getTheApp = page.getByRole('link', { name: 'Get the app' });
+    await expect(getTheApp).toBeVisible();
+    // The listing or, until it exists, the App Store search: either way Apple's.
+    expect(await getTheApp.getAttribute('href')).toMatch(/^https:\/\/apps\.apple\.com\//);
     for (const href of ['/privacy', '/terms', '/support']) {
       await expect(page.locator(`a[href="${href}"]`)).toHaveCount(1);
     }
+    // No web signup while the web is locked (Sam, 2026-09-26): the admin types /signin.
+    await expect(page.locator('a[href="/signin"]')).toHaveCount(0);
   });
 
   test('the download screen renders and offers the App Store', async ({ page }) => {
