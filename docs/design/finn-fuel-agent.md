@@ -115,6 +115,62 @@ inComfort  = (B + d) ≤ C        // soft preference — ideally stop by here
 
 **Nothing past `R` is ever recommended** — that's the conservative bias, plus the `no_stations_found` honest-warning path for genuinely remote legs. The user's number is used as-is (no hidden haircut); the driver is told to state a range that already includes their reserve.
 
+### 2b. A day's end is not the trip's end — next-day look-ahead (BUILT 2026-09-26)
+
+**The bug.** The greedy walk stopped as soon as the leg END was in reach, so a
+day could finish on fumes and hand the next day a tank it could not start on.
+Found on a real 14-day Spain trip (`da203241`, local run, 550 km range):
+
+| Day | Burned at start | Result |
+|---|---|---|
+| Monzón → Cabrales (263 km) | 265 | end in reach → **no stop**, arrives with ~20 km |
+| Cabrales → Vitoria | 530 | first station 27 km in: *"beyond safe range (20 km)"* |
+| Madrid → Isla Mayor (552 km) | ~440 | tops up at **km 3**, drives 549 of 550 km |
+| Isla Mayor → Sierra Nevada | 550 | *"impossible tank state"* |
+| Sierra Nevada → Madrid | 914 | the failed day before counted as fully burned |
+
+The tank arithmetic was right; the plan was not. Days were sourced in order, so
+this was not the lazy-order bug `sourcingOrder.ts` fixed.
+
+**The rule now.** Planning a day also reads the NEXT drive day's stations and
+makes sure the tank arrives with enough to reach that day's first one
+(`fuelNeededAtLegStartKm` → `planLegFuelStops({ arrivalReserveKm })`). A stop
+placed only for that carries the reason *"next fuel is N km away, on the next
+day's drive"*. If no station left on the day can make it, the day is still
+planned (it is drivable) and the next day raises its own warning; that
+shortfall is its geography.
+
+**Why forward, not backward.** Repairing day N when day N+1 is opened would make
+day N's plan depend on which days the driver had opened, and day N would show
+"no stop, arrive on 20 km" until then. Looking forward makes each day a
+function of its own tank chain plus the next day's stations, whatever the open
+order.
+
+**Cost.** Free when the whole next day fits in what this day leaves even
+without a stop (a refuel only ever leaves more). Otherwise it is the next day's
+Places search. It is memoized for the request, so the cascade reuses it when it
+plans that day. Worst case is two paid searches per day-open instead of one,
+about $0.03 more. The old skip heuristics (`MIN_LEG_KM_FOR_PLANNING = 100`,
+`SKIP_PLANNING_THRESHOLD = 0.7`) are replaced by the exact test
+`burned + leg + next day's run ≤ R`. The 100 km rule ignored the burn, so a
+short leg on a nearly empty tank was marked "no stop needed".
+
+**Same km on both sides.** The walk-back reads a leg as `legs.distance_km` and
+a stop at its stored whole-km `distance_from_start_km`. Projection measures
+the decoded polyline, which is ~0.3% shorter. Finn now plans on exactly what
+the walk reads back (`alongKmOnLeg`), so "arrives with 0 km to spare" cannot
+come back the next day as "1–2 km over range".
+
+**A failed earlier day stops the cascade.** If a day the cascade sources ends
+`failed`, the day being opened fails too, retryably, with "an earlier day's
+fuel plan failed". It is no longer planned on a burn that counts the failed
+day as driven dry.
+
+Regression test: `src/lib/finn/spainTrip.test.ts`. It replays the real trip:
+the leg lengths plus Finn's real station results, captured once (9 Places
+calls, about $0.30) into `src/lib/finn/__fixtures__/spain-da203241.json` as
+along-route km only, with no names, ids or coordinates.
+
 ### 3. Comfort band (soft preference) — replaces the "450–500 / 1% margin" idea
 
 > **Pushback, carried from the design chat:** a hard 450–505 km window with a 1% reserve is both brittle (if no station sits in that thin band you're stranded) and unnecessary (if you always fill to full, stopping at 60% vs 90% costs the *same* fuel — the only real cost of stopping early is *more stops*, i.e. time). Replace it with a soft band, not a hard window.

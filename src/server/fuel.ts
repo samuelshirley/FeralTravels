@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, stops, trips, type GeoJSONLineString } from '@/server/db/schema';
 
@@ -23,11 +23,14 @@ import {
 } from '@/server/google/accounted';
 import type { FuelStation } from '@/lib/google/places';
 import {
+  alongKmOnLeg,
   filterUsableStations,
+  fuelNeededAtLegStartKm,
   planLegFuelStops,
   projectPointOntoRoute,
   cumulativeDistancesKm,
   type PlacementCandidate,
+  type PlacementResult,
 } from '@/lib/finn';
 import { legsNeedingSourcingBefore } from '@/lib/finn/sourcingOrder';
 
@@ -57,12 +60,6 @@ import { legsNeedingSourcingBefore } from '@/lib/finn/sourcingOrder';
 // Hard cap on how many fuel stops we'll propose per leg — keeps a very long leg
 // from spawning a cluttered list of option rows.
 const MAX_STOPS_PER_LEG = 8;
-// Minimum leg length to bother planning at all. Under this, the tank almost
-// certainly covers the drive.
-const MIN_LEG_KM_FOR_PLANNING = 100;
-// Carry-over allowance: if cumulative km since the last refuel + this leg's
-// distance is under range × this, skip planning (and the Places call) entirely.
-const SKIP_PLANNING_THRESHOLD = 0.7;
 // Max straight-line distance a station may sit off the route to still count as
 // "on the way." Caps the detour we'll ever propose.
 const MAX_DETOUR_KM = 15;
@@ -166,10 +163,24 @@ export async function planFuelStopsForLeg(
   legId: string,
   userId: string
 ): Promise<FuelPlanResult> {
-  const blocked = await sourcePrerequisiteLegs(legId, userId);
+  const searches: StationSearches = new Map();
+  const blocked = await sourcePrerequisiteLegs(legId, userId, searches);
   if (blocked) return blocked;
-  return planOneLeg(legId, userId);
+  return planOneLeg(legId, userId, searches);
 }
+
+/** One leg's usable stations, positioned in the km the tank walk reads back. */
+interface LegStations {
+  candidates: PlacementCandidate[];
+  byId: Map<string, FuelStation>;
+}
+
+/**
+ * The station searches made while serving ONE day-open, by leg id. Planning a
+ * day looks at the next day's stations, and the cascade then plans that next
+ * day too — without this, the same leg would be searched (and billed) twice.
+ */
+type StationSearches = Map<string, Promise<LegStations>>;
 
 /**
  * Source every earlier day this leg's tank state depends on, oldest first.
@@ -193,7 +204,8 @@ export async function planFuelStopsForLeg(
  */
 async function sourcePrerequisiteLegs(
   legId: string,
-  userId: string
+  userId: string,
+  searches: StationSearches
 ): Promise<FuelPlanResult | null> {
   const rows = await db
     .select({ tripId: legs.tripId, sortOrder: legs.sortOrder })
@@ -259,7 +271,20 @@ async function sourcePrerequisiteLegs(
 
   // Oldest first: each leg's tank walk reads the answers of the ones before it.
   for (const id of toSource) {
-    await planOneLeg(id, userId);
+    const earlier = await planOneLeg(id, userId, searches);
+    if (earlier.status === 'failed') {
+      // That day carries no fuel stop now, so the tank walk would count its
+      // whole distance as burned and plan this day on a tank that is not real.
+      // Spain trip `da203241`: one failed day turned the next into "914 km
+      // burned against a 550 km range". The failure is shown on its own day;
+      // this one waits for it, retryably, instead of repeating it as nonsense.
+      return failLeg(
+        legId,
+        target.tripId,
+        userId,
+        "An earlier day's fuel plan failed, and this day's fuel depends on it. We'll retry automatically."
+      );
+    }
   }
   return null;
 }
@@ -271,7 +296,8 @@ async function sourcePrerequisiteLegs(
  */
 async function planOneLeg(
   legId: string,
-  userId: string
+  userId: string,
+  searches: StationSearches
 ): Promise<FuelPlanResult> {
   // 1. Load leg + its trip so we know which vehicle to use.
   const rows = await db
@@ -350,6 +376,8 @@ async function planOneLeg(
   if (polyline.length < 2 || totalKm <= 0) {
     return failLeg(legId, leg.tripId, userId, 'Route geometry was unusable');
   }
+  // The walk-back reads this leg as `distance_km` long, so plan it that long.
+  const legKm = leg.distanceKm != null && leg.distanceKm > 0 ? leg.distanceKm : totalKm;
 
   // Cross-leg fuel state: how much range is already gone when this leg starts.
   // Without this, three sequential 500 km legs each pass the "fits within range"
@@ -365,30 +393,50 @@ async function planOneLeg(
       ? declaredAnchor.burnedKm
       : await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder, declaredAnchor);
 
-  const belowMinLeg = totalKm < MIN_LEG_KM_FOR_PLANNING;
-  const cumulativeFitsComfortably =
-    kmAlreadyBurned + totalKm < range * SKIP_PLANNING_THRESHOLD;
-
-  // Early exit (and skip the Places call) when no stop can be needed.
-  if (belowMinLeg || cumulativeFitsComfortably) {
-    await clearAutoPlannerOptionStops(legId);
-    await setFuelStatus(legId, 'ready');
-    return { legId, status: 'ready', stopsCreated: 0 };
-  }
-
   // 4. Google Places corridor → eligibility filter → route projection → candidates.
   //
-  // PAID. One Places Text Search (New) per leg planned — so the sourcing
-  // cascade above multiplies this by the number of days it has to catch up on.
-  // `logGooglePlacesUsage` had no caller at all between 2026-06-29 and
-  // 2026-09-09, which meant the cost of a day-open was invisible; it is wired
-  // on BOTH outcomes here because a failed call is billed the same as a
-  // successful one.
-  let corridor: FuelStation[];
+  // PAID. One Places Text Search (New) per leg searched — so the sourcing
+  // cascade above multiplies this by the number of days it has to catch up on,
+  // and the look-ahead below adds the next day's search when this day's fuel
+  // might not cover it. `logGooglePlacesUsage` had no caller at all between
+  // 2026-06-29 and 2026-09-09, which meant the cost of a day-open was
+  // invisible; it is wired on BOTH outcomes because a failed call is billed
+  // the same as a successful one.
+  const ctx = { userId, tripId: leg.tripId };
+  let plan: PlacementResult;
+  let byId: Map<string, FuelStation>;
+  let candidateCount: number;
   try {
-    corridor = await searchFuelAlongRouteAccounted(encodePolyline(polyline), {
-      userId,
-      tripId: leg.tripId,
+    // 5. Look ahead: the next drive day has to reach its first station on
+    //    whatever this day leaves in the tank.
+    const reserveKm = await nextDayReserveKm(
+      leg,
+      range - kmAlreadyBurned - legKm,
+      range,
+      declaredAnchor,
+      ctx,
+      searches
+    );
+
+    // Early exit (and skip this leg's Places call) when no stop can be needed:
+    // the leg AND the next day's run to its first station fit in the tank.
+    if (kmAlreadyBurned + legKm + reserveKm <= range) {
+      await clearAutoPlannerOptionStops(legId);
+      await setFuelStatus(legId, 'ready');
+      return { legId, status: 'ready', stopsCreated: 0 };
+    }
+
+    const stations = await legStations(legId, polyline, totalKm, legKm, ctx, searches);
+    byId = stations.byId;
+    candidateCount = stations.candidates.length;
+
+    // 6. Deterministic greedy placement.
+    plan = planLegFuelStops({
+      legLengthKm: legKm,
+      rangeKm: range,
+      kmBurnedAtStart: kmAlreadyBurned,
+      candidates: stations.candidates,
+      arrivalReserveKm: reserveKm,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -397,41 +445,18 @@ async function planOneLeg(
     return failLeg(legId, leg.tripId, userId, reason);
   }
 
-  const { kept } = filterUsableStations(corridor);
-  const cumulative = cumulativeDistancesKm(polyline);
-  const byId = new Map<string, FuelStation>();
-  const candidates: PlacementCandidate[] = [];
-  for (const st of kept) {
-    const proj = projectPointOntoRoute({ lat: st.lat, lng: st.lng }, polyline, cumulative);
-    if (proj.perpKm > MAX_DETOUR_KM) continue;
-    byId.set(st.placeId, st);
-    candidates.push({
-      id: st.placeId,
-      alongKm: proj.alongKm,
-      detourKm: proj.perpKm,
-    });
-  }
-
-  // 5. Deterministic greedy placement.
-  const plan = planLegFuelStops({
-    legLengthKm: totalKm,
-    rangeKm: range,
-    kmBurnedAtStart: kmAlreadyBurned,
-    candidates,
-  });
-
   // The tank walk produced a state that cannot be true — see
   // [[PlacementTankStateInvalid]]. Never the remote-route warning: this is our
   // arithmetic, not the driver's geography. `failed` is retryable and carries no
   // 48h cache stamp, and failLeg puts it in /admin/errors. After the sourcing
-  // cascade above this should be unreachable; the log is how we find out if it
-  // is not.
+  // cascade and the next-day look-ahead this should be unreachable; the log is
+  // how we find out if it is not.
   if (plan.kind === 'tank_state_invalid') {
     return failLeg(
       legId,
       leg.tripId,
       userId,
-      `Fuel planning hit an impossible tank state: ${Math.round(plan.burnedKm)} km burned against a ${Math.round(plan.rangeKm)} km range at this day's start. Earlier days should have been sourced first. We'll retry automatically.`
+      `Fuel planning hit an impossible tank state: ${Math.round(plan.burnedKm)} km burned against a ${Math.round(plan.rangeKm)} km range at this day's start. We'll retry automatically.`
     );
   }
 
@@ -443,7 +468,7 @@ async function planOneLeg(
     // failure, NOT the cached `no_stations_found` safety warning. A false
     // "carry extra fuel" warning costs the warning its credibility exactly
     // where it matters (genuinely remote routes).
-    if (candidates.length === 0) {
+    if (candidateCount === 0) {
       return failLeg(
         legId,
         leg.tripId,
@@ -505,7 +530,9 @@ async function planOneLeg(
         // Canonical km: `notes` is Penny's context, never rendered. The UI
         // words `forcedReason` itself, in the user's units.
         notes: placed.reason
-          ? `Top up here — next fuel is ${placed.reason.gap_km} km away.`
+          ? `Top up here — next fuel is ${placed.reason.gap_km} km away${
+              placed.reason.kind === 'next_day_fuel_far' ? ", on the next day's drive" : ''
+            }.`
           : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
         forcedReason: placed.reason ?? null,
         alternatives: null,
@@ -515,6 +542,101 @@ async function planOneLeg(
 
   await setFuelStatus(legId, 'ready');
   return { legId, status: 'ready', stopsCreated: chosen.length };
+}
+
+/**
+ * Search one leg's corridor (PAID — see step 4 of [[planOneLeg]]) and turn the
+ * result into placement candidates: truck stops dropped, anything more than
+ * MAX_DETOUR_KM off the route dropped, positions in walk-back km
+ * ([[alongKmOnLeg]]). At most one search per leg per request.
+ */
+function legStations(
+  legId: string,
+  polyline: LatLng[],
+  polylineKm: number,
+  legKm: number,
+  ctx: { userId: string; tripId: string },
+  searches: StationSearches
+): Promise<LegStations> {
+  const known = searches.get(legId);
+  if (known) return known;
+  const pending = (async () => {
+    const corridor = await searchFuelAlongRouteAccounted(encodePolyline(polyline), ctx);
+    const { kept } = filterUsableStations(corridor);
+    const cumulative = cumulativeDistancesKm(polyline);
+    const byId = new Map<string, FuelStation>();
+    const candidates: PlacementCandidate[] = [];
+    for (const st of kept) {
+      const proj = projectPointOntoRoute({ lat: st.lat, lng: st.lng }, polyline, cumulative);
+      if (proj.perpKm > MAX_DETOUR_KM) continue;
+      byId.set(st.placeId, st);
+      candidates.push({
+        id: st.placeId,
+        alongKm: alongKmOnLeg(proj.alongKm, polylineKm, legKm),
+        detourKm: proj.perpKm,
+      });
+    }
+    return { candidates, byId };
+  })();
+  searches.set(legId, pending);
+  return pending;
+}
+
+/**
+ * How much fuel `leg` must still have in the tank when it ends: the distance
+ * the NEXT drive day runs before its first station
+ * ([[fuelNeededAtLegStartKm]]). 0 when there is nothing to look ahead to.
+ *
+ * Finn used to plan each day as if its end were the end of the trip, so a day
+ * could finish on fumes and hand the next one a tank it could not start on —
+ * Spain trip `da203241`: "Next fuel is 27 km ahead — beyond safe range
+ * (20 km)" on a 550 km vehicle. Looking FORWARD, rather than repairing the
+ * earlier day when the later one is opened, keeps a day's plan independent of
+ * which days the driver happens to have opened.
+ *
+ * Free when the whole next day fits in what this one leaves even without a
+ * stop (a refuel only ever leaves more). Otherwise it costs the next day's
+ * station search, which the request memoizes and that day reuses when the
+ * cascade plans it.
+ */
+async function nextDayReserveKm(
+  leg: { tripId: string; sortOrder: number },
+  leftAtEndWithoutStopsKm: number,
+  rangeKm: number,
+  declaredAnchor: DeclaredTankAnchor | null,
+  ctx: { userId: string; tripId: string },
+  searches: StationSearches
+): Promise<number> {
+  const later = await db
+    .select({
+      id: legs.id,
+      legType: legs.legType,
+      distanceKm: legs.distanceKm,
+      geometry: legs.geometry,
+    })
+    .from(legs)
+    .where(and(eq(legs.tripId, leg.tripId), gt(legs.sortOrder, leg.sortOrder)))
+    .orderBy(asc(legs.sortOrder));
+
+  for (const next of later) {
+    // The driver's declared tank state re-baselines the tank there; what this
+    // day leaves behind no longer matters.
+    if (declaredAnchor?.legId === next.id) return 0;
+    // Rest days burn nothing, and neither — to the tank walk — does a drive
+    // leg with no distance yet.
+    if (next.legType !== 'drive' || next.distanceKm == null || next.distanceKm <= 0) continue;
+    if (leftAtEndWithoutStopsKm >= next.distanceKm) return 0;
+
+    const polyline = geometryToLatLngs(next.geometry);
+    const polylineKm = polylineLengthKm(polyline);
+    // No stored route to search along; that day raises its own warning when
+    // it is planned.
+    if (polyline.length < 2 || polylineKm <= 0) return 0;
+
+    const stations = await legStations(next.id, polyline, polylineKm, next.distanceKm, ctx, searches);
+    return fuelNeededAtLegStartKm(next.distanceKm, stations.candidates, rangeKm);
+  }
+  return 0;
 }
 
 /**

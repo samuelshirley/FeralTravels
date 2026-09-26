@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { planLegFuelStops, type PlacementCandidate } from './plan';
+import {
+  alongKmOnLeg,
+  fuelNeededAtLegStartKm,
+  planLegFuelStops,
+  type PlacementCandidate,
+} from './plan';
 
 const c = (id: string, alongKm: number): PlacementCandidate => ({
   id,
@@ -165,6 +170,90 @@ describe('planLegFuelStops', () => {
         candidates: [c('a', 50)],
       });
       expect(r.kind).toBe('tank_state_invalid');
+    });
+  });
+
+  describe('the next drive day (arrivalReserveKm)', () => {
+    it("tops up when today fits but tomorrow's first fuel would not, and says why", () => {
+      // 265 burned, 264 km today → 21 km left at the end; tomorrow's first
+      // station is 28 km in. Without the reserve this is "no stop needed".
+      const r = planLegFuelStops({
+        legLengthKm: 264,
+        rangeKm: 550,
+        kmBurnedAtStart: 265,
+        candidates: [c('mid', 150), c('late', 237)],
+        arrivalReserveKm: 28,
+      });
+      expect(r.kind).toBe('planned');
+      expect(r.stops.map((s) => s.candidate.id)).toEqual(['late']);
+      // 27 km to the end of today + 28 into tomorrow.
+      expect(r.stops[0].reason).toEqual({ kind: 'next_day_fuel_far', gap_km: 55 });
+    });
+
+    it('adds nothing when what is left covers the next day\'s first stretch', () => {
+      const r = planLegFuelStops({
+        legLengthKm: 264,
+        rangeKm: 550,
+        kmBurnedAtStart: 200,
+        candidates: [c('late', 237)],
+        arrivalReserveKm: 28,
+      });
+      expect(r).toEqual({ kind: 'planned', stops: [] });
+    });
+
+    it("keeps the latest top-up when a stop is needed anyway", () => {
+      // Reach 145 from the start: only `early` is in range. From there the end
+      // is 440 away and 440 + 150 > 550 — so the walk carries on to `late`.
+      const r = planLegFuelStops({
+        legLengthKm: 554,
+        rangeKm: 550,
+        kmBurnedAtStart: 405,
+        candidates: [c('early', 114), c('late', 500)],
+        arrivalReserveKm: 150,
+      });
+      expect(r.kind).toBe('planned');
+      expect(r.stops.map((s) => s.candidate.id)).toEqual(['early', 'late']);
+      // `early` is needed for today; only `late` is there for tomorrow.
+      expect(r.stops[0].reason).toBeUndefined();
+      expect(r.stops[1].reason).toEqual({ kind: 'next_day_fuel_far', gap_km: 204 });
+    });
+
+    it("finishes the leg when no station left on it can make the reserve", () => {
+      // Best effort: the leg itself is drivable, so it is not this day's gap.
+      // It still tops up at the last station it has.
+      const r = planLegFuelStops({
+        legLengthKm: 300,
+        rangeKm: 550,
+        kmBurnedAtStart: 100,
+        candidates: [c('a', 100)],
+        arrivalReserveKm: 500,
+      });
+      expect(r.kind).toBe('planned');
+      expect(r.stops.map((s) => s.candidate.id)).toEqual(['a']);
+    });
+  });
+
+  describe('fuelNeededAtLegStartKm', () => {
+    it('is the distance to the first station', () => {
+      expect(fuelNeededAtLegStartKm(270, [c('b', 48), c('a', 27)], 550)).toBe(27);
+    });
+    it('is the whole leg when it has no station', () => {
+      expect(fuelNeededAtLegStartKm(270, [], 550)).toBe(270);
+    });
+    it('never asks for more than a full tank', () => {
+      expect(fuelNeededAtLegStartKm(900, [c('far', 700)], 550)).toBe(550);
+    });
+    it('ignores a station at the very start, as the planner does', () => {
+      expect(fuelNeededAtLegStartKm(270, [c('zero', 0), c('a', 27)], 550)).toBe(27);
+    });
+  });
+
+  describe('alongKmOnLeg', () => {
+    it('scales polyline km to the leg distance the tank walk reads, in whole km', () => {
+      // Polyline 551.9 km for a 553.2 km leg: a station 550.0 km along the
+      // polyline is 551 km into the leg as the walk measures it.
+      expect(alongKmOnLeg(550, 551.9, 553.2)).toBe(551);
+      expect(alongKmOnLeg(3.2, 551.9, 553.2)).toBe(3);
     });
   });
 });
