@@ -29,10 +29,16 @@ const FIXTURE_DOMAIN = 'e2e.feraltravels.com';
 
 let seq = 0;
 
-/** A fresh address, unique per run and per call. */
+/**
+ * A fresh address, unique per run and per call. `seq` is per WORKER process
+ * (CI runs 4), so the worker index is part of the address: without it two
+ * workers seeding in the same millisecond got the same email, and the seed
+ * failed on users_email_unique (CI run 36272165470, chat-maps-link).
+ */
 export function uniqueEmail(): string {
   const runId = (process.env.GITHUB_RUN_ID || `local${process.pid}`).toLowerCase();
-  return `playwright-${runId}-${Date.now().toString(36)}-${seq++}@${FIXTURE_DOMAIN}`;
+  const worker = process.env.TEST_WORKER_INDEX ?? '0';
+  return `playwright-${runId}-w${worker}-${Date.now().toString(36)}-${seq++}@${FIXTURE_DOMAIN}`;
 }
 
 /** Back-compat shape for specs that want the object form. */
