@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
@@ -10,6 +12,7 @@ vi.mock('server-only', () => ({}));
 vi.mock('@/server/repos/usage', () => ({
   logGoogleApiUsage: vi.fn(async () => {}),
   logGooglePlacesUsage: vi.fn(async () => {}),
+  logUsageEvent: vi.fn(async () => {}),
 }));
 
 import {
@@ -18,6 +21,7 @@ import {
   resolveCoordsFromInput,
   resolveMapsLinksInMessage,
 } from './coordsResolve';
+import { logUsageEvent } from '@/server/repos/usage';
 
 describe('extractUrlsFromText', () => {
   it('extracts a URL embedded mid-sentence', () => {
@@ -322,5 +326,203 @@ describe('resolveMapsLinksInMessage', () => {
     const msg = links.join(' ');
     const results = await resolveMapsLinksInMessage(msg);
     expect(results).toHaveLength(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09 share links. `https://maps.app.goo.gl/ys3PKbHMPZbQq8o29?g_st=ic`
+// (Praça do Comércio, Lisbon) 302s THREE times to an address-only `q=` and
+// ends on a page whose only coordinates are in the og:image staticmap. The
+// fixture is that page, captured live and trimmed.
+// ---------------------------------------------------------------------------
+
+const SHARE_PAGE = readFileSync(join(__dirname, '__fixtures__', 'maps-share-2026-09.html'), 'utf8');
+const SHORT = 'https://maps.app.goo.gl/ys3PKbHMPZbQq8o29?g_st=ic';
+const TAIL =
+  '&ftid=0xd19347a6ca0796f:0xc5fa8d0ee58ee54&entry=gps&shh=CAE&skid=c876bf6e-a386-4a4d-b596-011eb77c8e4d&g_st=ic';
+const Q = 'Pra%C3%A7a+do+Com%C3%A9rcio+2-113,+1100-148,+Portugal';
+const HOP1 = `https://maps.google.com?q=${Q}${TAIL}`;
+const HOP2 = `https://maps.google.com/maps?q=${Q}${TAIL}`;
+const HOP3 = `https://www.google.com/maps?q=${Q}${TAIL}`;
+const CLEAN_Q = 'Praça do Comércio 2-113, 1100-148, Portugal';
+
+type Handler = (url: string, init?: RequestInit) => Response | undefined;
+
+/** Serve the real 3-hop chain, then `page` as the final 200; anything else via `extra`. */
+function shareChain(page: string, extra: Handler = () => undefined) {
+  const places: Array<{ textQuery: string }> = [];
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    // The resolver normalises each Location through URL (`maps.google.com?q=`
+    // becomes `maps.google.com/?q=`), so compare normalised forms.
+    const url = new URL(String(input)).toString();
+    const same = (a: string) => url === new URL(a).toString();
+    const redirect = (to: string) => new Response(null, { status: 302, headers: { location: to } });
+    if (same(SHORT)) return redirect(HOP1);
+    if (same(HOP1)) return redirect(HOP2);
+    if (same(HOP2)) return redirect(HOP3);
+    if (same(HOP3)) return new Response(page, { status: 200 });
+    if (url.includes('places.googleapis.com')) {
+      places.push(JSON.parse(String(init?.body)) as { textQuery: string });
+    }
+    return extra(url, init) ?? new Response(JSON.stringify({ places: [] }), { status: 200 });
+  });
+  return places;
+}
+
+/** The fixture with every staticmap URL (attribute and JSON copies) removed. */
+const withoutStaticmap = (html: string) =>
+  html.replace(/https:\/\/maps\.google\.com\/maps\/api\/staticmap\?[^"]*/g, '');
+
+describe('2026-09 share links (address-only q= redirect chain)', () => {
+  const originalFetch = globalThis.fetch;
+  let prevKey: string | undefined;
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.mocked(logUsageEvent).mockClear();
+    prevKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = 'test-key';
+  });
+  afterEach(() => {
+    vi.stubGlobal('fetch', originalFetch);
+    if (prevKey === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    else process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY = prevKey;
+  });
+
+  it('resolves the real chain from the staticmap pin, with zero Places calls', async () => {
+    const places = shareChain(SHARE_PAGE);
+    const result = await resolveCoordsFromInput(SHORT);
+    expect(result).toMatchObject({ lat: 38.7069975, lng: -9.1356866, name: 'Praça do Comércio 2-113' });
+    expect(places).toHaveLength(0);
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('never reads APP_INITIALIZATION_STATE (the viewer\'s viewport, Girona) as the place', async () => {
+    shareChain(SHARE_PAGE);
+    const result = await resolveCoordsFromInput(SHORT);
+    expect(result?.lat).not.toBeCloseTo(41.975808, 2);
+    expect(result?.lng).not.toBeCloseTo(2.8278784, 2);
+  });
+
+  it('without the staticmap, geocodes exactly once with the clean redirect q=', async () => {
+    const places = shareChain(withoutStaticmap(SHARE_PAGE), (url) =>
+      url.includes('places.googleapis.com')
+        ? new Response(
+            JSON.stringify({
+              places: [
+                {
+                  location: { latitude: 38.70701, longitude: -9.13568 },
+                  displayName: { text: 'Some Business At That Address' },
+                  types: ['establishment'],
+                },
+              ],
+            }),
+            { status: 200 },
+          )
+        : undefined,
+    );
+    const links = await resolveMapsLinksInMessage(`Add this overnight location for my stop in Lisbon ${SHORT}`, {
+      userId: 'u1',
+      tripId: 't1',
+    });
+    expect(places).toEqual([{ textQuery: CLEAN_Q }]);
+    // The shared name (og:title) is kept, not Places' label.
+    expect(links[0]).toMatchObject({ resolved: true, lat: 38.70701, lng: -9.13568, name: 'Praça do Comércio 2-113' });
+    expect(logUsageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'penny:maps-link',
+        success: true,
+        userId: 'u1',
+        tripId: 't1',
+        errorMessage: expect.stringContaining('via=geocode'),
+      }),
+    );
+  });
+
+  it('decodes the double-encoded, non-ASCII embedded link', () => {
+    expect(extractEmbeddedMapsQuery(SHARE_PAGE)).toBe(CLEAN_Q);
+  });
+
+  it('decodes HTML entities in a content-first og:title', async () => {
+    const page = SHARE_PAGE.replace(
+      '<meta content="Praça do Comércio 2-113" property="og:title">',
+      '<meta content="Caf&#233; &amp; Bar O&#39;Neill" property="og:title">',
+    );
+    shareChain(page);
+    const result = await resolveCoordsFromInput(SHORT);
+    expect(result?.name).toBe("Café & Bar O'Neill");
+  });
+
+  it('reads a unicode-escaped staticmap center= when that is the only pin', async () => {
+    const page =
+      '<html><head><title>Google Maps</title></head><body><script>var d=["https://maps.google.com/maps/api/staticmap?center\\u003d38.7069975%2C-9.1356866\\u0026zoom\\u003d16"];</script></body></html>';
+    const places = shareChain(page);
+    const result = await resolveCoordsFromInput(SHORT);
+    expect(result).toMatchObject({ lat: 38.7069975, lng: -9.1356866 });
+    expect(places).toHaveLength(0);
+  });
+
+  it('reads a styled markers= pin (color:red%7C prefix)', async () => {
+    const page =
+      '<meta content="https://maps.google.com/maps/api/staticmap?zoom=16&amp;markers=color:red%7Clabel:A%7C38.7069975,-9.1356866" property="og:image">';
+    shareChain(page);
+    expect(await resolveCoordsFromInput(SHORT)).toMatchObject({ lat: 38.7069975, lng: -9.1356866 });
+  });
+
+  it('never geocodes a bare "Google Maps" title', async () => {
+    const page =
+      '<html><head><title> Google Maps </title><meta content="Google Maps" property="og:title"></head><body></body></html>';
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes('places.googleapis.com')
+        ? new Response(JSON.stringify({ places: [] }), { status: 200 })
+        : new Response(page, { status: 200 }),
+    );
+    const links = await resolveMapsLinksInMessage('https://maps.app.goo.gl/bare');
+    const placesCalls = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes('places.googleapis.com'));
+    expect(placesCalls).toHaveLength(0);
+    expect(links[0]).toMatchObject({ resolved: false, stage: 'no_coords' });
+    expect(links[0].name_hint).toBeUndefined();
+  });
+
+  it('ignores the viewport alone — a page with only APP_INITIALIZATION_STATE is a miss', async () => {
+    const page =
+      '<html><head><title> Google Maps </title></head><body><script>window.APP_INITIALIZATION_STATE=[[[23729.117755998923,2.8278784,41.975808],[0,0,0],[1024,768],13.1]];</script></body></html>';
+    vi.mocked(fetch).mockResolvedValue(new Response(page, { status: 200 }));
+    expect(await resolveCoordsFromInput('https://maps.app.goo.gl/viewport')).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a miss writes a penny:maps-link usage row and hands Penny a name_hint', async () => {
+    // No coords anywhere, and Places finds nothing for any candidate.
+    const places = shareChain(withoutStaticmap(SHARE_PAGE));
+    const links = await resolveMapsLinksInMessage(`stop here ${SHORT}`, { userId: 'u1', tripId: 't1' });
+    // hint, embedded q and og:description are one string after dedupe; og:title is the second.
+    expect(places).toEqual([{ textQuery: CLEAN_Q }, { textQuery: 'Praça do Comércio 2-113' }]);
+    expect(links[0]).toMatchObject({
+      url: SHORT,
+      resolved: false,
+      stage: 'geocode_miss',
+      name_hint: 'Praça do Comércio 2-113',
+    });
+    expect(logUsageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'penny:maps-link',
+        requests: 0,
+        success: false,
+        userId: 'u1',
+        tripId: 't1',
+        errorMessage: expect.stringMatching(/^stage=geocode_miss host=maps\.app\.goo\.gl hops=3 hint=yes .*url=https:\/\/maps\.app\.goo\.gl\//),
+      }),
+    );
+  });
+
+  it('a fetch failure is logged with its message, not swallowed', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(fetch).mockRejectedValue(new Error('socket hang up'));
+    const links = await resolveMapsLinksInMessage('https://maps.app.goo.gl/down');
+    expect(links[0]).toMatchObject({ resolved: false, stage: 'fetch_error' });
+    expect(logUsageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, errorMessage: expect.stringContaining('socket hang up') }),
+    );
+    warn.mockRestore();
   });
 });

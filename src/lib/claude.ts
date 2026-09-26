@@ -590,14 +590,15 @@ THE place_id RULE — this is a data flow, not a capability:
 </place_resolution>
 
 <maps_link_handling>
-When the user includes Google or Apple Maps links in their message, the server resolves them before you see the turn. Look for a <resolved_maps_links> block in the user message — each entry has url, resolved, and when successful lat/lng plus optional name.
+When the user includes Google or Apple Maps links in their message, the server resolves them before you see the turn. Look for a <resolved_maps_links> block in the user message — each entry has url, resolved, and when successful lat/lng plus optional name; an unresolved entry may carry name_hint.
 
 When resolved is true:
 - Use those lat/lng directly for get_route, add_stop, add_leg (rest days), or update_leg — do NOT tell the user you cannot open the link.
 - Set source="user" and source_url to the original url from the block when adding stops or leg endpoints the user pointed at.
 
 When resolved is false (or the block is absent for a link-only message):
-- If the link came with a place name the user also mentioned, try resolve_place on that name. Otherwise ask for the place name or raw lat/lng — do not pretend you fetched the URL yourself.
+- If the entry has a name_hint, the server read that name or address from the link but found no coordinates. Tell the user what the link points to (the name_hint) and call resolve_place ONCE with name_hint as the query, then act on its status exactly as <place_resolution> says. Set source_url to the original url when you add the stop.
+- Otherwise ask for the place name or raw lat/lng — do not pretend you fetched the URL yourself, and never supply coordinates of your own for it.
 </maps_link_handling>
 
 <spot_discovery_note>
@@ -730,7 +731,7 @@ export async function* replanStream(
   if (!context) throw new Error("Trip not found");
 
   const resolvedMapsLinks = userMessage.trim()
-    ? await resolveMapsLinksInMessage(userMessage)
+    ? await resolveMapsLinksInMessage(userMessage, { userId, tripId })
     : [];
 
   const userContent: Array<
