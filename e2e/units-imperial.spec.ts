@@ -20,7 +20,7 @@ import { request } from '@playwright/test';
 const KM = /\b\d[\d,.]*\s*km\b/;
 const MI = /\b\d[\d,.]*\s*mi\b/;
 
-async function seedShortRange(email: string): Promise<void> {
+async function seed(email: string, extra: { rangeKm?: number; forcedFuelStop?: boolean }): Promise<void> {
   const ctx = await request.newContext({
     baseURL: process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`,
     extraHTTPHeaders: testEndpointHeaders(),
@@ -32,14 +32,20 @@ async function seedShortRange(email: string): Promise<void> {
         userName: FIXTURE_USER_NAME,
         vehicleName: FIXTURE_VEHICLE_NAME,
         tripName: FIXTURE_TRIP_NAME,
-        // Day 1 is 489 km; against 300 km Finn must place a stop.
-        rangeKm: 300,
+        ...extra,
       },
     });
     if (!res.ok()) throw new Error(`[e2e/units] seed failed (${res.status()}): ${await res.text()}`);
   } finally {
     await ctx.dispose();
   }
+}
+
+async function signInImperial(page: Page, email: string): Promise<void> {
+  await login(page, email);
+  // The preference the Settings toggle writes, set the same way it does.
+  const res = await page.request.patch('/api/me/preferences', { data: { units_pref: 'imperial' } });
+  expect(res.ok(), `preferences PATCH ${res.status()}`).toBe(true);
 }
 
 async function itineraryText(page: Page): Promise<string> {
@@ -49,12 +55,9 @@ async function itineraryText(page: Page): Promise<string> {
 test.describe('Imperial units', () => {
   test('the trip screen, an open day and NEXT STOP render miles and never km', async ({ page }) => {
     const email = uniqueEmail();
-    await seedShortRange(email);
-    await login(page, email);
-
-    // The preference the Settings toggle writes, set the same way it does.
-    const res = await page.request.patch('/api/me/preferences', { data: { units_pref: 'imperial' } });
-    expect(res.ok(), `preferences PATCH ${res.status()}`).toBe(true);
+    // Day 1 is 489 km; against 300 km Finn must place a stop.
+    await seed(email, { rangeKm: 300 });
+    await signInImperial(page, email);
 
     await openTrip(page);
     const day = page.getByTestId('leg-card').first();
@@ -79,5 +82,25 @@ test.describe('Imperial units', () => {
     const text = await itineraryText(page);
     expect(text).toMatch(MI);
     expect(text, text).not.toMatch(KM);
+  });
+
+  test("a forced fuel stop's reason is in miles, never km", async ({ page }) => {
+    // Seeded, not searched: a Finn-style forced stop on day 1 with its fuel
+    // cache fresh, so opening the day makes no Places call and keeps the row.
+    const email = uniqueEmail();
+    await seed(email, { forcedFuelStop: true });
+    await signInImperial(page, email);
+
+    await openTrip(page);
+    const day = page.getByTestId('leg-card').first();
+    await expect(day).toBeVisible({ timeout: 20_000 });
+    await day.click();
+
+    const row = page.getByTestId('stop-row').filter({ hasText: 'TotalEnergies Château-Thierry' });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    // 412 km × 0.621371 = 256.0 mi.
+    const line = row.getByText(/^Top up here:/);
+    await expect(line).toHaveText('Top up here: next fuel is 256 mi away');
+    await expect(line).not.toHaveText(/km/);
   });
 });

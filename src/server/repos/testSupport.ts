@@ -6,6 +6,7 @@ import {
   vehicles,
   trips,
   legs,
+  stops,
   announcements,
   announcementDismissals,
   emailOtpCodes,
@@ -283,6 +284,14 @@ export async function seedFixture(opts: {
    * days for the cross-day tank-state spec — see {@link THREE_LONG_DRIVES}.
    */
   legPreset?: 'canonical' | 'three_long_drives';
+  /**
+   * Put one forced Finn fuel stop on day 1, so a spec can read the forced-stop
+   * line ("Top up here: next fuel is 412 km away") without paying for a Places
+   * search or depending on where Google's stations happen to be. See
+   * {@link seedForcedFuelStop}. Off by default: every existing caller seeds
+   * legs with no stops, and asserts that.
+   */
+  forcedFuelStop?: boolean;
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
   assertEnabled();
   const userId = await ensureUserId(opts.email, opts.userName);
@@ -324,9 +333,53 @@ export async function seedFixture(opts: {
   for (const leg of legPreset) {
     await addLeg({ tripId: trip.id, ...leg, dates: legDates[leg.sortOrder] ?? legDates[0] });
   }
+  if (opts.forcedFuelStop) await seedForcedFuelStop(trip.id);
 
   await assertFixtureTripPossible(trip.id, userId, 'seedFixture');
   return { userId, vehicleId: vehicle.id, tripId: trip.id };
+}
+
+/**
+ * The row Finn writes when he forces a stop (`planOneLeg` in server/fuel.ts),
+ * on the trip's first leg: source 'google', status 'option' (an active row in
+ * the open day's timeline), `forced_reason` set, `notes` in Finn's km wording.
+ *
+ * The leg's fuel cache is then stamped fresh, exactly as a completed search
+ * stamps it (`setFuelStatus(legId, 'ready')`). That is what keeps the stop on
+ * screen: LegCard's day-open loader only fetches a leg that is `none`,
+ * `failed` or stale, and the server's `planFuelStopsForLegLazy` answers a fresh
+ * `ready` leg from cache — so no Places call is made, and nothing replaces
+ * this row with real stations.
+ *
+ * Display data, not a plan Finn would make: the 412 km gap is chosen so it
+ * converts to a whole 256 mi for the imperial spec.
+ */
+async function seedForcedFuelStop(tripId: string): Promise<void> {
+  const [first] = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(legs.sortOrder)
+    .limit(1);
+  if (!first) throw new Error('seedFixture: forcedFuelStop needs a leg to put it on');
+
+  await db.insert(stops).values({
+    legId: first.id,
+    sortOrder: 1000,
+    stopType: 'fuel',
+    status: 'option',
+    name: 'TotalEnergies Château-Thierry',
+    lat: 49.0464,
+    lng: 3.4031,
+    distanceFromStartKm: 95,
+    source: 'google',
+    notes: 'Top up here — next fuel is 412 km away.',
+    forcedReason: { kind: 'next_fuel_far', gap_km: 412 },
+  });
+  await db
+    .update(legs)
+    .set({ fuelStatus: 'ready', fuelPlanError: null, fuelStopsUpdatedAt: new Date() })
+    .where(eq(legs.id, first.id));
 }
 
 /**

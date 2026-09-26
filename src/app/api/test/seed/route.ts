@@ -15,6 +15,8 @@ const bodySchema = z.object({
   rangeKm: z.number().int().min(50).max(2000).optional(),
   /** Which itinerary to seed. Defaults to the canonical two legs. */
   legPreset: z.enum(['canonical', 'three_long_drives']).optional(),
+  /** Put one forced Finn fuel stop on day 1, its fuel cache fresh. Default off. */
+  forcedFuelStop: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
