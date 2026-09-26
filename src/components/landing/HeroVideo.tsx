@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { LANDING_POSTER, LANDING_VIDEO } from './config';
+import { LANDING_POSTER, LANDING_VIDEO, pickSources } from './config';
 
 /**
  * The looping clip behind the hero, layered over the server-rendered poster.
@@ -16,13 +16,20 @@ import { LANDING_POSTER, LANDING_VIDEO } from './config';
  * browsers pause a backgrounded video, and `autoPlay` is a load-time attribute
  * that never fires twice. Without this, switching tabs and back leaves a frozen
  * frame behind the headline.
+ *
+ * THE SOURCES ARE PICKED HERE, not by `<source media>`: WebKit reads `media` as
+ * not matching on a video React mounts, so iPhones played the desktop file
+ * (see `pickSources` in config.ts).
  */
 export default function HeroVideo({ className }: { className: string }) {
-  const [motionOk, setMotionOk] = useState(false);
+  // null until mounted, and for good under Reduce Motion: no video at all.
+  const [sources, setSources] = useState<{ src: string; type: string }[] | null>(null);
+  const motionOk = sources !== null;
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    setMotionOk(!window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setSources(pickSources(LANDING_VIDEO, (q) => window.matchMedia(q).matches));
   }, []);
 
   // Reduce Motion still wins: with it on there is no video to resume.
@@ -43,7 +50,7 @@ export default function HeroVideo({ className }: { className: string }) {
     };
   }, [motionOk]);
 
-  if (!motionOk) return null;
+  if (!sources) return null;
 
   return (
     <video
@@ -65,8 +72,8 @@ export default function HeroVideo({ className }: { className: string }) {
       }}
     >
       {/* In order: the browser plays the first source it can. */}
-      {LANDING_VIDEO.sources.map((s) => (
-        <source key={s.src} src={s.src} type={s.type} media={s.media} />
+      {sources.map((s) => (
+        <source key={s.src} src={s.src} type={s.type} />
       ))}
     </video>
   );

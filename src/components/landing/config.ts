@@ -58,6 +58,25 @@ export function landingVideo(baseUrl: string | undefined): LandingVideo {
   };
 }
 
+/**
+ * The sources this screen should offer, in order, with `media` already decided.
+ *
+ * WHY NOT `<source media>`: WebKit evaluates `media` as not matching when the
+ * <video> is built detached and then inserted, which is how React mounts it,
+ * so an iPhone skipped the phone file and played the desktop one (5 of 6 loads
+ * on the preview; 3 of 3 with Blob, 17.7 MB instead of 7.9 MB). HeroVideo
+ * calls this with `matchMedia` and renders no `media` attribute at all.
+ * Order is kept, so the HEVC → h264 fallback still holds.
+ */
+export function pickSources(
+  video: LandingVideo,
+  matches: (query: string) => boolean,
+): { src: string; type: string }[] {
+  return video.sources
+    .filter((s) => !s.media || matches(s.media))
+    .map(({ src, type }) => ({ src, type }));
+}
+
 // NEXT_PUBLIC_ values are inlined at build time, so the variable is referenced
 // by its literal name — `process.env[name]` would read undefined in the browser.
 export const LANDING_VIDEO = landingVideo(process.env.NEXT_PUBLIC_LANDING_VIDEO_BASE_URL);
