@@ -286,10 +286,10 @@ export async function seedFixture(opts: {
   legPreset?: 'canonical' | 'three_long_drives';
   /**
    * Put one forced Finn fuel stop on day 1, so a spec can read the forced-stop
-   * line ("Top up here: next fuel is 412 km away") without paying for a Places
-   * search or depending on where Google's stations happen to be. See
-   * {@link seedForcedFuelStop}. Off by default: every existing caller seeds
-   * legs with no stops, and asserts that.
+   * line ("Top up here: next fuel is 412 km away, on the next day's drive")
+   * without paying for a Places search or depending on where Google's
+   * stations happen to be. See {@link seedForcedFuelStop}. Off by default:
+   * every existing caller seeds legs with no stops, and asserts that.
    */
   forcedFuelStop?: boolean;
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
@@ -344,6 +344,11 @@ export async function seedFixture(opts: {
  * on the trip's first leg: source 'google', status 'option' (an active row in
  * the open day's timeline), `forced_reason` set, `notes` in Finn's km wording.
  *
+ * The kind is `next_day_fuel_far` because that is the only one real Finn
+ * persists: a top-up so the tank reaches the next drive day's first station.
+ * `next_fuel_far` is defensive — when the gap after a station exceeds range,
+ * the plan comes back as a `gap` and no stop is saved at all.
+ *
  * The leg's fuel cache is then stamped fresh, exactly as a completed search
  * stamps it (`setFuelStatus(legId, 'ready')`). That is what keeps the stop on
  * screen: LegCard's day-open loader only fetches a leg that is `none`,
@@ -373,8 +378,8 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
     lng: 3.4031,
     distanceFromStartKm: 95,
     source: 'google',
-    notes: 'Top up here — next fuel is 412 km away.',
-    forcedReason: { kind: 'next_fuel_far', gap_km: 412 },
+    notes: "Top up here — next fuel is 412 km away, on the next day's drive.",
+    forcedReason: { kind: 'next_day_fuel_far', gap_km: 412 },
   });
   await db
     .update(legs)

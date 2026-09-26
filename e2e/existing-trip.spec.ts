@@ -105,7 +105,7 @@ test.describe('Opening an existing trip', () => {
     // has to be able to read it, which until 2026-09-24 nothing rendered.
     const row = page.getByTestId('stop-row').filter({ hasText: 'TotalEnergies Château-Thierry' });
     await expect(row).toBeVisible({ timeout: 30_000 });
-    await expect(row.getByText(/^Top up here:/)).toHaveText('Top up here: next fuel is 412 km away');
+    await expect(row.getByText(/^Top up here:/)).toHaveText("Top up here: next fuel is 412 km away, on the next day's drive");
     // Only the forced stop carries a line; the destination row does not.
     await expect(page.getByTestId('stop-row').filter({ hasText: 'Top up here' })).toHaveCount(1);
   });

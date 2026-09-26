@@ -100,7 +100,7 @@ test.describe('Imperial units', () => {
     await expect(row).toBeVisible({ timeout: 30_000 });
     // 412 km × 0.621371 = 256.0 mi.
     const line = row.getByText(/^Top up here:/);
-    await expect(line).toHaveText('Top up here: next fuel is 256 mi away');
+    await expect(line).toHaveText("Top up here: next fuel is 256 mi away, on the next day's drive");
     await expect(line).not.toHaveText(/km/);
   });
 });
