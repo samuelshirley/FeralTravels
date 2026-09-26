@@ -1236,6 +1236,27 @@ jobs:
             --output maestro-report-date-picker.xml \
             --debug-output maestro-debug
 
+          # THE REGRESSION FLOW for the Google share link Penny said she could
+          # not resolve (2026-09-26): a maps.app.goo.gl link that 302s three
+          # times to an address-only `q=` and carries its coordinates only in
+          # the og:image staticmap. seed-maps-link-stop.js seeds the canonical
+          # "August Portugal Trip" and sends the REAL link through Penny's own
+          # add_stop path server-side (no model call); the flow opens the Porto
+          # → Lisbon day and asserts the stop is on it. The link is fetched LIVE
+          # from Google — one free redirect walk, zero paid Places calls — so a
+          # change on Google's side goes red here with the resolver's stage in
+          # the error. Adds one more trip to the fixture account; before
+          # settings-location.yaml for the same reason as the ones above.
+          maestro --device "$SIM_UDID" test mobile/maestro/maps-link-stop.yaml \
+            -e APP_ID=com.feraltravels.ios \
+            -e EMAIL="$EMAIL" \
+            -e TRIP_NAME="$TRIP_NAME" \
+            -e BASE_URL="$E2E_BASE_URL" \
+            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+            --format junit \
+            --output maestro-report-maps-link-stop.xml \
+            --debug-output maestro-debug
+
           # A permission button is the one kind of UI that cannot be checked by
           # looking at it: one that renders perfectly and calls nothing is
           # indistinguishable from one that works, and `Mobile typecheck`

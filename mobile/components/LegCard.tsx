@@ -303,7 +303,7 @@ export default function LegCard({
         selected && styles.cardSelected,
       ]}
     >
-      <Pressable onPress={onToggle} style={styles.headerRow}>
+      <Pressable onPress={onToggle} style={styles.headerRow} testID={`leg-card-${leg.id}`}>
         <View
           style={[
             styles.dot,

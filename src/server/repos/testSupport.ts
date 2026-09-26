@@ -16,6 +16,8 @@ import {
   usageAlerts,
   pennyTurns,
   chatHistory,
+  stops,
+  type GeoJSONLineString,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
 import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
@@ -44,6 +46,8 @@ import {
 import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from './vehicles';
 import { createTrip, addLeg } from './trips';
+import { resolveCanonicalTrip } from '@/server/fixtures/canonicalTrip';
+import { decodePolyline } from '@/lib/polyline';
 
 /**
  * TEST-ONLY fixture data layer for the E2E suite.
@@ -384,6 +388,133 @@ export async function createAdHocTrip(opts: {
     .where(eq(trips.id, trip.id));
   await assertFixtureTripPossible(trip.id, userId, `createAdHocTrip('${opts.kind}')`);
   return { tripId: trip.id, vehicleId };
+}
+
+/**
+ * Seed the canonical trip — "August Portugal Trip", twelve legs with real
+ * geometry and Finn's real fuel stops (see `server/fixtures/canonicalTrip.ts`)
+ * — as a NEW trip named `name` on a fixture account, alongside whatever the
+ * account already has. `name` should carry the caller's fixture prefix.
+ *
+ * FUEL CACHE: every leg the fixture marks as sourced is stamped fresh (1 h
+ * old) instead of carrying the fixture's deliberate 200 h staleness. A stale
+ * cache re-sources on day-open, which is a PAID Places search per leg — a
+ * flow that opens a day must never buy one. Legs the fixture never sourced
+ * stay null, so do not open those days in a flow (Finn would run).
+ */
+export async function seedCanonicalTrip(opts: {
+  email: string;
+  name: string;
+}): Promise<{
+  tripId: string;
+  vehicleId: string;
+  legs: Array<{ id: string; sortOrder: number; title: string }>;
+}> {
+  assertEnabled();
+  const normalized = opts.email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('seedCanonicalTrip: not a fixture address');
+  }
+  const userId = await ensureUserId(normalized);
+  const vehicleId = await ensureFixtureVehicle(userId, `${opts.name} vehicle`);
+
+  const canonical = resolveCanonicalTrip();
+  const freshCache = new Date(Date.now() - 60 * 60 * 1000);
+
+  const trip = await createTrip({
+    userId,
+    name: opts.name,
+    startDate: canonical.startISO,
+    endDate: canonical.endISO,
+    vehicleId,
+  });
+  await db
+    .update(trips)
+    .set({ ...canonical.meta })
+    .where(eq(trips.id, trip.id));
+
+  const seededLegs: Array<{ id: string; sortOrder: number; title: string }> = [];
+  for (const leg of canonical.legs) {
+    // The fixture stores geometry as an encoded polyline; the column holds
+    // the GeoJSON LineString ([lng, lat] pairs) Directions produced.
+    const geometry: GeoJSONLineString | null = leg.geometry
+      ? { type: 'LineString', coordinates: decodePolyline(leg.geometry).map((p) => [p.lng, p.lat]) }
+      : null;
+    const [row] = await db
+      .insert(legs)
+      .values({
+        tripId: trip.id,
+        sortOrder: leg.sortOrder,
+        legType: leg.legType,
+        title: leg.title,
+        label: leg.label,
+        segmentIndex: leg.segmentIndex,
+        segmentName: leg.segmentName,
+        startName: leg.startName,
+        endName: leg.endName,
+        startLat: leg.startLat,
+        startLng: leg.startLng,
+        endLat: leg.endLat,
+        endLng: leg.endLng,
+        dates: leg.date,
+        distanceKm: leg.distanceKm,
+        driveTimeMinutes: leg.driveTimeMinutes,
+        terrain: leg.terrain,
+        overnight: leg.overnight,
+        status: leg.status,
+        color: leg.color,
+        notes: leg.notes,
+        fuelStatus: leg.fuelStatus,
+        fuelStopsUpdatedAt: leg.fuelStopsUpdatedAt ? freshCache : null,
+        geometry,
+      })
+      .returning({ id: legs.id });
+    seededLegs.push({ id: row.id, sortOrder: leg.sortOrder, title: leg.title });
+
+    for (const [i, stop] of leg.stops.entries()) {
+      await db.insert(stops).values({
+        legId: row.id,
+        sortOrder: i,
+        stopType: stop.stopType,
+        status: stop.status,
+        name: stop.name,
+        lat: stop.lat,
+        lng: stop.lng,
+        distanceFromStartKm: stop.distanceFromStartKm,
+        source: stop.source,
+        googleMapsUri: stop.googleMapsUri,
+        placeId: stop.placeId,
+        fuelType: stop.fuelType,
+        notes: stop.notes,
+      });
+    }
+  }
+
+  await assertFixtureTripPossible(trip.id, userId, 'seedCanonicalTrip');
+  return { tripId: trip.id, vehicleId, legs: seededLegs };
+}
+
+/**
+ * The id of the fixture user who owns `tripId`, or a throw. For test-only
+ * endpoints that act AS that user on that trip — same three guards as the rest
+ * of `/api/test/*`, plus the fixture-address and ownership checks, so one can
+ * never reach a real account's trip.
+ */
+export async function fixtureUserOwningTrip(email: string, tripId: string): Promise<string> {
+  assertEnabled();
+  const normalized = email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('fixtureUserOwningTrip: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('fixtureUserOwningTrip: no such fixture user');
+  const [trip] = await db
+    .select({ id: trips.id })
+    .from(trips)
+    .where(and(eq(trips.id, tripId), eq(trips.userId, user.id)))
+    .limit(1);
+  if (!trip) throw new Error('fixtureUserOwningTrip: trip does not belong to that fixture user');
+  return user.id;
 }
 
 /** Delete every `playwright-`-prefixed trip and vehicle for the user. */
