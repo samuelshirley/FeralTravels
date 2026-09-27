@@ -71,6 +71,10 @@ appId: ${APP_ID}
     timeout: 8000
 
 # ── When, and how long a day ────────────────────────────────────────────────
+# The chat scrolls each new question into view; a tap during that scroll only
+# stops it (iOS), and the chip never hears it — two local runs in three lost
+# the Metric tap that way. So each chip waits for the thread to settle.
+- waitForAnimationToEnd
 - tapOn: 'In a month'
 - extendedWaitUntil:
     visible: 'How long do you want to drive each day\?'
@@ -79,6 +83,7 @@ appId: ${APP_ID}
     id: 'onboarding-chip-chosen'
     text: 'In a month'
 
+- waitForAnimationToEnd
 - tapOn: '6 h'
 - extendedWaitUntil:
     visible:
@@ -89,6 +94,7 @@ appId: ${APP_ID}
     text: '6 h'
 
 # ── Units ───────────────────────────────────────────────────────────────────
+- waitForAnimationToEnd
 - tapOn: 'Metric (km)'
 - extendedWaitUntil:
     visible:
@@ -114,17 +120,16 @@ appId: ${APP_ID}
     notVisible:
       id: 'onboarding-vehicle-card'
     timeout: 30000
-# The card redraws as two answered steps — the name as Hilux's own bubble, the
-# range as its chosen chip — not one "Hilux · 500 km" line (that was the web).
+# Live, the card's answer is ONE bubble, "Hilux · 500 km": the client holds one
+# answer while the server writes two steps (clientRecordsAnsweredStep,
+# src/lib/onboardingForm.ts). The two-step redraw — Hilux's bubble, the range's
+# chip — is what the relaunch below reads back.
 # Up, not "visible": the hand-off turn can finish in seconds, and the chat then
-# scrolls to Penny's reply with these answers above the fold.
+# scrolls to Penny's reply with this answer above the fold.
 - scrollUntilVisible:
-    element:
-      id: 'onboarding-chip-chosen'
-      text: '500 km'
+    element: 'Hilux · 500 km'
     direction: UP
     timeout: 30000
-- assertVisible: 'Hilux'
 - assertVisible:
     id: 'chat-composer-input'
     text: 'Ask Penny…'

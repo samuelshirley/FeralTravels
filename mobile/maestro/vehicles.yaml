@@ -43,23 +43,28 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'DRIVING LIMITS'
     timeout: 10000
-# The INPUT, not its question: the question Text reads the same with " *" on
-# the end, and tapping that focuses nothing (the first run typed the name into
-# thin air and Save said "name is required").
+# By testID (vehicle-<question key>-input). By label, the first run tapped the
+# question Text, not the field ("name is required"); the second typed the name
+# but left the range empty — so each value is read back before Save, and a red
+# run names the field that did not take it.
 - tapOn:
-    text: "What.s the vehicle called\\? \\(just a nickname is fine\\)"
+    id: 'vehicle-name-input'
 - inputText: 'Test Van'
-# Return leaves the name field. Tapping straight to the range field did not
-# move focus on the first run — "400" landed in the name ("Test Van400").
 - pressKey: Enter
+- assertVisible:
+    id: 'vehicle-name-input'
+    text: 'Test Van'
 - scrollUntilVisible:
     element:
-      text: "What.s your driving range on a tank, in kilometers\\?"
+      id: 'vehicle-range_km-input'
     direction: DOWN
     timeout: 10000
 - tapOn:
-    text: "What.s your driving range on a tank, in kilometers\\?"
+    id: 'vehicle-range_km-input'
 - inputText: '400'
+- assertVisible:
+    id: 'vehicle-range_km-input'
+    text: '400'
 - scrollUntilVisible:
     element: 'Save'
     direction: DOWN
