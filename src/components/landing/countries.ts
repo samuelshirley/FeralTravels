@@ -1,13 +1,18 @@
 /**
  * Where the app is on sale: the App Store availability chosen in App Store
  * Connect — the 27 EU member states, the UK, the US, Canada, Australia and New
- * Zealand. Alphabetical. Change it here when the storefront list changes; the
- * page's "N countries" heading counts this array.
+ * Zealand, plus Albania, Belarus, Bosnia and Herzegovina, Iceland, Kosovo,
+ * Moldova, Montenegro, North Macedonia, Norway, Russia, Serbia, Switzerland,
+ * Türkiye and Ukraine. Alphabetical. Change it here when the storefront list
+ * changes; the page's "N countries" heading counts this array.
  */
 export const LANDING_COUNTRIES = [
+  'Albania',
   'Australia',
   'Austria',
+  'Belarus',
   'Belgium',
+  'Bosnia and Herzegovina',
   'Bulgaria',
   'Canada',
   'Croatia',
@@ -20,21 +25,32 @@ export const LANDING_COUNTRIES = [
   'Germany',
   'Greece',
   'Hungary',
+  'Iceland',
   'Ireland',
   'Italy',
+  'Kosovo',
   'Latvia',
   'Lithuania',
   'Luxembourg',
   'Malta',
+  'Moldova',
+  'Montenegro',
   'Netherlands',
   'New Zealand',
+  'North Macedonia',
+  'Norway',
   'Poland',
   'Portugal',
   'Romania',
+  'Russia',
+  'Serbia',
   'Slovakia',
   'Slovenia',
   'Spain',
   'Sweden',
+  'Switzerland',
+  'Türkiye',
+  'Ukraine',
   'United Kingdom',
   'United States',
 ] as const;
