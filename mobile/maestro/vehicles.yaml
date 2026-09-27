@@ -43,8 +43,11 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'DRIVING LIMITS'
     timeout: 10000
+# The INPUT, not its question: the question Text reads the same with " *" on
+# the end, and tapping that focuses nothing (the first run typed the name into
+# thin air and Save said "name is required").
 - tapOn:
-    text: "What.s the vehicle called.*"
+    text: "What.s the vehicle called\\? \\(just a nickname is fine\\)"
 - inputText: 'Test Van'
 - tapOn:
     text: "What.s your driving range on a tank, in kilometers\\?"

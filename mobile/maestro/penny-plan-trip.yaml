@@ -86,13 +86,13 @@ appId: ${APP_ID}
 - assertVisible:
     text: '.* → .* · 2 days.*'
 - assertVisible:
-    text: '.*Alta → .*(Nordkapp|North Cape).*'
+    text: '.*Alta.* → .*(Nordkapp|North Cape).*'
 - assertVisible:
     text: '.*(Nordkapp|North Cape).* → Alta.*'
 
 # ── Day 1: Finn tops up, and says why ───────────────────────────────────────
 - tapOn:
-    text: '.*Alta → .*(Nordkapp|North Cape).*'
+    text: '.*Alta.* → .*(Nordkapp|North Cape).*'
 - extendedWaitUntil:
     visible:
       text: '.*LOCATION OFF.*'
@@ -137,7 +137,7 @@ appId: ${APP_ID}
         text: 'FUEL: .*'
     commands:
       - tapOn:
-          text: '.*Alta → .*(Nordkapp|North Cape).*'
+          text: '.*Alta.* → .*(Nordkapp|North Cape).*'
 - scrollUntilVisible:
     element:
       text: "FUEL: .*, [0-9]+ mi\\. Top up here: next fuel is [0-9]+ mi away, on the next day's drive\\. Opens in Google Maps"

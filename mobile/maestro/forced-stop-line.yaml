@@ -41,12 +41,12 @@ appId: ${APP_ID}
 - tapOn: 'LIST'
 - extendedWaitUntil:
     visible:
-      text: '.*Paris → Strasbourg.*'
+      text: '.*Paris, France → Strasbourg, France.*'
     timeout: 30000
 
 # ── Metric: the seeded default ──────────────────────────────────────────────
 - tapOn:
-    text: '.*Paris → Strasbourg.*'
+    text: '.*Paris, France → Strasbourg, France.*'
 - scrollUntilVisible:
     element:
       text: "FUEL: TotalEnergies Ch.teau-Thierry, 95 km\\. Top up here: next fuel is 412 km away, on the next day's drive\\. Opens in Google Maps"
@@ -72,7 +72,7 @@ appId: ${APP_ID}
 - tapOn: 'LIST'
 - extendedWaitUntil:
     visible:
-      text: '.*Paris → Strasbourg.*304 mi.*'
+      text: '.*Paris, France → Strasbourg, France, 304 mi.*'
     timeout: 30000
 - runFlow:
     when:
@@ -80,7 +80,7 @@ appId: ${APP_ID}
         text: 'FUEL: TotalEnergies.*'
     commands:
       - tapOn:
-          text: '.*Paris → Strasbourg.*'
+          text: '.*Paris, France → Strasbourg, France.*'
 - scrollUntilVisible:
     element:
       text: "FUEL: TotalEnergies Ch.teau-Thierry, 59 mi\\. Top up here: next fuel is 256 mi away, on the next day's drive\\. Opens in Google Maps"

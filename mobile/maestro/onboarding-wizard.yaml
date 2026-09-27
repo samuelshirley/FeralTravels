@@ -114,10 +114,18 @@ appId: ${APP_ID}
     notVisible:
       id: 'onboarding-vehicle-card'
     timeout: 30000
+# The card redraws as two answered steps — the name as Hilux's own bubble, the
+# range as its chosen chip — not one "Hilux · 500 km" line (that was the web).
 - extendedWaitUntil:
     visible:
-      text: '.*Hilux · 500 km.*'
+      id: 'onboarding-chip-chosen'
+      text: '500 km'
     timeout: 30000
+- assertVisible: 'Hilux'
+- assertVisible:
+    id: 'chat-composer-input'
+    text: 'Ask Penny…'
+
 
 # ── Stored, not remembered ──────────────────────────────────────────────────
 # Relaunch — the keychain keeps the session — and the answered steps are still
@@ -142,4 +150,5 @@ appId: ${APP_ID}
     direction: UP
     timeout: 30000
 - assertVisible:
-    text: '.*Hilux · 500 km.*'
+    id: 'onboarding-chip-chosen'
+    text: '500 km'

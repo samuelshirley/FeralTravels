@@ -50,13 +50,13 @@ appId: ${APP_ID}
     text: '.* → .*~645 km · 2 days.*'
 - assertVisible: 'E2E Fixture Van'
 - assertVisible:
-    text: '.*Paris → Strasbourg.*489 km.*'
+    text: '.*Paris, France → Strasbourg, France, 489 km.*'
 - assertVisible:
-    text: '.*Strasbourg → Stuttgart.*156 km.*'
+    text: '.*Strasbourg, France → Stuttgart, Germany, 156 km.*'
 
 # ── Today sources itself ────────────────────────────────────────────────────
 - tapOn:
-    text: '.*Paris → Strasbourg.*'
+    text: '.*Paris, France → Strasbourg, France.*'
 - extendedWaitUntil:
     visible:
       text: '.*LOCATION OFF.*'
@@ -84,11 +84,11 @@ appId: ${APP_ID}
 # ── Another day sources when it is opened, and only then ────────────────────
 - scrollUntilVisible:
     element:
-      text: '.*Strasbourg → Stuttgart.*'
+      text: '.*Strasbourg, France → Stuttgart, Germany.*'
     direction: DOWN
     timeout: 20000
 - tapOn:
-    text: '.*Strasbourg → Stuttgart.*'
+    text: '.*Strasbourg, France → Stuttgart, Germany.*'
 - scrollUntilVisible:
     element:
       text: 'DESTINATION: Stuttgart.*'

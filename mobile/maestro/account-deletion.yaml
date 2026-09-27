@@ -64,7 +64,9 @@ appId: ${APP_ID}
     enabled: true
 
 # ── Cancel leaves the account alone ─────────────────────────────────────────
-- hideKeyboard
+# Return, not hideKeyboard: Maestro's hideKeyboard finds no standard dismiss on
+# this field (the same trap ios-e2e-bringup.md records for the chat composer).
+- pressKey: Enter
 - tapOn:
     id: 'delete-account-cancel'
 - extendedWaitUntil:
@@ -81,7 +83,7 @@ appId: ${APP_ID}
 - tapOn:
     id: 'delete-account-input'
 - inputText: 'delete account'
-- hideKeyboard
+- pressKey: Enter
 - tapOn:
     id: 'delete-account-confirm'
 - extendedWaitUntil:

@@ -59,7 +59,7 @@ appId: ${APP_ID}
     visible: 'Planning is paused on this account'
     timeout: 20000
 - assertVisible:
-    text: '.*Paris → Strasbourg.*'
+    text: '.*Paris, France → Strasbourg, France.*'
 
 # Both plans are one tap away.
 - tapOn: 'Keep planning'
