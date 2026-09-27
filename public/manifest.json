@@ -2,7 +2,7 @@
   "name": "Feral Travels",
   "short_name": "Feral",
   "description": "Map-first overlanding trip planner — Feral Travels",
-  "start_url": "/",
+  "start_url": "/signin",
   "display": "standalone",
   "background_color": "#161826",
   "theme_color": "#161826",

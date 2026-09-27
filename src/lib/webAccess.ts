@@ -1,12 +1,11 @@
 /**
- * The web app's master switch. Pages ON unless `WEB_APP_ENABLED=0`.
+ * The web app's master switch. Pages OFF unless `WEB_APP_ENABLED=1`.
  *
- * Read that sentence twice — it is the opposite of `PAYWALL_ENABLED`, and this
- * line said the opposite of the code until 2026-08-28. The wrong version cost a
- * real detour: it reads as "merging this blocks the web", which sent someone
- * looking for a way to split the block out of a shared PR when the actual lever
- * was one Vercel variable. The switch is inverted ON PURPOSE (see `webAppEnabled`
- * below); a doc comment that inverts it back is worse than no comment.
+ * Read that sentence twice. Until 2026-09-24 it said the opposite — ON unless
+ * `=0` — and a comment that inverts the switch is worse than no comment: the
+ * last time this line disagreed with the code (fixed 2026-08-28) it sent
+ * someone hunting for a way to split the block out of a shared PR when the
+ * actual lever was one Vercel variable.
  *
  * 2026-08-28: the product is an iOS app. The web came first and most users will
  * never know it exists, so rather than maintain two front ends and test both,
@@ -20,13 +19,23 @@
  * if a desktop companion turns out to be wanted, which is the same argument
  * `PAYWALL_ENABLED` makes for itself.
  *
- * Default ON, unlike the paywall, and deliberately so: the failure mode of a
- * missing env var should be the app that works, not a blank site.
+ * WHY DEFAULT OFF. It used to default ON, on the argument that a missing env var
+ * should be the app that works rather than a blank site. 2026-09-24 showed what
+ * that argument costs: the variable had never been set in Vercel production, so
+ * every page's `requireWebAccess()` returned early and anyone could sign up at
+ * /login and use the whole web app — for the month the web was supposed to be
+ * off. Off is the intended state, so off is the default: only the exact string
+ * `'1'` opens it. The gate is `requireWebAccess()` in each PAGE and never runs
+ * on `/api`, so a missing variable cannot take the iOS app down with it.
+ *
+ * The root `middleware.ts` does not run — with `src/app`, Next 14 looks for
+ * middleware only in `src/` — so `requireWebAccess()` in each page is the
+ * entire gate, and `webAccessCoverage.test.ts` is what keeps it on every page.
  */
 type EnvLike = Record<string, string | undefined>;
 
 export function webAppEnabled(env: EnvLike = process.env): boolean {
-  return env.WEB_APP_ENABLED !== '0';
+  return env.WEB_APP_ENABLED === '1';
 }
 
 /** Where a blocked browser lands. */
@@ -58,6 +67,8 @@ export const WEB_ALWAYS_ALLOWED = [
   '/terms',
   '/support',
   '/legal/',
+  // What the public landing page at `/` loads (see WEB_ALWAYS_ALLOWED_EXACT).
+  '/landing/',
   '/login',
   GET_THE_APP_PATH,
   '/_next',
@@ -66,6 +77,21 @@ export const WEB_ALWAYS_ALLOWED = [
   '/icon-',
   '/sw.js',
 ] as const;
+
+/**
+ * Paths allowed by EXACT match only, never as a prefix.
+ *
+ * `/` is the public landing page (2026-09-24): the App Store listing's own
+ * URL, what a stranger, a crawler and a reviewer all land on. It cannot go in
+ * the prefix list above — every path starts with `/`, so that one entry would
+ * switch the whole gate off without a single test noticing a page it let in.
+ *
+ * The middleware that calls this is not compiled today (it sits beside `src/`,
+ * not in it), so the in-page `requireWebAccess()` is the live gate. This is for
+ * the day it is revived: without it, the landing page and its images would be
+ * swapped for the download screen.
+ */
+export const WEB_ALWAYS_ALLOWED_EXACT = ['/'] as const;
 
 /**
  * True for a browser PAGE that the download screen should replace.
@@ -77,6 +103,7 @@ export const WEB_ALWAYS_ALLOWED = [
  */
 export function isBlockedWebPath(pathname: string): boolean {
   if (pathname.startsWith('/api/') || pathname === '/api') return false;
+  if (WEB_ALWAYS_ALLOWED_EXACT.some((p) => pathname === p)) return false;
   if (WEB_ALWAYS_ALLOWED.some((p) => pathname.startsWith(p))) return false;
   return true;
 }

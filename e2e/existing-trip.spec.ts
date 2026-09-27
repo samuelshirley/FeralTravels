@@ -1,9 +1,39 @@
-import { test, expect } from '@playwright/test';
-import { signInAsNewUser } from './fixtures/auth';
-import { FIXTURE_VEHICLE_NAME } from './fixtures/constants';
+import { test, expect, request } from '@playwright/test';
+import { login, signInAsNewUser, uniqueEmail } from './fixtures/auth';
+import {
+  FIXTURE_TRIP_NAME,
+  FIXTURE_USER_NAME,
+  FIXTURE_VEHICLE_NAME,
+  testEndpointHeaders,
+} from './fixtures/constants';
 import { openTrip } from './fixtures/nav';
 import { createBlankPlanningTrip } from './fixtures/test-trip';
 import { formatDayMonthYear, legDateISO, todayISO } from '../src/lib/dates';
+
+/**
+ * The canonical fixture plus one forced Finn fuel stop on day 1, its fuel cache
+ * stamped fresh so opening the day neither searches Places nor replaces it.
+ */
+async function seedWithForcedFuelStop(email: string): Promise<void> {
+  const ctx = await request.newContext({
+    baseURL: process.env.E2E_BASE_URL || `http://localhost:${process.env.E2E_PORT || 4444}`,
+    extraHTTPHeaders: testEndpointHeaders(),
+  });
+  try {
+    const res = await ctx.post('/api/test/seed', {
+      data: {
+        email,
+        userName: FIXTURE_USER_NAME,
+        vehicleName: FIXTURE_VEHICLE_NAME,
+        tripName: FIXTURE_TRIP_NAME,
+        forcedFuelStop: true,
+      },
+    });
+    if (!res.ok()) throw new Error(`[e2e/existing-trip] seed failed (${res.status()}): ${await res.text()}`);
+  } finally {
+    await ctx.dispose();
+  }
+}
 
 /**
  * The core read path: a signed-in user opens their trip and sees it.
@@ -59,6 +89,25 @@ test.describe('Opening an existing trip', () => {
     expect(href.pathname).toBe('/maps/dir/');
     expect(href.searchParams.get('dir_action')).toBe('navigate');
     expect(href.searchParams.get('destination')).toBeTruthy();
+  });
+
+  test('a fuel stop Finn forced says why', async ({ page }) => {
+    const email = uniqueEmail();
+    await seedWithForcedFuelStop(email);
+    await login(page, email);
+    await openTrip(page);
+
+    const firstDay = page.getByTestId('leg-card').first();
+    await expect(firstDay).toBeVisible({ timeout: 15_000 });
+    await firstDay.click();
+
+    // CLAUDE.md: a forced stop MUST carry a one-line reason — and the driver
+    // has to be able to read it, which until 2026-09-24 nothing rendered.
+    const row = page.getByTestId('stop-row').filter({ hasText: 'TotalEnergies Château-Thierry' });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(row.getByText(/^Top up here:/)).toHaveText("Top up here: next fuel is 412 km away, on the next day's drive");
+    // Only the forced stop carries a line; the destination row does not.
+    await expect(page.getByTestId('stop-row').filter({ hasText: 'Top up here' })).toHaveCount(1);
   });
 
   test('every driving day can be navigated to its destination', async ({ page }) => {

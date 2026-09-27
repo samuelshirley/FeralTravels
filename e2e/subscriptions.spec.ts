@@ -706,6 +706,25 @@ test.describe('Subscriptions — comped', () => {
   });
 });
 
+/**
+ * Where this deployment sends a stranger who asks for an app page: `/login`
+ * while the web app is on, `/get-the-app` while it is off. Discovered by asking
+ * — an anonymous GET /trips, first hop only — the same probe web-blocked.spec
+ * uses, restated here rather than imported so neither spec leans on the other.
+ * The signed-out contract below is "a way in, never a wall", and which way in
+ * depends on the switch.
+ */
+async function strangerDestination(page: Page): Promise<'/login' | '/get-the-app'> {
+  const res = await page.request.get('/trips', { maxRedirects: 0 });
+  const location = res.headers()['location'] ?? '';
+  if (location.includes('/get-the-app')) return '/get-the-app';
+  if (location.includes('/login')) return '/login';
+  throw new Error(
+    `GET /trips answered ${res.status()} -> "${location}" for a stranger, which is neither ` +
+      `the web gate (/get-the-app) nor the auth redirect (/login).`
+  );
+}
+
 test.describe('Subscriptions — the public edge', () => {
   test('signed out: a stranger gets a way in, not a bare wall', async ({ page }) => {
     /**
@@ -713,30 +732,40 @@ test.describe('Subscriptions — the public edge', () => {
      * trial to spend, there is nothing to sell them yet, and a wall in front
      * of someone who has never had an account is just a closed door.
      *
-     * NOTE on the design doc: it specifies a marketing landing page with an
-     * App Store link at `/`. That page does not exist yet — `src/app/page.tsx`
-     * redirects to `/login`, which is where sign-in and the legal links live.
-     * So this asserts the property that actually matters and is testable
-     * today: a stranger is handed sign-in, and no entitlement machinery
-     * touches them. Tighten it to assert the landing page when there is one.
+     * `/` is the landing page the design doc specifies (src/app/page.tsx,
+     * 2026-09-24): public, with "Get the app" (to the App Store) as its one
+     * button and no sign-in link — no web signup while the web is locked. What
+     * used to live at `/` — gate, then /login or /trips — is `/signin`, so the
+     * sign-in half of this test starts there. Where a stranger lands from
+     * `/signin` depends on the web switch, so it is asked, not assumed.
      */
+    const destination = await strangerDestination(page);
+
     const res = await page.goto('/');
     expect(res?.status()).toBe(200);
-    await expect(page).toHaveURL(/\/login/);
-
-    // A way in, both ways in.
-    await expect(page.getByPlaceholder('you@example.com')).toBeVisible();
-    // `/email me a/i` — the button reads "Email me a 6-digit code" since the
-    // sign-in rebuild, and the old full-sentence regex cannot match across the
-    // inserted words. Same fix as e2e/fixtures/auth.ts.
-    await expect(page.getByRole('button', { name: /email me a/i })).toBeVisible();
-
+    expect(new URL(page.url()).pathname, '/ must not redirect a stranger').toBe('/');
+    const getTheApp = page.getByRole('link', { name: 'Get the app' });
+    await expect(getTheApp).toBeVisible();
+    // The listing or, until it exists, the App Store search: either way Apple's.
+    expect(await getTheApp.getAttribute('href')).toMatch(/^https:\/\/apps\.apple\.com\//);
     // And no block notice anywhere — signed out is not a blocked state.
+    await expect(notice(page)).toHaveCount(0);
+
+    await page.goto('/signin');
+    await expect(page).toHaveURL(new RegExp(`${destination}(\\?|$)`));
+    if (destination === '/login') {
+      // A way in, both ways in.
+      await expect(page.getByPlaceholder('you@example.com')).toBeVisible();
+      // `/email me a/i` — the button reads "Email me a 6-digit code" since the
+      // sign-in rebuild, and the old full-sentence regex cannot match across the
+      // inserted words. Same fix as e2e/fixtures/auth.ts.
+      await expect(page.getByRole('button', { name: /email me a/i })).toBeVisible();
+    }
     await expect(notice(page)).toHaveCount(0);
 
     // A deep link behaves the same way rather than showing a wall.
     await page.goto('/trips');
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(new RegExp(`${destination}(\\?|$)`));
     await expect(notice(page)).toHaveCount(0);
   });
 

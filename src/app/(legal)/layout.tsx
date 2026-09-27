@@ -30,10 +30,12 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
           A wordmark, NOT a link. These pages are standalone on purpose.
 
           It used to be `← Feral Travels` pointing at `/`, which was fine when
-          the web was the product. It is not now: `/` redirects to the download
-          screen, so the only navigation a reviewer was offered led out of the
-          document they were sent to read and into a prompt to install an app
-          they are in the middle of reviewing.
+          the web was the product. It is not now. `/` has been the public
+          landing page since 2026-09-24 (before that it redirected to the
+          download screen), and either way a link there is the only navigation
+          a reviewer is offered and it leads out of the document they were sent
+          to read, into a pitch to install the app they are in the middle of
+          reviewing.
 
           Nothing here routes into the app. The three legal pages cross-link to
           each other — Apple and Google both expect to get between them — and

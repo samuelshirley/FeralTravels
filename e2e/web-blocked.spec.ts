@@ -26,7 +26,8 @@ import { testEndpointHeaders } from './fixtures/constants';
  *
  * Most of it does not care either way: /api, the legal pages and /login are
  * never gated in either configuration, and those are the assertions that stop
- * this becoming an outage or an App Store rejection. Only the five page paths
+ * this becoming an outage or an App Store rejection. Neither is `/`, the public
+ * landing page, which renders for a stranger in both. Only the five page paths
  * at the bottom differ, and there they are the more useful assertion in the
  * web-ON case: they prove the gate ships INERT, which is exactly the
  * configuration going to production with the flag unset.
@@ -46,12 +47,13 @@ import { testEndpointHeaders } from './fixtures/constants';
  * spec exists to catch, so it now probes the running app instead: send an
  * anonymous request to a gated page and read where it is sent.
  *
- *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED=0
+ *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED unset or anything but '1'
  *   → /login        ordinary auth redirect    → the gate is off
  *
  * INTENT comes from the project name. ci.yml runs this spec twice: once in the
- * `api` project against the ordinary preview, and once in `web-blocked` against
- * a second deployment of the same build carrying WEB_APP_ENABLED=0. So project
+ * `api` project against the ordinary preview (deployed with WEB_APP_ENABLED=1),
+ * and once in `web-blocked` against a second deployment of the same build with
+ * WEB_APP_ENABLED not passed at all — unset, as in production. So project
  * -> deployment -> flag is one chain with nothing to keep in step by hand.
  *
  * Observed and intended are then compared, and a mismatch is the most valuable
@@ -87,7 +89,7 @@ let WEB_ON = true;
 test.beforeAll(async ({}, testInfo) => {
   // The project's OWN baseURL, not the ambient env var. The `web-blocked`
   // project points at a second deployment of the same build with
-  // WEB_APP_ENABLED=0; reading E2E_BASE_URL here would have probed the open one
+  // WEB_APP_ENABLED unset; reading E2E_BASE_URL here would have probed the open one
   // and then asserted the blocked contract against it.
   const ctx = await playwrightRequest.newContext({
     baseURL:
@@ -210,7 +212,9 @@ test.describe('web app off', () => {
    * the exact regression that would take the web app down for everyone the
    * moment this branch merges.
    */
-  for (const path of ['/', '/trips', '/settings', '/vehicle-setup', '/admin']) {
+  // `/signin`, not `/`: the old root's gate-then-redirect moved there on
+  // 2026-09-24, and `/` became the public landing page (tested below).
+  for (const path of ['/signin', '/trips', '/settings', '/vehicle-setup', '/admin']) {
     test(`${path} never renders for a stranger`, async ({ request }) => {
       // FOLLOWING the redirects, not asserting the first hop.
       //
@@ -234,6 +238,32 @@ test.describe('web app off', () => {
       }
     });
   }
+
+  /**
+   * The landing page is the front door in BOTH states — it is what a stranger,
+   * a crawler and an App Store reviewer get at the bare domain. Were it swept
+   * into the gate, the site would answer the App Store listing's own URL with a
+   * redirect, so no branch on WEB_ON here: the assertion is the same either way.
+   */
+  test('/ is the public landing page for a stranger', async ({ request, page }) => {
+    const res = await request.get('/', { ...anon });
+    expect(res.status(), '/ must render, not redirect').toBe(200);
+    expect(new URL(res.url()).pathname, '/ must not redirect a stranger anywhere').toBe('/');
+
+    await page.goto('/');
+    await expect(
+      page.getByRole('heading', { level: 1, name: "Tell Penny where you're going. She plans the drive." })
+    ).toBeVisible();
+    const getTheApp = page.getByRole('link', { name: 'Get the app' });
+    await expect(getTheApp).toBeVisible();
+    // The listing or, until it exists, the App Store search: either way Apple's.
+    expect(await getTheApp.getAttribute('href')).toMatch(/^https:\/\/apps\.apple\.com\//);
+    for (const href of ['/privacy', '/terms', '/support']) {
+      await expect(page.locator(`a[href="${href}"]`)).toHaveCount(1);
+    }
+    // No web signup while the web is locked (Sam, 2026-09-26): the admin types /signin.
+    await expect(page.locator('a[href="/signin"]')).toHaveCount(0);
+  });
 
   test('the download screen renders and offers the App Store', async ({ page }) => {
     const res = await page.goto('/get-the-app');

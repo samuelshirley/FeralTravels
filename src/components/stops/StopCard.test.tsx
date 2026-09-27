@@ -107,4 +107,38 @@ describe('StopCard', () => {
     expect(link.getAttribute('href')).toContain('42.3441');
     expect(link.getAttribute('href')).toContain('-3.6969');
   });
+
+  describe("Finn's forced-stop reason", () => {
+    const forcedReason = { kind: 'next_fuel_far', gap_km: 412 } as const;
+
+    it('shows the line on a forced fuel stop, in km for a metric user', () => {
+      render(
+        <UnitsProvider initialUnits="metric">
+          <StopCard {...baseProps} forcedReason={forcedReason} />
+        </UnitsProvider>
+      );
+      expect(screen.getByText('Top up here: next fuel is 412 km away')).toBeInTheDocument();
+    });
+
+    it('shows miles, and no kilometres, for an imperial user', () => {
+      render(
+        <UnitsProvider initialUnits="imperial">
+          <StopCard {...baseProps} forcedReason={forcedReason} />
+        </UnitsProvider>
+      );
+      const line = screen.getByText(/^Top up here/).textContent ?? '';
+      expect(line).toBe('Top up here: next fuel is 256 mi away');
+      expect(line).not.toMatch(/\bkm\b/);
+    });
+
+    it('is absent on a fuel stop Finn did not force', () => {
+      render(<StopCard {...baseProps} forcedReason={null} />);
+      expect(screen.queryByText(/Top up here/)).not.toBeInTheDocument();
+    });
+
+    it('is absent on a user-added stop even if a reason is passed', () => {
+      render(<StopCard {...baseProps} stopType="other" forcedReason={forcedReason} />);
+      expect(screen.queryByText(/Top up here/)).not.toBeInTheDocument();
+    });
+  });
 });

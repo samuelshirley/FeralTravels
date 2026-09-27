@@ -179,8 +179,8 @@ test.describe('Account deletion', () => {
     //
     // EITHER destination is correct, and which one you get says nothing about
     // deletion. With the web app on, a session-less browser is sent to /login.
-    // With it off (WEB_APP_ENABLED=0, which is how production and the CI
-    // preview run since 2026-08-28) the same browser is sent to /get-the-app
+    // With it off (WEB_APP_ENABLED unset, which is how production runs; CI's
+    // ordinary preview runs with it on) the same browser is sent to /get-the-app
     // instead — it is not a person who needs to sign in, it is a person who
     // needs the app. The assertion is that /settings does not RENDER, which is
     // the thing this test is about; pinning the destination made it fail three

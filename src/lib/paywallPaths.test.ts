@@ -34,6 +34,20 @@ describe('paywall path allowlists', () => {
     expect(isPublicPath('/admin')).toBe(false);
   });
 
+  /**
+   * `/` is public by EXACT match. As a prefix it would make every path public,
+   * so the old root `/signin` and an arbitrary `/x` are pinned as not public.
+   */
+  it('the landing page and its images are public; nothing else rides on "/"', () => {
+    for (const p of ['/', '/landing/penny.jpg']) {
+      expect(isPublicPath(p), p).toBe(true);
+      expect(isPaywallExempt(p), p).toBe(true);
+    }
+    for (const p of ['/signin', '/trips', '/x']) {
+      expect(isPublicPath(p), p).toBe(false);
+    }
+  });
+
   it('matches by prefix, not by substring', () => {
     // A path that merely CONTAINS "/privacy" is not the privacy page.
     expect(isPublicPath('/trips/privacy')).toBe(false);

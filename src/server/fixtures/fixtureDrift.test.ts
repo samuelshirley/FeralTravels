@@ -119,6 +119,7 @@ describe('canonical fixture does not silently go stale', () => {
       'sourceUrl',     // superseded by googleMapsUri for Google-sourced stops
       'alternatives',  // the source trip's stops carry none
       'photos',        // dormant column, always null
+      'forcedReason',  // set only on a stop Finn forced; the canonical stop is not forced (null)
     ]);
     const unaccounted = declared.filter((c) => !carried.has(c));
     expect(

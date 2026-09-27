@@ -204,6 +204,7 @@ function stopRow(r: typeof stops.$inferSelect): Stop {
     alternatives: r.alternatives ?? null,
     place_id: r.placeId ?? null,
     google_maps_uri: r.googleMapsUri ?? null,
+    forced_reason: r.forcedReason ?? null,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
   };
@@ -1711,6 +1712,8 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
           alternatives: s.alternatives,
           placeId: s.placeId,
           googleMapsUri: s.googleMapsUri,
+          // Travels with `notes`, which already says the same thing in English.
+          forcedReason: s.forcedReason,
         });
       }
 

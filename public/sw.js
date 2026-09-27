@@ -1,5 +1,5 @@
 // Bump this on every deploy that changes SW strategy so old SWs purge.
-const CACHE_NAME = 'trip-planner-v6';
+const CACHE_NAME = 'trip-planner-v7';
 
 // We deliberately do NOT precache HTML. Next.js ships hashed bundles and the
 // HTML shell references them by hash; caching stale HTML makes the app point
@@ -90,8 +90,9 @@ self.addEventListener('fetch', (event) => {
         } catch {
           const cached = await caches.match(req);
           if (cached) return cached;
-          // Last-ditch offline fallback
-          const fallback = await caches.match('/');
+          // Last-ditch offline fallback: the app's entry, not `/` — that is
+          // the public landing page since 2026-09-24.
+          const fallback = await caches.match('/signin');
           if (fallback) return fallback;
           throw new Error('offline');
         }

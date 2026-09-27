@@ -39,6 +39,7 @@ const CI_FLOWS = [
   'chat-tab-in-flight.yaml',
   'onboarding-flash.yaml',
   'onboarding-date-picker.yaml',
+  'maps-link-stop.yaml',
 ];
 
 /** `runFlow: x.yaml` — a subflow inherits its parent's variables. */

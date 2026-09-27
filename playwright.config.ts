@@ -193,7 +193,7 @@ export default defineConfig({
 
     /**
      * THE OTHER SIDE OF THE SWITCH — the same spec, against a second deployment
-     * of the same build with WEB_APP_ENABLED=0.
+     * of the same build with WEB_APP_ENABLED unset.
      *
      * A project rather than a second `playwright test` invocation, and that is
      * the whole point of the shape. The separate-command version broke twice in
@@ -230,10 +230,11 @@ export default defineConfig({
      * demo, and a spec that took a year to get right is much cheaper to keep
      * than to rewrite from memory.
      *
-     * RE-ENABLED 2026-08-28. The preview no longer deploys with
-     * `WEB_APP_ENABLED=0`, and ci.yml sets `E2E_WEB_UI=1` beside `E2E_BASE_URL`
-     * — the two move together by construction, in the same job, because either
-     * one alone is a suite that fails for a configuration reason.
+     * RE-ENABLED 2026-08-28. The preview deploys with `WEB_APP_ENABLED=1`
+     * (since 2026-09-24 the web is off without it), and ci.yml sets
+     * `E2E_WEB_UI=1` beside `E2E_BASE_URL` — the two move together by
+     * construction, in the same job, because either one alone is a suite that
+     * fails for a configuration reason.
      *
      * The coverage this restores is the reason it was worth doing: these specs
      * are the only automated proof that Penny plans a trip, that fuel sources
@@ -246,8 +247,9 @@ export default defineConfig({
      * things that would be an outage or an App Store rejection — /api, the legal
      * pages and /login are ungated in EITHER configuration — and the gate's own
      * logic is unit-tested in `src/lib/webAccess.test.ts` and
-     * `webAccessCoverage.test.ts`. To go back, restore the deploy flag in ci.yml
-     * and drop `E2E_WEB_UI`; the spec follows automatically.
+     * `webAccessCoverage.test.ts`. To go back, drop `-e WEB_APP_ENABLED="1"`
+     * from the deploy in ci.yml and drop `E2E_WEB_UI`; the spec follows
+     * automatically.
      */
     ...(process.env.E2E_WEB_UI === '1'
       ? [
@@ -314,6 +316,11 @@ export default defineConfig({
             // here (not in .env) so a developer's `npm run dev` doesn't
             // unexpectedly expose them — only tests turn them on.
             E2E_TEST_ENDPOINTS: '1',
+            // The web is OFF unless this is exactly '1' (src/lib/webAccess.ts),
+            // and a local run is the open side of the switch, like CI's
+            // ordinary preview: the `api` project's web-blocked.spec.ts expects
+            // it open.
+            WEB_APP_ENABLED: '1',
             AUTH_URL: BASE_URL,
             // The TripMap component reads NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
             // (Next bakes NEXT_PUBLIC_ vars into the client bundle at

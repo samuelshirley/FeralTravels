@@ -1,7 +1,9 @@
 'use client';
 
-import type { StopType } from '@/types/trip';
+import type { ForcedStopReason, StopType } from '@/types/trip';
 import Distance from '@/components/Distance';
+import { useUnits } from '@/components/UnitsContext';
+import { forcedStopLine } from '@/lib/forcedStopReason';
 import { FuelIcon, PlaceIcon } from '@/components/icons';
 import { buildGoHereUrl } from '@/lib/maps';
 
@@ -16,6 +18,8 @@ export interface StopCardProps {
   lng?: number | null;
   /** When true, dims the card and shows a spinner overlay. */
   loading?: boolean;
+  /** Why Finn forced this fuel stop; renders one line under the distance. */
+  forcedReason?: ForcedStopReason | null;
 }
 
 /**
@@ -57,8 +61,11 @@ export default function StopCard({
   lat,
   lng,
   loading = false,
+  forcedReason,
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
+  const { units } = useUnits();
+  const forcedLine = forcedStopLine(stopType, forcedReason, units);
 
   const href =
     googleMapsUri ??
@@ -141,6 +148,11 @@ export default function StopCard({
                 `Distance`; this one was written before it and never caught up.
               */}
               <Distance km={distanceFromStartKm} layout="inline" /> from start
+            </div>
+          )}
+          {forcedLine && (
+            <div style={{ fontSize: 10.5, color: 'var(--tp-subtle)', marginTop: 1 }}>
+              {forcedLine}
             </div>
           )}
         </div>
