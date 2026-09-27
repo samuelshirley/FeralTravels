@@ -80,6 +80,11 @@ interface LegCardProps {
   autoSourceFuel?: boolean;
   /** True when this leg is the one currently selected on the map. */
   selected?: boolean;
+  /**
+   * The base-day note box took focus. `Itinerary` scrolls this card above the
+   * keyboard — the list never scrolls a focused input into view by itself.
+   */
+  onNoteEditorFocus?: () => void;
 }
 
 /** Native port of src/components/LegCard.tsx. */
@@ -98,6 +103,7 @@ export default function LegCard({
   isCurrent = false,
   autoSourceFuel = false,
   selected = false,
+  onNoteEditorFocus,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
   const isRestDay = leg.leg_type === "rest";
@@ -467,6 +473,7 @@ export default function LegCard({
                 multiline
                 value={noteDraft}
                 onChangeText={setNoteDraft}
+                onFocus={onNoteEditorFocus}
                 placeholder="Note"
                 placeholderTextColor={theme.subtle}
                 maxLength={500}
