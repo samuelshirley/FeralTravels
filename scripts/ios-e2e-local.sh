@@ -95,8 +95,10 @@ STOREKIT_FILE="mobile/storekit/FeralTravels.storekit"
 #
 # The test flows want a name that is obviously a fixture; the screenshot flow
 # wants one a customer could read on the App Store. Same canonical two legs
-# either way — Paris → Strasbourg → Stuttgart is a real route with real road
-# geometry, which is why it photographs well — only the labels differ.
+# either way — Paris → Strasbourg → Stuttgart, real endpoints and distances —
+# only the labels differ. NOT real road geometry: CANONICAL_TWO_LEGS in
+# src/server/repos/testSupport.ts seeds no `geometry`, so the map draws each leg
+# as TripMap's dashed straight-line fallback (checked 2026-09-23).
 #
 # `sign-in.yaml` and `chat-keyboard.yaml` match the trip card against
 # ${TRIP_NAME}, so this and the seed have to move together. `screenshots`
@@ -757,11 +759,15 @@ run_flow() {
   rm -rf "$OUT/maestro"
   say "Running $flow on $udid"
   set +e
-  MAESTRO_DRIVER_STARTUP_TIMEOUT=240000 \
   # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the sign-in
   # code itself rather than trusting one minted before the run. TEST_SECRET is
   # empty locally — there is nothing to lock out — and the script omits the
   # header when it is.
+  #
+  # The comment sits ABOVE the command, not between the timeout and `maestro`:
+  # a comment after a `\` continuation ends the command there, which turned the
+  # timeout into a bare shell assignment that Maestro never saw.
+  MAESTRO_DRIVER_STARTUP_TIMEOUT=240000 \
   maestro --device "$udid" test "$file" \
     -e APP_ID="$APP_ID" \
     -e EMAIL="$EMAIL" \
@@ -819,8 +825,8 @@ run_flow() {
 #    image that is not one of the dimensions it expects for the slot. See
 #    scripts/pick-screenshot-simulator.mjs.
 #  - PRESENTABLE NAMES on the same canonical graph. Paris → Strasbourg →
-#    Stuttgart with real coordinates and real road geometry is already what the
-#    fixture seeds; only "E2E Fixture Trip" had to go.
+#    Stuttgart with real coordinates is already what the fixture seeds; only
+#    "E2E Fixture Trip" had to go.
 #  - EVERY PNG IS MEASURED before it is kept. A set that is silently 1206x2622
 #    (an iPhone 17 Pro — the 6.3" device that §3 of the listing doc wrongly
 #    names for the 6.9" slot) is a set you find out about at upload.
@@ -852,7 +858,21 @@ screenshots() {
   [ -d mobile/ios-build ] && [ -n "$(ls -d mobile/ios-build/*.app 2>/dev/null)" ] || build
   install_app "$udid" "$model"
 
+  # A STORE STATUS BAR, not whatever the simulator happens to show. Left alone
+  # it reads the wall-clock time and four empty cellular dots — a simulator has
+  # no carrier — which on the 2026-09-02 and first 2026-09-23 sets looked like a
+  # phone with no signal. Set after install_app, which shuts down and reboots
+  # the device, and cleared again after the flow so the test flows see the real
+  # one (a failed flow exits before the clear; `simctl status_bar <udid> clear`
+  # by hand if that matters).
+  xcrun simctl status_bar "$udid" override \
+    --time "9:41" --dataNetwork wifi --wifiMode active --wifiBars 3 \
+    --cellularMode active --cellularBars 4 --operatorName "" \
+    --batteryState charged --batteryLevel 100
+  ok "status bar pinned (9:41, full signal, full battery)"
+
   run_flow screenshots
+  xcrun simctl status_bar "$udid" clear || true
 
   # ── Measure, then keep ───────────────────────────────────────────────────
   #
