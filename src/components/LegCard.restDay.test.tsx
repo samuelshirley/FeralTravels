@@ -20,14 +20,16 @@
  * markup it is run against.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { LegWithDetails } from '@/types/trip';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/trips/00000000-0000-0000-0000-000000000001',
 }));
 
+const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', () => ({
+  apiFetch,
   tripApi: () => ({
     planFuelStops: vi.fn().mockResolvedValue({}),
     listStopsForLeg: vi.fn().mockResolvedValue([]),
@@ -50,6 +52,7 @@ import LegCard from './LegCard';
 
 afterEach(() => {
   cleanup();
+  apiFetch.mockReset();
   gps.value = { position: null, gpsStatus: 'unavailable' };
 });
 
@@ -178,5 +181,117 @@ describe('LegCard on a day spent in one place', () => {
     renderLeg(portoRestDay({ leg_type: 'rest' } as Partial<LegWithDetails>));
 
     expect(navButtonText()).toEqual([]);
+  });
+});
+
+/**
+ * "+ Add note to this day". It used to be "+ Add to this day", which broadcast
+ * `penny:prefill` to put a prompt in Penny's composer — off-screen on iOS, so
+ * the button looked dead, and Penny refused the prompt when it was sent. It is
+ * now a note box that writes the day's notes through PATCH /api/legs/:id/notes.
+ */
+describe('LegCard base-day notes', () => {
+  const baseDay = (overrides: Partial<LegWithDetails> = {}) =>
+    portoRestDay({ leg_type: 'rest', ...overrides } as Partial<LegWithDetails>);
+
+  function renderBaseDay(leg: LegWithDetails, onChanged = vi.fn(), readonly = false) {
+    render(
+      <LegCard
+        tripId="00000000-0000-0000-0000-000000000001"
+        leg={leg}
+        expanded
+        onToggle={() => {}}
+        onNavigate={() => {}}
+        onChanged={onChanged}
+        readonly={readonly}
+      />
+    );
+    return onChanged;
+  }
+
+  it('labels the button "+ Add note to this day" and no longer talks to Penny', () => {
+    const prefill = vi.fn();
+    window.addEventListener('penny:prefill', prefill);
+    try {
+      renderBaseDay(baseDay());
+      expect(screen.queryByText('+ Add to this day')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '+ Add note to this day' }));
+      expect(prefill).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('penny:prefill', prefill);
+    }
+  });
+
+  it('opens an inline note box with Save disabled until something is typed', () => {
+    renderBaseDay(baseDay());
+    fireEvent.click(screen.getByRole('button', { name: '+ Add note to this day' }));
+
+    const box = screen.getByPlaceholderText('Note');
+    expect(document.activeElement).toBe(box);
+    expect(screen.queryByRole('button', { name: '+ Add note to this day' })).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    fireEvent.change(box, { target: { value: '   ' } });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByPlaceholderText('Note')).toBeNull();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('saves the existing notes plus the new one, refreshes, and closes', async () => {
+    apiFetch.mockResolvedValue({ notes: [] });
+    const onChanged = renderBaseDay(baseDay({ parsedNotes: ['Port cellars'] }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add note to this day' }));
+    fireEvent.change(screen.getByPlaceholderText('Note'), { target: { value: '  Laundry  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/legs/00000000-0000-0000-0000-0000000000c0/notes', {
+      method: 'PATCH',
+      body: { notes: ['Port cellars', 'Laundry'] },
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(screen.queryByPlaceholderText('Note')).toBeNull();
+  });
+
+  it('keeps the typed text when the save fails', async () => {
+    apiFetch.mockRejectedValue(new Error('boom'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onChanged = renderBaseDay(baseDay());
+    fireEvent.click(screen.getByRole('button', { name: '+ Add note to this day' }));
+    fireEvent.change(screen.getByPlaceholderText('Note'), { target: { value: 'Laundry' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).not.toBeDisabled());
+    expect(screen.getByPlaceholderText('Note')).toHaveValue('Laundry');
+    expect(onChanged).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('deletes one note by saving the list without it', async () => {
+    apiFetch.mockResolvedValue({ notes: [] });
+    const onChanged = renderBaseDay(baseDay({ parsedNotes: ['Port cellars', 'Laundry'] }));
+    const deletes = screen.getAllByRole('button', { name: 'Delete note' });
+    expect(deletes).toHaveLength(2);
+    fireEvent.click(deletes[0]);
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/legs/00000000-0000-0000-0000-0000000000c0/notes', {
+      method: 'PATCH',
+      body: { notes: ['Laundry'] },
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('offers neither the button nor delete on a read-only trip', () => {
+    renderBaseDay(baseDay({ parsedNotes: ['Port cellars'] }), vi.fn(), true);
+    expect(screen.getByText('Port cellars')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '+ Add note to this day' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete note' })).toBeNull();
+  });
+
+  it('leaves driving-day notes without a delete control', () => {
+    renderLeg(portoRestDay({ parsedNotes: ['Fill up before the pass'] } as Partial<LegWithDetails>));
+    expect(screen.getByText('Fill up before the pass')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Delete note' })).toBeNull();
   });
 });

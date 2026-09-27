@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LegWithDetails } from '@/types/trip';
-import { tripApi } from '@/lib/api';
+import { apiFetch, tripApi } from '@/lib/api';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
   assertDestinationReachable,
@@ -303,6 +303,37 @@ export default function LegCard({
   const driveColor = leg.color || 'var(--tp-primary)';
   const dotColor = isRestDay ? baseDayColor : driveColor;
 
+  // ── Base-day notes ──────────────────────────────────────────────────────
+  // The user's own notes for a day in one place. `noteDraft` is null while the
+  // box is closed. Every write sends the whole list (PATCH replaces it), then the
+  // parent reload brings the saved list back as `parsedNotes`.
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const saveNotes = async (notes: string[]): Promise<boolean> => {
+    setNotesSaving(true);
+    try {
+      await apiFetch(`/api/legs/${leg.id}/notes`, { method: 'PATCH', body: { notes } });
+      onChanged?.();
+      return true;
+    } catch (e) {
+      // apiFetch already surfaced this via the global ErrorNotifier (no silent
+      // swallow). The caller keeps whatever the user typed.
+      console.warn('saving day notes failed', e);
+      return false;
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+  const noteSaveDisabled = notesSaving || (noteDraft ?? '').trim() === '';
+  const addNote = async () => {
+    const text = noteDraft?.trim();
+    if (!text) return;
+    if (await saveNotes([...leg.parsedNotes, text])) setNoteDraft(null);
+  };
+  const deleteNote = (index: number) => {
+    void saveNotes(leg.parsedNotes.filter((_, i) => i !== index));
+  };
+
   return (
     <div
       data-testid="leg-card"
@@ -523,6 +554,9 @@ export default function LegCard({
                 <div
                   key={i}
                   style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
                     fontSize: 13,
                     color: 'var(--tp-muted)',
                     lineHeight: 1.5,
@@ -531,28 +565,42 @@ export default function LegCard({
                     marginBottom: 2,
                   }}
                 >
-                  {note}
+                  <span style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap' }}>{note}</span>
+                  {!readonly && (
+                    <button
+                      type="button"
+                      aria-label="Delete note"
+                      disabled={notesSaving}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteNote(i);
+                      }}
+                      style={{
+                        flexShrink: 0,
+                        background: 'none',
+                        border: 'none',
+                        padding: '0 4px',
+                        fontSize: 15,
+                        lineHeight: 1.3,
+                        color: 'var(--tp-subtle)',
+                        cursor: notesSaving ? 'default' : 'pointer',
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Add to this day button — links to Penny chat */}
-          {!readonly && (
+          {/* Add a note to this day — an inline box that saves to the leg's notes */}
+          {!readonly && noteDraft === null && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                // Dispatch a custom event that ChatPanel listens for to
-                // pre-fill Penny's input with context about this rest day.
-                const detail = {
-                  legId: leg.id,
-                  dayTitle: leg.title,
-                  location: leg.end_name || leg.overnight || '',
-                  dates: leg.dates,
-                };
-                window.dispatchEvent(
-                  new CustomEvent('penny:prefill', { detail })
-                );
+                setNoteDraft('');
               }}
               style={{
                 marginTop: 14,
@@ -570,8 +618,78 @@ export default function LegCard({
                 cursor: 'pointer',
               }}
             >
-              + Add to this day
+              + Add note to this day
             </button>
+          )}
+          {!readonly && noteDraft !== null && (
+            <div style={{ marginTop: 14 }}>
+              <textarea
+                autoFocus
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                placeholder="Note"
+                maxLength={500}
+                rows={3}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  lineHeight: 1.5,
+                  color: 'var(--tp-text)',
+                  background: `${baseDayColor}12`,
+                  border: `1px solid ${baseDayColor}30`,
+                  borderRadius: 6,
+                  padding: '7px 10px',
+                  resize: 'vertical',
+                }}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button
+                  type="button"
+                  disabled={noteSaveDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void addNote();
+                  }}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    color: baseDayColor,
+                    background: `${baseDayColor}12`,
+                    border: `1px solid ${baseDayColor}30`,
+                    padding: '7px 14px',
+                    borderRadius: 6,
+                    cursor: noteSaveDisabled ? 'default' : 'pointer',
+                    opacity: noteSaveDisabled ? 0.5 : 1,
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  disabled={notesSaving}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNoteDraft(null);
+                  }}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    color: 'var(--tp-subtle)',
+                    background: 'none',
+                    border: 'none',
+                    padding: '7px 8px',
+                    cursor: notesSaving ? 'default' : 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}

@@ -136,7 +136,8 @@ api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops api/me
+api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops
+api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
 api/promo/redeem api/routes api/routes/[id]

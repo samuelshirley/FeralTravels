@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { LegWithDetails } from "@/shared/types/trip";
 import { tripApi } from "@/lib/api";
 import {
@@ -15,7 +15,6 @@ import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
 import { Distance, Spinner } from "@/components/ui";
 import { shadow, theme } from "@/lib/theme";
-import { emitPennyPrefill } from "@/lib/pennyPrefill";
 import { font } from "@/lib/typography";
 import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from "@/components/icons";
 
@@ -275,6 +274,37 @@ export default function LegCard({
   const driveColor = leg.color || theme.primary;
   const dotColor = isRestDay ? restDayColor : driveColor;
 
+  // ── Base-day notes ──────────────────────────────────────────────────────
+  // Mirrors src/components/LegCard.tsx: `noteDraft` is null while the box is
+  // closed, every write sends the whole list, and the trip reload brings the
+  // saved list back as `parsedNotes`.
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const saveNotes = async (notes: string[]): Promise<boolean> => {
+    setNotesSaving(true);
+    try {
+      await api.setLegNotes(leg.id, notes);
+      onChanged?.();
+      return true;
+    } catch (e) {
+      // apiFetch already surfaced this via the global error surface (no silent
+      // swallow). The caller keeps whatever the user typed.
+      console.warn("saving day notes failed", e);
+      return false;
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+  const noteSaveDisabled = notesSaving || (noteDraft ?? "").trim() === "";
+  const addNote = async () => {
+    const text = noteDraft?.trim();
+    if (!text) return;
+    if (await saveNotes([...leg.parsedNotes, text])) setNoteDraft(null);
+  };
+  const deleteNote = (index: number) => {
+    void saveNotes(leg.parsedNotes.filter((_, i) => i !== index));
+  };
+
   // The web rotates the chevron with a CSS transition; Animated is the native
   // equivalent and runs the rotation off the JS thread.
   const chevron = useRef(new Animated.Value(expanded ? 1 : 0)).current;
@@ -391,31 +421,86 @@ export default function LegCard({
             <View style={styles.notesBlock}>
               <Text style={[styles.blockLabel, { color: restDayColor }]}>PLANS & NOTES</Text>
               {leg.parsedNotes.map((note: string, i: number) => (
-                <View key={i} style={[styles.note, { borderLeftColor: `${restDayColor}40` }]}>
-                  <Text style={styles.noteText}>{note}</Text>
+                <View
+                  key={i}
+                  style={[styles.note, styles.noteRow, { borderLeftColor: `${restDayColor}40` }]}
+                >
+                  <Text style={[styles.noteText, styles.noteTextFill]}>{note}</Text>
+                  {!readonly ? (
+                    <Pressable
+                      onPress={() => deleteNote(i)}
+                      disabled={notesSaving}
+                      accessibilityRole="button"
+                      accessibilityLabel="Delete note"
+                      hitSlop={10}
+                      style={styles.noteDelete}
+                    >
+                      <Text style={styles.noteDeleteText}>×</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ))}
             </View>
           ) : null}
 
-          {/* Add to this day button — hands Penny the context for this rest day */}
-          {!readonly ? (
+          {/* Add a note to this day — an inline box that saves to the leg's notes.
+              No KeyboardAvoidingView here: the trip screen's root owns the
+              keyboard (see app/trips/[tripId].tsx). */}
+          {!readonly && noteDraft === null ? (
             <Pressable
-              onPress={() =>
-                emitPennyPrefill({
-                  legId: leg.id,
-                  dayTitle: leg.title,
-                  location: leg.end_name || leg.overnight || "",
-                  dates: leg.dates,
-                })
-              }
+              onPress={() => setNoteDraft("")}
+              accessibilityRole="button"
               style={[
                 styles.addToDay,
                 { backgroundColor: `${restDayColor}12`, borderColor: `${restDayColor}30` },
               ]}
             >
-              <Text style={[styles.addToDayText, { color: restDayColor }]}>+ Add to this day</Text>
+              <Text style={[styles.addToDayText, { color: restDayColor }]}>
+                + Add note to this day
+              </Text>
             </Pressable>
+          ) : null}
+          {!readonly && noteDraft !== null ? (
+            <View style={styles.noteEditor}>
+              <TextInput
+                autoFocus
+                multiline
+                value={noteDraft}
+                onChangeText={setNoteDraft}
+                placeholder="Note"
+                placeholderTextColor={theme.subtle}
+                maxLength={500}
+                editable={!notesSaving}
+                style={[
+                  styles.noteInput,
+                  { backgroundColor: `${restDayColor}12`, borderColor: `${restDayColor}30` },
+                ]}
+              />
+              <View style={styles.noteActions}>
+                <Pressable
+                  onPress={() => void addNote()}
+                  disabled={noteSaveDisabled}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: noteSaveDisabled }}
+                  style={[
+                    styles.addToDay,
+                    styles.noteActionButton,
+                    { backgroundColor: `${restDayColor}12`, borderColor: `${restDayColor}30` },
+                    noteSaveDisabled && styles.noteActionDisabled,
+                  ]}
+                >
+                  <Text style={[styles.addToDayText, { color: restDayColor }]}>Save</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setNoteDraft(null)}
+                  disabled={notesSaving}
+                  accessibilityRole="button"
+                  style={styles.noteCancel}
+                >
+                  <Text style={[styles.addToDayText, { color: theme.subtle }]}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
           ) : null}
         </View>
       ) : null}
@@ -627,6 +712,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   addToDayText: { fontSize: 12, fontFamily: font.semibold, letterSpacing: 0.5 },
+  noteRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  noteTextFill: { flex: 1 },
+  noteDelete: { paddingHorizontal: 4 },
+  noteDeleteText: { fontFamily: font.regular, fontSize: 15, lineHeight: 19, color: theme.subtle },
+  noteEditor: { marginTop: 14 },
+  noteInput: {
+    minHeight: 72,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.text,
+    textAlignVertical: "top",
+  },
+  noteActions: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  noteActionButton: { marginTop: 0 },
+  noteActionDisabled: { opacity: 0.5 },
+  noteCancel: { paddingVertical: 7, paddingHorizontal: 8 },
   navBlock: { marginTop: 10 },
   /** Same shape, same defect, same fix as navButton. */
   syncingPill: {
