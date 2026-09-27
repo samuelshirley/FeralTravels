@@ -123,8 +123,39 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      ios_shards: ${{ steps.shards.outputs.ios_shards }}
     steps:
       - uses: actions/checkout@v4
+
+      # The iOS shards to run: one per mobile/maestro/shards/<name>.yaml, so a
+      # new shard is a new file and nothing here changes. `ai` holds the flows
+      # that ask Penny to plan for real (Anthropic spend), and joins ONLY on a
+      # run STARTED by the `ai-tests` label — the same rule, and the same env
+      # plumbing, as the E2E job's E2E_AI_SPECS (see there for why a label and
+      # why the triggering event rather than the PR carrying it).
+      - name: Pick the iOS shards
+        id: shards
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_ACTION" = "labeled" ] && [ "$LABEL_NAME" = "ai-tests" ]; then
+            IOS_AI=1
+          else
+            IOS_AI=0
+          fi
+          SHARDS="$(IOS_AI="$IOS_AI" node -e "
+            const fs = require('fs');
+            const names = fs.readdirSync('mobile/maestro/shards')
+              .filter((f) => f.endsWith('.yaml'))
+              .map((f) => f.slice(0, -5))
+              .filter((n) => n !== 'ai' || process.env.IOS_AI === '1')
+              .sort();
+            console.log(JSON.stringify(names));
+          ")"
+          echo "ios_shards=$SHARDS" >> "$GITHUB_OUTPUT"
+          echo "iOS shards: $SHARDS" >> "$GITHUB_STEP_SUMMARY"
       - name: Classify the diff
         id: scope
         env:
@@ -759,73 +790,48 @@ jobs:
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
-  # ── iOS end-to-end, on a real simulator ────────────────────────────────────
+  # ── iOS end-to-end, on real simulators ─────────────────────────────────────
   #
-  # The web suite proves the API and the browser UI. NOTHING proved the Expo app
-  # until this job: `Mobile typecheck` compiles it, which catches a type error
-  # and no layout at all. The bug that earned this job (d316cd6) type-checked
-  # perfectly and hid the chat composer behind the keyboard on every iPhone.
+  # iOS is the product, so this is where the end-to-end weight sits: the web
+  # suite above keeps what does not depend on a screen (the API guards, the legal
+  # pages App Review loads, sign-in, the paywall's server side, the web lock).
   #
   # Not React Native Testing Library, deliberately: RNTL renders a component
   # tree in JS with no layout engine and no keyboard, so it would find the
   # composer, assert it exists, and go green while the app was unusable. That is
-  # the same green-but-empty shape `scripts/assert-e2e-ran.mjs` exists to catch,
-  # and buying it for less money is not a bargain.
+  # the same green-but-empty shape `scripts/assert-e2e-ran.mjs` exists to catch.
   #
-  # ── The cost, stated plainly, because it is the reason for every `if:` here ──
+  # ── The shape: build once, then shards in parallel (2026-09-27) ──────────────
   #
-  # A simulator needs macOS, and GitHub bills macOS runners at ~10x Linux. An
-  # unconditional cold run — prebuild, xcodebuild, boot, flows — is ~20 minutes
-  # of that on every push. So:
+  # One job did everything in series — compile (13-16 min), boot (3-8), then
+  # every flow as its own `maestro test`, each paying ~1-1.5 min to start the
+  # XCTest driver again. Seven flows took 30-45 minutes and a slow runner was
+  # cancelled at 45:29 with every flow green (run 36272165470). Adding the
+  # screens Playwright used to cover would have put it past an hour. So:
   #
-  #   1. It runs ONLY when something under mobile/ changed. A web-only PR pays
-  #      nothing, which is most PRs.
-  #   2. The built .app is cached against the NATIVE fingerprint, reusing the
-  #      same distinction `scripts/decide-mobile-release.mjs` already draws for
-  #      OTA-vs-native. A JS-only change restores the binary and rebuilds the
-  #      bundle (~5 min) instead of compiling Xcode from scratch (~20 min).
+  #   ios-build   compiles the NATIVE app once, in parallel with the unit tests
+  #               and the preview deploy (it needs neither), cached by native
+  #               fingerprint, and hands it on as an artifact.
+  #   ios-e2e     one job per shard (mobile/maestro/shards/<name>.yaml), each on
+  #               its own runner and simulator: swap in a JS bundle built for
+  #               THIS preview, boot, then launch.yaml and the shard's flows in
+  #               ONE Maestro run (one driver start per shard, not per flow).
+  #   ios-e2e-summary
+  #               keeps the one check name, `iOS e2e (simulator)`, and the one
+  #               PR comment, whatever the shard count.
   #
-  # If this ever needs to run on a web-only PR, the honest fix is to widen the
-  # path filter deliberately — not to delete the filter.
-  ios-e2e:
-    name: iOS e2e (simulator)
-    needs: preview
+  # Docker is not an option: the iOS Simulator runs only on macOS. The
+  # repository is public, so macOS minutes are free; the cost of a shard is a
+  # runner slot (five concurrent on the free plan), not money.
+  ios-build:
+    name: iOS build (simulator app)
+    needs: decide
+    if: needs.decide.outputs.docs_only != 'true'
     runs-on: macos-15
-    # 60, not 45: with seven flows a slow runner finished every flow and was
-    # still cancelled at 45:29 (run 36272165470). A fast run takes ~31 min.
-    timeout-minutes: 60
-    env:
-      # ONE definition, read by both the install step and its cache key.
-      #
-      # It pairs with the Xcode selected further down: Maestro ships a PREBUILT
-      # iOS driver, so the release and the Xcode that built it move together.
-      # `scripts/ios-e2e-local.sh` carries the same pin as `MAESTRO_PIN` — the
-      # two files cannot share a definition, so each points at the other.
-      # When bumping, check which Xcode that release's `rebuild-ios-drivers.yaml`
-      # used and move the `xcode-select` with it.
-      MAESTRO_VERSION: 2.10.0
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The fingerprint below diffs against the base, so a shallow clone
-          # would make every run look like a native change and rebuild.
-          fetch-depth: 0
 
-      # NO DIFF GATE. This job used to skip unless something under `mobile/`
-      # changed, because macOS runners bill about ten times a Linux one.
-      #
-      # Both halves of that reasoning expired on 2026-08-28. The repository is
-      # public, so Actions minutes — macOS included — are free. And the app is
-      # now the ONLY client: the web front end serves a download screen and its
-      # Playwright specs are paused. So a change to `src/app/api/trips/route.ts`
-      # touches no file under `mobile/`, would have skipped the simulator, and
-      # is exactly the change most likely to break the trips screen. Nothing
-      # else would have caught it — the first report would have been a phone.
-      #
-      # There is NO build cache — see the long note below, which explains why
-      # one was removed rather than fixed. Every run compiles the app. This
-      # paragraph used to end by promising the opposite, describing a cache the
-      # step below it had already deleted.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -836,210 +842,207 @@ jobs:
         run: npm ci
         working-directory: mobile
 
-      # NO BUILD CACHE, deliberately, and this is a correction rather than a
-      # preference.
+      # ── The cache, and why this one is safe when the last one was not ──
       #
-      # (The two sentences that stood here asked "did anything that ends up in
-      # the BINARY move? If not, last run's .app still runs this JS" — the
-      # rationale for the cache that the rest of this comment explains was
-      # removed. They described the deleted step as though it were still there.)
+      # There was a `.app` cache once, removed on 2026-08-28: on a hit it
+      # skipped the whole build, bundle included, so the simulator would have
+      # launched an app pointed at a PREVIOUS PR's torn-down preview. The URL is
+      # inlined at BUNDLE time. The fix is to stop caching the bundle, not to
+      # stop caching the compile: this job builds against a placeholder host,
+      # and every shard runs `scripts/ios-rebundle.sh`, which replaces the
+      # bundle with one built for its own preview and FAILS if the result does
+      # not contain that preview's host or still contains the placeholder.
       #
-      # There was one, keyed on a "native fingerprint" (package-lock +
-      # app.config + eas.json), with a comment promising "the JS bundle is
-      # always rebuilt below, because EXPO_PUBLIC_API_URL is inlined at bundle
-      # time and every PR has a different preview URL." There was no such step.
-      # On a cache HIT the whole build was skipped, bundle included — so the
-      # simulator would have launched an app pointed at a PREVIOUS PR's preview,
-      # a URL torn down when that PR closed. Sign-in would fail against a dead
-      # host and the flow would look like a broken app.
-      #
-      # It has not bitten yet only because the fingerprint has changed on every
-      # run so far. The first time it does not, the failure is a mystery.
-      #
-      # Rebuilding always removes the hazard outright, and it costs nothing that
-      # matters: the repository is public, so macOS Actions minutes are free.
+      # Keyed on the native fingerprint (`@expo/fingerprint`: native deps,
+      # app config, config plugins, patches), the runner image and the Xcode
+      # that compiles it. A PR's cache is visible only to that PR and to `main`,
+      # so the first push of a PR compiles and every later push restores.
+      - name: Fingerprint the native app
+        id: fp
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          HASH="$(npx fingerprint fingerprint:generate --platform ios | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).hash))")"
+          XCODE="$(xcodebuild -version | awk 'NR==1 {print $2}')"
+          echo "key=ios-sim-app-v1-${ImageOS}-${ImageVersion}-xcode${XCODE}-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "Native fingerprint $HASH (Xcode $XCODE, image $ImageOS $ImageVersion)"
+
+      - name: Restore the compiled app
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios-build
+          key: ${{ steps.fp.outputs.key }}
+
       # RELEASE, not Debug, and this is a correction rather than a preference.
+      # A Debug build contains NO JavaScript — it fetches its bundle from a Metro
+      # packager at launch, and nothing here runs one — so it came up on the red
+      # box "No script URL provided" every time (2026-09-01). Release is also the
+      # configuration the flows claim to test: `__DEV__` off, the JS that ships.
       #
-      # A Debug build contains NO JavaScript. React Native's Debug path fetches
-      # its bundle from a Metro packager on localhost:8081 at launch, and this
-      # job has never run one — so the installed app came up on the red box
-      # "No script URL provided. Make sure the packager is running", every
-      # single time. `launch.yaml` could not have passed here under any
-      # selector: it waits 30s for `signin-email` on a screen the app was never
-      # going to draw. Proven locally on 2026-09-01, from the view hierarchy of
-      # a Debug build on a booted simulator.
+      # Default Xcode (16.4, iOS 18.5 SDK), deliberately: that is the build that
+      # has been shipping. The shards select Xcode 26.2 for Maestro's driver,
+      # and an 18.5 app runs fine on a 26.2 simulator.
       #
-      # Release runs the bundling phase at build time, so the .app is
-      # self-contained. It is also the configuration whose behaviour the flows
-      # claim to be testing — `__DEV__` off, the JS that ships.
+      # NO EXTRA BUILD SETTINGS, measured: ONLY_ACTIVE_ARCH / index store / dwarf
+      # moved the build 14m06s → 14m46s, and the arch flag was a no-op (the four
+      # `-arch x86_64` lines are toolchain probes). And NO CODE_SIGNING_ALLOWED=NO:
+      # expo-secure-store needs the entitlements an unsigned build lacks, and
+      # sign-in died storing the session. A simulator build signs ad hoc.
       - name: Build the app for the simulator
+        if: steps.cache.outputs.cache-hit != 'true'
         env:
-          EXPO_PUBLIC_API_URL: ${{ needs.preview.outputs.url }}
+          # A host that cannot resolve, so an app that somehow kept this bundle
+          # fails loudly — and ios-rebundle.sh refuses to hand it on anyway.
+          EXPO_PUBLIC_API_URL: https://ios-bundle-placeholder.invalid
         working-directory: mobile
         run: |
           set -euo pipefail
           npx expo prebuild --platform ios --clean
-          # Derived, never hardcoded: `expo prebuild` names the workspace after
-          # app.config.js's `name`, so a rename would otherwise fail here with
-          # an xcodebuild error that says nothing about the cause.
+          # Derived, never hardcoded: prebuild names the workspace after
+          # app.config.js's `name`.
           WORKSPACE="$(ls -d ios/*.xcworkspace | head -1)"
           SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
           echo "Building scheme $SCHEME from $WORKSPACE"
-          echo "API base baked into this build: $EXPO_PUBLIC_API_URL"
-          # NO EXTRA BUILD SETTINGS HERE, and that is a MEASURED result rather
-          # than an omission.
-          #
-          # `ONLY_ACTIVE_ARCH=YES`, `COMPILER_INDEX_STORE_ENABLE=NO` and
-          # `DEBUG_INFORMATION_FORMAT=dwarf` were added on the reasoning that
-          # this job throws away a second architecture slice, an index store
-          # and a dSYM. Measured across two real runs, the build went 14m06s →
-          # 14m46s — no saving, inside the noise of a macOS runner.
-          #
-          # The arch flag was a NO-OP: both logs contain the same four
-          # `-arch x86_64` lines, and all four are `clang -v -E -dM ...
-          # /dev/null` toolchain PROBES, not compilation. The build was already
-          # arm64-only, so there was never a second slice to skip.
-          #
-          # Don't re-add them without a measurement — an unexplained flag in a
-          # build invocation costs more later than the seconds it did not save.
-          #
-          # `-configuration Release` stays: see the note below on Debug builds
-          # containing no JavaScript at all. `-quiet` is deliberately NOT here —
-          # a quieter build log is a worse one the day it breaks.
           xcodebuild -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphonesimulator \
             -derivedDataPath ios/build
-          # CODE_SIGNING_ALLOWED=NO was here. It has to go, and this is not a
-          # preference. `expo-secure-store` is where the session token lives, and
-          # the keychain refuses an app with no entitlements: sign-in completed,
-          # `POST /api/mobile/otp/verify` returned 200, and the app then died on
-          # "Calling the 'setValueWithKeyAsync' function has failed → Caused by: A
-          # required entitlement isn't present", stranded on the code screen holding
-          # a session it could not store. `setToken` does not catch that on purpose.
-          # A simulator build signs ad hoc and needs no team, account or profile, so
-          # dropping the flag costs nothing.
           mkdir -p ios-build
           cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
 
-      # ── The toolchain Maestro's driver needs, and why it is selected HERE ──
+      # A tarball, not the directory: upload-artifact does not keep the
+      # executable bit, and an .app whose binary lost it does not launch.
+      - name: Pack the app
+        run: tar -czf ios-sim-app.tgz -C mobile/ios-build .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-sim-app
+          path: ios-sim-app.tgz
+          retention-days: 1
+          if-no-files-found: error
+
+  ios-e2e:
+    name: iOS e2e · ${{ matrix.shard }}
+    needs: [decide, preview, ios-build]
+    if: needs.decide.outputs.docs_only != 'true'
+    runs-on: macos-15
+    timeout-minutes: 40
+    strategy:
+      # Every shard reports. A red `core` must not cancel a `trips` that would
+      # have said something different about the same commit.
+      fail-fast: false
+      matrix:
+        # Chosen by the decide job from mobile/maestro/shards/*.yaml; `ai` is in
+        # it only on a run started by the `ai-tests` label (see decide).
+        shard: ${{ fromJSON(needs.decide.outputs.ios_shards) }}
+    env:
+      # ONE definition, read by both the install step and its cache key.
+      # It pairs with the Xcode selected below: Maestro ships a PREBUILT iOS
+      # driver, so the release and the Xcode that built it move together.
+      # `scripts/ios-e2e-local.sh` carries the same pin as `MAESTRO_PIN`.
+      # When bumping, check which Xcode that release's `rebuild-ios-drivers.yaml`
+      # used and move the `xcode-select` with it.
+      MAESTRO_VERSION: 2.10.0
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── The toolchain Maestro's driver needs ────────────────────────────
       #
-      # Maestro does not compile its iOS driver on the runner. It ships a
-      # PREBUILT `maestro-driver-iosUITests-Runner.app` and the `.xctestrun`
-      # that goes with it, and starts them with `xcodebuild
-      # test-without-building`. Those products are built in Maestro's own CI on
-      # macos-26 with Xcode 26.2 — see `rebuild-ios-drivers.yaml` in
-      # mobile-dev-inc/maestro, which is titled "Rebuild iOS Driver (Xcode
-      # 26.2)" and does nothing else.
-      #
-      # The DEFAULT Xcode on the macos-15 image is 16.4, and 16.4 cannot run a
-      # 26.2 xctestrun. `xcodebuild` returns instantly, nothing ever listens on
-      # port 7001, and Maestro waits out its startup budget and reports "iOS
-      # driver not ready in time, consider increasing timeout" — a message that
-      # names a timeout and says nothing about a toolchain, which is how this
-      # job burned a run looking like a slow simulator. Raising
-      # MAESTRO_DRIVER_STARTUP_TIMEOUT cannot help: nothing is on its way.
-      #
-      # AFTER the app build, deliberately. The app compiles against the default
-      # Xcode 16.4 and the iOS 18.5 SDK, which is the build that has been
-      # shipping and is not worth disturbing to fix a test harness. An app built
-      # against 18.5 installs and runs on a 26.2 simulator perfectly well.
+      # Maestro does not compile its iOS driver on the runner; it ships a
+      # prebuilt runner and `.xctestrun` built with Xcode 26.2
+      # (`rebuild-ios-drivers.yaml` in mobile-dev-inc/maestro). The image's
+      # default 16.4 cannot run it: `xcodebuild` returns instantly, nothing
+      # listens on port 7001, and Maestro reports "iOS driver not ready in
+      # time" — a message that names a timeout and is not about one.
       - name: Select the Xcode that Maestro's driver was built with
         run: |
           set -euo pipefail
           sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
 
-      - name: Boot a simulator and install the app
+      # STARTED here and waited for later: a boot takes 3-8 minutes on these
+      # runners and needs nothing the next steps produce, so it runs while the
+      # bundle is built. `simctl boot` returns once the boot has begun;
+      # `bootstatus -b` in the install step is the wait.
+      - name: Start booting a simulator
         run: |
           set -euo pipefail
-          # Nothing else booted. Maestro finds its device by looking for a
-          # BOOTED simulator, so a stray one left up by the image is a device
-          # this job never installed the app onto.
+          # Nothing else booted: Maestro finds its device by looking for a
+          # BOOTED simulator, and a stray one is a device with no app on it.
           xcrun simctl shutdown all || true
-          # ── The software keyboard has to actually exist ─────────────────
-          #
-          # A simulator defaults to "Connect Hardware Keyboard": focusing a text
-          # field raises NO on-screen keyboard. The field still focuses and text
-          # still types, so nothing reads as broken — but `chat-keyboard.yaml`
-          # then fails on the single thing it exists to prove. With no keyboard
-          # there is no `keyboardWillShow`, the bottom nav never unmounts, and
-          # the flow's gate ("the nav is gone, so the keyboard is up") is false.
-          #
-          # BEFORE the boot. A device reads this as it comes up; setting it on an
-          # already-booted simulator does nothing at all.
+          # The SOFTWARE keyboard has to exist, and this must be set BEFORE the
+          # boot — a booted device ignores it. With the default hardware
+          # keyboard the field focuses and text types but `keyboardWillShow`
+          # never fires, and `chat-keyboard.yaml` fails on the one thing it
+          # exists to prove.
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
-          # The NEWEST iOS runtime on the image, not the first iPhone `simctl`
-          # happens to name — which on this image is an iOS 18.5 one, a second
-          # way to hand a driver built by Xcode 26.2 a runtime it was never
-          # built against. `scripts/pick-ios-simulator.mjs` has the reasoning
-          # and the reason neither the model nor the runtime is hardcoded; node
-          # is already set up above for the Expo build.
+          # The NEWEST runtime on the image, not the first iPhone simctl names
+          # (an 18.5 one — a runtime the 26.2 driver was never built against).
           read -r UDID LABEL <<<"$(node scripts/pick-ios-simulator.mjs)"
           echo "Booting $LABEL ($UDID)"
           xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl install "$UDID" mobile/ios-build/*.app
-          # ── Warm the simulator before Maestro touches it ────────────────
-          #
-          # On 2026-09-07 (run 34101156123) `xcodebuild test-without-building`
-          # launched Maestro's XCTest runner on a freshly booted simulator and
-          # STALLED: the runner log stopped after two IDERunDestination warnings
-          # and never printed "Running tests…", Maestro polled its port for the
-          # full 240s, and the job died as "iOS driver not ready in time" —
-          # before launch.yaml ran, on the same image, Maestro and Xcode as the
-          # green run three days earlier. Every green run shows the driver up
-          # ~30s after launch on a simulator that has already run a process.
-          # So launch the app once and put it down again: SpringBoard and
-          # CoreSimulator finish their first-boot work on our clock, not on the
-          # driver's. clearState in launch.yaml wipes anything this leaves.
-          # Tolerant: if the app cannot launch here, launch.yaml fails on the
-          # same thing with a screenshot attached, which is the better report.
-          xcrun simctl launch "$UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
-          sleep 5
-          xcrun simctl terminate "$UDID" com.feraltravels.ios || true
-          # ── And warm the SETTINGS app, for the same reason ──────────────
-          #
-          # `settings-location.yaml` ends by tapping a switch that calls
-          # `Linking.openSettings()` and asserting our screen goes away. That
-          # requires com.apple.Preferences to LAUNCH, and its cold first launch
-          # on a contended runner is wildly variable. Measured across four runs
-          # over the same commit range, on an identical simulator and runtime:
-          #
-          #   34241970838  passed
-          #   34353133456  FAILED  — not backgrounded inside 11s
-          #   34375663713  passed  — backgrounded in 12.3s
-          #   34387740964  FAILED  — not backgrounded inside 26s
-          #
-          # Pass, fail, pass, fail. Raising the flow's timeout was tried and did
-          # not fix it (26s was not enough either), which is what makes this the
-          # right layer: pay the launch cost here, once, on our clock, instead
-          # of guessing a number inside an assertion.
-          #
-          # Tolerant like the launch above — if Settings will not start, the
-          # flow fails with a screenshot, which is the better report.
-          xcrun simctl launch "$UDID" com.apple.Preferences || echo "::warning::Settings warm-up failed; settings-location may be slow"
-          sleep 3
-          xcrun simctl terminate "$UDID" com.apple.Preferences || true
-          # Passed to Maestro explicitly below rather than left to discovery.
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 
-      # PINNED. Unpinned, this step installs whatever Maestro released most
-      # recently, and the iOS driver inside it is built against whatever Xcode
-      # Maestro was using that week — so the Xcode selected above and the driver
-      # it has to run are a pair that would otherwise drift apart without a
-      # single line of this repository changing. When bumping it, check which
-      # Xcode that release's `rebuild-ios-drivers.yaml` used and move both.
-      # The version is a JOB-level env (see `env:` on the job) so the cache key
-      # below and the installer read the SAME value. Retyping it into the key
-      # would let a key silently disagree with the pin — a cache serving a
-      # different Maestro than the one requested, which is the failure this job
-      # is least equipped to explain, since a driver/Xcode mismatch presents as
-      # a timeout that names no version.
-      #
-      # `~/.maestro` is a fixed artifact for a pinned version, so this is a pure
-      # download saving and cannot change what the flows exercise.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+        working-directory: mobile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-sim-app
+
+      # The compiled app from ios-build, with a bundle built for THIS preview.
+      # ios-rebundle.sh fails the job if the bundle does not carry the preview's
+      # host, so a stale URL cannot reach a flow and look like a broken app.
+      - name: Put this preview's JavaScript into the app
+        env:
+          API_URL: ${{ needs.preview.outputs.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p ios-app
+          tar -xzf ios-sim-app.tgz -C ios-app
+          scripts/ios-rebundle.sh ios-app/*.app "$API_URL"
+
+      - name: Wait for the simulator and install the app
+        run: |
+          set -euo pipefail
+          xcrun simctl bootstatus "$SIM_UDID" -b
+          xcrun simctl install "$SIM_UDID" ios-app/*.app
+          # ── Warm the simulator before Maestro touches it ────────────────
+          #
+          # 2026-09-07 (run 34101156123): Maestro's XCTest runner STALLED on a
+          # freshly booted simulator and the job died "iOS driver not ready in
+          # time" before launch.yaml ran. Every green run shows the driver up
+          # ~30s after launch on a simulator that has already run a process. So
+          # launch the app once and put it down: SpringBoard's first-boot work
+          # happens on our clock. Tolerant: launch.yaml reports it better.
+          xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
+          sleep 5
+          xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+          # ── And warm the SETTINGS app ───────────────────────────────────
+          #
+          # settings-location.yaml asserts our screen goes away when the switch
+          # opens Settings, and com.apple.Preferences' cold first launch on a
+          # contended runner measured pass/fail/pass/fail across four runs
+          # (11s, 12.3s, 26s not enough). Paying it here was the fix. Cheap on a
+          # shard that does not need it.
+          xcrun simctl launch "$SIM_UDID" com.apple.Preferences || echo "::warning::Settings warm-up failed; settings-location may be slow"
+          sleep 3
+          xcrun simctl terminate "$SIM_UDID" com.apple.Preferences || true
+
+      # PINNED, with the version as a JOB-level env so this key and the
+      # installer read the SAME value — a key that disagreed with the pin would
+      # serve a different Maestro, whose driver/Xcode mismatch presents as a
+      # timeout naming no version.
       - name: Cache Maestro
         uses: actions/cache@v4
         with:
@@ -1049,10 +1052,6 @@ jobs:
       - name: Install Maestro
         run: |
           set -euo pipefail
-          # Skip the download when the cache restored a usable install. The
-          # PATH export and `--version` stay OUTSIDE this branch so a restored
-          # Maestro is still put on the path and still prints its version into
-          # the log — a cached run and a fresh one look the same from here.
           if [ -x "$HOME/.maestro/bin/maestro" ]; then
             echo "Maestro restored from cache"
           else
@@ -1073,66 +1072,51 @@ jobs:
           echo "::add-mask::$SECRET"
           echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
 
+      # ONE ACCOUNT PER SHARD. Each shard runs on its own simulator at the same
+      # time as the others, and the sign-in code is single-use; two shards on
+      # one address would spend each other's codes. The address carries a
+      # timestamp, so two invocations never collide.
       - name: Mint the fixture account
         id: fixture
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           # Seeds the account and proves the send path works before a simulator
-          # is involved. It deliberately does NOT hand over a code any more:
-          # one minted here is deleted by the app's own send as soon as the 60s
-          # resend cooldown has lapsed, and launch.yaml alone takes 53 seconds.
-          # read-otp.js reads the live one from inside the flow instead.
+          # is involved. It deliberately does NOT hand over a code: one minted
+          # here is replaced by the app's own send once the 60s resend cooldown
+          # lapses. read-otp.js reads the live one from inside the flow.
           node scripts/ios-e2e-fixture.mjs --base-url "${{ needs.preview.outputs.url }}" > fixture.env
           cat fixture.env >> "$GITHUB_ENV"
 
       - name: Run the flows
         id: flows
         env:
-          # read-otp.js fetches the sign-in code from this deployment itself.
-          # Named here rather than reused from the e2e job's E2E_BASE_URL, which
-          # is that job's env and not visible in this one.
+          # read-otp.js and the seed scripts call this deployment themselves.
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          # 240s, the same budget Maestro uses in its own iOS e2e workflow. The
-          # default is 120s. This is NOT the fix for the driver failing to start
-          # — that is the Xcode selection above — it is headroom for a cold
-          # runner installing and launching the runner app for the first time.
+          SHARD: ${{ matrix.shard }}
+          # 240s, the budget Maestro uses in its own iOS CI. Headroom for a cold
+          # runner, NOT the fix for a driver that never starts (that is Xcode).
           MAESTRO_DRIVER_STARTUP_TIMEOUT: 240000
         run: |
-          # The FILE, not the directory. sign-in.yaml is a subflow that
-          # chat-keyboard.yaml runs itself; pointing Maestro at the directory
-          # runs it standalone as well, and the OTP code is single-use — the
-          # first sign-in spends it and the second fails on a code the server
-          # has already deleted.
-          # --device, so the flows run on the simulator this job booted and
-          # installed onto, rather than on whichever one Maestro finds booted.
-          # LAYER 1 FIRST. `launch.yaml` needs no network and no fixture account:
-          # it proves the driver came up, the build installed, and the app renders
-          # its first screen. When it fails the problem is the harness, and nothing
-          # below it is worth reading — a distinction this job could not make while
-          # one invocation reported on all three layers at once. Same split locally,
-          # for the same reason: scripts/ios-e2e-local.sh.
+          # LAYER 1 FIRST, on its own. `launch.yaml` needs no network and no
+          # fixture account: it proves the driver came up, the build installed
+          # and the app renders its first screen. When it fails the problem is
+          # the harness, and nothing below it is worth reading.
           #
           # RETRIED ONCE, ON ONE SIGNATURE ONLY. `iOS driver not ready in time`
-          # is Maestro giving up on its own XCTest runner ever answering — the
-          # runner never came up, so no flow ran and the app was never touched.
-          # That is a harness failure with nothing to learn from a re-run of
-          # the whole job (18 minutes to rebuild the app for a 30-second
-          # bring-up), and the fix for it is a fresh simulator: kill the stuck
-          # xcodebuild, reboot the same UDID, warm it as above, go again. Any
-          # OTHER failure of launch.yaml — an assertion, a crash on the first
-          # screen — is the app, is not retried, and fails the job as before.
-          # A generic step-retry action would retry those too, which is how a
-          # real regression becomes "flaky". `harness_retried` is surfaced in
-          # the PR comment so a bad day on the runners stays visible rather
-          # than silently green.
+          # means Maestro's XCTest runner never answered — no flow ran and the
+          # app was never touched — so a fresh simulator is the fix: kill the
+          # stuck xcodebuild, reboot the same UDID, warm it, go again. Any OTHER
+          # failure is the app, is not retried, and fails the job. A generic
+          # step-retry would retry those too, which is how a regression becomes
+          # "flaky". The retry is surfaced in the PR comment.
           DRIVER_TIMEOUT_SIGNATURE='iOS driver not ready in time'
           HARNESS_RETRIED=0
           run_launch() {
             maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
               -e APP_ID=com.feraltravels.ios \
               --format junit \
-              --output maestro-report-launch.xml \
+              --output "maestro-report-$SHARD-launch.xml" \
               --debug-output maestro-debug 2>&1 | tee "launch-attempt-$1.log"
             return "${PIPESTATUS[0]}"
           }
@@ -1154,45 +1138,21 @@ jobs:
           done
           echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
 
-          # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the
-          # sign-in code ITSELF instead of trusting one minted before the run.
-          # A pre-minted code is a race with the 60s resend cooldown, and this
-          # job loses it: launch.yaml above takes 53 seconds, so by the time the
-          # flow taps "Email me a code" the cooldown has lapsed, the send
-          # succeeds, and storeOtpCode deletes the minted code and replaces it.
-          # That was "Invalid or expired code" on the simulator, surfacing two
-          # steps later as an assertion about the trips list. A laptop could not
-          # reproduce it until the local database was pinned to UTC — see
-          # mobile/maestro/read-otp.js for why, and note the underlying
-          # `timestamp`-without-time-zone defect it describes.
-          # TRIP_NAME comes from the fixture step, which emitted the name it
-          # actually seeded. sign-in.yaml asserts on it, and it used to be the
-          # literal `E2E Fixture Trip` — it became a variable when
-          # `ios-e2e-local.sh screenshots` needed the same graph under a
-          # customer-readable name, the local runner was taught to pass it and
-          # this was not, and the assertion then could not match on any CI run.
-          # Passed from the fixture rather than restated here so the two cannot
-          # drift; src/lib/maestroFlowParams.test.ts fails if a flow references
-          # a variable no runner supplies.
-          maestro --device "$SIM_UDID" test mobile/maestro/chat-keyboard.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output maestro-report.xml \
-            --debug-output maestro-debug
-
-          # THE REGRESSION FLOW for the two navigation/state bugs reported on
-          # 2026-09-11: CHAT from Settings landing on the trips list, and a
-          # remounted chat screen reading READY over a live turn. It plants a
-          # `penny_turns` row rather than asking Penny to plan something, so it
-          # costs no Anthropic call and races nothing — see seed-turn.js.
+          # THE SHARD, in ONE Maestro run: one driver start instead of one per
+          # flow. `--config` names the flows and their ORDER
+          # (`executionOrder.flowsOrder`) — order matters inside a shard, e.g.
+          # settings-location spends the location dialog for the install and so
+          # runs last. The workspace is the directory, but only the listed flows
+          # run: sign-in.yaml is a subflow and must not run standalone, because
+          # the sign-in code is single-use and a second sign-in would find it
+          # spent. `continueOnFailure` so one red flow does not hide the rest.
           #
-          # Before settings-location.yaml, which spends the location dialog and
-          # leaves `canAskAgain` false for the rest of the install.
-          maestro --device "$SIM_UDID" test mobile/maestro/chat-tab-in-flight.yaml \
+          # Every variable any flow reads is passed to every shard;
+          # src/lib/maestroFlowParams.test.ts fails if a flow references one no
+          # runner supplies — Maestro does not fail on an undefined variable, it
+          # silently fails to match.
+          maestro --device "$SIM_UDID" test mobile/maestro \
+            --config "mobile/maestro/shards/$SHARD.yaml" \
             -e APP_ID=com.feraltravels.ios \
             -e EMAIL="$EMAIL" \
             -e TRIP_NAME="$TRIP_NAME" \
@@ -1200,110 +1160,20 @@ jobs:
             -e BASE_URL="$E2E_BASE_URL" \
             -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
             --format junit \
-            --output maestro-report-in-flight.xml \
+            --output "maestro-report-$SHARD.xml" \
             --debug-output maestro-debug
 
-          # THE REGRESSION FLOW for the first-run START HERE flash (TestFlight
-          # build 8): `+ New trip`, then the greeting must land as the first-run
-          # headline with START HERE never on screen. Creates one untitled trip
-          # on the fixture account; the flow below still finds TRIP_NAME.
-          # Before settings-location.yaml for the same reason as the one above.
-          maestro --device "$SIM_UDID" test mobile/maestro/onboarding-flash.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output maestro-report-onboarding-flash.xml \
-            --debug-output maestro-debug
-
-          # THE DATE STEP'S CALENDAR and THE PACE STEP'S `Custom` CHIP. Native
-          # had neither until 2026-09-22 — the date step drew three chips and
-          # nothing else, so a specific day could only be typed. Walks a fresh
-          # trip to the date step, opens the calendar, steps a month and picks
-          # a day, asserts the step redrew carrying it, then taps `Custom` and
-          # proves the composer took focus without submitting. The walk does
-          # not depend on Penny: without a key the intent scan is all-null, and
-          # with one, "Porto" names no origin, so the path is the same. At most
-          # one intent-scan call, so NOT behind the ai-tests label.
-          # Creates one more untitled trip on the fixture account, like the
-          # flow above; before settings-location.yaml for the same reason.
-          maestro --device "$SIM_UDID" test mobile/maestro/onboarding-date-picker.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output maestro-report-date-picker.xml \
-            --debug-output maestro-debug
-
-          # THE REGRESSION FLOW for the Google share link Penny said she could
-          # not resolve (2026-09-26): a maps.app.goo.gl link that 302s three
-          # times to an address-only `q=` and carries its coordinates only in
-          # the og:image staticmap. seed-maps-link-stop.js seeds the canonical
-          # "August Portugal Trip" and sends the REAL link through Penny's own
-          # add_stop path server-side (no model call); the flow opens the Porto
-          # → Lisbon day and asserts the stop is on it. The link is fetched LIVE
-          # from Google — one free redirect walk, zero paid Places calls — so a
-          # change on Google's side goes red here with the resolver's stage in
-          # the error. Adds one more trip to the fixture account; before
-          # settings-location.yaml for the same reason as the ones above.
-          maestro --device "$SIM_UDID" test mobile/maestro/maps-link-stop.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output maestro-report-maps-link-stop.xml \
-            --debug-output maestro-debug
-
-          # A permission button is the one kind of UI that cannot be checked by
-          # looking at it: one that renders perfectly and calls nothing is
-          # indistinguishable from one that works, and `Mobile typecheck`
-          # compiles both. This taps it and asserts the SYSTEM dialog appears,
-          # which can only happen if the app actually reached iOS.
-          #
-          # LAST, deliberately: it spends the location dialog for the install
-          # and `canAskAgain` does not come back, so anything needing a fresh
-          # "never asked" state must run before it. It also DENIES at the end —
-          # granting makes report_position re-anchor the fixture trip to
-          # wherever the simulator thinks it is.
-          maestro --device "$SIM_UDID" test mobile/maestro/settings-location.yaml \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output maestro-report-location.xml \
-            --debug-output maestro-debug
-
-      # Always. A screenshot of the failing screen is the entire value of
-      # driving a real simulator, and it is as useful on a green run for seeing
-      # what the flows actually did.
-      # WHICH STEP FAILED, in the log, without downloading anything.
-      #
-      # The first failing run said exactly "[Failed] chat-keyboard (28s)" and
-      # nothing else. The step that died was in the artifact — behind a login,
-      # a download and an unzip, which is three obstacles between a red build
-      # and the one line that explains it. The JUnit XML already names it; this
-      # just prints it.
+      # WHICH STEP FAILED, in the log, without downloading anything. The first
+      # failing run said exactly "[Failed] chat-keyboard (28s)" and nothing
+      # else; the answer was behind a login, a download and an unzip.
       - name: Say where the flow died
         if: failure()
         run: |
           echo "::group::maestro-report.xml"
           cat maestro-report*.xml 2>/dev/null || echo "(no report produced)"
           echo "::endgroup::"
-          # WHICH LINE OF THE YAML. `commands-*.json` records every step and its
-          # status, and it is the only file that answers that question — the
-          # JUnit's `<failure>Unknown error</failure>` does not. Named
-          # explicitly rather than swept up by a glob: the first version of this
-          # step matched `*.log` and printed `device-xctest.log`, which is the
-          # DRIVER's own unit tests passing. A page of green about something
-          # nobody asked about, while the actual step failure sat unread.
+          # WHICH LINE OF THE YAML: `commands-*.json` records every step and its
+          # status; the JUnit's `<failure>Unknown error</failure>` does not.
           echo "::group::which step failed"
           find maestro-debug -name 'commands-*.json' 2>/dev/null | while read -r f; do
             echo "--- $f"; cat "$f"
@@ -1316,13 +1186,10 @@ jobs:
           echo "::endgroup::"
           echo "::group::screenshots captured"
           find maestro-debug -name '*.png' 2>/dev/null | sed 's/^/  /' || true
-          echo "  (download the maestro-ios artifact to view them)"
+          echo "  (download this shard's maestro-ios artifact to view them)"
           echo "::endgroup::"
-          # The XCTest runner's own log, which is where a driver that never
-          # comes up says why. It lives outside the working directory, and
-          # reading it meant downloading the artifact — three obstacles between
-          # a red build and the one line that explains it, which is the whole
-          # reason this step exists.
+          # The XCTest runner's own log: where a driver that never comes up
+          # says why.
           echo "::group::XCTest driver log and simulator state"
           xcodebuild -version || true
           xcrun simctl list devices booted || true
@@ -1331,20 +1198,15 @@ jobs:
           done || echo "(no driver log)"
           echo "::endgroup::"
 
-      # `include-hidden-files` is the whole reason run 119's artifact came back
-      # 502 BYTES holding one file. Maestro writes its debug output to
-      # `<--debug-output>/.maestro/tests/<timestamp>/` — a DOTTED directory — and
-      # upload-artifact has skipped hidden files by default since v4.4. So the
-      # screenshots, the per-command JSON and maestro.log were all silently
-      # dropped, and the PR comment cheerfully pointed at an artifact holding
-      # only the JUnit XML that says "Unknown error". Maestro's own workflow sets
-      # this flag, for exactly this reason.
+      # `include-hidden-files: true` is not tidiness: Maestro writes under
+      # `<--debug-output>/.maestro/tests/<timestamp>/`, and upload-artifact has
+      # skipped dotfiles since v4.4 — run 119's artifact was 502 bytes.
       - name: Upload the recordings
         id: recordings
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: maestro-ios
+          name: maestro-ios-${{ matrix.shard }}
           path: |
             maestro-report*.xml
             maestro-debug/**
@@ -1352,56 +1214,83 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
-      # The whole value of driving a real simulator is the screenshot of the
-      # screen it died on, and that is worth nothing sitting in an artifact
-      # nobody is told about. The web suite has reported to the PR since day
-      # one; this job reported nothing, so "did iOS pass?" meant opening the
-      # Actions tab and knowing which job to look for — at exactly the moment
-      # you are deciding whether to merge.
-      - name: Comment iOS results on the PR
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+      # What the summary job needs to write ONE comment for all shards: a
+      # matrix job's outputs are overwritten by whichever instance ends last,
+      # so each shard leaves a small file instead.
+      - name: Record this shard's outcome
+        if: always()
         env:
+          SHARD: ${{ matrix.shard }}
           OUTCOME: ${{ steps.flows.outcome }}
           HARNESS_RETRIED: ${{ steps.flows.outputs.harness_retried }}
           ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
+        run: |
+          node -e "console.log(JSON.stringify({shard:process.env.SHARD,outcome:process.env.OUTCOME||'skipped',harnessRetried:process.env.HARNESS_RETRIED==='1',artifactUrl:process.env.ARTIFACT_URL||''}))" > "ios-shard-$SHARD.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-shard-${{ matrix.shard }}
+          path: ios-shard-${{ matrix.shard }}.json
+          retention-days: 3
+
+  ios-e2e-summary:
+    # The check name the PR has always shown. The deploy gate reads the run's
+    # overall conclusion, and branch protection requires only Decide scope and
+    # Unit tests, so the shard count can change without touching either.
+    name: iOS e2e (simulator)
+    needs: [decide, ios-e2e]
+    if: always() && needs.decide.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ios-shard-*
+          merge-multiple: true
+          path: shards
+
+      - name: Comment iOS results on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SHARDS: ${{ needs.decide.outputs.ios_shards }}
         with:
           script: |
+            const fs = require('fs');
             const marker = '<!-- feraltravels-ios-e2e -->';
             const pr = context.payload.pull_request;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const outcome = process.env.OUTCOME || 'skipped';
-            const artifact = process.env.ARTIFACT_URL;
-
-            const lines = ['### 📱 iOS e2e (simulator)', ''];
-            if (outcome === 'success') {
-              lines.push(
-                '**Passed.** Real OTP sign-in and the chat-keyboard regression, driven on a',
-                "booted simulator against this PR's own preview deployment.",
-              );
-            } else if (outcome === 'skipped' || outcome === '') {
-              lines.push(
-                '**Did not run.** The flows step never started, so the app is untested on',
-                'this commit — check the job for which earlier step stopped it.',
-              );
-            } else {
-              lines.push(
-                '**Failed.** The recordings artifact holds a screenshot of the screen it died',
-                'on; that is the fastest way in, faster than reading the log.',
-              );
+            const expected = JSON.parse(process.env.SHARDS || '[]');
+            const results = {};
+            for (const f of fs.existsSync('shards') ? fs.readdirSync('shards') : []) {
+              try {
+                const r = JSON.parse(fs.readFileSync(`shards/${f}`, 'utf8'));
+                results[r.shard] = r;
+              } catch { /* a malformed file reads as "did not run" below */ }
             }
-            // Visible on green as well as red: a harness retry is a fact about
-            // the runners, and a run that needed one should not read exactly
-            // like a run that did not.
-            if (process.env.HARNESS_RETRIED === '1') {
-              lines.push(
-                '',
-                '⚠️ **Harness retried once.** The XCTest driver did not come up on the first',
-                'attempt (a simulator flake, not the app); the simulator was rebooted and the',
-                'flows ran on the second.',
-              );
+            const icon = { success: '✅', failure: '❌', cancelled: '⚪', skipped: '⚪' };
+            const lines = ['### 📱 iOS e2e (simulator)', '', '| Shard | Result |', '|---|---|'];
+            let allGreen = expected.length > 0;
+            for (const shard of expected) {
+              const r = results[shard];
+              const outcome = r?.outcome || 'did not run';
+              if (outcome !== 'success') allGreen = false;
+              const link = r?.artifactUrl ? ` · [recordings](${r.artifactUrl})` : '';
+              const retry = r?.harnessRetried ? ' · ⚠️ harness retried once' : '';
+              lines.push(`| \`${shard}\` | ${icon[outcome] || '⚪'} ${outcome}${link}${retry} |`);
             }
-            if (artifact) lines.push('', `[Recordings](${artifact})`);
+            lines.push('');
+            lines.push(allGreen
+              ? "**Passed.** Every shard ran its flows on a booted simulator against this PR's own preview."
+              : '**Not green.** A failed shard\'s recordings hold a screenshot of the screen it died on — the fastest way in.');
+            if (!expected.includes('ai')) {
+              lines.push('', 'The Penny flows (`ai` shard) did not run — add the `ai-tests` label to run them.');
+            }
+            // A harness retry is a fact about the runners: visible on green too.
+            if (Object.values(results).some((r) => r.harnessRetried)) {
+              lines.push('', '⚠️ **Harness retried once** on a shard: the XCTest driver did not come up on the first attempt (a simulator flake, not the app).');
+            }
             lines.push('', `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`);
 
             const body = [marker, ...lines].join('\n');
@@ -1409,8 +1298,16 @@ jobs:
               ...context.repo, issue_number: pr.number, per_page: 100,
             });
             const existing = comments.find((c) => c.body?.includes(marker));
-            // Delete and repost — same reasoning as the E2E table above.
+            // Delete and repost — an edited comment keeps its ORIGINAL timeline
+            // position, where a stale green would sit above newer commits.
             if (existing) {
               await github.rest.issues.deleteComment({ ...context.repo, comment_id: existing.id });
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+
+      - name: Fail unless every shard passed
+        env:
+          RESULT: ${{ needs.ios-e2e.result }}
+        run: |
+          echo "Shards: $RESULT"
+          [ "$RESULT" = "success" ]

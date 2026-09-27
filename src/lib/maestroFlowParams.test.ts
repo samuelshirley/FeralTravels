@@ -33,14 +33,32 @@ const CI = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
 const LOCAL = fs.readFileSync(path.join(ROOT, 'scripts/ios-e2e-local.sh'), 'utf8');
 
 /** The flows CI actually invokes, and the flow each one pulls in. */
-const CI_FLOWS = [
-  'launch.yaml',
-  'chat-keyboard.yaml',
-  'chat-tab-in-flight.yaml',
-  'onboarding-flash.yaml',
-  'onboarding-date-picker.yaml',
-  'maps-link-stop.yaml',
-];
+const SHARD_DIR = path.join(FLOW_DIR, 'shards');
+
+/**
+ * The shard configs are the list of what CI runs: ci.yml runs `launch.yaml`
+ * on every shard, then `maestro test mobile/maestro --config shards/<name>.yaml`.
+ * Read with two small regexes rather than a YAML dependency — the format is
+ * fixed and a test below fails if a config stops matching it.
+ */
+function listUnder(source: string, key: string): string[] {
+  const block = source.match(new RegExp(`^\\s*${key}:\\s*\\n((?:\\s+- .*\\n?)+)`, 'm'));
+  return block ? [...block[1].matchAll(/-\s+([\w.-]+)/g)].map((m) => m[1]) : [];
+}
+
+const SHARDS = fs
+  .readdirSync(SHARD_DIR)
+  .filter((f) => f.endsWith('.yaml'))
+  .map((f) => {
+    const source = live(fs.readFileSync(path.join(SHARD_DIR, f), 'utf8'));
+    return {
+      name: f.slice(0, -'.yaml'.length),
+      flows: listUnder(source, 'flows'),
+      order: listUnder(source, 'flowsOrder'),
+    };
+  });
+
+const CI_FLOWS = ['launch.yaml', ...SHARDS.flatMap((s) => s.flows)];
 
 /** `runFlow: x.yaml` — a subflow inherits its parent's variables. */
 function subflowsOf(source: string): string[] {
@@ -171,6 +189,53 @@ describe('Maestro flow parameters', () => {
       missing,
       `scripts/ios-e2e-local.sh runs the flows without -e for: ${missing.join(', ')}`
     ).toEqual([]);
+  });
+
+  it('finds the shards at all, and each one lists its flows in both places', () => {
+    expect(SHARDS.length).toBeGreaterThanOrEqual(2);
+    for (const shard of SHARDS) {
+      expect(shard.flows.length, `shards/${shard.name}.yaml lists no flows`).toBeGreaterThan(0);
+      // `flowsOrder` names flows without the extension. A flow in `flows:` but
+      // not in `flowsOrder` still runs, in an order nobody chose; one in
+      // `flowsOrder` but not `flows:` silently does not run at all.
+      expect(
+        [...shard.order].sort(),
+        `shards/${shard.name}.yaml: flows and flowsOrder disagree`
+      ).toEqual(shard.flows.map((f) => f.replace(/\.yaml$/, '')).sort());
+      for (const flow of shard.flows) {
+        expect(fs.existsSync(path.join(FLOW_DIR, flow)), `shards/${shard.name}.yaml names missing ${flow}`).toBe(true);
+      }
+    }
+  });
+
+  /**
+   * A flow no shard lists is a flow CI never runs — green forever, proving
+   * nothing. Subflows (reached by `runFlow` from another flow, like sign-in)
+   * must NOT be listed: sign-in spends a single-use code, and running it
+   * standalone would leave the next flow's sign-in holding a spent one.
+   */
+  it('every flow runs in exactly one shard, and no subflow runs on its own', () => {
+    const NOT_A_CI_FLOW = new Set(['launch.yaml', 'screenshots.yaml']);
+    const all = fs.readdirSync(FLOW_DIR).filter((f) => f.endsWith('.yaml'));
+    const subflows = new Set(
+      all.flatMap((f) => subflowsOf(live(fs.readFileSync(path.join(FLOW_DIR, f), 'utf8'))))
+    );
+    const listed = SHARDS.flatMap((s) => s.flows);
+    for (const flow of all) {
+      if (NOT_A_CI_FLOW.has(flow)) continue;
+      const count = listed.filter((f) => f === flow).length;
+      if (subflows.has(flow)) {
+        expect(count, `${flow} is a subflow and must not be listed in a shard`).toBe(0);
+      } else {
+        expect(count, `${flow} is in ${count} shards; it must be in exactly one`).toBe(1);
+      }
+    }
+  });
+
+  it('ci.yml runs launch.yaml, then each shard through its own config', () => {
+    expect(CI).toMatch(/test mobile\/maestro\/launch\.yaml/);
+    expect(CI).toMatch(/test mobile\/maestro \\\n\s+--config "mobile\/maestro\/shards\/\$SHARD\.yaml"/);
+    expect(CI).toContain("fs.readdirSync('mobile/maestro/shards')");
   });
 
   it('the fixture emits the trip name rather than anyone restating it', () => {

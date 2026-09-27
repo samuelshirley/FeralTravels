@@ -210,9 +210,10 @@ check-preview-env.mjs claude-task.sh db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
-ios-e2e-fixture.mjs ios-e2e-local.sh lifetime-spend.ts make-test-user.ts
-measure-message-gate.ts migrate-sqlite-to-neon.ts pick-ios-simulator.mjs
-pick-screenshot-simulator.mjs probe-oauth-providers.mjs prune-branches.sh
+ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh lifetime-spend.ts
+make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
+pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
+prune-branches.sh
 reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts
@@ -249,7 +250,9 @@ reappears in `src/`.
 `settings-location.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
-(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
+(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs
+them in parallel SHARDS, one per `mobile/maestro/shards/<name>.yaml`; a new flow
+must be listed in exactly one (`maestroFlowParams.test.ts`).
 
 ## Lockdown invariants (load-bearing — do not loosen)
 
