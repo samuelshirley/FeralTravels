@@ -1,0 +1,22 @@
+# Shard `account`: the flows that need an account in a particular state — a new
+# one mid-wizard, one whose trial is over, one about to be deleted. Each seeds
+# its OWN account (seed-account.js, a suffix per flow), so none can disturb
+# another and the order below is for reading. One Maestro run on its own
+# simulator (see the ios-e2e job in ci.yml).
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - onboarding-wizard.yaml
+  - onboarding-range.yaml
+  - vehicles.yaml
+  - paywall.yaml
+  - account-deletion.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - onboarding-wizard
+    - onboarding-range
+    - vehicles
+    - paywall
+    - account-deletion

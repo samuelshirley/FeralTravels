@@ -129,6 +129,32 @@ function live(source: string): string {
 }
 
 /** Every `${VAR}` in a flow, including the ones it reaches through runFlow. */
+/**
+ * Variables a flow hands a script or subflow itself, in the call's `env:` block:
+ *
+ *   - runScript:
+ *       file: seed-account.js
+ *       env:
+ *         ACCOUNT_SUFFIX: fs
+ *
+ * Those reach the callee without any runner's `-e`, so they are subtracted from
+ * what the callee needs — for THAT call only. Anything the `env:` values
+ * themselves reference (`EMAIL: ${EMAIL}`) is still counted, by the `${...}`
+ * scan of the calling flow.
+ */
+function envPassedTo(source: string, callee: string): Set<string> {
+  const keys = new Set<string>();
+  const commands = source.split(/\n(?=- )/);
+  for (const command of commands) {
+    if (!/^- run(?:Script|Flow):/.test(command)) continue;
+    if (!new RegExp(`file:\\s*${callee.replace(/\./g, '\\.')}\\s*$`, 'm').test(command)) continue;
+    const env = command.match(/\n(\s+)env:\s*\n((?:\1\s+[A-Z_][A-Z0-9_]*:.*\n?)+)/);
+    if (!env) continue;
+    for (const m of env[2].matchAll(/^\s+([A-Z_][A-Z0-9_]*):/gm)) keys.add(m[1]);
+  }
+  return keys;
+}
+
 function varsFor(flow: string, seen = new Set<string>()): Set<string> {
   const vars = new Set<string>();
   if (seen.has(flow)) return vars;
@@ -138,10 +164,12 @@ function varsFor(flow: string, seen = new Set<string>()): Set<string> {
   const source = live(fs.readFileSync(file, 'utf8'));
   for (const m of source.matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g)) vars.add(m[1]);
   for (const script of runScriptsOf(source)) {
-    for (const v of scriptVars(script)) vars.add(v);
+    const passed = envPassedTo(source, script);
+    for (const v of scriptVars(script)) if (!passed.has(v)) vars.add(v);
   }
   for (const sub of subflowsOf(source)) {
-    for (const v of varsFor(sub, seen)) vars.add(v);
+    const passed = envPassedTo(source, sub);
+    for (const v of varsFor(sub, new Set(seen))) if (!passed.has(v)) vars.add(v);
   }
   return vars;
 }

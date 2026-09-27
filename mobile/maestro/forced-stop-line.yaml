@@ -1,0 +1,102 @@
+# Finn's forced-stop reason reaches the driver, in the driver's units.
+#
+# CLAUDE.md: "a forced stop MUST carry a one-line reason." This is the seeded
+# half of that proof (Sam, 2026-09-27: one seeded iOS test, and the real Penny
+# flow in the `ai` shard covers the same line end to end). The stop is written
+# by /api/test/seed `forcedFuelStop` — the row Finn writes, with its leg's fuel
+# cache stamped fresh — so no Places search runs and nothing Google does can
+# move it: TotalEnergies Château-Thierry, 95 km into day 1, gap 412 km.
+#
+# It replaces e2e/units-imperial.spec.ts too: after the km check it switches to
+# miles the way a user does (Settings), and asserts the line, the stop row and
+# the itinerary say mi and never km.
+#
+# The line sits inside the stop row's Google Maps link, whose accessibility
+# label is the whole row (stopRowAccessibilityLabel) — that label is what is
+# matched, which is also what VoiceOver reads. Before 2026-09-27 the label was
+# "<name> in Google Maps" and the reason was invisible to both.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: fs
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: '1'
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris → Strasbourg.*'
+    timeout: 30000
+
+# ── Metric: the seeded default ──────────────────────────────────────────────
+- tapOn:
+    text: '.*Paris → Strasbourg.*'
+- scrollUntilVisible:
+    element:
+      text: "FUEL: TotalEnergies Ch.teau-Thierry, 95 km\\. Top up here: next fuel is 412 km away, on the next day's drive\\. Opens in Google Maps"
+    direction: DOWN
+    timeout: 20000
+# Exactly one row says why: the destination row does not.
+- assertNotVisible:
+    text: 'DESTINATION: .*Top up here.*'
+
+# ── Imperial, switched the way a user switches it ───────────────────────────
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Imperial (mi)'
+    timeout: 20000
+- tapOn: 'Imperial (mi)'
+# The Settings range line re-renders in the new units once the preference saved.
+- extendedWaitUntil:
+    visible:
+      text: 'REFILL EVERY ~311 mi'
+    timeout: 20000
+
+# LIST goes back to the trip that was open.
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris → Strasbourg.*304 mi.*'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: 'FUEL: TotalEnergies.*'
+    commands:
+      - tapOn:
+          text: '.*Paris → Strasbourg.*'
+- scrollUntilVisible:
+    element:
+      text: "FUEL: TotalEnergies Ch.teau-Thierry, 59 mi\\. Top up here: next fuel is 256 mi away, on the next day's drive\\. Opens in Google Maps"
+    direction: DOWN
+    timeout: 20000
+
+# An imperial user sees no km anywhere on the itinerary — not in the line, not
+# in a row, not in the day headers or the trip's meta line (noHardcodedUnits is
+# the unit-level guard; this is the screen).
+- assertNotVisible:
+    text: '.*[0-9] km.*'
+- scrollUntilVisible:
+    element: 'ROUTE PLAN'
+    direction: UP
+    timeout: 20000
+- assertVisible:
+    text: '.* → .*~401 mi · 2 days.*'
+- assertNotVisible:
+    text: '.*[0-9] km.*'

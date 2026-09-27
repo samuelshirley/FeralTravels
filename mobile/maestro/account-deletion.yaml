@@ -1,0 +1,98 @@
+# Deleting the account from the phone: the confirmation holds until the exact
+# phrase is typed, Cancel really cancels, and Delete signs the phone out of an
+# account that no longer exists. The screen half of e2e/account-deletion.spec.ts
+# — that spec keeps the database half (what is deleted, what survives, the
+# tombstone), which a screen cannot see.
+#
+# Its own account (suffix `del`): deleting the shard's would take every later
+# flow in the shard with it.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: del
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+
+- scrollUntilVisible:
+    element:
+      id: 'delete-account-open'
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: 'delete-account-open'
+- extendedWaitUntil:
+    visible: 'Are you sure you want to delete your account?'
+    timeout: 10000
+
+# ── Nothing but the exact phrase arms it ────────────────────────────────────
+- assertVisible:
+    id: 'delete-account-confirm'
+    enabled: false
+- tapOn:
+    id: 'delete-account-input'
+- inputText: 'delete'
+- assertVisible:
+    id: 'delete-account-confirm'
+    enabled: false
+- eraseText
+- inputText: 'delete my account'
+- assertVisible:
+    id: 'delete-account-confirm'
+    enabled: false
+- eraseText
+- inputText: 'delete account'
+- assertVisible:
+    id: 'delete-account-confirm'
+    enabled: true
+
+# ── Cancel leaves the account alone ─────────────────────────────────────────
+- hideKeyboard
+- tapOn:
+    id: 'delete-account-cancel'
+- extendedWaitUntil:
+    notVisible: 'Are you sure you want to delete your account?'
+    timeout: 10000
+- assertVisible: 'Vehicle profile'
+
+# ── Delete ──────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'delete-account-open'
+- extendedWaitUntil:
+    visible: 'Are you sure you want to delete your account?'
+    timeout: 10000
+- tapOn:
+    id: 'delete-account-input'
+- inputText: 'delete account'
+- hideKeyboard
+- tapOn:
+    id: 'delete-account-confirm'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 60000
+
+# The session is gone, not just the screen: a relaunch stays signed out.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000

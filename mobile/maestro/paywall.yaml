@@ -1,0 +1,99 @@
+# The paywall, on the screen that sells: a trial that is over blocks new
+# planning and offers both plans; a subscription lifts it. The screen half of
+# e2e/subscriptions.spec.ts — every state's SERVER verdict stays in that spec.
+#
+# THE COMPED TRAP. Every fixture address is comped, and native OTP sign-in
+# re-sets `comped` from the address — so the state is written AFTER sign-in
+# (set-subscription.js), and the app is relaunched so its launch gate asks for
+# the entitlement again. Written first, the sign-in would undo it and every
+# assertion below would be about an account that was never blocked.
+#
+# The preview is a clone of production, where the paywall switch
+# (`app_meta.paywall_enabled`) is on; the Playwright spec depends on the same.
+#
+# No purchase is made. Maestro cannot drive StoreKit (ios-e2e-bringup.md), and
+# RevenueCat's webhook is the only thing that may grant access anyway — the
+# "subscribed" half below writes the row that webhook would.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: pw
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# ── Day 7: the trial is over ────────────────────────────────────────────────
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '7'
+      SUBSCRIPTION_STATUS: ''
+- stopApp
+- launchApp
+
+# A blocked account with trips lands in Penny's chat, where she says why.
+- extendedWaitUntil:
+    visible: 'Keep planning'
+    timeout: 30000
+- assertVisible:
+    text: ".*seven days up.*"
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+
+# Its trip is still readable — under a notice that planning is paused.
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'Planning is paused on this account'
+    timeout: 20000
+- assertVisible:
+    text: '.*Paris → Strasbourg.*'
+
+# Both plans are one tap away.
+- tapOn: 'Keep planning'
+- extendedWaitUntil:
+    visible:
+      text: '.*Choose a plan.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      text: '.*per month.*'
+    timeout: 30000
+- assertVisible:
+    text: '.*per year.*'
+- tapOn: 'Close'
+
+# The trips list is covered too: no new trip on a blocked account.
+- tapOn: 'Back to trips'
+- extendedWaitUntil:
+    visible: 'Planning is paused on this account'
+    timeout: 20000
+
+# ── Subscribed: the wall comes down ─────────────────────────────────────────
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '7'
+      SUBSCRIPTION_STATUS: active
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: '+ New trip'
+    timeout: 30000
+- assertNotVisible: 'Planning is paused on this account'
+- assertVisible:
+    text: '.*${output.account.tripName}.*'

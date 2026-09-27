@@ -32,3 +32,30 @@ export function forcedStopLine(
       return null;
   }
 }
+
+/**
+ * What VoiceOver reads for one row of a day's stop timeline — and so what the
+ * iOS e2e flows can match.
+ *
+ * The row is a Google Maps link, and an explicit `accessibilityLabel` HIDES a
+ * control's children: the label that was here, "<name> in Google Maps", was all
+ * a screen-reader user heard. The kicker, the distance and — the one CLAUDE.md
+ * makes mandatory — Finn's reason for forcing the stop were on screen and
+ * nowhere else. So the label carries every line the row shows, in the same
+ * units, and still says where the tap goes.
+ *
+ * "FUEL: TotalEnergies Château-Thierry, 95 km. Top up here: next fuel is 412 km
+ * away, on the next day's drive. Opens in Google Maps"
+ */
+export function stopRowAccessibilityLabel(
+  row: { kicker: string; name: string; distanceKm: number | null; forcedLine: string | null },
+  units: UnitsPref
+): string {
+  const head =
+    row.distanceKm != null
+      ? `${row.kicker}: ${row.name}, ${formatKm(row.distanceKm, units)}.`
+      : `${row.kicker}: ${row.name}.`;
+  return [head, row.forcedLine ? `${row.forcedLine}.` : null, 'Opens in Google Maps']
+    .filter(Boolean)
+    .join(' ');
+}
