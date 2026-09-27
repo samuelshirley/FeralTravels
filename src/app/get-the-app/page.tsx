@@ -4,9 +4,9 @@ import { APP_STORE_URL } from '@/lib/paywallCopy';
 /**
  * What a browser sees now that Feral Travels is an iOS app.
  *
- * Not a paywall and not an error. Most people who land here never knew a web
- * version existed; the ones who did were using it before the product decided
- * what it was. Both deserve a sentence and a button, not a wall.
+ * Not a paywall and not an error. Anyone but the admin who reaches a gated web
+ * page — /trips, /signin, an old link, a sign-in email — is sent here. They get
+ * what the app is, where to sign in, and a button.
  *
  * The App Store link is `APP_STORE_URL`, which reads `NEXT_PUBLIC_APP_STORE_URL`
  * and falls back to Apple's SEARCH url until the listing id exists. A search
@@ -18,7 +18,7 @@ import { APP_STORE_URL } from '@/lib/paywallCopy';
  */
 export const metadata: Metadata = {
   title: 'Feral Travels — get the app',
-  description: 'Feral Travels is an iPhone app. Plan overland trips with Penny, wherever you are.',
+  description: 'Feral Travels is an iPhone app that plans your road trip and finds cheap fuel along the route.',
 };
 
 export default function GetTheAppPage() {
@@ -50,18 +50,12 @@ export default function GetTheAppPage() {
         </div>
 
         <h1 style={{ fontSize: 26, fontWeight: 700, margin: '0 0 12px', lineHeight: 1.25 }}>
-          It&apos;s an iPhone app now
+          Feral Travels runs on iPhone
         </h1>
 
-        <p style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--tp-muted, #6b6b6b)', margin: '0 0 8px' }}>
-          Feral Travels plans overland trips from the passenger seat — fuel stops, base days, and
-          Penny to argue with about the route. That belongs on the phone that&apos;s in the truck
-          with you, so that&apos;s where it lives.
-        </p>
-
         <p style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--tp-muted, #6b6b6b)', margin: '0 0 22px' }}>
-          Your trips are all still here, exactly as you left them. Sign in on the app and
-          they&apos;re waiting.
+          Plan the route and find cheap fuel along it. Already have an account? Sign in on the app
+          with the same email.
         </p>
 
         <a
@@ -79,16 +73,8 @@ export default function GetTheAppPage() {
             textDecoration: 'none',
           }}
         >
-          Get it on the App Store
+          Download on the App Store
         </a>
-
-        <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--tp-subtle, #9a9a9a)', margin: '26px 0 0' }}>
-          Wanted a desktop version?{' '}
-          <a href="mailto:support@feraltravels.com" style={{ color: 'var(--tp-primary, #4E7AB0)' }}>
-            Tell us
-          </a>{' '}
-          — it&apos;s the sort of thing that gets built if enough people ask.
-        </p>
 
         {/*
           Kept in the footer of this page specifically. It is the one page a

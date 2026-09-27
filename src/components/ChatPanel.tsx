@@ -793,26 +793,6 @@ export default function ChatPanel({
   const pennyThinking =
     introTyping || replanWaiting || setupQuestionPending || !!pennyStreamingText;
 
-  // Listen for "Add to this day" button clicks from rest-day LegCards.
-  // Pre-fills the chat input with a contextual prompt for Penny.
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as {
-        legId: string;
-        dayTitle: string;
-        location: string;
-        dates: string | null;
-      };
-      const locationStr = detail.location || 'this location';
-      const prompt = `I want to add plans for ${detail.dayTitle} in ${locationStr} — what should I do there?`;
-      setInput(prompt);
-      textareaRef.current?.focus();
-      scrollToBottom();
-    };
-    window.addEventListener('penny:prefill', handler);
-    return () => window.removeEventListener('penny:prefill', handler);
-  }, [scrollToBottom]);
-
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || messages.length === 0) return;
     // Optimistic messages have no `seq` (or seq=0). Walk from the front to
@@ -2650,7 +2630,7 @@ export default function ChatPanel({
 
           The rows PREFILL the composer and focus it rather than sending: the
           examples are shapes to edit, not messages anyone actually wants to
-          send verbatim. Same channel `+ Add to this day` uses.
+          send verbatim.
         */}
         {messages.length === 0 && onboardingPhase === 'off' && (
           <div style={{ padding: '4px 0 12px' }}>

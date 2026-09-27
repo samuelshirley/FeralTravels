@@ -530,6 +530,18 @@ source), mutation-checked three ways — StopsSection removed from the native re
 `restDay` flag dropped from it, the empty-day null gate removed (1 red each); also
 `LegCard.restDayStops.test.tsx` and `StopsSection.test.tsx` (web, jsdom, the real StopsSection).
 
+H21. **A base day's native note box scrolls itself above the keyboard; no second
+`KeyboardAvoidingView` does it.** The trip screen's root KAV (H7) shrinks the panes, but the
+Itinerary `FlatList` never scrolls a focused `TextInput` into view, so a base day near the bottom
+of the list would open its "+ Add note to this day" box behind the keyboard (read off the layout,
+not yet reproduced on a simulator). LegCard reports the box's
+`onFocus` (`onNoteEditorFocus`); Itinerary waits for `keyboardDidShow` (the viewport has shrunk by
+then; immediately if the keyboard is already up) and `scrollToIndex`es the row with
+`viewPosition: 1`, because the box is the last thing in the card. *Enforced by:*
+`restDayNoteKeyboardGuard.test.ts` (source), mutation-checked four ways on 2026-09-27, 1 red
+each: `onFocus` unwired, `viewPosition: 0.5`, `keyboardWillShow`, a `KeyboardAvoidingView` import
+in Itinerary. Not proven on a simulator by any flow.
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

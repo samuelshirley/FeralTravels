@@ -15,8 +15,10 @@ which account or which trip produced them.
 
 ## What is in the set
 
-Five shots, in the order §3 of `docs/design/app-store-listing.md` argues for.
+Four shots, in the order §3 of `docs/design/app-store-listing.md` argues for.
 The filenames carry that order, because App Store Connect uses upload order.
+`05-settings` is out of the set and, since 2026-09-23, out of the flow too — see
+Status.
 
 | File | Screen | Why it is in the set |
 |---|---|---|
@@ -24,22 +26,21 @@ The filenames carry that order, because App Store Connect uses upload order.
 | `02-penny-chat.png` | Penny, after a real reply | The differentiator |
 | `03-itinerary.png` | Day 1 expanded, fuel stops loaded | The product actually working |
 | `04-map.png` | Route and stop markers | The visual anchor |
-| `05-settings.png` | Vehicle profile | The fuel maths is yours to set |
 
 ## The trip in them
 
 The same canonical two legs the test flows use — **Paris → Strasbourg →
-Stuttgart**, real coordinates and real road geometry from
-`CANONICAL_TWO_LEGS` in `src/server/repos/testSupport.ts` — seeded under names a
+Stuttgart**, real coordinates and distances from `CANONICAL_TWO_LEGS` in
+`src/server/repos/testSupport.ts` (but NO road geometry: the map draws each leg
+as TripMap's dashed straight-line fallback) — seeded under names a
 customer could read (`Paris to Stuttgart`, `The Hilux`, `Sam`) instead of
 `E2E Fixture Trip`. Same graph, different labels; `ios-e2e-local.sh` passes the
 three names to `scripts/ios-e2e-fixture.mjs`.
 
 The account is a throwaway `playwright-…@e2e.feraltravels.com` fixture on the
-LOCAL server and local database, never production. Its address is why
-`05-settings.png` is scrolled with the vehicle card centred: that pushes the
-"Signed in as" row off the top, and a fixture address must not appear on a
-public store listing. **Check it did.**
+LOCAL server and local database, never production. Its address must not
+appear on a public store listing, which is why there is no Settings shot.
+**Check none of the four shows it.**
 
 ## Sizes, and the correction that made this necessary
 
@@ -59,7 +60,7 @@ is silently the wrong size is otherwise something you discover at upload.
 
 **Looking at them.** Nothing in the pipeline can tell a map that loaded its
 tiles from a grey rectangle where a map should be; both are the same number of
-pixels. These go on a public listing. Open all five.
+pixels. These go on a public listing. Open all four.
 
 Two things to look at in particular on the first run:
 
@@ -91,7 +92,7 @@ a decision.
 | `02-penny-chat` | **Good.** A real, specific answer: day 1 measured against the vehicle's range, a recommendation, and an offer to place a stop. |
 | `03-itinerary` | **Was wrong, now good.** It read *"No fuel stop needed on this day"* — day 1 is 489 km and the fixture range was 500, so Finn correctly placed nothing, and the slot meant to show the product working showed it idle. `seedCanonicalFixture` now takes an optional `rangeKm` and the runner seeds 300, so the same leg genuinely needs stops: Reims at 147 km and Station AVIA Saverne at 442 km, with their routing buttons. Still carries a "LOCATION OFF — OPEN SETTINGS" line (see below). |
 | `04-map` | **Intermittent, not broken.** The first run produced a blank grid with a route line on it — Apple Maps tiles had not loaded on a freshly booted simulator. A later run on the same warmed simulator rendered France and Germany properly, with the route and both gold fuel markers. **If it comes out blank, re-run it**; nothing in the flow can tell the two apart. |
-| `05-settings` | **REMOVED from the set, 2026-09-02.** It leaked the fixture's `playwright-…@e2e.feraltravels.com` address, twice, for two different reasons. Centring the 'Vehicle profile' heading did not push it off a 6.9" screen; centring the range stat did — until the copy-rule cleanup deleted two blurbs, the screen got shorter, and the address came back into frame. The workaround was load-bearing on the page being long. Four images is inside Apple's 3–5, so the set ships without it until the layout is fixed. |
+| `05-settings` | **REMOVED from the set, 2026-09-02.** It leaked the fixture's `playwright-…@e2e.feraltravels.com` address, twice, for two different reasons. Centring the 'Vehicle profile' heading did not push it off a 6.9" screen; centring the range stat did — until the copy-rule cleanup deleted two blurbs, the screen got shorter, and the address came back into frame. The workaround was load-bearing on the page being long. Four images is inside Apple's 3–5, so the set ships without it until the layout is fixed. On 2026-09-23 the step came out of `screenshots.yaml` too: it had stayed in the flow, and the runner copies every PNG the flow takes, so each regeneration put the leaking image back in this directory. |
 
 ### Getting `05-settings` back
 

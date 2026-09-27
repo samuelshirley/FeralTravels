@@ -1,5 +1,6 @@
 // Seed rest-day-stop.yaml's state: the canonical trip, plus the Lisbon share
-// link as a stop on its FIRST Lisbon base day.
+// link as a stop on its LAST Lisbon base day — the lowest base day in the list,
+// which is the case #70's note box had to scroll above the keyboard for.
 //
 // Same two endpoints as seed-maps-link-stop.js, and the same live link — that
 // flow puts it on the Porto → Lisbon DRIVE day, this one on a BASE day, which
@@ -30,7 +31,7 @@ var leg = null;
 for (var i = 0; i < trip.legs.length; i++) {
   var l = trip.legs[i];
   if (l.title.indexOf('Lisbon') === 0 && l.title.indexOf('rest day') > 0) {
-    if (!leg || l.sortOrder < leg.sortOrder) leg = l;
+    if (!leg || l.sortOrder > leg.sortOrder) leg = l;
   }
 }
 if (!leg) {

@@ -1,23 +1,28 @@
 /**
  * The landing page's hero video, read in one place.
  *
- * TWO SOURCES, one switch — `NEXT_PUBLIC_LANDING_VIDEO_BASE_URL`. Both are
- * the same 6.17 s seamless loop of Penny, ALREADY slowed to 0.6x at a true
- * 30 fps, muted, no audio track, metadata stripped; frame 0 is the poster and
- * the last frame leads back into it. Both play at 1x.
+ * TWO SOURCES, one switch — `NEXT_PUBLIC_LANDING_VIDEO_BASE_URL`. Both play
+ * at 1x, muted, with no audio track.
  *
  * - UNSET (the default): the copy committed in public/landing/ (Sam,
- *   2026-09-26), hero-1920.mp4 (1080p) and hero-1280.mp4 (720p), served by the
- *   normal CDN.
+ *   2026-09-27), hero-1920.mp4 (1080p) and hero-1280.mp4 (720p), served by the
+ *   normal CDN. Sam's drone shot of the camper truck on a gravel mountain road
+ *   past snow and a lake: 10 s at normal speed, 30 fps. It loops with a HARD
+ *   CUT — the drone circles the truck, so the last frame cannot lead back into
+ *   the first, and a crossfade would blur two camera angles. Frame 0 is the
+ *   poster.
  * - SET: the 4K copy on the Vercel Blob store `feral-travels-media`, e.g.
  *   https://x4hcb3okuf17fqdz.public.blob.vercel-storage.com/hero/v1/ (with
  *   or without the trailing slash). Built by a script outside git; to change
- *   it, upload hero/v2/ and point the variable there.
+ *   it, upload hero/v2/ and point the variable there. hero/v1/ is still
+ *   PENNY'S clip (a 6.17 s seamless loop, already slowed to 0.6x), not the
+ *   drone shot: setting the variable today brings Penny back.
  *
  * THE RATE FOLLOWS THE SOURCE. It is chosen with the sources in
  * `landingVideo()` and never set on its own, so a future source at normal speed
- * cannot be wired in without deciding how fast it plays. Slowing a pre-slowed
- * file again would play Penny at 0.36x.
+ * cannot be wired in without deciding how fast it plays. The drone shot is at
+ * normal speed and Penny's Blob copy is pre-slowed, so both are 1x; slowing
+ * the pre-slowed file again would play Penny at 0.36x.
  *
  * WHY BLOB IS OPT-IN: the Vercel Hobby plan caps Blob transfer at 10 GB a
  * month (about 560 desktop plays), and past that Blob is locked for 30 days.
@@ -82,7 +87,7 @@ export function pickSources(
 export const LANDING_VIDEO = landingVideo(process.env.NEXT_PUBLIC_LANDING_VIDEO_BASE_URL);
 
 /**
- * Frame 0 of the loop (Penny far down the track), so the poster
+ * Frame 0 of the committed clip (the truck on the mountain road), so the poster
  * hands over to the video without a jump. The whole hero under Reduce Motion.
  */
 export const LANDING_POSTER = '/landing/hero-poster.jpg';

@@ -337,6 +337,10 @@ export function tripApi(tripId: string) {
         reason?: string;
       }>(`/api/legs/${legId}/fuel-stops`, { method: "POST", body: {} }),
 
+    /** Replace a day's notes with the full list (the base-day "+ Add note" box). */
+    setLegNotes: (legId: string, notes: string[]) =>
+      apiFetch<{ notes: string[] }>(`/api/legs/${legId}/notes`, { method: "PATCH", body: { notes } }),
+
     listStopsForLeg: (legId: string) =>
       apiFetch<Stop[]>("/api/stops", { query: { tripId, legId } }),
     addStop: (legId: string, payload: Record<string, unknown>) =>
