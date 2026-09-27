@@ -3,70 +3,82 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * The gate that keeps the Anthropic-spending E2E specs off every push.
+ * The gate that keeps the Anthropic-spending e2e flows off every push.
  *
- * `penny-plan-trip` and `chat-maps-link` make real Penny turns. Measured
- * 2026-09-08 across four consecutive CI runs, a full suite made exactly five
- * `/api/trip/replan` calls and cost $0.51–0.58 — and the repo pushes hard
- * enough that 2026-09-03 alone fired 28 CI runs. They now run only when the
- * `ai-tests` label starts the run.
+ * Measured 2026-09-08 across four consecutive CI runs, a full suite's Penny
+ * turns cost $0.51–0.58 — and the repo pushes hard enough that 2026-09-03 alone
+ * fired 28 CI runs. So the flows that ask Penny to plan for real run only when
+ * the `ai-tests` label starts the run.
  *
- * Everything here is read as TEXT, deliberately. The three files are a TS
- * config, a plain `.mjs` script and a YAML workflow; nothing can import all
- * three, which is exactly why the list of costly specs is duplicated and why
- * that duplication needs a test. The same reasoning as
- * `decideMobileRelease.test.ts`, which reads `mobile.yml` to prove CI still
- * runs the script it exists to guard.
+ * WHERE THEY LIVE (2026-09-27): the iOS Maestro shard `ai`
+ * (mobile/maestro/shards/ai.yaml) — penny-plan-trip.yaml and
+ * penny-maps-link.yaml, the most thorough flows in the suite on purpose (Sam:
+ * the expensive ones are how a driver really uses the app). They were two
+ * Playwright specs until then, gated by `E2E_AI_SPECS` in the E2E job; the
+ * decide job now drops the `ai` shard from the iOS matrix unless the label
+ * started the run.
+ *
+ * Everything here is read as TEXT, deliberately: a YAML workflow, a Maestro
+ * shard config and a TS config cannot import each other.
  *
  * WHAT THIS PROTECTS. Every failure below is silent — a run that looks green
- * and tested less than the reader thinks:
- *   - the two lists drifting, so the assert script waves through a labelled run
- *     in which one costly spec never ran;
- *   - the label plumbing being removed, so the label does nothing and there is
- *     no way to test Penny before merging at all;
- *   - `E2E_MAX_SKIPPED` being raised to "make the gate work", which is how that
- *     allowance stopped meaning anything the last time.
+ * and tested less than the reader thinks, or spent more than it should:
+ *   - the spending flows leaking into a shard that runs on every push;
+ *   - the label plumbing being removed, so there is no way to test Penny
+ *     before merging at all;
+ *   - the gate keying on the PR CARRYING the label, which spends on every push;
+ *   - `E2E_MAX_SKIPPED` being raised, which is how that allowance stopped
+ *     meaning anything the last time.
  */
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p: string) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-const config = read('playwright.config.ts');
-const assertScript = read('scripts/assert-e2e-ran.mjs');
-const summaryScript = read('scripts/e2e-pr-summary.mjs');
 const ci = read('.github/workflows/ci.yml');
+const config = read('playwright.config.ts');
+const SHARD_DIR = 'mobile/maestro/shards';
 
-/** Pull a `const NAME = [ ... ]` string-array literal out of source text. */
-function stringArray(source: string, name: string): string[] {
-  const m = source.match(new RegExp(`${name}\\s*=\\s*\\[([^\\]]*)\\]`));
-  if (!m) throw new Error(`${name} not found — the gate has been restructured`);
-  return [...m[1].matchAll(/['"]([^'"]+)['"]/g)].map((x) => x[1]);
+/** The `flows:` list of one shard config. */
+function shardFlows(name: string): string[] {
+  const source = read(`${SHARD_DIR}/${name}.yaml`);
+  const block = source.match(/^flows:\s*\n((?:\s+- .*\n?)+)/m);
+  if (!block) throw new Error(`${name}.yaml has no flows: list — the shard format changed`);
+  return [...block[1].matchAll(/-\s+([\w.-]+)/g)].map((m) => m[1]);
 }
 
-describe('the costly-spec list has exactly one definition in effect', () => {
-  it('playwright.config.ts and assert-e2e-ran.mjs name the same specs', () => {
-    const fromConfig = stringArray(config, 'AI_SPEC_NAMES');
-    const fromAssert = stringArray(assertScript, 'AI_SPEC_NAMES');
-    expect(fromConfig.length).toBeGreaterThan(0);
-    expect([...fromAssert].sort()).toEqual([...fromConfig].sort());
+const SPENDING_FLOWS = ['penny-plan-trip.yaml', 'penny-maps-link.yaml'];
+
+describe('the spending flows are in the `ai` shard and nowhere else', () => {
+  it('the `ai` shard is exactly the flows that ask Penny to plan', () => {
+    expect([...shardFlows('ai')].sort()).toEqual([...SPENDING_FLOWS].sort());
   });
 
-  it('names the two specs that actually spend, and not the ones that do not', () => {
-    const names = stringArray(config, 'AI_SPEC_NAMES');
-    expect(names).toContain('penny-plan-trip');
-    expect(names).toContain('chat-maps-link');
-    // onboarding-flow spends one Sonnet turn at its handoff and is deliberately
-    // NOT gated: it is the wizard's only end-to-end coverage and the only proof
-    // that `chat_history.form_meta` survives a reload. Decided 2026-09-08 —
-    // moving it here is a coverage decision, not a tidy-up.
-    expect(names).not.toContain('onboarding-flow');
-    expect(stringArray(config, 'WEB_UI_SPEC_NAMES')).toContain('onboarding-flow');
+  it('no shard that runs on every push carries one of them', () => {
+    const everyPush = fs
+      .readdirSync(path.join(ROOT, SHARD_DIR))
+      .filter((f) => f.endsWith('.yaml') && f !== 'ai.yaml')
+      .map((f) => f.slice(0, -'.yaml'.length));
+    expect(everyPush.length).toBeGreaterThan(0);
+    for (const shard of everyPush) {
+      for (const flow of SPENDING_FLOWS) {
+        expect(shardFlows(shard), `${flow} would spend on every push from shard ${shard}`).not.toContain(flow);
+      }
+    }
   });
 
-  it('the web-ui project no longer hardcodes the spec list it is built from', () => {
-    expect(config).toContain('testMatch: webUiTestMatch');
-    // The old literal regex listed every spec inline; a reinstated one would
-    // run the costly specs on every push again while every check here passed.
-    expect(config).not.toMatch(/testMatch:\s*\/\(existing-trip\|/);
+  it('the onboarding hand-off stays OUTSIDE the gate, on purpose', () => {
+    // onboarding-wizard spends one Penny turn at its hand-off and is
+    // deliberately NOT gated: it is the wizard's only end-to-end coverage and
+    // the only proof the answers survive a relaunch. Decided 2026-09-08 for the
+    // web spec it replaced — moving it into `ai` is a coverage decision, not a
+    // tidy-up.
+    expect(shardFlows('ai')).not.toContain('onboarding-wizard.yaml');
+    expect(shardFlows('account')).toContain('onboarding-wizard.yaml');
+  });
+
+  it('the Playwright suite asks Penny nothing, so it has no gate of its own to drift', () => {
+    expect(config).not.toContain('AI_SPEC_NAMES');
+    expect(fs.existsSync(path.join(ROOT, 'e2e/penny-plan-trip.spec.ts'))).toBe(false);
+    expect(fs.existsSync(path.join(ROOT, 'e2e/chat-maps-link.spec.ts'))).toBe(false);
   });
 });
 
@@ -75,10 +87,11 @@ describe('the label plumbing in ci.yml', () => {
     expect(ci).toMatch(/types:\s*\[opened, synchronize, reopened, ready_for_review, labeled\]/);
   });
 
-  it('the E2E job turns the `ai-tests` label into E2E_AI_SPECS', () => {
-    expect(ci).toContain('E2E_AI_SPECS=1');
-    expect(ci).toContain('E2E_AI_SPECS=0');
+  it('the decide job adds the `ai` shard only for the `ai-tests` label', () => {
     expect(ci).toMatch(/LABEL_NAME"?\s*=\s*"ai-tests"/);
+    expect(ci).toContain("n !== 'ai' || process.env.IOS_AI === '1'");
+    expect(ci).toContain('ios_shards: ${{ steps.shards.outputs.ios_shards }}');
+    expect(ci).toContain('shard: ${{ fromJSON(needs.decide.outputs.ios_shards) }}');
   });
 
   it('reads the label through env, never interpolated into the shell', () => {
@@ -90,39 +103,38 @@ describe('the label plumbing in ci.yml', () => {
   });
 
   it('gates on the run STARTING from the label, not on the PR carrying it', () => {
-    // `contains(pull_request.labels.*.name, ...)` would put the costly specs
-    // back on every push made while the label sat on the PR — the exact thing
-    // being switched off.
+    // `contains(pull_request.labels.*.name, ...)` would put the spend back on
+    // every push made while the label sat on the PR — the exact thing being
+    // switched off.
     expect(ci).toMatch(/EVENT_ACTION"?\s*=\s*"labeled"/);
     expect(ci).not.toContain("contains(github.event.pull_request.labels.*.name, 'ai-tests')");
   });
 
-  it('the skip allowance was NOT loosened to accommodate the gate', () => {
-    // Gated specs are dropped from testMatch and produce no result at all, so
-    // they cannot inflate the skip count. If this is ever above 0 again, the
-    // question to answer first is what started skipping.
+  it('the skip allowance was NOT loosened', () => {
     expect(ci).toMatch(/E2E_MAX_SKIPPED:\s*'0'/);
   });
 
-  it('the runner-side gate uses the CI key, never the production one', () => {
-    // The value is only tested for presence, but a production key on a public
-    // repo's runner is a production key one bad log line from being public.
-    expect(ci).toContain('ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}');
-    expect(ci).not.toContain('ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}');
+  it('no Anthropic key sits on a runner: nothing on the runner calls Penny', () => {
+    // The Penny flows call her through the PREVIEW, which bills the CI key
+    // from the Vercel preview environment (anthropicKey.ts). The runner-side
+    // copy existed only for the Playwright specs' presence check; a key on a
+    // public repo's runner is a key one bad log line from being public.
+    expect(ci).not.toMatch(/ANTHROPIC_API_KEY:\s*\$\{\{ secrets\./);
   });
 });
 
 describe('a run that did not exercise Penny says so', () => {
-  it('assert-e2e-ran.mjs fails a labelled run in which a costly spec produced nothing', () => {
-    expect(assertScript).toContain('AI_SPECS_REQUESTED');
-    expect(assertScript).toMatch(/if \(AI_SPECS_REQUESTED\)/);
-    expect(assertScript).toContain('process.exit(1)');
-  });
-
-  it('the PR comment distinguishes the two kinds of green', () => {
+  it('the iOS PR comment distinguishes the two kinds of green', () => {
     // Without this the reader cannot tell, at the moment they are deciding to
     // merge, whether Penny was asked to plan anything.
-    expect(summaryScript).toContain("process.env.E2E_AI_SPECS === '1'");
-    expect(summaryScript).toContain('ai-tests');
+    expect(ci).toContain("if (!expected.includes('ai'))");
+    expect(ci).toContain('did not run — add the `ai-tests` label to run them.');
+  });
+
+  it('a labelled run whose `ai` shard produced nothing is red, not green', () => {
+    // Every expected shard must report success; one that never ran reads as
+    // "did not run" and fails the summary.
+    expect(ci).toContain("const outcome = r?.outcome || 'did not run';");
+    expect(ci).toMatch(/RESULT: \$\{\{ needs\.ios-e2e\.result \}\}[\s\S]*\[ "\$RESULT" = "success" \]/);
   });
 });

@@ -43,6 +43,8 @@
 #   scripts/ios-e2e-local.sh up            # db + server, leave them running
 #   scripts/ios-e2e-local.sh build         # prebuild + xcodebuild + install
 #   scripts/ios-e2e-local.sh run [flow]    # mint a fixture, run one flow
+#   scripts/ios-e2e-local.sh shard <name>  # mint a fixture, run one shard as CI
+#                                          # does (mobile/maestro/shards/<name>.yaml)
 #   scripts/ios-e2e-local.sh all           # doctor, up, build-if-needed, 1→2→3
 #   scripts/ios-e2e-local.sh hierarchy     # dump the current screen's view tree
 #   scripts/ios-e2e-local.sh studio        # Maestro Studio against this device
@@ -95,8 +97,10 @@ STOREKIT_FILE="mobile/storekit/FeralTravels.storekit"
 #
 # The test flows want a name that is obviously a fixture; the screenshot flow
 # wants one a customer could read on the App Store. Same canonical two legs
-# either way — Paris → Strasbourg → Stuttgart is a real route with real road
-# geometry, which is why it photographs well — only the labels differ.
+# either way — Paris → Strasbourg → Stuttgart, real endpoints and distances —
+# only the labels differ. NOT real road geometry: CANONICAL_TWO_LEGS in
+# src/server/repos/testSupport.ts seeds no `geometry`, so the map draws each leg
+# as TripMap's dashed straight-line fallback (checked 2026-09-23).
 #
 # `sign-in.yaml` and `chat-keyboard.yaml` match the trip card against
 # ${TRIP_NAME}, so this and the seed have to move together. `screenshots`
@@ -703,8 +707,19 @@ device_id() {
 # ───────────────────────────────────────────────────────────────────────────
 run_flow() {
   local flow="${1:-chat-keyboard}"
-  local file="mobile/maestro/${flow%.yaml}.yaml"
-  [ -f "$file" ] || die "No such flow: $file"
+  # `shard:<name>` runs a whole shard the way CI does: ONE Maestro run over
+  # mobile/maestro with mobile/maestro/shards/<name>.yaml naming the flows and
+  # their order (so sign-in.yaml never runs standalone and spends the code).
+  local target=()
+  if [ "${flow#shard:}" != "$flow" ]; then
+    local shard_file="mobile/maestro/shards/${flow#shard:}.yaml"
+    [ -f "$shard_file" ] || die "No such shard: $shard_file"
+    target=(mobile/maestro --config "$shard_file")
+  else
+    local file="mobile/maestro/${flow%.yaml}.yaml"
+    [ -f "$file" ] || die "No such flow: $file"
+    target=("$file")
+  fi
 
   # `launch` is the HARNESS check and must not need the server to be healthy —
   # otherwise a broken backend reds layer 1 and the first line of output blames
@@ -757,12 +772,16 @@ run_flow() {
   rm -rf "$OUT/maestro"
   say "Running $flow on $udid"
   set +e
-  MAESTRO_DRIVER_STARTUP_TIMEOUT=240000 \
   # BASE_URL and TEST_SECRET are for read-otp.js, which fetches the sign-in
   # code itself rather than trusting one minted before the run. TEST_SECRET is
   # empty locally — there is nothing to lock out — and the script omits the
   # header when it is.
-  maestro --device "$udid" test "$file" \
+  #
+  # The comment sits ABOVE the command, not between the timeout and `maestro`:
+  # a comment after a `\` continuation ends the command there, which turned the
+  # timeout into a bare shell assignment that Maestro never saw.
+  MAESTRO_DRIVER_STARTUP_TIMEOUT=240000 \
+  maestro --device "$udid" test "${target[@]}" \
     -e APP_ID="$APP_ID" \
     -e EMAIL="$EMAIL" \
     -e BASE_URL="$API_URL" \
@@ -819,8 +838,8 @@ run_flow() {
 #    image that is not one of the dimensions it expects for the slot. See
 #    scripts/pick-screenshot-simulator.mjs.
 #  - PRESENTABLE NAMES on the same canonical graph. Paris → Strasbourg →
-#    Stuttgart with real coordinates and real road geometry is already what the
-#    fixture seeds; only "E2E Fixture Trip" had to go.
+#    Stuttgart with real coordinates is already what the fixture seeds; only
+#    "E2E Fixture Trip" had to go.
 #  - EVERY PNG IS MEASURED before it is kept. A set that is silently 1206x2622
 #    (an iPhone 17 Pro — the 6.3" device that §3 of the listing doc wrongly
 #    names for the 6.9" slot) is a set you find out about at upload.
@@ -852,7 +871,21 @@ screenshots() {
   [ -d mobile/ios-build ] && [ -n "$(ls -d mobile/ios-build/*.app 2>/dev/null)" ] || build
   install_app "$udid" "$model"
 
+  # A STORE STATUS BAR, not whatever the simulator happens to show. Left alone
+  # it reads the wall-clock time and four empty cellular dots — a simulator has
+  # no carrier — which on the 2026-09-02 and first 2026-09-23 sets looked like a
+  # phone with no signal. Set after install_app, which shuts down and reboots
+  # the device, and cleared again after the flow so the test flows see the real
+  # one (a failed flow exits before the clear; `simctl status_bar <udid> clear`
+  # by hand if that matters).
+  xcrun simctl status_bar "$udid" override \
+    --time "9:41" --dataNetwork wifi --wifiMode active --wifiBars 3 \
+    --cellularMode active --cellularBars 4 --operatorName "" \
+    --batteryState charged --batteryLevel 100
+  ok "status bar pinned (9:41, full signal, full battery)"
+
   run_flow screenshots
+  xcrun simctl status_bar "$udid" clear || true
 
   # ── Measure, then keep ───────────────────────────────────────────────────
   #
@@ -918,6 +951,7 @@ case "${1:-all}" in
   build)     doctor; build ;;
   install)   install_app ;;
   run)       run_flow "${2:-chat-keyboard}" ;;
+  shard)     run_flow "shard:${2:?usage: shard <name>}" ;;
   hierarchy) hierarchy ;;
   screenshots) screenshots "${2:-6.9}" ;;
   studio)    maestro --device "$(device_id)" studio ;;
@@ -937,14 +971,17 @@ case "${1:-all}" in
     install_app
     say "Layer 1 — harness"   ; run_flow launch
     say "Layer 2 — wiring"    ; run_flow sign-in
-    say "Layer 3 — behaviour" ; run_flow chat-keyboard
-    say "Layer 3 — behaviour" ; run_flow onboarding-flash
-    say "Layer 3 — behaviour" ; run_flow onboarding-date-picker
-    say "Layer 3 — behaviour" ; run_flow maps-link-stop
-    # Also layer 3, and deliberately LAST: it spends the iOS location dialog
-    # for the install, and `canAskAgain` does not come back. Anything that
-    # needs a fresh "never asked" state has to run before it.
-    say "Layer 3 — permissions"; run_flow settings-location
+    # Then every shard, exactly as CI runs them (one fixture account and one
+    # Maestro run each). `ai` asks Penny to plan for real and spends Anthropic
+    # credit, so it runs only with IOS_AI=1 — the local twin of the label.
+    for shard_file in mobile/maestro/shards/*.yaml; do
+      shard="$(basename "$shard_file" .yaml)"
+      if [ "$shard" = ai ] && [ "${IOS_AI:-0}" != 1 ]; then
+        warn "skipping shard ai (Penny for real) — IOS_AI=1 to run it"
+        continue
+      fi
+      say "Shard $shard" ; run_flow "shard:$shard"
+    done
     ;;
   *) die "unknown command: $1 (see the header of this file)" ;;
 esac

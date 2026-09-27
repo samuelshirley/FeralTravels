@@ -66,7 +66,7 @@ export default function HeroVideo({ className }: { className: string }) {
       onLoadedMetadata={(e) => {
         const v = e.currentTarget;
         // Safari resets playbackRate to defaultPlaybackRate on load; set both.
-        // The rate belongs to the source (config.ts); both current sources are pre-slowed, so 1.
+        // The rate belongs to the source (config.ts); both current sources play at 1x.
         v.defaultPlaybackRate = LANDING_VIDEO.rate;
         v.playbackRate = LANDING_VIDEO.rate;
       }}

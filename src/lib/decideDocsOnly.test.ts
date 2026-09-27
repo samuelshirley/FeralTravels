@@ -103,13 +103,34 @@ describe('the CI workflow is wired to it', () => {
   });
 
   /**
-   * `e2e` and `ios-e2e` carry no gate of their own — they `needs: preview`, and
-   * GitHub skips a job whose dependency skipped. If either is ever re-parented,
-   * it needs the gate written out.
+   * `e2e` carries no gate of its own — it `needs: preview`, and GitHub skips a
+   * job whose dependency skipped. If it is ever re-parented, it needs the gate
+   * written out.
    */
-  it('leaves e2e and ios-e2e depending on preview, which is what skips them', () => {
+  it('leaves e2e depending on preview, which is what skips it', () => {
     expect(ci).toMatch(/ {2}e2e:\n(?: {4}.*\n)* {4}needs: preview/);
-    expect(ci).toMatch(/ {2}ios-e2e:\n(?: {4}.*\n)* {4}needs: preview/);
+  });
+
+  /**
+   * The iOS jobs are gated explicitly. `ios-build` depends only on `decide`
+   * (it compiles while the preview deploys), so nothing upstream would skip
+   * it. And `ios-e2e-summary` runs `if: always()` so it can report a failed
+   * shard — `always()` overrides a skipped dependency, so without the gate
+   * written into the same `if:` a docs-only PR would run it, find no shards,
+   * and FAIL the run the deploy gate reads.
+   */
+  it('gates every iOS job on docs_only, the always() one included', () => {
+    const job = (name: string) => {
+      const start = ci.indexOf(`\n  ${name}:\n`);
+      expect(start, `no ${name} job`).toBeGreaterThan(-1);
+      const next = ci.slice(start + 1).search(/\n {2}[a-z0-9_-]+:\n/);
+      return ci.slice(start, next === -1 ? undefined : start + 1 + next);
+    };
+    for (const name of ['ios-build', 'ios-e2e', 'ios-e2e-summary']) {
+      expect(job(name), name).toMatch(/\n {4}if: .*needs\.decide\.outputs\.docs_only != 'true'/);
+    }
+    expect(job('ios-e2e-summary')).toMatch(/\n {4}if: always\(\) && needs\.decide\.outputs\.docs_only != 'true'/);
+    expect(job('ios-e2e')).toMatch(/\n {4}needs: \[decide, preview, ios-build\]/);
   });
 
   it('does NOT gate the unit job — the docs guards live there', () => {

@@ -1,0 +1,160 @@
+# Penny plans a trip for real, and the driver sees all of it — the most
+# expensive flow in the suite, so the most thorough (Sam, 2026-09-27: "we want
+# the most expensive test (the ai ones) to be the most thorough tests we have …
+# because its actually how a user will use the app"). Runs only in the `ai`
+# shard, on a run started by the `ai-tests` label.
+#
+# THE TRIP IS CHOSEN SO FINN MUST FORCE A STOP. Alta → the North Cape Hall and
+# back, in a vehicle with a 250 km range. Day 1 is ~234 km, inside the range,
+# but the first station on day 2 is ~30 km past the Hall, across the Nordkapp
+# plateau — so arriving on day 1's last fumes would strand the car tomorrow,
+# and Finn tops up in Honningsvåg: "Top up here: next fuel is 61 km away, on
+# the next day's drive". Verified 2026-09-26 by running Finn's own code on live
+# Google data: the stop is forced for any range from 236 to 260 km, and 250 is
+# the middle, so a small change in Google's route length cannot flip it. It
+# breaks only if a station opens within ~5 km of the Hall. The NUMBER is not
+# asserted (a station opening or closing on day 1 moves it); the line is.
+# The prompt names the Hall, because "Nordkapp" alone can resolve to the
+# municipality — Honningsvåg — where day 2 starts beside a pump.
+#
+# What it proves, end to end: a real planning turn lands; the plan is two days
+# with the right ends; today's fuel sources itself; Finn's forced-stop line
+# reaches the stop row (and VoiceOver); the map draws the route; and a switch
+# to miles re-words every distance, the line included.
+#
+# Cost: one Penny turn, then Directions and two Places searches (day 1, and
+# day 2 for Finn's look-ahead).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ai1
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: '250'
+      EXTRA_TRIP_KIND: blank
+      EXTRA_TRIP_NAME: E2E Fixture North Cape Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# A trip with no days opens on the chat.
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# ── Ask ─────────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Plan this as a two-day drive, no rest days, and go ahead without asking me anything. Day 1: drive from Alta, Norway to the North Cape Hall (Nordkapphallen) at the tip of Nordkapp. Day 2: drive from the North Cape Hall back to Alta.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+# Keyboard down before waiting out the turn (screenshots.yaml: a blinking caret
+# keeps the screen "changing" for as long as the keyboard is up).
+# After the thread settles: a fast reply scrolls the chat, and a tap during
+# that scroll only stops it, leaving the keyboard over the tabs (ai run
+# 36322929428). Once more if the tabs are still covered. Not the left edge:
+# that is iOS's back-swipe zone and ate the tap locally.
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+
+# ── The plan lands ──────────────────────────────────────────────────────────
+# Not chat-plan-ready: that row is written only on the onboarding hand-off
+# turn (trip/replan/route.ts, isHandoff); this trip is planned from plain chat.
+- extendedWaitUntil:
+    visible: 'Changes applied to trip'
+    timeout: 300000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+- assertVisible: 'Changes applied to trip'
+
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- assertVisible:
+    text: '.* → .* · 2 days.*'
+- assertVisible:
+    text: '.*Alta.* → .*(Nordkapp|North Cape).*'
+- assertVisible:
+    text: '.*(Nordkapp|North Cape).* → Alta.*'
+
+# ── Day 1: Finn tops up, and says why ───────────────────────────────────────
+- tapOn:
+    text: '.*Alta.* → .*(Nordkapp|North Cape).*'
+- extendedWaitUntil:
+    visible:
+      text: '.*LOCATION OFF.*'
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: "FUEL: .*, [0-9]+ km\\. Top up here: next fuel is [0-9]+ km away, on the next day's drive\\. Opens in Google Maps"
+    direction: DOWN
+    timeout: 20000
+- assertNotVisible:
+    text: 'No fuel stations found.*'
+- assertVisible:
+    text: 'DESTINATION: .*Opens in Google Maps'
+
+# ── The map draws it ────────────────────────────────────────────────────────
+- tapOn: 'MAP'
+- extendedWaitUntil:
+    visible: 'Recenter the map on the whole route'
+    timeout: 30000
+- assertNotVisible: 'Map failed to load.'
+
+# ── Miles, everywhere ───────────────────────────────────────────────────────
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Imperial (mi)'
+    timeout: 20000
+- tapOn: 'Imperial (mi)'
+- extendedWaitUntil:
+    visible:
+      text: 'REFILL EVERY ~155 mi'
+    timeout: 20000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: 'FUEL: .*'
+    commands:
+      - tapOn:
+          text: '.*Alta.* → .*(Nordkapp|North Cape).*'
+- scrollUntilVisible:
+    element:
+      text: "FUEL: .*, [0-9]+ mi\\. Top up here: next fuel is [0-9]+ mi away, on the next day's drive\\. Opens in Google Maps"
+    direction: DOWN
+    timeout: 20000
+- assertNotVisible:
+    text: '.*[0-9] km.*'

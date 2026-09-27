@@ -1,0 +1,19 @@
+# Shard `ai`: Penny planning for real — Anthropic spend, plus Directions and
+# Places. It runs ONLY on a CI run STARTED by the `ai-tests` label (the decide
+# job drops it otherwise), and locally only with IOS_AI=1. These are the most
+# thorough flows in the suite on purpose: they are how a driver actually uses
+# the app, so they assert the whole journey, not a seeded slice of it.
+#
+# Each flow seeds its own account (seed-account.js), so the order is for
+# reading. One Maestro run on its own simulator (see the ios-e2e job in ci.yml).
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - penny-plan-trip.yaml
+  - penny-maps-link.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - penny-plan-trip
+    - penny-maps-link

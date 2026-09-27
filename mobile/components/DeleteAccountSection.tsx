@@ -85,6 +85,7 @@ export default function DeleteAccountSection() {
           accessibilityRole="button"
           onPress={() => setOpen(true)}
           style={styles.outlineDangerBtn}
+          testID="delete-account-open"
         >
           <Text style={styles.outlineDangerText}>Delete account</Text>
         </Pressable>
@@ -119,6 +120,10 @@ export default function DeleteAccountSection() {
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.input}
+              // The placeholder was this field's only name, and a placeholder
+              // vanishes the moment anything is typed.
+              accessibilityLabel={`Type ${DELETE_CONFIRM_PHRASE} to confirm`}
+              testID="delete-account-input"
             />
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -126,8 +131,12 @@ export default function DeleteAccountSection() {
             <Pressable
               accessibilityRole="button"
               disabled={!armed || deleting}
+              // Said, not only drawn: VoiceOver reads "dimmed" until the phrase
+              // matches, and the iOS e2e flow asserts the same state.
+              accessibilityState={{ disabled: !armed || deleting }}
               onPress={confirmDelete}
               style={[styles.dangerBtn, (!armed || deleting) && styles.dangerBtnDisabled]}
+              testID="delete-account-confirm"
             >
               <Text
                 style={[
@@ -143,6 +152,7 @@ export default function DeleteAccountSection() {
               disabled={deleting}
               onPress={close}
               style={styles.cancelBtn}
+              testID="delete-account-cancel"
             >
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>

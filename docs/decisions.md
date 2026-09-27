@@ -139,12 +139,13 @@ fuel brief.
 
 C3. **Fuel is sourced lazily when a day is opened, cached 48 h, invalidated per affected leg —
 never a trip-wide fan-out.** *Enforced by:* `fuelCache.test.ts`, `LegCard.fuelResource.test.tsx`,
-`e2e/lazy-fuel-sourcing.spec.ts`.
+`mobile/maestro/trip-itinerary.yaml` (today sources itself; another day only when opened).
 
 C4. **Before planning day N, every unsourced drive leg since the last real refuel is sourced
 first (the dependency cascade).** A never-opened day is indistinguishable from "needed no fuel"
 to the tank walk; without this, opening day 12 first reported −1896 km of range. *Enforced by:*
-`finn/sourcingOrder.test.ts`, `plan.test.ts`, `e2e/lazy-fuel-sourcing.spec.ts`.
+`finn/sourcingOrder.test.ts`, `plan.test.ts`, `e2e/fuel-cascade.spec.ts` (one request for day 3
+sources days 1 and 2 behind it).
 
 C5. **A remaining range ≤ 0 at a leg's start is `tank_state_invalid` (retryable, logged),
 never `no_stations_found`.** The sentence "next fuel N km ahead — beyond safe range (−M km)" is
@@ -334,9 +335,10 @@ green; a direct push to `main` lands but never deploys.** *Enforced by:* the wor
 pass on an up-to-date branch, force-push and deletion are blocked; admins can bypass it. The
 configuration is in `docs/design/deploy-pipeline.md`.
 
-F2. **No E2E spec may skip (`E2E_MAX_SKIPPED=0`); the two Anthropic-spending specs run only on
-the `ai-tests` label; the production key never reaches the runner.** *Enforced by:*
-`aiSpecGate.test.ts`, `scripts/assert-e2e-ran.mjs`.
+F2. **No E2E spec may skip (`E2E_MAX_SKIPPED=0`); the Anthropic-spending flows — the iOS `ai`
+shard — run only on a run started by the `ai-tests` label; no Anthropic key reaches a runner.**
+*Enforced by:* `aiSpecGate.test.ts`, `scripts/assert-e2e-ran.mjs`. (Until 2026-09-27 the gated
+flows were two Playwright specs; they are Maestro flows now — see ios-e2e-bringup.md.)
 
 F3. **Two Anthropic keys: `ANTHROPIC_API_KEY_CI` wins on every runtime except production.**
 *Enforced by:* `anthropicKey.test.ts`. That the CI key is actually SET in Vercel Preview —
@@ -412,7 +414,7 @@ H1. **Copy rule: every string tells the user something they cannot already see.*
 *Enforced by:* **NOT ENFORCED** (review discipline).
 
 H2. **An imperial user sees miles and never km.** *Enforced by:* `noHardcodedUnitsGuard.test.ts`,
-`e2e/units-imperial.spec.ts`.
+`mobile/maestro/forced-stop-line.yaml` (switched in Settings; no km anywhere on the itinerary).
 
 H3. **Every "go here" link is a drive from the device (`buildGoHereUrl`), not a pin.**
 *Enforced by:* `goHereLinksGuard.test.ts`, `StopsSection.test.tsx`.
@@ -431,7 +433,9 @@ H7. **The native `KeyboardAvoidingView` lives at the screen root; `ChatPanel` ne
 send is the gate, not `assertVisible`).
 
 H8. **The viewport hint cookie makes a phone's reload render the phone tree first.**
-*Enforced by:* `e2e/viewport-hint.spec.ts`.
+*Enforced by:* **NOT ENFORCED** since 2026-09-27. It is web-only, the web front end is locked
+behind `WEB_APP_ENABLED`, and `e2e/viewport-hint.spec.ts` went with the other web-screen specs when
+the e2e weight moved to the phone (Sam's call, ticket tkt_8r6z2q6vfy).
 
 H9. **Never silently swallow errors** — inline UI or `ErrorNotifier`. *Enforced by:* **NOT ENFORCED** — measured 2026-09-09: 41 empty catches outside test files, the large majority deliberate fire-and-forget telemetry (`logUsageEvent(...).catch(() => {})`), a pattern this repo endorses. Enforcing it needs a `// swallow-ok: <reason>` marker on all 41 with an accurate per-site reason: an editorial pass, not a guard. One shipped with a 41-entry baseline would be decoration.
 
@@ -461,7 +465,7 @@ read `running` at 12:51:48 and 12:52:11, and the live view hierarchy at 12:52:10
 node `READY` and no `THINKING` node at all. The store alone is not enough — it is per-process, so a
 restart and a turn another client sent both need the server's answer. *Enforced by:*
 `inFlightIndicatorGuard.test.ts`, `pennyRunStore.test.ts`, `ChatPanel.inFlight.test.tsx`,
-`e2e/chat-tab-in-flight.spec.ts`, `mobile/maestro/chat-tab-in-flight.yaml`.
+`mobile/maestro/chat-tab-in-flight.yaml`.
 
 H16. **LIST / MAP / CHAT return to the trip that was open, not to the trips index.** They are tabs
 OF a trip; the nav is also mounted where no trip is in scope (Settings, the trips list), and it
@@ -469,7 +473,8 @@ used to send all three to `/trips`. So tapping CHAT mid-answer dropped the drive
 trips instead of back in the conversation. The remembered id is session-scoped module state — the
 component that knows which trip it is, is exactly the one not mounted at the moment the answer is
 needed — and with nothing remembered the index is still the right answer. *Enforced by:*
-`lastOpenTrip.test.ts`, `inFlightIndicatorGuard.test.ts`, `e2e/chat-tab-in-flight.spec.ts`.
+`lastOpenTrip.test.ts`, `inFlightIndicatorGuard.test.ts`, `mobile/maestro/chat-tab-in-flight.yaml`
+(CHAT from Settings lands back in the open chat).
 
 H17. **A day's nav button wraps inside the card; it never truncates and never runs off it.** A
 long station name grew the button past the card, which sets `overflow: "hidden"`, so its end was
@@ -529,6 +534,29 @@ nothing at all when the day has no stops. *Enforced by:* `restDayStopsGuard.test
 source), mutation-checked three ways — StopsSection removed from the native rest branch, the
 `restDay` flag dropped from it, the empty-day null gate removed (1 red each); also
 `LegCard.restDayStops.test.tsx` and `StopsSection.test.tsx` (web, jsdom, the real StopsSection).
+
+H21. **A base day's native note box scrolls itself above the keyboard; no second
+`KeyboardAvoidingView` does it.** The trip screen's root KAV (H7) shrinks the panes, but the
+Itinerary `FlatList` never scrolls a focused `TextInput` into view, so a base day near the bottom
+of the list would open its "+ Add note to this day" box behind the keyboard (read off the layout,
+not yet reproduced on a simulator). LegCard reports the box's
+`onFocus` (`onNoteEditorFocus`); Itinerary waits for `keyboardDidShow` (the viewport has shrunk by
+then; immediately if the keyboard is already up) and `scrollToIndex`es the row with
+`viewPosition: 1`, because the box is the last thing in the card. *Enforced by:*
+`restDayNoteKeyboardGuard.test.ts` (source), mutation-checked four ways on 2026-09-27, 1 red
+each: `onFocus` unwired, `viewPosition: 0.5`, `keyboardWillShow`, a `KeyboardAvoidingView` import
+in Itinerary. On a simulator: `mobile/maestro/rest-day-stop.yaml` opens the note box on the lowest
+base day with the keyboard up and TAPS Save — a tap that lands only if Save is above the keyboard.
+
+H22. **A native modal's backdrop and sheet Pressables carry `accessible={false}`.** A Pressable
+is an accessibility element and iOS merges its whole subtree into one node, so the backdrop +
+tap-swallowing sheet that every mobile/ modal uses published ONE element for the whole modal:
+none of its buttons, fields or text existed for VoiceOver or Maestro. Shipped three times — the
+trips-list menu, the trip header's menu, and (found 2026-09-27 by `paywall.yaml`, whose tree held
+one node over a sheet showing both prices) the purchase sheet, where a VoiceOver user could not
+choose a plan. The same sweep fixed the Contact Support sheet and the trip-card delete dialog.
+*Enforced by:* `modalMergeGuard.test.ts` (source; mutation-checked by dropping the purchase sheet's
+backdrop flag) and `mobile/maestro/paywall.yaml` (taps the sheet's Close).
 
 ## I. Spend defence
 

@@ -1,0 +1,195 @@
+# A Google Maps link pasted into Penny's chat becomes a stop on the right day,
+# and moving that day's end re-plans its fuel. Three real Penny turns — the
+# path a driver actually takes with a link a friend sent them. Runs only in the
+# `ai` shard, on a run started by the `ai-tests` label. Replaces
+# e2e/chat-maps-link.spec.ts.
+#
+# maps-link-stop.yaml (every run, no model) proves the RESOLVER turns a share
+# link into the right place. This proves the rest: that Penny, given the link
+# in a sentence, adds it as a stop the driver sees on day 1; and that when the
+# day is told to end there instead, the day is re-routed and Finn sources it
+# again (the item-6 re-source), rather than keeping the old day's stations.
+#
+# Girona → Annecy is ~700 km in the Hilux's 500 km range, so day 1 always needs
+# a fuel stop — the FUEL row is how "sourced" is read off the screen.
+#
+# The three messages are the web spec's, word for word. They are not arbitrary:
+# "that place" in the third failed 6/6 until Penny's <pasted_place_disambiguation>
+# rule (pastedPlaceRule.test.ts, 2026-09-26) said a single pasted place is the
+# referent — rewording them would test a different sentence.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ai2
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: blank
+      EXTRA_TRIP_NAME: E2E Fixture Annecy Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# ── Turn 1: the day ─────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Girona, Spain to Annecy, France, all in one driving day. Go ahead without asking me anything.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+# After the thread settles: a fast reply scrolls the chat, and a tap during
+# that scroll only stops it, leaving the keyboard over the tabs (ai run
+# 36322929428). Once more if the tabs are still covered. Not the left edge:
+# that is iOS's back-swipe zone and ate the tap locally.
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+# Not chat-plan-ready: that row is written only on the onboarding hand-off
+# turn (trip/replan/route.ts, isHandoff); this trip is planned from plain chat.
+- extendedWaitUntil:
+    visible: 'Changes applied to trip'
+    timeout: 300000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Girona.* → .*Annecy.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Girona.* → .*Annecy.*'
+- extendedWaitUntil:
+    visible:
+      text: 'FUEL: .*Opens in Google Maps'
+    timeout: 180000
+
+# ── Turn 2: the link ────────────────────────────────────────────────────────
+- tapOn: 'CHAT'
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Add this place as a stop along the way on day 1: https://maps.app.goo.gl/E9VYBkjCT1cgCBbt8'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Girona.* → .*'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: '(?i)STOP: .*meythet.*'
+    commands:
+      - tapOn:
+          text: '.*Girona.* → .*'
+- scrollUntilVisible:
+    element:
+      text: '(?i)STOP: .*meythet.*Opens in Google Maps'
+    direction: DOWN
+    timeout: 30000
+
+# ── Turn 3: end the day there ───────────────────────────────────────────────
+- tapOn: 'CHAT'
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'End day 1 at that place instead of central Annecy.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+
+# The day now ends there, and Finn sourced the new day rather than keeping the
+# old one's stations: a FUEL row again, and no failure notice.
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '(?i).*Girona.* → .*meythet.*'
+    timeout: 60000
+- runFlow:
+    when:
+      notVisible:
+        text: '(?i)DESTINATION: .*meythet.*'
+    commands:
+      - tapOn:
+          text: '(?i).*Girona.* → .*meythet.*'
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: 'FUEL: .*Opens in Google Maps'
+    direction: DOWN
+    timeout: 30000
+- assertNotVisible:
+    text: 'No fuel stations found.*'
+- assertNotVisible:
+    text: 'Fuel planning failed.*'

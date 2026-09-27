@@ -43,8 +43,8 @@ appId: ${APP_ID}
 - tapOn:
     id: 'leg-card-${output.legId}'
 
-# The stop row's accessible label is "<name> in Google Maps"; its text is the
-# name. Either matches. `.` stands in for ç and é so an encoding difference in
+# The stop row's accessible label is "STOP: <name>. Opens in Google Maps"
+# (stopRowAccessibilityLabel); the regex matches it anywhere in that line. `.` stands in for ç and é so an encoding difference in
 # the hierarchy cannot fail a correct render.
 - scrollUntilVisible:
     element:

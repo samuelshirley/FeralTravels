@@ -1,0 +1,20 @@
+# Shard `trips`: what a driver sees on a trip — the itinerary, its stops, fuel.
+# One Maestro run on its own simulator and its own fixture account (see the
+# ios-e2e job in ci.yml). trip-itinerary runs FIRST: it reads the account's own
+# seeded trip and asserts the trips list, which the flows after it add trips to.
+# The rest seed what they look at (forced-stop-line on an account of its own).
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - trip-itinerary.yaml
+  - forced-stop-line.yaml
+  - maps-link-stop.yaml
+  - rest-day-stop.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - trip-itinerary
+    - forced-stop-line
+    - maps-link-stop
+    - rest-day-stop

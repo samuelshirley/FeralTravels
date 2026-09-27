@@ -1,0 +1,114 @@
+# A seeded trip, the way a driver reads it: the trips list, the day cards, the
+# drive link, fuel sourced for today on its own and for another day on demand,
+# and the map. Replaces e2e/existing-trip.spec.ts and e2e/lazy-fuel-sourcing.spec.ts,
+# which proved the same things on the web front end no user reaches any more.
+#
+# The shard's account (EMAIL) owns the canonical two-leg fixture: Paris →
+# Strasbourg (489 km) then Strasbourg → Stuttgart (156 km), in the Hilux's real
+# 500 km range, starting SEEDED_TRIP_START_OFFSET_DAYS out — so day 1 is the
+# CURRENT day and nothing is "behind you".
+#
+# FUEL IS SOURCED FOR REAL here — two paid Places searches, the same two the web
+# spec paid. Neither leg is sourced by the seed, so:
+#   - day 1 is the current day, and the itinerary sources it WITHOUT being opened
+#     (LegCard's autoSourceFuel). 489 km inside a 500 km range needs no stop, so
+#     the settled state is "No fuel stop needed on this day".
+#   - day 2 sources only when it is opened. It too fits in range.
+# Maestro cannot see the network, so "sourced" is read off the screen: the
+# spinner goes away and the day's verdict appears. A day that was never sourced
+# says "No stops yet — fuel stops appear here automatically" instead, which is
+# what the notVisible checks are for.
+#
+# LOCATION IS DENIED (sign-in.yaml launches with `location: never`), so the nav
+# block's kicker reads "LOCATION OFF — OPEN SETTINGS" and the drive link is still
+# there: directions start from wherever the phone is, never a pin.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# ── The trips list ──────────────────────────────────────────────────────────
+# The card is one accessibility element: name, then "2 days · ~645 km". The date
+# lives in a header above it (trip-date-header), never in the card.
+- assertVisible:
+    text: '.*${TRIP_NAME}.*2 days.*645 km.*'
+- assertVisible:
+    id: 'trip-date-header'
+
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+
+# ── The itinerary ───────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+# Start → end dates, total distance, day count, in one line.
+- assertVisible:
+    text: '.* → .*~645 km · 2 days.*'
+- assertVisible: 'E2E Fixture Van'
+- assertVisible:
+    text: '.*Paris, France → Strasbourg, France, 489 km.*'
+- assertVisible:
+    text: '.*Strasbourg, France → Stuttgart, Germany, 156 km.*'
+
+# ── Today sources itself ────────────────────────────────────────────────────
+- tapOn:
+    text: '.*Paris, France → Strasbourg, France.*'
+- extendedWaitUntil:
+    visible:
+      text: '.*LOCATION OFF.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      text: 'No fuel stop needed on this day.*'
+    timeout: 120000
+- assertNotVisible: 'Planning fuel stops…'
+- assertNotVisible:
+    text: 'No fuel stations found.*'
+
+# The timeline: where the day starts and ends, each a Google Maps link whose
+# label carries the distance (stopRowAccessibilityLabel).
+- assertVisible:
+    text: 'START: Paris.*0 km.*Opens in Google Maps'
+- assertVisible:
+    text: 'DESTINATION: Strasbourg.*489 km.*Opens in Google Maps'
+
+# The drive link: a destination to drive to, not a pin (goHereLinks guard).
+- assertVisible:
+    id: 'nav-stop-link'
+    text: '.*Strasbourg.* in Google Maps.*'
+
+# ── Another day sources when it is opened, and only then ────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Strasbourg, France → Stuttgart, Germany.*'
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: '.*Strasbourg, France → Stuttgart, Germany.*'
+- scrollUntilVisible:
+    element:
+      text: 'DESTINATION: Stuttgart.*'
+    direction: DOWN
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 120000
+- assertNotVisible:
+    text: 'No stops yet.*'
+- assertNotVisible:
+    text: 'No fuel stations found.*'
+
+# ── The map ─────────────────────────────────────────────────────────────────
+# Tiles are not asserted: Apple/Google tiles on a freshly booted simulator are
+# intermittent (ios-e2e-bringup.md, "Passing is not the same as usable"). What
+# is asserted is that the map mounted rather than failing, and that it is the
+# route's map (the recenter control exists only over a drawn route).
+- tapOn: 'MAP'
+- extendedWaitUntil:
+    visible: 'Recenter the map on the whole route'
+    timeout: 30000
+- assertNotVisible: 'Map failed to load.'

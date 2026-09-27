@@ -89,8 +89,9 @@ never run tests or seed fixtures against the prod database.
   than half-migrated. Keep migrations additive.
 - **Only the newest preview URL works** — a stale one fails as a fake sign-out
   (`/login`) because its database was dropped. Take it from the sticky comment.
-- **The Anthropic-spending specs are behind the `ai-tests` label**
-  (`penny-plan-trip`, `chat-maps-link`); add it when you are ready to merge.
+- **The Anthropic-spending e2e flows are behind the `ai-tests` label** — the
+  iOS `ai` shard (`penny-plan-trip`, `penny-maps-link`); add it when you are
+  ready to merge.
 - **Claude commits** finished work (after `tsc --noEmit` + `npm run test` pass);
   **Sam pushes, opens the PR, and merges.** Keep commits scoped, and **run the
   unit tests after EVERY code change**, not just before a commit.
@@ -137,7 +138,8 @@ api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops api/me
+api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops
+api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
 api/promo/redeem api/routes api/routes/[id]
@@ -210,9 +212,10 @@ check-preview-env.mjs claude-task.sh db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
-ios-e2e-fixture.mjs ios-e2e-local.sh lifetime-spend.ts make-test-user.ts
-measure-message-gate.ts migrate-sqlite-to-neon.ts pick-ios-simulator.mjs
-pick-screenshot-simulator.mjs probe-oauth-providers.mjs prune-branches.sh
+ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh lifetime-spend.ts
+make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
+pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
+prune-branches.sh
 reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts
@@ -229,10 +232,9 @@ Open a PR instead. `seed-e2e-fixture.ts` and `cleanup-e2e.ts` were also
 
 What each proves: **`docs/design/e2e-tests.md`**.
 
-existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow,
-onboarding-validation, penny-plan-trip, chat-maps-link, units-imperial,
-lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange,
-breakers, chat-tab-in-flight, viewport-hint, subscriptions, promo
+legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion,
+subscriptions, vehicle-crud, announcement, breakers — server contracts only.
+The screens are Maestro flows on the phone (below) since 2026-09-27.
 
 **E2E auth: no session bypass exists.** Every authenticated spec signs in through
 the REAL OTP flow, reading its own fixture address's code from
@@ -245,11 +247,16 @@ reappears in `src/`.
 ### iOS E2E (`mobile/maestro/`)
 
 `launch.yaml`, `sign-in.yaml`, `chat-keyboard.yaml`, `chat-tab-in-flight.yaml`,
-`onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `maps-link-stop.yaml`,
-`settings-location.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
+`onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `onboarding-wizard.yaml`,
+`onboarding-range.yaml`, `trip-itinerary.yaml`, `forced-stop-line.yaml`,
+`maps-link-stop.yaml`, `rest-day-stop.yaml`, `vehicles.yaml`, `paywall.yaml`,
+`account-deletion.yaml`, `settings-location.yaml`, `penny-plan-trip.yaml`,
+`penny-maps-link.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
-(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard).
+(Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs
+them in parallel SHARDS, one per `mobile/maestro/shards/<name>.yaml`; a new flow
+must be listed in exactly one (`maestroFlowParams.test.ts`).
 
 ## Lockdown invariants (load-bearing — do not loosen)
 

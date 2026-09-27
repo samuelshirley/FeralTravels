@@ -401,6 +401,15 @@ bypass anywhere in this codebase.
 
 ### The specs
 
+> **2026-09-27: the server half and the screen half are separate files now.**
+> `e2e/subscriptions.spec.ts` asserts each state below through the API — the
+> resolved verdict (`GET /api/me/entitlement`) and its enforcement
+> (`POST /api/trips` → 402). What a blocked driver SEES — Penny's paywall bubble,
+> the "Planning is paused" overlay, both prices in the purchase sheet, and a
+> subscription lifting it — is `mobile/maestro/paywall.yaml` on a simulator. The
+> "Expected" column below is the product behaviour; the web overlay and sheet it
+> once also described are behind the web lock.
+
 | Spec | Sets up | Asserts |
 |---|---|---|
 | `sub-trial-day0` | Fresh fixture user | No paywall. Can create a trip and talk to Penny |

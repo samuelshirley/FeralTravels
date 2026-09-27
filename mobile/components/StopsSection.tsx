@@ -5,7 +5,7 @@ import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
 import { buildGoHereUrl } from "@/shared/lib/maps";
 import { formatKm } from "@/shared/lib/units";
-import { forcedStopLine } from "@/shared/lib/forcedStopReason";
+import { forcedStopLine, stopRowAccessibilityLabel } from "@/shared/lib/forcedStopReason";
 import { useUnits } from "@/lib/units";
 import StopCard from "@/components/StopCard";
 import { useStopActions } from "@/components/useStopActions";
@@ -336,7 +336,9 @@ export default function StopsSection({
                   <Pressable
                     onPress={() => void Linking.openURL(row.href!)}
                     accessibilityRole="link"
-                    accessibilityLabel={`${row.name} in Google Maps`}
+                    // Everything the row says, forced-stop reason included: an
+                    // explicit label hides the children from VoiceOver.
+                    accessibilityLabel={stopRowAccessibilityLabel(row, units)}
                     testID="stop-row-link"
                     style={styles.timelineLink}
                   >

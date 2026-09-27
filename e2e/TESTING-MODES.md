@@ -64,24 +64,19 @@ by name (`FIXTURE_TRIP_NAME` / `FIXTURE_VEHICLE_NAME` in
 
 ## 3. Mid-suite throwaway rows (`playwright-*`)
 
-**What it is:** targeted extra state named `playwright-<runId>-…` via
-[`playwrightName()`](fixtures/constants.ts), created over `/api/test/trip`:
-
-| Helper | State |
-|--------|--------|
-| [`createBlankPlanningTrip`](fixtures/test-trip.ts) | Empty trip, `onboarding_state=done`, default vehicle — Penny chat |
-| [`createOnboardingTrip`](fixtures/test-trip.ts) | `onboarding_state=not_started` — wizard |
-| [`createVehicleNewProfileTrip`](fixtures/test-trip.ts) | `onboarding_state=vehicle_new`, incomplete vehicle — validation |
-
-Specs that create these clean up via
+The helpers that created extra ad-hoc trips (`createBlankPlanningTrip`,
+`createOnboardingTrip`, `createVehicleNewProfileTrip`) went with the web-screen
+specs on 2026-09-27; the Maestro flows seed those states over the same
+`/api/test/trip` endpoint (`mobile/maestro/seed-account.js`). Specs clean up via
 [`cleanupPlaywrightFixtureData(email)`](fixtures/test-trip.ts); since users are
 disposable, leftovers are inert anyway (CI's DB branch is re-cloned each push).
 
 ## Login-flow specs
 
 [`login-otp.spec.ts`](login-otp.spec.ts) is the real-delivery test — see 1b
-above. [`login-google-button.spec.ts`](login-google-button.spec.ts) asserts the
-OAuth URL only — Google blocks headless completion.
+above. The web's Google button had its own spec until 2026-09-27; the web is
+locked, and the phone's Google sign-in is `oauth-exchange.spec.ts` (every
+refusal) plus a real device (the happy path cannot be minted in CI).
 
 ## Concurrency
 

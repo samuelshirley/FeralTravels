@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  Keyboard,
   Linking,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type EmitterSubscription,
   type ListRenderItemInfo,
 } from "react-native";
 import LegCard from "@/components/LegCard";
@@ -463,6 +465,38 @@ export default function Itinerary({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTarget?.nonce]);
 
+  // ── Base-day note box → above the keyboard ────────────────────────────
+  // The trip screen's root KeyboardAvoidingView shrinks this list when the
+  // keyboard opens, but a FlatList never scrolls a focused TextInput into view.
+  // The note box is the last thing in its LegCard, so once the keyboard is up
+  // (the viewport has shrunk by then), put that row's bottom at the viewport's.
+  const noteKeyboardSub = useRef<EmitterSubscription | null>(null);
+  const noteScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelNoteScroll = () => {
+    noteKeyboardSub.current?.remove();
+    noteKeyboardSub.current = null;
+    if (noteScrollTimer.current) clearTimeout(noteScrollTimer.current);
+    noteScrollTimer.current = null;
+  };
+  useEffect(() => cancelNoteScroll, []);
+  const scrollNoteEditorIntoView = (legId: string) => {
+    cancelNoteScroll();
+    const scroll = () => {
+      // Past legs live in the list header and have no row index; skip them.
+      const index = rowsRef.current.findIndex((r) => r.kind === "leg" && r.leg.id === legId);
+      if (index >= 0) listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 1 });
+    };
+    if (Keyboard.isVisible()) {
+      // Already up: just let the freshly opened box lay out first.
+      noteScrollTimer.current = setTimeout(scroll, 90);
+      return;
+    }
+    noteKeyboardSub.current = Keyboard.addListener("keyboardDidShow", () => {
+      cancelNoteScroll();
+      scroll();
+    });
+  };
+
   const totalDist = allLegs.reduce((sum, l) => sum + (l.distance_km || 0), 0);
 
   const dateRange = formatTripDateRange(trip);
@@ -483,6 +517,7 @@ export default function Itinerary({
       isPast={isPast}
       isCurrent={!isPast && leg.id === currentLegId}
       autoSourceFuel={!isPast && leg.id === autoSourceLegId}
+      onNoteEditorFocus={() => scrollNoteEditorIntoView(leg.id)}
     />
   );
 

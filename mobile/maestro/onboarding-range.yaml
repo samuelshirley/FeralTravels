@@ -1,0 +1,70 @@
+# The range question refuses a range Finn cannot plan with, and takes a real
+# one. Replaces e2e/onboarding-validation.spec.ts.
+#
+# /api/test/trip `vehicle_new` parks a trip on the range step with a vehicle
+# that has a name and no range — the single-question numeric step, which is
+# where the client-side bounds (200–1500 km, vehicleProfile.ts) apply. The
+# accepted answer is then read back where a user would look for it: Settings.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: rng
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: vehicle_new
+      EXTRA_TRIP_NAME: E2E Fixture Range Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      text: "What.s your driving range on a tank, in kilometers\\?"
+    timeout: 30000
+
+# Below the minimum: refused on the phone, before anything is sent.
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: '50'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Must be at least 200.'
+    timeout: 10000
+- assertVisible:
+    text: "What.s your driving range on a tank, in kilometers\\?"
+
+# A real range goes through.
+- tapOn:
+    id: 'chat-composer-input'
+- eraseText
+- inputText: '400'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    notVisible: 'Must be at least 200.'
+    timeout: 10000
+- tapOn:
+    point: '50%,25%'
+- extendedWaitUntil:
+    visible: 'SETTINGS'
+    timeout: 8000
+
+# Stored on the trip's vehicle: Settings lists it at 400 km.
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: 'REFILL EVERY ~400 km'
+    direction: DOWN
+    timeout: 20000

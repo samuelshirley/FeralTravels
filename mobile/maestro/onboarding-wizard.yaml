@@ -1,0 +1,165 @@
+# The whole first-trip wizard, on a brand-new account that owns no vehicle:
+# destination, origin, date (by chip), pace, units, the vehicle card — then the
+# hand-off to Penny, and a relaunch proving the answers were stored rather than
+# held in memory. Replaces e2e/onboarding-flow.spec.ts (its calendar test is
+# onboarding-date-picker.yaml, in the `core` shard).
+#
+# ONE ANTHROPIC TURN, deliberately NOT behind the ai-tests label: submitting the
+# vehicle card hands the trip to Penny, and that hand-off is what this flow
+# exists to reach. The owner chose to keep paying for it on every push when it
+# was the web spec (2026-09-08; aiSpecGate.test.ts) and the reason still holds —
+# it is the wizard's only end-to-end coverage. The intent scan on the first
+# message is a Haiku call (~$0.0015). The flow does not wait for Penny's plan.
+#
+# The account has no vehicle and a NULL units preference, which is what makes
+# the units step and the composite vehicle card appear at all; an account with a
+# complete vehicle skips straight to the hand-off.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: onb
+      SEED_CANONICAL: ''
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: onboarding
+      EXTRA_TRIP_NAME: E2E Fixture Onboarding Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+- assertVisible:
+    id: 'onboarding-progress'
+    text: '1 OF [0-9]+'
+
+# ── Where to, and from where ────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Road trip to Berlin'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Where are you starting from?'
+    timeout: 30000
+# Named a destination and no origin, so it asks the origin — not the date yet.
+- assertNotVisible: 'When are you setting off?'
+
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Girona'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'When are you setting off?'
+    timeout: 30000
+# Keyboard down (the send field has no dismiss key; tapping the thread clears
+# it — screenshots.yaml), so the chips below are not under it.
+- tapOn:
+    point: '50%,25%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+
+# ── When, and how long a day ────────────────────────────────────────────────
+# The chat scrolls each new question into view; a tap during that scroll only
+# stops it (iOS), and the chip never hears it — two local runs in three lost
+# the Metric tap that way. So each chip waits for the thread to settle.
+- waitForAnimationToEnd
+- tapOn: 'In a month'
+- extendedWaitUntil:
+    visible: 'How long do you want to drive each day\?'
+    timeout: 30000
+- assertVisible:
+    id: 'onboarding-chip-chosen'
+    text: 'In a month'
+
+- waitForAnimationToEnd
+- tapOn: '6 h'
+- extendedWaitUntil:
+    visible:
+      text: 'Do you want distances in metric.*'
+    timeout: 30000
+- assertVisible:
+    id: 'onboarding-chip-chosen'
+    text: '6 h'
+
+# ── Units ───────────────────────────────────────────────────────────────────
+- waitForAnimationToEnd
+- tapOn: 'Metric (km)'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-vehicle-card'
+    timeout: 30000
+- assertVisible:
+    id: 'onboarding-chip-chosen'
+    text: 'Metric \(km\)'
+# The card owns the answer; the composer is not a second way to give it.
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+
+# ── The vehicle card ────────────────────────────────────────────────────────
+- tapOn:
+    id: 'onboarding-vehicle-name'
+- inputText: 'Hilux'
+- tapOn: 'RANGE ON A TANK'
+- tapOn: '500 km'
+- tapOn:
+    id: 'onboarding-vehicle-submit'
+- extendedWaitUntil:
+    notVisible:
+      id: 'onboarding-vehicle-card'
+    timeout: 30000
+# Live, the card's answer is ONE bubble, "Hilux · 500 km": the client holds one
+# answer while the server writes two steps (clientRecordsAnsweredStep,
+# src/lib/onboardingForm.ts). The two-step redraw — Hilux's bubble, the range's
+# chip — is what the relaunch below reads back.
+# Up, not "visible": the hand-off turn can finish in seconds, and the chat then
+# scrolls to Penny's reply with this answer above the fold.
+- scrollUntilVisible:
+    element: 'Hilux · 500 km'
+    direction: UP
+    timeout: 30000
+- assertVisible:
+    id: 'chat-composer-input'
+    text: 'Ask Penny…'
+
+
+# ── Stored, not remembered ──────────────────────────────────────────────────
+# Relaunch — the keychain keeps the session — and the answered steps are still
+# there, read back from the server (chat_history.form_meta), not from memory.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- runFlow:
+    when:
+      visible: 'CHAT'
+    commands:
+      - tapOn: 'CHAT'
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
+      text: '500 km'
+    direction: UP
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
+      text: '6 h'
+    direction: UP
+    timeout: 30000

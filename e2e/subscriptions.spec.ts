@@ -1,7 +1,6 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { login, uniqueEmail } from './fixtures/auth';
 import { playwrightName } from './fixtures/constants';
-import { openTrip } from './fixtures/nav';
 import { cleanupPlaywrightFixtureData, seedCanonicalFixture } from './fixtures/test-trip';
 import {
   attemptCreateTrip,
@@ -28,7 +27,14 @@ import { PAYWALL_ERROR_CODE } from '../src/types/entitlement';
  * subscription row — so that is all the fixture endpoint writes. It never says
  * "this user is entitled"; `getAccountVerdict` decides that from the rows, the
  * same way it will in production. What these specs exercise is the real
- * resolver against real data, through the real UI.
+ * resolver against real data, through the real API — the verdict
+ * (`GET /api/me/entitlement`) and its enforcement (`POST /api/trips` → 402).
+ *
+ * THE SCREENS ARE ON THE PHONE (2026-09-27). This spec used to assert the web's
+ * overlay, purchase sheet and chat bubble too; iOS is the product and the web
+ * front end is locked, so what a blocked driver SEES is proved by
+ * mobile/maestro/paywall.yaml on a simulator. What stays here is everything a
+ * screen cannot show: every state's verdict, the 402, the admin round trip.
  *
  * ── The comped trap, stated once here because it is the whole file ──
  *
@@ -73,7 +79,7 @@ const DAY_ZERO: SubscriptionFixture = { comped: false, createdAtDaysAgo: 0, anth
 
 /**
  * Fresh user, canonical trip seeded, signed in through the real OTP flow, then
- * put into `fixture` and landed on `/trips`.
+ * put into `fixture`.
  *
  * The order matters. State is written AFTER sign-in, never before: the Auth.js
  * `signIn` event calls `syncCompedFlagOnSignIn`, and the day the OTP path gets
@@ -87,7 +93,6 @@ async function signedInWithState(page: Page, fixture: SubscriptionFixture): Prom
   await seedCanonicalFixture(email);
   await login(page, email);
   await setSubscriptionState(email, fixture);
-  await page.goto('/trips');
   return email;
 }
 
@@ -96,44 +101,8 @@ function notice(page: Page) {
   return page.locator('[data-block-reason]');
 }
 
-/**
- * Prove a blocked account can still reach its own trip.
- *
- * `openTrip` clicks the card, and the card is now UNDER the overlay — that is
- * the block working, not a bug to route around. The overlay offers no way
- * through (its old "Talk to Penny" link led to a disabled composer), so this
- * reads the covered card's id and goes to the URL directly — the way a
- * bookmark, or the iOS app's `?chat=1` hand-off, gets there. What is asserted
- * is that the workspace opens instead of bouncing back to `/trips`.
- */
-async function gotoBlockedTrip(page: Page) {
-  const id = await page.getByTestId('trip-card').first().getAttribute('data-trip-id');
-  expect(id, 'the covered trip card carries no data-trip-id').toBeTruthy();
-  await page.goto(`/trips/${id}?chat=1`);
-  await page.waitForURL(/\/trips\/[0-9a-f-]{36}/, { timeout: 20_000 });
-}
 
-/**
- * Nothing inside `container` may extend past its right edge.
- *
- * `width: 100%` plus padding on a content-box element was 26px wider than its
- * card, so on desktop the App Store button poked out of the sheet. Measured,
- * not eyeballed — and applied to every container PurchaseOptions renders in.
- */
-async function expectNoRightOverflow(container: Locator) {
-  const overflow = await container.evaluate((card) => {
-    const edge = card.getBoundingClientRect().right;
-    return [...card.querySelectorAll('*')]
-      .map((el) => Math.round(el.getBoundingClientRect().right - edge))
-      .filter((over) => over > 0);
-  });
-  expect(overflow).toEqual([]);
-}
 
-/** The button only an entitled account gets. Its absence is a courtesy, not the gate. */
-function newTripButton(page: Page) {
-  return page.getByRole('button', { name: '+ New trip' });
-}
 
 test.describe('Subscriptions — trial', () => {
   test('day 0: a brand-new account has no paywall and can create a trip', async ({ page }) => {
@@ -153,8 +122,6 @@ test.describe('Subscriptions — trial', () => {
       'com.feraltravels.ios.monthly',
     ]);
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     // The positive half. `POST /api/trips` is the authority — the button being
     // drawn proves only that the page thought so.
@@ -178,8 +145,6 @@ test.describe('Subscriptions — trial', () => {
     expect(entitlement.state).toBe('trial');
     expect(entitlement.entitled).toBe(true);
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     const created = await attemptCreateTrip(page, playwrightName('trial-day6'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
@@ -209,23 +174,10 @@ test.describe('Subscriptions — trial', () => {
     ]);
     expect(entitlement.products.map((p) => p.priceLabel).sort()).toEqual(['$2.69', '$22.00']);
 
-    // The web soft block: the notice appears, the button does not, and the
-    // trips themselves stay readable — reading costs no Anthropic call and
-    // stranding a driver mid-trip would be gratuitous.
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'trial_over');
-    await expect(newTripButton(page)).toHaveCount(0);
-    await expect(page.getByTestId('trip-card')).toHaveCount(1);
-
-    // One dialog, not two: the App Store button and the code field are IN the
-    // overlay, with no button that opens a sheet on top of it — and no link to
-    // a Penny who cannot answer.
-    const card = notice(page).getByTestId('entitlement-overlay-card');
-    await expect(card.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
-    await expect(card.getByTestId('promo-input')).toBeVisible();
-    await expect(card.getByTestId('entitlement-overlay-cta')).toHaveCount(0);
-    await expect(notice(page).getByText('Talk to Penny')).toHaveCount(0);
-    await expect(page.getByTestId('purchase-sheet')).toHaveCount(0);
-    await expectNoRightOverflow(card);
+    // Blocked from planning, not from reading: the trips they made stay
+    // theirs — reading costs no Anthropic call, and stranding a driver
+    // mid-trip would be gratuitous.
+    expect(entitlement.canViewExistingTrips).toBe(true);
 
     // The server refuses on its own authority, whatever the page drew.
     const created = await attemptCreateTrip(page, playwrightName('trial-day7'));
@@ -233,27 +185,6 @@ test.describe('Subscriptions — trial', () => {
     expect(created.body.code).toBe(PAYWALL_ERROR_CODE);
     expect(created.body.state).toBe('trial_expired');
     expect(created.body.blockReason).toBe('trial_over');
-
-    // And in the workspace, Penny says it herself — a message in the
-    // transcript, not a sheet thrown over the app.
-    await gotoBlockedTrip(page);
-    const cta = page.getByTestId('paywall-cta');
-    await expect(cta).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('trip-chat-composer')).toBeDisabled();
-
-    // The sheet offers the two things the web can actually do — get the app,
-    // or redeem a code — and NO price rows. This account is not allowlisted for
-    // the fake purchase, so a row would be a button that does nothing; the
-    // plan is picked in the iPhone app. (The prices still travel in the
-    // payload — asserted on day 0 above — because Penny's bubble quotes them.)
-    await cta.click();
-    const sheet = page.getByTestId('purchase-sheet');
-    await expect(sheet).toBeVisible();
-    await expect(sheet.getByTestId('purchase-sheet-plan')).toHaveCount(0);
-    await expect(sheet.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
-    await expect(sheet.getByTestId('promo-input')).toBeVisible();
-    await expect(sheet.getByTestId('promo-submit')).toBeVisible();
-    await expectNoRightOverflow(sheet);
   });
 
   test('trial ceiling: $1.20 of spend ends the trial on day 3', async ({ page }) => {
@@ -275,8 +206,6 @@ test.describe('Subscriptions — trial', () => {
     // Still inside the seven days — proof the state came from spend, not age.
     expect(entitlement.trialDaysRemaining).toBeGreaterThan(0);
 
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'trial_over');
-    await expect(newTripButton(page)).toHaveCount(0);
 
     const created = await attemptCreateTrip(page, playwrightName('trial-spent'));
     expect(created.status).toBe(402);
@@ -310,8 +239,6 @@ test.describe('Subscriptions — subscribed', () => {
     expect(entitlement.entitled).toBe(true);
     expect(entitlement.blockReason).toBeNull();
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     const created = await attemptCreateTrip(page, playwrightName('flag-flip'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
@@ -349,16 +276,11 @@ test.describe('Subscriptions — subscribed', () => {
       'com.feraltravels.ios.monthly',
     ]);
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     const created = await attemptCreateTrip(page, playwrightName('watch'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
 
     // And nothing in the chat either — no bubble, a live composer.
-    await openTrip(page);
-    await expect(page.getByTestId('trip-chat-composer')).toBeEnabled({ timeout: 20_000 });
-    await expect(page.getByTestId('paywall-cta')).toHaveCount(0);
 
     await cleanupPlaywrightFixtureData(email);
   });
@@ -383,28 +305,13 @@ test.describe('Subscriptions — subscribed', () => {
     // The cap is not the user's fault and the copy must not read like an
     // accusation — it points at a human. Asserting the mailto is asserting
     // that this is the apologetic branch and not the sales one.
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'usage_cap');
-    await expect(notice(page).locator('a[href^="mailto:"]')).toBeVisible();
-    // Nothing to sell a capped account, so no App Store button or code field.
-    await expect(notice(page).getByTestId('purchase-sheet-app-store-link')).toHaveCount(0);
-    await expect(notice(page).getByTestId('promo-input')).toHaveCount(0);
-    await expect(newTripButton(page)).toHaveCount(0);
 
     const created = await attemptCreateTrip(page, playwrightName('capped'));
     expect(created.status).toBe(402);
     expect(created.body.blockReason).toBe('usage_cap');
 
-    // Existing trips still rendered: the card is there behind the overlay, and
-    // the workspace opens instead of bouncing back to /trips.
+    // Existing trips stay readable.
     expect(entitlement.canViewExistingTrips).toBe(true);
-    await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    await gotoBlockedTrip(page);
-    await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}/);
-    await expect(page.getByTestId('leg-card')).toHaveCount(2);
-
-    // Support, not a purchase sheet — there is nothing to buy your way out of.
-    await expect(page.getByTestId('paywall-support-link')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('paywall-cta')).toHaveCount(0);
   });
 
   test('cancelled: auto-renew off with 30 days paid keeps FULL access', async ({ page }) => {
@@ -438,15 +345,10 @@ test.describe('Subscriptions — subscribed', () => {
     expect(entitlement.blockReason).toBeNull();
     expect(entitlement.paywall).toBeNull();
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     const created = await attemptCreateTrip(page, playwrightName('cancelled'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
 
-    await openTrip(page);
-    await expect(page.getByTestId('trip-chat-composer')).toBeEnabled({ timeout: 20_000 });
-    await expect(page.getByTestId('paywall-cta')).toHaveCount(0);
 
     await cleanupPlaywrightFixtureData(email);
   });
@@ -475,34 +377,18 @@ test.describe('Subscriptions — subscribed', () => {
     expect(entitlement.entitled).toBe(false);
     expect(entitlement.blockReason).toBe('subscription_over');
 
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'subscription_over');
-    await expect(newTripButton(page)).toHaveCount(0);
 
     const created = await attemptCreateTrip(page, playwrightName('expired'));
     expect(created.status).toBe(402);
     expect(created.body.state).toBe('expired');
 
-    // The block covers the page rather than sitting above it, and the trips
-    // they already made are still rendered underneath — covered, not deleted.
+    // The trips they already made stay readable — covered, not deleted.
     expect(entitlement.canViewExistingTrips).toBe(true);
-    await expect(page.getByTestId('trip-card')).toHaveCount(1);
-    // The overlay carries the purchase sheet's contents inline — the same
-    // PurchaseOptions block Penny's bubble opens in a sheet — so there is
-    // nothing to click first and no second modal. Asserted by label rather than
-    // href: NEXT_PUBLIC_APP_STORE_URL is an env var (the numeric app id is
-    // minted at first submission), so the URL is not something a spec can
-    // assert on. The label is ours.
-    const card = notice(page).getByTestId('entitlement-overlay-card');
-    await expect(card.getByTestId('purchase-sheet-app-store-link')).toHaveText('Download the app');
-    await expect(card.getByTestId('promo-input')).toBeVisible();
-    await expect(page.getByTestId('purchase-sheet')).toHaveCount(0);
-    await expectNoRightOverflow(card);
   });
 
   test('refunded: closed completely, including the trips already made', async ({ page }) => {
     // The one state where reading also stops. Apple returned the money, so the
-    // access it bought ended with it — and a bookmarked trip URL must not be
-    // the way around the notice.
+    // access it bought ended with it.
     await signedInWithState(page, {
       comped: false,
       createdAtDaysAgo: 400,
@@ -520,23 +406,9 @@ test.describe('Subscriptions — subscribed', () => {
     expect(entitlement.blockReason).toBe('revoked');
     expect(entitlement.canViewExistingTrips).toBe(false);
 
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'revoked');
-    await expect(newTripButton(page)).toHaveCount(0);
-    // Not merely hidden behind a wall — not rendered at all.
-    await expect(page.getByTestId('trip-card')).toHaveCount(0);
-
     const created = await attemptCreateTrip(page, playwrightName('refunded'));
     expect(created.status).toBe(402);
     expect(created.body.blockReason).toBe('revoked');
-
-    // The direct URL bounces back to the explanation rather than 404ing: the
-    // support address is on /trips, and this user may well think it is wrong.
-    const trips = await page.request.get('/api/trips');
-    const rows = (await trips.json()) as Array<{ id: string }>;
-    expect(rows.length).toBeGreaterThan(0);
-    await page.goto(`/trips/${rows[0].id}`);
-    await expect(page).toHaveURL(/\/trips$/);
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'revoked');
   });
 });
 
@@ -590,7 +462,6 @@ test.describe('Subscriptions — revoke and undo', () => {
       adminAction: { action: 'revoke', reason: 'e2e: refund reported, pending confirmation' },
     });
 
-    await page.goto('/trips');
     const revoked = await readEntitlement(page);
     expect(revoked.state).toBe('revoked');
     expect(revoked.entitled).toBe(false);
@@ -598,8 +469,6 @@ test.describe('Subscriptions — revoke and undo', () => {
     // server's verdict is the claim — a spec that only checked the DOM would
     // pass against a UI that hid a button over an account still entitled.
     expect(revoked.canViewExistingTrips).toBe(false);
-    await expect(notice(page)).toHaveAttribute('data-block-reason', 'revoked');
-    await expect(page.getByTestId('trip-card')).toHaveCount(0);
 
     const blocked = await attemptCreateTrip(page, playwrightName('revoked'));
     expect(blocked.status).toBe(402);
@@ -613,7 +482,6 @@ test.describe('Subscriptions — revoke and undo', () => {
     });
     expect(undo.adminActionResult).toMatchObject({ ok: true, action: 'restore', status: 'active' });
 
-    await page.goto('/trips');
     const after = await readEntitlement(page);
     expect(after.state).toBe('subscribed');
     expect(after.entitled).toBe(true);
@@ -626,8 +494,6 @@ test.describe('Subscriptions — revoke and undo', () => {
 
     // And the account works again, positively: the trip they already had is
     // readable, and planning is allowed.
-    await expect(notice(page)).toHaveCount(0);
-    await expect(page.getByTestId('trip-card').first()).toBeVisible();
     const created = await attemptCreateTrip(page, playwrightName('reactivated'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
 
@@ -661,7 +527,6 @@ test.describe('Subscriptions — revoke and undo', () => {
     expect(result.adminActionResult).toMatchObject({ ok: false, reason: 'not_revoked' });
 
     // And it changed nothing.
-    await page.goto('/trips');
     const entitlement = await readEntitlement(page);
     expect(entitlement.state).toBe('subscribed');
     expect(entitlement.entitled).toBe(true);
@@ -696,8 +561,6 @@ test.describe('Subscriptions — comped', () => {
     expect(entitlement.blockReason).toBeNull();
     expect(entitlement.paywall).toBeNull();
 
-    await expect(notice(page)).toHaveCount(0);
-    await expect(newTripButton(page)).toBeVisible();
 
     const created = await attemptCreateTrip(page, playwrightName('comped'));
     expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);

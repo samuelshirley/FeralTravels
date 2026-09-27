@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
  * Penny's <pasted_place_disambiguation> rule, read as text (SYSTEM_PROMPT is
  * module-private — same approach as toolTraceGuard.test.ts).
  *
- * Why: e2e/chat-maps-link.spec.ts pastes ONE Maps link, lands it as a stop,
+ * Why: the Maps-link journey (e2e/chat-maps-link.spec.ts until 2026-09-27, now
+ * mobile/maestro/penny-maps-link.yaml, same words) pastes ONE Maps link, lands it as a stop,
  * then says "End day 1 at that place instead of central Annecy." Penny asked
  * whether "that place" meant the stop or the pasted link — the same place —
  * and never moved the leg end (failed 6/6 on 2026-09-26). The rule must say

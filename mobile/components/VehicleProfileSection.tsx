@@ -473,6 +473,7 @@ function VehicleForm({
                     placeholderTextColor={theme.subtle}
                     style={styles.input}
                     accessibilityLabel={q.label}
+                    testID={`vehicle-${q.key}-input`}
                   />
                 ) : (
                   <TextInput
@@ -484,6 +485,7 @@ function VehicleForm({
                     keyboardType={q.kind === "integer" ? "number-pad" : "decimal-pad"}
                     style={styles.input}
                     accessibilityLabel={q.label}
+                    testID={`vehicle-${q.key}-input`}
                   />
                 )}
               </Field>

@@ -18,7 +18,7 @@
     "trial-account": "tsx --tsconfig tsconfig.scripts.json scripts/trial-account.ts",
     "test-user": "tsx --tsconfig tsconfig.scripts.json scripts/make-test-user.ts",
     "e2e": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test",
-    "e2e:smoke": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test e2e/existing-trip.spec.ts e2e/login-google-button.spec.ts e2e/login-otp.spec.ts e2e/vehicle-crud.spec.ts",
+    "e2e:smoke": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test e2e/legal-pages.spec.ts e2e/login-otp.spec.ts e2e/oauth-exchange.spec.ts e2e/vehicle-crud.spec.ts",
     "e2e:headed": "playwright test --headed",
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",

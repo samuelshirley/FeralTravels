@@ -1,0 +1,26 @@
+# Shard `core`: sign-in, chat, onboarding, settings. One Maestro run on its own
+# simulator and its own fixture account (see the ios-e2e job in ci.yml).
+#
+# ORDER MATTERS, and flowsOrder is what enforces it:
+#   - settings-location runs LAST: it spends the location dialog for the
+#     install, and `canAskAgain` does not come back. It also DENIES at the end —
+#     granting would let report_position re-anchor the fixture trip.
+#   - chat-tab-in-flight and the two onboarding flows only ADD to the account
+#     (a planted turn, untitled trips), so they tolerate running after anything.
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - chat-keyboard.yaml
+  - chat-tab-in-flight.yaml
+  - onboarding-flash.yaml
+  - onboarding-date-picker.yaml
+  - settings-location.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - chat-keyboard
+    - chat-tab-in-flight
+    - onboarding-flash
+    - onboarding-date-picker
+    - settings-location

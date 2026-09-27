@@ -53,7 +53,9 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.root}>
-      <ScrollView contentContainerStyle={styles.content}>
+      {/* "handled": with the range keypad up, a tap on Save otherwise only
+          dismissed the keyboard and the vehicle was not saved (vehicles.yaml). */}
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Eyebrow>USER</Eyebrow>
         <Text style={styles.title}>Settings</Text>
 

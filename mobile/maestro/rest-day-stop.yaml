@@ -1,0 +1,90 @@
+# A base day lists its stops (#67), and a note added to it saves with the
+# keyboard up (#70).
+#
+# The bug (2026-09-26): "Add this overnight location for my stop in Lisbon" put
+# the stop on a rest day — `leg_type: 'rest'`, a day spent in one city — and it
+# was saved and drawn on the map but never listed in the itinerary, on web or
+# iOS, because both LegCards rendered StopsSection only in the drive branch.
+# #67 fixed it with tsc and a source-text guard; this is the device proof.
+#
+# seed-rest-day-stop.js seeds the canonical 12-leg trip and puts the real Maps
+# share link on its last Lisbon base day through Penny's own add_stop path
+# server-side (no model). The flow then opens THAT day and asserts the stop is
+# listed, with its Maps link, and that a base day still shows no fuel UI.
+#
+# Then #70's note box, which had only a source-text guard
+# (restDayNoteKeyboardGuard.test.ts; "not proven on a simulator by any flow"):
+# the trip screen's KeyboardAvoidingView shrinks the list, but a FlatList never
+# scrolls a focused input into view, so a base day low in the list opened its
+# box BEHIND the keyboard. Itinerary now scrolls the row up on keyboardDidShow.
+# The gate is behavioural, the same shape as chat-keyboard.yaml: with the
+# keyboard up (CHAT gone from the nav), TAP Save — which only lands if Save is
+# genuinely above the keyboard; under it, the tap hits a key — then the note
+# must be listed under PLANS & NOTES.
+#
+# No paid call: a base day never sources fuel, and the canonical trip's sourced
+# legs are stamped fresh. The share link is resolved live (a free redirect walk).
+appId: ${APP_ID}
+---
+- runScript: seed-rest-day-stop.js
+
+- runFlow: sign-in.yaml
+
+- tapOn:
+    text: '.*${output.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+
+- scrollUntilVisible:
+    element:
+      id: 'leg-card-${output.legId}'
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: 'leg-card-${output.legId}'
+
+# The base day's own sections, then its stop.
+- scrollUntilVisible:
+    element: 'LOCATION'
+    direction: DOWN
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: 'STOP: .*Pra.a do Com.rcio.*Opens in Google Maps'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    text: 'Remove .*Pra.a do Com.rcio.*'
+
+# A base day has no drive, so nothing about fuel may appear on it.
+- assertNotVisible: 'Planning fuel stops…'
+- assertNotVisible:
+    text: 'No fuel stop needed.*'
+- assertNotVisible:
+    text: 'No stops yet.*'
+- assertNotVisible:
+    text: '.*NAVIGATE.*'
+
+# ── A note, typed with the keyboard up ──────────────────────────────────────
+- scrollUntilVisible:
+    element: '+ Add note to this day'
+    direction: DOWN
+    timeout: 20000
+- tapOn: '+ Add note to this day'
+- extendedWaitUntil:
+    notVisible: 'CHAT'
+    timeout: 8000
+# Plain dictionary words: Maestro types through the real keyboard, and
+# autocorrect would rewrite anything it does not know.
+- inputText: 'Coffee by the river at ten'
+- tapOn: 'Save'
+# The editor CLOSING is the proof the save landed. The note's own text proves
+# nothing on its own — it is on screen in the input before Save is ever tapped.
+- extendedWaitUntil:
+    visible: '+ Add note to this day'
+    timeout: 20000
+- assertVisible: 'PLANS & NOTES'
+- assertVisible: 'Coffee by the river at ten'
+- assertVisible: 'Delete note'

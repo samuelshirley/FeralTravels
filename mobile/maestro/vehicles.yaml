@@ -1,0 +1,107 @@
+# Vehicles in Settings: the only vehicle cannot be deleted and the screen says
+# why; adding a second makes both deletable, and it is still there after a
+# relaunch. The screen half of e2e/vehicle-crud.spec.ts.
+#
+# Its own account (suffix `veh`): the vehicle count is the assertion, and the
+# shard's account gains vehicles from other flows.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: veh
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+
+# ── One vehicle: kept, and the screen says so ───────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: "This is your only vehicle, so it can.t be deleted.*"
+    direction: DOWN
+    timeout: 20000
+- assertVisible: 'E2E Fixture Van'
+- assertNotVisible: 'Delete'
+
+# ── Add a second ────────────────────────────────────────────────────────────
+- tapOn: '+ Add vehicle'
+- extendedWaitUntil:
+    visible: 'DRIVING LIMITS'
+    timeout: 10000
+# By testID (vehicle-<question key>-input). By label, the first run tapped the
+# question Text, not the field ("name is required"); the second typed the name
+# but left the range empty — so each value is read back before Save, and a red
+# run names the field that did not take it.
+- tapOn:
+    id: 'vehicle-name-input'
+- inputText: 'Test Van'
+- pressKey: Enter
+- assertVisible:
+    id: 'vehicle-name-input'
+    text: 'Test Van'
+# Centred: after Return, CI left the field at y=838, under the tab bar yet
+# "visible" to Maestro, so the tap missed and the range stayed empty.
+- scrollUntilVisible:
+    element:
+      id: 'vehicle-range_km-input'
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- tapOn:
+    id: 'vehicle-range_km-input'
+- inputText: '420'
+- assertVisible:
+    id: 'vehicle-range_km-input'
+    text: '420'
+- scrollUntilVisible:
+    element: 'Save'
+    direction: DOWN
+    timeout: 10000
+- tapOn: 'Save'
+# Saved = the form is gone. Settings is then left scrolled below the vehicle
+# list (CI run 36319721526), so the new card is scrolled UP to, not waited for.
+- extendedWaitUntil:
+    notVisible:
+      id: 'vehicle-name-input'
+    timeout: 20000
+- scrollUntilVisible:
+    element: 'REFILL EVERY ~420 km'
+    direction: UP
+    centerElement: true
+    timeout: 20000
+- assertVisible: 'Test Van'
+- assertNotVisible:
+    text: "This is your only vehicle.*"
+- assertVisible:
+    text: 'Delete'
+    index: 1
+
+# ── Stored ──────────────────────────────────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- scrollUntilVisible:
+    element: 'Test Van'
+    direction: DOWN
+    timeout: 20000

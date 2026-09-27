@@ -56,19 +56,39 @@ test.describe('Announcement', () => {
     );
   });
 
-  test('shows once, then stays dismissed', async ({ page }) => {
+  /**
+   * The contract the native AnnouncementModal is built on, asked the way the
+   * app asks it (mobile/lib/api.ts): the active announcement for THIS user,
+   * then a dismissal that is per-user and permanent.
+   *
+   * Why not a Maestro flow: an announcement is GLOBAL — the table has no user
+   * column — and while this one is seeded every account on the preview sees it
+   * on the trips list. The iOS shards run in parallel against the same preview,
+   * so a modal seeded for one flow would pop up over every other shard's trips
+   * list. The web modal this used to drive is behind the web lock (2026-09-27).
+   */
+  test('the active announcement is served once, then stays dismissed', async ({ page }) => {
     await signInAsNewUser(page, { seedFixture: false });
 
-    const modal = page.getByTestId('announcement-modal');
-    await expect(modal).toBeVisible({ timeout: 15_000 });
-    await expect(modal).toContainText(TITLE);
-    await expect(modal).toContainText(BODY);
+    const first = await page.request.get('/api/announcements/active');
+    expect(first.ok(), await first.text()).toBe(true);
+    const { announcement } = (await first.json()) as {
+      announcement: { id: string; title: string; body: string; buttonText: string } | null;
+    };
+    expect(announcement, 'the seeded announcement was not served').not.toBeNull();
+    expect(announcement!.id).toBe(announcementId);
+    expect(announcement!.title).toBe(TITLE);
+    expect(announcement!.body).toBe(BODY);
+    expect(announcement!.buttonText).toBe(BUTTON);
 
-    await page.getByTestId('announcement-dismiss-btn').click();
-    await expect(page.getByTestId('announcement-modal-overlay')).toBeHidden({ timeout: 10_000 });
+    const dismissed = await page.request.post('/api/announcements/dismiss', {
+      data: { announcementId: announcement!.id },
+    });
+    expect(dismissed.ok(), await dismissed.text()).toBe(true);
 
-    await page.reload();
-    await expect(page.getByRole('heading', { name: 'Trips' })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('announcement-modal-overlay')).toBeHidden();
+    // Gone for this user — the next launch shows nothing.
+    const after = await page.request.get('/api/announcements/active');
+    expect(after.ok()).toBe(true);
+    expect(((await after.json()) as { announcement: unknown }).announcement).toBeNull();
   });
 });
