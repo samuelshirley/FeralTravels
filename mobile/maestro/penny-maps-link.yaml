@@ -45,20 +45,33 @@ appId: ${APP_ID}
 # ── Turn 1: the day ─────────────────────────────────────────────────────────
 - tapOn:
     id: 'chat-composer-input'
-- inputText: 'Girona, Spain to Annecy, France, all in one driving day.'
+- inputText: 'Girona, Spain to Annecy, France, all in one driving day. Go ahead without asking me anything.'
 - tapOn:
     id: 'chat-composer-send'
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000
+# After the thread settles: a fast reply scrolls the chat, and a tap during
+# that scroll only stops it, leaving the keyboard over the tabs (ai run
+# 36322929428). Once more if the tabs are still covered. Not the left edge:
+# that is iOS's back-swipe zone and ate the tap locally.
+- waitForAnimationToEnd
 - tapOn:
     point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
 - extendedWaitUntil:
     visible: 'CHAT'
     timeout: 8000
+# Not chat-plan-ready: that row is written only on the onboarding hand-off
+# turn (trip/replan/route.ts, isHandoff); this trip is planned from plain chat.
 - extendedWaitUntil:
-    visible:
-      id: 'chat-plan-ready'
+    visible: 'Changes applied to trip'
     timeout: 300000
 - extendedWaitUntil:
     visible:
@@ -88,8 +101,16 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000
+- waitForAnimationToEnd
 - tapOn:
     point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
 - extendedWaitUntil:
     visible: 'CHAT'
     timeout: 8000
@@ -127,8 +148,16 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000
+- waitForAnimationToEnd
 - tapOn:
     point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
 - extendedWaitUntil:
     visible: 'CHAT'
     timeout: 8000
