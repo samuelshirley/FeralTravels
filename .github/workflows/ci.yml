@@ -49,7 +49,6 @@
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   AUTH_SECRET                     (also the HMAC key for the per-run test-endpoint secret)
-#   ANTHROPIC_API_KEY               (runner-side gate so the Penny spec runs)
 #   AUTH_RESEND_KEY                 (runner-side copy of the app's Resend key —
 #                                    lets login-otp read the inbound mailbox)
 #   E2E_INBOX_DOMAIN                (the Resend receiving domain, e.g.
@@ -67,8 +66,9 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    # `labeled` is here for ONE label: `ai-tests`. See the E2E job's
-    # "Decide whether the Anthropic-spending specs run" step.
+    # `labeled` is here for ONE label: `ai-tests`. See the decide job's
+    # "Pick the iOS shards" step — the label adds the `ai` shard, the Maestro
+    # flows that ask Penny to plan for real.
     #
     # WHY A LABEL AND NOT A COMMENT OR workflow_dispatch, which both read as
     # more natural ways to say "run them now": deploy-production.yml's gate
@@ -79,7 +79,7 @@ on:
     # branch, so the gate would never find it and the label would run the tests
     # without making the PR mergeable. A label is also the only one of the three
     # that a re-run preserves: "Re-run all jobs" replays the `labeled` event,
-    # so the AI specs run again.
+    # so the `ai` shard runs again.
     #
     # `--limit 1` takes the LATEST run for the sha, so the label run supersedes
     # the push run it followed. The corollary, stated because it is the sharp
@@ -129,10 +129,22 @@ jobs:
 
       # The iOS shards to run: one per mobile/maestro/shards/<name>.yaml, so a
       # new shard is a new file and nothing here changes. `ai` holds the flows
-      # that ask Penny to plan for real (Anthropic spend), and joins ONLY on a
-      # run STARTED by the `ai-tests` label — the same rule, and the same env
-      # plumbing, as the E2E job's E2E_AI_SPECS (see there for why a label and
-      # why the triggering event rather than the PR carrying it).
+      # that ask Penny to plan for real (Anthropic spend, plus Directions and
+      # Places), and joins ONLY on a run STARTED by the `ai-tests` label (see
+      # the trigger for why a label).
+      #
+      # STARTED BY, not "the PR carries it": that would put the spend back on
+      # every push made while the label sat there, which is the thing being
+      # switched off. Remove and re-add the label, or "Re-run all jobs" on the
+      # labelled run, to run it again.
+      #
+      # The label name goes through env, never `${{ }}` inside the shell — a
+      # label is attacker-controllable text on a public repo, and interpolating
+      # it into a script is a command-injection hole.
+      #
+      # Until 2026-09-27 the same gate chose two Playwright specs
+      # (penny-plan-trip, chat-maps-link) in the E2E job; they are this shard's
+      # two flows now, on the phone.
       - name: Pick the iOS shards
         id: shards
         env:
@@ -575,43 +587,11 @@ jobs:
           echo "::add-mask::$SECRET"
           echo "E2E_TEST_ENDPOINTS_SECRET=$SECRET" >> "$GITHUB_ENV"
 
-      # The Anthropic-spending specs run ONLY when this run was started by
-      # adding the `ai-tests` label. Not "the PR carries the label" — that would
-      # put them back on every subsequent push while the label sat there, which
-      # is the thing being switched off. Remove and re-add the label (or hit
-      # "Re-run all jobs" on this run) to test again.
-      #
-      # Written to GITHUB_ENV rather than a step-level env so the later summary
-      # and PR-comment steps read it too: a green check that never asked Penny
-      # to plan anything must not look like one that did.
-      #
-      # The label name goes through env, never `${{ }}` inside the shell — a
-      # label is attacker-controllable text on a public repo, and interpolating
-      # it into a script is a command-injection hole.
-      - name: Decide whether the Anthropic-spending specs run
-        env:
-          EVENT_ACTION: ${{ github.event.action }}
-          LABEL_NAME: ${{ github.event.label.name }}
-        run: |
-          if [ "$EVENT_ACTION" = "labeled" ] && [ "$LABEL_NAME" = "ai-tests" ]; then
-            echo 'E2E_AI_SPECS=1' >> "$GITHUB_ENV"
-            echo 'Anthropic-spending specs: RUNNING (`ai-tests` label).' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'E2E_AI_SPECS=0' >> "$GITHUB_ENV"
-            echo 'Anthropic-spending specs: skipped — add the `ai-tests` label to run them.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       # E2E_BASE_URL → playwright.config skips its local webServer and the
       # whole suite (fixtures included) targets the deployed preview.
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          # The preview deploys with WEB_APP_ENABLED=1 (see the deploy step), so the
-          # browser specs can run again. This one variable drives both halves:
-          # playwright.config.ts adds the `web-ui` project, and
-          # web-blocked.spec.ts asserts the gate is NOT engaged rather than that
-          # it is. Both must move together with the deploy flag above.
-          E2E_WEB_UI: '1'
           # The second deployment — same build, WEB_APP_ENABLED unset. Its presence
           # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
           # covers both sides of the switch: one browser resolution, one
@@ -624,18 +604,6 @@ jobs:
           # the PR comment reported the FIRST run's 78 passes while the job was
           # red. Both are structural consequences of running the suite twice.
           E2E_BLOCKED_BASE_URL: ${{ needs.preview.outputs.blocked_url }}
-          # Runner-side gate only — the value is never used to call Anthropic;
-          # the specs test `process.env.ANTHROPIC_API_KEY` for PRESENCE and skip
-          # without it. Fed from the CI key so the production key is never on a
-          # runner at all, and so a leaked runner log costs a key that bills
-          # nothing but tests.
-          #
-          # The app's own key is separate and comes from the Vercel PREVIEW
-          # environment: set ANTHROPIC_API_KEY_CI there and `anthropicKey.ts`
-          # prefers it on every non-production runtime. Setting it on Production
-          # too is harmless — that resolver refuses to use it when
-          # VERCEL_ENV=production.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
           # The real inbox for login-otp.spec.ts — the only spec that sends an
           # actual email and reads it back. Resend Inbound, so it's the account
           # and key we already have. Absent, the spec skips (see

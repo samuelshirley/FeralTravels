@@ -12,6 +12,11 @@
 #
 # Girona → Annecy is ~700 km in the Hilux's 500 km range, so day 1 always needs
 # a fuel stop — the FUEL row is how "sourced" is read off the screen.
+#
+# The three messages are the web spec's, word for word. They are not arbitrary:
+# "that place" in the third failed 6/6 until Penny's <pasted_place_disambiguation>
+# rule (pastedPlaceRule.test.ts, 2026-09-26) said a single pasted place is the
+# referent — rewording them would test a different sentence.
 appId: ${APP_ID}
 ---
 - runScript:
@@ -77,7 +82,7 @@ appId: ${APP_ID}
 - tapOn: 'CHAT'
 - tapOn:
     id: 'chat-composer-input'
-- inputText: 'Add this as a stop on day 1: https://maps.app.goo.gl/E9VYBkjCT1cgCBbt8'
+- inputText: 'Add this place as a stop along the way on day 1: https://maps.app.goo.gl/E9VYBkjCT1cgCBbt8'
 - tapOn:
     id: 'chat-composer-send'
 - extendedWaitUntil:
@@ -116,7 +121,7 @@ appId: ${APP_ID}
 - tapOn: 'CHAT'
 - tapOn:
     id: 'chat-composer-input'
-- inputText: 'End day 1 at that place instead of Annecy.'
+- inputText: 'End day 1 at that place instead of central Annecy.'
 - tapOn:
     id: 'chat-composer-send'
 - extendedWaitUntil:

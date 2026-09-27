@@ -12,10 +12,6 @@ import path from 'node:path';
  *   page navigation in each test wait 5–15s for the route to compile, which
  *   produced flaky timeouts.
  *
- * - The Penny submit-trip test really does call Anthropic + Google Places
- *   live, so the per-test timeout is 90s. Other tests cap out around the
- *   default 30s.
- *
  * - We hit the same Neon DB the dev app uses (DATABASE_URL from .env). Each
  *   run starts from a clean fixture account *data-wise* (all trips + vehicles
  *   for the fixture user are deleted, then re-seeded — see
@@ -36,9 +32,10 @@ import path from 'node:path';
  *   we're testing app behaviour. Multiple browsers would ~3× the run time
  *   without catching anything we'd actually act on.
  *
- * Full `npm run e2e` can feel "frozen" for several minutes: `webServer` runs
- * `npm run build` (quiet on success), then the Penny test waits up to ~150s
- * for Anthropic streaming. Use `npm run e2e:smoke` for the fast path (no Penny).
+ * Full `npm run e2e` can feel "frozen" for a minute or two while `webServer`
+ * runs `npm run build` (quiet on success). Nothing in it asks Penny to plan:
+ * the flows that do are Maestro's `ai` shard (mobile/maestro/shards/ai.yaml).
+ * `npm run e2e:smoke` is the fast path.
  */
 
 // Read .env so DATABASE_URL, E2E_TEST_ENDPOINTS_*, etc. are
@@ -54,55 +51,6 @@ const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // Whether to skip starting our own webServer (useful when E2E_BASE_URL points
 // at an already-running app, e.g. a Vercel preview URL).
 const useExternalServer = !!process.env.E2E_BASE_URL;
-
-/**
- * THE SPECS THAT COST MONEY, and which do not run on an ordinary push.
- *
- * Measured 2026-09-08 from four consecutive CI runs' preview logs: a full suite
- * made exactly FIVE `/api/trip/replan` calls — one from `penny-plan-trip`,
- * three from `chat-maps-link`, one from `onboarding-flow`'s handoff — and cost
- * $0.51–0.58, of which ~64% was cache-READ tokens, because a single Penny
- * message is a tool-use loop of up to 24 model calls (×4 auto-continues) and
- * every call re-reads a ~23,300-token system-prompt-plus-tools prefix. At the
- * push rate this repo actually runs at (28 CI runs on 2026-09-03 alone) that is
- * most of the Anthropic bill, spent proving something no commit changed.
- *
- * So these two are gated behind the `ai-tests` label — see the E2E job in
- * ci.yml. `onboarding-flow` is deliberately NOT here even though its handoff
- * spends one Sonnet turn: it is the wizard's only end-to-end coverage and the
- * only thing that proves `chat_history.form_meta` survives a reload, and the
- * owner chose to keep paying for it on every push (2026-09-08).
- *
- * Dropping them from `testMatch` rather than `test.skip`-ing them is
- * deliberate: a skipped spec would trip `E2E_MAX_SKIPPED=0` in
- * assert-e2e-ran.mjs, and raising that allowance to accommodate a routine cost
- * decision is exactly how the allowance stopped meaning anything last time.
- * Not running is instead asserted POSITIVELY — assert-e2e-ran.mjs fails if
- * E2E_AI_SPECS=1 and one of these produced no result.
- */
-export const AI_SPEC_NAMES = ['penny-plan-trip', 'chat-maps-link'] as const;
-
-/** The rest of the browser suite: no Anthropic call, or Haiku-only (~$0.0015). */
-const WEB_UI_SPEC_NAMES = [
-  'existing-trip',
-  'onboarding-flow',
-  'onboarding-validation',
-  'units-imperial',
-  'viewport-hint',
-  'lazy-fuel-sourcing',
-  'vehicle-crud',
-  'subscriptions',
-  // Costs no Anthropic call despite being about a Penny turn: it PLANTS the
-  // turn through /api/test/turn rather than asking her to plan anything.
-  'chat-tab-in-flight',
-] as const;
-
-/** Set by the E2E job only when the PR carries the `ai-tests` label. */
-const runAiSpecs = process.env.E2E_AI_SPECS === '1';
-
-const webUiTestMatch = new RegExp(
-  `(${[...WEB_UI_SPEC_NAMES, ...(runAiSpecs ? AI_SPEC_NAMES : [])].join('|')})\\.spec\\.ts`
-);
 
 // Global setup resets seeded persona graphs once per run. `workers` stays 1 so
 // mid-suite playwright-* rows don't race unrelated specs until we shard DBs.
@@ -181,14 +129,24 @@ export default defineConfig({
      * OAuth exchange refuses a forged token, that a real OTP email is delivered
      * and passes SPF/DMARC, that account deletion actually deletes (Apple
      * guideline 5.1.1(v)), that the legal URLs submitted to App Store Connect
-     * answer 200 anonymously, and that the web block does not take the API with
-     * it. The browser is incidental to most of them — `oauth-exchange` never
-     * opens a page at all.
+     * answer 200 anonymously, that the web block does not take the API with
+     * it, what every paywall state resolves to and that the server enforces it,
+     * and that the last vehicle cannot be deleted. The browser is incidental to
+     * most of them — `oauth-exchange` never opens a page at all.
+     *
+     * THE SCREENS MOVED TO THE PHONE (2026-09-27). The `web-ui` project — the
+     * trip, fuel, onboarding, paywall, vehicle and Penny specs, driven in a
+     * browser against a front end no user reaches since the web lock — is gone.
+     * Each was rebuilt as a Maestro flow on a real iOS simulator
+     * (mobile/maestro/, run by ci.yml's `iOS e2e · <shard>` jobs), and the two
+     * that ask Penny for real are the `ai` shard, behind the same `ai-tests`
+     * label. What was server-side in them stayed here.
      */
     {
       name: 'api',
       use: { ...devices['Desktop Chrome'] },
-      testMatch: /(oauth-exchange|login-otp|legal-pages|account-deletion|web-blocked)\.spec\.ts/,
+      testMatch:
+        /(oauth-exchange|login-otp|legal-pages|account-deletion|web-blocked|subscriptions|vehicle-crud|fuel-cascade)\.spec\.ts/,
     },
 
     /**
@@ -220,70 +178,25 @@ export default defineConfig({
         ]
       : []),
 
-    /**
-     * WEB UI — PAUSED, not deleted. 2026-08-28.
-     *
-     * The product went iOS-first and the browser now serves one download
-     * screen, so these specs assert a front end no user reaches. Pausing rather
-     * than deleting is deliberate: the pages still exist behind
-     * `WEB_APP_ENABLED`, the owner may yet want a landing page or an isolated
-     * demo, and a spec that took a year to get right is much cheaper to keep
-     * than to rewrite from memory.
-     *
-     * RE-ENABLED 2026-08-28. The preview deploys with `WEB_APP_ENABLED=1`
-     * (since 2026-09-24 the web is off without it), and ci.yml sets
-     * `E2E_WEB_UI=1` beside `E2E_BASE_URL` — the two move together by
-     * construction, in the same job, because either one alone is a suite that
-     * fails for a configuration reason.
-     *
-     * The coverage this restores is the reason it was worth doing: these specs
-     * are the only automated proof that Penny plans a trip, that fuel sources
-     * lazily, that the paywall blocks and that vehicles can be managed. They
-     * were paused for a day and nothing covered any of it.
-     *
-     * WHAT IT COSTS, since the flag is fixed per deployment and one preview
-     * cannot be on both sides: no browser test now exercises the web app in its
-     * switched-OFF state. `web-blocked.spec.ts` still runs and still proves the
-     * things that would be an outage or an App Store rejection — /api, the legal
-     * pages and /login are ungated in EITHER configuration — and the gate's own
-     * logic is unit-tested in `src/lib/webAccess.test.ts` and
-     * `webAccessCoverage.test.ts`. To go back, drop `-e WEB_APP_ENABLED="1"`
-     * from the deploy in ci.yml and drop `E2E_WEB_UI`; the spec follows
-     * automatically.
-     */
-    ...(process.env.E2E_WEB_UI === '1'
-      ? [
-          {
-            name: 'web-ui',
-            use: { ...devices['Desktop Chrome'] },
-            // Built from WEB_UI_SPEC_NAMES + AI_SPEC_NAMES at the top of this
-            // file; the AI half is present only under the `ai-tests` label.
-            testMatch: webUiTestMatch,
-          },
-          // The announcement is GLOBAL app state — an active announcement pops
-          // a modal over every signed-in user's /trips, which would block
-          // clicks in any spec running beside it. So it runs on its own, after
-          // the rest.
-          {
-            name: 'announcement',
-            use: { ...devices['Desktop Chrome'] },
-            testMatch: /announcement\.spec\.ts/,
-            dependencies: ['web-ui'],
-          },
-          // The circuit breakers are GLOBAL app state, in the strongest sense
-          // on this list: while the spec holds one open, every Penny turn in
-          // the deployment is refused. So it runs after the announcement,
-          // which runs after everything else — nothing is in flight while the
-          // app is shut. The spec re-opens it in an `afterAll` that runs
-          // whatever happened.
-          {
-            name: 'breakers',
-            use: { ...devices['Desktop Chrome'] },
-            testMatch: /breakers\.spec\.ts/,
-            dependencies: ['announcement'],
-          },
-        ]
-      : []),
+    // The announcement is GLOBAL app state — while it is seeded, every account
+    // on the deployment is served it — so it runs on its own, after the rest.
+    {
+      name: 'announcement',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /announcement\.spec\.ts/,
+      dependencies: ['api'],
+    },
+    // The circuit breakers are GLOBAL app state, in the strongest sense on this
+    // list: while the spec holds one open, every Penny turn in the deployment
+    // is refused. So it runs after the announcement, which runs after
+    // everything else — nothing is in flight while the app is shut. The spec
+    // re-opens it in an `afterAll` that runs whatever happened.
+    {
+      name: 'breakers',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /breakers\.spec\.ts/,
+      dependencies: ['announcement'],
+    },
   ],
  ...(useExternalServer
     ? {}

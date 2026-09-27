@@ -89,54 +89,10 @@ test.describe('Account deletion', () => {
     }
   });
 
-  test('the danger zone is at the foot of Settings and opens a confirm dialog', async ({ page }) => {
-    addresses.push(await signInAsNewUser(page, { redirectTo: '/settings' }));
-
-    const open = page.getByTestId('delete-account-open');
-    await expect(open).toBeVisible();
-
-    await expect(page.getByTestId('delete-account-dialog')).toHaveCount(0);
-    await open.click();
-
-    const dialog = page.getByTestId('delete-account-dialog');
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('Are you sure you want to delete your account?');
-  });
-
-  test('the delete button stays disabled until the phrase is typed exactly', async ({ page }) => {
-    addresses.push(await signInAsNewUser(page, { redirectTo: '/settings' }));
-    await page.getByTestId('delete-account-open').click();
-
-    const confirmButton = page.getByTestId('delete-account-confirm-button');
-    const input = page.getByTestId('delete-account-confirm-input');
-
-    await expect(confirmButton).toBeDisabled();
-
-    // A near-miss must not arm it — that is the whole point of the gesture.
-    await input.fill('delete');
-    await expect(confirmButton).toBeDisabled();
-
-    await input.fill('delete my account');
-    await expect(confirmButton).toBeDisabled();
-
-    await input.fill('delete account');
-    await expect(confirmButton).toBeEnabled();
-  });
-
-  test('cancel closes the dialog and leaves the account alone', async ({ page }) => {
-    addresses.push(await signInAsNewUser(page, { redirectTo: '/settings' }));
-    await page.getByTestId('delete-account-open').click();
-    await page.getByTestId('delete-account-confirm-input').fill('delete account');
-
-    // Armed, and the user backs out anyway. Nothing should have happened.
-    await page.getByTestId('delete-account-cancel').click();
-    await expect(page.getByTestId('delete-account-dialog')).toHaveCount(0);
-
-    await page.reload();
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-    const me = await page.request.get('/api/me');
-    expect(me.ok()).toBe(true);
-  });
+  // The dialog itself — the phrase gate, Cancel, the sign-out that follows —
+  // is driven on the phone by mobile/maestro/account-deletion.yaml (2026-09-27).
+  // This file keeps what a screen cannot show: what the server refuses, what
+  // it deletes, what it keeps, and the tombstone.
 
   test('the API refuses a request without the exact confirm phrase', async ({ page }) => {
     addresses.push(await signInAsNewUser(page, { redirectTo: '/settings' }));

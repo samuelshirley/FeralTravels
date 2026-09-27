@@ -15,6 +15,18 @@ prove you can see it while typing, which is exactly the bug that shipped
 | `sign-in.yaml` | wiring | The real OTP sign-in, end to end, against the API. |
 | `chat-keyboard.yaml` | behaviour | The regression: composer reachable and operable **while the keyboard is up**. |
 | `maps-link-stop.yaml` | behaviour | A real Google share link (fetched live) lands as a stop on the Porto → Lisbon day. Seeds via `seed-maps-link-stop.js`; no Anthropic call. |
+| `chat-tab-in-flight.yaml`, `onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `settings-location.yaml` | behaviour | Regression flows — each file's header says which bug. |
+| `trip-itinerary.yaml` | behaviour | Trips list, day cards, drive link, fuel sourced for today on its own and another day on open, the map. |
+| `forced-stop-line.yaml` | behaviour | Finn's forced-stop reason on the stop row, in km, then in mi after switching units — and no km anywhere. |
+| `rest-day-stop.yaml` | behaviour | A base day lists its stops (#67), and a note saves with the keyboard up (#70). |
+| `onboarding-wizard.yaml`, `onboarding-range.yaml` | behaviour | The whole first-trip wizard to the hand-off and a relaunch; the range step's bounds. One Penny turn (the hand-off). |
+| `vehicles.yaml`, `paywall.yaml`, `account-deletion.yaml` | behaviour | Settings' vehicles; a trial that is over and a subscription that lifts it; deleting the account. Each on its own account (`seed-account.js`). |
+| `penny-plan-trip.yaml`, `penny-maps-link.yaml` | behaviour, **`ai` shard** | Penny planning for real — only on a run started by the `ai-tests` label. |
+
+**Shards.** CI runs `launch.yaml`, then each `shards/<name>.yaml` as ONE Maestro
+run on its own simulator (`core`, `trips`, `account`, and `ai` on the label).
+Locally: `scripts/ios-e2e-local.sh shard <name>`. A new flow goes into exactly
+one shard, or `maestroFlowParams.test.ts` fails.
 
 **Read that table top to bottom when a run is red.** The three layers fail with
 very different causes and, until this split existed, with the same message: an

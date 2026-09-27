@@ -201,8 +201,8 @@ async function ensureUserId(email: string, name?: string): Promise<string> {
  *
  * `name` carries the caller's `playwright-` prefix so cleanupPlaywright sweeps
  * anything this creates; the Hilux's real NUMBERS are what the fixture is
- * borrowing, not its nickname (existing-trip.spec.ts asserts the seeded
- * vehicle's name on screen, so the name stays the caller's to choose).
+ * borrowing, not its nickname (mobile/maestro/trip-itinerary.yaml asserts the
+ * seeded vehicle's name on screen, so the name stays the caller's to choose).
  */
 async function ensureFixtureVehicle(userId: string, name: string): Promise<string> {
   const owned = await listVehiclesForUser(userId);

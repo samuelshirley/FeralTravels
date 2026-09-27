@@ -1,9 +1,8 @@
-import { request, type APIRequestContext, type Page } from '@playwright/test';
+import { request, type APIRequestContext } from '@playwright/test';
 import {
   FIXTURE_USER_NAME,
   FIXTURE_TRIP_NAME,
   FIXTURE_VEHICLE_NAME,
-  playwrightName,
   testEndpointHeaders,
 } from './constants';
 
@@ -59,135 +58,12 @@ export async function seedCanonicalFixture(
   });
 }
 
-/** Back-compat name: re-seeding and seeding are the same POST. */
-export const reseedCanonicalFixture = seedCanonicalFixture;
-
-async function createTripFor(
-  email: string,
-  kind: 'blank' | 'onboarding' | 'vehicle_new',
-  label: string,
-  startDate?: string,
-): Promise<{ tripId: string; vehicleId: string | null; name: string }> {
-  const name = playwrightName(label);
-  return withApi(async (ctx) => {
-    const res = await ctx.post('/api/test/trip', {
-      data: { email, name, kind, ...(startDate ? { startDate } : {}) },
-    });
-    if (!res.ok()) {
-      throw new Error(`[e2e/test-trip] create ${kind} trip failed (${res.status()}): ${await res.text()}`);
-    }
-    const body = (await res.json()) as { tripId: string; vehicleId: string | null };
-    return { tripId: body.tripId, vehicleId: body.vehicleId ?? null, name };
-  });
-}
-
-/**
- * Empty trip with `onboarding_state='done'` and a vehicle — lets the Penny
- * submit test skip onboarding and type straight into the chat.
- *
- * The vehicle is now GUARANTEED, not inherited: this used to take whatever
- * `getDefaultVehicleId` returned, so calling it for an account that had not
- * been seeded produced a trip that had left onboarding with no vehicle
- * anywhere — a state the app cannot reach, and one whose every day renders
- * "Finish your vehicle profile". The fixture layer creates the Hilux when the
- * account owns nothing usable, and refuses to hand back an impossible trip.
- * Seeding the canonical fixture first is still fine; it is no longer required.
- */
-export async function createBlankPlanningTrip(
-  email: string,
-  label: string,
-  /** ISO start date; defaults to the seeded near-future start. */
-  startDate?: string,
-): Promise<{ tripId: string; name: string }> {
-  const { tripId, name } = await createTripFor(email, 'blank', label, startDate);
-  return { tripId, name };
-}
-
-/**
- * Trip fixed at `onboarding_state='not_started'` — the wizard walks
- * trip_intent → trip_date → units_pick. No vehicle attached.
- */
-export async function createOnboardingTrip(
-  email: string,
-  label: string,
-): Promise<{ tripId: string; name: string }> {
-  const { tripId, name } = await createTripFor(email, 'onboarding', label);
-  return { tripId, name };
-}
-
-/**
- * Trip fixed at `onboarding_state='vehicle_new'` with an intentionally
- * incomplete vehicle (no range) — exercises numeric validation in the composer.
- */
-export async function createVehicleNewProfileTrip(
-  email: string,
-  label: string,
-): Promise<{ tripId: string; vehicleId: string; name: string }> {
-  const { tripId, vehicleId, name } = await createTripFor(email, 'vehicle_new', label);
-  if (!vehicleId) throw new Error('[e2e/test-trip] vehicle_new trip returned no vehicleId');
-  return { tripId, vehicleId, name };
-}
-
 /** Delete all `playwright-`-prefixed trips + vehicles for `email`. */
 export async function cleanupPlaywrightFixtureData(email: string): Promise<void> {
   await withApi(async (ctx) => {
     const res = await ctx.post('/api/test/cleanup', { data: { email } });
     if (!res.ok()) {
       throw new Error(`[e2e/test-trip] cleanup failed (${res.status()}): ${await res.text()}`);
-    }
-  });
-}
-
-/**
- * Count the legs on a trip via the authenticated trip API (post-Penny
- * assertion). Uses the PAGE's browser context — the caller is already signed
- * in via the real OTP flow — so the request carries the session cookie.
- * Reads `GET /api/trip?tripId=` (the full-trip endpoint backed by getTripFull)
- * — NOT `/api/trips/[id]`, which has no GET handler (PATCH/DELETE only).
- * Failures THROW so a broken helper is distinguishable from an empty plan.
- */
-export async function countLegs(page: Page, tripId: string): Promise<number> {
-  const res = await page.request.get(`/api/trip?tripId=${tripId}`);
-  if (!res.ok()) {
-    throw new Error(`[e2e/countLegs] GET /api/trip failed (${res.status()}): ${await res.text()}`);
-  }
-  const body = (await res.json()) as { legs?: unknown[] };
-  return Array.isArray(body.legs) ? body.legs.length : 0;
-}
-
-/**
- * Plant a `penny_turns` row so a spec can open the chat screen while the server
- * is "mid-answer", with no Anthropic call and no race against Penny's latency.
- *
- * Nothing about the CLIENT is faked: it reads the real
- * `GET /api/trips/[id]/turns`, gets the real row, and has to decide for itself
- * what to render. That decision is the thing that was broken.
- */
-export async function seedRunningTurn(
-  email: string,
-  tripId: string,
-  status: 'queued' | 'running' = 'running',
-): Promise<string> {
-  return withApi(async (ctx) => {
-    const res = await ctx.post('/api/test/turn', {
-      data: { action: 'seed', email, tripId, status },
-    });
-    if (!res.ok()) {
-      throw new Error(`[e2e/seedRunningTurn] ${res.status()}: ${await res.text()}`);
-    }
-    const body = (await res.json()) as { idempotencyKey: string };
-    return body.idempotencyKey;
-  });
-}
-
-/** End a planted turn, so the spec leaves nothing running behind it. */
-export async function finishSeededTurn(email: string, idempotencyKey: string): Promise<void> {
-  await withApi(async (ctx) => {
-    const res = await ctx.post('/api/test/turn', {
-      data: { action: 'finish', email, idempotencyKey },
-    });
-    if (!res.ok()) {
-      throw new Error(`[e2e/finishSeededTurn] ${res.status()}: ${await res.text()}`);
     }
   });
 }

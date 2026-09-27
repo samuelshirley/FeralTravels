@@ -4,13 +4,25 @@
 > 225 KB back to a map. Nothing here was rewritten or deleted — only relocated.
 > `CLAUDE.md` links here from the one-line summary that replaced it.
 
-### E2E Tests (`e2e/`)
+### E2E Tests (`e2e/`) — server contracts, since 2026-09-27
 
-existing-trip, login-otp, login-google-button, vehicle-crud, onboarding-flow, onboarding-validation, penny-plan-trip, chat-maps-link, units-imperial, lazy-fuel-sourcing, announcement, account-deletion, legal-pages, oauth-exchange, breakers, chat-tab-in-flight
+legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion, subscriptions, vehicle-crud, fuel-cascade, announcement, breakers
 
-**`existing-trip`** gained the trips-list date headers (2026-09-22): a dated trip sits under a `DD Mon YYYY` header with no date in its card meta, two trips sharing a start date share one header, and the list reads newest date first. The fixtures are created out of date order on purpose, so reverting to last-activity ordering fails the order assertion instead of passing by coincidence; `POST /api/test/trip` takes an optional ISO `startDate` for `kind: 'blank'` only, and the dates are derived from today (`seedDates.test.ts` bans literals). Each assertion was mutation-checked — ISO header, header per card, last-activity order — and failed on its own bug.
+**The screens moved to the phone (2026-09-27).** Sam: iOS is the product, so the end-to-end weight sits on Maestro, and Playwright keeps what does not depend on a screen — the API guards, the legal pages App Review loads, sign-in and real mail delivery, the paywall's server verdicts, the web lock. Every browser spec that drove the locked web front end was rebuilt as a flow on a real simulator (`mobile/maestro/`, run in parallel shards by ci.yml — `docs/design/ios-e2e-bringup.md`), and each Playwright spec was deleted only after its replacement had passed in CI:
 
-**`chat-maps-link`** (2026-09-04) plans Girona → Annecy with Penny, pastes the `maps.app.goo.gl` short link INTO CHAT and asserts it lands as an `other` stop with a source from the stops API's author enum, then moves the day's destination and asserts the leg ends `ready` WITH a fuel stop again — the only automated proof of the chat paste path (the day-card row is gone) and of the item-6 re-source. Three Penny turns a run — the most expensive spec in the repo, and **gated behind the `ai-tests` label since 2026-09-08** along with `penny-plan-trip`; it does not run on a push. **`units-imperial`** flips the preference through `PATCH /api/me/preferences`, opens the seeded trip with a 300 km range so day 1 needs a stop, and asserts the NEXT STOP row, the stop rows and the whole itinerary pane show `mi` and no `km`.
+| Was (Playwright) | Now |
+|---|---|
+| `existing-trip` | `trip-itinerary.yaml` — trips list and date header, day cards, drive link, map |
+| `lazy-fuel-sourcing` | `trip-itinerary.yaml` (today sources itself; another day only when opened) + `e2e/fuel-cascade.spec.ts` (the server-side dependency cascade, one request) |
+| `units-imperial` | `forced-stop-line.yaml` (switched in Settings; mi everywhere, never km) |
+| `onboarding-flow`, `onboarding-validation` | `onboarding-wizard.yaml`, `onboarding-range.yaml` (the calendar test was already `onboarding-date-picker.yaml`) |
+| `vehicle-crud` (screen half) | `vehicles.yaml`; the last-vehicle API refusal stays in `vehicle-crud` |
+| `subscriptions` (screen half) | `paywall.yaml`; every state's verdict and the 402 stay in `subscriptions` |
+| `account-deletion` (dialog tests) | `account-deletion.yaml`; the database half stays |
+| `announcement` (web modal) | the API the native modal calls, in `announcement` — a seeded announcement is global, so as a Maestro flow it would pop up over the other shards running in parallel |
+| `penny-plan-trip`, `chat-maps-link` | `penny-plan-trip.yaml`, `penny-maps-link.yaml` — the `ai` shard, behind the `ai-tests` label, and the most thorough flows in the suite |
+| `chat-tab-in-flight` | already `chat-tab-in-flight.yaml` |
+| `viewport-hint`, `login-google-button` | nothing — web-only behaviour on a locked front end (decision H8 says so) |
 
 **`account-deletion`** gained a database vantage point in **`POST /api/test/deletion`** (`state` / `seed-usage` / `cleanup-usage`, same three guards as the rest of `/api/test/*`). Without it the suite's strongest claim was `GET /api/trips` → 401, which only proves the SESSION died — an implementation that deleted `sessions` and left every trip, usage row and tombstone in place passed the whole file. It now asserts the tombstone's counts and provider inference, that the ciphertext decrypts back to the address (compared server-side; the plaintext never crosses the wire), that `usage_events` rows SURVIVE with `user_id` detached and `error_message` scrubbed, that the trip rows are gone by user id, and that the address can sign up again into a clean account. Two of those double as config checks and fail loudly rather than skipping: `DELETED_USER_ENC_KEY` must be set on the target environment, as must `AUTH_GOOGLE_IOS_CLIENT_ID` (see `oauth-exchange`).
 

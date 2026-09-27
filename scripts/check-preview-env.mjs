@@ -39,7 +39,7 @@ const REQUIRED = [
   ['AUTH_SECRET', 'Session signing. Nothing can sign in, so every authenticated spec dies at the door.'],
   ['AUTH_RESEND_KEY', 'Sends the OTP. login-otp.spec.ts reads a REAL delivered email back.'],
   ['AUTH_EMAIL_FROM', 'The From: address on that email.'],
-  ['AUTH_GOOGLE_ID', 'Web Google sign-in — login-google-button.spec.ts.'],
+  ['AUTH_GOOGLE_ID', 'Web Google sign-in (the web is locked; the admin still signs in there).'],
   ['AUTH_GOOGLE_SECRET', 'Web Google sign-in.'],
   [
     'AUTH_GOOGLE_IOS_CLIENT_ID',
