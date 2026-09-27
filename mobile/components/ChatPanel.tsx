@@ -25,7 +25,6 @@ import { API_BASE_URL } from "@/lib/config";
 import type { OnboardingState } from "@/shared/types/trip";
 import { useUnits } from "@/lib/units";
 import { useErrors } from "@/lib/errors";
-import { onPennyPrefill } from "@/lib/pennyPrefill";
 import { theme } from "@/lib/theme";
 import {
   fetchEntitlement,
@@ -582,20 +581,6 @@ export default function ChatPanel({
       if (stickToBottom.current) scrollToBottom();
     });
     return () => sub.remove();
-  }, [scrollToBottom]);
-
-  // "Add to this day" on a rest-day LegCard — the native stand-in for the web's
-  // `penny:prefill` CustomEvent. Same contract: prefill the composer, focus it,
-  // and scroll down so the user sees what they're about to send.
-  useEffect(() => {
-    return onPennyPrefill((detail) => {
-      const locationStr = detail.location || "this location";
-      setInput(
-        `I want to add plans for ${detail.dayTitle} in ${locationStr} — what should I do there?`
-      );
-      inputRef.current?.focus();
-      scrollToBottom();
-    });
   }, [scrollToBottom]);
 
   // While a turn is in flight but Penny hasn't streamed any text yet, show the

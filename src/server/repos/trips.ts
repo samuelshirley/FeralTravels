@@ -902,6 +902,23 @@ export async function deleteLeg(legId: string): Promise<void> {
 }
 
 /**
+ * Replace a leg's notes wholesale — the user-authored path behind
+ * `PATCH /api/legs/:id/notes` (the rest-day "+ Add note to this day" box).
+ * Stored in the same JSON string-array shape Penny's add_leg/update_leg write,
+ * so `getTripFull`'s `parsedNotes` reads both. An empty list clears the column.
+ */
+export async function setLegNotes(legId: string, notes: string[]): Promise<string[]> {
+  await db
+    .update(legs)
+    .set({
+      notes: notes.length > 0 ? JSON.stringify(notes) : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(legs.id, legId));
+  return notes;
+}
+
+/**
  * Title for a server-generated non-driving leg at a named location.
  *
  * `leg_type` is still `'rest'` in the database; "base day" is what the user

@@ -126,7 +126,7 @@ Centred `Your trips` header + avatar; then flush-left kicker `YOUR TRIPS` over `
 
 > Where are we going? One city is enough to start — I'll sort the fuel.
 
-Under Penny's bubble, a `TAP TO START, THEN EDIT` kicker and three rows, all of which **prefill the composer and focus it** (reuse `lib/pennyPrefill` / the web's `penny:prefill` CustomEvent — the same channel `+ Add to this day` uses):
+Under Penny's bubble, a `TAP TO START, THEN EDIT` kicker and three rows, all of which **prefill the composer and focus it** (each client sets its own composer state directly; the `pennyPrefill` / `penny:prefill` channel the base-day `+ Add to this day` button used was removed on 2026-09-27, when that button became `+ Add note to this day`):
 
 1. Accented, 48px, `MapPinSimpleArea` icon — **`Name a city — Lisbon, Girona, Tromsø…`** with a second line `or just start typing`. Prefills nothing; focuses the composer.
 2. `Paris to Stuttgart, 5 h days`
