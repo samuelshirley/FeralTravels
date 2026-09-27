@@ -25,9 +25,9 @@ describe('landingVideo', () => {
     ]);
   });
 
-  // Both copies are the same loop, already slowed to 0.6x. Any other rate
-  // slows it twice (0.36x) or speeds Penny past the pace she was cut at.
-  it('both sources are pre-slowed, so both play at 1x', () => {
+  // The committed drone shot is at normal speed; the Blob copy (Penny) is
+  // already slowed to 0.6x, so any other rate would slow her twice (0.36x).
+  it('both sources play at 1x', () => {
     expect(landingVideo(undefined).rate).toBe(1);
     expect(landingVideo(BLOB).rate).toBe(1);
   });
