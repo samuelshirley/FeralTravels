@@ -73,10 +73,18 @@ appId: ${APP_ID}
     direction: DOWN
     timeout: 10000
 - tapOn: 'Save'
+# Saved = the form is gone. Settings is then left scrolled below the vehicle
+# list (CI run 36319721526), so the new card is scrolled UP to, not waited for.
 - extendedWaitUntil:
-    visible: 'Test Van'
+    notVisible:
+      id: 'vehicle-name-input'
     timeout: 20000
-- assertVisible: 'REFILL EVERY ~420 km'
+- scrollUntilVisible:
+    element: 'REFILL EVERY ~420 km'
+    direction: UP
+    centerElement: true
+    timeout: 20000
+- assertVisible: 'Test Van'
 - assertNotVisible:
     text: "This is your only vehicle.*"
 - assertVisible:
