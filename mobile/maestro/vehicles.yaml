@@ -54,17 +54,20 @@ appId: ${APP_ID}
 - assertVisible:
     id: 'vehicle-name-input'
     text: 'Test Van'
+# Centred: after Return, CI left the field at y=838, under the tab bar yet
+# "visible" to Maestro, so the tap missed and the range stayed empty.
 - scrollUntilVisible:
     element:
       id: 'vehicle-range_km-input'
     direction: DOWN
+    centerElement: true
     timeout: 10000
 - tapOn:
     id: 'vehicle-range_km-input'
-- inputText: '400'
+- inputText: '420'
 - assertVisible:
     id: 'vehicle-range_km-input'
-    text: '400'
+    text: '420'
 - scrollUntilVisible:
     element: 'Save'
     direction: DOWN
@@ -73,7 +76,7 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Test Van'
     timeout: 20000
-- assertVisible: 'REFILL EVERY ~400 km'
+- assertVisible: 'REFILL EVERY ~420 km'
 - assertNotVisible:
     text: "This is your only vehicle.*"
 - assertVisible:

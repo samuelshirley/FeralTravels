@@ -38,16 +38,36 @@ if (!leg) {
   throw new Error('The seeded canonical trip has no "Lisbon (rest day)" leg: ' + seeded.body);
 }
 
-var added = http.post(BASE_URL + '/api/test/maps-link-stop', {
-  headers: headers,
-  body: JSON.stringify({
-    email: EMAIL,
-    tripId: trip.tripId,
-    legId: leg.id,
-    message: 'Add this overnight location for my stop in Lisbon ' + shareLink,
-    status: 'selected',
-  }),
-});
+// Google's short-link host answers HTTP 429 when the runner resolved the same
+// link seconds earlier (maps-link-stop.yaml runs just before this in the
+// `trips` shard; CI run 36317917362). Only that stage is retried, with a wait:
+// Maestro's JS has no timers, so the wait is a clock-bounded loop.
+function addStop() {
+  return http.post(BASE_URL + '/api/test/maps-link-stop', {
+    headers: headers,
+    body: JSON.stringify({
+      email: EMAIL,
+      tripId: trip.tripId,
+      legId: leg.id,
+      message: 'Add this overnight location for my stop in Lisbon ' + shareLink,
+      status: 'selected',
+    }),
+  });
+}
+function stageOf(res) {
+  try {
+    var b = JSON.parse(res.body);
+    return b.link && b.link.stage ? b.link.stage : null;
+  } catch (e) {
+    return null;
+  }
+}
+var added = addStop();
+for (var attempt = 1; attempt <= 2 && !added.ok && stageOf(added) === 'http_429'; attempt++) {
+  var until = Date.now() + attempt * 15000;
+  while (Date.now() < until) {}
+  added = addStop();
+}
 var result = {};
 try {
   result = JSON.parse(added.body);
