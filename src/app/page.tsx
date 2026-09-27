@@ -38,7 +38,7 @@ export const metadata: Metadata = {
         url: LANDING_POSTER,
         width: LANDING_POSTER_WIDTH,
         height: LANDING_POSTER_HEIGHT,
-        alt: 'Penny running down a forest track',
+        alt: 'A camper truck on a gravel mountain road, past snow and a lake',
       },
     ],
   },
