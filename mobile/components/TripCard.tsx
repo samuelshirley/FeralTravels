@@ -197,14 +197,17 @@ export default function TripCard({
           if (!busy) setShowConfirm(false);
         }}
       >
+        {/* accessible={false} on both, or iOS merges the dialog into one element
+            and Cancel / Delete vanish for VoiceOver (modalMergeGuard.test.ts). */}
         <Pressable
           style={styles.backdrop}
           onPress={() => {
             if (!busy) setShowConfirm(false);
           }}
+          accessible={false}
         >
           {/* Swallow taps on the sheet so the backdrop press doesn't close it. */}
-          <Pressable style={styles.confirmSheet} onPress={() => {}}>
+          <Pressable style={styles.confirmSheet} onPress={() => {}} accessible={false}>
             <Text style={styles.confirmTitle}>Delete trip?</Text>
             <Text style={styles.confirmBody}>
               {`“${name}” will be permanently deleted.`}

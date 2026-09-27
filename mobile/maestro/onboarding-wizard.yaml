@@ -116,10 +116,13 @@ appId: ${APP_ID}
     timeout: 30000
 # The card redraws as two answered steps — the name as Hilux's own bubble, the
 # range as its chosen chip — not one "Hilux · 500 km" line (that was the web).
-- extendedWaitUntil:
-    visible:
+# Up, not "visible": the hand-off turn can finish in seconds, and the chat then
+# scrolls to Penny's reply with these answers above the fold.
+- scrollUntilVisible:
+    element:
       id: 'onboarding-chip-chosen'
       text: '500 km'
+    direction: UP
     timeout: 30000
 - assertVisible: 'Hilux'
 - assertVisible:
@@ -146,9 +149,12 @@ appId: ${APP_ID}
 - scrollUntilVisible:
     element:
       id: 'onboarding-chip-chosen'
+      text: '500 km'
+    direction: UP
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
       text: '6 h'
     direction: UP
     timeout: 30000
-- assertVisible:
-    id: 'onboarding-chip-chosen'
-    text: '500 km'

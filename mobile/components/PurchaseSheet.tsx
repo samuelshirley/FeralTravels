@@ -107,12 +107,17 @@ export default function PurchaseSheet({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={dismiss}>
-      <Pressable style={styles.backdrop} onPress={dismiss}>
+      <Pressable style={styles.backdrop} onPress={dismiss} accessible={false}>
+        {/* accessible={false} on BOTH wrappers, or iOS merges the whole sheet into
+            one accessibility element and nothing inside it — Close, the plan
+            rows, Restore — exists for VoiceOver or Maestro (the trips menu,
+            app/trips/index.tsx, has the long version; modalMergeGuard.test.ts). */}
         {/* Swallow taps inside the sheet so reading a price doesn't dismiss
             the thing the user is trying to read. */}
         <Pressable
           style={[styles.sheet, { paddingBottom: 20 + insets.bottom }]}
           onPress={() => {}}
+          accessible={false}
         >
           <View style={styles.grabber} />
 

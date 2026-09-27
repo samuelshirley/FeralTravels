@@ -542,6 +542,16 @@ then; immediately if the keyboard is already up) and `scrollToIndex`es the row w
 each: `onFocus` unwired, `viewPosition: 0.5`, `keyboardWillShow`, a `KeyboardAvoidingView` import
 in Itinerary. Not proven on a simulator by any flow.
 
+H22. **A native modal's backdrop and sheet Pressables carry `accessible={false}`.** A Pressable
+is an accessibility element and iOS merges its whole subtree into one node, so the backdrop +
+tap-swallowing sheet that every mobile/ modal uses published ONE element for the whole modal:
+none of its buttons, fields or text existed for VoiceOver or Maestro. Shipped three times — the
+trips-list menu, the trip header's menu, and (found 2026-09-27 by `paywall.yaml`, whose tree held
+one node over a sheet showing both prices) the purchase sheet, where a VoiceOver user could not
+choose a plan. The same sweep fixed the Contact Support sheet and the trip-card delete dialog.
+*Enforced by:* `modalMergeGuard.test.ts` (source; mutation-checked by dropping the purchase sheet's
+backdrop flag) and `mobile/maestro/paywall.yaml` (taps the sheet's Close).
+
 ## I. Spend defence
 
 The threat this section exists for, stated once: the app has no revenue, and

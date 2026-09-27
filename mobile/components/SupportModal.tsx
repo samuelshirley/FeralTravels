@@ -67,9 +67,11 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Pressable style={styles.backdrop} onPress={handleClose}>
+        {/* accessible={false} on both, or iOS merges the sheet into one element
+            and its fields and buttons vanish for VoiceOver (modalMergeGuard.test.ts). */}
+        <Pressable style={styles.backdrop} onPress={handleClose} accessible={false}>
           {/* Swallow taps inside the sheet so they don't dismiss the modal. */}
-          <Pressable style={styles.sheet} onPress={() => {}}>
+          <Pressable style={styles.sheet} onPress={() => {}} accessible={false}>
             <View style={styles.header}>
               <Text style={styles.headerTitle}>Contact Support</Text>
               <Pressable

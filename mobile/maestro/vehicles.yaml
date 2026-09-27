@@ -49,10 +49,17 @@ appId: ${APP_ID}
 - tapOn:
     text: "What.s the vehicle called\\? \\(just a nickname is fine\\)"
 - inputText: 'Test Van'
+# Return leaves the name field. Tapping straight to the range field did not
+# move focus on the first run — "400" landed in the name ("Test Van400").
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      text: "What.s your driving range on a tank, in kilometers\\?"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     text: "What.s your driving range on a tank, in kilometers\\?"
 - inputText: '400'
-- hideKeyboard
 - scrollUntilVisible:
     element: 'Save'
     direction: DOWN
