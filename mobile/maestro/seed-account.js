@@ -15,7 +15,8 @@
 //   ACCOUNT_SUFFIX    e.g. 'fs' → playwright-…-fs@e2e.feraltravels.com
 //   SEED_CANONICAL    '1' → /api/test/seed: the default vehicle and the
 //                     two-leg Paris → Strasbourg → Stuttgart trip
-//                     ('E2E Fixture Trip'). '' → the account owns nothing yet.
+//                     ('E2E Fixture Trip'), with the chat that planned it
+//                     (seededTranscript.ts). '' → the account owns nothing yet.
 //   FORCED_FUEL_STOP  '1' → a forced Finn stop on day 1 of that trip, its fuel
 //                     cache stamped fresh so no Places search runs
 //   RANGE_KM          the seeded vehicle's range in km, '' for the Hilux's 500

@@ -202,6 +202,9 @@ test.describe('Account deletion', () => {
     // this test itself created — not a number copied out of the repo.
     expect(tomb.tripCount).toBeGreaterThanOrEqual(1);
     expect(tomb.vehicleCount).toBeGreaterThanOrEqual(1);
+    // The seeded trip carries the chat that planned it (seededTranscript.ts),
+    // so the count deletion records has something real to count.
+    expect(tomb.chatMessageCount).toBeGreaterThanOrEqual(1);
     expect(tomb.deletedBy).toBe('self');
     expect(tomb.accountCreatedAt).toBeTruthy();
     // An OTP user has no `accounts` row and no unexpired `oauth_token_uses`,
