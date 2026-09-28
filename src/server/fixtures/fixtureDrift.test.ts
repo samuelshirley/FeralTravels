@@ -145,7 +145,7 @@ describe('canonical fixture does not silently go stale', () => {
      * fixture. Each is a decision; adding one here is how you record it.
      */
     const notInFixture: Record<string, string> = {
-      chatHistory: 'generated per-seed by seedTranscript — cloning the real transcript ships stale calendar dates (see 732eda4)',
+      chatHistory: 'generated per-seed by writeSeededTranscript (server/seededTranscript.ts) — cloning the real transcript ships stale calendar dates (see 732eda4)',
       routes: 'the source trip has none; nav links are derived from leg endpoints at render time',
       routeLinks: 'child of routes, which the fixture does not carry',
       costs: 'the source trip has none',

@@ -430,7 +430,7 @@ async function completeOnboarding(
   // form rows, so the origin has to travel inside the one message she gets.
   const scan = (trip?.onboardingScan ?? null) as OnboardingScan | null;
   const origin = scan?.origin_place?.trim() || null;
-  const tripIntent = origin ? `${pendingIntent}\n\nStarting from: ${origin}` : pendingIntent;
+  const tripIntent = handoffIntent(pendingIntent, origin);
 
   // Stamp the user-level flag the first time only. `onConflict`-free because
   // this is the single place onboarding can complete, and `IS NULL` keeps a
@@ -457,6 +457,15 @@ async function completeOnboarding(
     didHandoff: true,
     tripIntent,
   };
+}
+
+/**
+ * The one message Penny plans from: the opening message plus the origin, which
+ * travels inside it because Penny never sees the form rows. Exported so the
+ * seeded transcript's `handoff` row is the same text.
+ */
+export function handoffIntent(pendingIntent: string, origin: string | null): string {
+  return origin ? `${pendingIntent}\n\nStarting from: ${origin}` : pendingIntent;
 }
 
 /**
@@ -594,6 +603,33 @@ export const UNITS_QUESTION: Question = {
     { value: 'imperial', label: 'Imperial (cheeseburgers)' },
   ],
 };
+
+/** The answer bubble the units step records. Exported for the seeded transcript. */
+export function unitsAnswerLabel(units: UnitsPref): string {
+  return units === 'metric' ? 'Metric (kilometers)' : 'Imperial (miles)';
+}
+
+/**
+ * Penny's receipt for what the opening message's scan read — "Got it —
+ * starting from Paris, 5 h of driving a day, setting off Sat 12 Sep." — or
+ * undefined when it read nothing. The date is formatted in `units`, which the
+ * caller resolves (a first trip has not answered the units step yet, so it is
+ * metric there). Exported so the seeded transcript writes the same words.
+ */
+export function intentScanNote(read: {
+  originPlace: string | null;
+  dailyDriveHours: number | null;
+  startISO: string | null;
+  units: UnitsPref;
+}): string | undefined {
+  const acknowledged: string[] = [];
+  if (read.originPlace) acknowledged.push(`starting from ${read.originPlace}`);
+  if (read.dailyDriveHours != null) acknowledged.push(`${read.dailyDriveHours} h of driving a day`);
+  if (read.startISO) {
+    acknowledged.push(`setting off ${formatDate(parseISODate(read.startISO), read.units)}`);
+  }
+  return acknowledged.length > 0 ? `Got it — ${acknowledged.join(', ')}.` : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot: returns the current onboarding question for a trip
@@ -954,17 +990,19 @@ export async function submitAnswer(
       updatedAt: new Date(),
     };
 
-    const acknowledged: string[] = [];
-    if (scan.originPlace) acknowledged.push(`starting from ${scan.originPlace}`);
-    if (scan.dailyDriveHours != null) acknowledged.push(`${scan.dailyDriveHours} h of driving a day`);
     if (exactIso) {
       patch.startDate = scan.startDatePhrase ?? text;
       patch.startDateParsed = exactIso;
-      const unitsForFmt =
-        (await getRawUnitsPref(userId)) != null ? await getUnitsPref(userId) : 'metric';
-      acknowledged.push(`setting off ${formatDate(parseISODate(exactIso), unitsForFmt)}`);
     }
-    const note = acknowledged.length > 0 ? `Got it — ${acknowledged.join(', ')}.` : undefined;
+    // Only a date needs formatting, so only a date pays for the units read.
+    const unitsForFmt: UnitsPref =
+      exactIso && (await getRawUnitsPref(userId)) != null ? await getUnitsPref(userId) : 'metric';
+    const note = intentScanNote({
+      originPlace: scan.originPlace,
+      dailyDriveHours: scan.dailyDriveHours,
+      startISO: exactIso,
+      units: unitsForFmt,
+    });
 
     // Next: origin unless the message named one, then the date unless the
     // message pinned one, then the pace unless stated, then units / vehicle.
@@ -1170,7 +1208,7 @@ export async function submitAnswer(
       .update(trips)
       .set({ onboardingState: nextState, updatedAt: new Date() })
       .where(eq(trips.id, tripId));
-    const answerLabel = raw === 'metric' ? 'Metric (kilometers)' : 'Imperial (miles)';
+    const answerLabel = unitsAnswerLabel(raw);
     await writeQA(tripId, UNITS_QUESTION, answerLabel, raw);
     const afterSnapshot = await getOnboardingSnapshot(tripId, userId);
     // Returning user with vehicle already set: onboarding may jump straight
