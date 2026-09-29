@@ -408,6 +408,15 @@ are cookie-only, so the mobile app can never be the caller. A set relation over 
 `fetch(`/`apiFetch(` arguments, not a grep: the path was named in comments all along.
 *Enforced by:* `adminEndpointCallerGuard.test.ts`.
 
+G10. **A seeded planned trip carries the chat a real one has: the onboarding Q/A, the handoff,
+`plan_ready`, and Penny's reply with a COMPUTED plan summary.** Seeders wrote legs and no chat, so
+a seeded trip opened on Penny's START HERE chips above a finished itinerary, which no real trip
+shows. One writer (`writeSeededTranscript`, fixed text, dates derived from the trip's start);
+every function in a fixture-gated file that writes legs must call it after its last leg — the
+file set is found by gate + leg write, not listed. *Enforced by:* `seededTranscriptGuard.test.ts`
+(mutation-checked 2026-09-28: call removed from `seedCanonicalTrip`, call moved above
+`seedFixture`'s legs, a new gated seeder file — each red), `seededTranscript.test.ts`.
+
 ## H. UI conventions
 
 H1. **Copy rule: every string tells the user something they cannot already see.**

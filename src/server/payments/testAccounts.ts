@@ -3,9 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { and, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import {
-  chatHistory,
   emailOtpCodes,
-  legs,
   subscriptions,
   trips,
   usageAlerts,
@@ -16,10 +14,8 @@ import { addVehicle } from '@/server/repos/vehicles';
 import { HILUX_FIXTURE_VEHICLE } from '@/app/api/test/fixtureVehicle';
 import { cloneTrip, createTrip } from '@/server/repos/trips';
 import { seededTripStartISO } from '@/app/api/test/seedDates';
-// The real greeting, imported rather than retyped: a fixture whose first turn
-// differs from the one every real trip opens with is a fixture that can pass
-// while the thing it stands in for has changed underneath it.
-import { TRIP_INTENT_QUESTION } from '@/server/onboarding';
+import { writeSeededTranscript } from '@/server/seededTranscript';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import { legDateISO } from '@/lib/dates';
 import type { SubscriptionStatus } from '@/types/entitlement';
 import { assertNotProduction } from '@/server/productionGuard';
@@ -225,12 +221,13 @@ export async function createTestAccount(input: CreateTestAccountInput): Promise<
  * writes rows directly is the only thing that can build it, which is exactly
  * why nothing else caught it.
  *
- * So this seeds all four facts a real account holds together, in order:
+ * So this seeds all five facts a real account holds together, in order:
  *   1. a vehicle, and one that can actually fuel-plan (the Hilux numbers)
  *   2. the trip, cloned so the legs and stops are real, re-dated forward
  *   3. that trip pointed at that vehicle, and marked onboarded
  *   4. the user-level onboarding stamp, so a seed can be ASKED whether it
  *      built something coherent
+ *   5. the conversation that planned it (`writeSeededTranscript`)
  *
  * It re-dates the clone forward for the reason `seedDates.ts` spells out: a
  * past-dated trip is a different product state, and a tester who wanted the
@@ -273,26 +270,6 @@ async function seedRealisticAccountData(userId: string): Promise<void> {
           )
         : null;
     endISO = days === null ? null : legDateISO(startISO, days);
-
-    // A transcript, because a finished itinerary with an empty one is the other
-    // half of the same tell — Penny plans in conversation, so a trip she
-    // supposedly planned has one.
-    //
-    // GENERATED, not cloned. Copying the source trip's rows across was the
-    // obvious way to do it and it put a lie in the fixture: the source chat is
-    // a real conversation about real calendar dates, so a clone of it arrived
-    // saying "setting off Tue 18 Aug" and "change this trip to me leaving on
-    // September 15th" above an itinerary this function had just re-dated to
-    // today + 14. Reported as a bug in the seeded dates; the dates were right
-    // and the conversation about them was three weeks stale. `plan_summary` is
-    // worse still — it is a snapshot of depart/arrive dates that the UI renders
-    // INSTEAD of the prose, so a cloned one puts stale dates on screen as
-    // structured fact rather than as something Penny once said.
-    //
-    // The generated turns say only what is true of the trip that now exists,
-    // and they say it in terms of `startISO`, so the fixture cannot rot the way
-    // a calendar date written into a row does.
-    await db.insert(chatHistory).values(seedTranscript(tripId, startISO, await routeNames(tripId)));
   } else {
     const created = await createTrip({ userId, name: 'Test trip', startDate: startISO });
     tripId = created.id;
@@ -302,6 +279,8 @@ async function seedRealisticAccountData(userId: string): Promise<void> {
   //        is stamped as having onboarded. `cloneTrip` does neither, and its
   //        not doing so is correct for the user-facing clone button — this is
   //        the fixture layer's job to finish.
+  //        The pace is onboarding's too: every real trip has one, and the
+  //        transcript below names it.
   await db
     .update(trips)
     .set({
@@ -309,6 +288,7 @@ async function seedRealisticAccountData(userId: string): Promise<void> {
       tripNameCiKey: 'test trip',
       vehicleId: vehicle.id,
       onboardingState: 'done',
+      dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
       startDate: startISO,
       startDateParsed: startISO,
       endDate: endISO,
@@ -320,88 +300,20 @@ async function seedRealisticAccountData(userId: string): Promise<void> {
     .update(users)
     .set({ onboardingCompletedAt: new Date() })
     .where(eq(users.id, userId));
-}
 
-
-/**
- * The route the seeded trip actually describes, as the ordered list of places
- * it stops at, de-duplicated.
- *
- * Read from the legs that were just cloned rather than hardcoded, because the
- * source trip is whatever the admin's most recent one is and that changes. A
- * transcript naming towns the itinerary does not visit is the same class of
- * fixture lie this function exists to stop telling.
- */
-async function routeNames(tripId: string): Promise<string[]> {
-  const rows = await db
-    .select({ start: legs.startName, end: legs.endName })
-    .from(legs)
-    .where(eq(legs.tripId, tripId))
-    .orderBy(legs.sortOrder);
-
-  const names: string[] = [];
-  for (const r of rows) {
-    for (const n of [r.start, r.end]) {
-      const name = n?.trim();
-      // Consecutive duplicates only: a rest day is start === end, and a route
-      // that legitimately returns to where it started should say so at the end.
-      if (name && name !== names[names.length - 1]) names.push(name);
-    }
-  }
-  return names;
-}
-
-/** "Thu 10 Sep" — the form Penny writes a departure in. UTC, like every seed. */
-function humanDate(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-}
-
-/**
- * The four turns that make a seeded trip look planned.
- *
- * Every date in them is derived from `startISO`, which is itself
- * `today + SEEDED_TRIP_START_OFFSET_DAYS` computed at seed time — so an account
- * generated today and one generated in March both read correctly. Nothing here
- * may contain a written calendar date; that is the whole point of the function.
- *
- * `planSummary` stays null. It is the structured snapshot the UI renders in
- * place of the prose, and inventing one would mean this fixture asserting
- * day counts and totals it did not compute.
- *
- * Exported only so `testAccounts.test.ts` can sweep the turns for a written
- * calendar date. Nothing else calls it.
- */
-export function seedTranscript(
-  tripId: string,
-  startISO: string,
-  route: string[]
-): Array<typeof chatHistory.$inferInsert> {
-  const from = route[0] ?? 'home';
-  const to = route[route.length - 1] ?? 'the coast';
-  const when = humanDate(startISO);
-  const shape = route.length > 1 ? route.join(' → ') : from;
-
-  return [
-    { tripId, role: 'assistant', kind: 'form_question', content: TRIP_INTENT_QUESTION.label },
-    {
-      tripId,
-      role: 'user',
-      kind: 'form_answer',
-      content: `${from} to ${to}, leaving ${when}. Happy to take it slowly and stop a few nights on the way.`,
-    },
-    { tripId, role: 'assistant', kind: 'ai', content: `Got it — setting off ${when}.` },
-    {
-      tripId,
-      role: 'assistant',
-      kind: 'ai',
-      content: `Plan is saved! Here's the shape: ${shape}. Every driving day is a comfortable one, and I've put fuel stops in where your range needs them.`,
-    },
-  ];
+  // 5. A transcript, because a finished itinerary with an empty one is the
+  //    other half of the same tell — Penny plans in conversation, so a trip she
+  //    supposedly planned has one. Only the clone has a plan; the fallback trip
+  //    has no days, like a real trip whose plan was never built.
+  //
+  //    GENERATED, not cloned, and written LAST so it describes the trip as it
+  //    now stands. Copying the source trip's rows put a lie in the fixture: the
+  //    source chat is about real calendar dates, so a clone arrived saying
+  //    "setting off Tue 18 Aug" above an itinerary this function had just
+  //    re-dated to today + 14, and its cloned `plan_summary` put those stale
+  //    dates on screen as structured fact. `writeSeededTranscript` derives
+  //    every date from the start and computes the summary from the legs.
+  if (source) await writeSeededTranscript(tripId);
 }
 
 

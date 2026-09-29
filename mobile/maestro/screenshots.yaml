@@ -74,10 +74,11 @@ appId: ${APP_ID}
 - takeScreenshot: 01-trips
 
 # ── 2. Penny, mid-plan ──────────────────────────────────────────────────────
-# The differentiator, and the only one of the four that has to be EARNED — the
-# seeded graph carries no chat history, so this sends a real message and waits
-# for a real reply. It spends one Anthropic call, the same trade
-# chat-keyboard.yaml already makes.
+# The differentiator, and the only one of the four that has to be EARNED. The
+# seeded trip carries the transcript that planned it (seededTranscript.ts), but
+# that is fixed text; the shot is of Penny ANSWERING, so this sends a real
+# message and waits for a real reply. It spends one Anthropic call, the same
+# trade chat-keyboard.yaml already makes.
 - tapOn:
     text: '.*${TRIP_NAME}.*'
 

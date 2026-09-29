@@ -43,11 +43,12 @@ import {
   HILUX_FIXTURE_VEHICLE,
   impossibleFixtureTripReason,
 } from '@/app/api/test/fixtureVehicle';
-import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY, vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from './vehicles';
 import { createTrip, addLeg } from './trips';
 import { resolveCanonicalTrip } from '@/server/fixtures/canonicalTrip';
 import { decodePolyline } from '@/lib/polyline';
+import { writeSeededTranscript } from '@/server/seededTranscript';
 
 /**
  * TEST-ONLY fixture data layer for the E2E suite.
@@ -328,9 +329,12 @@ export async function seedFixture(opts: {
     endDate: legDates[legDates.length - 1],
     vehicleId: vehicle.id,
   });
+  // The pace is what onboarding's trip_pace step writes, and every real trip
+  // now has one; the seeded transcript's opening message names it. The flat
+  // default is what the legs below were built at.
   await db
     .update(trips)
-    .set({ onboardingState: 'done', status: 'planning' })
+    .set({ onboardingState: 'done', status: 'planning', dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY })
     .where(eq(trips.id, trip.id));
 
   for (const leg of legPreset) {
@@ -339,6 +343,8 @@ export async function seedFixture(opts: {
   if (opts.forcedFuelStop) await seedForcedFuelStop(trip.id);
 
   await assertFixtureTripPossible(trip.id, userId, 'seedFixture');
+  // The conversation that planned it — a planned trip never opens on START HERE.
+  await writeSeededTranscript(trip.id);
   return { userId, vehicleId: vehicle.id, tripId: trip.id };
 }
 
@@ -394,6 +400,12 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
  * Create an ad-hoc, throwaway trip for a single spec. `name` must be supplied
  * pre-prefixed (e.g. `playwright-<runId>-...`) so {@link cleanupPlaywright}
  * sweeps it. Kinds mirror the old test-trip.ts helpers.
+ *
+ * NO SEEDED TRANSCRIPT, on purpose, for any kind. `onboarding` and
+ * `vehicle_new` are parked mid-onboarding: the wizard under test writes their
+ * chat. `blank` is past onboarding but has no days — it is the "trip with no
+ * plan yet" the Penny flows plan from, and a handoff with no plan after it is
+ * a state real users reach only when planning fails.
  */
 export async function createAdHocTrip(opts: {
   email: string;
@@ -485,9 +497,11 @@ export async function seedCanonicalTrip(opts: {
     endDate: canonical.endISO,
     vehicleId,
   });
+  // The pace too: the fixture does not carry the source's (see
+  // CANONICAL_TRIP_NOT_CARRIED), and the flat default is what it was built at.
   await db
     .update(trips)
-    .set({ ...canonical.meta })
+    .set({ ...canonical.meta, dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY })
     .where(eq(trips.id, trip.id));
 
   const seededLegs: Array<{ id: string; sortOrder: number; title: string }> = [];
@@ -548,6 +562,7 @@ export async function seedCanonicalTrip(opts: {
   }
 
   await assertFixtureTripPossible(trip.id, userId, 'seedCanonicalTrip');
+  await writeSeededTranscript(trip.id);
   return { tripId: trip.id, vehicleId, legs: seededLegs };
 }
 
