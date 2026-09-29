@@ -733,6 +733,39 @@ first, on this branch) leaves the files there for the next person to repair.
 `KNOWN_ORPHANS` is therefore empty and should stay empty. *Enforced by:*
 `migrationJournalGuard.test.ts`.
 
+I20. **Jev may SETTLE a message only as a confident T1; everything else is
+Haiku's call, and Haiku's answer is final (2026-09-29).** With the admin switch
+on, a Jev-compatible typed-decision server is asked the tier question first. Its
+answer stands only for `T1` at top probability ≥ `JEV_T1_MIN` (0.85) with a
+lead ≥ 0.2 over the runner-up, read from `probabilities` — never from the
+backend's own `confidence`, which on Laya is uncalibrated. A T2, a T3, an unsure
+T1, any error, timeout, schema failure or missing config calls the unchanged
+Haiku classifier. A wrong T1 costs one Penny turn; a wrong T3 strikes a real
+driver, and nothing may strike on Jev's word. Switch OFF = no network call at
+all. Jev's `usage_events` rows (`provider: 'jev'`, $0, `meta` with no user text)
+count toward no cap, limit, breaker or trial ceiling. *Enforced by (mutation-checked
+2026-09-29):* `messageGateJev.test.ts` (every outcome through `gateMessage`, incl. mode off =
+zero fetches, the strike being Haiku's, no user text in the row, and the cap
+readers' filters), `jevAdapter.test.ts` (the captured Laya response and the
+settle rule). See `docs/design/jev.md`.
+
+I21. **Jev's config comes from the server environment only, and a local host
+is refused anywhere but a laptop.** `JEV_BASE_URL` is where chat messages go, so
+a loopback / private-range / `.local` host is accepted only when `VERCEL_ENV`
+and `CI` are both unset; production needs https and `JEV_API_KEY`; no
+`NEXT_PUBLIC_JEV*` / `EXPO_PUBLIC_JEV*` name exists; no workflow sets `JEV_*`. A
+rejected config is "not configured" (Haiku), never a throw. *Enforced by:*
+`jevConfigGuard.test.ts` — mutation-checked; it found that `new URL()` rewrites
+`[::ffff:127.0.0.1]` as `[::ffff:7f00:1]`, which the first version let through.
+
+I22. **`src/server/jev/` is a bounded module that answers the message gate and
+nothing else.** Only `messageGate.ts`, `repos/jev.ts`, `api/admin/jev/**` and
+`scripts/` may import it, only through `index.ts`; Penny (`claude.ts`) and the
+replan route may not. A Jev answer anywhere else is not caught by Haiku and is
+not what the privacy page will describe. *Enforced by:* `jevBoundaryGuard.test.ts`
+(mutation-checked: an alias import in `claude.ts`, a relative one in the replan
+route, and a reach past `index.ts` each turn it red).
+
 ## Machine-checked meta (added 2026-09-09)
 
 Not product decisions — the checks that keep this register and CLAUDE.md from

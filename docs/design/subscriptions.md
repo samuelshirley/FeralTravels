@@ -124,6 +124,14 @@ nobody was ever billed for, and would block users who cost us zero.
 Google spend still belongs in the admin panel. It just must not gate
 anything.
 
+**`provider = 'jev'` rows are excluded from every cap too** — the 12-month cap
+and trial ceiling by the same `anthropic%` filter, the spend breakers likewise,
+and the per-user hourly request limit and daily $ cap (`getUserUsageSummary`,
+which counts every provider) by name. They are $0 (a self-hosted GPU is a fixed
+cost) and a Jev call is bookkeeping for a message the gate already counts once;
+counting it would spend a driver's 120/hour on our infrastructure.
+`messageGateJev.test.ts` holds each reader's filter. See `docs/design/jev.md`.
+
 ### Trial ceiling
 
 **$1 of Anthropic spend, or 7 days, whichever comes first.**

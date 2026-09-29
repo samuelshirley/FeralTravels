@@ -18,6 +18,8 @@ import {
   STRIKE_LOCK_MESSAGE,
 } from '@/lib/strikes';
 import { classifyMessage } from './pennyClassifier';
+import { jevClassifyTier } from '@/server/jev';
+import { effectiveJevMode, logJevUsage } from '@/server/repos/jev';
 
 /**
  * The message gate, assembled: is Penny paused for this account, what tier is
@@ -153,13 +155,14 @@ export async function gateMessage(input: {
   });
 
   if (!decision) {
-    const classified = await classifyMessage(
-      input.message,
-      { tripName: vocab.tripName, places: vocab.names },
-      input.userId,
-      input.tripId
-    );
-    decision = { tier: classified.tier, by: classified.by, reason: classified.reason };
+    const ctx = { tripName: vocab.tripName, places: vocab.names };
+    // Jev may settle a confident T1 and nothing else; every other outcome,
+    // and the switch being off, is Haiku exactly as before.
+    decision = await jevSettles(input, ctx);
+    if (!decision) {
+      const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId);
+      decision = { tier: classified.tier, by: classified.by, reason: classified.reason };
+    }
   }
 
   await record(input, decision);
@@ -194,6 +197,39 @@ export async function gateMessage(input: {
     message: gateMessageFor(decision.tier),
     lockedUntil: null,
   };
+}
+
+/**
+ * Jev's turn, when the admin switch puts this account on it.
+ *
+ * Returns a decision ONLY for a confident T1 (`src/server/jev/decide.ts`), and
+ * null for everything else — a T2, a T3, an unsure T1, an error, a timeout, no
+ * config, the switch off — so the caller asks Haiku exactly as it always has
+ * and Haiku's answer is final. Jev can therefore let a message through; it can
+ * never refuse one, and it can never put a strike on anybody.
+ *
+ * With the switch off this is one cached read and no network call at all.
+ * Every Jev call writes its own `provider: 'jev'` row; the gate's own
+ * `penny:gate` row still records the final decision, with `by: 'classifier'`
+ * and a reason naming Jev when Jev decided.
+ */
+async function jevSettles(
+  input: { userId: string; tripId: string; message: string },
+  ctx: { tripName: string | null; places: string[] }
+): Promise<GateDecision | null> {
+  const { mode, source } = await effectiveJevMode(input.userId);
+  if (mode !== 'on') return null;
+
+  const outcome = await jevClassifyTier(input.message, ctx);
+  await logJevUsage({
+    userId: input.userId,
+    tripId: input.tripId,
+    source,
+    outcome,
+    model: outcome.echoedModel,
+  });
+  if (!outcome.settled || outcome.top === null) return null;
+  return { tier: 'T1', by: 'classifier', reason: `jev T1 p=${outcome.top.toFixed(2)}` };
 }
 
 /**
