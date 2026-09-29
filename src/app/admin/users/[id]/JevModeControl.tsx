@@ -3,7 +3,8 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-type Override = 'on' | 'off' | null;
+type Mode = 'off' | 'compare' | 'on';
+type Override = Mode | null;
 
 interface Props {
   userId: string;
@@ -11,23 +12,26 @@ interface Props {
   /** `users.jev_mode` as it stands; null follows the global switch. Undefined when the read failed. */
   override: Override | undefined;
   /** The deployment-wide switch, so "follow" can say what it resolves to. */
-  globalOn: boolean;
+  globalMode: Mode;
 }
+
+const MODE_NAME: Record<Mode, string> = { off: 'Haiku', compare: 'Compare', on: 'Jev' };
 
 /**
  * Which classifier the message gate asks for ONE account.
  *
- * Three states, not a switch, because there are three real answers: follow the
+ * Four states, not a switch, because there are four real answers: follow the
  * global switch (the default, and what almost every account should be), force
- * Jev-first — to try Jev on one test account while the global switch is off —
- * or force Haiku, to hold one account on today's behaviour while it is on.
+ * Haiku — to hold one account on today's behaviour — force Compare, to measure
+ * Jev against Haiku on one account's messages with Haiku still deciding, or
+ * force Jev-first, to try it on one test account while the global switch is off.
  *
  * Same shape as `PaywallEnforceControl`: a ref re-entrancy guard,
  * `router.refresh()` after a change, an inline error. Nothing is confirmed:
  * every state is one tap back, and none of them can refuse a message — Jev may
  * only let one through.
  */
-export default function JevModeControl({ userId, userLabel, override, globalOn }: Props) {
+export default function JevModeControl({ userId, userLabel, override, globalMode }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,9 +62,10 @@ export default function JevModeControl({ userId, userLabel, override, globalOn }
   }
 
   const options: Array<{ value: Override; label: string }> = [
-    { value: null, label: `Follow global (${globalOn ? 'Jev' : 'Haiku'})` },
-    { value: 'on', label: 'Jev first' },
+    { value: null, label: `Follow global (${MODE_NAME[globalMode]})` },
     { value: 'off', label: 'Haiku only' },
+    { value: 'compare', label: 'Compare' },
+    { value: 'on', label: 'Jev first' },
   ];
 
   return (

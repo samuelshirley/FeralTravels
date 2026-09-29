@@ -21,14 +21,23 @@ import { JEV_PROVIDER, microcentsToDollars } from './usage';
  *
  * Copied from `payments/switch.ts`'s paywall switch, for the same reason in a
  * gentler form: OFF is today's behaviour, byte for byte, so a read that failed
- * and answered "off" costs one Haiku call. Anything other than exactly `'on'`
- * or `'off'` is not a value — it is read as the default (global: off; user:
- * follow the global).
+ * and answered "off" costs one Haiku call. Anything other than exactly `'on'`,
+ * `'compare'` or `'off'` is not a value — it is read as the default (global:
+ * off; user: follow the global).
+ *
+ * ── Three modes ──
+ *
+ *  - `'off'`: Haiku only. No network call to Jev.
+ *  - `'compare'`: Haiku decides every message exactly as `'off'`; Jev is asked
+ *    the same question alongside and its answer is only LOGGED, beside
+ *    Haiku's, so /admin can say whether Jev-first would be safe.
+ *  - `'on'`: Jev first; it may settle a confident T1, else Haiku.
  */
 
 export const JEV_META_KEY = 'jev_mode';
 
-export type JevMode = 'on' | 'off';
+export const JEV_MODES = ['off', 'compare', 'on'] as const;
+export type JevMode = (typeof JEV_MODES)[number];
 /** `null` = follow the global switch. */
 export type JevOverride = JevMode | null;
 
@@ -43,14 +52,18 @@ export function invalidateJevSwitch(): void {
   cached = null;
 }
 
-/** Only exactly `'on'` is on. */
-export function jevModeFromValue(value: string | null | undefined): JevMode {
-  return value === 'on' ? 'on' : 'off';
+function isJevMode(value: string | null | undefined): value is JevMode {
+  return (JEV_MODES as readonly string[]).includes(value as string);
 }
 
-/** Exactly `'on'` or `'off'` overrides; anything else follows the global. */
+/** Exactly `'on'` or `'compare'`; anything else is OFF. */
+export function jevModeFromValue(value: string | null | undefined): JevMode {
+  return isJevMode(value) ? value : 'off';
+}
+
+/** Exactly `'on'`, `'compare'` or `'off'` overrides; anything else follows the global. */
 export function jevOverrideFromValue(value: string | null | undefined): JevOverride {
-  return value === 'on' || value === 'off' ? value : null;
+  return isJevMode(value) ? value : null;
 }
 
 /** The user's override if set, else the global switch. */
@@ -129,23 +142,28 @@ export async function effectiveJevMode(
   }
 }
 
-/** How many accounts ignore the global switch, by direction. For /admin. */
-export async function countJevOverrides(): Promise<{ on: number; off: number }> {
+/** How many accounts ignore the global switch, by mode. For /admin. */
+export async function countJevOverrides(): Promise<Record<JevMode, number>> {
   const [row] = await db
     .select({
       on: sql<number>`COUNT(*) FILTER (WHERE ${users.jevMode} = 'on')::int`,
+      compare: sql<number>`COUNT(*) FILTER (WHERE ${users.jevMode} = 'compare')::int`,
       off: sql<number>`COUNT(*) FILTER (WHERE ${users.jevMode} = 'off')::int`,
     })
     .from(users);
-  return { on: Number(row?.on ?? 0), off: Number(row?.off ?? 0) };
+  return {
+    on: Number(row?.on ?? 0),
+    compare: Number(row?.compare ?? 0),
+    off: Number(row?.off ?? 0),
+  };
 }
 
 // ── The ledger ──────────────────────────────────────────────────────────────
 
 /**
- * `usage_events.meta` for a Jev row. EXACTLY these keys — built field by field
- * from the outcome rather than spread from it, so nothing the outcome might
- * carry (and certainly not the driver's message) can ride along.
+ * `usage_events.meta` for a Jev-first row. EXACTLY these keys — built field by
+ * field from the outcome rather than spread from it, so nothing the outcome
+ * might carry (and certainly not the driver's message) can ride along.
  * `messageGateJev.test.ts` holds that.
  */
 export interface JevUsageMeta {
@@ -175,8 +193,55 @@ export function jevUsageMeta(source: JevModeSource, o: JevTierOutcome): JevUsage
 }
 
 /**
+ * `usage_events.meta` for a compare-mode row: Jev's answer beside Haiku's.
+ * Same key-by-key rule as `jevUsageMeta`, and never user text.
+ *
+ * `settled` is always false — in compare mode Jev settles nothing.
+ * `wouldSettle` is whether the Jev-first rule (`settlesAsT1`) would have let
+ * this message through without Haiku. `agree` is Jev's CHOICE against Haiku's
+ * TIER, false when Jev gave no answer.
+ */
+export interface JevCompareMeta {
+  mode: 'compare';
+  source: JevModeSource;
+  choice: MessageTier | null;
+  top: number | null;
+  margin: number | null;
+  latencyMs: number | null;
+  settled: false;
+  wouldSettle: boolean;
+  haikuTier: MessageTier;
+  agree: boolean;
+  deferredReason: string | null;
+  echoedModel: string | null;
+}
+
+export function jevCompareMeta(
+  source: JevModeSource,
+  o: JevTierOutcome,
+  haikuTier: MessageTier
+): JevCompareMeta {
+  const m = jevUsageMeta(source, o);
+  return {
+    mode: 'compare',
+    source,
+    choice: m.choice,
+    top: m.top,
+    margin: m.margin,
+    latencyMs: m.latencyMs,
+    settled: false,
+    wouldSettle: o.settled,
+    haikuTier,
+    agree: o.choice !== null && o.choice === haikuTier,
+    deferredReason: m.deferredReason,
+    echoedModel: m.echoedModel,
+  };
+}
+
+/**
  * One row per Jev call: `provider: 'jev'`, cost 0, tokens, success/error,
- * `meta`. Never throws — a bookkeeping failure must not refuse a message.
+ * `meta`. `compare` set = a compare-mode row, carrying Haiku's tier.
+ * Never throws — a bookkeeping failure must not refuse a message.
  */
 export async function logJevUsage(input: {
   userId: string;
@@ -184,6 +249,7 @@ export async function logJevUsage(input: {
   source: JevModeSource;
   outcome: JevTierOutcome;
   model: string | null;
+  compare?: { haikuTier: MessageTier };
 }): Promise<void> {
   const o = input.outcome;
   try {
@@ -198,7 +264,9 @@ export async function logJevUsage(input: {
       costMicrocents: 0,
       success: o.success,
       errorMessage: o.errorMessage === null ? null : o.errorMessage.slice(0, 200),
-      meta: jevUsageMeta(input.source, o),
+      meta: input.compare
+        ? jevCompareMeta(input.source, o, input.compare.haikuTier)
+        : jevUsageMeta(input.source, o),
     });
   } catch (err) {
     console.error('[repos/jev] could not record the Jev call', err);
@@ -258,8 +326,14 @@ export interface JevStats {
   avoidedUsd: number;
 }
 
+/** Compare-mode rows carry `meta.mode = 'compare'`; Jev-first rows carry the source. */
+const isCompareRow = sql`${usageEvents.meta}->>'mode' = 'compare'`;
+const isJevFirstRow = sql`COALESCE(${usageEvents.meta}->>'mode', '') <> 'compare'`;
+
 /**
- * Jev's last N days, for the switch on /admin.
+ * Jev-first's last N days, for the switch on /admin. Compare rows are
+ * excluded: Jev settled none of them, and counting them would read as
+ * "passed to Haiku".
  *
  * "Dollars avoided" is settled × the average Haiku classifier call over the
  * last 30 days. The classifier's `usage_events` rows carry the same model id
@@ -279,7 +353,9 @@ export async function getJevStats(days = 7): Promise<JevStats> {
       p95: sql<number | null>`percentile_cont(0.95) WITHIN GROUP (ORDER BY (${usageEvents.meta}->>'latencyMs')::float8)`,
     })
     .from(usageEvents)
-    .where(and(eq(usageEvents.provider, JEV_PROVIDER), gte(usageEvents.createdAt, since)));
+    .where(
+      and(eq(usageEvents.provider, JEV_PROVIDER), gte(usageEvents.createdAt, since), isJevFirstRow)
+    );
 
   const costSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const [cost] = await db
@@ -324,4 +400,140 @@ export async function getJevStats(days = 7): Promise<JevStats> {
     classifierCallRows: rows,
     avoidedUsd: settled * classifierCallUsd,
   };
+}
+
+// ── Compare mode, for /admin ────────────────────────────────────────────────
+
+const TIERS: readonly MessageTier[] = ['T1', 'T2', 'T3'];
+
+function asTier(v: string | null): MessageTier | null {
+  return v !== null && (TIERS as readonly string[]).includes(v) ? (v as MessageTier) : null;
+}
+
+/** One group of compare rows, as `getJevCompareStats` reads them. */
+export interface JevCompareGroup {
+  haikuTier: string | null;
+  choice: string | null;
+  wouldSettle: boolean;
+  success: boolean;
+  timedOut: boolean;
+  n: number;
+}
+
+export interface JevCompareStats {
+  days: number;
+  /** Every compare row: one per message both were asked about. */
+  compared: number;
+  /** Rows where Jev gave an answer; the base of the agreement rate. */
+  answered: number;
+  errors: number;
+  timeouts: number;
+  /** Jev's choice === Haiku's tier. */
+  agreed: number;
+  /** matrix[haikuTier][jevChoice] = count, answered rows only. */
+  matrix: Record<MessageTier, Record<MessageTier, number>>;
+  /** Rows the Jev-first rule would have let through without Haiku. */
+  wouldSettle: number;
+  /**
+   * THE number: of those, how many Haiku refused (T2 or T3). Each is a message
+   * Jev-first would have handed to Penny that Haiku kept from her.
+   */
+  wouldPassHaikuRefused: number;
+  wouldPassHaikuT2: number;
+  wouldPassHaikuT3: number;
+  /** Haiku-T1 rows, and how many of them Jev-first would have settled. */
+  haikuT1: number;
+  haikuT1WouldSettle: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+}
+
+/** Pure: the grouped rows → the numbers /admin shows. */
+export function summariseJevCompare(
+  groups: JevCompareGroup[],
+  days: number,
+  latency: { p50: number | null; p95: number | null } = { p50: null, p95: null }
+): JevCompareStats {
+  const row = (): Record<MessageTier, number> => ({ T1: 0, T2: 0, T3: 0 });
+  const matrix: Record<MessageTier, Record<MessageTier, number>> = { T1: row(), T2: row(), T3: row() };
+  const s: JevCompareStats = {
+    days,
+    compared: 0,
+    answered: 0,
+    errors: 0,
+    timeouts: 0,
+    agreed: 0,
+    matrix,
+    wouldSettle: 0,
+    wouldPassHaikuRefused: 0,
+    wouldPassHaikuT2: 0,
+    wouldPassHaikuT3: 0,
+    haikuT1: 0,
+    haikuT1WouldSettle: 0,
+    p50Ms: latency.p50 === null ? null : Math.round(latency.p50),
+    p95Ms: latency.p95 === null ? null : Math.round(latency.p95),
+  };
+  for (const g of groups) {
+    const n = Number(g.n);
+    const haiku = asTier(g.haikuTier);
+    const jev = asTier(g.choice);
+    s.compared += n;
+    if (!g.success) s.errors += n;
+    if (g.timedOut) s.timeouts += n;
+    if (haiku === 'T1') s.haikuT1 += n;
+    if (haiku && jev) {
+      s.answered += n;
+      matrix[haiku][jev] += n;
+      if (haiku === jev) s.agreed += n;
+    }
+    if (g.wouldSettle) {
+      s.wouldSettle += n;
+      if (haiku === 'T1') s.haikuT1WouldSettle += n;
+      if (haiku === 'T2') s.wouldPassHaikuT2 += n;
+      if (haiku === 'T3') s.wouldPassHaikuT3 += n;
+    }
+  }
+  s.wouldPassHaikuRefused = s.wouldPassHaikuT2 + s.wouldPassHaikuT3;
+  return s;
+}
+
+/**
+ * Compare mode's last N days: Haiku's tier against Jev's choice on the same
+ * messages. Grouped in SQL, summed in `summariseJevCompare`.
+ */
+export async function getJevCompareStats(days = 7): Promise<JevCompareStats> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const where = and(
+    eq(usageEvents.provider, JEV_PROVIDER),
+    gte(usageEvents.createdAt, since),
+    isCompareRow
+  );
+  const haikuTier = sql<string | null>`${usageEvents.meta}->>'haikuTier'`;
+  const choice = sql<string | null>`${usageEvents.meta}->>'choice'`;
+  const wouldSettle = sql<boolean>`COALESCE((${usageEvents.meta}->>'wouldSettle')::boolean, false)`;
+  const timedOut = sql<boolean>`COALESCE(${usageEvents.meta}->>'deferredReason' = 'timeout', false)`;
+
+  const groups = await db
+    .select({
+      haikuTier,
+      choice,
+      wouldSettle,
+      success: usageEvents.success,
+      timedOut,
+      n: sql<number>`COUNT(*)::int`,
+    })
+    .from(usageEvents)
+    .where(where)
+    .groupBy(haikuTier, choice, wouldSettle, usageEvents.success, timedOut);
+
+  const [lat] = await db
+    .select({
+      p50: sql<number | null>`percentile_cont(0.5) WITHIN GROUP (ORDER BY (${usageEvents.meta}->>'latencyMs')::float8)`,
+      p95: sql<number | null>`percentile_cont(0.95) WITHIN GROUP (ORDER BY (${usageEvents.meta}->>'latencyMs')::float8)`,
+    })
+    .from(usageEvents)
+    .where(and(where, eq(usageEvents.success, true)));
+
+  const num = (v: number | null | undefined) => (v === null || v === undefined ? null : Number(v));
+  return summariseJevCompare(groups, days, { p50: num(lat?.p50), p95: num(lat?.p95) });
 }

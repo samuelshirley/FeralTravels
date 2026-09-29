@@ -94,8 +94,9 @@ export const users = pgTable('users', {
   paywallEnforced: boolean('paywall_enforced').default(false).notNull(),
   /**
    * Which classifier the message gate asks for THIS account: `null` follows the
-   * global `app_meta.jev_mode` row, `'on'` forces Jev-first, `'off'` forces
-   * Haiku only. Anything else reads as null. Read and written only through
+   * global `app_meta.jev_mode` row, `'on'` forces Jev-first, `'compare'`
+   * forces compare (Haiku decides, Jev only logged), `'off'` forces Haiku
+   * only. Anything else reads as null. Read and written only through
    * `src/server/repos/jev.ts`; see `docs/design/jev.md`.
    */
   jevMode: text('jev_mode'),
@@ -785,7 +786,8 @@ export const usageEvents = pgTable(
     /**
      * Structured facts about the call, for rows whose provider has any. Only
      * `provider = 'jev'` writes it today: `{mode, choice, top, margin,
-     * latencyMs, settled, deferredReason, echoedModel}` — never user text.
+     * latencyMs, settled, deferredReason, echoedModel}`, plus `source,
+     * wouldSettle, haikuTier, agree` on compare rows — never user text.
      */
     meta: jsonb('meta'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

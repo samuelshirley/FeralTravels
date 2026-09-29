@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireAdmin, errorResponse } from '@/server/auth/guards';
-import { setUserJevOverride } from '@/server/repos/jev';
+import { JEV_MODES, setUserJevOverride } from '@/server/repos/jev';
 import { logUsageEvent } from '@/server/repos/usage';
 
 export const runtime = 'nodejs';
@@ -8,7 +8,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * One account's Jev override, from /admin/users/[id]: `null` follows the
- * global switch, 'on' forces Jev-first, 'off' forces Haiku only.
+ * global switch, 'on' forces Jev-first, 'compare' forces Haiku-decides with
+ * Jev logged beside it, 'off' forces Haiku only.
  *
  * The sibling of `/api/admin/jev`, as `/api/admin/paywall/user` is of
  * `/api/admin/paywall`: it lets Jev be tried on one account while the global
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic';
  */
 const schema = z.object({
   userId: z.string().min(1),
-  mode: z.enum(['on', 'off']).nullable(),
+  mode: z.enum(JEV_MODES).nullable(),
 });
 
 export async function POST(req: Request) {

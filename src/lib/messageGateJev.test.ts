@@ -16,16 +16,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *  2. Mode off makes ZERO network calls and is Haiku, as today.
  *  3. The Jev row in `usage_events` carries no user text.
  *  4. Jev rows count toward no cap, limit, breaker or trial ceiling.
+ *  5. COMPARE mode: Haiku decides every message exactly as mode off, Jev is
+ *     asked at the same moment, and its answer is only written down — beside
+ *     Haiku's tier, never instead of it. And /admin's reading of those rows.
  */
 
 const h = vi.hoisted(() => {
   const inserted: Array<Record<string, unknown>> = [];
-  const state = { failInsert: false };
-  // A drizzle stand-in: every chain resolves to [], and `.values(row)` is
-  // captured so the real `logJevUsage` can be asserted on.
+  const wheres: unknown[] = [];
+  const state: { failInsert: boolean; results: unknown[][] } = { failInsert: false, results: [] };
+  // A drizzle stand-in: every chain resolves to the next queued result (or
+  // []), `.where(x)` is captured so the admin queries' filters can be read,
+  // and `.values(row)` is captured so the real `logJevUsage` can be asserted on.
   const chain: unknown = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (resolve: (v: unknown[]) => void) => resolve([]);
+      if (prop === 'then') {
+        return (resolve: (v: unknown[]) => void) => resolve(state.results.shift() ?? []);
+      }
+      if (prop === 'where') {
+        return (w: unknown) => {
+          wheres.push(w);
+          return chain;
+        };
+      }
       if (prop === 'values') {
         return (row: Record<string, unknown>) => {
           if (state.failInsert) throw new Error('insert failed');
@@ -39,7 +52,7 @@ const h = vi.hoisted(() => {
       return chain;
     },
   });
-  return { chain, inserted, state };
+  return { chain, inserted, wheres, state };
 });
 
 vi.mock('server-only', () => ({}));
@@ -60,9 +73,20 @@ vi.mock('@/server/repos/jev', async (importOriginal) => {
   return { ...real, effectiveJevMode: vi.fn() };
 });
 
-import { gateMessage } from '@/server/messageGate';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+
+import { gateMessage, type GateOutcome } from '@/server/messageGate';
 import { classifyMessage } from '@/server/pennyClassifier';
-import { effectiveJevMode, jevModeFromValue, jevOverrideFromValue, resolveJevMode } from '@/server/repos/jev';
+import {
+  effectiveJevMode,
+  getJevCompareStats,
+  getJevStats,
+  jevModeFromValue,
+  jevOverrideFromValue,
+  resolveJevMode,
+  summariseJevCompare,
+} from '@/server/repos/jev';
 import { getStrikeState, setStrikeState } from '@/server/repos/users';
 import { logUsageEvent } from '@/server/repos/usage';
 import { buildClassifyContent, CLASSIFY_SYSTEM } from '@/lib/pennyClassifierPrompt';
@@ -116,7 +140,9 @@ function gateRow() {
 
 beforeEach(() => {
   h.inserted.length = 0;
+  h.wheres.length = 0;
   h.state.failInsert = false;
+  h.state.results = [];
   vi.clearAllMocks();
   vi.stubEnv('JEV_BASE_URL', 'https://jev.example.test');
   vi.stubEnv('JEV_API_KEY', 'test-key');
@@ -326,26 +352,31 @@ describe('the Jev row carries no user text', () => {
 });
 
 describe('the switch rules', () => {
-  it('only exactly "on" is on, globally', () => {
+  it('only exactly "on" or "compare" is not off, globally', () => {
     expect(jevModeFromValue('on')).toBe('on');
-    for (const v of ['ON', '1', 'true', 'yes', ' on', '', null, undefined]) {
+    expect(jevModeFromValue('compare')).toBe('compare');
+    for (const v of ['ON', 'COMPARE', 'Compare', ' compare', '1', 'true', 'yes', ' on', '', null, undefined]) {
       expect(jevModeFromValue(v), String(v)).toBe('off');
     }
   });
 
-  it('a per-user value is on, off, or follows the global', () => {
+  it('a per-user value is on, compare, off, or follows the global', () => {
     expect(jevOverrideFromValue('on')).toBe('on');
+    expect(jevOverrideFromValue('compare')).toBe('compare');
     expect(jevOverrideFromValue('off')).toBe('off');
-    for (const v of ['ON', 'Off', '1', '', null, undefined]) {
+    for (const v of ['ON', 'Off', 'COMPARE', '1', '', null, undefined]) {
       expect(jevOverrideFromValue(v), String(v)).toBeNull();
     }
   });
 
-  it('the user override wins over the global switch, both ways', () => {
+  it('the user override wins over the global switch, every way', () => {
     expect(resolveJevMode('off', null)).toEqual({ mode: 'off', source: 'global' });
     expect(resolveJevMode('on', null)).toEqual({ mode: 'on', source: 'global' });
+    expect(resolveJevMode('compare', null)).toEqual({ mode: 'compare', source: 'global' });
     expect(resolveJevMode('off', 'on')).toEqual({ mode: 'on', source: 'user' });
     expect(resolveJevMode('on', 'off')).toEqual({ mode: 'off', source: 'user' });
+    expect(resolveJevMode('on', 'compare')).toEqual({ mode: 'compare', source: 'user' });
+    expect(resolveJevMode('compare', 'off')).toEqual({ mode: 'off', source: 'user' });
   });
 });
 
@@ -371,5 +402,272 @@ describe('jev rows count toward no cap, limit, breaker or trial ceiling', () => 
     const breakers = read('src/server/payments/breakerCheck.ts');
     expect(breakers).toMatch(/\$\{usageEvents\.provider\} LIKE 'anthropic%'/);
     expect(read('src/server/payments/testAccounts.ts')).toMatch(/LIKE 'anthropic%'/);
+  });
+});
+
+// ── Compare mode ────────────────────────────────────────────────────────────
+
+describe('compare mode: Haiku decides, Jev is only written down', () => {
+  beforeEach(() => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+  });
+
+  it('a confident Jev T1 (0.99) against a Haiku T3: T3, the strike, Haiku called', async () => {
+    useFetch(ok(jevBody('T1', { T1: 0.99, T2: 0.005, T3: 0.005 })));
+    haikuSays('T3');
+    const out = await run(1);
+
+    expect(classifyMessage).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ tier: 'T3', by: 'classifier', reason: 'haiku T3', blocked: true });
+    expect(setStrikeState).toHaveBeenCalledWith(USER, expect.objectContaining({ strikes: 2 }));
+    expect(gateRow()).toMatchObject({ model: 'T3', errorMessage: 'T3 by classifier: haiku T3' });
+
+    const rows = jevRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      provider: 'jev',
+      costMicrocents: 0,
+      success: true,
+      meta: { mode: 'compare', choice: 'T1', top: 0.99, wouldSettle: true, settled: false, haikuTier: 'T3', agree: false },
+    });
+  });
+
+  it('the reverse: a confident Jev T3 against a Haiku T1: T1, no strike', async () => {
+    useFetch(ok(jevBody('T3', { T1: 0.005, T2: 0.005, T3: 0.99 })));
+    haikuSays('T1');
+    const out = await run(2);
+
+    expect(classifyMessage).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ tier: 'T1', by: 'classifier', reason: 'haiku T1', blocked: false, lockedUntil: null });
+    expect(setStrikeState).toHaveBeenCalledWith(USER, expect.objectContaining({ strikes: 0 }));
+    expect(jevRows()[0].meta).toMatchObject({ choice: 'T3', wouldSettle: false, haikuTier: 'T1', agree: false });
+  });
+
+  it('agreeing with Haiku changes nothing either: the decision is still Haiku\'s', async () => {
+    useFetch(ok(jevBody('T1', { T1: 0.99, T2: 0.005, T3: 0.005 })));
+    haikuSays('T1');
+    const out = await run();
+    expect(classifyMessage).toHaveBeenCalledTimes(1);
+    expect(out.reason).toBe('haiku T1');
+  });
+
+  it('asks Jev and Haiku at the same moment: the fetch is out before Haiku answers', async () => {
+    let releaseHaiku!: () => void;
+    let fetchesWhenHaikuAsked = -1;
+    vi.mocked(classifyMessage).mockImplementation(() => {
+      fetchesWhenHaikuAsked = fetchMock.mock.calls.length;
+      return new Promise((resolve) => {
+        releaseHaiku = () => resolve({ tier: 'T2', by: 'classifier', reason: 'haiku T2', microcents: 1 });
+      });
+    });
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
+    const pending = gateMessage({ userId: USER, tripId: TRIP, message: MESSAGE });
+
+    await vi.waitFor(() => expect(classifyMessage).toHaveBeenCalledTimes(1));
+    expect(fetchesWhenHaikuAsked).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseHaiku();
+    const out = await pending;
+    expect(out.tier).toBe('T2');
+    expect(jevRows()[0].meta).toMatchObject({ haikuTier: 'T2', choice: 'T1', agree: false });
+  });
+
+  it('waits for a Jev answer that lands after Haiku, inside Jev\'s timeout', async () => {
+    useFetch(
+      () =>
+        new Promise<Response>((resolve) =>
+          setTimeout(() => resolve(new Response(JSON.stringify(jevBody('T2', { T1: 0.1, T2: 0.8, T3: 0.1 })))), 15),
+        ),
+    );
+    haikuSays('T2');
+    await run();
+    expect(jevRows()[0]).toMatchObject({ success: true, meta: { choice: 'T2', haikuTier: 'T2', agree: true } });
+  });
+
+  it('never waits past Jev\'s own timeout, even for a backend that ignores the abort', async () => {
+    vi.stubEnv('JEV_TIMEOUT_MS', '30');
+    useFetch(() => new Promise<Response>(() => {})); // never answers, never rejects
+    haikuSays('T3');
+    const started = Date.now();
+    const out = await run(1);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(out).toMatchObject({ tier: 'T3', reason: 'haiku T3' });
+    expect(jevRows()[0]).toMatchObject({
+      success: false,
+      meta: { mode: 'compare', deferredReason: 'timeout', choice: null, wouldSettle: false, haikuTier: 'T3', agree: false },
+    });
+  });
+
+  /**
+   * A Jev failure in compare mode is one `success: false` row and nothing
+   * else: the outcome, the strike write and the gate row are byte for byte
+   * what mode off produces for the same Haiku answer.
+   */
+  const failures: Array<{ name: string; fetch: (url: string, init: RequestInit) => Promise<Response>; env?: Record<string, string>; reason: string }> = [
+    { name: 'HTTP 422', fetch: async () => new Response('{}', { status: 422 }), reason: 'http_422' },
+    { name: 'HTTP 529', fetch: async () => new Response('{}', { status: 529 }), reason: 'http_529' },
+    { name: 'network error', fetch: async () => { throw new TypeError('fetch failed'); }, reason: 'network' },
+    { name: 'bad JSON', fetch: async () => new Response('{"answers": {', { status: 200 }), reason: 'bad_json' },
+    {
+      name: 'timeout',
+      env: { JEV_TIMEOUT_MS: '20' },
+      fetch: (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        }),
+      reason: 'timeout',
+    },
+    { name: 'no config', fetch: ok(jevBody('T1', { T1: 1 })), env: { JEV_BASE_URL: '' }, reason: 'not_configured' },
+  ];
+
+  describe.each(failures)('Jev fails ($name)', ({ fetch, env, reason }) => {
+    it.each(['T1', 'T2', 'T3'] as const)('the outcome is mode off\'s, for Haiku %s', async (haikuTier) => {
+      for (const [k, v] of Object.entries(env ?? {})) vi.stubEnv(k, v);
+
+      async function once(mode: 'off' | 'compare') {
+        vi.clearAllMocks();
+        h.inserted.length = 0;
+        vi.mocked(effectiveJevMode).mockResolvedValue({ mode, source: 'global' });
+        useFetch(fetch);
+        haikuSays(haikuTier);
+        const out: GateOutcome = await run(1);
+        return {
+          out,
+          strikes: vi.mocked(setStrikeState).mock.calls,
+          gate: gateRow(),
+          haikuCalls: vi.mocked(classifyMessage).mock.calls.length,
+          jev: jevRows(),
+        };
+      }
+
+      const off = await once('off');
+      const compare = await once('compare');
+
+      expect(compare.out).toEqual(off.out);
+      expect(compare.strikes).toEqual(off.strikes);
+      expect(compare.gate).toEqual(off.gate);
+      expect(compare.haikuCalls).toBe(1);
+      expect(off.jev).toHaveLength(0);
+      expect(compare.jev).toHaveLength(1);
+      expect(compare.jev[0]).toMatchObject({
+        provider: 'jev',
+        success: false,
+        meta: { mode: 'compare', deferredReason: reason, wouldSettle: false, haikuTier, agree: false },
+      });
+    });
+  });
+
+  it.each([
+    ['confident T1', jevBody('T1', { T1: 0.99, T2: 0.005, T3: 0.005 }), 'T1', { wouldSettle: true, agree: true }],
+    ['unsure T1', jevBody('T1', { T1: 0.6, T2: 0.3, T3: 0.1 }), 'T1', { wouldSettle: false, agree: true }],
+    ['T2 vs T2', jevBody('T2', { T1: 0.1, T2: 0.8, T3: 0.1 }), 'T2', { wouldSettle: false, agree: true }],
+    ['T3 vs T3', jevBody('T3', { T1: 0.05, T2: 0.05, T3: 0.9 }), 'T3', { wouldSettle: false, agree: true }],
+    ['T2 vs T3', jevBody('T2', { T1: 0.1, T2: 0.8, T3: 0.1 }), 'T3', { wouldSettle: false, agree: false }],
+    ['confident T1 vs T2', jevBody('T1', { T1: 0.95, T2: 0.03, T3: 0.02 }), 'T2', { wouldSettle: true, agree: false }],
+  ] as const)('meta for %s: haikuTier, agree and wouldSettle', async (_name, body, haikuTier, want) => {
+    useFetch(ok(body));
+    haikuSays(haikuTier);
+    await run();
+    expect(jevRows()[0].meta).toMatchObject({ mode: 'compare', source: 'global', haikuTier, ...want });
+  });
+
+  it('a per-user compare row records where the mode came from', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'user' });
+    haikuSays('T1');
+    await run();
+    expect(jevRows()[0].meta).toMatchObject({ mode: 'compare', source: 'user' });
+  });
+
+  it('the compare row is exactly its whitelisted keys, and no user text', async () => {
+    useFetch(
+      ok({
+        model: MESSAGE,
+        answers: { tier: { type: 'choice', choice: 'T2', probabilities: { T2: 1 }, note: MESSAGE } },
+        usage: { input_tokens: 5, output_tokens: 0 },
+        echo: MESSAGE,
+      }),
+    );
+    haikuSays('T2');
+    await run();
+    const [row] = jevRows();
+    expect(Object.keys(row.meta as object).sort()).toEqual(
+      [
+        'agree', 'choice', 'deferredReason', 'echoedModel', 'haikuTier', 'latencyMs',
+        'margin', 'mode', 'settled', 'source', 'top', 'wouldSettle',
+      ].sort(),
+    );
+    expect(row.meta).toMatchObject({ haikuTier: 'T2', agree: true, wouldSettle: false, echoedModel: null });
+    expect(JSON.stringify(row)).not.toContain('cheeseburger');
+  });
+});
+
+// ── /admin's reading of the compare rows ────────────────────────────────────
+
+const dialect = new PgDialect();
+const whereSql = (i: number) => dialect.sqlToQuery(h.wheres[i] as SQL).sql;
+
+describe('the compare stats', () => {
+  const groups = [
+    // haikuTier, choice, wouldSettle, success, timedOut, n
+    { haikuTier: 'T1', choice: 'T1', wouldSettle: true, success: true, timedOut: false, n: 120 },
+    { haikuTier: 'T1', choice: 'T1', wouldSettle: false, success: true, timedOut: false, n: 20 },
+    { haikuTier: 'T1', choice: 'T2', wouldSettle: false, success: true, timedOut: false, n: 8 },
+    { haikuTier: 'T1', choice: 'T3', wouldSettle: false, success: true, timedOut: false, n: 2 },
+    { haikuTier: 'T2', choice: 'T1', wouldSettle: true, success: true, timedOut: false, n: 4 },
+    { haikuTier: 'T2', choice: 'T1', wouldSettle: false, success: true, timedOut: false, n: 2 },
+    { haikuTier: 'T2', choice: 'T2', wouldSettle: false, success: true, timedOut: false, n: 22 },
+    { haikuTier: 'T2', choice: 'T3', wouldSettle: false, success: true, timedOut: false, n: 2 },
+    { haikuTier: 'T3', choice: 'T1', wouldSettle: true, success: true, timedOut: false, n: 1 },
+    { haikuTier: 'T3', choice: 'T2', wouldSettle: false, success: true, timedOut: false, n: 1 },
+    { haikuTier: 'T3', choice: 'T3', wouldSettle: false, success: true, timedOut: false, n: 10 },
+    { haikuTier: 'T1', choice: null, wouldSettle: false, success: false, timedOut: true, n: 5 },
+    { haikuTier: 'T3', choice: null, wouldSettle: false, success: false, timedOut: false, n: 3 },
+  ];
+
+  it('reads only compare rows, and sums them into the table and the headline', async () => {
+    h.state.results = [groups, [{ p50: 87.6, p95: 300.2 }]];
+    const s = await getJevCompareStats(7);
+
+    expect(whereSql(0)).toContain(`"usage_events"."meta"->>'mode' = 'compare'`);
+    expect(whereSql(0)).toContain(`"usage_events"."provider" = $`);
+    expect(whereSql(1)).toContain(`->>'mode' = 'compare'`);
+
+    expect(s).toMatchObject({
+      days: 7,
+      compared: 200,
+      answered: 192,
+      errors: 8,
+      timeouts: 5,
+      agreed: 172,
+      wouldSettle: 125,
+      wouldPassHaikuRefused: 5,
+      wouldPassHaikuT2: 4,
+      wouldPassHaikuT3: 1,
+      haikuT1: 155,
+      haikuT1WouldSettle: 120,
+      p50Ms: 88,
+      p95Ms: 300,
+    });
+    expect(s.matrix).toEqual({
+      T1: { T1: 140, T2: 8, T3: 2 },
+      T2: { T1: 6, T2: 22, T3: 2 },
+      T3: { T1: 1, T2: 1, T3: 10 },
+    });
+  });
+
+  it('an unknown label is counted as compared and nowhere in the table', () => {
+    const s = summariseJevCompare(
+      [{ haikuTier: 'T1', choice: 'T4', wouldSettle: false, success: true, timedOut: false, n: 3 }],
+      7,
+    );
+    expect(s).toMatchObject({ compared: 3, answered: 0, agreed: 0 });
+    expect(s.matrix.T1).toEqual({ T1: 0, T2: 0, T3: 0 });
+  });
+
+  it('Jev-first stats leave the compare rows out: Jev settled none of them', async () => {
+    await getJevStats(7);
+    expect(whereSql(0)).toContain(`COALESCE("usage_events"."meta"->>'mode', '') <> 'compare'`);
   });
 });

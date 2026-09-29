@@ -137,3 +137,57 @@ export async function jevClassifyTier(
     });
   }
 }
+
+/**
+ * Compare mode: START Jev's answer now, read it later — and never wait past
+ * Jev's own timeout, counted from now.
+ *
+ * The fetch goes out before this returns, so the caller can ask Haiku in the
+ * meantime and pay only for whatever of Jev's timeout is left once Haiku has
+ * answered. The client's AbortController already bounds the exchange; the
+ * deadline here bounds the WAIT as well, so a backend (or a fetch) that
+ * ignores the abort still costs the driver no more than `JEV_TIMEOUT_MS`.
+ * Like `jevClassifyTier`, the reader never throws.
+ */
+export function startJevClassifyTier(
+  message: string,
+  ctx: ClassifyContext,
+  deps: {
+    fetchImpl?: FetchLike;
+    env?: Record<string, string | undefined>;
+    clock?: () => number;
+  } = {}
+): () => Promise<JevTierOutcome> {
+  const clock = deps.clock ?? Date.now;
+  const started = clock();
+  let budgetMs = 0;
+  try {
+    const cfg = readJevConfig(deps.env);
+    budgetMs = cfg.ok ? cfg.config.timeoutMs : 0;
+  } catch (err) {
+    console.error('[jev] could not read the config for the compare deadline', err);
+  }
+  const pending = jevClassifyTier(message, ctx, deps);
+
+  return async () => {
+    const left = Math.max(0, budgetMs - (clock() - started));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<JevTierOutcome>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve(
+            unsettled('timeout', {
+              latencyMs: clock() - started,
+              errorMessage: `no answer within ${budgetMs} ms`,
+            })
+          ),
+        left
+      );
+    });
+    try {
+      return await Promise.race([pending, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}

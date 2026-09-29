@@ -153,12 +153,12 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
 
   // The Jev override. A failed read is `undefined` and the control says so,
   // rather than showing "follow global" for a value nobody could read.
-  const [jevOverride, jevGlobalOn] = await Promise.all([
+  const [jevOverride, jevGlobalMode] = await Promise.all([
     getUserJevOverride(params.id).catch((err) => {
       console.error('[admin/users] could not read the Jev override', err);
       return undefined;
     }),
-    globalJevMode().then((m) => m === 'on'),
+    globalJevMode(),
   ]);
 
   const spend12moUsd = spend12mo / MICROCENTS_PER_DOLLAR;
@@ -524,7 +524,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               userId={detail.user.id}
               userLabel={detail.user.email || detail.user.name || detail.user.id}
               override={jevOverride}
-              globalOn={jevGlobalOn}
+              globalMode={jevGlobalMode}
             />
           </div>
 
