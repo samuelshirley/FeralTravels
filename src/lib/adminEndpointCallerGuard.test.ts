@@ -74,6 +74,8 @@ describe('every /api/admin/* write has a caller in src/', () => {
   it('finds the admin write routes (the guard is not vacuous)', () => {
     expect(routes).toContain('/api/admin/paywall');
     expect(routes).toContain('/api/admin/paywall/user');
+    expect(routes).toContain('/api/admin/jev');
+    expect(routes).toContain('/api/admin/jev/user');
     expect(routes.length).toBeGreaterThanOrEqual(8);
   });
 

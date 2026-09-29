@@ -24,6 +24,8 @@ import {
 import AppNavbar from '@/components/AppNavbar';
 import RevokeAccessControl from './RevokeAccessControl';
 import PaywallEnforceControl from './PaywallEnforceControl';
+import JevModeControl from './JevModeControl';
+import { getUserJevOverride, globalJevMode } from '@/server/repos/jev';
 import styles from '../../admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 import { formatDayMonthYear } from '@/lib/dates';
@@ -148,6 +150,16 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
       // Read so the override can say when it is redundant, not to gate it.
       paywallEnabled(),
     ]);
+
+  // The Jev override. A failed read is `undefined` and the control says so,
+  // rather than showing "follow global" for a value nobody could read.
+  const [jevOverride, jevGlobalOn] = await Promise.all([
+    getUserJevOverride(params.id).catch((err) => {
+      console.error('[admin/users] could not read the Jev override', err);
+      return undefined;
+    }),
+    globalJevMode().then((m) => m === 'on'),
+  ]);
 
   const spend12moUsd = spend12mo / MICROCENTS_PER_DOLLAR;
   const thresholds = [
@@ -499,6 +511,20 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               enforced={detail.user.paywallEnforced}
               comped={detail.user.comped}
               globalOn={paywallGlobalOn}
+            />
+          </div>
+
+          {/*
+            Beside the paywall override because it is the same kind of
+            per-account lever on a global switch. Below it because it is the
+            rarer one: which model sorts this account's messages.
+          */}
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--tp-border)' }}>
+            <JevModeControl
+              userId={detail.user.id}
+              userLabel={detail.user.email || detail.user.name || detail.user.id}
+              override={jevOverride}
+              globalOn={jevGlobalOn}
             />
           </div>
 
