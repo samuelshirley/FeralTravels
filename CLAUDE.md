@@ -40,8 +40,9 @@ which provider serves what; this has been wrong here before, expensively.
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
   resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
-- **Jev (optional, OFF by default):** a self-hosted typed-decision server asked
-  the message-gate tier first; it may settle only a confident T1, else Haiku —
+- **Jev (optional, OFF by default):** a self-hosted typed-decision server for
+  the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
+  logged), JEV FIRST (it may settle only a confident T1, else Haiku) —
   **`docs/design/jev.md`**.
 - **Maps / geo:** Google — client JS, server Directions, Places (New)
   `searchText` for name→coords, Places Text Search along-route for Finn's

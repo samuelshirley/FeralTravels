@@ -39,18 +39,71 @@ tool's own `tier` description. The two classifiers cannot drift apart, and
 `jevAdapter.test.ts` fails if the `T1 = … T2 = … T3 =` layout they are cut from
 changes shape.
 
-## The flag
+## The flag: three modes
+
+| Mode | Value | What the gate does |
+|---|---|---|
+| **HAIKU ONLY** | `'off'` | Haiku, as before Jev existed. No network call to Jev. |
+| **COMPARE** | `'compare'` | Haiku decides every message, exactly as `'off'`. Jev is asked the same question **at the same moment**, and its answer is only **logged** beside Haiku's (below). |
+| **JEV FIRST** | `'on'` | Jev first. It may settle a confident T1 and nothing else; everything else goes to Haiku. |
 
 | Where | Values | Meaning |
 |---|---|---|
-| `app_meta.jev_mode` (global) | `'on'` / anything else | Jev-first for every account without an override. **Missing row, a read error, or any other value = OFF.** 30 s cache, like the paywall switch. |
-| `users.jev_mode` (per account) | `null` / `'on'` / `'off'` | `null` follows the global. `'on'` forces Jev-first, `'off'` forces Haiku only. Anything else = `null`. |
+| `app_meta.jev_mode` (global) | `'off'` / `'compare'` / `'on'` | The mode for every account without an override. **Missing row, a read error, or any other value = OFF.** 30 s cache, like the paywall switch. |
+| `users.jev_mode` (per account) | `null` / `'off'` / `'compare'` / `'on'` | `null` follows the global; any mode forces that mode for this account. Anything else = `null`. |
 
-Effective mode = the account's override if set, else the global row. Both are
-flipped from /admin: the global switch sits under the Penny lockdown block, and
-the per-account control is on `/admin/users/[id]`, in three states. Each flip
-writes an `admin:jev-*` `usage_events` row naming who pressed it. Every read and
-write goes through `src/server/repos/jev.ts`.
+Both columns are plain text, with no CHECK constraint, so the third mode needed
+no migration. Effective mode = the account's override if set, else the global
+row. Both are flipped from /admin: the global three-way switch sits under the
+Penny lockdown block, and the per-account control is on `/admin/users/[id]`, in
+four states (follow global / Haiku only / Compare / Jev first). Each flip writes
+an `admin:jev-*` `usage_events` row naming who pressed it. Every read and write
+goes through `src/server/repos/jev.ts`.
+
+## Compare: measuring Jev-first before trusting it
+
+Compare exists to answer one question with real traffic: **would Jev-first be
+safe?** It asks it without changing a single outcome.
+
+- For every message the deterministic rules don't settle, the gate **starts
+  Jev and Haiku together** (`startJevClassifyTier`, then `classifyMessage`).
+- **Haiku's verdict decides**: the same tier, reason, strike and `penny:gate`
+  row as mode off. Jev's answer cannot change the tier, the strike, the reason,
+  or whether Haiku is called (`haikuComparedWithJev` in `messageGate.ts`).
+- Once Haiku has answered, the gate waits for Jev **at most until Jev's own
+  timeout (`JEV_TIMEOUT_MS`), counted from when Jev was started**. So compare
+  adds whatever of that timeout is left after Haiku, and usually nothing. The
+  deadline bounds the wait even if a backend ignores the abort.
+- A Jev error or timeout is one `success: false` row and changes nothing else.
+
+Each compared message writes one `provider: 'jev'` row, whose `meta` is:
+
+```
+{mode: 'compare', source: 'global'|'user', choice, top, margin, latencyMs,
+ settled: false, wouldSettle, haikuTier, agree, deferredReason, echoedModel}
+```
+
+`wouldSettle` = the Jev-first rule (`settlesAsT1`) would have let this message
+through without Haiku. `agree` = Jev's `choice === haikuTier`, false when Jev
+gave no answer. `settled` is always false, because in compare Jev settles
+nothing. As with every Jev row: no user text, $0, and counted toward no cap.
+
+/admin's compare section reads only these rows (the Jev-first stats exclude
+them):
+
+- **The headline: "Jev would have passed, Haiku refused"**, the rows with
+  `wouldSettle` true and Haiku's tier not T1, as a count and as a rate out of
+  every `wouldSettle` row, split T2/T3. Each one is a message Jev-first would
+  have handed to Penny that Haiku kept from her. **This is the number that says
+  whether Jev-first is safe**, and the one to read before turning it on.
+- **Coverage**: of Haiku's T1s, the share Jev-first would have settled. That is
+  how many Haiku calls Jev-first would save.
+- The number compared, Jev's errors and timeouts, overall agreement (out of the
+  messages Jev answered), Jev's p50/p95 latency, and a 3×3 table of Haiku's tier
+  (rows) × Jev's choice (columns).
+
+Use it to set `JEV_T1_MIN` for a new backend. Run compare, raise the threshold
+until the headline is at or near zero, then read what coverage is left.
 
 ## The rule: Jev may settle a T1 and nothing else
 
@@ -84,11 +137,13 @@ Jev call gets its own row (below).
 ## Accounting
 
 One `usage_events` row per Jev call: `provider: 'jev'`, `cost_microcents: 0`,
-tokens, `success`, and `meta` (jsonb, migration 0043):
+tokens, `success`, and `meta` (jsonb, migration 0043). A Jev-first row:
 
 ```
 {mode: 'global'|'user', choice, top, margin, latencyMs, settled, deferredReason, echoedModel}
 ```
+
+A compare row has `mode: 'compare'` and the keys in **Compare** above.
 
 **Never user text.** `meta` is built key by key from the outcome, never spread.
 Error strings never include a response body, and an echoed `model` that does
@@ -100,7 +155,7 @@ cap (`getUserUsageSummary` excludes them by name). Not the 12-month cap, the
 trial ceiling or the spend breakers, which count `anthropic%` only. They are $0,
 and a Jev call is bookkeeping for a message the gate already counts once.
 
-/admin shows the last 7 days: settled, passed to Haiku, errors and timeouts,
+For Jev first, /admin shows the last 7 days: settled, passed to Haiku, errors and timeouts,
 p50/p95 latency, and **Haiku dollars avoided** = settled × the average Haiku
 classifier call. That average comes from 30 days of `usage_events`, and the
 classifier's rows share Penny's model id, so they are picked out by shape:
@@ -147,14 +202,14 @@ top minus second, and ignores every extra field.
 
 Even `probabilities` is a backend's own scale. **`JEV_T1_MIN` must be
 re-measured for each backend and each model version** before the global switch
-goes on. Run a labelled set through it, pick the threshold where Jev's settled
-T1s are all true T1s, and only then flip it. The local CPU trial found Laya
+goes on. Run compare (or a labelled set) through it, pick the threshold where
+Jev's would-settle T1s are all Haiku T1s, and only then switch to Jev first. The local CPU trial found Laya
 right on clear messages and unable to flag unclear ones, which is exactly the
 case the threshold exists for.
 
 ## Privacy
 
-Once the switch is on for real users, **the GPU host is a processor of chat
+Once the switch is on (Jev first **or compare**) for real users, **the GPU host is a processor of chat
 messages** (the classifier-path ones, with the trip's name and place names). The
 privacy page (`src/app/(legal)/privacy`) lists every sub-processor and **must
 name the Jev host before the global switch is turned on with real users.**
@@ -168,8 +223,9 @@ accounts is fine today.
   allows only `messageGate.ts`, `repos/jev.ts`, `api/admin/jev/**` and
   `scripts/` to import it. Penny (`claude.ts`) and the replan route must not.
 - `src/server/repos/jev.ts`: the switches, the ledger rows, the /admin stats.
-- `src/server/messageGate.ts`: `jevSettles()`, called only when the free
-  deciders returned nothing, before `classifyMessage`.
+- `src/server/messageGate.ts`: `jevSettles()` (Jev first) and
+  `haikuComparedWithJev()` (compare), called only when the free deciders
+  returned nothing.
 - `api/admin/jev` and `api/admin/jev/user`: cookie-only admin, Zod, logged.
 - Tests: `jevAdapter.test.ts`, `messageGateJev.test.ts`, `jevConfigGuard.test.ts`,
   `jevBoundaryGuard.test.ts`, `JevSwitch.test.tsx`. Decisions I20–I22.

@@ -105,7 +105,7 @@ src/
       schema.ts       # All tables (see Schema below)
       client.ts       # Neon connection
     repos/            # Data access layer (see Repos below)
-    jev/              # BOUNDED MODULE: the optional Jev tier classifier the message gate asks before Haiku; may settle only a confident T1 (docs/design/jev.md)
+    jev/              # BOUNDED MODULE: the optional Jev tier classifier; the message gate asks it before Haiku (may settle only a confident T1) or beside Haiku in compare mode (only logged) (docs/design/jev.md)
     auth/
       index.ts        # NextAuth config
       guards.ts       # Auth guard utilities

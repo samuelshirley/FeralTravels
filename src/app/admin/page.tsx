@@ -41,6 +41,7 @@ import { recentIpLimitHits } from '@/server/ipLimit';
 import { lockedAccounts } from '@/server/repos/users';
 import {
   countJevOverrides,
+  getJevCompareStats,
   getJevStats,
   globalJevMode,
   jevConfigView,
@@ -141,10 +142,14 @@ export default async function AdminPage() {
    * "could not read" rather than as zeros — zero settled is a real, and very
    * different, answer. The mode read itself fails to OFF, like the gate's.
    */
-  const [jevOn, jevStats, jevOverrides] = await Promise.all([
-    globalJevMode().then((m) => m === 'on'),
+  const [jevMode, jevStats, jevCompare, jevOverrides] = await Promise.all([
+    globalJevMode(),
     getJevStats(7).catch((err) => {
       console.error('[admin] getJevStats failed', err);
+      return null;
+    }),
+    getJevCompareStats(7).catch((err) => {
+      console.error('[admin] getJevCompareStats failed', err);
       return null;
     }),
     countJevOverrides().catch((err) => {
@@ -860,9 +865,10 @@ export default async function AdminPage() {
         */}
         <section style={{ ...card, marginTop: 16 }}>
           <JevSwitch
-            on={jevOn}
+            mode={jevMode}
             config={jevConfig}
             stats={jevStats}
+            compare={jevCompare}
             overrides={jevOverrides}
             minMargin={JEV_MIN_MARGIN}
           />

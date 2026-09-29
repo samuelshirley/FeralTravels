@@ -743,11 +743,22 @@ T1, any error, timeout, schema failure or missing config calls the unchanged
 Haiku classifier. A wrong T1 costs one Penny turn; a wrong T3 strikes a real
 driver, and nothing may strike on Jev's word. Switch OFF = no network call at
 all. Jev's `usage_events` rows (`provider: 'jev'`, $0, `meta` with no user text)
-count toward no cap, limit, breaker or trial ceiling. *Enforced by (mutation-checked
+count toward no cap, limit, breaker or trial ceiling. The switch has THREE
+modes, global and per account: `off` (Haiku only), `on` (Jev first, as above)
+and `compare`, where **Haiku decides every message exactly as `off`** and Jev,
+started at the same moment and waited on no longer than its own timeout, is
+only logged beside it (`wouldSettle`, `haikuTier`, `agree`). Jev's verdict never
+decides in compare. It exists so /admin can show "Jev would have passed, Haiku
+refused" before anyone trusts Jev-first. *Enforced by (mutation-checked
 2026-09-29):* `messageGateJev.test.ts` (every outcome through `gateMessage`, incl. mode off =
 zero fetches, the strike being Haiku's, no user text in the row, and the cap
-readers' filters), `jevAdapter.test.ts` (the captured Laya response and the
-settle rule). See `docs/design/jev.md`.
+readers' filters; in compare, Haiku's tier and strike against a contrary
+confident Jev both ways, a Jev failure matching mode off exactly, Jev's fetch
+out before Haiku answers, the wait bounded by Jev's timeout, and the
+`agree`/`wouldSettle` meta. Each of these turned it red: compare returning Jev's
+settle, compare dropping Haiku, `agree` on the wrong field, Jev started after
+Haiku, and the unbounded wait), `jevAdapter.test.ts` (the captured Laya response
+and the settle rule). See `docs/design/jev.md`.
 
 I21. **Jev's config comes from the server environment only, and a local host
 is refused anywhere but a laptop.** `JEV_BASE_URL` is where chat messages go, so
