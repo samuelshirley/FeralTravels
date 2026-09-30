@@ -27,10 +27,11 @@ import { testEndpointHeaders } from './fixtures/constants';
  * Most of it does not care either way: /api, the legal pages and /login are
  * never gated in either configuration, and those are the assertions that stop
  * this becoming an outage or an App Store rejection. Neither is `/`, the public
- * landing page, which renders for a stranger in both. Only the five page paths
+ * landing page, which renders for a stranger in both. Only the four page paths
  * at the bottom differ, and there they are the more useful assertion in the
  * web-ON case: they prove the gate ships INERT, which is exactly the
- * configuration going to production with the flag unset.
+ * configuration going to production with the flag unset. `/admin` is not one of
+ * them: signed out, it goes to the sign-in form on both sides of the switch.
  */
 
 /**
@@ -214,7 +215,7 @@ test.describe('web app off', () => {
    */
   // `/signin`, not `/`: the old root's gate-then-redirect moved there on
   // 2026-09-24, and `/` became the public landing page (tested below).
-  for (const path of ['/signin', '/trips', '/settings', '/vehicle-setup', '/admin']) {
+  for (const path of ['/signin', '/trips', '/settings', '/vehicle-setup']) {
     test(`${path} never renders for a stranger`, async ({ request }) => {
       // FOLLOWING the redirects, not asserting the first hop.
       //
@@ -238,6 +239,32 @@ test.describe('web app off', () => {
       }
     });
   }
+
+  /**
+   * The admin's door, the same in BOTH states — no branch on WEB_ON.
+   *
+   * Until 2026-09-30 `/admin` sat in the loop above, and with the web off a
+   * signed-out visit went to /get-the-app like every other page. The download
+   * screen has no sign-in, so the one person allowed in had no way in short of
+   * knowing to type /login. `src/app/admin/layout.tsx` now sends a signed-out
+   * visitor to the sign-in form first, carrying `callbackUrl` so a verified
+   * code lands on the dashboard.
+   *
+   * The FIRST hop, unlike the loop: there is exactly one, and the query string
+   * is the assertion — following the redirect would end on a 200 at /login and
+   * lose it.
+   */
+  test('/admin sends a stranger to the sign-in form, bound for /admin', async ({ request }) => {
+    const res = await request.get('/admin', { ...anon, maxRedirects: 0 });
+    const location = res.headers()['location'] ?? '';
+
+    expect(res.status(), '/admin must never render for a stranger').not.toBe(200);
+    expect(res.status(), '/admin must redirect a stranger').toBeGreaterThanOrEqual(300);
+    expect(res.status()).toBeLessThan(400);
+    expect(location, '/admin must not send the admin to the download screen').not.toContain('/get-the-app');
+    expect(location).toContain('/login');
+    expect(location, 'the sign-in form must know to come back to /admin').toContain('callbackUrl=%2Fadmin');
+  });
 
   /**
    * The landing page is the front door in BOTH states — it is what a stranger,

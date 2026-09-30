@@ -40,7 +40,7 @@ vi.mock('@/server/auth/test-endpoints', () => ({
 }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
-import { requireWebAccess } from './webAccess';
+import { requireAdminSignIn, requireWebAccess } from './webAccess';
 
 const FIXTURE = 'playwright-1-abc@e2e.feraltravels.com';
 
@@ -101,6 +101,42 @@ describe('requireWebAccess, WEB_APP_ENABLED=1', () => {
     signedInAs('someone@example.com');
     await expect(requireWebAccess()).resolves.toBeUndefined();
     expect(mocks.auth).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `requireAdminSignIn` — the door. Found 2026-09-30: a signed-out /admin went to
+ * the download screen with the web off, and the download screen has no sign-in.
+ * It must answer the same way on both sides of the switch, and it must not
+ * decide who is an admin: that stays with each page.
+ */
+describe.each([
+  ['unset (production)', undefined],
+  ['=1', '1'],
+])('requireAdminSignIn, WEB_APP_ENABLED %s', (_label, value) => {
+  beforeEach(() => {
+    vi.stubEnv('WEB_APP_ENABLED', value);
+  });
+
+  it('sends a visitor with no session to the sign-in form, bound for /admin', async () => {
+    signedInAs(null);
+    await expect(requireAdminSignIn()).rejects.toThrow(mocks.RedirectSentinel);
+    expect(mocks.redirect).toHaveBeenCalledWith('/login?callbackUrl=%2Fadmin');
+  });
+
+  it('lets anyone with a session through, without asking whether they are the admin', async () => {
+    signedInAs('someone@example.com');
+    await expect(requireAdminSignIn()).resolves.toBeUndefined();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.isAdminEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('requireAdminSignIn, session store down', () => {
+  it('lets the outage through as an error rather than reading it as signed out', async () => {
+    mocks.auth.mockRejectedValue(new Error('SessionStoreUnavailable'));
+    await expect(requireAdminSignIn()).rejects.toThrow('SessionStoreUnavailable');
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });
