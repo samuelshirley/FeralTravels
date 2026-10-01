@@ -6,6 +6,7 @@ import HeroVideo from '@/components/landing/HeroVideo';
 import { LANDING_POSTER, LANDING_POSTER_HEIGHT, LANDING_POSTER_WIDTH } from '@/components/landing/config';
 import { LANDING_COUNTRIES } from '@/components/landing/countries';
 import { LANDING_SCREENSHOTS } from '@/components/landing/screenshots';
+import { webAppEnabled } from '@/lib/webAccess';
 import styles from './page.module.css';
 
 /**
@@ -15,7 +16,10 @@ import styles from './page.module.css';
  * PUBLIC: no auth(), no requireWebAccess(). It is the page a stranger, a
  * crawler and an App Store reviewer all land on, and it has to render for
  * every one of them — listed in `webAccessCoverage.test.ts` as deliberately
- * ungated. Static, and the only client JS is the hero video.
+ * ungated. The only client JS is the hero video.
+ *
+ * "Try it on the web" shows only while `webAppEnabled()` — a pure env read, not
+ * a gate: with the web switched off the link would lead to the download screen.
  *
  * Claims are the MVP and nothing more (CLAUDE.md): Penny plans the days, Finn
  * finds fuel within range. No campgrounds, no groceries.
@@ -24,6 +28,9 @@ import styles from './page.module.css';
 const TITLE = 'Feral Travels: road trips planned by Penny';
 const DESCRIPTION =
   'A road trip planner for iPhone. Penny lays your trip out day by day, and Finn finds fuel along the route before your tank runs low.';
+
+// CI deploys one prebuilt artifact with the web switch on and off; a static render would bake one answer into both.
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -90,12 +97,22 @@ export default function LandingPage() {
           <span className={styles.wordmark}>FERAL TRAVELS</span>
         </div>
         <div className={styles.heroBody}>
-          <h1 className={styles.headline}>Tell Penny where you&apos;re going. She plans the drive.</h1>
-          <p className={styles.lede}>{DESCRIPTION}</p>
-          {/* Text, not Apple's logo: the logo is only allowed inside the official badge. */}
-          <a href={APP_STORE_URL} className={styles.cta}>
-            Get the app
-          </a>
+          <h1 className={styles.headline}>Roadtrip plan with Penny</h1>
+          <p className={styles.lede}>
+            Tell Penny where you&apos;re going, she sorts out the day to day planning and Finn finds you gas
+            stations based on your range.
+          </p>
+          <div className={styles.ctas}>
+            {/* Text, not Apple's logo: the logo is only allowed inside the official badge. */}
+            <a href={APP_STORE_URL} className={styles.cta}>
+              Get the app
+            </a>
+            {webAppEnabled() && (
+              <Link href="/signin" className={styles.ctaSecondary}>
+                Try it on the web
+              </Link>
+            )}
+          </div>
         </div>
       </header>
 

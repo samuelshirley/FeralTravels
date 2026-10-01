@@ -53,3 +53,31 @@ export async function requireWebAccess(): Promise<void> {
 
   redirect(GET_THE_APP_PATH);
 }
+
+/** Where a signed-out /admin visit lands: the existing sign-in form, which carries `callbackUrl` through /login/verify. */
+export const ADMIN_SIGN_IN_PATH = `/login?callbackUrl=${encodeURIComponent('/admin')}`;
+
+/**
+ * The door for the one person allowed in.
+ *
+ * Found 2026-09-30: with the web off, `requireWebAccess()` sent a signed-out
+ * visit to /admin to /get-the-app like any other page — and the download screen
+ * has no sign-in. /login worked the whole time, but nothing pointed at it, so
+ * the admin could only get in by knowing to type it.
+ *
+ * Called from `src/app/admin/layout.tsx`, which renders before any admin page,
+ * so this redirect wins over the page's own in BOTH switch states.
+ *
+ * It asks one question — is anybody signed in — and nothing else. It does NOT
+ * decide admin-ness and does NOT replace `requireWebAccess()`: every admin page
+ * still runs that and `isAdmin` itself, so a signed-in non-admin still ends at
+ * /get-the-app (web off) or /trips (web on). The sign-in form is reachable by
+ * anyone at /login already; this grants nothing, it only stops hiding it.
+ *
+ * The strict `auth()`, which throws when the session store is down: an outage
+ * is a 503, never a sign-out (see `docs/design/conventions.md`).
+ */
+export async function requireAdminSignIn(): Promise<void> {
+  const session = await auth();
+  if (!session?.user) redirect(ADMIN_SIGN_IN_PATH);
+}
