@@ -1,0 +1,89 @@
+# Auto-merge — continuous deployment (Sam, 2026-10-01).
+#
+# EVERY open, non-draft PR into main from this repo merges itself — and
+# merging is deploying — once its CI run is green AND the AI shard (`iOS e2e ·
+# ai`, which only a run started by the `ai-tests` label includes) has passed on
+# its head. Docs-only PRs need no AI shard. After every merge, every other open
+# PR has main merged into it (update-branch, never a rebase or force-push:
+# agents are pushing to those branches).
+#
+# All the logic is in .github/scripts/auto-merge.mjs, tested by
+# src/lib/autoMerge.test.ts. What merges when, the `hold` and `no-tests-needed`
+# labels, the token and the cost: docs/design/auto-merge.md.
+#
+# WHY A PAT: a label, branch update or merge made with GITHUB_TOKEN starts no
+# workflows — CI would never re-run on an updated branch, and a bot merge would
+# never deploy. Every write goes out with secrets.AUTO_UPDATE_TOKEN (Contents,
+# Pull requests and Workflows: read and write). github.token is passed only as
+# READ_TOKEN, for reads (it has `actions: read`; the PAT does not). With the
+# secret unset, both jobs log a notice and exit 0.
+#
+# workflow_run and push workflows always run main's copy of this file and of the
+# script — never a PR's — and the job never checks out PR code.
+
+name: Auto-merge
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  push:
+    branches: [main]
+
+# One run at a time PER PR HEAD (and one for main pushes), never cancelled.
+# NOT a single repo-wide group: GitHub keeps one pending run per group and
+# cancels the rest, so two CI runs finishing while a third was being handled
+# would silently drop one, and that PR would sit green and unmerged. Parallel
+# runs for different PRs cannot merge two PRs onto one stale main: branch
+# protection requires up to date, and the merge passes --match-head-commit.
+concurrency:
+  group: auto-merge-${{ github.event.workflow_run.head_sha || 'main' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  after-ci:
+    name: Merge or advance the tested PR
+    # A red run needs nothing from here (CI comments on the PR itself).
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Decide and act
+        env:
+          AUTO_UPDATE_TOKEN: ${{ secrets.AUTO_UPDATE_TOKEN }}
+          READ_TOKEN: ${{ github.token }}
+        run: node .github/scripts/auto-merge.mjs
+
+  update-open-prs:
+    name: Bring open PRs up to date with main
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Merge main into every open PR that is behind
+        env:
+          AUTO_UPDATE_TOKEN: ${{ secrets.AUTO_UPDATE_TOKEN }}
+          READ_TOKEN: ${{ github.token }}
+        run: node .github/scripts/auto-merge.mjs
