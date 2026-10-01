@@ -22,14 +22,22 @@ describe('webAppEnabled', () => {
    */
   it('defaults ON, so a missing env var is an open web', () => {
     expect(webAppEnabled({})).toBe(true);
-    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(true);
+    expect(webAppEnabled({ WEB_APP_DISABLED: undefined })).toBe(true);
   });
 
-  it('is off only for the exact string "0" — the kill switch', () => {
-    expect(webAppEnabled({ WEB_APP_ENABLED: '0' })).toBe(false);
-    for (const v of ['1', 'false', '', 'true', ' 0']) {
-      expect(webAppEnabled({ WEB_APP_ENABLED: v }), `WEB_APP_ENABLED=${JSON.stringify(v)}`).toBe(true);
+  it('is off only for the exact string "1" — the kill switch', () => {
+    expect(webAppEnabled({ WEB_APP_DISABLED: '1' })).toBe(false);
+    for (const v of ['0', 'true', '', ' 1']) {
+      expect(webAppEnabled({ WEB_APP_DISABLED: v }), `WEB_APP_DISABLED=${JSON.stringify(v)}`).toBe(true);
     }
+  });
+
+  /**
+   * Production carried a stale `WEB_APP_ENABLED=0` from when 0 meant off. The
+   * switch was renamed so that value cannot block the web; it must stay inert.
+   */
+  it('ignores the old WEB_APP_ENABLED, so the stale production "0" cannot block', () => {
+    expect(webAppEnabled({ WEB_APP_ENABLED: '0' })).toBe(true);
   });
 });
 

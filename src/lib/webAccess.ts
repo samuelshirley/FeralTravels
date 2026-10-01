@@ -1,11 +1,14 @@
 /**
- * The web app's master switch. Pages ON unless `WEB_APP_ENABLED=0`.
+ * The web app's master switch. Pages ON unless `WEB_APP_DISABLED=1`.
  *
- * Exactly the string `'0'` turns the web off; unset, `'1'` or anything else
- * leaves it on. 2026-10-01: Sam re-enabled the desktop web so the people he
- * interviews can try it. It is on by DEFAULT so that merging is the release —
- * no Vercel variable to set — and `WEB_APP_ENABLED=0` in Vercel is the kill
- * switch.
+ * Exactly the string `'1'` turns the web off; unset or anything else leaves it
+ * on. 2026-10-01: Sam re-enabled the desktop web so the people he interviews
+ * can try it, and it is on by DEFAULT so that merging is the release.
+ *
+ * The kill switch was renamed from `WEB_APP_ENABLED` the same day: production
+ * carried a stale `WEB_APP_ENABLED=0` from when 0 meant off, which kept the web
+ * shut after the default flipped. A new name makes that value inert with no
+ * Vercel step. `WEB_APP_ENABLED` is ignored, whatever its value.
  *
  * History, briefly. 2026-08-28 the browser was cut to one screen, download
  * the app, for everyone but the admin: the product is an iOS app and two front
@@ -27,7 +30,7 @@
 type EnvLike = Record<string, string | undefined>;
 
 export function webAppEnabled(env: EnvLike = process.env): boolean {
-  return env.WEB_APP_ENABLED !== '0';
+  return env.WEB_APP_DISABLED !== '1';
 }
 
 /** Where a blocked browser lands. */

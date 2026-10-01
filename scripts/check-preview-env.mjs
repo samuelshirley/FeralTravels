@@ -64,8 +64,8 @@ const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDP
 /**
  * Set on preview and must not be.
  *
- * `WEB_APP_ENABLED`: ci.yml passes it only to the second, "blocked" deployment
- * (`=0`). The ordinary preview gets none, so it runs the default production
+ * `WEB_APP_DISABLED`: ci.yml passes it only to the second, "blocked" deployment
+ * (`=1`). The ordinary preview gets none, so it runs the default production
  * runs — the web ON — and a value on the Vercel preview environment would
  * silently replace that default with whatever it says.
  *
@@ -83,7 +83,7 @@ const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDP
  */
 const FORBIDDEN = [
   [
-    'WEB_APP_ENABLED',
+    'WEB_APP_DISABLED',
     'ci.yml leaves it unset on the ordinary preview so it proves the production default (web ON). Remove it from the Vercel Preview environment.',
   ],
 ];
