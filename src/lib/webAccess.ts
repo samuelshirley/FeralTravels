@@ -1,32 +1,24 @@
 /**
- * The web app's master switch. Pages OFF unless `WEB_APP_ENABLED=1`.
+ * The web app's master switch. Pages ON unless `WEB_APP_ENABLED=0`.
  *
- * Read that sentence twice. Until 2026-09-24 it said the opposite — ON unless
- * `=0` — and a comment that inverts the switch is worse than no comment: the
- * last time this line disagreed with the code (fixed 2026-08-28) it sent
- * someone hunting for a way to split the block out of a shared PR when the
- * actual lever was one Vercel variable.
+ * Exactly the string `'0'` turns the web off; unset, `'1'` or anything else
+ * leaves it on. 2026-10-01: Sam re-enabled the desktop web so the people he
+ * interviews can try it. It is on by DEFAULT so that merging is the release —
+ * no Vercel variable to set — and `WEB_APP_ENABLED=0` in Vercel is the kill
+ * switch.
  *
- * 2026-08-28: the product is an iOS app. The web came first and most users will
- * never know it exists, so rather than maintain two front ends and test both,
- * the browser now serves one screen — download the app — to everybody except
- * the admin account.
+ * History, briefly. 2026-08-28 the browser was cut to one screen, download
+ * the app, for everyone but the admin: the product is an iOS app and two front
+ * ends meant testing both. On 2026-09-24 it turned out production had never
+ * set the variable while the default was ON, so the web was open the whole
+ * time it was meant to be off; the default became OFF until this re-enable.
  *
  * WHY A SWITCH AND NOT A DELETION. The web is still the entire server: every
  * screen in the iOS app is a call to `www.feraltravels.com/api/*`. "Turn off
  * the web app" means turn off the PAGES, and the difference between those two
- * sentences is the whole app going dark. It is also reversible in an env change
- * if a desktop companion turns out to be wanted, which is the same argument
- * `PAYWALL_ENABLED` makes for itself.
- *
- * WHY DEFAULT OFF. It used to default ON, on the argument that a missing env var
- * should be the app that works rather than a blank site. 2026-09-24 showed what
- * that argument costs: the variable had never been set in Vercel production, so
- * every page's `requireWebAccess()` returned early and anyone could sign up at
- * /login and use the whole web app — for the month the web was supposed to be
- * off. Off is the intended state, so off is the default: only the exact string
- * `'1'` opens it. The gate is `requireWebAccess()` in each PAGE and never runs
- * on `/api`, so a missing variable cannot take the iOS app down with it.
+ * sentences is the whole app going dark. The gate is `requireWebAccess()` in
+ * each PAGE and never runs on `/api`, so the switch cannot take the iOS app
+ * down in either position.
  *
  * The root `middleware.ts` does not run — with `src/app`, Next 14 looks for
  * middleware only in `src/` — so `requireWebAccess()` in each page is the
@@ -35,7 +27,7 @@
 type EnvLike = Record<string, string | undefined>;
 
 export function webAppEnabled(env: EnvLike = process.env): boolean {
-  return env.WEB_APP_ENABLED === '1';
+  return env.WEB_APP_ENABLED !== '0';
 }
 
 /** Where a blocked browser lands. */
