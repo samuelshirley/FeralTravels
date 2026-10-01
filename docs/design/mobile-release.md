@@ -10,6 +10,15 @@ succeeded, or a later main deploy that contains it did. See
 drafted and never landed.) Read `mobile.yml`'s header for the mechanics; this
 file is the setup and the traps.
 
+**That wait can be long.** Since 2026-10-01 the production deploy itself waits
+up to 90 minutes for a CI run still going on the merged PR (PR #79 was merged
+one second after its `ai-tests` label started a fresh run, and the deploy
+refused it). So the mobile job waits up to 135 minutes for the deploy (its own
+110 + 20 of an earlier deploy's work it may queue behind + 5) and its timeout
+is 240 (135 + 90 of native build + 15). Both are sized from
+`deploy-production.yml`'s job timeout, and `otaAfterDeployGuard.test.ts` fails
+if they drift apart.
+
 ## What a merge to `main` does
 
 The workflow diffs the merge against the previous `main` and picks one of two
