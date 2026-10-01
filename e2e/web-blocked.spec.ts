@@ -27,18 +27,13 @@ import { testEndpointHeaders } from './fixtures/constants';
  * Most of it does not care either way: /api, the legal pages and /login are
  * never gated in either configuration, and those are the assertions that stop
  * this becoming an outage or an App Store rejection. Neither is `/`, the public
- * landing page, which renders for a stranger in both. Only the four page paths
- * at the bottom differ, and there they are the more useful assertion in the
- * web-ON case: they prove the gate ships INERT, which is exactly the
- * configuration going to production with the flag unset. `/admin` is not one of
+ * landing page, which renders for a stranger in both — only its "Try it on the
+ * web" link depends on the state. The four page paths at the bottom differ, and
+ * in the web-ON case they prove the gate ships INERT, which is the
+ * configuration production runs with the flag unset. `/admin` is not one of
  * them: signed out, it goes to the sign-in form on both sides of the switch.
  */
 
-/**
- * True when the preview deployed with the web app ON. Set beside
- * `E2E_BASE_URL` in ci.yml, by the same step that decides the deploy flag, so
- * the two cannot drift apart silently.
- */
 /**
  * What the deployment ACTUALLY does, discovered by asking it.
  *
@@ -48,14 +43,14 @@ import { testEndpointHeaders } from './fixtures/constants';
  * spec exists to catch, so it now probes the running app instead: send an
  * anonymous request to a gated page and read where it is sent.
  *
- *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED unset or anything but '1'
- *   → /login        ordinary auth redirect    → the gate is off
+ *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED='0'
+ *   → /login        ordinary auth redirect    → the web is on (unset or anything but '0')
  *
  * INTENT comes from the project name. ci.yml runs this spec twice: once in the
- * `api` project against the ordinary preview (deployed with WEB_APP_ENABLED=1),
- * and once in `web-blocked` against a second deployment of the same build with
- * WEB_APP_ENABLED not passed at all — unset, as in production. So project
- * -> deployment -> flag is one chain with nothing to keep in step by hand.
+ * `api` project against the ordinary preview (WEB_APP_ENABLED not passed at
+ * all — unset, as in production), and once in `web-blocked` against a second
+ * deployment of the same build with WEB_APP_ENABLED=0. So project -> deployment
+ * -> flag is one chain with nothing to keep in step by hand.
  *
  * Observed and intended are then compared, and a mismatch is the most valuable
  * failure this file can produce: it means the env var did not take, which is
@@ -90,7 +85,7 @@ let WEB_ON = true;
 test.beforeAll(async ({}, testInfo) => {
   // The project's OWN baseURL, not the ambient env var. The `web-blocked`
   // project points at a second deployment of the same build with
-  // WEB_APP_ENABLED unset; reading E2E_BASE_URL here would have probed the open one
+  // WEB_APP_ENABLED=0; reading E2E_BASE_URL here would have probed the open one
   // and then asserted the blocked contract against it.
   const ctx = await playwrightRequest.newContext({
     baseURL:
@@ -118,16 +113,16 @@ test.describe('web app off', () => {
    */
   test('the web switch is in the state this deployment intended', async ({}, testInfo) => {
     // Intent comes from the PROJECT, and the project comes from which
-    // deployment ci.yml aimed it at — which came from the WEB_APP_ENABLED value
-    // it passed to `vercel deploy`. One chain, no second variable to keep in
+    // deployment ci.yml aimed it at — which came from whether it passed
+    // WEB_APP_ENABLED=0 to `vercel deploy`. One chain, no second variable to keep in
     // step by hand. The earlier version read E2E_WEB_UI, a Playwright switch on
     // a different machine, which is the drift this file exists to catch.
     const expected: WebState = testInfo.project.name === 'web-blocked' ? 'blocked' : 'open';
     expect(
       observed,
       `Project "${testInfo.project.name}" targets a deployment that should be ${expected}, ` +
-        `but it is ${observed}. The WEB_APP_ENABLED value ci.yml passed to \`vercel deploy\` ` +
-        `did not take effect. Every assertion below is now checking the wrong contract, so ` +
+        `but it is ${observed}. The WEB_APP_ENABLED ci.yml gave \`vercel deploy\` (0 for the blocked ` +
+        `deployment, none for the open one) did not take effect. Every assertion below is now checking the wrong contract, so ` +
         `fix this before reading any other failure in this file.`
     ).toBe(expected);
   });
@@ -270,7 +265,8 @@ test.describe('web app off', () => {
    * The landing page is the front door in BOTH states — it is what a stranger,
    * a crawler and an App Store reviewer get at the bare domain. Were it swept
    * into the gate, the site would answer the App Store listing's own URL with a
-   * redirect, so no branch on WEB_ON here: the assertion is the same either way.
+   * redirect. The one branch on WEB_ON is the "Try it on the web" link, which
+   * must not offer a door the gate would shut.
    */
   test('/ is the public landing page for a stranger', async ({ request, page }) => {
     const res = await request.get('/', { ...anon });
@@ -279,7 +275,7 @@ test.describe('web app off', () => {
 
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { level: 1, name: "Tell Penny where you're going. She plans the drive." })
+      page.getByRole('heading', { level: 1, name: 'Roadtrip plan with Penny' })
     ).toBeVisible();
     const getTheApp = page.getByRole('link', { name: 'Get the app' });
     await expect(getTheApp).toBeVisible();
@@ -288,8 +284,15 @@ test.describe('web app off', () => {
     for (const href of ['/privacy', '/terms', '/support']) {
       await expect(page.locator(`a[href="${href}"]`)).toHaveCount(1);
     }
-    // No web signup while the web is locked (Sam, 2026-09-26): the admin types /signin.
-    await expect(page.locator('a[href="/signin"]')).toHaveCount(0);
+    // The landing page renders per request, so each deployment shows its own state.
+    if (WEB_ON) {
+      const tryIt = page.getByRole('link', { name: 'Try it on the web' });
+      await expect(tryIt).toBeVisible();
+      expect(await tryIt.getAttribute('href')).toBe('/signin');
+    } else {
+      // No web signup while the web is locked (Sam, 2026-09-26): the admin types /signin.
+      await expect(page.locator('a[href="/signin"]')).toHaveCount(0);
+    }
   });
 
   test('the download screen renders and offers the App Store', async ({ page }) => {

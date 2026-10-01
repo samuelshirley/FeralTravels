@@ -82,6 +82,12 @@
   max-width: 34em;
 }
 
+.ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .page .cta {
   display: inline-block;
   padding: 14px 24px;
@@ -99,7 +105,28 @@
   background: var(--tp-primary-hover);
 }
 
-.page .cta:focus-visible {
+/* The secondary of the pair: .cta's size and radius, outlined in its colour. The 1px border comes out of the padding. */
+.page .ctaSecondary {
+  display: inline-block;
+  padding: 13px 23px;
+  border: 1px solid var(--tp-primary);
+  border-radius: var(--tp-radius-md);
+  background: var(--tp-primary-tint);
+  color: var(--tp-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.page .ctaSecondary:hover {
+  background: var(--tp-primary-muted);
+  border-color: var(--tp-primary-hover);
+}
+
+.page .cta:focus-visible,
+.page .ctaSecondary:focus-visible {
   outline: none;
   box-shadow: var(--tp-focus-ring);
 }
