@@ -293,7 +293,7 @@ chat under Penny's typing dots. Each passed on a re-run (runs 35857768871,
 36267660286, 36329051603). A reviewer's first trip takes the same path, so this
 was treated as a user-facing bug.
 
-**Cause, read from the code.** On mount, the native `ChatPanel` fires two
+**Cause.** On mount, the native `ChatPanel` fires two
 independent requests. History lands with `setMessages(data.messages)`, a
 wholesale replace. The onboarding snapshot lands and a second effect appends the
 first setup question as an `optimistic-` bubble. When the snapshot won the race,
@@ -318,11 +318,14 @@ ships over the air.
 fails if the gate or the dep is removed. It was mutation-checked against both,
 and against the original code.
 
-**Evidence still owed.** A builder sandbox cannot run Maestro, so this was not
-reproduced on a simulator. To reproduce, add a temporary
-`await new Promise((r) => setTimeout(r, 2000));` before `api.listChat()`. On the
-unfixed panel, `onboarding-flash.yaml` should then fail on the typing dots every
-time. With the fix and the same delay, it should pass.
+**Reproduced on the local simulator (2026-10-01).** A temporary
+`await new Promise((r) => setTimeout(r, 2000));` before `api.listChat()` forces
+the history to land second. The unfixed panel then fails `onboarding-flash.yaml`
+on `onboarding-headline` after 30 s, and its screenshot is the CI one: an empty
+chat under the typing dots. The fixed panel with the same delay passes. Without
+the delay, `onboarding-flash`, `onboarding-wizard` and `onboarding-date-picker`
+all pass. That delay is the way to re-check this race after any change to how
+the native panel loads history.
 
 ## Next action
 
