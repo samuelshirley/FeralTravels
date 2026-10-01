@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `requireWebAccess` with the switch in the state production actually runs:
- * `WEB_APP_ENABLED` unset.
+ * `requireWebAccess` on both sides of the switch.
  *
- * Found 2026-09-24: production never had the variable, the switch defaulted ON,
- * and this function returned on its first line for every visitor — so anyone
- * could sign up at /login and use the whole web app. Every page called it and
- * `webAccessCoverage.test.ts` was green; the gate was present and inert. These
- * tests drive it with the variable absent, so a default that opens the web
- * fails here rather than in production.
+ * Production runs with `WEB_APP_ENABLED` unset, which is the web ON since
+ * 2026-10-01. Both cases are driven explicitly: unset must return before
+ * asking who anyone is, and `'0'` — the kill switch — must turn everyone but
+ * the admin away. Found 2026-09-24: a gate that every page called and
+ * `webAccessCoverage.test.ts` saw was still inert, because nothing tested the
+ * value production actually had.
  */
 
 const mocks = vi.hoisted(() => {
@@ -49,7 +48,7 @@ function signedInAs(email: string | null) {
 }
 
 beforeEach(() => {
-  vi.stubEnv('WEB_APP_ENABLED', undefined);
+  vi.stubEnv('WEB_APP_ENABLED', '0');
   mocks.auth.mockReset();
   mocks.redirect.mockClear();
   mocks.isAdminEmail.mockReset().mockResolvedValue(false);
@@ -61,7 +60,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('requireWebAccess, WEB_APP_ENABLED unset (production)', () => {
+describe('requireWebAccess, WEB_APP_ENABLED=0 (the kill switch)', () => {
   it('sends a signed-in non-admin to the download screen', async () => {
     signedInAs('someone@example.com');
     await expect(requireWebAccess()).rejects.toThrow(mocks.RedirectSentinel);
@@ -95,9 +94,12 @@ describe('requireWebAccess, WEB_APP_ENABLED unset (production)', () => {
   });
 });
 
-describe('requireWebAccess, WEB_APP_ENABLED=1', () => {
+describe.each([
+  ['unset (production)', undefined],
+  ['=1', '1'],
+])('requireWebAccess, WEB_APP_ENABLED %s', (_label, value) => {
   it('lets a signed-in non-admin in without asking who they are', async () => {
-    vi.stubEnv('WEB_APP_ENABLED', '1');
+    vi.stubEnv('WEB_APP_ENABLED', value);
     signedInAs('someone@example.com');
     await expect(requireWebAccess()).resolves.toBeUndefined();
     expect(mocks.auth).not.toHaveBeenCalled();
@@ -113,7 +115,7 @@ describe('requireWebAccess, WEB_APP_ENABLED=1', () => {
  */
 describe.each([
   ['unset (production)', undefined],
-  ['=1', '1'],
+  ['=0', '0'],
 ])('requireAdminSignIn, WEB_APP_ENABLED %s', (_label, value) => {
   beforeEach(() => {
     vi.stubEnv('WEB_APP_ENABLED', value);

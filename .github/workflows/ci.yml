@@ -333,8 +333,8 @@ jobs:
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
-      # The same build, deployed a second time with WEB_APP_ENABLED unset, so
-      # the configuration production actually runs gets tested too.
+      # The same build, deployed a second time with WEB_APP_ENABLED=0, so the
+      # kill switch is proven to block.
       blocked_url: ${{ steps.deploy.outputs.blocked_url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -428,19 +428,11 @@ jobs:
           # worth asserting on.
           node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
-          # WEB_APP_ENABLED="1" is passed here, so this preview runs with the web
-          # app ON. The web is OFF unless the variable is exactly "1"
-          # (src/lib/webAccess.ts), so dropping this line blocks every browser
-          # spec below.
-          #
-          # It was blocked for a day, to match where production is heading. The cost
-          # was the whole web UI suite: `existing-trip`, `onboarding-flow`,
-          # `penny-plan-trip`, `lazy-fuel-sourcing`, `vehicle-crud` and
-          # `subscriptions` were all paused, because each would be redirected to
-          # /get-the-app before its first assertion. That is the only automated
-          # proof that Penny plans a trip, that fuel sources lazily, that the
-          # paywall blocks and that vehicles can be managed — traded for one
-          # spec's worth of edge-redirect coverage.
+          # WEB_APP_ENABLED is deliberately NOT passed here, so this preview runs
+          # the default production runs: the web app ON (it is on unless the
+          # variable is exactly "0" — src/lib/webAccess.ts). A value on the
+          # Vercel Preview environment would replace that default, so
+          # check-preview-env.mjs above refuses one.
           #
           # The flag is fixed per deployment, so ONE preview cannot test both
           # states; the blocked side is the second deployment below.
@@ -457,26 +449,16 @@ jobs:
           URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
-            -e WEB_APP_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
           # A SECOND deployment of the same prebuilt artifact, with the web app
-          # switched OFF.
+          # switched OFF by WEB_APP_ENABLED="0" — the kill switch.
           #
           # One deployment can only be in one state, so a suite running against
-          # one of them can only ever prove half of a switch. The half it does
-          # not prove is the half that ships: production runs with
-          # WEB_APP_ENABLED unset, and until this existed nothing had ever
-          # executed that configuration — the block was argued from unit tests
-          # and a local reading of middleware.
-          #
-          # WEB_APP_ENABLED is deliberately NOT passed, so this deployment proves
-          # the DEFAULT blocks. It used to pass "0" while production had the
-          # variable unset and the default was ON: CI proved "0" blocked, and
-          # production served the whole web app to anyone who signed up
-          # (2026-09-24). Testing the value production does not have is how
-          # that went unseen.
+          # one of them can only ever prove half of a switch. The ordinary
+          # preview above proves the default (unset, as production runs it)
+          # opens the web; this one proves "0" closes it.
           #
           # Cheap, because everything expensive is already done. Same prebuilt
           # bundle, same Neon branch, same secret; only the env differs. It adds
@@ -487,6 +469,7 @@ jobs:
           BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
+            -e WEB_APP_ENABLED="0" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
           echo "Preview (web blocked): $BLOCKED_URL"
@@ -592,7 +575,7 @@ jobs:
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          # The second deployment — same build, WEB_APP_ENABLED unset. Its presence
+          # The second deployment — same build, WEB_APP_ENABLED=0. Its presence
           # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
           # covers both sides of the switch: one browser resolution, one
           # playwright-results.json, one PR comment, one skip-guard.
