@@ -108,7 +108,7 @@ export default function LandingPage() {
               Get the app
             </a>
             {webAppEnabled() && (
-              <Link href="/signin" className={styles.ctaSecondary}>
+              <Link href="/login" className={styles.ctaSecondary}>
                 Try it on the web
               </Link>
             )}

@@ -17,7 +17,7 @@ import { testEndpointHeaders } from './fixtures/constants';
  *
  * Runs in the `api` project, unauthenticated, against the deployed preview.
  *
- * WHICH SIDE OF THE SWITCH IT IS ON. `WEB_APP_ENABLED` is fixed for the life of
+ * WHICH SIDE OF THE SWITCH IT IS ON. `WEB_APP_DISABLED` is fixed for the life of
  * a deployment, so one preview cannot exercise both states. Rather than skip
  * half this file on the side it is not on — a skip reds the build, because
  * E2E_MAX_SKIPPED is 0, and a suite that quietly tests nothing is the failure
@@ -39,17 +39,17 @@ import { testEndpointHeaders } from './fixtures/constants';
  *
  * The first version keyed off `E2E_WEB_UI`, which is a Playwright PROJECT
  * switch — a different variable, on a different machine, kept in step with
- * `WEB_APP_ENABLED` by hand. Two names for one fact is the drift this whole
+ * the web switch by hand. Two names for one fact is the drift this whole
  * spec exists to catch, so it now probes the running app instead: send an
  * anonymous request to a gated page and read where it is sent.
  *
- *   → /get-the-app  the web gate engaged      → WEB_APP_ENABLED='0'
- *   → /login        ordinary auth redirect    → the web is on (unset or anything but '0')
+ *   → /get-the-app  the web gate engaged      → WEB_APP_DISABLED='1'
+ *   → /login        ordinary auth redirect    → the web is on (unset or anything but '1')
  *
  * INTENT comes from the project name. ci.yml runs this spec twice: once in the
- * `api` project against the ordinary preview (WEB_APP_ENABLED not passed at
+ * `api` project against the ordinary preview (WEB_APP_DISABLED not passed at
  * all — unset, as in production), and once in `web-blocked` against a second
- * deployment of the same build with WEB_APP_ENABLED=0. So project -> deployment
+ * deployment of the same build with WEB_APP_DISABLED=1. So project -> deployment
  * -> flag is one chain with nothing to keep in step by hand.
  *
  * Observed and intended are then compared, and a mismatch is the most valuable
@@ -85,7 +85,7 @@ let WEB_ON = true;
 test.beforeAll(async ({}, testInfo) => {
   // The project's OWN baseURL, not the ambient env var. The `web-blocked`
   // project points at a second deployment of the same build with
-  // WEB_APP_ENABLED=0; reading E2E_BASE_URL here would have probed the open one
+  // WEB_APP_DISABLED=1; reading E2E_BASE_URL here would have probed the open one
   // and then asserted the blocked contract against it.
   const ctx = await playwrightRequest.newContext({
     baseURL:
@@ -114,14 +114,14 @@ test.describe('web app off', () => {
   test('the web switch is in the state this deployment intended', async ({}, testInfo) => {
     // Intent comes from the PROJECT, and the project comes from which
     // deployment ci.yml aimed it at — which came from whether it passed
-    // WEB_APP_ENABLED=0 to `vercel deploy`. One chain, no second variable to keep in
+    // WEB_APP_DISABLED=1 to `vercel deploy`. One chain, no second variable to keep in
     // step by hand. The earlier version read E2E_WEB_UI, a Playwright switch on
     // a different machine, which is the drift this file exists to catch.
     const expected: WebState = testInfo.project.name === 'web-blocked' ? 'blocked' : 'open';
     expect(
       observed,
       `Project "${testInfo.project.name}" targets a deployment that should be ${expected}, ` +
-        `but it is ${observed}. The WEB_APP_ENABLED ci.yml gave \`vercel deploy\` (0 for the blocked ` +
+        `but it is ${observed}. The WEB_APP_DISABLED ci.yml gave \`vercel deploy\` (1 for the blocked ` +
         `deployment, none for the open one) did not take effect. Every assertion below is now checking the wrong contract, so ` +
         `fix this before reading any other failure in this file.`
     ).toBe(expected);
@@ -288,10 +288,10 @@ test.describe('web app off', () => {
     if (WEB_ON) {
       const tryIt = page.getByRole('link', { name: 'Try it on the web' });
       await expect(tryIt).toBeVisible();
-      expect(await tryIt.getAttribute('href')).toBe('/signin');
+      expect(await tryIt.getAttribute('href')).toBe('/login');
     } else {
-      // No web signup while the web is locked (Sam, 2026-09-26): the admin types /signin.
-      await expect(page.locator('a[href="/signin"]')).toHaveCount(0);
+      // No web signup while the web is locked (Sam, 2026-09-26): the admin types /login.
+      await expect(page.getByRole('link', { name: 'Try it on the web' })).toHaveCount(0);
     }
   });
 
