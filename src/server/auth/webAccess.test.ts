@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `requireWebAccess` on both sides of the switch.
  *
- * Production runs with `WEB_APP_ENABLED` unset, which is the web ON since
+ * Production runs with `WEB_APP_DISABLED` unset, which is the web ON since
  * 2026-10-01. Both cases are driven explicitly: unset must return before
- * asking who anyone is, and `'0'` — the kill switch — must turn everyone but
+ * asking who anyone is, and `'1'` — the kill switch — must turn everyone but
  * the admin away. Found 2026-09-24: a gate that every page called and
  * `webAccessCoverage.test.ts` saw was still inert, because nothing tested the
  * value production actually had.
@@ -48,7 +48,7 @@ function signedInAs(email: string | null) {
 }
 
 beforeEach(() => {
-  vi.stubEnv('WEB_APP_ENABLED', '0');
+  vi.stubEnv('WEB_APP_DISABLED', '1');
   mocks.auth.mockReset();
   mocks.redirect.mockClear();
   mocks.isAdminEmail.mockReset().mockResolvedValue(false);
@@ -60,7 +60,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('requireWebAccess, WEB_APP_ENABLED=0 (the kill switch)', () => {
+describe('requireWebAccess, WEB_APP_DISABLED=1 (the kill switch)', () => {
   it('sends a signed-in non-admin to the download screen', async () => {
     signedInAs('someone@example.com');
     await expect(requireWebAccess()).rejects.toThrow(mocks.RedirectSentinel);
@@ -96,10 +96,10 @@ describe('requireWebAccess, WEB_APP_ENABLED=0 (the kill switch)', () => {
 
 describe.each([
   ['unset (production)', undefined],
-  ['=1', '1'],
-])('requireWebAccess, WEB_APP_ENABLED %s', (_label, value) => {
+  ['=0', '0'],
+])('requireWebAccess, WEB_APP_DISABLED %s', (_label, value) => {
   it('lets a signed-in non-admin in without asking who they are', async () => {
-    vi.stubEnv('WEB_APP_ENABLED', value);
+    vi.stubEnv('WEB_APP_DISABLED', value);
     signedInAs('someone@example.com');
     await expect(requireWebAccess()).resolves.toBeUndefined();
     expect(mocks.auth).not.toHaveBeenCalled();
@@ -115,10 +115,10 @@ describe.each([
  */
 describe.each([
   ['unset (production)', undefined],
-  ['=0', '0'],
-])('requireAdminSignIn, WEB_APP_ENABLED %s', (_label, value) => {
+  ['=1', '1'],
+])('requireAdminSignIn, WEB_APP_DISABLED %s', (_label, value) => {
   beforeEach(() => {
-    vi.stubEnv('WEB_APP_ENABLED', value);
+    vi.stubEnv('WEB_APP_DISABLED', value);
   });
 
   it('sends a visitor with no session to the sign-in form, bound for /admin', async () => {

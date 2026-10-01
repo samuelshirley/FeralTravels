@@ -333,7 +333,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
-      # The same build, deployed a second time with WEB_APP_ENABLED=0, so the
+      # The same build, deployed a second time with WEB_APP_DISABLED=1, so the
       # kill switch is proven to block.
       blocked_url: ${{ steps.deploy.outputs.blocked_url }}
     env:
@@ -428,9 +428,9 @@ jobs:
           # worth asserting on.
           node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
-          # WEB_APP_ENABLED is deliberately NOT passed here, so this preview runs
+          # WEB_APP_DISABLED is deliberately NOT passed here, so this preview runs
           # the default production runs: the web app ON (it is on unless the
-          # variable is exactly "0" — src/lib/webAccess.ts). A value on the
+          # variable is exactly "1" — src/lib/webAccess.ts). A value on the
           # Vercel Preview environment would replace that default, so
           # check-preview-env.mjs above refuses one.
           #
@@ -453,12 +453,12 @@ jobs:
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
           # A SECOND deployment of the same prebuilt artifact, with the web app
-          # switched OFF by WEB_APP_ENABLED="0" — the kill switch.
+          # switched OFF by WEB_APP_DISABLED="1" — the kill switch.
           #
           # One deployment can only be in one state, so a suite running against
           # one of them can only ever prove half of a switch. The ordinary
           # preview above proves the default (unset, as production runs it)
-          # opens the web; this one proves "0" closes it.
+          # opens the web; this one proves "1" closes it.
           #
           # Cheap, because everything expensive is already done. Same prebuilt
           # bundle, same Neon branch, same secret; only the env differs. It adds
@@ -469,7 +469,7 @@ jobs:
           BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
-            -e WEB_APP_ENABLED="0" \
+            -e WEB_APP_DISABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
           echo "Preview (web blocked): $BLOCKED_URL"
@@ -575,7 +575,7 @@ jobs:
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          # The second deployment — same build, WEB_APP_ENABLED=0. Its presence
+          # The second deployment — same build, WEB_APP_DISABLED=1. Its presence
           # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
           # covers both sides of the switch: one browser resolution, one
           # playwright-results.json, one PR comment, one skip-guard.

@@ -151,7 +151,7 @@ export default defineConfig({
 
     /**
      * THE OTHER SIDE OF THE SWITCH — the same spec, against a second deployment
-     * of the same build with WEB_APP_ENABLED=0.
+     * of the same build with WEB_APP_DISABLED=1.
      *
      * A project rather than a second `playwright test` invocation, and that is
      * the whole point of the shape. The separate-command version broke twice in
@@ -229,13 +229,14 @@ export default defineConfig({
             // here (not in .env) so a developer's `npm run dev` doesn't
             // unexpectedly expose them — only tests turn them on.
             E2E_TEST_ENDPOINTS: '1',
-            // The web is ON unless this is exactly '0' (src/lib/webAccess.ts),
+            // The web is OFF only when this is exactly '1' (src/lib/webAccess.ts),
             // and a local run is the open side of the switch, like CI's
-            // ordinary preview and production. '1' rather than unset because
-            // Next's .env loading never overrides a variable already set, so a
-            // developer's .env carrying WEB_APP_ENABLED=0 cannot close it and
-            // red the `api` project's web-blocked.spec.ts.
-            WEB_APP_ENABLED: '1',
+            // ordinary preview and production. '' rather than unset because
+            // Next's .env loading never overrides a variable already set (an
+            // empty string counts), so a developer's .env carrying
+            // WEB_APP_DISABLED=1 cannot close it and red the `api` project's
+            // web-blocked.spec.ts.
+            WEB_APP_DISABLED: '',
             AUTH_URL: BASE_URL,
             // The TripMap component reads NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
             // (Next bakes NEXT_PUBLIC_ vars into the client bundle at
