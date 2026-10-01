@@ -134,10 +134,10 @@ test.describe('Account deletion', () => {
     // And a protected page bounces instead of rendering.
     //
     // EITHER destination is correct, and which one you get says nothing about
-    // deletion. With the web app on, a session-less browser is sent to /login.
-    // With it off (WEB_APP_ENABLED unset, which is how production runs; CI's
-    // ordinary preview runs with it on) the same browser is sent to /get-the-app
-    // instead — it is not a person who needs to sign in, it is a person who
+    // deletion. With the web app on (WEB_APP_ENABLED unset, which is how
+    // production and CI's ordinary preview run), a session-less browser is sent
+    // to /login. With it off (WEB_APP_ENABLED=0) the same browser is sent to
+    // /get-the-app instead — it is not a person who needs to sign in, it is a person who
     // needs the app. The assertion is that /settings does not RENDER, which is
     // the thing this test is about; pinning the destination made it fail three
     // times for a reason that had nothing to do with account deletion.
