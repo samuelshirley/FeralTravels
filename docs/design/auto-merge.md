@@ -5,6 +5,19 @@ tests have passed, AI tests included**, and every other open PR is then brought
 up to date. Merging is deploying (`deploy-pipeline.md`), so from the moment
 `AUTO_UPDATE_TOKEN` exists a green PR reaches production with nobody looking.
 
+**Except a PR that needs a new iOS build** (Sam, 2026-10-02: *"The only things
+that shouldn't auto merge are if it requires a new build for iOS — only
+continuous delivery for over-the-air changes."*):
+
+- **Auto-merges:** a PR that changes nothing under `mobile/`, or whose mobile
+  changes ship over the air (JS only, an EAS Update).
+- **Does not:** a PR that needs a new iOS binary — a dependency or lockfile
+  change, `app.config.js`, `eas.json`, app assets, an install/EAS build hook.
+  The bot posts one comment saying so, adds no `ai-tests` label (no Penny
+  spend) and never merges it; it still brings it up to date with main after
+  every merge. **Merge it by hand** when you are ready for the TestFlight
+  build (`mobile-release.md`).
+
 - Workflow: `.github/workflows/auto-merge.yml`
 - Logic: `.github/scripts/auto-merge.mjs` (pure rules + a thin `gh` layer)
 - Tests: `src/lib/autoMerge.test.ts`
@@ -13,21 +26,49 @@ up to date. Merging is deploying (`deploy-pipeline.md`), so from the moment
 
 A PR merges when ALL of these hold:
 
-1. It is open, not a draft, targets `main`, comes from this repository (never
+1. Merging it needs no new iOS binary (below).
+2. It is open, not a draft, targets `main`, comes from this repository (never
    a fork: the token can write here, so fork code is never what it merges), and
    has no `hold` label.
-2. Its latest CI run is for its CURRENT head commit and concluded `success`.
+3. Its latest CI run is for its CURRENT head commit and concluded `success`.
    A run for an older head (the PR was pushed since), a re-run of an older run,
    or a run superseded by a newer one on the same commit decides nothing.
-3. It changes no app code, or it changes a test too, or it carries
+4. It changes no app code, or it changes a test too, or it carries
    `no-tests-needed` (below).
-4. It is not behind `main` and does not conflict with it.
-5. It is docs-only (CI skipped `Deploy tested preview`), or the AI shard
+5. It is not behind `main` and does not conflict with it.
+6. It is docs-only (CI skipped `Deploy tested preview`), or the AI shard
    (`iOS e2e · ai`) has passed on some CI run for this head commit.
 
 The merge is a merge commit (`gh pr merge --merge`, the repo's style) pinned to
 the tested head (`--match-head-commit`), so a push that lands in between is
 never merged untested.
+
+### How "needs a new iOS build" is decided
+
+The same classifier the Mobile workflow uses, `scripts/decide-mobile-release.mjs`
+(tested by `decideMobileRelease.test.ts`), with the same inputs as mobile.yml's
+PR forecast: `git merge-base main <PR head>` → PR head, `--json`. Its answer is
+`none`, `js-only` or `native`; only `none` and `js-only` auto-merge.
+
+`after-ci` checks out **main's** copy of the bot and the classifier (sparse,
+full history, `persist-credentials: false`), fetches the PR head commit as git
+objects only — anonymously, the repo is public — and runs the classifier on it
+before the bot. Nothing from the PR is checked out, installed, imported or run;
+`autoMerge.test.ts` fails if that job ever gains an npm/npx/install or a
+checkout of the PR.
+
+**It fails safe to native.** A fetch that fails, no merge-base, a classifier
+that errors, no output, unparseable output, or a decision that is not one of the
+three: each is treated as `native`, says why in the job log and on the PR, and
+the PR waits for a person. A PR wrongly held costs a manual merge; a native
+change wrongly merged would publish JS to binaries that cannot run it.
+
+**The comment** (`<!-- auto-merge:native -->`) says the PR needs a new iOS
+build, so it will not merge itself, and lists the classifier's reasons. It is
+edited in place if the reasons change, and deleted once a later head is no
+longer native — that head then goes through the normal rules. `update-open-prs`
+still brings native PRs up to date with main after every merge, which keeps
+them mergeable for when you merge them.
 
 ## What happens on each CI run
 
@@ -35,6 +76,7 @@ never merged untested.
 
 | PR state | Action |
 |---|---|
+| needs a new iOS build (or the classifier could not say) | one sticky comment with the reasons; nothing else |
 | app code, no test, no `no-tests-needed` | one sticky comment listing the files; no merge |
 | conflicts with main | one sticky comment: merge main in by hand |
 | behind main | update-branch (merge main in) → CI runs again |
@@ -42,7 +84,7 @@ never merged untested.
 | AI shard already ran on this head and failed | nothing: push a fix, or remove and re-add `ai-tests` |
 | ready | merge |
 
-A PR that cannot merge anyway is not sent to the AI shard, because the commit
+A PR that cannot merge anyway — a native one included — is not sent to the AI shard, because the commit
 that fixes it needs its own AI run. A sticky comment is deleted once its
 condition is gone.
 
@@ -78,9 +120,6 @@ fails or, worse, restores the old history. Merging main in only adds a commit.
   re-evaluates the PR.
 - **`ai-tests`** — managed by the bot from now on; adding it by hand still
   works as before (ci.yml).
-
-`hold` and `no-tests-needed` must exist in the repository (Issues → Labels, or
-`gh label create hold`) before they can be added from the UI.
 
 ### The tests rule
 
