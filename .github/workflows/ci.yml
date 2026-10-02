@@ -32,17 +32,27 @@
 #
 # FAIL FAST (Sam, 2026-10-02): "If anything fails on the PR, immediately stop
 # the rest of the jobs and investigate the failure so we aren't wasting time or
-# tokens." Every job that does real work ends with a `Stop the whole run` step
-# (`if: failure() && !cancelled()`) that cancels THIS run with `gh run cancel`
-# — hence `actions: write` below — so a red Unit tests does not leave the
-# macOS shards and the Penny-spending `ai` shard running on a PR that is
-# already red. The iOS matrix is `fail-fast: true` as well. The step is LAST in
-# its job: the steps that report a failure (the Playwright report, Maestro's
-# recordings, "Say where the flow died") run first, so the failure that stopped
-# the run is still reported with its evidence. Two jobs run after a cancel by
-# design (`if: always()`) and carry no stop step: `iOS e2e (simulator)`, which
-# says in its PR comment which job stopped the run and which were cancelled,
-# and the leaked-preview cleanup. src/lib/ciFailFast.test.ts holds all of this.
+# tokens." ONE watcher job, `Stop the run at the first failure`, starts with
+# the run (no `needs`) and runs .github/scripts/fail-fast.mjs, which polls this
+# run attempt's jobs every ~15s and cancels the run (`gh run cancel` — hence
+# `actions: write` below) as soon as any other job has concluded `failure`, so
+# a red Unit tests does not leave the macOS shards and the Penny-spending `ai`
+# shard running on a PR that is already red. The iOS matrix is `fail-fast: true`
+# as well (GitHub's own matrix fail-fast leaves the failed shard `failure`).
+#
+# WHY A WATCHER and not a stop step at the end of each job (the first version):
+# `gh run cancel` cancels every job not yet completed, INCLUDING the one that
+# asked, so a job cancelling its own run rewrites its own `failure` as
+# `cancelled`. Run 36988769859: `iOS e2e · account` failed, cancelled the run,
+# and came out `cancelled` with everything else — nothing showed as failed, the
+# iOS comment could not name the cause. The watcher cancels only after the
+# failed job has COMPLETED, so it keeps `failure` in the checks list and in the
+# PR comment. Cost: one ubuntu runner for the length of the run (free on this
+# public repo). Its step is `continue-on-error`, so it can never turn a run
+# red. Two jobs run after a cancel by design (`if: always()`): `iOS e2e
+# (simulator)`, whose PR comment names the job that failed and the jobs
+# cancelled as a result, and the leaked-preview cleanup; the watcher neither
+# waits on them nor counts them. src/lib/ciFailFast.test.ts holds all of this.
 # A cancelled run concludes `cancelled`, which the deploy gate and auto-merge
 # both read as not green.
 #
@@ -115,8 +125,8 @@ concurrency:
   group: ci-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# `actions: write` is for the `Stop the whole run` steps (gh run cancel) and the
-# iOS summary's read of this run's jobs; see FAIL FAST above.
+# `actions: write` is for the fail-fast watcher (gh run cancel) and the iOS
+# summary's read of this run's jobs; see FAIL FAST above.
 permissions:
   contents: read
   pull-requests: write
@@ -126,6 +136,31 @@ env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
+  # FAIL FAST — see the header. No `needs`: it starts with the run and watches
+  # every other job. Its deadlines nest (script 165 min < step 170 < job 180),
+  # all past the longest run (~77 min; a labelled AI run longer), so it stops
+  # watching on its own terms; the step's `continue-on-error` keeps even a
+  # timeout from turning the run red. Its own conclusion means nothing — after
+  # a cancel it is `cancelled` like the rest — and every reader of this run's
+  # jobs (the iOS comment, fail-fast.mjs) leaves it out by name.
+  fail-fast:
+    name: Stop the run at the first failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Watch this run's jobs
+        continue-on-error: true
+        timeout-minutes: 170
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAIL_FAST_DEADLINE_MINUTES: '165'
+        run: node .github/scripts/fail-fast.mjs
+
   # Is this PR documentation only? The jobs that DEPLOY something or DRIVE a
   # browser are gated on the answer; see scripts/decide-docs-only.mjs for the
   # rule, the fail-safe direction, and why the workflow still runs at all.
@@ -208,26 +243,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # FAIL FAST (see the header): this job failed, so cancel the rest of the
-      # run. LAST in the job, so every step above that reports the failure has
-      # already run. `!cancelled()`: a job failing BECAUSE the run is being
-      # cancelled is not a cause, and must not claim to be one.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: Decide scope
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
-
   # ONE job for both vitest projects, because both ARE unit tests. The
   # project split (`unit` in node, `components` in jsdom) still exists — it
   # keeps logic specs from paying for a DOM they never touch — but it is a
@@ -297,23 +312,6 @@ jobs:
       - run: npm ci
       - run: npm test
 
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: Unit tests
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
-
   # The mobile half of the gate. Deliberately typecheck-only for now: mobile/
   # has no test suite of its own, and the shared domain logic it depends on is
   # already covered by the unit project (including the mirror-drift guard in
@@ -369,23 +367,6 @@ jobs:
           if grep -q PURCHASE_DIAGNOSTICS_DEV_ONLY "$out/dev-false.js"; then
             echo "::error::the RELEASE bundle contains purchaseDiagnostics — see docs/decisions.md E12"
             exit 1
-          fi
-
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: Mobile typecheck
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
           fi
 
   # THE preview — tested by e2e below, clickable by humans from the PR comment.
@@ -612,23 +593,6 @@ jobs:
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: Deploy tested preview
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
-
   e2e:
     name: E2E tests (against preview)
     needs: preview
@@ -839,23 +803,6 @@ jobs:
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
 
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: E2E tests (against preview)
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
-
   # ── iOS end-to-end, on real simulators ─────────────────────────────────────
   #
   # iOS is the product, so this is where the end-to-end weight sits: the web
@@ -989,23 +936,6 @@ jobs:
           path: ios-sim-app.tgz
           retention-days: 1
           if-no-files-found: error
-
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: iOS build (simulator app)
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
 
   ios-e2e:
     name: iOS e2e · ${{ matrix.shard }}
@@ -1321,23 +1251,6 @@ jobs:
           path: ios-shard-${{ matrix.shard }}.json
           retention-days: 3
 
-      # FAIL FAST — see the header and the first `Stop the whole run`.
-      - name: Stop the whole run
-        if: failure() && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILED_JOB: iOS e2e · ${{ matrix.shard }}
-        run: |
-          echo "### ⛔ $FAILED_JOB failed, so the rest of this run was cancelled" >> "$GITHUB_STEP_SUMMARY"
-          if ! out="$(gh run cancel ${{ github.run_id }} -R ${{ github.repository }} 2>&1)"; then
-            # Another job got there first, or the run had already finished.
-            if printf '%s' "$out" | grep -qiE 'cancel|completed'; then
-              echo "::notice::gh run cancel: $out"
-            else
-              echo "::warning::Could not cancel the rest of the run: $out"
-            fi
-          fi
-
   ios-e2e-summary:
     # The check name the PR has always shown. The deploy gate reads the run's
     # overall conclusion, and branch protection requires only Decide scope and
@@ -1345,9 +1258,8 @@ jobs:
     #
     # Runs after a FAIL FAST cancel too (`always()` on the job AND on the steps
     # that must run: a step's default `success()` is false in a cancelled run,
-    # so without it the comment would silently not be written). It has no
-    # `Stop the whole run` step: by the time it starts, everything it reports on
-    # has finished.
+    # so without it the comment would silently not be written). By the time it
+    # starts, every shard it reports on has finished.
     name: iOS e2e (simulator)
     needs: [decide, ios-e2e]
     if: always() && needs.decide.outputs.docs_only != 'true'
@@ -1384,9 +1296,11 @@ jobs:
 
             // FAIL FAST: did a failed job stop this run? Asked of the run's own
             // jobs, because the shard files cannot say — a shard cancelled
-            // before it started leaves none. The two jobs that run after a
-            // cancel by design are neither the cause nor cancelled.
-            const afterCancel = new Set(['iOS e2e (simulator)', 'Drop the preview database if the PR has closed']);
+            // before it started leaves none. Left out: the two jobs that run
+            // after a cancel by design, and the fail-fast watcher, which
+            // outlives every job it watches and is cancelled by its own cancel —
+            // none of the three is the cause, and none was stopped by it.
+            const afterCancel = new Set(['iOS e2e (simulator)', 'Drop the preview database if the PR has closed', 'Stop the run at the first failure']);
             let failed = [];
             let cancelled = [];
             let jobsError = '';
@@ -1477,7 +1391,7 @@ jobs:
   # drop the branch again. It needs every job that uses the preview, so it runs
   # after the last of them. It must never turn CI red and is never a required
   # check: every step is `continue-on-error`. It runs after a FAIL FAST cancel
-  # too (`always()` on the job and its steps), and has no stop step of its own.
+  # too (`always()` on the job and its steps).
   drop-preview-db:
     name: Drop the preview database if the PR has closed
     needs: [decide, preview, e2e, ios-e2e]
