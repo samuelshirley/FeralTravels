@@ -285,6 +285,48 @@ it happened, so the flake rate stays readable from the PR thread.
 lines ending in destination warnings is the stall; a runner log that never
 exists at all (`xcodebuild` exiting at once) is the Xcode mismatch.
 
+## The missing first-run greeting — an app race, not a flake (2026-10-01)
+
+4 of 12 recent iOS failures had one signature: `extendedWaitUntil id:
+onboarding-headline` timing out at 30 s, and a failure screenshot of an empty
+chat under Penny's typing dots. Each passed on a re-run (runs 35857768871,
+36267660286, 36329051603). A reviewer's first trip takes the same path, so this
+was treated as a user-facing bug.
+
+**Cause.** On mount, the native `ChatPanel` fires two
+independent requests. History lands with `setMessages(data.messages)`, a
+wholesale replace. The onboarding snapshot lands and a second effect appends the
+first setup question as an `optimistic-` bubble. When the snapshot won the race,
+the bubble was drawn and then wiped by the empty history. That effect's deps
+(`isOnboarding, onboardingLoading, onboardingSnapshot, tripId`) never changed
+again, so it never redrew. `setupQuestionPending` stayed true, because a
+question was owed and none was on screen, so the typing dots ran forever. It is
+the same class of race the paywall bubble once hit (see the comment above the
+entitlement effect). The web is immune: its panel starts from the server's
+`initialMessages` and has no history fetch to lose to.
+
+**Fix.** The question effect waits for `historyLoading` in its gate and in its
+deps, so the question is always appended to the real transcript, and
+`isFirstQuestion` reads that transcript rather than the empty one the panel
+mounts with. A failed history load still clears `historyLoading` in its
+`finally`, so the greeting lands on an empty transcript. Merging instead of
+replacing was rejected because it would need ordering and dedupe rules against
+a server transcript that can itself carry setup rows. The fix is JS-only, so it
+ships over the air.
+
+**Guard.** `src/lib/onboardingPhaseGuard.test.ts` reads the native panel and
+fails if the gate or the dep is removed. It was mutation-checked against both,
+and against the original code.
+
+**Reproduced on the local simulator (2026-10-01).** A temporary
+`await new Promise((r) => setTimeout(r, 2000));` before `api.listChat()` forces
+the history to land second. The unfixed panel then fails `onboarding-flash.yaml`
+on `onboarding-headline` after 30 s, and its screenshot is the CI one: an empty
+chat under the typing dots. The fixed panel with the same delay passes. Without
+the delay, `onboarding-flash`, `onboarding-wizard` and `onboarding-date-picker`
+all pass. That delay is the way to re-check this race after any change to how
+the native panel loads history.
+
 ## Next action
 
 Push and watch the CI job. It is the only remaining unknown, and the three
