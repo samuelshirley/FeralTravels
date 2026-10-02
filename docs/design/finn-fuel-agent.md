@@ -1,4 +1,4 @@
-# ADR: Finn — the fuel-stop + pricing engine
+# ADR: Finn — the fuel-stop engine
 
 > **Update 2026-07-22 — Google-only cutover.** Finn no longer uses OSM. Station
 > search moved from OSM Overpass to **Google Places Text Search (New)**
@@ -28,8 +28,16 @@
 > before 0042 are **not** parsed out of `notes`: they show no line until their
 > leg is re-sourced.
 
+> **Finn finds stations; he does not price them.** Finn places fuel stops along
+> the route within the vehicle's range and picks, from the stations he can
+> safely reach, the farthest one (`choose` in `src/lib/finn/plan.ts`). He does
+> not fetch, store, show or rank by price. Pricing was built (Phase 1 below) and
+> then deleted in `a0c9ee6` on 2026-07-22, because per-station price data does
+> not exist for most countries. It is **not planned**. Every price section below
+> is marked *Removed 2026-07-22 (historical)* and is kept only for its reasoning.
+
 **Status:** Proposed
-**Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display)
+**Date:** 2026-06-26 (updated 2026-06-26: station eligibility filter built; live Google `fuelOptions` price fallback; tri-state price display. The last two were removed 2026-07-22.)
 **Deciders:** Sam
 **Replaces (delete + rebuild):** the Google-Places fuel logic in `src/server/fuel.ts` / `fuelPlaces.ts` is **torn out** and rebuilt under a single new module, `src/lib/finn/`. This is a clean teardown, not an incremental migration — the old sampler accreted weird states partly because fuel logic was spread across Penny + server. Good *pure* logic (`fuelTankState.ts`) is **relocated into Finn, not deleted**.
 **Source material:** `docs/fuel-stop-agent-brief.md` + the 2026-06-26 design conversation. Read the brief first; this doc resolves its five open questions and adds the engineering detail (selection algorithm, scoring, schema, phasing).
@@ -39,18 +47,18 @@
 
 ## Context
 
-Penny plans the trip and talks to the user. **Finn** owns one job: given a route and a vehicle, place fuel stops so the driver never runs past safe range, and rank them by price where we have price data. This is the product's headline feature; everything else exists to make it useful on the road.
+Penny plans the trip and talks to the user. **Finn** owns one job: given a route and a vehicle, place fuel stops so the driver never runs past safe range. (This ADR originally also ranked them by price; that was removed 2026-07-22 and is not planned.) This is the product's headline feature; everything else exists to make it useful on the road.
 
 The app today has a *working but legally and qualitatively limited* fuel planner (`src/server/fuel.ts`): it samples the route polyline every ~0.85×range km, calls **Google Places** Nearby Search at each sample, and persists the chosen Google stations (place_id, name, coords, `googleMapsUri`) into the `stops` table. Two problems with that as the foundation:
 
 1. **It persists Google place data.** The brief's data-source rule — Google for live routing/render only, never stored — is correct, and the current planner violates it. Finn's OSM migration is also the fix for this.
-2. **It has no price awareness at all.** The only `price` reference in `src/lib/penny/` is the `submitIdea` stub that logs fuel pricing as a *missing* capability.
+2. **It has no price awareness at all.** The only `price` reference in `src/lib/penny/` is the `submitIdea` stub that logs fuel pricing as a *missing* capability. (Pricing was later built and then removed 2026-07-22; Finn has no price awareness now, by decision.)
 
-Forces at play: legal (Google ToS forbids storing/deriving datasets from their places; OSM is ODbL and storable), cost (Places + price-feed calls are metered — hence lazy planning + caching), safety (overland routes run through empty country; never run dry), and data fragmentation (EU has good open price feeds; the US has none).
+Forces at play: legal (Google ToS forbids storing/deriving datasets from their places; OSM is ODbL and storable), cost (Places + price-feed calls are metered — hence lazy planning + caching), safety (overland routes run through empty country; never run dry), and data fragmentation (EU has good open price feeds; the US has none). The price-feed forces are historical: pricing was removed 2026-07-22.
 
 ### Constraints (decided)
 
-- **Regions:** Europe **and** US, same engine. EU gets price ranking; US ships **station-only, no price** at first (labelled honestly).
+- **Regions:** Europe **and** US, same engine, **station-only everywhere** — no price, no price ranking. (The original call was EU price ranking, US station-only; pricing was removed 2026-07-22.)
 - **No LLM in the hot path or on the safety floor.** The common path (find/rank/place) and the hard gap-safety math are deterministic and reproducible. An **agentic supervisor** (LLM) wakes *only on exceptions* — empty/thin/conflicting data — to validate, re-query, and escalate. It may gather data and ask the user via Penny; it may never invent a station/coordinate/price or override the safety floor.
 - **Reuse the seams, rebuild the guts.** Keep the *interface* surfaces — `POST /api/legs/[id]/fuel-stops`, the `planFuelStops` Penny tool, the `stops` table as cache, `vehicleProfile.ts` for the range number — but delete the old implementation behind them and rebuild it inside `src/lib/finn/`. `fuelTankState.ts` moves into Finn intact.
 
@@ -59,7 +67,7 @@ Forces at play: legal (Google ToS forbids storing/deriving datasets from their p
 The single most important architectural line, and the fix for the "weird states":
 
 - **Penny owns the conversation and produces a *perfect number*** — the validated fuel range (+ fuel type + tank state) — and then **gets out of fuel logic entirely**.
-- **Finn owns *everything* downstream of that number** — stations, gap/safety math, pricing, ranking, caching, the exception supervisor. He **starts from a clean, trusted input** and never re-interprets free text or trip prose.
+- **Finn owns *everything* downstream of that number** — stations, gap/safety math, placement, caching, the exception supervisor. (Pricing was on this list until it was removed 2026-07-22.) He **starts from a clean, trusted input** and never re-interprets free text or trip prose.
 
 Previously Penny was doing both, so fuel state leaked across the chat boundary and drifted. After this split, the only thing crossing from Penny to Finn is structured, validated data — never "smart" free-text the way the lockdown invariants forbid.
 
@@ -70,7 +78,7 @@ Previously Penny was doing both, so fuel state leaked across the chat boundary a
 Build Finn as a **deterministic service** behind the existing endpoint + Penny tool, with three layers:
 
 1. **Stations — OSM (Overpass).** Query `amenity=fuel` and `highway=services` within a tight buffer of the route polyline. Storable (ODbL + attribution), so it can live in the `stops` cache. **Replaces** the Google Places station lookup.
-2. **Prices — regional providers behind one interface.** Per-station open feeds first: Tankerkönig (DE), then France (`prix-carburants`), Spain, Italy (Austria is rate-limited). Where no open feed covers a region, a **live Google `fuelOptions` provider** (non-stored — see below) supplies a price when Google has one; this is what gives the US (and no-feed EU stations) a price instead of nothing. Only when *no* provider covers a country at all does Finn report `unavailable_in_country`.
+2. **Removed 2026-07-22 (historical).** **Prices — regional providers behind one interface.** Per-station open feeds first: Tankerkönig (DE), then France (`prix-carburants`), Spain, Italy (Austria is rate-limited). Where no open feed covers a region, a **live Google `fuelOptions` provider** (non-stored — see below) supplies a price when Google has one; this is what gives the US (and no-feed EU stations) a price instead of nothing. Only when *no* provider covers a country at all does Finn report `unavailable_in_country`.
 3. **Routing — Google, live only.** Directions for the polyline + map render. Never persisted.
 
 Selection is a **reachability filter + scoring function** — arithmetic, not LLM judgement — wrapped by an **agentic supervisor** that engages only when the deterministic core returns something empty, thin, or suspicious (see "When the core fails" below). Finn the dog is the brand: the deterministic core is his reflexes, the supervisor is the part that feels like him thinking.
@@ -185,6 +193,11 @@ Prefer stops in the **upper part of the range** — default band ~**60–100% of
 
 ### 4. Scoring (the "two-part decision," made explicit)
 
+> **Removed 2026-07-22 (historical).** No scoring function with price terms exists. Finn takes the
+> farthest station he can safely reach (`choose` in `src/lib/finn/plan.ts`).
+> `w_price`, `priceNorm`, "prefer a station we have a price for" and the
+> motorway-vs-supermarket argument below describe the deleted pricing layer.
+
 For each reachable candidate compute a cost (lower = better):
 
 ```
@@ -201,6 +214,9 @@ score =  w_price     · priceNorm           // cheaper is better; 0 when price u
 - **Non-priced is a last resort, never a disqualifier.** Finn falls to a non-priced station **only when no priced candidate is safely reachable** — so a driver is never stranded for lack of price data. In a country with no pricing source at all, every candidate is non-priced and selection cleanly degenerates to distance/detour, which is correct.
 
 ### 5. Output contract
+
+> The `price` tri-state and the `cheapest_in_range` whyTag were **removed
+> 2026-07-22 (historical)**; no fuel stop carries a price.
 
 ```
 FuelStopCandidate {
@@ -220,6 +236,9 @@ FuelStopCandidate {
 Penny slices these into the per-day view and narrates the `whyTag`. **Google Maps link is single-destination per stop** — multi-stop URLs aren't reliable. (A whole-day directions URL with `waypoints=` up to 9 stops exists via `maps/dir/?api=1&...` if we want it later; not needed for v1's "navigate to this station" CTA.)
 
 ### Price availability model — never a silent null
+
+> **Removed 2026-07-22 (historical).** Nothing resolves a price any more; this model, the per-country
+> capability map and the live `fuelOptions` lookup are gone with the pricing layer.
 
 `price` resolves to exactly one of three states; the UI shows a distinct, calm message
 for each so a missing price never reads like a bug:
@@ -248,13 +267,13 @@ Finn is "really, really in-depth" precisely *here* — a set of small, pure, ind
 2. **Burn / tank state** — *exists* (`fuelTankState.ts`): continuous-drive model, only the trip-start full tank and actual fuel stops refill.
 3. **Gap math (safety)** — largest fuel-free stretch ahead vs reachable distance → the "fill now / carry N liters" alarm. Deterministic, never the LLM (see next section).
 4. **Detour math** — perpendicular distance to the polyline (cheap, ranks everything) → real Directions detour distance+time for finalists only. Classifies on-motorway-services (≈0) vs off-ramp vs in-town.
-5. **Worth-the-detour / cost trade-off** — the Germany/Norway resolver: `savings = (priceHere − priceThere) × litersToFill`; `detourCost = extraKm × fuelCostPerKm + timeValue`. Recommend the cheaper station only if `savings > detourCost + margin`. With real prices this is pure arithmetic — no guessing whether "the motorway is cheaper here."
-6. **Pricing math** — normalize currency + unit (€/L vs $/gal), per fuel type, weight by price age (`priceAsOf`), reject outliers. Missing price → term drops out, rank on detour/band.
+5. **Removed 2026-07-22 (historical).** **Worth-the-detour / cost trade-off** — the Germany/Norway resolver: `savings = (priceHere − priceThere) × litersToFill`; `detourCost = extraKm × fuelCostPerKm + timeValue`. Recommend the cheaper station only if `savings > detourCost + margin`. With real prices this is pure arithmetic — no guessing whether "the motorway is cheaper here."
+6. **Removed 2026-07-22 (historical).** **Pricing math** — normalize currency + unit (€/L vs $/gal), per fuel type, weight by price age (`priceAsOf`), reject outliers. Missing price → term drops out, rank on detour/band.
 7. **Fuel-type compatibility** — match the vehicle's fuel (diesel / octane grade / LPG / AdBlue) against OSM `fuel:*` tags. **Needs a `fuel_type` field re-added to the vehicle profile** (removed in migration 0007 — owned by the Penny task). Without it Finn can't guarantee the station sells the right fuel.
 8. **Comfort-band + fill-frequency scoring** — prefer refuel at ~60–90% of range used; soft "one fill per day." Both soft, always subordinate to the hard floor.
-9. **Cost-to-fill / budget** — `litersNeeded × price` per stop → summed trip fuel-budget estimate. A near-free product feature once prices exist.
+9. **Removed 2026-07-22 (historical).** **Cost-to-fill / budget** — `litersNeeded × price` per stop → summed trip fuel-budget estimate. A near-free product feature once prices exist.
 10. **GPS reconciliation** — expected remaining range (from plan) vs actual position/elapsed distance → drift detection → prompt the user to confirm/update tank state (they own the truth). Feeds module 1. (UI + the prompt-timing bug are in the Penny task.)
-11. **Units / locale** — metric/imperial display, per-country currency.
+11. **Units / locale** — metric/imperial display. (Per-country currency was for prices: removed 2026-07-22.)
 
 ## When the core fails — the agentic supervisor
 
@@ -268,7 +287,7 @@ The deterministic core handles the easy 95% (e.g. cheap fuel along a French moto
 |---|---|
 | Empty reachable set | Re-query OSM wider buffer / alternate tags; cross-check a **live, unstored** Google lookup for a station OSM missed; search for fuel in a town just off-route |
 | Only-option with thin margin | Verify it's real & open (hours/24h); confirm before relying on a single point of failure |
-| Suspicious data | Outlier price; `amenity=fuel` that's actually a marina/aviation dock; stale `closed` tag — flag and down-weight or re-fetch |
+| Suspicious data | Outlier price (historical — no prices since 2026-07-22); `amenity=fuel` that's actually a marina/aviation dock; stale `closed` tag — flag and down-weight or re-fetch |
 | Large gap ahead | Hand Penny a structured question: *"500 km gap ahead, ~300 km in tank — carry jerrycans, or detour 20 km to Røros to fill?"* |
 
 **Hard limits on the supervisor (preserves the lockdown invariant):** it may request more data (always re-validated by the deterministic core) or ask the user via Penny; it may **not** invent a station/coordinate/price, mark a leg safe against the gap math, or relax the safety floor. Cost/latency stay bounded because it fires only on the ~5% of hard legs — the France case never pays the LLM tax.
@@ -283,11 +302,15 @@ Unchanged from the brief — reproduced here as the binding contract:
 - **Cold-opened far day** (day 15 with days 1–14 unplanned) will often compute *out of range* — that's *correct*, since they'd run dry without earlier stops. Handle with honest copy ("plan your earlier days first"), **not** a red error, and **do not** cascade-plan upstream days (defeats lazy loading).
 - **`stops` table is the cache** (`stop_type='fuel'`). Persistent across sessions.
 - **Lazy:** explicit **"Find fuel stops"** button per day; today's day may auto-plan on load (one cheap lookup). Loading animation while searching.
-- **Invalidation:** new per-leg `fuel_plan_hash` + `fuel_planned_at`. Hash = leg geometry (start/end/waypoints/polyline) + vehicle profile (range/reserve) + entry tank state + price-feed region/version + Finn algo version. Recompute only when the hash changes (route edit, waypoint swap, vehicle change).
+- **Invalidation:** new per-leg `fuel_plan_hash` + `fuel_planned_at`. Hash = leg geometry (start/end/waypoints/polyline) + vehicle profile (range/reserve) + entry tank state + price-feed region/version (historical — pricing removed 2026-07-22) + Finn algo version. Recompute only when the hash changes (route edit, waypoint swap, vehicle change).
 
 ---
 
 ## List view, cache tiers, and price refresh
+
+> **Removed 2026-07-22 (historical).** for everything about **price** in this section: tier 2, the
+> `refresh-prices` endpoint (never built), price dispersion and the price
+> freshness policy. Only tier 1 (station + placement) exists.
 
 **List view.** Days render relevant-first: today (e.g. June 26) at the top, future drive days below. Each day shows its skeleton immediately; fuel stops fill in per the load rules below.
 
@@ -315,8 +338,8 @@ So Finn never re-runs the expensive corridor search just because prices aged. �
 
 ## Resolving the brief's five open questions
 
-1. **First region + feed →** Germany / **Tankerkönig** (free, real-time, official; the DE/EU test trip lives here). EU adapters follow on the same interface.
-2. **US strategy →** OSM stations + **live Google `fuelOptions` as the price provider** (non-stored) where Google has coverage; `unavailable_in_country`/`unknown` otherwise. This *updates* the earlier "station-only, no price" call — `fuelOptions` gives the US a price without breaking the cache contract (price is live, never persisted). Revisit a paid feed (OPIS / commercial) only if `fuelOptions` US coverage proves too thin.
+1. **Removed 2026-07-22 (historical).** **First region + feed →** Germany / **Tankerkönig** (free, real-time, official; the DE/EU test trip lives here). EU adapters follow on the same interface.
+2. **Removed 2026-07-22 (historical).** The US, like everywhere, is station-only now. Original answer: **US strategy →** OSM stations + **live Google `fuelOptions` as the price provider** (non-stored) where Google has coverage; `unavailable_in_country`/`unknown` otherwise. This *updates* the earlier "station-only, no price" call — `fuelOptions` gives the US a price without breaking the cache contract (price is live, never persisted). Revisit a paid feed (OPIS / commercial) only if `fuelOptions` US coverage proves too thin.
 3. **Freshness-hash inputs →** as listed above. Invalidating leg edits: start/end change, waypoint add/remove/reorder, route re-fetch, vehicle range/reserve change. Vehicle *name* change does **not** invalidate.
 4. **Starting fuel override →** capture **per-trip**, not per-vehicle (it varies by trip) and not onboarding-only. Add `trips.start_fuel_fraction` (default `1.0`). Onboarding states the full-tank assumption; the override edits this field.
 5. **`planFuelStops` tool vs the lazy-button endpoint →** **converge on one core, keep two thin entrypoints.** Both the Penny tool and `POST /api/legs/[id]/fuel-stops` call the same deterministic `planFuelStopsForLeg` service. The tool is Penny's trigger/discussion path; the button is the UI's. No duplicated logic.
@@ -324,6 +347,9 @@ So Finn never re-runs the expensive corridor search just because prices aged. �
 ---
 
 ## Data-source split (the legal backbone)
+
+> The two price rows below were **removed 2026-07-22 (historical)**, along with
+> `src/lib/fuelPricing/`.
 
 | Source | Used for | Stored? | License/ToS |
 |--------|----------|---------|-------------|
@@ -340,13 +366,16 @@ New clients: `src/lib/osm/` (Overpass) and `src/lib/fuelPricing/` (a `PriceProvi
 
 Finn should be a **hard-walled module in the existing app and database**, not a separate deployable service and **not** a separate database.
 
-- **One database (Neon).** Finn's inputs — route geometry, tank state, the range number, prior selected stops — already live here, and the `stops` table *is* his cache. A second DB turns every plan into a cross-database sync problem for zero current benefit. Any new fuel tables (OSM station cache, price snapshots) go in the same DB.
-- **A module, not a microservice.** `src/lib/finn/` (or `src/lib/fuel/`) behind one clean interface, with `src/lib/osm/` and `src/lib/fuelPricing/` as its data adapters. A separate deployable service buys independent scaling Finn doesn't need pre-revenue and costs latency, inter-service auth, and ops. **Design the seam so Finn *could* be extracted later** — don't pay for it now.
-- **The one real "service" concern is execution time, not topology.** Overpass + price-feed calls are slow and Vercel functions time out. Solve that by running planning as a **background job that writes the cache** (the "Find fuel stops" button kicks off async work + the UI polls), *not* by standing up a separate database or server.
+- **One database (Neon).** Finn's inputs — route geometry, tank state, the range number, prior selected stops — already live here, and the `stops` table *is* his cache. A second DB turns every plan into a cross-database sync problem for zero current benefit. Any new fuel tables go in the same DB.
+- **A module, not a microservice.** `src/lib/finn/` (or `src/lib/fuel/`) behind one clean interface, with `src/lib/google/places.ts` as its station adapter (`src/lib/osm/` and `src/lib/fuelPricing/` were removed 2026-07-22). A separate deployable service buys independent scaling Finn doesn't need pre-revenue and costs latency, inter-service auth, and ops. **Design the seam so Finn *could* be extracted later** — don't pay for it now.
+- **The one real "service" concern is execution time, not topology.** Overpass + price-feed calls (both removed 2026-07-22) were slow and Vercel functions time out. Solve that by running planning as a **background job that writes the cache** (the "Find fuel stops" button kicks off async work + the UI polls), *not* by standing up a separate database or server.
 
 Net: modular monolith now, clean interface, extractable later. Matches the "ship → make money → iterate" posture.
 
 ## Options considered
+
+> Historical. Stations moved to Google Places on 2026-07-22 and pricing was
+> removed, so none of these options is what runs; see the banner at the top.
 
 ### Option A — Google Places for stations **and** prices (`fuelOptions`)
 | Dimension | Assessment |
@@ -375,16 +404,16 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 
 ## Consequences
 
-**Easier:** legally clean stored data; price ranking becomes possible; one tunable knob (price-vs-time) instead of a brittle hardcoded window; reproducible plan facts; cheaper steady-state (open data + cache).
+**Easier:** legally clean stored data; price ranking becomes possible (historical — pricing removed 2026-07-22); one tunable knob (price-vs-time) instead of a brittle hardcoded window; reproducible plan facts; cheaper steady-state (open data + cache).
 
 **Harder / to watch:**
 - **OSM completeness & freshness** — a closed/missing station is a real failure mode. Keep the existing radius-escalation + `no_stations_found` honest warning; consider a Google *live* cross-check (not stored) for the finalist only.
 - **Overpass reliability/rate limits** — plan for a hosted/cached Overpass or a provider with SLA before scale.
-- **Price-feed staleness** — always surface `priceAsOf`; never present a stale price as current.
+- **Price-feed staleness** (historical — pricing removed 2026-07-22) — always surface `priceAsOf`; never present a stale price as current.
 - **Detour cost** — cheap perpendicular-distance prefilter is essential; precise Directions detour only for finalists.
 - **Teardown blast radius** — deleting the Google-Places fuel guts means auditing every reader of fuel `stops` that assumes a Google `place_id`/`googleMapsUri` (the UI's "open in Maps" link, dedupe-by-place_id in the old planner, any admin view). OSM ids are a different namespace; the single-destination Maps link is rebuilt from lat/lng, not a Google place_id.
 
-**Revisit later:** US paid price source; whole-day multi-waypoint Maps links; fuel-type/brand preferences in the vehicle profile.
+**Revisit later:** whole-day multi-waypoint Maps links; fuel-type/brand preferences in the vehicle profile. (A US paid price source was on this list; pricing was dropped 2026-07-22 and is not planned.)
 
 ---
 
@@ -403,7 +432,7 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 4. Schema: add `legs.fuel_plan_hash`, `legs.fuel_planned_at`, `trips.start_fuel_fraction`; reconcile the double-reserve in `computeEffectiveRangeKm`. (`schema.ts` → `db:generate` → `db:migrate`; update CLAUDE.md schema/table notes.)
 5. Background-job execution for the slow Overpass/Directions work + cache freshness check + invalidation on leg/vehicle edits.
 
-**Phase 1 — EU pricing (Germany)**
+**Phase 1 — EU pricing (Germany)** — **Removed 2026-07-22 (historical).**
 6. `src/lib/fuelPricing/` `PriceProvider` interface + Tankerkönig adapter (free key).
 7. Overlay prices on in-range candidates; enable `w_price`; `cheapest_in_range` whyTag; show `priceAsOf` + OSM/feed attribution.
 
@@ -411,16 +440,16 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 7a. Deterministic gap detector + alarm (largest fuel-free stretch vs reachable distance) — wire as a backstop independent of the LLM.
 7b. Exception triggers from the core (empty set, thin margin, suspicious data, gap) → supervisor that re-queries OSM/live-Google, validates, and escalates a structured question to Penny. Hard limits enforced (no fabrication, no floor override). Time-out falls back to the deterministic alarm.
 
-**Phase 2 — EU breadth**
+**Phase 2 — EU breadth** — **Removed 2026-07-22 (historical).** Not planned.
 8. Austria (E-Control), France (`prix-carburants`), Spain, Italy adapters behind the same interface. Region→provider resolver from station country.
 
 **Phase 3 — US**
-9. Station-only path: OSM stations, price provider returns "unavailable," UI labels it. Revisit paid feed separately.
+9. Station-only path. (The "unavailable" price label and the paid-feed revisit were dropped with pricing on 2026-07-22.)
 
 **Cross-cutting**
-10. UI: per-day "Find fuel stops" button + loading state; honest copy for out-of-range cold-opens and no-price regions.
+10. UI: per-day "Find fuel stops" button + loading state; honest copy for out-of-range cold-opens.
 11. Penny copy: never invent prices/stations; log unsupported asks via `submitIdea`.
-12. Tests: `fuelTankState` already covered; add OSM corridor parsing, reachability/scoring unit tests, price-adapter contract tests, and an e2e for the button → ranked list. Run `npm run test` + `tsc --noEmit` after every change.
+12. Tests: `fuelTankState` already covered; add OSM corridor parsing, reachability/scoring unit tests, and an e2e for the button → ranked list. Run `npm run test` + `tsc --noEmit` after every change.
 
 ---
 
@@ -431,5 +460,5 @@ Net: modular monolith now, clean interface, extractable later. Matches the "ship
 3. [ ] **Phase 0 cutover (active):** pure greedy multi-stop planner in `src/lib/finn/`; rewire `planFuelStopsForLeg` to OSM+Finn behind the existing seam; **delete `fuelPlaces.ts` + the Google station path** so there is exactly one planner.
 4. [ ] Verify no remaining reads of Google `place_id`/`googleMapsUri` assume Google identity after the OSM swap (UI "open in Maps" link rebuilt from lat/lng).
 5. [ ] Schema migration: `fuel_plan_hash`, `fuel_planned_at`, `start_fuel_fraction`.
-6. [x] Phase 1: `src/lib/fuelPricing/` (tri-state coverage + coordinator), Tankerkönig (DE) + Google `fuelOptions` providers, wired into `planFuelStopsForLeg` (bulk pricing → cheapest-priced preference; finalist tri-state persisted on `stops`, migration 0016), `StopCard` display, `vehicles.fuel_type` (default diesel). Tests in `lib/fuelPricing/*`.
-7. [ ] Phase 2: FR/ES/IT feed adapters (same interface; add to `FEED_COUNTRIES`); fuel-type onboarding question + Settings select; cheap price-refresh path; `fuel_plan_hash`/`start_fuel_fraction`.
+6. [x] Phase 1: `src/lib/fuelPricing/` (tri-state coverage + coordinator), Tankerkönig (DE) + Google `fuelOptions` providers, wired into `planFuelStopsForLeg` (bulk pricing → cheapest-priced preference; finalist tri-state persisted on `stops`, migration 0016), `StopCard` display, `vehicles.fuel_type` (default diesel). Tests in `lib/fuelPricing/*`. **Then removed 2026-07-22 (`a0c9ee6`, migration 0022 dropped the price columns).**
+7. [ ] Phase 2: fuel-type onboarding question + Settings select; `fuel_plan_hash`/`start_fuel_fraction`. (FR/ES/IT feed adapters and the price-refresh path were dropped with pricing on 2026-07-22 — not planned.)
