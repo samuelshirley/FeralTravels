@@ -1240,9 +1240,19 @@ export default function ChatPanel({
 
   // Typing animation before each onboarding question, then the question lands
   // as a Penny bubble — so trip setup reads like a conversation, not a form.
+  //
+  // Not before the history has landed. History arrives with `setMessages(...)`,
+  // a wholesale replace, so a question drawn first was wiped when an empty
+  // transcript came back second — and this effect's deps never changed again,
+  // so the first-run screen sat on Penny's typing dots with no greeting. The
+  // web is immune: it starts from `initialMessages`. Waiting also means
+  // `isFirstQuestion` reads the real transcript, not the empty one we mount
+  // with. A failed history load still clears `historyLoading` (its `finally`),
+  // so the greeting lands on the empty transcript.
   useEffect(() => {
     if (
       !isOnboarding ||
+      historyLoading ||
       onboardingLoading ||
       !onboardingSnapshot ||
       onboardingSnapshot.state === "done"
@@ -1272,8 +1282,8 @@ export default function ChatPanel({
     };
 
     // The first question is the first-run screen's headline, not a reply, so
-    // it lands the moment the snapshot does — the typing bubble has already
-    // covered the fetch (`setupQuestionPending`). Every later question keeps a
+    // it lands the moment the snapshot and the history both have — the typing
+    // bubble has already covered the wait (`setupQuestionPending`). Every later question keeps a
     // 2s beat, which is what makes setup read as a conversation. Mirrors web.
     const isFirstQuestion =
       onboardingSnapshot.state === "trip_intent" && messagesRef.current.length === 0;
@@ -1288,7 +1298,7 @@ export default function ChatPanel({
       addQuestionBubble();
     }, delay);
     return () => clearTimeout(timer);
-  }, [isOnboarding, onboardingLoading, onboardingSnapshot, tripId]);
+  }, [isOnboarding, historyLoading, onboardingLoading, onboardingSnapshot, tripId]);
 
   // A question can arrive with a prefilled answer (e.g. a start date we pulled
   // out of the trip description) — drop it into the composer once, keyed on
