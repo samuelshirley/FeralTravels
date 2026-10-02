@@ -18,6 +18,8 @@ import {
   STRIKE_LOCK_MESSAGE,
 } from '@/lib/strikes';
 import { classifyMessage } from './pennyClassifier';
+import { jevClassifyTier, startJevClassifyTier } from '@/server/jev';
+import { effectiveJevMode, logJevUsage, type JevModeSource } from '@/server/repos/jev';
 
 /**
  * The message gate, assembled: is Penny paused for this account, what tier is
@@ -153,13 +155,21 @@ export async function gateMessage(input: {
   });
 
   if (!decision) {
-    const classified = await classifyMessage(
-      input.message,
-      { tripName: vocab.tripName, places: vocab.names },
-      input.userId,
-      input.tripId
-    );
-    decision = { tier: classified.tier, by: classified.by, reason: classified.reason };
+    const ctx = { tripName: vocab.tripName, places: vocab.names };
+    const haiku = async (): Promise<GateDecision> => {
+      const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId);
+      return { tier: classified.tier, by: classified.by, reason: classified.reason };
+    };
+    const { mode, source } = await effectiveJevMode(input.userId);
+    if (mode === 'compare') {
+      // Haiku decides, exactly as with the switch off; Jev is only logged.
+      decision = await haikuComparedWithJev(input, ctx, source, haiku);
+    } else {
+      // Jev may settle a confident T1 and nothing else; every other outcome,
+      // and the switch being off, is Haiku exactly as before.
+      decision = mode === 'on' ? await jevSettles(input, ctx, source) : null;
+      if (!decision) decision = await haiku();
+    }
   }
 
   await record(input, decision);
@@ -194,6 +204,68 @@ export async function gateMessage(input: {
     message: gateMessageFor(decision.tier),
     lockedUntil: null,
   };
+}
+
+/**
+ * Compare mode: Haiku decides, and Jev is asked the same question at the same
+ * moment so its answer can be logged beside Haiku's.
+ *
+ * The returned decision is HAIKU'S, always — the same tier, reason and strike
+ * as mode off. Jev's outcome is read only to be written down, and it is read
+ * with a deadline: Jev's own timeout, counted from when Jev was started, so
+ * the most compare mode adds to a message is whatever of `JEV_TIMEOUT_MS` is
+ * left once Haiku has answered. A Jev error or timeout is one row with
+ * `success: false` and changes nothing else.
+ */
+async function haikuComparedWithJev(
+  input: { userId: string; tripId: string; message: string },
+  ctx: { tripName: string | null; places: string[] },
+  source: JevModeSource,
+  haiku: () => Promise<GateDecision>
+): Promise<GateDecision> {
+  const readJev = startJevClassifyTier(input.message, ctx);
+  const decision = await haiku();
+  const outcome = await readJev();
+  await logJevUsage({
+    userId: input.userId,
+    tripId: input.tripId,
+    source,
+    outcome,
+    model: outcome.echoedModel,
+    compare: { haikuTier: decision.tier },
+  });
+  return decision;
+}
+
+/**
+ * Jev's turn, when the admin switch puts this account on Jev-first.
+ *
+ * Returns a decision ONLY for a confident T1 (`src/server/jev/decide.ts`), and
+ * null for everything else — a T2, a T3, an unsure T1, an error, a timeout, no
+ * config, the switch off — so the caller asks Haiku exactly as it always has
+ * and Haiku's answer is final. Jev can therefore let a message through; it can
+ * never refuse one, and it can never put a strike on anybody.
+ *
+ * Only called with the mode on; with it off the gate makes no network call.
+ * Every Jev call writes its own `provider: 'jev'` row; the gate's own
+ * `penny:gate` row still records the final decision, with `by: 'classifier'`
+ * and a reason naming Jev when Jev decided.
+ */
+async function jevSettles(
+  input: { userId: string; tripId: string; message: string },
+  ctx: { tripName: string | null; places: string[] },
+  source: JevModeSource
+): Promise<GateDecision | null> {
+  const outcome = await jevClassifyTier(input.message, ctx);
+  await logJevUsage({
+    userId: input.userId,
+    tripId: input.tripId,
+    source,
+    outcome,
+    model: outcome.echoedModel,
+  });
+  if (!outcome.settled || outcome.top === null) return null;
+  return { tier: 'T1', by: 'classifier', reason: `jev T1 p=${outcome.top.toFixed(2)}` };
 }
 
 /**

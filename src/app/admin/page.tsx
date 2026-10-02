@@ -36,8 +36,17 @@ import TestUserBlock from './TestUserBlock';
 import PromoCodeBlock from './PromoCodeBlock';
 import PennyLockdownBlock from './PennyLockdownBlock';
 import PaywallSwitch from './PaywallSwitch';
+import JevSwitch from './JevSwitch';
 import { recentIpLimitHits } from '@/server/ipLimit';
 import { lockedAccounts } from '@/server/repos/users';
+import {
+  countJevOverrides,
+  getJevCompareStats,
+  getJevStats,
+  globalJevMode,
+  jevConfigView,
+  JEV_MIN_MARGIN,
+} from '@/server/repos/jev';
 import styles from './admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -127,6 +136,28 @@ export default async function AdminPage() {
     topGatedAccounts(24).catch(() => []),
     lockedAccounts().catch(() => []),
   ]);
+
+  /*
+   * The Jev switch and its week. A failed stats or override read renders as
+   * "could not read" rather than as zeros — zero settled is a real, and very
+   * different, answer. The mode read itself fails to OFF, like the gate's.
+   */
+  const [jevMode, jevStats, jevCompare, jevOverrides] = await Promise.all([
+    globalJevMode(),
+    getJevStats(7).catch((err) => {
+      console.error('[admin] getJevStats failed', err);
+      return null;
+    }),
+    getJevCompareStats(7).catch((err) => {
+      console.error('[admin] getJevCompareStats failed', err);
+      return null;
+    }),
+    countJevOverrides().catch((err) => {
+      console.error('[admin] countJevOverrides failed', err);
+      return null;
+    }),
+  ]);
+  const jevConfig = jevConfigView();
 
   const [
     overview,
@@ -824,6 +855,22 @@ export default async function AdminPage() {
             gateMix={gateMix}
             topGated={topGated}
             lockedOut={lockedOut}
+          />
+        </section>
+
+        {/*
+          Directly under the lockdown block: it is the other half of the same
+          gate — that block shows what the gate refused, this one shows which
+          classifier decided and what it cost.
+        */}
+        <section style={{ ...card, marginTop: 16 }}>
+          <JevSwitch
+            mode={jevMode}
+            config={jevConfig}
+            stats={jevStats}
+            compare={jevCompare}
+            overrides={jevOverrides}
+            minMargin={JEV_MIN_MARGIN}
           />
         </section>
 

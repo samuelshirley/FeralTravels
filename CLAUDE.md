@@ -40,6 +40,10 @@ which provider serves what; this has been wrong here before, expensively.
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
   resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
+- **Jev (optional, OFF by default):** a self-hosted typed-decision server for
+  the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
+  logged), JEV FIRST (it may settle only a confident T1, else Haiku) —
+  **`docs/design/jev.md`**.
 - **Maps / geo:** Google — client JS, server Directions, Places (New)
   `searchText` for name→coords, Places Text Search along-route for Finn's
   stations. **These calls are PAID.** Coords→name is Nominatim: the Geocoding
@@ -124,6 +128,7 @@ src/
     db/               # schema.ts (all tables), client.ts (Neon)
     repos/            # Data access layer (see Repos)
     payments/         # BOUNDED MODULE — index.ts is the only public surface
+    jev/              # BOUNDED MODULE — Jev tier classifier; docs/design/jev.md
     auth/             # guards.ts admin.ts otp.ts test-endpoints.ts
                       # sessionStore.ts otp-email.ts magic-email.ts
   types/trip.ts       # Shared TypeScript types
@@ -133,7 +138,8 @@ middleware.ts  scripts/  drizzle/  e2e/  mobile/
 ### API Routes
 
 ```
-api/admin/announcements api/admin/paywall api/admin/paywall/user
+api/admin/announcements api/admin/jev api/admin/jev/user api/admin/paywall
+api/admin/paywall/user
 api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
@@ -176,8 +182,8 @@ ipRequestCounters, oauthProviderKeys
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, testSupport
-(test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
+announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, jev,
+testSupport (test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
 revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
 
 ### Penny Tools (`src/lib/penny/tools/`)

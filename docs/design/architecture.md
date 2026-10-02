@@ -105,6 +105,7 @@ src/
       schema.ts       # All tables (see Schema below)
       client.ts       # Neon connection
     repos/            # Data access layer (see Repos below)
+    jev/              # BOUNDED MODULE: the optional Jev tier classifier; the message gate asks it before Haiku (may settle only a confident T1) or beside Haiku in compare mode (only logged) (docs/design/jev.md)
     auth/
       index.ts        # NextAuth config
       guards.ts       # Auth guard utilities
@@ -123,4 +124,4 @@ e2e/                  # Playwright test specs
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, announcements, pennyTurns, accountDeletion, testSupport (test-only)
+trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin, announcements, pennyTurns, accountDeletion, jev, testSupport (test-only)

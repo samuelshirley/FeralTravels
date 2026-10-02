@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/server/db/client';
 import { usageEvents } from '@/server/db/schema';
-import { and, eq, gte, sql, desc } from 'drizzle-orm';
+import { and, eq, gte, ne, sql, desc } from 'drizzle-orm';
 import {
   dollarsToMicrocents,
   estimateAnthropicCostUsd,
@@ -9,6 +9,17 @@ import {
 } from '@/lib/anthropicCostEstimate';
 
 export { dollarsToMicrocents, estimateAnthropicCostUsd, microcentsToDollars };
+
+/**
+ * The provider on a Jev call's row. Written by `repos/jev.ts`, at $0 — a
+ * self-hosted GPU is a fixed cost — and excluded from every per-user limit:
+ * the hourly request count and daily $ cap below, the 12-month cap and trial
+ * ceiling (`payments/usage.ts`, `anthropic%` only) and the breakers
+ * (`anthropic%` and `penny:gate` only). A Jev call is the gate's own
+ * bookkeeping for a message that is already counted once; counting it again
+ * would spend the driver's 120/hour on our infrastructure.
+ */
+export const JEV_PROVIDER = 'jev';
 
 export interface LogAnthropicUsageInput {
   userId: string;
@@ -269,7 +280,14 @@ export async function getUserUsageSummary(userId: string, hours: number) {
       outputTokens: sql<number>`COALESCE(SUM(${usageEvents.outputTokens}), 0)`,
     })
     .from(usageEvents)
-    .where(and(eq(usageEvents.userId, userId), gte(usageEvents.createdAt, since)));
+    .where(
+      and(
+        eq(usageEvents.userId, userId),
+        gte(usageEvents.createdAt, since),
+        // Jev rows never count toward the caps — see JEV_PROVIDER.
+        ne(usageEvents.provider, JEV_PROVIDER)
+      )
+    );
   return rows[0] ?? { requests: 0, microcents: 0, inputTokens: 0, outputTokens: 0 };
 }
 
