@@ -7,6 +7,12 @@
 # PR has main merged into it (update-branch, never a rebase or force-push:
 # agents are pushing to those branches).
 #
+# EXCEPT a PR that needs a new iOS binary (Sam, 2026-10-02: continuous delivery
+# for over-the-air changes only). after-ci runs main's
+# scripts/decide-mobile-release.mjs — the classifier mobile.yml runs — on the
+# PR's merge-base..head; `native`, or no usable answer, gets one sticky comment
+# and is merged by hand. `js-only` (OTA) and `none` merge as above.
+#
 # All the logic is in .github/scripts/auto-merge.mjs, tested by
 # src/lib/autoMerge.test.ts. What merges when, the `hold` and `no-tests-needed`
 # labels, the token and the cost: docs/design/auto-merge.md.
@@ -19,7 +25,9 @@
 # secret unset, both jobs log a notice and exit 0.
 #
 # workflow_run and push workflows always run main's copy of this file and of the
-# script — never a PR's — and the job never checks out PR code.
+# scripts — never a PR's — and no job checks out PR code. after-ci FETCHES the
+# PR head as git objects so the classifier can diff it; nothing from it is
+# checked out, installed, imported or run.
 
 name: Auto-merge
 
@@ -56,17 +64,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # main's bot and main's classifier; both import only node: builtins.
+      # Full history so merge-base can be found.
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            /.github/scripts/
+            /scripts/decide-mobile-release.mjs
+          sparse-checkout-cone-mode: false
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # Does merging this ship over the air, or need a new iOS binary? Same
+      # classifier and merge-base as mobile.yml's forecast. Every failure is
+      # written down as `native`, and the script reads a missing or garbled
+      # file as `native` too.
+      - name: Classify the mobile release (PR head as data only)
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          OUT: ${{ runner.temp }}/mobile-release.json
+        run: |
+          set -uo pipefail
+          native() {
+            echo "::warning::$1 — treating this PR as needing a new iOS build."
+            printf '{"decision":"native","reasons":["%s"]}\n' "$1" > "$OUT"
+          }
+          # The repo is public: an anonymous fetch, no token on disk.
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null &&
+             ! git fetch --no-tags --quiet origin "$HEAD_SHA"; then
+            native "could not fetch the PR head ${HEAD_SHA:0:7}"
+          elif ! MERGE_BASE="$(git merge-base HEAD "$HEAD_SHA")"; then
+            native "no merge base between main and ${HEAD_SHA:0:7}"
+          elif ! node scripts/decide-mobile-release.mjs \
+                 --base "$MERGE_BASE" --head "$HEAD_SHA" --json > "$OUT"; then
+            native "the mobile release classifier failed to run"
+          fi
+          cat "$OUT"
       - name: Decide and act
         env:
           AUTO_UPDATE_TOKEN: ${{ secrets.AUTO_UPDATE_TOKEN }}
           READ_TOKEN: ${{ github.token }}
+          MOBILE_RELEASE_FILE: ${{ runner.temp }}/mobile-release.json
         run: node .github/scripts/auto-merge.mjs
 
   update-open-prs:

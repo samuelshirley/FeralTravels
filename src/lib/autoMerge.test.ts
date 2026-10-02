@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
  */
 // Plain ESM JS — same arrangement as decideDocsOnly.test.ts.
 import * as autoMerge from '../../.github/scripts/auto-merge.mjs';
+import { decideMobileRelease } from '../../scripts/decide-mobile-release.mjs';
 
 const {
   AI_JOB,
@@ -29,7 +30,9 @@ const {
   decideForOpenPr,
   isWriteCall,
   missingTests,
+  nativeBody,
   normalisePr,
+  parseMobileRelease,
   run: runMain,
   testsMissingBody,
   tokenFor,
@@ -95,9 +98,12 @@ function state(over: Record<string, unknown> = {}) {
     ai: { passed: true, attempted: true },
     files: ['src/lib/units.ts', 'src/lib/units.test.ts'],
     mergeableState: 'clean',
+    mobile: { decision: 'none', reasons: ['nothing under mobile/ changed'] },
     ...over,
   };
 }
+const NATIVE = { decision: 'native', reasons: ['mobile/app.config.js changed — native input, matched file-level'] };
+const JS_ONLY = { decision: 'js-only', reasons: ['no native input moved — safe to publish over the air'] };
 const withPr = (over: Record<string, unknown>) => normalisePr(restPr(over));
 
 describe('decideAfterCi: state → action', () => {
@@ -133,6 +139,13 @@ describe('decideAfterCi: state → action', () => {
     ['mobile code with a Maestro flow → merge', { files: ['mobile/app/index.tsx', 'mobile/maestro/x.yaml'] }, 'merge'],
     ['CI-only change needs no test', { files: ['.github/workflows/x.yml'] }, 'merge'],
 
+    // Continuous delivery for over-the-air changes only (Sam, 2026-10-02).
+    ['js-only (OTA) merges', { mobile: JS_ONLY, files: ['mobile/app/index.tsx', 'mobile/maestro/x.yaml'] }, 'merge'],
+    ['native → comment, never merge', { mobile: NATIVE }, 'comment-native', /new iOS build/],
+    ['an unknown classifier decision is native', { mobile: { decision: 'maybe', reasons: [] } }, 'comment-native'],
+    ['no classifier verdict at all is native', { mobile: undefined }, 'comment-native'],
+    ['a failed classifier run is native', { mobile: parseMobileRelease(null) }, 'comment-native'],
+
     // Mergeability.
     ['behind main → update-branch', { mergeableState: 'behind' }, 'update-branch'],
     ['conflict → comment', { mergeableState: 'dirty' }, 'comment-conflict'],
@@ -153,10 +166,21 @@ describe('decideAfterCi: state → action', () => {
     expect(decideAfterCi(state({ ...noAi, files: ['src/a.ts'] })).action).toBe('comment-tests-missing');
   });
 
+  it('a native PR gets no label, no update and no merge — whatever else is true of it', () => {
+    const noAi = { jobs: fullRun(), ai: { passed: false, attempted: false } };
+    for (const over of [{}, noAi, { mergeableState: 'behind' }, { mergeableState: 'dirty' }, { files: ['mobile/app.config.js'] }]) {
+      const d = decideAfterCi(state({ ...over, mobile: NATIVE }));
+      expect(d.action, JSON.stringify(over)).toBe('comment-native');
+      expect(d.reasons).toEqual(NATIVE.reasons);
+    }
+  });
+
   it('clears a sticky only once its condition is gone', () => {
-    expect(decideAfterCi(state({ files: ['src/a.ts'] })).clear).toBeUndefined();
-    expect(decideAfterCi(state({ mergeableState: 'dirty' })).clear).toEqual(['testsMissing']);
-    expect(decideAfterCi(state()).clear).toEqual(['testsMissing', 'conflict']);
+    expect(decideAfterCi(state({ mobile: NATIVE })).clear).toBeUndefined();
+    expect(decideAfterCi(state({ files: ['src/a.ts'] })).clear).toEqual(['native']);
+    expect(decideAfterCi(state({ mergeableState: 'dirty' })).clear).toEqual(['native', 'testsMissing']);
+    expect(decideAfterCi(state()).clear).toEqual(['native', 'testsMissing', 'conflict']);
+    expect(decideAfterCi(state({ mobile: JS_ONLY })).clear).toEqual(['native', 'testsMissing', 'conflict']);
   });
 });
 
@@ -212,6 +236,32 @@ describe('the pieces', () => {
     expect(tokenFor(reads[0], ENV)).toBe('gh-token');
   });
 
+  it('parseMobileRelease: only a well-formed none/js-only is OTA; everything else is native', () => {
+    // The classifier's own output, so a change to its shape breaks this test.
+    const real = (changedFiles: string[]) => JSON.stringify(decideMobileRelease({ changedFiles, packageJsonBefore: null, packageJsonAfter: null }));
+    expect(parseMobileRelease(real(['src/a.ts'])).decision).toBe('none');
+    expect(parseMobileRelease(real(['mobile/app/index.tsx'])).decision).toBe('js-only');
+    expect(parseMobileRelease(real(['mobile/app.config.js'])).decision).toBe('native');
+    expect(parseMobileRelease(real(['mobile/package-lock.json']))).toMatchObject({
+      decision: 'native',
+      reasons: [expect.stringMatching(/dependency graph/)],
+    });
+
+    for (const bad of [null, undefined, '', '   ', 'native\n', '{', '{}', '{"decision":"maybe"}', '{"decision":null}', '[]']) {
+      const r = parseMobileRelease(bad);
+      expect(r.decision, String(bad)).toBe('native');
+      expect(r.reasons[0], String(bad)).toMatch(/treated as needing a new iOS build/);
+    }
+  });
+
+  it('nativeBody lists the classifier reasons under its marker', () => {
+    const body = nativeBody(NATIVE.reasons);
+    expect(body.startsWith(MARKER.native)).toBe(true);
+    expect(body).toContain(`- ${NATIVE.reasons[0]}`);
+    expect(body).toMatch(/will not merge itself/);
+    expect(body).toMatch(/merge this one by hand/);
+  });
+
   it('classifyGhError', () => {
     expect(classifyGhError('gh: Bad credentials (HTTP 401)')).toBe('token-rejected');
     expect(classifyGhError('gh: Resource not accessible by personal access token (HTTP 403)')).toBe('token-rejected');
@@ -245,6 +295,8 @@ type Fake = {
   /** stderr for a failing write, keyed by a substring of the joined args */
   fail?: Record<string, string>;
   commitPulls?: number[];
+  /** what the classify step wrote to MOBILE_RELEASE_FILE (null: nothing) */
+  mobileRelease?: string | null;
 };
 
 function fakeGitHub(f: Fake) {
@@ -257,6 +309,7 @@ function fakeGitHub(f: Fake) {
   const pr = (n: number) => f.prs.find((p) => p.number === n)!;
 
   const io = {
+    readFile: (p: string) => (p === MOBILE_RELEASE_FILE ? (f.mobileRelease === undefined ? JSON.stringify(state().mobile) : f.mobileRelease) : null),
     sleep: (ms: number) => void sleeps.push(ms),
     log: (l: string) => void logs.push(l),
     gh(args: string[]) {
@@ -301,7 +354,8 @@ function fakeGitHub(f: Fake) {
 const ciEvent = (over: Record<string, unknown> = {}) => ({
   workflow_run: { id: 200, head_sha: HEAD, conclusion: 'success', event: 'pull_request', pull_requests: [{ number: 81 }], ...over },
 });
-const ciEnv = { ...ENV, GITHUB_EVENT_NAME: 'workflow_run' };
+const MOBILE_RELEASE_FILE = '/runner/temp/mobile-release.json';
+const ciEnv = { ...ENV, GITHUB_EVENT_NAME: 'workflow_run', MOBILE_RELEASE_FILE };
 const pushEnv = { ...ENV, GITHUB_EVENT_NAME: 'push', GITHUB_SHA: MAIN };
 
 function baseFake(over: Partial<Fake> = {}): Fake {
@@ -424,6 +478,66 @@ describe('onCiCompleted against a fake GitHub', () => {
     expect(gh.writes()).toContainEqual(['api', '-X', 'DELETE', `repos/${REPO}/issues/comments/7`]);
     expect(gh.writes()).toContainEqual(['api', '-X', 'DELETE', `repos/${REPO}/issues/comments/8`]);
     expect(gh.writes().some((a) => a.join(' ').includes('comments/9'))).toBe(false);
+  });
+
+  it('native: ONE sticky with the reasons; no label, no update-branch, no merge', () => {
+    const noAi = { jobs: { 200: fullRun() } }; // would otherwise be labelled
+    for (const over of [{}, noAi, { mergeable: ['behind'] }]) {
+      const f = baseFake({ ...over, mobileRelease: JSON.stringify(NATIVE) });
+      const gh = fakeGitHub(f);
+      expect(runMain({ env: ciEnv, event: ciEvent(), io: gh.io })).toBe(0);
+      expect(gh.writes(), JSON.stringify(over)).toEqual([
+        ['api', '-X', 'POST', `repos/${REPO}/issues/81/comments`, '-f', `body=${nativeBody(NATIVE.reasons)}`],
+      ]);
+      expectWritesUsePat(gh.calls);
+
+      // The next run on a native head changes nothing.
+      const again = fakeGitHub(f);
+      runMain({ env: ciEnv, event: ciEvent(), io: again.io });
+      expect(again.writes()).toEqual([]);
+      expect(f.comments[81]).toHaveLength(1);
+    }
+  });
+
+  it('native with different reasons edits the sticky in place', () => {
+    const f = baseFake({ mobileRelease: JSON.stringify(NATIVE) });
+    runMain({ env: ciEnv, event: ciEvent(), io: fakeGitHub(f).io });
+    f.mobileRelease = JSON.stringify({ decision: 'native', reasons: ['mobile/eas.json changed'] });
+    const gh = fakeGitHub(f);
+    runMain({ env: ciEnv, event: ciEvent(), io: gh.io });
+    expect(gh.writes()).toHaveLength(1);
+    expect(gh.writes()[0].slice(0, 3)).toEqual(['api', '-X', 'PATCH']);
+    expect(f.comments[81]).toEqual([{ id: expect.any(Number), body: nativeBody(['mobile/eas.json changed']) }]);
+  });
+
+  it('no classifier output, garbage, or no MOBILE_RELEASE_FILE at all → native, not merged', () => {
+    const cases: [Record<string, string>, string | null][] = [
+      [ciEnv, null],
+      [ciEnv, 'Error: something'],
+      [ciEnv, '{"decision":"ota"}'],
+      [{ ...ciEnv, MOBILE_RELEASE_FILE: '' }, JSON.stringify(JS_ONLY)],
+    ];
+    for (const [env, text] of cases) {
+      const f = baseFake({ mobileRelease: text });
+      const gh = fakeGitHub(f);
+      expect(runMain({ env, event: ciEvent(), io: gh.io })).toBe(0);
+      expect(gh.writes().some((a) => a[1] === 'merge'), String(text)).toBe(false);
+      expect(f.comments[81]?.[0].body.startsWith(MARKER.native), String(text)).toBe(true);
+      expect(gh.logs.join('\n')).toMatch(/comment-native/);
+    }
+  });
+
+  it('a native comment is cleared once a later head is over-the-air, which then merges', () => {
+    const f = baseFake({ mobileRelease: JSON.stringify(NATIVE) });
+    runMain({ env: ciEnv, event: ciEvent(), io: fakeGitHub(f).io });
+    const id = f.comments[81][0].id;
+
+    f.mobileRelease = JSON.stringify(JS_ONLY);
+    f.files = ['mobile/app/index.tsx', 'mobile/maestro/x.yaml'];
+    const gh = fakeGitHub(f);
+    runMain({ env: ciEnv, event: ciEvent(), io: gh.io });
+    expect(gh.writes()).toContainEqual(['api', '-X', 'DELETE', `repos/${REPO}/issues/comments/${id}`]);
+    expect(gh.writes().some((a) => a[1] === 'merge')).toBe(true);
   });
 
   it('a rejected token fails the run loudly', () => {
@@ -554,6 +668,52 @@ describe('.github/workflows/auto-merge.yml', () => {
   it('never checks out PR code', () => {
     expect(body).not.toMatch(/ref:/);
     expect(body.match(/persist-credentials: false/g)).toHaveLength(2);
+  });
+
+  describe('after-ci classifies with main\'s classifier, the PR head as data only', () => {
+    const afterCi = body.slice(body.indexOf('  after-ci:'), body.indexOf('  update-open-prs:'));
+    const steps = afterCi.split('\n      - ');
+    const checkout = steps.find((s) => s.startsWith('uses: actions/checkout@'))!;
+    const classify = steps.find((s) => s.includes('scripts/decide-mobile-release.mjs') && s.includes('run: |'))!;
+    const act = steps.find((s) => s.includes('.github/scripts/auto-merge.mjs'))!;
+
+    it('checks out main\'s bot and classifier, full history, no credentials left behind', () => {
+      expect(checkout).toContain('/.github/scripts/');
+      expect(checkout).toContain('/scripts/decide-mobile-release.mjs');
+      expect(checkout).toContain('sparse-checkout-cone-mode: false');
+      expect(checkout).toContain('fetch-depth: 0');
+      expect(checkout).toContain('persist-credentials: false');
+      // The sparse checkout is enough only while the classifier imports nothing of the repo's.
+      const imports = read('scripts/decide-mobile-release.mjs').match(/^import .* from '([^']+)';$/gm) ?? [];
+      expect(imports.length).toBeGreaterThan(0);
+      for (const i of imports) expect(i).toMatch(/from 'node:/);
+    });
+
+    it('runs the same classifier invocation as mobile.yml, against merge-base..head', () => {
+      expect(classify).toContain('git merge-base HEAD "$HEAD_SHA"');
+      expect(classify).toMatch(/node scripts\/decide-mobile-release\.mjs \\\n\s+--base "\$MERGE_BASE" --head "\$HEAD_SHA" --json > "\$OUT"/);
+      expect(read('.github/workflows/mobile.yml')).toMatch(/node scripts\/decide-mobile-release\.mjs \\\n\s+--base "\$MERGE_BASE" --head "\$HEAD" --json/);
+      expect(classify).toContain('HEAD_SHA: ${{ github.event.workflow_run.head_sha }}');
+      // Every failure path writes native.
+      expect(classify.match(/^\s+native "/gm)).toHaveLength(3);
+      expect(classify).toContain('"decision":"native"');
+      // The classify step comes first, and hands its file to the script.
+      expect(afterCi.indexOf(classify)).toBeLessThan(afterCi.indexOf(act));
+      expect(classify).toContain('OUT: ${{ runner.temp }}/mobile-release.json');
+      expect(act).toContain('MOBILE_RELEASE_FILE: ${{ runner.temp }}/mobile-release.json');
+    });
+
+    it('never installs, checks out or runs anything from the PR', () => {
+      expect(afterCi).not.toMatch(/\b(npm|npx|yarn|pnpm|bun|corepack)\b/);
+      expect(afterCi).not.toMatch(/\binstall\b/);
+      expect(afterCi).not.toMatch(/git (checkout|switch|worktree|restore|reset|merge |stash|apply|am )/);
+      expect(afterCi).not.toMatch(/sparse-checkout (set|add|disable)/);
+      // The token stays off the classify step: the fetch is anonymous (public repo).
+      expect(classify).not.toMatch(/token|secrets\./i);
+      // node runs exactly two files, both main's.
+      const nodeRuns = afterCi.match(/\bnode \S+/g);
+      expect(nodeRuns).toEqual(['node scripts/decide-mobile-release.mjs', 'node .github/scripts/auto-merge.mjs']);
+    });
   });
 
   it("the job names the script reads are ci.yml's", () => {

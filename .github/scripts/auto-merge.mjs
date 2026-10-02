@@ -7,7 +7,10 @@
  *
  *  - `workflow_run` (a CI run completed) → `onCiCompleted`: decide what the
  *    tested PR needs next — start the AI run (`ai-tests` label), bring it up to
- *    date with main, merge it, or say on the PR why it is stuck.
+ *    date with main, merge it, or say on the PR why it is stuck. A PR that
+ *    needs a new iOS binary never merges itself (Sam, 2026-10-02): the
+ *    workflow runs main's scripts/decide-mobile-release.mjs on the PR head
+ *    first and hands the verdict in through MOBILE_RELEASE_FILE.
  *  - `push` to main (any merge) → `onMainPush`: bring every other open PR up to
  *    date by merging main INTO it (GitHub's update-branch), never a rebase.
  *
@@ -53,7 +56,16 @@ export const LABEL = {
 export const MARKER = {
   testsMissing: '<!-- auto-merge:tests-missing -->',
   conflict: '<!-- auto-merge:conflict -->',
+  native: '<!-- auto-merge:native -->',
 };
+
+/**
+ * The mobile release decisions that may ship with nobody looking: `none`
+ * (nothing under mobile/) and `js-only` (an over-the-air update). Everything
+ * else — `native`, and any value this file does not know — needs a new iOS
+ * binary, or cannot be proven not to, and is merged by hand.
+ */
+export const OTA_SAFE = new Set(['none', 'js-only']);
 
 /** mergeable_state values GitHub will merge on. */
 const MERGEABLE = new Set(['clean', 'unstable', 'has_hooks']);
@@ -237,6 +249,36 @@ export function aiHistory(runsJobs) {
   };
 }
 
+/**
+ * The classifier's `--json` output (scripts/decide-mobile-release.mjs, run by
+ * the workflow against merge-base..head), read fail-safe: no file, unparseable
+ * JSON or a decision outside the classifier's three is `native`, with the
+ * reason it was assumed. A wrongly-held PR waits for a person; a wrongly-merged
+ * native change ships JS to a binary that cannot run it.
+ *
+ * @param {string | null | undefined} text
+ * @returns {{ decision: string, reasons: string[] }}
+ */
+export function parseMobileRelease(text) {
+  const failSafe = (why) => ({
+    decision: 'native',
+    reasons: [`${why}, so this is treated as needing a new iOS build`],
+  });
+  if (typeof text !== 'string' || text.trim() === '') return failSafe('the mobile release classifier produced no output');
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return failSafe('the mobile release classifier output is not JSON');
+  }
+  const decision = parsed?.decision;
+  if (decision !== 'native' && !OTA_SAFE.has(decision)) {
+    return failSafe(`the mobile release classifier answered ${JSON.stringify(decision)}, which is not one it can give`);
+  }
+  const reasons = Array.isArray(parsed.reasons) ? parsed.reasons.map(String) : [];
+  return { decision, reasons };
+}
+
 /** @param {string} p */
 export function isTestPath(p) {
   return (
@@ -267,24 +309,27 @@ export function missingTests(files, labels) {
 
 /**
  * @typedef {{
- *   action: 'skip' | 'label-ai' | 'update-branch' | 'merge' | 'comment-conflict' | 'comment-tests-missing',
+ *   action: 'skip' | 'label-ai' | 'update-branch' | 'merge' | 'comment-conflict' | 'comment-tests-missing' | 'comment-native',
  *   reason: string,
  *   files?: string[],
+ *   reasons?: string[],
  *   clear?: (keyof typeof MARKER)[],
  * }} Decision
  */
 
 /**
  * What a completed CI run means for its PR. The order is deliberate, cheapest
- * fix first and Penny spend last: a PR that cannot merge anyway (no tests, a
- * conflict, behind main) is not sent to the AI shard, because the commit that
- * fixes it needs its own AI run.
+ * fix first and Penny spend last: a PR that cannot merge anyway (needs an iOS
+ * build, no tests, a conflict, behind main) is not sent to the AI shard,
+ * because the commit that fixes it needs its own AI run — and a native PR is
+ * merged by hand, so the bot spends nothing on it at all.
  *
  * @param {Parameters<typeof guardPr>[0] & {
  *   jobs: Parameters<typeof classifyRun>[0],
  *   ai: ReturnType<typeof aiHistory>,
  *   files: string[],
  *   mergeableState: string,
+ *   mobile: { decision: string, reasons: string[] } | null | undefined,
  * }} s
  * @returns {Decision}
  */
@@ -301,16 +346,29 @@ export function decideAfterCi(s) {
     };
   }
 
+  // Continuous delivery is for over-the-air changes only (Sam, 2026-10-02).
+  // Anything but a known OTA-safe decision — a missing one included — holds.
+  if (!OTA_SAFE.has(String(s.mobile?.decision))) {
+    const mobile = s.mobile ?? parseMobileRelease(null);
+    return {
+      action: 'comment-native',
+      reason: `needs a new iOS build (mobile release: ${mobile.decision}); merge it by hand`,
+      reasons: mobile.reasons,
+    };
+  }
+  /** @type {Decision['clear']} */
+  const clear = ['native'];
+
   const missing = missingTests(s.files, pr.labels);
   if (missing.length > 0) {
     return {
       action: 'comment-tests-missing',
       reason: `changes app code (${missing.length} file(s)) but no test, and has no \`${LABEL.noTests}\` label`,
       files: missing,
+      clear,
     };
   }
-  /** @type {Decision['clear']} */
-  const clear = ['testsMissing'];
+  clear.push('testsMissing');
 
   if (s.mergeableState === 'dirty') {
     return { action: 'comment-conflict', reason: 'conflicts with main', clear };
@@ -365,6 +423,19 @@ export function testsMissingBody(files) {
   ].join('\n');
 }
 
+/** @param {string[]} reasons the classifier's, for the PR's author to check */
+export function nativeBody(reasons) {
+  const listed = (reasons.length > 0 ? reasons : ['the classifier gave no reason']).map((r) => `- ${r}`);
+  return [
+    MARKER.native,
+    '**This PR needs a new iOS build, so it will not merge itself.** Auto-merge ships over-the-air changes only; merge this one by hand when you are ready for a TestFlight build.',
+    '',
+    ...listed,
+    '',
+    'Same classifier as the Mobile workflow (`scripts/decide-mobile-release.mjs`, merge-base → head). This comment goes away if a later push no longer needs a native build.',
+  ].join('\n');
+}
+
 export const CONFLICT_BODY = [
   MARKER.conflict,
   '**Auto-merge cannot bring this PR up to date: it conflicts with `main`.**',
@@ -377,6 +448,7 @@ export const CONFLICT_BODY = [
 /**
  * @typedef {{
  *   gh: (args: string[]) => { ok: boolean, stdout: string, stderr: string },
+ *   readFile: (path: string) => string | null,
  *   sleep: (ms: number) => void,
  *   log: (line: string) => void,
  * }} Io
@@ -437,6 +509,13 @@ function settledMergeableState(io, gh, pr) {
   return state;
 }
 
+/** Post a sticky, or bring the one already there up to date. */
+function upsertSticky(gh, n, stickies, marker, body) {
+  const existing = stickies.find((c) => c.body.startsWith(marker));
+  if (!existing) gh.comment(n, body);
+  else if (existing.body !== body) gh.editComment(existing.id, body);
+}
+
 /** Post the conflict comment unless one is already there. */
 function postConflictOnce(gh, n, stickies) {
   if (stickies.some((c) => c.body.startsWith(MARKER.conflict))) return 'conflict comment already posted';
@@ -466,10 +545,14 @@ function updateBranch(gh, pr, stickies) {
  * A CI run completed.
  *
  * @param {Io} io
- * @param {{ repo: string, run: { id: number, headSha: string, conclusion: string, pullRequests: number[] } }} ctx
+ * @param {{
+ *   repo: string,
+ *   run: { id: number, headSha: string, conclusion: string, pullRequests: number[] },
+ *   mobile: ReturnType<typeof parseMobileRelease>,
+ * }} ctx
  * @returns {Decision & { pr?: number, outcome?: string, warning?: boolean }}
  */
-export function onCiCompleted(io, { repo, run }) {
+export function onCiCompleted(io, { repo, run, mobile }) {
   const gh = client(io, repo);
 
   const candidates = run.pullRequests.length > 0 ? run.pullRequests : gh.prsForSha(run.headSha);
@@ -494,6 +577,7 @@ export function onCiCompleted(io, { repo, run }) {
     ai: aiHistory([jobs, ...others]),
     files: gh.files(open.number),
     mergeableState: settledMergeableState(io, gh, open),
+    mobile,
   });
 
   const stickies = gh.stickies(open.number);
@@ -524,14 +608,14 @@ export function onCiCompleted(io, { repo, run }) {
     case 'comment-conflict':
       outcome = postConflictOnce(gh, open.number, stickies);
       break;
-    case 'comment-tests-missing': {
-      const body = testsMissingBody(decision.files ?? []);
-      const existing = stickies.find((c) => c.body.startsWith(MARKER.testsMissing));
-      if (!existing) gh.comment(open.number, body);
-      else if (existing.body !== body) gh.editComment(existing.id, body);
+    case 'comment-tests-missing':
+      upsertSticky(gh, open.number, stickies, MARKER.testsMissing, testsMissingBody(decision.files ?? []));
       outcome = 'tests-missing comment in place';
       break;
-    }
+    case 'comment-native':
+      upsertSticky(gh, open.number, stickies, MARKER.native, nativeBody(decision.reasons ?? []));
+      outcome = 'needs-an-iOS-build comment in place; not merging';
+      break;
     default:
       break;
   }
@@ -594,6 +678,8 @@ export function run({ env, event, io }) {
           conclusion: wr.conclusion,
           pullRequests: (wr.pull_requests ?? []).map((p) => p.number),
         },
+        // Written by the workflow's classify step; absent → native.
+        mobile: parseMobileRelease(env.MOBILE_RELEASE_FILE ? io.readFile(env.MOBILE_RELEASE_FILE) : null),
       });
       const who = d.pr ? `PR #${d.pr}` : `run ${wr.id}`;
       io.log(`${d.warning ? '::warning::' : '::notice::'}${who}: ${d.action} — ${d.reason}${d.outcome ? ` → ${d.outcome}` : ''}`);
@@ -632,6 +718,13 @@ export function realIo(env) {
       } catch (e) {
         const err = /** @type {{ stdout?: string, stderr?: string, message: string }} */ (e);
         return { ok: false, stdout: err.stdout ?? '', stderr: err.stderr || err.message };
+      }
+    },
+    readFile(path) {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
       }
     },
     sleep(ms) {
