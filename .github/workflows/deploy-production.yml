@@ -13,6 +13,14 @@
 # push through a PR. Branch protection on main should require the CI checks
 # anyway; this is the second lock on the same door.
 #
+# A CI run STILL GOING is waited for (up to 90 min), not failed. The required
+# checks do not cover every CI job, so a merge can land while E2E is running —
+# PR #79 did, one second after its `ai-tests` label started a fresh run, and
+# deploy run 36856433646 refused it, leaving prod a merge behind (2026-10-01).
+# While a deploy waits it holds the `deploy-production` concurrency group, so a
+# later merge's deploy queues behind it; GitHub keeps only one pending run and
+# cancels the older, which mobile.yml accepts when a later deploy covers it.
+#
 # WHY THIS IS SAFE ENOUGH TO BE AUTOMATIC: the PR already ran the full suite
 # against a Vercel preview backed by a fresh clone of the prod DB, migrations
 # included — so the merge itself is the decision point. The residual risk this
@@ -66,7 +74,10 @@ jobs:
   deploy:
     name: Migrate prod + deploy to production
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The CI gate may wait up to 90 min (its WAIT_SECONDS), then migrate +
+    # build + deploy take up to the 20 this job had before the gate waited.
+    # mobile.yml's deploy wait is sized from this number.
+    timeout-minutes: 110
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -81,11 +92,23 @@ jobs:
       # for THAT sha to be completed + successful. If the commit has its own CI
       # run (e.g. deploying a PR head directly), that counts too.
       #
-      # In-progress counts as not green (wait for it). No run at all counts as
-      # not green (open a PR).
+      # A run still going is WAITED FOR, not failed: polled every POLL_SECONDS,
+      # re-reading the LATEST run each time (so a newer run for the sha — a
+      # label run, a re-run — supersedes the one we started on), up to
+      # WAIT_SECONDS. CI took 22–77 min over the last 30 green runs, so the
+      # ceiling is 90. Then success deploys; any other conclusion, or the
+      # ceiling, fails. No run at all fails at once (open a PR).
+      #
+      # Why it waits (2026-10-01): PR #79 got the `ai-tests` label at 11:36:30
+      # and was merged at 11:36:31. The label started a new CI run on the same
+      # head; this gate read it as in_progress and exited 1 three seconds later
+      # (run 36856433646), so production stayed on PR #77.
       - name: Require green CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}
+          WAIT_SECONDS: '5400'
+          POLL_SECONDS: '30'
+          LOG_EVERY_SECONDS: '300'
         run: |
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
@@ -96,6 +119,8 @@ jobs:
               --limit 1 --json status,conclusion \
               --jq 'if length == 0 then "none" else (.[0].status + "/" + (.[0].conclusion // "pending")) end'
           }
+
+          RECOVER="Production was NOT updated. Once CI is green for this commit, re-run this deploy: Actions → Deploy to production → Re-run, or \`gh run rerun $GITHUB_RUN_ID\`."
 
           # 1. Did this exact commit get a CI run? (unusual on main, but honour it)
           TESTED_SHA="$SHA"
@@ -112,9 +137,33 @@ jobs:
             fi
           fi
 
+          if [ "$STATE" = "none" ]; then
+            echo "::error::No CI run exists for $SHA nor for the head of a pull request it came from. $RECOVER Merge through a pull request; a direct push to main is never deployed."
+            exit 1
+          fi
+
+          # 3. Still running: wait for it, re-reading the latest run each time.
+          START="$(date +%s)"
+          LAST_LOG="$START"
           echo "Latest CI run for $TESTED_SHA: $STATE"
+          while [ "${STATE%%/*}" != "completed" ]; do
+            NOW="$(date +%s)"
+            if [ $(( NOW - START )) -ge "$WAIT_SECONDS" ]; then
+              echo "::error::Gave up after $(( NOW - START ))s waiting for CI on $TESTED_SHA (last state: $STATE); the ceiling is ${WAIT_SECONDS}s. $RECOVER"
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+            if ! NEXT="$(ci_state "$TESTED_SHA")"; then NEXT="api-error"; fi
+            NOW="$(date +%s)"
+            if [ "$NEXT" != "$STATE" ] || [ $(( NOW - LAST_LOG )) -ge "$LOG_EVERY_SECONDS" ]; then
+              echo "CI for $TESTED_SHA after $(( NOW - START ))s: $NEXT"
+              LAST_LOG="$NOW"
+            fi
+            STATE="$NEXT"
+          done
+
           if [ "$STATE" != "completed/success" ]; then
-            echo "::error::CI is not green for $TESTED_SHA (state: $STATE). Production was NOT updated. Merge through a pull request with green CI checks, or wait for the run to finish."
+            echo "::error::CI for $TESTED_SHA concluded ${STATE#completed/}, not success. $RECOVER"
             exit 1
           fi
           echo "CI green for $TESTED_SHA — deploying." >> "$GITHUB_STEP_SUMMARY"
