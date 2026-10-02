@@ -50,7 +50,10 @@ condition is gone.
 CI run for that commit has run the AI shard. A red or flaky AI run is never
 retried by the bot. A *cancelled* one may be: any label or reopen starts a new
 CI run that cancels the one in flight (ci.yml's concurrency), and only a person
-causes that, so it cannot loop.
+causes that, so it cannot loop. CI's fail-fast (2026-10-02) is the other thing
+that cancels an AI shard — another job failed — and it cannot loop either: that
+run concludes `cancelled`, `after-ci` acts only on a green run, and the next
+push is a new head with its own one attempt.
 
 ## After every merge
 
@@ -153,4 +156,3 @@ waiting for one still running, before it migrates production and deploys
 ## Follow-ups (files owned elsewhere)
 
 - `CLAUDE.md`'s Workflow section still says Sam pushes, opens the PR and merges.
-- `deploy-pipeline.md` should link this file from its workflow list.

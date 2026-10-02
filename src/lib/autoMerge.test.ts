@@ -117,6 +117,8 @@ describe('decideAfterCi: state → action', () => {
     ['fork whose repo was deleted', { pr: withPr({ head: { sha: HEAD, repo: null } }) }, 'skip', /fork/],
     ['hold label', { pr: withPr({ labels: [{ name: 'hold' }] }) }, 'skip', /hold/],
     ['red run', { run: { id: 200, headSha: HEAD, conclusion: 'failure' } }, 'skip', /concluded failure/],
+    // CI's fail-fast cancels the whole run when any job fails (2026-10-02).
+    ['a run fail-fast stopped', { run: { id: 200, headSha: HEAD, conclusion: 'cancelled' }, jobs: fullRun('cancelled') }, 'skip', /concluded cancelled/],
 
     // The AI shard.
     ['green without the AI shard → label', { jobs: fullRun(), ai: { passed: false, attempted: false } }, 'label-ai'],

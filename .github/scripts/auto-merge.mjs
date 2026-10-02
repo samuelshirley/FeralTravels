@@ -200,7 +200,9 @@ export function guardPr({ run, pr, latestRunId }) {
  * A CANCELLED AI job is not an attempt. Any label, or a reopen, starts a new
  * CI run that cancels the one in flight (ci.yml's concurrency), so adding
  * `hold` during an AI run would otherwise use up the head's one automatic
- * try. Only a person's event cancels a run, so this cannot loop.
+ * try. Only a person's event does that, so it cannot loop. CI's fail-fast also
+ * cancels an AI job when another job fails, and cannot loop either: that run is
+ * not green, so `after-ci` never acts on it.
  *
  * @param {{ name: string, status?: string, conclusion?: string | null }[]} jobs
  */
