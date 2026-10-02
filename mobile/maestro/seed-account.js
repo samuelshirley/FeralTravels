@@ -20,6 +20,9 @@
 //   FORCED_FUEL_STOP  '1' → a forced Finn stop on day 1 of that trip, its fuel
 //                     cache stamped fresh so no Places search runs
 //   RANGE_KM          the seeded vehicle's range in km, '' for the Hilux's 500
+//   JEV_MODE          '' | 'on' | 'compare' | 'off' — force the account's
+//                     message-gate Jev mode (users.jev_mode); needs
+//                     SEED_CANONICAL. Only penny-jev-gate.yaml sets it.
 //   EXTRA_TRIP_KIND   '' | 'blank' | 'onboarding' | 'vehicle_new' — one more
 //                     trip over /api/test/trip (see createAdHocTrip)
 //   EXTRA_TRIP_NAME   its name
@@ -49,6 +52,10 @@ if (!/^[a-z0-9]+$/.test(ACCOUNT_SUFFIX)) {
 var at = EMAIL.indexOf('@');
 var email = EMAIL.slice(0, at) + '-' + ACCOUNT_SUFFIX + EMAIL.slice(at);
 
+if (JEV_MODE && SEED_CANONICAL !== '1') {
+  throw new Error('seed-account.js: JEV_MODE is set by /api/test/seed, so it needs SEED_CANONICAL=1');
+}
+
 var tripName = null;
 var tripId = null;
 
@@ -61,6 +68,7 @@ if (SEED_CANONICAL === '1') {
   };
   if (FORCED_FUEL_STOP === '1') body.forcedFuelStop = true;
   if (RANGE_KM) body.rangeKm = parseInt(RANGE_KM, 10);
+  if (JEV_MODE) body.jevMode = JEV_MODE;
   tripId = post('/api/test/seed', body).tripId;
   tripName = body.tripName;
 }

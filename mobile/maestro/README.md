@@ -22,6 +22,7 @@ prove you can see it while typing, which is exactly the bug that shipped
 | `onboarding-wizard.yaml`, `onboarding-range.yaml` | behaviour | The whole first-trip wizard to the hand-off and a relaunch; the range step's bounds. One Penny turn (the hand-off). |
 | `vehicles.yaml`, `paywall.yaml`, `account-deletion.yaml` | behaviour | Settings' vehicles; a trial that is over and a subscription that lifts it; deleting the account. Each on its own account (`seed-account.js`). |
 | `penny-plan-trip.yaml`, `penny-maps-link.yaml` | behaviour, **`ai` shard** | Penny planning for real — only on a run started by the `ai-tests` label. |
+| `penny-jev-gate.yaml` | behaviour, **`ai` shard** | The message gate asks Jev first (a seeded `users.jev_mode = 'on'`) on three messages the free rules cannot settle, and Penny answers each. `check-jev-gate.js` reads the gate's own ledger after each, so it cannot pass with Jev skipped. The one place CI calls Jev. |
 
 **Shards.** CI runs `launch.yaml`, then each `shards/<name>.yaml` as ONE Maestro
 run on its own simulator (`core`, `trips`, `account`, and `ai` on the label).

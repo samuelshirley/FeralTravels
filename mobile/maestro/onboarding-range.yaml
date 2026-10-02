@@ -14,6 +14,7 @@ appId: ${APP_ID}
       SEED_CANONICAL: '1'
       FORCED_FUEL_STOP: ''
       RANGE_KM: ''
+      JEV_MODE: ''
       EXTRA_TRIP_KIND: vehicle_new
       EXTRA_TRIP_NAME: E2E Fixture Range Trip
 
