@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
-import { finishPennyTurn, seedPennyTurn } from '@/server/repos/testSupport';
+import { finishPennyTurn, readFixtureGateLedger, seedPennyTurn } from '@/server/repos/testSupport';
 
 /**
  * TEST-ONLY: plant a `penny_turns` row for a fixture user's trip, so a spec can
@@ -12,6 +12,12 @@ import { finishPennyTurn, seedPennyTurn } from '@/server/repos/testSupport';
  * ALWAYS false on Vercel production with no override; plus the per-run HMAC in
  * x-e2e-test-secret, and a fixture-address check inside the repo because this
  * one WRITES rows.
+ *
+ * `action: 'gate-ledger'` READS instead: the fixture account's `penny:gate`
+ * and `jev` usage rows — tier and decider, Jev's choice, top probability,
+ * settled and deferred reason, never user text — so penny-jev-gate.yaml can
+ * prove Jev was actually asked rather than skipped. It lives here rather than
+ * in a route of its own because a turn is what writes those rows.
  *
  * POST and force-dynamic for the reason spelled out in ../otp/route.ts: a GET
  * route handler is prerendered at build time, before the flag that gates it is
@@ -33,12 +39,19 @@ const bodySchema = z.union([
     idempotencyKey: z.string().min(8).max(100),
     status: z.enum(['done', 'error']).optional(),
   }),
+  z.object({
+    action: z.literal('gate-ledger'),
+    email: z.string().email(),
+  }),
 ]);
 
 export async function POST(req: Request) {
   if (!isTestRequestAuthorized(req)) return new Response('Not found', { status: 404 });
   try {
     const body = bodySchema.parse(await req.json());
+    if (body.action === 'gate-ledger') {
+      return Response.json({ ok: true, ...(await readFixtureGateLedger(body.email)) });
+    }
     if (body.action === 'finish') {
       await finishPennyTurn(body);
       return Response.json({ ok: true });
