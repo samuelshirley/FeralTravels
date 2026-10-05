@@ -74,6 +74,25 @@ export async function getChatPage(params: {
   return { messages, hasMore };
 }
 
+/**
+ * Penny's message immediately before the one being gated: the trip's newest
+ * chat row when it is an assistant row, else null.
+ *
+ * The message gate runs BEFORE the driver's new message is written
+ * (`api/trip/replan`), so the newest row is whatever came just before it. Only
+ * the content is returned; the gate reads it to tell a bare reply ("yes do
+ * that") from junk, and hands it to the classifier for the same reason.
+ */
+export async function previousAssistantMessage(tripId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ role: chatHistory.role, content: chatHistory.content })
+    .from(chatHistory)
+    .where(eq(chatHistory.tripId, tripId))
+    .orderBy(desc(chatHistory.seq))
+    .limit(1);
+  return row?.role === 'assistant' ? row.content : null;
+}
+
 export async function addChatMessage(
   tripId: string,
   role: 'user' | 'assistant',
