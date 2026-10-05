@@ -1,5 +1,5 @@
 # Jev is asked, and Penny answers. The ONE place CI calls Jev (TypeSafe's
-# hosted jev-1.13.0): one fresh fixture account, three synthetic messages, on
+# hosted jev-1.13.0): one fresh fixture account, four synthetic messages, on
 # the PR's preview, whose Vercel Preview environment carries JEV_BASE_URL,
 # JEV_API_KEY and JEV_MODEL. Production has no JEV_*. Runs only in the `ai`
 # shard, on a run started by the `ai-tests` label. Sam chose this on
@@ -17,11 +17,11 @@
 # day later" names nothing on the trip and uses none of TRIP_VOCABULARY, so it
 # goes to Jev, and Jev must settle it (locally T1 at 0.99 in 225 ms).
 #
-# MESSAGES 2 AND 3 ARE BARE REPLIES: "yes do that", "undo that". Shown alone,
-# with nothing of what Penny had just said, the classifier refused both as
-# junk. Now the gate's reply rule lets a bare reply through for free when the
+# MESSAGES 2, 3 AND 4 ARE BARE REPLIES: "yes do that", "undo that", then
+# "Whatever you choose" (leaving the choice to Penny). Shown alone, with
+# nothing of what Penny had just said, the classifier refused them as junk. Now the gate's reply rule lets a bare reply through for free when the
 # trip's last chat message is Penny's, and the classifier is shown her
-# previous message too. So these must be T1 by any decider, the free rule
+# previous message too. So each must be T1 by any decider, the free rule
 # included; if one does reach the classifier, Jev must have been asked.
 #
 # What it proves, per message, from the server's ledger (check-jev-gate.js)
@@ -30,7 +30,7 @@
 # line on screen. A flow that only watched the screen would pass with Jev
 # unplugged.
 #
-# Cost: three Penny turns on the canonical trip, one Jev call (~$0.00004) and
+# Cost: four Penny turns on the canonical trip, one Jev call (~$0.00004) and
 # a Haiku gate call only where Jev defers; the replies are free to gate.
 appId: ${APP_ID}
 ---
@@ -180,6 +180,49 @@ appId: ${APP_ID}
       ACCOUNT_EMAIL: ${output.account.email}
       MESSAGE_NO: '3'
       MESSAGE_LABEL: 'undo that'
+      REQUIRE_JEV: ''
+- assertNotVisible:
+    text: '.*I only work on your trip.*'
+- assertNotVisible:
+    text: ".*I can't check that, but I can plan around it.*"
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── 4: leave it to Penny ────────────────────────────────────────────────────
+# Sam sent this straight after a Penny question on a brand-new trip and got
+# the refusal line.
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Whatever you choose'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- runScript:
+    file: check-jev-gate.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      MESSAGE_NO: '4'
+      MESSAGE_LABEL: 'Whatever you choose'
       REQUIRE_JEV: ''
 - assertNotVisible:
     text: '.*I only work on your trip.*'

@@ -19,11 +19,11 @@
 // classifier, and JEV must settle it (T1, confident): this is the proof Jev is
 // wired, configured and trusted. Haiku letting it through is not enough.
 //
-// REQUIRE_JEV '' — a bare reply to Penny ("yes do that", "undo that"). Since
-// the gate's reply rule these are let through FREE straight after a Penny
-// message, so they need not reach a model at all. They must be T1, by any
-// decider. If one does reach the classifier anyway, it must have its own Jev
-// row like every classifier-path message.
+// REQUIRE_JEV '' — a bare reply to Penny ("yes do that", "undo that",
+// "Whatever you choose"). Since the gate's reply rule these are let through
+// FREE straight after a Penny message, so they need not reach a model at
+// all. They must be T1, by any decider. If one does reach the classifier
+// anyway, it must have its own Jev row like every classifier-path message.
 //
 // Called after each message, so a failure names the message it is about and
 // says who refused it: the decider, and Jev's choice, top probability and
