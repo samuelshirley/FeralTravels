@@ -22,6 +22,10 @@ import { CAP_WINDOW_DAYS } from './constants';
  *    Google spend still belongs in the admin panel — it just must not gate
  *    anything.
  *
+ *    The same filter keeps `provider = 'jev'` rows out (self-hosted, $0, and
+ *    never a reason to cap anyone) — `messageGateJev.test.ts` pins that this
+ *    stays a prefix match on `anthropic`, not a "everything but Google" list.
+ *
  * Rolling 12 months rather than per calendar month, for monthly and annual
  * subscribers alike: someone who plans one big trip in July and nothing else
  * would blow a monthly allowance while costing us almost nothing across the

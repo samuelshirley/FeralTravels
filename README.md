@@ -29,7 +29,7 @@ Live at [feraltravels.com](https://www.feraltravels.com) (web + PWA). A native i
 | API | 61 REST routes; every route accepts one Zod-validated payload; all DB access through `src/server/repos/*` |
 | DB | Neon Postgres via Drizzle ORM (33 tables, migrations in `drizzle/`) |
 | Auth | NextAuth v5 — email OTP, Google OAuth, and Sign in with Apple; mobile uses the same flows and gets a bearer token stored in the iOS Keychain |
-| AI | Anthropic SDK, tool use, 21 Penny tools in `src/lib/penny/tools/`; model IDs in `src/lib/models.ts` |
+| AI | Anthropic SDK, tool use, 21 Penny tools in `src/lib/penny/tools/`; model IDs in `src/lib/models.ts`. **Jev** (TypeSafe, typed decisions) as an optional first opinion on the message gate, off by default (`src/server/jev/`) |
 | Maps | Google Maps Platform — **one key** (`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`) for the browser SDK, server Directions, and Places (New) search-along-route / text search |
 | Email | Resend |
 | Payments | Apple IAP via RevenueCat; entitlement lives server-side in `src/server/payments/` |
@@ -127,6 +127,41 @@ mobile/           Expo iOS app (shares DOM-free logic via mobile/shared, regener
 ## Penny turn resilience
 
 Every chat turn is a durable `penny_turns` row with an idempotency key. A partial unique index enforces one running turn per trip at the DB level; extra sends queue and drain in-request. A phone that backgrounds mid-stream re-attaches to the durable record instead of showing a false "something went wrong". See [`docs/design/penny-turn-resilience.md`](docs/design/penny-turn-resilience.md).
+
+## Jev: a fast first opinion on the message gate
+
+Before Penny runs, every chat message passes the **message gate**, which decides whether it is a trip request (T1), harmless off-topic (T2) or junk/abuse (T3). Jev is a **typed-decision model** from TypeSafe: it answers a fixed-choice question with a probability per answer, in about 0.25 s, and it cannot write text. It sits in front of Haiku on the one step where a fixed answer is all that is needed:
+
+```
+message ─▶ free rules (src/lib/pennyGate.ts)  ── settled? ──▶ T1 → Penny / T2·T3 → refused
+                 │ not settled
+                 ▼
+           Jev (src/server/jev/)   ── T1 with p ≥ JEV_T1_MIN (0.85)? ──▶ T1 → Penny  (Haiku not called)
+                 │ anything else, error or timeout
+                 ▼
+           Haiku classifier (src/server/pennyClassifier.ts) ──▶ final tier
+```
+
+- **Jev can only let a message through, never refuse one.** A low-confidence answer, a T2/T3, an error or a timeout all fall through to Haiku, which decides exactly as it did before Jev existed. Jev cannot strike or lock an account.
+- **Penny herself is unchanged.** Replies, plans, tool calls and place names stay on Haiku. Jev never sees a tool and never writes text.
+- **Three modes**, flipped from `/admin` with no redeploy: `off` (Haiku only, no Jev call), `compare` (Haiku decides; Jev's answer is only logged beside it), and `on` (Jev first, as above). The global switch is the `app_meta.jev_mode` row. A per-account override, `users.jev_mode`, wins over it. A missing or unreadable value means **off**.
+- **Config is server env only:** `JEV_BASE_URL`, `JEV_API_KEY`, `JEV_MODEL`, `JEV_TIMEOUT_MS` (default 800) and `JEV_T1_MIN` (default 0.85). Production needs https and a key. Any bad or missing config counts as "not configured": the gate goes to Haiku and `/admin` shows why. For TypeSafe's hosted Jev, set `JEV_BASE_URL=https://api.typesafe.ai` and pin `JEV_MODEL=jev-1.13.0`, because the code's default model id (`typed-decisions`) names the local open-source stand-in. The Vercel **Preview** environment has these set. **Production has none of them**, so Jev is off there whatever the switch says.
+- **Ledger:** every Jev call writes one `usage_events` row (`provider: 'jev'`) with its choice, top probability, latency and whether it settled the message. It never stores user text, and it counts toward no spend cap. `/admin` shows Jev-first and compare stats, including "Jev would have passed, Haiku refused".
+- **Bounded module:** only `messageGate.ts`, `repos/jev.ts`, `api/admin/jev/**` and `scripts/` may import `src/server/jev/`, which `jevBoundaryGuard.test.ts` enforces. `claude.ts` (Penny) may not.
+
+**Measured on 2026-10-02** (hosted `jev-1.13.0` against Haiku 4.5; 397 synthetic messages plus 39 real ones from three users):
+
+| | Jev | Haiku classifier |
+|---|---|---|
+| Gate accuracy, messages the free rules can't settle | 94% | 85% |
+| Real requests wrongly refused (synthetic set) | 5 | 30 |
+| Real users' messages, gate | 39/39 | 38/39 |
+| Latency (median) | ~0.23 s | 0.7–1 s |
+| Cost per gate decision | ~$0.00004 (third-party price; TypeSafe publishes none) | $0.0014 |
+
+**What it does not do:** save much money yet. A gate call is about 2% of a Penny turn, so Jev's real gain is faster, more accurate gate decisions. Making Jev route simple requests ("fuel on day 3") to code without a Penny turn is future work. **Before real users:** TypeSafe must be named on the privacy page as a processor of chat messages.
+
+Full design, modes and ledger: [`docs/design/jev.md`](docs/design/jev.md).
 
 ## Deploying
 
