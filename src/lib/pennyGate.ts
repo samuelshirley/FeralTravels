@@ -110,8 +110,8 @@ const DENY_PATTERNS: Array<{ re: RegExp; reason: string }> = [
 ];
 
 /**
- * A bare reply to Penny: a message that ONLY affirms, declines, undoes or
- * picks one of the options she just offered.
+ * A bare reply to Penny: a message that ONLY affirms, declines, undoes,
+ * picks one of the options she just offered, or leaves the choice to her.
  *
  * "yes do that", "undo that", "the second one" carry no trip vocabulary and
  * name no place, so before this rule they all went to the classifier, which
@@ -137,6 +137,14 @@ const REPLY_CORE = [
   'cancel', 'scrap that',
   // pick
   'first', 'second', 'third', 'last', 'other', 'both', 'that one', 'this one',
+  // leave it to Penny: "Whatever you choose" straight after her question was
+  // refused on a brand-new trip. Whole phrases, so no new filler is needed and
+  // "whatever, write me a poem" still has words no reply is made of.
+  'whatever', 'whatever you choose', 'whatever you pick', 'whatever you decide',
+  'whatever you think', 'whatever you want', 'up to you', "it's up to you", 'you choose',
+  'you pick', 'you decide', 'your call', 'your choice', 'surprise me', 'either', 'either one',
+  'either is fine', 'either works', "i don't mind", "don't mind", 'i dont mind',
+  "dealer's choice",
 ];
 const REPLY_PICK_PATTERNS = ['[1-9]', 'option [1-9abc]', 'number [1-9]'];
 const REPLY_FILLER = [
