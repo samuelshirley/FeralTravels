@@ -125,10 +125,22 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Delete this vehicle?'
     timeout: 10000
-- tapOn: 'Delete'
+# The ALERT's Delete, not a card's. With two vehicles both cards carry a
+# "Delete" button under the native alert, and those come first in the view
+# tree: the first local run tapped one of them and the alert never closed.
+# So it is the third match, and the step after proves the alert went.
+- tapOn:
+    text: 'Delete'
+    index: 2
 - extendedWaitUntil:
-    visible:
+    notVisible: 'Delete this vehicle?'
+    timeout: 10000
+# The refusal is drawn inline at the TOP of the vehicle section (role alert),
+# which the delete button may have scrolled past.
+- scrollUntilVisible:
+    element:
       text: '.*This is your default vehicle\. Set another as default first\..*'
+    direction: UP
     timeout: 20000
 - assertVisible: 'E2E Fixture Van'
 
@@ -141,12 +153,24 @@ appId: ${APP_ID}
     timeout: 20000
 - assertNotVisible:
     id: 'vehicle-default-Spare Truck'
+- scrollUntilVisible:
+    element:
+      id: 'vehicle-delete-E2E Fixture Van'
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
 - tapOn:
     id: 'vehicle-delete-E2E Fixture Van'
 - extendedWaitUntil:
     visible: 'Delete this vehicle?'
     timeout: 10000
-- tapOn: 'Delete'
+# The alert's Delete again: still two vehicles, so two card buttons first.
+- tapOn:
+    text: 'Delete'
+    index: 2
+- extendedWaitUntil:
+    notVisible: 'Delete this vehicle?'
+    timeout: 10000
 - extendedWaitUntil:
     notVisible: 'E2E Fixture Van'
     timeout: 20000
