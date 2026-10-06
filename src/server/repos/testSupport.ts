@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, inArray, like, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import {
   users,
@@ -20,7 +20,7 @@ import {
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
-import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
+import { GATE_PROVIDER, SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
 /**
  * Payments is imported through its ONE public surface, never by reaching into
  * `./entitlements` or the `subscriptions` table — the whole value of that
@@ -40,11 +40,19 @@ import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement
 import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
 import { seededLegDateISO, seededTripStartISO } from '@/app/api/test/seedDates';
 import {
+  gateRowFromUsage,
+  jevRowFromUsage,
+  type FixtureGateRow,
+  type FixtureJevRow,
+} from '@/app/api/test/turn/gateLedger';
+import {
   HILUX_FIXTURE_VEHICLE,
   impossibleFixtureTripReason,
 } from '@/app/api/test/fixtureVehicle';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY, vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from './vehicles';
+import { setUserJevOverride, type JevMode } from './jev';
+import { JEV_PROVIDER } from './usage';
 import { createTrip, addLeg } from './trips';
 import { resolveCanonicalTrip } from '@/server/fixtures/canonicalTrip';
 import { decodePolyline } from '@/lib/polyline';
@@ -296,9 +304,22 @@ export async function seedFixture(opts: {
    * every existing caller seeds legs with no stops, and asserts that.
    */
   forcedFuelStop?: boolean;
+  /**
+   * Force this account's Jev mode (`users.jev_mode`), for the one flow that
+   * proves Jev is asked: `mobile/maestro/penny-jev-gate.yaml`. A preview's
+   * global switch is cloned from production (off), so a per-account override
+   * is the only way a fixture reaches Jev. Omitted = left as it is. Fixture
+   * addresses only: this is the one seed option that changes how a real
+   * account's messages would be handled.
+   */
+  jevMode?: JevMode;
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
   assertEnabled();
+  if (opts.jevMode !== undefined && !isFixtureEmail(opts.email.trim().toLowerCase())) {
+    throw new Error('seedFixture: jevMode is for fixture addresses only');
+  }
   const userId = await ensureUserId(opts.email, opts.userName);
+  if (opts.jevMode !== undefined) await setUserJevOverride(userId, opts.jevMode);
 
   // Reset: trips (cascades legs) then vehicles, and clear units so onboarding
   // unit tests start clean.
@@ -1300,4 +1321,51 @@ export async function finishPennyTurn(input: {
         eq(pennyTurns.userId, user.id),
       ),
     );
+}
+
+/**
+ * TEST-ONLY: the message gate's ledger for a fixture account — its `penny:gate`
+ * rows and its `jev` rows, oldest first.
+ *
+ * It exists so `penny-jev-gate.yaml` cannot pass with Jev silently skipped.
+ * Both existing AI flows passed locally with Jev-first on while Jev was never
+ * called, because the free rules settled every message; Penny answering proves
+ * nothing about Jev. These rows do.
+ *
+ * NEVER USER TEXT: every field is picked key by key (gateLedger.ts, tested).
+ * Of a gate row only the tier and the decider leave; its reason is Haiku's own
+ * words about the message when the classifier decided.
+ */
+export async function readFixtureGateLedger(
+  email: string,
+): Promise<{ gate: FixtureGateRow[]; jev: FixtureJevRow[] }> {
+  assertEnabled();
+  const normalized = email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('readFixtureGateLedger: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('readFixtureGateLedger: no such fixture user');
+
+  const rows = await db
+    .select({
+      provider: usageEvents.provider,
+      model: usageEvents.model,
+      success: usageEvents.success,
+      errorMessage: usageEvents.errorMessage,
+      meta: usageEvents.meta,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.userId, user.id),
+        inArray(usageEvents.provider, [GATE_PROVIDER, JEV_PROVIDER]),
+      ),
+    )
+    .orderBy(asc(usageEvents.id));
+
+  return {
+    gate: rows.filter((r) => r.provider === GATE_PROVIDER).map(gateRowFromUsage),
+    jev: rows.filter((r) => r.provider === JEV_PROVIDER).map(jevRowFromUsage),
+  };
 }

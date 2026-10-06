@@ -2,6 +2,7 @@ import 'server-only';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory, legs, stops, trips, vehicles } from '@/server/db/schema';
+import { previousAssistantMessage } from '@/server/repos/chat';
 import { logUsageEvent } from '@/server/repos/usage';
 import { getStrikeState, setStrikeState } from '@/server/repos/users';
 import { GATE_PROVIDER } from '@/server/payments';
@@ -17,7 +18,7 @@ import {
   strikeLockMinutesRemaining,
   STRIKE_LOCK_MESSAGE,
 } from '@/lib/strikes';
-import { classifyMessage } from './pennyClassifier';
+import { classifyMessage, type ClassifyContext } from './pennyClassifier';
 import { jevClassifyTier, startJevClassifyTier } from '@/server/jev';
 import { effectiveJevMode, logJevUsage, type JevModeSource } from '@/server/repos/jev';
 
@@ -143,19 +144,25 @@ export async function gateMessage(input: {
     };
   }
 
-  const [vocab, recent] = await Promise.all([
+  const [vocab, recent, previousAssistant] = await Promise.all([
     tripVocabulary(input.tripId),
     recentUserMessages(input.tripId),
+    previousAssistantMessage(input.tripId),
   ]);
 
   let decision = decideDeterministically({
     message: input.message,
     tripNames: vocab.names,
     recentMessages: recent,
+    previousAssistant,
   });
 
+  // Penny's previous message travels to BOTH classifiers (Jev's question is
+  // built by the same `buildClassifyContent`): a reply cannot be judged
+  // without what it replies to.
+  const ctx: ClassifyContext = { tripName: vocab.tripName, places: vocab.names, previousAssistant };
+
   if (!decision) {
-    const ctx = { tripName: vocab.tripName, places: vocab.names };
     const haiku = async (): Promise<GateDecision> => {
       const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId);
       return { tier: classified.tier, by: classified.by, reason: classified.reason };
@@ -219,7 +226,7 @@ export async function gateMessage(input: {
  */
 async function haikuComparedWithJev(
   input: { userId: string; tripId: string; message: string },
-  ctx: { tripName: string | null; places: string[] },
+  ctx: ClassifyContext,
   source: JevModeSource,
   haiku: () => Promise<GateDecision>
 ): Promise<GateDecision> {
@@ -253,7 +260,7 @@ async function haikuComparedWithJev(
  */
 async function jevSettles(
   input: { userId: string; tripId: string; message: string },
-  ctx: { tripName: string | null; places: string[] },
+  ctx: ClassifyContext,
   source: JevModeSource
 ): Promise<GateDecision | null> {
   const outcome = await jevClassifyTier(input.message, ctx);

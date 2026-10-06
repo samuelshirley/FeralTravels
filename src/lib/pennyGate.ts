@@ -109,6 +109,87 @@ const DENY_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(system prompt|your instructions|reveal your)\b/i, reason: 'prompt extraction' },
 ];
 
+/**
+ * A bare reply to Penny: a message that ONLY affirms, declines, undoes,
+ * picks one of the options she just offered, or leaves the choice to her.
+ *
+ * "yes do that", "undo that", "the second one" carry no trip vocabulary and
+ * name no place, so before this rule they all went to the classifier, which
+ * was never shown what Penny had asked and refused them as junk: T3, a strike.
+ * On a 397-message test set Haiku's gate refused 30 real drivers' messages
+ * this way. Read straight after a Penny message, these words are only ever a
+ * reply to her, so they are allowed for free.
+ *
+ * The whole message must be made of these phrases. A sentence that merely
+ * STARTS with "yes" is not a bare reply and is judged as before. Fillers
+ * ("please", "that", "the") may pad a reply but never make one on their own.
+ */
+const REPLY_CORE = [
+  // affirm
+  'yes', 'yeah', 'yea', 'yep', 'yup', 'ok', 'okay', 'sure', 'alright', 'all right', 'right',
+  'correct', 'perfect', 'great', 'good', 'fine', 'cool', 'deal', 'do it', 'do that', 'do this',
+  'do both', 'go ahead', 'go for it', 'sounds good', 'sounds great', 'looks good', 'please do',
+  "let's do it", "let's do that", 'that works', 'works for me', "that's fine", "that's right",
+  // decline
+  'no', 'nope', 'nah', 'neither', 'none', 'never mind', 'nevermind', "don't", 'leave it',
+  // undo
+  'undo', 'revert', 'go back', 'put it back', 'change it back', 'swap back', 'swap it back',
+  'cancel', 'scrap that',
+  // pick
+  'first', 'second', 'third', 'last', 'other', 'both', 'that one', 'this one',
+  // leave it to Penny: "Whatever you choose" straight after her question was
+  // refused on a brand-new trip. Whole phrases, so no new filler is needed and
+  // "whatever, write me a poem" still has words no reply is made of.
+  'whatever', 'whatever you choose', 'whatever you pick', 'whatever you decide',
+  'whatever you think', 'whatever you want', 'up to you', "it's up to you", 'you choose',
+  'you pick', 'you decide', 'your call', 'your choice', 'surprise me', 'either', 'either one',
+  'either is fine', 'either works', "i don't mind", "don't mind", 'i dont mind',
+  "dealer's choice",
+];
+const REPLY_PICK_PATTERNS = ['[1-9]', 'option [1-9abc]', 'number [1-9]'];
+const REPLY_FILLER = [
+  'please', 'thanks', 'thank you', 'thx', 'then', 'that', 'it', 'this', 'one', 'the', 'instead',
+  'just', 'and', 'a',
+];
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const alternation = (phrases: string[], patterns: string[] = []) =>
+  `(?:${[...[...phrases].sort((a, b) => b.length - a.length).map(escapeRe), ...patterns].join('|')})`;
+const REPLY_CORE_RE = alternation(REPLY_CORE, REPLY_PICK_PATTERNS);
+const REPLY_ANY_RE = alternation([...REPLY_CORE, ...REPLY_FILLER], REPLY_PICK_PATTERNS);
+/** Every word belongs to a reply phrase... */
+const REPLY_SHAPE = new RegExp(`^${REPLY_ANY_RE}(?: ${REPLY_ANY_RE})*$`);
+/** ...and at least one of them is not filler. */
+const REPLY_HAS_CORE = new RegExp(`(?:^| )${REPLY_CORE_RE}(?: |$)`);
+/** "About six words": "yes the second one please thanks" is a reply, a paragraph is not. */
+export const MAX_REPLY_WORDS = 6;
+
+/** Lowercase, curly quotes straightened, punctuation and emoji to spaces. */
+function normaliseReply(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** True when `text` is nothing but a short affirm / decline / undo / pick. */
+export function isBareReply(text: string): boolean {
+  const n = normaliseReply(text);
+  if (!n || n.split(' ').length > MAX_REPLY_WORDS) return false;
+  return REPLY_SHAPE.test(n) && REPLY_HAS_CORE.test(n);
+}
+
+/**
+ * Whether the message before this one was Penny actually answering. The gate's
+ * own T2/T3 lines are written as assistant rows too, and a "yes" to "I only
+ * work on your trip" is not a reply to anything she offered.
+ */
+function followsPenny(previousAssistant: string | null | undefined): boolean {
+  const prev = previousAssistant?.trim();
+  return Boolean(prev) && prev !== T2_MESSAGE && prev !== T3_MESSAGE;
+}
+
 /** A word made only of consonants and punctuation is not a sentence. */
 function hasNoVowels(text: string): boolean {
   return !/[aeiouyАаЕеИиОоУуЭэЮюЯяÀ-ɏͰ-῿぀-ヿ一-鿿]/i.test(text);
@@ -123,6 +204,11 @@ export interface GateInput {
   tripNames: readonly string[];
   /** The account's last few messages, to catch an exact repeat. */
   recentMessages: readonly string[];
+  /**
+   * Penny's message immediately before this one: the trip's newest chat row
+   * when it is hers, else null. Only then can a bare reply be read as one.
+   */
+  previousAssistant?: string | null;
 }
 
 /**
@@ -144,6 +230,15 @@ export function decideDeterministically(input: GateInput): GateDecision | null {
   }
   if (text.length > 12 && hasNoVowels(text)) {
     return { tier: 'T3', by: 'deny_rule', reason: 'no vowels' };
+  }
+  /*
+   * A bare reply straight after Penny. Below the deny patterns, so code or an
+   * injection inside a "reply" is still refused; ABOVE the exact-repeat rule,
+   * on purpose: a driver says "yes" to Penny more than once in five messages,
+   * and a second "yes" to a new question is not a retry of the first.
+   */
+  if (followsPenny(input.previousAssistant) && isBareReply(text)) {
+    return { tier: 'T1', by: 'allow_rule', reason: 'reply to Penny' };
   }
   /*
    * An exact repeat of something the account just sent. A driver who resends

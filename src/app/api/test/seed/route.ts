@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
+import { JEV_MODES } from '@/server/repos/jev';
 import { seedFixture } from '@/server/repos/testSupport';
 
 /**
@@ -17,6 +18,8 @@ const bodySchema = z.object({
   legPreset: z.enum(['canonical', 'three_long_drives']).optional(),
   /** Put one forced Finn fuel stop on day 1, its fuel cache fresh. Default off. */
   forcedFuelStop: z.boolean().optional(),
+  /** Force this fixture account's Jev mode (users.jev_mode). Default: left as is. */
+  jevMode: z.enum(JEV_MODES).optional(),
 });
 
 export async function POST(req: Request) {

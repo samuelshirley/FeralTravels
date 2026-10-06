@@ -13,8 +13,10 @@ import path from 'path';
  * WHERE THEY LIVE (2026-09-27): the iOS Maestro shard `ai`
  * (mobile/maestro/shards/ai.yaml) — penny-plan-trip.yaml and
  * penny-maps-link.yaml, the most thorough flows in the suite on purpose (Sam:
- * the expensive ones are how a driver really uses the app). They were two
- * Playwright specs until then, gated by `E2E_AI_SPECS` in the E2E job; the
+ * the expensive ones are how a driver really uses the app). penny-jev-gate.yaml
+ * joined them 2026-10-02: it spends Penny turns AND is the one flow that
+ * calls Jev, so it must never run on a push. The first two were
+ * Playwright specs until 2026-09-27, gated by `E2E_AI_SPECS` in the E2E job; the
  * decide job now drops the `ai` shard from the iOS matrix unless the label
  * started the run.
  *
@@ -45,7 +47,7 @@ function shardFlows(name: string): string[] {
   return [...block[1].matchAll(/-\s+([\w.-]+)/g)].map((m) => m[1]);
 }
 
-const SPENDING_FLOWS = ['penny-plan-trip.yaml', 'penny-maps-link.yaml'];
+const SPENDING_FLOWS = ['penny-plan-trip.yaml', 'penny-maps-link.yaml', 'penny-jev-gate.yaml'];
 
 describe('the spending flows are in the `ai` shard and nowhere else', () => {
   it('the `ai` shard is exactly the flows that ask Penny to plan', () => {

@@ -1,0 +1,232 @@
+# Jev is asked, and Penny answers. The ONE place CI calls Jev (TypeSafe's
+# hosted jev-1.13.0): one fresh fixture account, four synthetic messages, on
+# the PR's preview, whose Vercel Preview environment carries JEV_BASE_URL,
+# JEV_API_KEY and JEV_MODEL. Production has no JEV_*. Runs only in the `ai`
+# shard, on a run started by the `ai-tests` label. Sam chose this on
+# 2026-10-02 (ticket tkt_oym0o6flee); docs/design/jev.md is the gate it tests.
+#
+# A preview's global switch (`app_meta.jev_mode`) is cloned from production,
+# where it is off, so the account is seeded with its own override
+# (`users.jev_mode = 'on'`, Jev first). No other account on the preview
+# reaches Jev.
+#
+# MESSAGE 1 IS CHOSEN SO THE FREE RULES CANNOT SETTLE IT. Both other AI flows
+# passed locally with Jev first on and Jev never called: every message named a
+# place or used trip vocabulary, so `decideDeterministically`
+# (src/lib/pennyGate.ts) let it through before the classifier. "can we leave a
+# day later" names nothing on the trip and uses none of TRIP_VOCABULARY, so it
+# goes to Jev, and Jev must settle it (locally T1 at 0.99 in 225 ms).
+#
+# MESSAGES 2, 3 AND 4 ARE BARE REPLIES: "yes do that", "undo that", then
+# "Whatever you choose" (leaving the choice to Penny). Shown alone, with
+# nothing of what Penny had just said, the classifier refused them as junk. Now the gate's reply rule lets a bare reply through for free when the
+# trip's last chat message is Penny's, and the classifier is shown her
+# previous message too. So each must be T1 by any decider, the free rule
+# included; if one does reach the classifier, Jev must have been asked.
+#
+# What it proves, per message, from the server's ledger (check-jev-gate.js)
+# and then the screen: who decided, that Jev was asked wherever a model was
+# needed, that the gate said T1, and that Penny answered, with neither gate
+# line on screen. A flow that only watched the screen would pass with Jev
+# unplugged.
+#
+# Cost: four Penny turns on the canonical trip, one Jev call (~$0.00004) and
+# a Haiku gate call only where Jev defers; the replies are free to gate.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: jev
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: 'on'
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# A planned trip opens on its days; the chat is one tab over.
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# ── 1: an off-rule request ──────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'can we leave a day later'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+# Keyboard down before waiting out the turn; the same dance as penny-plan-trip
+# (a tap during a fast reply's scroll only stops the scroll; not the left
+# edge, which is iOS's back-swipe zone).
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+# The ledger first: on a refusal it says who refused and Jev's numbers, which
+# the screen cannot.
+- runScript:
+    file: check-jev-gate.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      MESSAGE_NO: '1'
+      MESSAGE_LABEL: 'can we leave a day later'
+      REQUIRE_JEV: '1'
+- assertNotVisible:
+    text: '.*I only work on your trip.*'
+- assertNotVisible:
+    text: ".*I can't check that, but I can plan around it.*"
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── 2: a bare yes ───────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'yes do that'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- runScript:
+    file: check-jev-gate.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      MESSAGE_NO: '2'
+      MESSAGE_LABEL: 'yes do that'
+      REQUIRE_JEV: ''
+- assertNotVisible:
+    text: '.*I only work on your trip.*'
+- assertNotVisible:
+    text: ".*I can't check that, but I can plan around it.*"
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── 3: a bare undo ──────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'undo that'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- runScript:
+    file: check-jev-gate.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      MESSAGE_NO: '3'
+      MESSAGE_LABEL: 'undo that'
+      REQUIRE_JEV: ''
+- assertNotVisible:
+    text: '.*I only work on your trip.*'
+- assertNotVisible:
+    text: ".*I can't check that, but I can plan around it.*"
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── 4: leave it to Penny ────────────────────────────────────────────────────
+# Sam sent this straight after a Penny question on a brand-new trip and got
+# the refusal line.
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Whatever you choose'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- runScript:
+    file: check-jev-gate.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      MESSAGE_NO: '4'
+      MESSAGE_LABEL: 'Whatever you choose'
+      REQUIRE_JEV: ''
+- assertNotVisible:
+    text: '.*I only work on your trip.*'
+- assertNotVisible:
+    text: ".*I can't check that, but I can plan around it.*"
+- assertNotVisible:
+    text: '^Error: .*'

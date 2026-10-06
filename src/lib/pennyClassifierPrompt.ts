@@ -70,12 +70,29 @@ export interface ClassifyContext {
   tripName?: string | null;
   /** Leg and stop names, so "Marfa" resolves. */
   places?: readonly string[];
+  /**
+   * Penny's message just before this one, when the trip's newest chat row is
+   * hers — so "yes do that" is read as a reply to what she offered.
+   */
+  previousAssistant?: string | null;
 }
 
+/** How much of Penny's previous message travels: its END, where her question is. */
+export const PREVIOUS_ASSISTANT_MAX_CHARS = 400;
+
 /**
- * The single user message. Names only — no dates, no distances, no
- * coordinates: the less of a driver's itinerary that travels to a model that
- * exists to read one sentence, the better.
+ * The single user message. Names, plus ONE message of Penny's — no dates, no
+ * distances, no coordinates of the trip's own: the less of a driver's
+ * itinerary that travels to a model that exists to read one sentence, the
+ * better.
+ *
+ * Penny's previous message is the exception, and it is one because a reply
+ * cannot be judged without it: shown "yes do that" alone, Haiku refused it as
+ * junk and put a strike on the driver. It is her words, not the driver's, and
+ * only the last {@link PREVIOUS_ASSISTANT_MAX_CHARS} characters of it travel —
+ * the end, where she asks what she is waiting on. It may carry dates or
+ * distances she wrote; that is the cost of reading a reply, and it is paid
+ * once per message, only on the classifier path.
  */
 export function buildClassifyContent(message: string, ctx: ClassifyContext = {}): string {
   const places = (ctx.places ?? []).slice(0, 40).filter(Boolean);
@@ -85,7 +102,15 @@ export function buildClassifyContent(message: string, ctx: ClassifyContext = {})
   ]
     .filter(Boolean)
     .join('\n');
-  return `${context ? `${context}\n\n` : ''}Message:\n${message}`;
+  const prev = ctx.previousAssistant?.trim();
+  const previous = prev
+    ? `Penny's previous message:\n${
+        prev.length > PREVIOUS_ASSISTANT_MAX_CHARS
+          ? `…${prev.slice(-PREVIOUS_ASSISTANT_MAX_CHARS)}`
+          : prev
+      }\n\n`
+    : '';
+  return `${context ? `${context}\n\n` : ''}${previous}Message:\n${message}`;
 }
 
 export function isTier(v: unknown): v is MessageTier {

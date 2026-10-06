@@ -94,8 +94,8 @@ never run tests or seed fixtures against the prod database.
 - **Only the newest preview URL works** — a stale one fails as a fake sign-out
   (`/login`) because its database was dropped. Take it from the sticky comment.
 - **The Anthropic-spending e2e flows are behind the `ai-tests` label** — the
-  iOS `ai` shard (`penny-plan-trip`, `penny-maps-link`); add it when you are
-  ready to merge.
+  iOS `ai` shard (`penny-plan-trip`, `penny-maps-link`, `penny-jev-gate`); add
+  it when you are ready to merge.
 - **Claude commits** finished work (after `tsc --noEmit` + `npm run test` pass);
   **Sam pushes, opens the PR, and merges.** Keep commits scoped, and **run the
   unit tests after EVERY code change**, not just before a commit.
@@ -257,7 +257,7 @@ reappears in `src/`.
 `onboarding-range.yaml`, `trip-itinerary.yaml`, `forced-stop-line.yaml`,
 `maps-link-stop.yaml`, `rest-day-stop.yaml`, `vehicles.yaml`, `paywall.yaml`,
 `account-deletion.yaml`, `settings-location.yaml`, `penny-plan-trip.yaml`,
-`penny-maps-link.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
+`penny-maps-link.yaml`, `penny-jev-gate.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs

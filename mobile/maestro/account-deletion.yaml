@@ -15,6 +15,7 @@ appId: ${APP_ID}
       SEED_CANONICAL: '1'
       FORCED_FUEL_STOP: ''
       RANGE_KM: ''
+      JEV_MODE: ''
       EXTRA_TRIP_KIND: ''
       EXTRA_TRIP_NAME: ''
 
