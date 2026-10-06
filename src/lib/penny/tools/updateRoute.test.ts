@@ -18,6 +18,22 @@ describe('update_route validator', () => {
     expect(withData({ status: 'selected' }).success).toBe(true);
   });
 
+  it('rejects end_lat without end_lng, and the reverse, naming the pair', () => {
+    for (const data of [{ end_lat: 44.1 }, { end_lng: -110.5 }, { end_lat: 44.1, end_lng: null }]) {
+      const result = withData(data);
+      expect(result.success, JSON.stringify(data)).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toMatch(/both be set or both omitted/);
+        expect(result.error.issues[0].path).toEqual(['data', 'end_lat']);
+      }
+    }
+  });
+
+  it('accepts both end coordinates, or both cleared', () => {
+    expect(withData({ end_lat: 44.1, end_lng: -110.5 }).success).toBe(true);
+    expect(withData({ end_lat: null, end_lng: null }).success).toBe(true);
+  });
+
   it('accepts an empty data object', () => {
     expect(withData({}).success).toBe(true);
   });

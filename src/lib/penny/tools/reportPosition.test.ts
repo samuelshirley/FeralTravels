@@ -92,6 +92,18 @@ describe('report_position validator — shape', () => {
     }
   });
 
+  it('rejects a resume_date shaped right that names no real day', () => {
+    for (const d of ['2026-13-45', '2026-02-30', '2027-02-29', '2026-00-10']) {
+      const result = parse({ ...ZURICH, resume_date: d });
+      expect(result.success, d).toBe(false);
+      if (!result.success) expect(result.error.issues[0].message).toMatch(/not a real calendar date/);
+    }
+  });
+
+  it('accepts a leap day in a leap year', () => {
+    expect(parse({ ...ZURICH, resume_date: '2028-02-29' }).success).toBe(true);
+  });
+
   it('rejects an empty or over-long place_name', () => {
     expect(parse({ ...ZURICH, place_name: '' }).success).toBe(false);
     expect(parse({ ...ZURICH, place_name: 'x'.repeat(201) }).success).toBe(false);
