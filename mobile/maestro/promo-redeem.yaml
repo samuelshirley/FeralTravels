@@ -1,0 +1,98 @@
+# Redeem a promo code from the paywall: a blocked account opens Penny's
+# paywall bubble, types a code minted for it into the purchase sheet, and is
+# let back in. A wrong code is refused with the server's own sentence first.
+#
+# Through the CHAT paywall bubble: the sheet opened from Settings has no promo
+# box (SubscriptionSection passes no onRedeemed, deliberately).
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `pr`): it is blocked, then granted.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: pr
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# Blocked: trial over, comped off (fixture addresses are on the comp list).
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '7'
+      SUBSCRIPTION_STATUS: ''
+- runScript:
+    file: seed-promo.js
+    env:
+      PROMO_EMAIL: ${output.account.email}
+      PROMO_EXPIRES_DAYS: ''
+
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: 'Keep planning'
+    timeout: 30000
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+- tapOn: 'Keep planning'
+- extendedWaitUntil:
+    visible:
+      text: '.*Choose a plan.*'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'promo-redeemer'
+    direction: DOWN
+    timeout: 20000
+
+# ── A code that is not ours: refused, with the server's sentence ────────────
+- tapOn:
+    id: 'promo-input'
+- inputText: 'FERAL-ZZZZ-ZZZZ'
+- tapOn:
+    id: 'promo-submit'
+- extendedWaitUntil:
+    visible:
+      id: 'promo-error'
+      text: "That code isn.t one of ours.*"
+    timeout: 20000
+
+# ── The account's own code: in ──────────────────────────────────────────────
+- tapOn:
+    id: 'promo-input'
+- eraseText: 20
+- inputText: ${output.promo.display}
+- tapOn:
+    id: 'promo-submit'
+- extendedWaitUntil:
+    notVisible:
+      text: '.*Choose a plan.*'
+    timeout: 30000
+- assertNotVisible: 'Keep planning'
+- assertVisible:
+    id: 'chat-composer-send'
+
+# ── Granted on the server: it survives a relaunch ───────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- assertNotVisible: 'Planning is paused on this account'

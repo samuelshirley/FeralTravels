@@ -19,6 +19,7 @@ flows:
   - vehicle-edit-delete.yaml
   - units-metric.yaml
   - support-form.yaml
+  - promo-redeem.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -28,3 +29,4 @@ executionOrder:
     - vehicle-edit-delete
     - units-metric
     - support-form
+    - promo-redeem
