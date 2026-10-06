@@ -1,0 +1,122 @@
+# The first-trip wizard, all the way to a PLAN on screen. onboarding-wizard.yaml
+# proves the wizard and fires the hand-off, but does not wait for what the
+# hand-off produces; this one does: Penny's "Trip is planned" line, its link
+# to the list, and the list's days for the trip the driver asked for.
+#
+# A short trip (Girona → Lyon, about 450 km at 6 h a day) to keep the turn
+# small. `ai` shard: the intent scan, the hand-off planning turn (~$0.085) and
+# Finn on day 1.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it with IOS_AI=1 before trusting a green or a red.
+#
+# Its own account (suffix `ai6`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ai6
+      SEED_CANONICAL: ''
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: onboarding
+      EXTRA_TRIP_NAME: E2E Fixture Hand-off Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+
+# ── The wizard (the same steps as onboarding-wizard.yaml) ───────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Road trip to Lyon'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Where are you starting from?'
+    timeout: 30000
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Girona'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'When are you setting off?'
+    timeout: 30000
+- tapOn:
+    point: '50%,25%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- waitForAnimationToEnd
+- tapOn: 'In a month'
+- extendedWaitUntil:
+    visible: 'How long do you want to drive each day\?'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn: '6 h'
+- extendedWaitUntil:
+    visible:
+      text: 'Do you want distances in metric.*'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn: 'Metric (km)'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-vehicle-card'
+    timeout: 30000
+- tapOn:
+    id: 'onboarding-vehicle-name'
+- inputText: 'Hilux'
+- tapOn: 'RANGE ON A TANK'
+- tapOn: '500 km'
+- tapOn:
+    id: 'onboarding-vehicle-submit'
+- extendedWaitUntil:
+    notVisible:
+      id: 'onboarding-vehicle-card'
+    timeout: 30000
+
+# ── The hand-off, awaited to a plan ─────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: 'chat-plan-ready'
+    timeout: 300000
+- assertVisible:
+    text: '.*Trip is planned.*'
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+- assertNotVisible:
+    text: '^Error: .*'
+- tapOn:
+    id: 'plan-ready-open-list'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- assertVisible:
+    text: '.*Girona.* → .*Lyon.*'
+- assertVisible:
+    text: '.*Girona.* → .*'
+- tapOn:
+    text: '.*Girona.* → .*'
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: 'DESTINATION: .*Opens in Google Maps'
+    direction: DOWN
+    timeout: 20000

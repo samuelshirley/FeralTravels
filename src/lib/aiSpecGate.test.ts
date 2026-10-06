@@ -15,7 +15,11 @@ import path from 'path';
  * penny-maps-link.yaml, the most thorough flows in the suite on purpose (Sam:
  * the expensive ones are how a driver really uses the app). penny-jev-gate.yaml
  * joined them 2026-10-02: it spends Penny turns AND is the one flow that
- * calls Jev, so it must never run on a push. The first two were
+ * calls Jev, so it must never run on a push. penny-rest-day.yaml,
+ * penny-stop-edit.yaml and onboarding-handoff-plan.yaml joined 2026-10-07 (S7
+ * of the test-everything effort: the thorough Penny journeys — a rest day with
+ * its stop, a stop edited then deleted with Finn re-sourcing, the hand-off
+ * awaited to a plan; Sam approved the spend). The first two were
  * Playwright specs until 2026-09-27, gated by `E2E_AI_SPECS` in the E2E job; the
  * decide job now drops the `ai` shard from the iOS matrix unless the label
  * started the run.
@@ -47,7 +51,14 @@ function shardFlows(name: string): string[] {
   return [...block[1].matchAll(/-\s+([\w.-]+)/g)].map((m) => m[1]);
 }
 
-const SPENDING_FLOWS = ['penny-plan-trip.yaml', 'penny-maps-link.yaml', 'penny-jev-gate.yaml'];
+const SPENDING_FLOWS = [
+  'penny-plan-trip.yaml',
+  'penny-maps-link.yaml',
+  'penny-jev-gate.yaml',
+  'penny-rest-day.yaml',
+  'penny-stop-edit.yaml',
+  'onboarding-handoff-plan.yaml',
+];
 
 describe('the spending flows are in the `ai` shard and nowhere else', () => {
   it('the `ai` shard is exactly the flows that ask Penny to plan', () => {
