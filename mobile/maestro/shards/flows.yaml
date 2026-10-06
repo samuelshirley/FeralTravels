@@ -15,8 +15,10 @@
 flows:
   - sign-out.yaml
   - delete-trip.yaml
+  - stop-actions.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
     - sign-out
     - delete-trip
+    - stop-actions
