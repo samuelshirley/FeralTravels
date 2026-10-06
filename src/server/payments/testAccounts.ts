@@ -285,7 +285,6 @@ async function seedRealisticAccountData(userId: string): Promise<void> {
     .update(trips)
     .set({
       name: 'Test trip',
-      tripNameCiKey: 'test trip',
       vehicleId: vehicle.id,
       onboardingState: 'done',
       dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY,

@@ -135,8 +135,8 @@ export const CANONICAL_TRIP_META = {
  *
  *   - `id`, `userId`, `vehicleId`, and every child row id — a seed makes new ones.
  *   - `createdAt` / `updatedAt` — the seed happened now, not last August.
- *   - `tripNameCiKey` — derived from the name by the repo layer; deriving it
- *     twice is how the two get to disagree.
+ *   - `tripNameCiKey` — generated from the name by Postgres (migration 0044);
+ *     it cannot be written at all.
  *   - `startDateParsed` / `endDateParsed` — derived from the ISO dates, same
  *     argument.
  *   - `lastKnownLat/Lng`, `positionUpdatedAt`, `currentLegId`, `currentLat/Lng`,

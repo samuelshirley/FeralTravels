@@ -605,8 +605,9 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
  * renamed doesn't conflict with itself.
  *
  * The DB also has a unique index on (user_id, trip_name_ci_key) — see
- * migrations 0005 + 0015 — so this check is for the nice error message; the index
- * is the actual race-condition backstop.
+ * migration 0044 — so this check is for the nice error message; the index is
+ * the actual race-condition backstop, and {@link rethrowTripNameConflict} gives
+ * a write that loses the race the same 409.
  */
 export async function assertTripNameAvailable(
   userId: string,
@@ -624,11 +625,26 @@ export async function assertTripNameAvailable(
     .from(trips)
     .where(and(...conditions))
     .limit(1);
-  if (existing.length > 0) {
-    throw new ConflictError(
-      `A trip named "${name.trim()}" already exists. Pick a different name.`,
-    );
+  if (existing.length > 0) throw tripNameTaken(name);
+}
+
+function tripNameTaken(name: string): ConflictError {
+  return new ConflictError(`A trip named "${name.trim()}" already exists. Pick a different name.`);
+}
+
+/**
+ * Turn a unique violation on trips_user_name_unique_idx into the same 409
+ * {@link assertTripNameAvailable} throws, and rethrow anything else untouched.
+ * The check-then-write is not atomic, so two "+ New trip" taps, two renames or
+ * a clone can both pass the check; the index then rejects the loser with
+ * Postgres 23505, which would otherwise surface as a 500.
+ */
+export function rethrowTripNameConflict(err: unknown, name: string): never {
+  const pg = err as { code?: unknown; constraint_name?: unknown } | null;
+  if (pg?.code === '23505' && pg.constraint_name === 'trips_user_name_unique_idx') {
+    throw tripNameTaken(name);
   }
+  throw err;
 }
 
 /**
@@ -732,7 +748,8 @@ export async function autoNameTripFromSeason(tripId: string, userId: string): Pr
   await db
     .update(trips)
     .set({ name, updatedAt: new Date() })
-    .where(eq(trips.id, tripId));
+    .where(eq(trips.id, tripId))
+    .catch((e) => rethrowTripNameConflict(e, name));
 }
 
 export async function createTrip(input: {
@@ -759,7 +776,8 @@ export async function createTrip(input: {
       endDateParsed: tryParseToISO(input.endDate),
       vehicleId: input.vehicleId ?? null,
     })
-    .returning();
+    .returning()
+    .catch((e) => rethrowTripNameConflict(e, input.name));
   return tripRow(row);
 }
 
@@ -1523,7 +1541,8 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
         isTemplate: false,
         preferAvoidHighways: s.preferAvoidHighways,
       })
-      .returning();
+      .returning()
+      .catch((e) => rethrowTripNameConflict(e, newName));
     const newTripId = newTrip.id;
 
     const srcLegs = await tx.select().from(legs).where(eq(legs.tripId, sourceTripId));
