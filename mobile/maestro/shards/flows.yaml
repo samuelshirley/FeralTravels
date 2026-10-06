@@ -20,6 +20,7 @@ flows:
   - units-metric.yaml
   - support-form.yaml
   - promo-redeem.yaml
+  - paywall-no-trips.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -30,3 +31,4 @@ executionOrder:
     - units-metric
     - support-form
     - promo-redeem
+    - paywall-no-trips
