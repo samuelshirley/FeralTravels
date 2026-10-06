@@ -804,13 +804,15 @@ export default function TripMap({
             />
             <Callout tooltip={false}>
               <View style={styles.callout}>
-                {/* The web hardcodes "Nordkapp" / "71.17°N — The Goal" (it shipped
-                    for one trip). Prefer the leg's real end_name when we have it
-                    and keep the web's exact copy as the fallback. */}
+                {/* The trip's real destination and the day it is reached. This
+                    fell back to the one-trip prototype's "Nordkapp / 71.17°N —
+                    The Goal" on every trip. */}
                 <Text style={styles.calloutDestination}>
-                  {lastLeg.end_name || "Nordkapp"}
+                  {lastLeg.end_name || lastLeg.title}
                 </Text>
-                <Text style={styles.calloutBody}>71.17°N — The Goal</Text>
+                {lastLeg.dates ? (
+                  <Text style={styles.calloutBody}>{lastLeg.dates}</Text>
+                ) : null}
               </View>
             </Callout>
           </Marker>

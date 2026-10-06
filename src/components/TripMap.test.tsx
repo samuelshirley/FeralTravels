@@ -522,12 +522,10 @@ describe('TripMap — units in the info windows', () => {
   });
 
   /*
-   * BUG — src/components/TripMap.tsx:485-492. The final destination marker's
-   * info window is a hardcoded "Nordkapp / 71.17°N — The Goal" (a leftover
-   * from the original one-trip prototype), so every trip's last pin claims to
-   * be Nordkapp. It should name the trip's actual destination.
+   * Was a hardcoded "Nordkapp / 71.17°N — The Goal" (a leftover from the
+   * one-trip prototype), so every trip's last pin claimed to be Nordkapp.
    */
-  it.fails("the destination marker's info window names the trip's actual destination", async () => {
+  it("the destination marker's info window names the trip's actual destination", async () => {
     renderMap({ legs: [leg('leg-1', { end_name: 'Burgos' })] });
     await ready();
     await waitFor(() => expect(live(drawn.markers).length).toBeGreaterThan(0));
@@ -535,5 +533,13 @@ describe('TripMap — units in the info windows', () => {
     finalMarker?.trigger('click');
     expect(drawn.infoWindows[0].content).toContain('Burgos');
     expect(drawn.infoWindows[0].content).not.toContain('Nordkapp');
+  });
+
+  it('falls back to the last leg title, escaped, when the destination has no name', async () => {
+    renderMap({ legs: [leg('leg-1', { end_name: null, title: 'Lyon → <Annecy>' })] });
+    await ready();
+    await waitFor(() => expect(live(drawn.markers).length).toBeGreaterThan(0));
+    live(drawn.markers).find((m) => m.opts.zIndex === 30)?.trigger('click');
+    expect(drawn.infoWindows[0].content).toContain('Lyon → &lt;Annecy&gt;');
   });
 });
