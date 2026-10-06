@@ -90,7 +90,14 @@ export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
     const id = parseUUID(ctx.params.id);
     if (!id) return Response.json({ error: 'Invalid vehicle id' }, { status: 400 });
     const result = await deleteVehicle(userId, id);
-    if (!result.ok) return Response.json({ error: result.error }, { status: 400 });
+    // Someone else's vehicle reads as missing: 404, like every other route
+    // addressed by an id. Only the caller's own account rules are a 400.
+    if (!result.ok) {
+      return Response.json(
+        { error: result.error },
+        { status: result.reason === 'not_found' ? 404 : 400 },
+      );
+    }
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);
