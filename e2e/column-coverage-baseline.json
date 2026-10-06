@@ -13,28 +13,12 @@
       "reason": "announcement.spec deletes its own rows in cleanup"
     },
     {
-      "gap": "breaker_alerts",
-      "reason": "estimate: breakers.spec trips a breaker but may not leave the alert row"
-    },
-    {
       "gap": "costs",
       "reason": "legacy table: no code path writes it"
     },
     {
-      "gap": "deleted_users.email_encrypted",
-      "reason": "estimate: null unless DELETED_USER_ENC_KEY is set on the Preview env"
-    },
-    {
-      "gap": "email_otp_codes",
-      "reason": "a code is deleted when it is used, so none should be left at the end"
-    },
-    {
       "gap": "gpx_trails",
       "reason": "no test uploads a GPX trail"
-    },
-    {
-      "gap": "ip_request_counters",
-      "reason": "estimate: the test runner is exempt from the per-IP limits (decision I7)"
     },
     {
       "gap": "legs.continuity_warning",
@@ -55,10 +39,6 @@
     {
       "gap": "penny_turns.error_message",
       "reason": "written only when a Penny turn errors"
-    },
-    {
-      "gap": "penny_turns.images",
-      "reason": "no test attaches an image to a message"
     },
     {
       "gap": "pois",
@@ -85,16 +65,12 @@
       "reason": "estimate: nothing writes it today"
     },
     {
+      "gap": "stops.fuel_type",
+      "reason": "Finn inserts fuel stops with fuel_type null (server/fuel.ts); only createStop/updateStop via /api/stops, /api/stops/[id] or Penny’s update_stop set it, no test sends one, and the canonical fixture’s stops carry null"
+    },
+    {
       "gap": "stops.photos",
       "reason": "dormant column (stop photos removed 2026-06-30), always null"
-    },
-    {
-      "gap": "stops.source_url",
-      "reason": "estimate: the canonical fixture does not write it"
-    },
-    {
-      "gap": "subscription_events",
-      "reason": "no test posts a RevenueCat webhook"
     },
     {
       "gap": "subscriptions.original_transaction_id",
@@ -145,12 +121,20 @@
       "reason": "written only by the declare_fuel_state tool"
     },
     {
-      "gap": "trips.onboarding_scan",
-      "reason": "cleared at handoff, so a finished onboarding leaves it null"
+      "gap": "trips.last_known_lat",
+      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
     },
     {
-      "gap": "trips.pending_intent",
-      "reason": "cleared at handoff, so a finished onboarding leaves it null"
+      "gap": "trips.last_known_lng",
+      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
+    },
+    {
+      "gap": "trips.last_known_place",
+      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
+    },
+    {
+      "gap": "trips.position_updated_at",
+      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
     },
     {
       "gap": "trips.progress_anchor_date",
@@ -161,32 +145,16 @@
       "reason": "written only by the report_position tool"
     },
     {
-      "gap": "usage_alerts",
-      "reason": "estimate: subscriptions.spec seeds and then cleans its own alert rows"
-    },
-    {
-      "gap": "usage_events.error_message",
-      "reason": "written only when a billable call fails"
-    },
-    {
-      "gap": "user_viewport_time",
-      "reason": "no client in a test reports viewport time"
-    },
-    {
       "gap": "users.image",
-      "reason": "set only from an OAuth profile; sign-in in tests is OTP"
-    },
-    {
-      "gap": "users.jev_mode",
-      "reason": "estimate: no test sets a per-account Jev mode"
-    },
-    {
-      "gap": "users.name",
       "reason": "set only from an OAuth profile; sign-in in tests is OTP"
     },
     {
       "gap": "users.penny_locked_until",
       "reason": "no test trips the junk-message lock"
+    },
+    {
+      "gap": "vehicles.fuel_type",
+      "reason": "written only by PATCH /api/vehicles/[id] and Penny’s update_vehicle (repos/vehicles.ts); the native app sends no fuel type, the fixture vehicle is null on purpose (api/test/fixtureVehicle.ts), and no flow asks Penny to change it"
     },
     {
       "gap": "verificationTokens",
