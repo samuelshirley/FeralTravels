@@ -4,7 +4,7 @@
  *
  * Component test, not e2e: /admin is behind a one-person allowlist. Errors here
  * surface through `window.alert` (the component's choice), so the tests assert
- * on that. Two paths do not surface at all — see the `it.fails` cases at the end.
+ * on that.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -214,27 +214,25 @@ describe('AnnouncementsClient', () => {
     expect(screen.getByRole('button', { name: 'Deactivate' })).toBeEnabled();
   });
 
-  // BUG: AnnouncementsClient.tsx handleToggle never checks the PATCH response's
-  // `ok` — a 4xx/5xx falls straight through to the list re-read, the row stays
-  // as it was, and nothing tells the admin the toggle failed ("Never silently
-  // swallow errors"). Flip to `it` once a non-2xx PATCH is surfaced.
-  it.fails('a non-2xx toggle is announced', async () => {
-    routedFetch({
+  // A 4xx/5xx PATCH used to fall straight through to the list re-read, the row
+  // stayed as it was, and nothing told the admin.
+  it('a non-2xx toggle is announced', async () => {
+    const fetchMock = routedFetch({
       patch: async () => json({ error: 'Injected failure' }, 500),
       list: async () => json(ROWS),
     });
     render(<AnnouncementsClient initialRows={ROWS} />);
     fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Deactivate' })).toBeEnabled());
-    await waitFor(() => expect(alertSpy).toHaveBeenCalled(), { timeout: 200 });
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Failed to toggle'));
+    expect(screen.getByRole('button', { name: 'Deactivate' })).toBeEnabled();
+    // No re-read after a refusal: there is nothing new to show.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  // BUG: after a successful create (and after a toggle), AnnouncementsClient.tsx
-  // re-reads the list with `if (listRes.ok) setRows(...)` and does nothing
-  // otherwise. `router.refresh()` cannot rescue it — `rows` is useState seeded
-  // from `initialRows`, so a new prop is ignored — so the announcement that was
-  // just shipped never appears and nothing is said. Flip to `it` once fixed.
-  it.fails('a failed re-read after shipping is announced, not left as a stale list', async () => {
+  // `rows` is seeded once from `initialRows`, so router.refresh() cannot fix a
+  // failed re-read: it has to be said. And it must NOT say "failed to create" —
+  // the announcement shipped, and the admin would ship it twice.
+  it('a failed re-read after shipping is announced as shipped-but-stale', async () => {
     routedFetch({
       post: async () => json({ ok: true }),
       list: async () => json({ error: 'db down' }, 503),
@@ -244,6 +242,22 @@ describe('AnnouncementsClient', () => {
     fireEvent.change(bodyInput(), { target: { value: 'World' } });
     fireEvent.click(shipButton());
     await waitFor(() => expect(refresh).toHaveBeenCalled());
-    await waitFor(() => expect(alertSpy).toHaveBeenCalled(), { timeout: 200 });
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith('Saved, but the list did not reload. Refresh the page to see it.'),
+    );
+    expect(alertSpy).not.toHaveBeenCalledWith('Failed to create announcement');
+    await waitFor(() => expect(shipButton()).toHaveTextContent('Ship it'));
+  });
+
+  it('a failed re-read after a toggle is announced', async () => {
+    routedFetch({
+      patch: async () => json({ ok: true }),
+      list: async () => Promise.reject(new TypeError('Failed to fetch')),
+    });
+    render(<AnnouncementsClient initialRows={ROWS} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith('Saved, but the list did not reload. Refresh the page to see it.'),
+    );
   });
 });
