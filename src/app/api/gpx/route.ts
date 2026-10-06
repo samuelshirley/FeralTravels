@@ -22,9 +22,13 @@ export async function GET(request: Request) {
     if (!legIdRaw) return Response.json({ error: 'legId is required' }, { status: 400 });
     const legId = parseUUID(legIdRaw);
     if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
-    const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
-    if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
-    await assertTripReadableByUser(inferredTripId, userId);
+    // The leg's own trip decides access. A supplied tripId must name that same
+    // trip: checking only the supplied one let your own tripId plus somebody
+    // else's legId read their rows (cross-tenant read, found 2026-10-06).
+    const legTripId = await getLegTripId(legId);
+    if (!legTripId || (tripIdRaw && parseUUID(tripIdRaw) !== legTripId))
+      return Response.json({ error: 'Leg not found on this trip' }, { status: 404 });
+    await assertTripReadableByUser(legTripId, userId);
 
     const trails = await getGpxTrailsForLeg(legId);
     const out = await Promise.all(
@@ -88,7 +92,8 @@ export async function POST(request: Request) {
     const tripId = tripIdRaw ? parseUUID(String(tripIdRaw)) : await getLegTripId(legId);
     if (!tripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
     await assertTripOwnedByUser(tripId, userId);
-    await assertLegOwnedByUser(legId, userId);
+    if ((await assertLegOwnedByUser(legId, userId)) !== tripId)
+      return Response.json({ error: 'Leg not found on this trip' }, { status: 404 });
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const finalName = `trip${tripId}-leg${legId}-${Date.now()}-${sanitizeFilename(file.name)}`;

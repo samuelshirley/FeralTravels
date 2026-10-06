@@ -12,7 +12,9 @@ import { parseUUID } from '@/lib/validation';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const stopTypeEnum = z.enum(['fuel', 'other']);
+// Locked to 'other': fuel rows come only from Finn, server-side, never from a
+// client (CLAUDE.md, "Stops are exactly two types"). No client sends 'fuel'.
+const stopTypeEnum = z.literal('other');
 const stopStatusEnum = z.enum(['option', 'selected', 'dismissed']);
 const fuelTypeEnum = z.enum(['diesel', 'petrol', 'premium', 'lpg']);
 const stopSourceEnum = z.enum([

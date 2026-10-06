@@ -1,6 +1,7 @@
 import 'server-only';
 import { eq } from 'drizzle-orm';
 import { headers } from 'next/headers';
+import { ZodError } from 'zod';
 import { db } from '@/server/db/client';
 import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
@@ -323,6 +324,24 @@ export function errorResponse(err: unknown): Response {
     return Response.json(
       { error: err.message, errorId, ...(err.details ?? {}) },
       { status: err.status },
+    );
+  }
+
+  /*
+   * A payload that fails its schema is the caller being wrong, not the server
+   * failing: 400, with each issue's path so the caller can see which field.
+   * Without this branch every route that calls `schema.parse()` answered a
+   * malformed body with a 500 and a Zod dump (28 routes, found 2026-10-06).
+   */
+  if (err instanceof ZodError) {
+    console.warn(`[${errorId}] HTTP 400: invalid payload`);
+    return Response.json(
+      {
+        error: err.issues[0]?.message ?? 'Invalid request',
+        errorId,
+        issues: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      },
+      { status: 400 },
     );
   }
 
