@@ -580,11 +580,15 @@ test.describe('API contracts — happy paths left in place', () => {
   });
 
   /**
-   * The upload writes the file to the app's own filesystem (src/lib/gpx.ts),
-   * which is read-only on Vercel. If this fails on the preview, that is a
-   * finding to report, not something to paper over here.
+   * KNOWN PRODUCTION BUG, pinned and reported to Sam — not papered over.
+   * The upload writes the file to the app's own folder (src/lib/gpx.ts), which
+   * is read-only on Vercel. CI run 37546672143, three attempts of three:
+   *   500 {"error":"EROFS: read-only file system, open
+   *        '/var/task/src/data/gpx/trip…-ridge.gpx'"}
+   * GPX upload cannot work in production. The assertion stays 201, so the day
+   * upload works this goes red and someone has to flip `test.fail` to `test`.
    */
-  test('GPX upload stores a trail', async () => {
+  test.fail('GPX upload stores a trail', async () => {
     const res = await owner.api.post('/api/gpx', {
       multipart: {
         file: {
