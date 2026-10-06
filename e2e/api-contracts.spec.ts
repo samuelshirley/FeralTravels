@@ -50,7 +50,11 @@ let strangerWeb: BrowserContext;
 let ids: { route: string; link: string; task: string; stop: string; strangerRoute: string };
 const usageBefore = new Map<string, number>();
 
-test.describe.configure({ mode: 'serial' });
+// In order, on one worker, sharing the accounts beforeAll makes — but NOT
+// 'serial': there one failure skipped every later test (CI run 37544810207:
+// 1 failed, 50 never ran). In 'default' mode a failure restarts the worker,
+// beforeAll seeds fresh accounts, and the rest still run and report.
+test.describe.configure({ mode: 'default' });
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
