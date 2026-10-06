@@ -18,6 +18,7 @@ flows:
   - stop-actions.yaml
   - vehicle-edit-delete.yaml
   - units-metric.yaml
+  - support-form.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -26,3 +27,4 @@ executionOrder:
     - stop-actions
     - vehicle-edit-delete
     - units-metric
+    - support-form

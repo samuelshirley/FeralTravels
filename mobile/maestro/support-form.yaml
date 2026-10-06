@@ -1,0 +1,50 @@
+# Contact Support from the account menu: type a message, send it, and the modal
+# says it was sent. The server answers a fixture sender as sent WITHOUT mailing
+# the support inbox (src/app/api/support/route.ts), so this runs on every push
+# without emailing anyone.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `sf`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: sf
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-support'
+- extendedWaitUntil:
+    visible: 'How can we help?'
+    timeout: 10000
+- tapOn:
+    id: 'support-input'
+- inputText: 'E2E: the support form round trip'
+- tapOn:
+    id: 'support-send'
+- extendedWaitUntil:
+    visible: 'Message sent'
+    timeout: 20000
+- assertVisible:
+    text: 'We.ll get back to you as soon as we can\.'
+- assertNotVisible:
+    text: 'Something went wrong.*'
+- tapOn:
+    id: 'support-sent-close'
+- extendedWaitUntil:
+    notVisible: 'Message sent'
+    timeout: 10000
