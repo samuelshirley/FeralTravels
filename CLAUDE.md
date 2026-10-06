@@ -177,8 +177,7 @@ subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
 ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
-`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`,
-`stops.price_*`.
+`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`.
 
 ### Repos (`src/server/repos/`)
 

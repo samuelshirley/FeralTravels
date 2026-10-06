@@ -150,7 +150,7 @@ const summaryComment = () => {
 describe('ci.yml fails fast through one watcher job', () => {
   it('the parser sees every job (so the checks below are not passing on nothing)', () => {
     expect(wf.jobs.map((j) => j.id)).toEqual([
-      'fail-fast', 'decide', 'unit', 'mobile', 'preview', 'e2e', 'ios-build', 'ios-e2e', 'ios-e2e-summary', 'drop-preview-db',
+      'fail-fast', 'decide', 'unit', 'mobile', 'preview', 'e2e', 'ios-build', 'ios-e2e', 'ios-e2e-summary', 'db-coverage', 'drop-preview-db',
     ]);
     for (const j of wf.jobs) expect(j.steps.length, j.id).toBeGreaterThan(0);
   });
@@ -509,7 +509,9 @@ describe('the leaked-preview cleanup job', () => {
 
   it('keeps its name, runs last and after a cancel, and never on a docs-only PR', () => {
     expect(job.fields.name).toBe('Drop the preview database if the PR has closed');
-    expect(job.fields.needs).toBe('[decide, preview, e2e, ios-e2e]');
+    // db-coverage reads the branch, so the cleanup waits for it; `always()`
+    // below still runs the cleanup when coverage failed or was skipped.
+    expect(job.fields.needs).toBe('[decide, preview, e2e, ios-e2e, db-coverage]');
     expect(job.fields.if).toBe("always() && needs.decide.outputs.docs_only != 'true'");
   });
 
