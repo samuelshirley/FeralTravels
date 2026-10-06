@@ -1457,9 +1457,16 @@ jobs:
           BRANCH_ID="$(neon /branches | jq -r --arg n "$NEON_BRANCH" '.branches[] | select(.name == $n) | .id')"
           [ -n "$BRANCH_ID" ] || { echo "::error::No Neon branch named $NEON_BRANCH"; exit 1; }
           # The database the preview uses: create-branch-action's default
-          # (neondb) when it exists, else the branch's first database.
-          read -r DB ROLE <<<"$(neon "/branches/$BRANCH_ID/databases" | jq -r '
-            (.databases | map(select(.name == "neondb")) + .databases) | first | "\(.name) \(.owner_name)"')"
+          # (neondb) when it exists, else the branch's first database. Fetched
+          # and picked in separate assignments so `set -e` sees either failing
+          # (inside `read <<<"$(…)"` it did not, run 37479797728).
+          DATABASES="$(neon "/branches/$BRANCH_ID/databases")"
+          PICK="$(printf '%s' "$DATABASES" | jq -r '[.databases[] | select(.name == "neondb")] + .databases | first | "\(.name) \(.owner_name)"')"
+          read -r DB ROLE <<<"$PICK"
+          if [ -z "${DB:-}" ] || [ "$DB" = null ] || [ -z "${ROLE:-}" ] || [ "$ROLE" = null ]; then
+            echo "::error::Neon listed no usable database on $NEON_BRANCH (got database '${DB:-}', owner '${ROLE:-}'), so there is nothing to measure"
+            exit 1
+          fi
           URI="$(neon "/connection_uri?branch_id=$BRANCH_ID&database_name=$DB&role_name=$ROLE" | jq -r .uri)"
           [ -n "$URI" ] && [ "$URI" != null ] || { echo "::error::Neon returned no connection string"; exit 1; }
           echo "::add-mask::$URI"
