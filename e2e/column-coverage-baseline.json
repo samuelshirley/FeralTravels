@@ -145,6 +145,10 @@
       "reason": "written only by the report_position tool"
     },
     {
+      "gap": "trips.trip_name_ci_key",
+      "reason": "BUG, not a test gap: declared GENERATED in drizzle/0000_baseline.sql but plain text on prod (null on every preview row; schema.ts declares plain text); nothing writes it, so the duplicate-name checks in repos/trips.ts and trips_user_name_unique_idx never fire. Fix tracked separately; remove this entry with the fix."
+    },
+    {
       "gap": "users.image",
       "reason": "set only from an OAuth profile; sign-in in tests is OTP"
     },
