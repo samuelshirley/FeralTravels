@@ -89,7 +89,7 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
                 <View style={styles.sentWrap}>
                   <Text style={styles.sentTitle}>Message sent</Text>
                   <Text style={styles.sentBody}>We&apos;ll get back to you as soon as we can.</Text>
-                  <Pressable onPress={handleClose} style={styles.sentClose}>
+                  <Pressable onPress={handleClose} style={styles.sentClose} testID="support-sent-close">
                     <Text style={styles.sentCloseText}>Close</Text>
                   </Pressable>
                 </View>
@@ -109,6 +109,7 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
                     numberOfLines={5}
                     maxLength={5000}
                     autoFocus
+                    testID="support-input"
                     editable={status !== "sending"}
                     textAlignVertical="top"
                     style={styles.textarea}
@@ -128,6 +129,7 @@ export default function SupportModal({ open, onClose }: SupportModalProps) {
                     <Pressable
                       disabled={!canSend}
                       onPress={handleSubmit}
+                      testID="support-send"
                       style={[
                         styles.sendBtn,
                         status === "sending" && styles.sendBtnSending,

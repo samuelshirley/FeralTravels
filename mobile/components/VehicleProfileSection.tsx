@@ -312,12 +312,31 @@ function VehicleCard({
           ) : null}
         </View>
         <View style={styles.actionRow}>
+          {/* testIDs keyed by the vehicle's name: card order is by id (a UUID),
+              so "Edit" alone cannot say which card it is, and a flow that adds
+              a vehicle in the UI never learns its id. Visible text unchanged —
+              vehicles.yaml reads "Delete". */}
           {!vehicle.is_default ? (
-            <SmallButton label="Set default" accent={theme.success} onPress={onSetDefault} />
+            <SmallButton
+              label="Set default"
+              testID={`vehicle-default-${vehicle.name}`}
+              accent={theme.success}
+              onPress={onSetDefault}
+            />
           ) : null}
-          <SmallButton label="Edit" accent={theme.primary} onPress={onEdit} />
+          <SmallButton
+            label="Edit"
+            testID={`vehicle-edit-${vehicle.name}`}
+            accent={theme.primary}
+            onPress={onEdit}
+          />
           {canDelete ? (
-            <SmallButton label="Delete" accent={theme.danger} onPress={onDelete} />
+            <SmallButton
+              label="Delete"
+              testID={`vehicle-delete-${vehicle.name}`}
+              accent={theme.danger}
+              onPress={onDelete}
+            />
           ) : null}
         </View>
       </View>
@@ -340,15 +359,22 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function SmallButton({
   label,
+  testID,
   accent,
   onPress,
 }: {
   label: string;
+  testID: string;
   accent: string;
   onPress: () => void;
 }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.smallButton}>
+    <Pressable
+      accessibilityRole="button"
+      testID={testID}
+      onPress={onPress}
+      style={styles.smallButton}
+    >
       <Text style={[styles.smallButtonText, { color: accent }]}>{label}</Text>
     </Pressable>
   );
