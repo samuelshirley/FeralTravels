@@ -40,7 +40,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rethrowTripNameConflict, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -1176,7 +1176,8 @@ async function dispatchAction(
       await db
         .update(trips)
         .set(tripUpdate)
-        .where(eq(trips.id, tripId));
+        .where(eq(trips.id, tripId))
+        .catch((e) => rethrowTripNameConflict(e, action.input.name ?? ''));
       // Auto-name the trip from its season/dates once a start date exists —
       // a no-op unless the trip still carries the "New trip" placeholder.
       await autoNameTripFromSeason(tripId, userId);
