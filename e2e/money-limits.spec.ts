@@ -60,6 +60,26 @@ test.describe('replan limits', () => {
     await a.api.dispose();
   });
 
+  /**
+   * KNOWN LEAK, pinned until its fix lands: replan's replay looks a turn up by
+   * key alone (src/app/api/trip/replan/route.ts, `getTurnByKey`), so another
+   * account that sends this key gets the owner's turn back — message and reply.
+   * The scoped lookup exists (`getTurnByKeyForUser`, repos/pennyTurns.ts); the
+   * one-line call-site change waits on that route's claim. Flip `test.fail` to
+   * `test` with it: the replay must then be refused, never answered.
+   */
+  test.fail("another account's key replays nothing of the owner's turn", async () => {
+    const [owner, other] = await Promise.all([signedInAccount(), signedInAccount()]);
+    const key = await plantedTurn(owner);
+    const res = await other.api.post('/api/trip/replan', {
+      data: { tripId: other.tripId, message: 'Plan my trip', handoff: true, idempotencyKey: key },
+    });
+    const text = await res.text();
+    expect(text).not.toContain(owner.tripId);
+    expect(res.status(), text).toBe(409);
+    await Promise.all([owner.api.dispose(), other.api.dispose()]);
+  });
+
   test("the subscriber's daily $5 cap answers 429", async () => {
     const a = await signedInAccount();
     await setSubscriptionState(a.email, {
