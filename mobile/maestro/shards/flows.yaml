@@ -17,6 +17,7 @@ flows:
   - delete-trip.yaml
   - stop-actions.yaml
   - vehicle-edit-delete.yaml
+  - units-metric.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -24,3 +25,4 @@ executionOrder:
     - delete-trip
     - stop-actions
     - vehicle-edit-delete
+    - units-metric
