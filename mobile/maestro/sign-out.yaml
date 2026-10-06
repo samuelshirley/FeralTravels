@@ -1,0 +1,77 @@
+# Sign out, from both menus that offer it: the trips list's account menu and a
+# trip's own header menu. Each lands on the sign-in screen, and a relaunch
+# stays there — the token is gone from the keychain, not just the screen.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `so`): it signs in twice, and a sign-in code is
+# single-use, so it must not share the shard's address.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: so
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# ── From the trips list ─────────────────────────────────────────────────────
+- tapOn: 'Account menu.*'
+- extendedWaitUntil:
+    visible: 'SIGNED IN AS'
+    timeout: 10000
+- tapOn:
+    id: 'account-menu-signout'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 20000
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+- assertNotVisible:
+    text: '.*${output.account.tripName}.*'
+
+# ── From inside a trip ──────────────────────────────────────────────────────
+# A fresh code: the successful verify above reset the resend ladder, so the
+# second send is not refused.
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- extendedWaitUntil:
+    visible: 'SIGNED IN AS'
+    timeout: 10000
+- tapOn:
+    id: 'trip-menu-signout'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 20000
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000

@@ -1,0 +1,20 @@
+# Shard `flows`: the user journeys added by the test-everything effort
+# (2026-10-07) — sign-out, deleting a trip, removing a stop, editing and
+# deleting vehicles, switching units back, the support form, redeeming a promo
+# code, and the paywall screen. A shard of its own so PR wall-clock time does
+# not grow by an existing shard's length. No Penny and no Google spend: every
+# state is seeded. Each flow seeds its OWN account (seed-account.js, a suffix
+# per flow), so none can disturb another and the order is for reading.
+#
+# Clone a template trip has NO flow: no fixture ever creates a template, and
+# templates are global — one seeded here would appear in every parallel
+# shard's trips list. The clone route is covered over HTTP (api-contracts).
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - sign-out.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - sign-out
