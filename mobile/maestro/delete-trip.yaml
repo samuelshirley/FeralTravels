@@ -1,0 +1,64 @@
+# Delete a trip from the trips list: EDIT TRIPS, the trip's ×, the confirm
+# sheet. The card goes, the other trip stays, and it is still gone after a
+# relaunch (the server deleted it; the list did not just hide it).
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `dt`) with TWO trips: the canonical one that stays,
+# and a blank one to delete. Deleting an entitled account's LAST trip would
+# send the list into its auto-create path on the next load.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: dt
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: blank
+      EXTRA_TRIP_NAME: 'Trip to delete'
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- assertVisible:
+    text: '.*E2E Fixture Trip.*'
+
+- tapOn: 'EDIT TRIPS'
+- extendedWaitUntil:
+    visible: 'DONE'
+    timeout: 10000
+# By testID (trip-delete-<id>): every card's × is a button, and the id is the
+# one seed-account.js just created.
+- tapOn:
+    id: 'trip-delete-${output.account.tripId}'
+- extendedWaitUntil:
+    visible: 'Delete trip?'
+    timeout: 10000
+- assertVisible:
+    text: '.*Trip to delete.* will be permanently deleted\.'
+- tapOn:
+    id: 'trip-delete-confirm'
+- extendedWaitUntil:
+    notVisible: 'Delete trip?'
+    timeout: 20000
+- assertNotVisible:
+    text: '.*Trip to delete.*'
+- assertVisible:
+    text: '.*E2E Fixture Trip.*'
+- tapOn: 'DONE'
+
+# ── Gone on the server, not just from the list ──────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*E2E Fixture Trip.*'
+    timeout: 30000
+- assertNotVisible:
+    text: '.*Trip to delete.*'

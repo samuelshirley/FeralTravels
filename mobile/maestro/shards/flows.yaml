@@ -14,7 +14,9 @@
 # checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
 flows:
   - sign-out.yaml
+  - delete-trip.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
     - sign-out
+    - delete-trip
