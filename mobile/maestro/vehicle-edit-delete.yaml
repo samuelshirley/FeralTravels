@@ -1,0 +1,176 @@
+# Vehicles in Settings, past adding one (vehicles.yaml): edit a vehicle's name
+# and range, be refused deleting the DEFAULT one with the reason on screen,
+# move the default, then delete the old one. Each change survives a relaunch.
+#
+# The buttons are targeted by testID keyed by the vehicle's NAME
+# (vehicle-<edit|delete|default>-<name>): the cards are ordered by id, a UUID,
+# so "Edit" alone cannot say which card, and the spare is created in the UI so
+# the flow never learns its id.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `ved`): it renames and deletes vehicles.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ved
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+
+# ── Add a spare (the same steps as vehicles.yaml) ───────────────────────────
+- scrollUntilVisible:
+    element: '+ Add vehicle'
+    direction: DOWN
+    timeout: 20000
+- tapOn: '+ Add vehicle'
+- extendedWaitUntil:
+    visible: 'DRIVING LIMITS'
+    timeout: 10000
+- tapOn:
+    id: 'vehicle-name-input'
+- inputText: 'Spare Van'
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      id: 'vehicle-range_km-input'
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- tapOn:
+    id: 'vehicle-range_km-input'
+- inputText: '420'
+- scrollUntilVisible:
+    element: 'Save'
+    direction: DOWN
+    timeout: 10000
+- tapOn: 'Save'
+- extendedWaitUntil:
+    notVisible:
+      id: 'vehicle-name-input'
+    timeout: 20000
+
+# ── Edit the spare: name and range ──────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: 'vehicle-edit-Spare Van'
+    direction: UP
+    centerElement: true
+    timeout: 20000
+- tapOn:
+    id: 'vehicle-edit-Spare Van'
+- extendedWaitUntil:
+    visible:
+      id: 'vehicle-name-input'
+    timeout: 10000
+- tapOn:
+    id: 'vehicle-name-input'
+- eraseText: 30
+- inputText: 'Spare Truck'
+- pressKey: Enter
+- assertVisible:
+    id: 'vehicle-name-input'
+    text: 'Spare Truck'
+- scrollUntilVisible:
+    element:
+      id: 'vehicle-range_km-input'
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- tapOn:
+    id: 'vehicle-range_km-input'
+- eraseText: 10
+- inputText: '450'
+- assertVisible:
+    id: 'vehicle-range_km-input'
+    text: '450'
+- scrollUntilVisible:
+    element: 'Save'
+    direction: DOWN
+    timeout: 10000
+- tapOn: 'Save'
+- extendedWaitUntil:
+    notVisible:
+      id: 'vehicle-name-input'
+    timeout: 20000
+- scrollUntilVisible:
+    element: 'REFILL EVERY ~450 km'
+    direction: UP
+    centerElement: true
+    timeout: 20000
+- assertVisible: 'Spare Truck'
+- assertNotVisible: 'Spare Van'
+
+# ── The default cannot be deleted, and the screen says why ─────────────────
+- tapOn:
+    id: 'vehicle-delete-E2E Fixture Van'
+- extendedWaitUntil:
+    visible: 'Delete this vehicle?'
+    timeout: 10000
+- tapOn: 'Delete'
+- extendedWaitUntil:
+    visible:
+      text: '.*This is your default vehicle\. Set another as default first\..*'
+    timeout: 20000
+- assertVisible: 'E2E Fixture Van'
+
+# ── Move the default, then the old one can go ───────────────────────────────
+- tapOn:
+    id: 'vehicle-default-Spare Truck'
+- extendedWaitUntil:
+    visible:
+      id: 'vehicle-default-E2E Fixture Van'
+    timeout: 20000
+- assertNotVisible:
+    id: 'vehicle-default-Spare Truck'
+- tapOn:
+    id: 'vehicle-delete-E2E Fixture Van'
+- extendedWaitUntil:
+    visible: 'Delete this vehicle?'
+    timeout: 10000
+- tapOn: 'Delete'
+- extendedWaitUntil:
+    notVisible: 'E2E Fixture Van'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "This is your only vehicle, so it can.t be deleted.*"
+    direction: DOWN
+    timeout: 20000
+- assertVisible: 'Spare Truck'
+
+# ── Stored ──────────────────────────────────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- scrollUntilVisible:
+    element: 'Spare Truck'
+    direction: DOWN
+    timeout: 20000
+- assertVisible: 'REFILL EVERY ~450 km'
+- assertVisible: 'DEFAULT'
+- assertNotVisible: 'E2E Fixture Van'

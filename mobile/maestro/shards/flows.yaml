@@ -16,9 +16,11 @@ flows:
   - sign-out.yaml
   - delete-trip.yaml
   - stop-actions.yaml
+  - vehicle-edit-delete.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
     - sign-out
     - delete-trip
     - stop-actions
+    - vehicle-edit-delete
