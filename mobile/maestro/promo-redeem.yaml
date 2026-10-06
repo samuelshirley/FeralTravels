@@ -62,11 +62,14 @@ appId: ${APP_ID}
     timeout: 20000
 
 # ── A code that is not ours: refused, with the server's sentence ────────────
+# Submitted with the keyboard's Go key (the field's onSubmitEditing), the way
+# a user does: Redeem sits under the keyboard, and the first local run's tap at
+# its coordinates landed on the keyboard's L key instead.
 - tapOn:
     id: 'promo-input'
 - inputText: 'FERAL-ZZZZ-ZZZZ'
-- tapOn:
-    id: 'promo-submit'
+- pressKey: Enter
+- hideKeyboard
 - extendedWaitUntil:
     visible:
       id: 'promo-error'
@@ -78,8 +81,7 @@ appId: ${APP_ID}
     id: 'promo-input'
 - eraseText: 20
 - inputText: ${output.promo.display}
-- tapOn:
-    id: 'promo-submit'
+- pressKey: Enter
 - extendedWaitUntil:
     notVisible:
       text: '.*Choose a plan.*'
