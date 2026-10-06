@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import AnnouncementModal from './AnnouncementModal';
+import { registerGlobalErrorReporter } from '@/lib/api';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -38,6 +39,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  registerGlobalErrorReporter(null);
 });
 
 function dismissCalls() {
@@ -93,18 +95,33 @@ describe('AnnouncementModal', () => {
   });
 
   /*
-   * BUG (convention: never silently swallow errors) — src/components/AnnouncementModal.tsx:45-56.
-   * handleDismiss never checks `res.ok` and its catch is empty, so a 500 (or an
-   * offline POST) closes the modal exactly as a success does. The user is told
-   * nothing and the announcement comes back on the next visit. The code comment
-   * calls this "best-effort"; the convention says a failed mutation is shown.
+   * A failed dismissal reaches the user through the global ErrorNotifier (the
+   * reporter apiFetch calls), and the popup still closes. It used to call fetch
+   * directly, never read `res.ok` and swallow the throw, so a 500 or an offline
+   * POST looked exactly like a success.
    */
-  it.fails('a failed dismissal is shown to the user', async () => {
+  it('a failed dismissal is reported to the user', async () => {
+    const reporter = vi.fn();
+    registerGlobalErrorReporter(reporter);
     dismissResponse = async () => json({ error: 'database unavailable' }, 500);
     render(<AnnouncementModal />);
     fireEvent.click(await screen.findByRole('button', { name: 'Got it' }));
-    await waitFor(() => expect(dismissCalls()).toHaveLength(1));
+    await waitFor(() => expect(reporter).toHaveBeenCalledTimes(1));
+    expect(reporter.mock.calls[0][1]).toMatchObject({ path: '/api/announcements/dismiss', status: 500 });
+    await waitFor(() =>
+      expect(screen.queryByTestId('announcement-modal')).not.toBeInTheDocument()
+    );
+  });
 
-    expect(await screen.findByRole('alert', {}, { timeout: 500 })).toBeInTheDocument();
+  it('an offline dismissal is reported too', async () => {
+    const reporter = vi.fn();
+    registerGlobalErrorReporter(reporter);
+    dismissResponse = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    render(<AnnouncementModal />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Got it' }));
+    await waitFor(() => expect(reporter).toHaveBeenCalledTimes(1));
+    expect(reporter.mock.calls[0][1]).toMatchObject({ status: null });
   });
 });
