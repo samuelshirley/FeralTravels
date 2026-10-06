@@ -1,0 +1,196 @@
+{
+  "entries": [
+    {
+      "gap": "accounts",
+      "reason": "no test links an OAuth account: every exchange in oauth-exchange.spec is refused, and sign-in is OTP"
+    },
+    {
+      "gap": "announcement_dismissals",
+      "reason": "announcement.spec deletes its own rows in cleanup"
+    },
+    {
+      "gap": "announcements",
+      "reason": "announcement.spec deletes its own rows in cleanup"
+    },
+    {
+      "gap": "breaker_alerts",
+      "reason": "estimate: breakers.spec trips a breaker but may not leave the alert row"
+    },
+    {
+      "gap": "costs",
+      "reason": "legacy table: no code path writes it"
+    },
+    {
+      "gap": "deleted_users.email_encrypted",
+      "reason": "estimate: null unless DELETED_USER_ENC_KEY is set on the Preview env"
+    },
+    {
+      "gap": "email_otp_codes",
+      "reason": "a code is deleted when it is used, so none should be left at the end"
+    },
+    {
+      "gap": "gpx_trails",
+      "reason": "no test uploads a GPX trail"
+    },
+    {
+      "gap": "ip_request_counters",
+      "reason": "estimate: the test runner is exempt from the per-IP limits (decision I7)"
+    },
+    {
+      "gap": "legs.continuity_warning",
+      "reason": "written only when a continuity re-route fails"
+    },
+    {
+      "gap": "legs.fuel_plan_error",
+      "reason": "written only when a fuel plan fails"
+    },
+    {
+      "gap": "links",
+      "reason": "no test writes a leg link"
+    },
+    {
+      "gap": "oauth_token_uses",
+      "reason": "every exchange in oauth-exchange.spec is refused before a token is redeemed"
+    },
+    {
+      "gap": "penny_turns.error_message",
+      "reason": "written only when a Penny turn errors"
+    },
+    {
+      "gap": "penny_turns.images",
+      "reason": "no test attaches an image to a message"
+    },
+    {
+      "gap": "pois",
+      "reason": "no test writes a POI"
+    },
+    {
+      "gap": "promo_codes",
+      "reason": "no test mints or redeems a promo code"
+    },
+    {
+      "gap": "route_links",
+      "reason": "no test creates a route option"
+    },
+    {
+      "gap": "routes",
+      "reason": "no test creates a route option"
+    },
+    {
+      "gap": "stops.alternatives",
+      "reason": "estimate: only Finn writes alternates, on the ai-tests run if at all"
+    },
+    {
+      "gap": "stops.fuel_amount_l",
+      "reason": "estimate: nothing writes it today"
+    },
+    {
+      "gap": "stops.photos",
+      "reason": "dormant column (stop photos removed 2026-06-30), always null"
+    },
+    {
+      "gap": "stops.source_url",
+      "reason": "estimate: the canonical fixture does not write it"
+    },
+    {
+      "gap": "subscription_events",
+      "reason": "no test posts a RevenueCat webhook"
+    },
+    {
+      "gap": "subscriptions.original_transaction_id",
+      "reason": "set only by the RevenueCat webhook"
+    },
+    {
+      "gap": "subscriptions.pre_revoke_status",
+      "reason": "set only by an admin revoke; no test revokes"
+    },
+    {
+      "gap": "subscriptions.revoked_at",
+      "reason": "set only by an admin revoke; no test revokes"
+    },
+    {
+      "gap": "subscriptions.revoked_by",
+      "reason": "set only by an admin revoke; no test revokes"
+    },
+    {
+      "gap": "subscriptions.revoked_reason",
+      "reason": "set only by an admin revoke; no test revokes"
+    },
+    {
+      "gap": "tasks",
+      "reason": "no test creates a task"
+    },
+    {
+      "gap": "trips.current_lat",
+      "reason": "written only by the report_position tool"
+    },
+    {
+      "gap": "trips.current_leg_id",
+      "reason": "written only by the report_position tool"
+    },
+    {
+      "gap": "trips.current_lng",
+      "reason": "written only by the report_position tool"
+    },
+    {
+      "gap": "trips.declared_range_at",
+      "reason": "written only by the declare_fuel_state tool"
+    },
+    {
+      "gap": "trips.declared_range_km",
+      "reason": "written only by the declare_fuel_state tool"
+    },
+    {
+      "gap": "trips.declared_range_leg_id",
+      "reason": "written only by the declare_fuel_state tool"
+    },
+    {
+      "gap": "trips.onboarding_scan",
+      "reason": "cleared at handoff, so a finished onboarding leaves it null"
+    },
+    {
+      "gap": "trips.pending_intent",
+      "reason": "cleared at handoff, so a finished onboarding leaves it null"
+    },
+    {
+      "gap": "trips.progress_anchor_date",
+      "reason": "written only by the report_position tool"
+    },
+    {
+      "gap": "trips.progress_updated_at",
+      "reason": "written only by the report_position tool"
+    },
+    {
+      "gap": "usage_alerts",
+      "reason": "estimate: subscriptions.spec seeds and then cleans its own alert rows"
+    },
+    {
+      "gap": "usage_events.error_message",
+      "reason": "written only when a billable call fails"
+    },
+    {
+      "gap": "user_viewport_time",
+      "reason": "no client in a test reports viewport time"
+    },
+    {
+      "gap": "users.image",
+      "reason": "set only from an OAuth profile; sign-in in tests is OTP"
+    },
+    {
+      "gap": "users.jev_mode",
+      "reason": "estimate: no test sets a per-account Jev mode"
+    },
+    {
+      "gap": "users.name",
+      "reason": "set only from an OAuth profile; sign-in in tests is OTP"
+    },
+    {
+      "gap": "users.penny_locked_until",
+      "reason": "no test trips the junk-message lock"
+    },
+    {
+      "gap": "verificationTokens",
+      "reason": "Auth.js magic-link table; sign-in is OTP (email_otp_codes)"
+    }
+  ]
+}

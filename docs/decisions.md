@@ -361,8 +361,14 @@ F5. **`src/` never imports from `mobile/`; shared files are byte-identical mirro
 F6. **Vercel's git auto-deploy is off; GitHub Actions owns every deployment.** *Enforced by:*
 `vercel.json` (config) — `vercelConfigGuard.test.ts` by test.
 
-F7. **Previews serve a copy-on-write clone of PROD data on a public URL** (accepted; branch dies
-with the PR; `noindex`). *Enforced by:* **NOT ENFORCED**. *Decision worth re-asking before launch.*
+F7. **A preview holds no customer data: copy prod → rehearse migrations → wipe → assert empty →
+deploy.** (Sam, 2026-09-30/10-01; until then previews served a full clone of prod on a public URL.)
+The clone exists only for the migration rehearsal; `scripts/wipe-preview-db.ts` truncates every
+`public` table but the deployment switches and the providers' public keys, and fails the job
+before the first `vercel deploy` if a row is left. Fixture data must then cover every table and
+column: `scripts/column-coverage.ts`, against `e2e/column-coverage-baseline.json`. *Enforced by:*
+`previewWipeGuard.test.ts` (order, fail-closed shape, branch-name refusal; mutation-checked),
+`columnCoverage.test.ts`.
 
 F8. **The migration chain cannot replay from an empty database; a fresh DB is `db:push` +
 `seed-migration-journal.ts`.** *Enforced by:* **NOT ENFORCED** (documented only).

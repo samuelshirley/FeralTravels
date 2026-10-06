@@ -10,12 +10,14 @@
 #                Mobile workflow publishes mobile/ over the air on merge:
 #                without this job the first thing to catch a type error in the
 #                app is a tester's phone.
-#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
-#                clone of PROD data), run migrations on it, and deploy a Vercel
-#                PREVIEW pointed at it. One preview per PR, refreshed on every
-#                push, torn down when the PR closes (pr-cleanup.yml). Prod's DB
-#                is never touched. The URL is posted as a sticky PR comment and
-#                to the run summary. It deploys BEFORE the tests intentionally,
+#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` as a
+#                copy-on-write clone of PROD, run migrations on it (the
+#                rehearsal), EMPTY it (wipe-preview-db.ts), and deploy a Vercel
+#                PREVIEW pointed at it: prod's schema, fixture data only. One
+#                preview per PR, refreshed on every push, torn down when the PR
+#                closes (pr-cleanup.yml). Prod's DB is never touched. The URL
+#                is posted as a sticky PR comment and to the run summary. It
+#                deploys BEFORE the tests intentionally,
 #                so you get a clickable preview even when a spec is red
 #                (test bug vs app bug).
 #   3. e2e     — full Playwright suite against that exact preview URL
@@ -65,11 +67,20 @@
 # x-e2e-test-secret header (E2E_TEST_ENDPOINTS_SECRET), the Playwright runner
 # sends it. No extra repo secret to manage; it rotates every run.
 #
-# NOTE: preview deployments carry a clone of REAL production data on a public
-# URL (Vercel Deployment Protection is off — the Hobby plan can't protect
-# previews without also protecting prod). pr-cleanup.yml deletes the DB branch
-# on PR close to bound the exposure window, and next.config.js sends
-# X-Robots-Tag: noindex on every non-production deployment.
+# NO CUSTOMER DATA ON A PREVIEW (Sam, 2026-09-30/10-01). Preview deployments
+# are public (Vercel Deployment Protection is off — the Hobby plan can't
+# protect previews without also protecting prod) and run unreviewed code with
+# /api/test/* armed. Until 2026-10 they also served a full clone of prod's
+# users, sessions, trips and chats. Now the clone exists only for the migration
+# rehearsal, on a branch no deployment points at yet, and the preview job
+# empties it and checks it is empty BEFORE the first `vercel deploy` — a wipe
+# that fails fails the job, so no URL ever points at real rows
+# (src/lib/previewWipeGuard.test.ts holds that order). Everything on a preview
+# is written by fixtures and the tests, and Sam's bar for those is "every
+# column / row of unique data type ... every db table":
+# scripts/column-coverage.ts measures it against
+# e2e/column-coverage-baseline.json. pr-cleanup.yml still deletes the branch on
+# PR close, and next.config.js still sends X-Robots-Tag: noindex.
 #
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
@@ -373,7 +384,7 @@ jobs:
   preview:
     name: Deploy tested preview
     # A docs-only PR skips the whole deployed half of this pipeline: no Neon
-    # branch cloned from production, no Vercel preview, and — because `e2e` and
+    # branch, no Vercel preview, and — because `e2e` and
     # `ios-e2e` both `needs: preview` — no Playwright run and no simulator.
     #
     # `unit` is deliberately NOT gated. Markdown in this repo is not inert:
@@ -402,9 +413,12 @@ jobs:
       - run: npm ci
 
       # Recreate this PR's branch from prod on every push: drop the old one
-      # (ignore if absent — first push), then re-create it so the preview shows
-      # CURRENT prod data and none of the previous run's fixture junk. E2E seeds
-      # its users into this branch over HTTP; prod is untouched.
+      # (ignore if absent — first push), then re-create it so the migration
+      # rehearsal below runs against CURRENT prod — schema, journal and real
+      # rows — and the preview starts with none of the previous run's fixtures.
+      # The real rows live only until the wipe step, before any deployment
+      # exists (see NO CUSTOMER DATA in the header). E2E seeds its users into
+      # this branch over HTTP; prod is untouched.
       - name: Delete previous Neon branch for this PR
         continue-on-error: true
         uses: neondatabase/delete-branch-action@v3
@@ -426,6 +440,26 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: npm run db:migrate
+
+      # EMPTY THE BRANCH, then prove it is empty — after the rehearsal, before
+      # the first `vercel deploy`. No customer data on a preview (Sam,
+      # 2026-09-30/10-01): it is a public URL running unreviewed code with
+      # /api/test/* armed. Every table in `public` is truncated except the few
+      # with no personal data that the preview needs (KEEP_TABLES in
+      # src/lib/columnCoverage.ts: the deployment switches and the OAuth
+      # providers' public keys); the journal in schema `drizzle` is left alone.
+      #
+      # FAIL CLOSED: no continue-on-error and no `if:`, so a failed wipe or a
+      # row left behind stops the job here and no preview deploys. The script
+      # refuses to run unless PREVIEW_DB_WIPE_CONFIRM equals NEON_BRANCH and
+      # names a preview/pr-<N> branch — the URL cannot say which branch it is,
+      # so the workflow that made the branch states it.
+      # src/lib/previewWipeGuard.test.ts holds all of this.
+      - name: Empty the PR branch (no customer data on a preview)
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+          PREVIEW_DB_WIPE_CONFIRM: ${{ env.NEON_BRANCH }}
+        run: npx tsx scripts/wipe-preview-db.ts
 
       # Turn paywall enforcement ON for the tested preview.
       #
@@ -562,7 +596,7 @@ jobs:
               '',
               `**${url}**`,
               '',
-              `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
+              `Test the changes here before merging. Production's schema, migrated, then emptied: fixture data only, no customer data (Neon branch \`${branch}\`). Rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
               '⚠️ **Use this URL, not one from an earlier push.** The Neon branch is dropped and recreated on every push, so older preview deployments still point at a database that no longer exists. They fail as an apparent sign-out — you get bounced to `/login` mid-session and signing in again does not help.',
               '',
@@ -741,9 +775,8 @@ jobs:
       # Per-spec results + a link to the report, as a sticky PR comment.
       #
       # The HTML report is a directory, so it can't be inlined, and it is
-      # deliberately NOT published to a URL: its screenshots and videos are of
-      # a preview backed by a CLONE OF PRODUCTION DATA. The artifact link is
-      # behind repo auth; a Pages or Vercel deploy of it would not be.
+      # deliberately NOT published to a URL. The artifact link is behind repo
+      # auth; a Pages or Vercel deploy of it would not be.
       - name: Comment E2E results on the PR
         if: always()
         uses: actions/github-script@v7
