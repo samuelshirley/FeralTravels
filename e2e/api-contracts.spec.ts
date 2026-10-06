@@ -2,8 +2,11 @@ import { test, expect, type APIRequestContext, type BrowserContext } from '@play
 import { login } from './fixtures/auth';
 import {
   anonymousContext,
+  bearerContext,
   paidUsage,
+  seedAccount,
   send,
+  signInWithOtp,
   signedInAccount,
   type SignedInAccount,
 } from './fixtures/api';
@@ -537,6 +540,43 @@ test.describe('API contracts — happy paths left in place', () => {
       stop_type: string;
     }[];
     expect(stops.find((s) => s.id === ids.stop)?.stop_type).toBe('other');
+  });
+
+  test("the owner's vehicle takes a fuel type", async () => {
+    const res = await owner.api.patch(`/api/vehicles/${owner.vehicleId}`, { data: { fuel_type: 'diesel' } });
+    expect(res.status(), await res.text()).toBe(200);
+    expect(((await res.json()) as { fuel_type: string | null }).fuel_type).toBe('diesel');
+  });
+
+  /**
+   * The columns no affordable flow writes (a failed fuel search, a continuity
+   * gap, Finn's alternates, a failed turn with an image, the tools' position
+   * and declared range…), seeded as fixture data and read back through the
+   * API the app uses. Left in place for the column-coverage measurement.
+   */
+  test('the coverage fixture round-trips through GET /api/trip', async () => {
+    const seeded = await seedAccount({ coverageColumns: true });
+    const api = await bearerContext(await signInWithOtp(seeded.email));
+    try {
+      const res = await api.get(`/api/trip?tripId=${seeded.tripId}`);
+      expect(res.status(), await res.text()).toBe(200);
+      const trip = (await res.json()) as {
+        legs: {
+          id: string;
+          continuity_warning: string | null;
+          fuel_plan_error: string | null;
+          stops: { stop_type: string; alternatives: { name: string }[] | null; source_url: string | null }[];
+        }[];
+      };
+      const [day1, day2] = trip.legs;
+      const fuel = day1.stops.find((st) => st.stop_type === 'fuel');
+      expect(fuel?.alternatives?.[0]?.name).toBe('Total Access Reims');
+      expect(fuel?.source_url).toMatch(/^https:\/\/www\.google\.com\/maps/);
+      expect(day2.continuity_warning).toBeTruthy();
+      expect(day2.fuel_plan_error).toBeTruthy();
+    } finally {
+      await api.dispose();
+    }
   });
 
   /**

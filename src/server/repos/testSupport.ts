@@ -8,7 +8,6 @@ import {
   legs,
   stops,
   announcements,
-  announcementDismissals,
   emailOtpCodes,
   deletedUsers,
   oauthTokenUses,
@@ -442,8 +441,12 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
 /**
  * Fixture DATA for the columns no flow a test can afford leaves behind:
  *
- * - `stops.alternatives` / `stops.source_url`: written by a real Finn search
- *   (paid Places), so a seeded fuel stop carries one alternate and its link;
+ * - `stops.alternatives` / `stops.source_url` / `stops.fuel_type`: written by
+ *   a real Finn search (paid Places) or a stop edit, so a seeded fuel stop
+ *   carries one alternate, its link and its fuel;
+ * - `trips.current_*` / `progress_*` / `declared_range_*`: what the
+ *   report_position and declare_fuel_state tools write, which only a paid
+ *   Penny turn reaches;
  * - `legs.continuity_warning` / `legs.fuel_plan_error`: written when Penny
  *   leaves a gap between days, and when a Places search fails;
  * - `users.jev_mode` = 'off' (Haiku only — the default behaviour, so nothing
@@ -478,6 +481,7 @@ async function seedCoverageColumns(userId: string, tripId: string): Promise<void
     lng: 4.0317,
     distanceFromStartKm: 144,
     source: 'google',
+    fuelType: 'diesel',
     sourceUrl: 'https://www.google.com/maps/search/?api=1&query=49.2583,4.0317',
     alternatives: [
       { name: 'Total Access Reims', lat: 49.2412, lng: 4.0605, place_id: null, distance_km: 3.1 },
@@ -495,6 +499,24 @@ async function seedCoverageColumns(userId: string, tripId: string): Promise<void
       fuelPlanError: 'Places search failed (fixture)',
     })
     .where(eq(legs.id, day2.id));
+
+  // What report_position and declare_fuel_state write: the driver is on day 1,
+  // at its start, and has said the tank holds about 320 km. The anchor date is
+  // day 1's own seeded date, never a calendar literal (seedDates.ts).
+  const now = new Date();
+  await db
+    .update(trips)
+    .set({
+      currentLegId: day1.id,
+      currentLat: 48.8566,
+      currentLng: 2.3522,
+      progressAnchorDate: seededLegDateISO(0),
+      progressUpdatedAt: now,
+      declaredRangeKm: 320,
+      declaredRangeLegId: day1.id,
+      declaredRangeAt: now,
+    })
+    .where(eq(trips.id, tripId));
 
   await db
     .update(users)
@@ -856,16 +878,24 @@ export async function seedAnnouncement(opts: {
   return { announcementId: row.id, parkedIds };
 }
 
-/** Undo {@link seedAnnouncement}: drop the seeded announcement + its dismissals, restore parked. */
+/**
+ * Undo {@link seedAnnouncement}: DEACTIVATE the seeded announcement and restore
+ * the parked ones.
+ *
+ * Deactivated, not deleted, and its dismissals kept: the rows are what the
+ * column-coverage measurement counts on the preview, and an inactive
+ * announcement is served to nobody. What must never survive is an ACTIVE one,
+ * which would pop a modal over every later run of every other spec.
+ */
 export async function cleanupAnnouncement(opts: {
   announcementId: string;
   parkedIds?: string[];
 }): Promise<void> {
   assertEnabled();
   await db
-    .delete(announcementDismissals)
-    .where(eq(announcementDismissals.announcementId, opts.announcementId));
-  await db.delete(announcements).where(eq(announcements.id, opts.announcementId));
+    .update(announcements)
+    .set({ active: false })
+    .where(eq(announcements.id, opts.announcementId));
   if (opts.parkedIds && opts.parkedIds.length > 0) {
     await db
       .update(announcements)
