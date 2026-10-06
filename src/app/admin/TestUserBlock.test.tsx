@@ -303,22 +303,21 @@ describe('TestUserBlock', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Failed to fetch');
   });
 
-  // BUG (convention: "Never silently swallow errors" / "No empty catch blocks"):
-  // TestUserBlock.tsx `refresh()` returns early on a non-2xx list read and has a
-  // comment-only catch, so a failed list load renders exactly like "no test
-  // accounts exist" — and after a successful Delete, a failed re-read leaves the
-  // deleted account on screen with nothing said. The source comment calls this
-  // deliberate ("not worth an error banner"); PromoCodeBlock decided the
-  // opposite for the same situation. Flip to `it` once the list failure is shown.
-  it.fails('a failed list load is said, not rendered as "no accounts"', async () => {
+  // A failed list load used to return early (non-2xx) or hit a comment-only
+  // catch, so it rendered exactly like "no test accounts exist".
+  it('a failed list load is said, not rendered as "no accounts"', async () => {
     routedFetch({ list: async () => json({ error: 'db down' }, 503) });
     await renderBlock();
-    expect(await screen.findByRole('alert', {}, { timeout: 200 })).toBeInTheDocument();
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Could not load the existing test accounts (HTTP 503).',
+    );
   });
 
-  it.fails('a rejected list load is said, not swallowed', async () => {
+  it('a rejected list load is said, not swallowed', async () => {
     routedFetch({ list: () => Promise.reject(new TypeError('Failed to fetch')) });
     await renderBlock();
-    expect(await screen.findByRole('alert', {}, { timeout: 200 })).toBeInTheDocument();
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Could not load the existing test accounts (Failed to fetch).',
+    );
   });
 });
