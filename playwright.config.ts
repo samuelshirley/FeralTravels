@@ -146,7 +146,7 @@ export default defineConfig({
       name: 'api',
       use: { ...devices['Desktop Chrome'] },
       testMatch:
-        /(oauth-exchange|login-otp|legal-pages|account-deletion|web-blocked|subscriptions|vehicle-crud|fuel-cascade)\.spec\.ts/,
+        /(oauth-exchange|login-otp|legal-pages|account-deletion|web-blocked|subscriptions|vehicle-crud|fuel-cascade|api-contracts|money-limits)\.spec\.ts/,
     },
 
     /**
