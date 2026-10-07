@@ -125,18 +125,19 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Delete this vehicle?'
     timeout: 10000
-# The ALERT's Delete, not a card's. With two vehicles both cards carry a
-# "Delete" button under the native alert. Neither tree order nor screen order
-# picks it reliably (the first two local runs tapped a card's: no confirm,
-# then index 2 = the Spare Truck card). What only the alert's button has is
-# its container: the hierarchy dump of that run shows one node labelled
-# "Delete this vehicle?" [41,388][361,514] holding Cancel and exactly ONE
-# "Delete" [205,450][345,498]; the card buttons ([313,493], [313,583]) are
-# outside it. The step after proves the alert closed.
+# The ALERT's Delete, not a card's: with two vehicles both cards carry a
+# "Delete" button under the native alert. Two local runs pinned how Maestro
+# picks among matches:
+#   - `index: 2` hit the Spare Truck card: matches are ordered by SCREEN
+#     position, top to bottom, not by view-tree order;
+#   - a `childOf` the alert's labelled container found nothing: it is DIRECT
+#     child only, and the alert's button sits seven levels under it.
+# The alert's Delete is at y=450 ([205,450][345,498]), above both card buttons
+# (y=493 and y=583), so it is the first match. The step after proves the alert
+# closed, so a layout that ever puts a card button higher fails right here.
 - tapOn:
     text: 'Delete'
-    childOf:
-      text: 'Delete this vehicle?'
+    index: 0
 - extendedWaitUntil:
     notVisible: 'Delete this vehicle?'
     timeout: 10000
@@ -158,22 +159,17 @@ appId: ${APP_ID}
     timeout: 20000
 - assertNotVisible:
     id: 'vehicle-default-Spare Truck'
-- scrollUntilVisible:
-    element:
-      id: 'vehicle-delete-E2E Fixture Van'
-    direction: DOWN
-    centerElement: true
-    timeout: 20000
 - tapOn:
     id: 'vehicle-delete-E2E Fixture Van'
 - extendedWaitUntil:
     visible: 'Delete this vehicle?'
     timeout: 10000
-# The alert's Delete again, by its container (see above).
+# The alert's Delete again: the first match top to bottom (see above). No
+# scroll before this one: centring a card could lift its button above the
+# alert's, and the layout is the one the refusal step above already proved.
 - tapOn:
     text: 'Delete'
-    childOf:
-      text: 'Delete this vehicle?'
+    index: 0
 - extendedWaitUntil:
     notVisible: 'Delete this vehicle?'
     timeout: 10000
