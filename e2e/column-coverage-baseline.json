@@ -5,28 +5,12 @@
       "reason": "no test links an OAuth account: every exchange in oauth-exchange.spec is refused, and sign-in is OTP"
     },
     {
-      "gap": "announcement_dismissals",
-      "reason": "announcement.spec deletes its own rows in cleanup"
-    },
-    {
-      "gap": "announcements",
-      "reason": "announcement.spec deletes its own rows in cleanup"
-    },
-    {
       "gap": "costs",
       "reason": "legacy table: no code path writes it"
     },
     {
       "gap": "gpx_trails",
       "reason": "dormant: GPX removed 2026-10-07 (Sam); table kept so the migration stays additive"
-    },
-    {
-      "gap": "legs.continuity_warning",
-      "reason": "written only when a continuity re-route fails"
-    },
-    {
-      "gap": "legs.fuel_plan_error",
-      "reason": "written only when a fuel plan fails"
     },
     {
       "gap": "links",
@@ -37,36 +21,12 @@
       "reason": "every exchange in oauth-exchange.spec is refused before a token is redeemed"
     },
     {
-      "gap": "penny_turns.error_message",
-      "reason": "written only when a Penny turn errors"
-    },
-    {
       "gap": "pois",
       "reason": "no test writes a POI"
     },
     {
-      "gap": "promo_codes",
-      "reason": "no test mints or redeems a promo code"
-    },
-    {
-      "gap": "route_links",
-      "reason": "no test creates a route option"
-    },
-    {
-      "gap": "routes",
-      "reason": "no test creates a route option"
-    },
-    {
-      "gap": "stops.alternatives",
-      "reason": "estimate: only Finn writes alternates, on the ai-tests run if at all"
-    },
-    {
       "gap": "stops.fuel_amount_l",
       "reason": "estimate: nothing writes it today"
-    },
-    {
-      "gap": "stops.fuel_type",
-      "reason": "Finn inserts fuel stops with fuel_type null (server/fuel.ts); only createStop/updateStop via /api/stops, /api/stops/[id] or Penny’s update_stop set it, no test sends one, and the canonical fixture’s stops carry null"
     },
     {
       "gap": "stops.photos",
@@ -77,84 +37,8 @@
       "reason": "set only by the RevenueCat webhook"
     },
     {
-      "gap": "subscriptions.pre_revoke_status",
-      "reason": "set only by an admin revoke; no test revokes"
-    },
-    {
-      "gap": "subscriptions.revoked_at",
-      "reason": "set only by an admin revoke; no test revokes"
-    },
-    {
-      "gap": "subscriptions.revoked_by",
-      "reason": "set only by an admin revoke; no test revokes"
-    },
-    {
-      "gap": "subscriptions.revoked_reason",
-      "reason": "set only by an admin revoke; no test revokes"
-    },
-    {
-      "gap": "tasks",
-      "reason": "no test creates a task"
-    },
-    {
-      "gap": "trips.current_lat",
-      "reason": "written only by the report_position tool"
-    },
-    {
-      "gap": "trips.current_leg_id",
-      "reason": "written only by the report_position tool"
-    },
-    {
-      "gap": "trips.current_lng",
-      "reason": "written only by the report_position tool"
-    },
-    {
-      "gap": "trips.declared_range_at",
-      "reason": "written only by the declare_fuel_state tool"
-    },
-    {
-      "gap": "trips.declared_range_km",
-      "reason": "written only by the declare_fuel_state tool"
-    },
-    {
-      "gap": "trips.declared_range_leg_id",
-      "reason": "written only by the declare_fuel_state tool"
-    },
-    {
-      "gap": "trips.last_known_lat",
-      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
-    },
-    {
-      "gap": "trips.last_known_lng",
-      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
-    },
-    {
-      "gap": "trips.last_known_place",
-      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
-    },
-    {
-      "gap": "trips.position_updated_at",
-      "reason": "written only by updateTripPosition via POST /api/trips/[id]/position, which the trip screen calls once it has a location fix; every flow keeps location denied (settings-location.yaml taps Don’t Allow on purpose), so no position is reported"
-    },
-    {
-      "gap": "trips.progress_anchor_date",
-      "reason": "written only by the report_position tool"
-    },
-    {
-      "gap": "trips.progress_updated_at",
-      "reason": "written only by the report_position tool"
-    },
-    {
       "gap": "users.image",
       "reason": "set only from an OAuth profile; sign-in in tests is OTP"
-    },
-    {
-      "gap": "users.penny_locked_until",
-      "reason": "no test trips the junk-message lock"
-    },
-    {
-      "gap": "vehicles.fuel_type",
-      "reason": "written only by PATCH /api/vehicles/[id] and Penny’s update_vehicle (repos/vehicles.ts); the native app sends no fuel type, the fixture vehicle is null on purpose (api/test/fixtureVehicle.ts), and no flow asks Penny to change it"
     },
     {
       "gap": "verificationTokens",
