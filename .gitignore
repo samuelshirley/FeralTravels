@@ -12,7 +12,7 @@ build/
 tmp/
 
 # database / data
-db/
+/db/
 src/data/gpx/*
 !src/data/gpx/.gitkeep
 
