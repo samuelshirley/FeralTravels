@@ -63,7 +63,9 @@ describe('deploy-production.yml: the CI gate is sized to wait', () => {
   });
 });
 
-describe('deploy-production.yml: the CI gate itself (behaviour, under bash, stub gh)', () => {
+// Every case here spawns bash (one to six times), which a loaded full-suite run
+// slows past vitest's 5 s default; alone they take 0.3-3.6 s.
+describe('deploy-production.yml: the CI gate itself (behaviour, under bash, stub gh)', { timeout: 60_000 }, () => {
   const gate = gateStep();
   const script = runBlock(gate);
   const root = mkdtempSync(path.join(tmpdir(), 'deploy-gate-'));
