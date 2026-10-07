@@ -25,6 +25,14 @@
       "reason": "no test writes a POI"
     },
     {
+      "gap": "routes.end_source_url",
+      "reason": "written by addRoute/updateRoute (POST/PATCH /api/routes, Penny’s add_route/update_route); api-contracts seeds a route with end_source ‘manual’ and no URL, and no flow asks Penny for an overnight option"
+    },
+    {
+      "gap": "routes.gpx_trail_id",
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); column kept so the migration stays additive"
+    },
+    {
       "gap": "stops.fuel_amount_l",
       "reason": "estimate: nothing writes it today"
     },
@@ -35,6 +43,22 @@
     {
       "gap": "subscriptions.original_transaction_id",
       "reason": "set only by the RevenueCat webhook"
+    },
+    {
+      "gap": "tasks.answer",
+      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
+    },
+    {
+      "gap": "tasks.answer_image_url",
+      "reason": "written only by updateTask (PATCH /api/tasks/[id], Penny’s update_task); no test answers a task"
+    },
+    {
+      "gap": "tasks.answer_source_url",
+      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
+    },
+    {
+      "gap": "tasks.description",
+      "reason": "written by addTask/updateTask (/api/tasks, Penny’s add_task/update_task); the seeded task and the contract rows send no description, and no flow asks Penny for a task"
     },
     {
       "gap": "users.image",
