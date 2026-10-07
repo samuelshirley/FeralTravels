@@ -55,6 +55,7 @@ which provider serves what; this has been wrong here before, expensively.
   never propose "use the server key" as a fix.
 - **Payments:** Apple IAP via RevenueCat (`mobile/`)
 - **Tests:** Vitest (unit) · Playwright (web e2e) · Maestro (iOS e2e, simulator)
+  · PGlite (real-Postgres repo round trips, in-process, in `npm run test`)
 - **Language:** TypeScript throughout, Zod for validation
 
 ## Commands
@@ -242,7 +243,8 @@ Open a PR instead. `seed-e2e-fixture.ts` and `cleanup-e2e.ts` were also
 What each proves: **`docs/design/e2e-tests.md`**.
 
 legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion,
-subscriptions, vehicle-crud, announcement, breakers — server contracts only.
+subscriptions, vehicle-crud, announcement, breakers, api-contracts,
+fuel-cascade, money-limits — server contracts only.
 The screens are Maestro flows on the phone (below) since 2026-09-27.
 
 **E2E auth: no session bypass exists.** Every authenticated spec signs in through
@@ -260,7 +262,10 @@ reappears in `src/`.
 `onboarding-range.yaml`, `trip-itinerary.yaml`, `forced-stop-line.yaml`,
 `maps-link-stop.yaml`, `rest-day-stop.yaml`, `vehicles.yaml`, `paywall.yaml`,
 `account-deletion.yaml`, `settings-location.yaml`, `penny-plan-trip.yaml`,
-`penny-maps-link.yaml`, `penny-jev-gate.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
+`penny-maps-link.yaml`, `penny-jev-gate.yaml`, `screenshots.yaml`, `delete-trip.yaml`,
+`onboarding-handoff-plan.yaml`, `paywall-no-trips.yaml`, `penny-rest-day.yaml`,
+`penny-stop-edit.yaml`, `promo-redeem.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
+`support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs
