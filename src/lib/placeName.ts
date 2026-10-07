@@ -1,11 +1,12 @@
 /**
  * The name a resolved place should carry on a leg.
  *
- * `resolve_place` already returns both halves — Google's `displayName`
- * ("Monument Valley") and its `formattedAddress` ("Monument Valley, UT 84536,
- * USA") — so nothing new is fetched here and no field mask changes (the mask
- * decides the Places SKU; see repos/usage.ts). What was missing is a single
- * SHORT, QUALIFIED string, because leaving Penny to pick meant she picked: bare
+ * The name is the place in the USER's words — `resolve_place`'s query — never
+ * Google's `displayName`, which is a business name Google's ToS (§3.2.3) does
+ * not let us store (2026-10-07). Google's `formattedAddress` ("Monument Valley,
+ * UT 84536, USA") is only read here, for the qualifier, so nothing new is
+ * fetched and no field mask changes. What was missing is a single SHORT,
+ * QUALIFIED string, because leaving Penny to pick meant she picked: bare
  * "Monument Valley" reads as a guess in a trip that also visits Utah, and the
  * full address puts a postcode in the itinerary.
  *
@@ -22,7 +23,7 @@ function stripPostcode(part: string): string {
 /**
  * A short place name qualified by its region: "Marfa, TX", "Girona, Spain".
  *
- * @param label Google's displayName — the place as a person says it.
+ * @param label The place as the user said it (resolve_place's query).
  * @param formattedAddress Google's formattedAddress, when there is one.
  */
 export function qualifiedPlaceName(
@@ -31,6 +32,9 @@ export function qualifiedPlaceName(
 ): string | null {
   const name = label?.trim();
   if (!name) return null;
+  // Already qualified by whoever typed it ("Bergen, Norway"): adding Google's
+  // region to it again would read "Bergen, Norway, Norway" or worse.
+  if (name.includes(',')) return name;
   const address = formattedAddress?.trim();
   if (!address) return name;
 

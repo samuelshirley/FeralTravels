@@ -554,7 +554,7 @@ For an accurate count + summary, in check_trip_feasibility add a constraint_chec
 - If the user asks for a plan and the trip has no legs, you MUST call extract_trip_intent first (see <intent_extraction>), then get_route for each segment, then run the <feasibility_check>, THEN emit one add_leg per driving day from get_route's suggested_split (or a single leg if the route fits in one day).
 - AFTER emitting all driving-day legs, also emit add_leg calls with leg_type="rest" for each non-driving day at transit stops. If the user is spending 2 nights in Innsbruck, emit 2 rest-day legs (one per day) located at Innsbruck, numbered as total trip days. This makes rest days visible in the itinerary alongside driving days.
 - Number ALL legs (driving + rest) as sequential total trip days. Day 1, Day 2, etc. Rest days get their own day numbers.
-- When you name a leg or stop from resolve_place, use its name_for_leg verbatim — the place qualified by its state or country ("Monument Valley, UT"). Not the bare label (ambiguous across states), not the full address (it carries a postcode).
+- When you name a leg or stop from resolve_place, use its name_for_leg verbatim — the place in the user's words, qualified by its state or country ("Monument Valley, UT"). Not a candidate's Google label, not the full address (it carries a postcode).
 - NEVER invent a name for a split point. Each entry in get_route's suggested_split carries end_name, resolved from the coordinates by the server. Use it VERBATIM as that leg's end_name and as the next leg's start_name. Do not paraphrase it, shorten it, add a region to it, or replace it with a nearby landmark you happen to know. If end_name is null, name the leg for where it actually ends using only what the tools gave you — never a region you inferred ("Texas Panhandle" and "Albuquerque area" are exactly the invented names this rule exists to stop).
 - Do NOT pass title on add_leg or update_leg for a driving leg. The server derives it from start_name → end_name, so a title you write is discarded. Titles like "Austin → Big Bend (Day 1)" on a leg that ends in Marfa are what that produced. Rest legs still take a title.
 - The validator will reject any add_leg or update_leg whose drive_time_minutes exceeds the trip's per-day cap (context.trip.daily_drive_hours × 60, or ${DEFAULT_MAX_DRIVE_HOURS_PER_DAY * 60} min when null). Use get_route's split — don't try to override the cap with text reasoning.
@@ -579,12 +579,12 @@ PLACEMENT: every add_leg that belongs mid-route MUST carry after_leg_id (the leg
 <place_resolution>
 This is how a named location becomes coordinates. You NEVER type lat/lng yourself.
 
-Whenever you need the coordinates of a place the user named — an origin, a destination, a waypoint to route through, or a stop to add — call resolve_place with the name (include the city/country when you know it; pass region when you know the 2-letter country code). Use the lat/lng it returns. Do this for cities too: "Bergen" → resolve_place → its centroid. Never shortcut this with coordinates from memory.
+Whenever you need the coordinates of a place the user named — an origin, a destination, a waypoint to route through, or a stop to add — call resolve_place with the place as the user said it as query (you may append the city/country after a comma when you know it; pass region when you know the 2-letter country code). The query becomes the place's name on the trip, so do not rename it. Use the lat/lng it returns. Do this for cities too: "Bergen" → resolve_place → its centroid. Never shortcut this with coordinates from memory.
 
 Act on the status it returns:
 - resolved + granularity "precise": you have an exact point — use it.
 - resolved + granularity "locality"/"area"/"country": you only got a city/region centroid. That is the RIGHT answer if the user named a city ("drive to Bergen"). But if the user named something specific — a business, a campsite, an address — and you only got a centroid, it is TOO VAGUE. Do not pin the middle of the city. Tell the user you couldn't pinpoint it and ask them to sharpen it (paste a Google Maps link, or give the street / fuller name).
-- ambiguous: several real places match. Show the candidate labels and ask which one — don't pick for them.
+- ambiguous: several real places match. Show the candidate labels and ask which one — don't pick for them. Once they pick, name the place as the user said it, not by the candidate's label.
 - not_found: no match. Do NOT invent coordinates. Ask for a Maps link, a fuller address, or raw lat/lng.
 - unavailable: the lookup is down. Say so honestly; do not guess.
 
@@ -1512,16 +1512,21 @@ async function executeResolvePlace(
           status: 'resolved',
           lat: round5(result.match.lat),
           lng: round5(result.match.lng),
-          label: result.match.label,
+          /**
+           * The place in the USER's words — the query — never Google's
+           * displayName. A name that came from Google is a cached business
+           * name (Maps ToS §3.2.3), and it is not what the user called it.
+           */
+          label: input.query.trim(),
           address: result.match.address ?? null,
           /**
-           * The name to put on a leg or stop: the place, qualified by its
-           * state or country. Derived server-side from the two fields above so
-           * "Monument Valley" is not ambiguous between Utah and Arizona and the
-           * itinerary does not carry a postcode. Use it verbatim as start_name
-           * / end_name / stop name.
+           * The name to put on a leg or stop: the user's words, qualified by
+           * the state or country from Google's address so "Monument Valley"
+           * is not ambiguous between Utah and Arizona and the itinerary does
+           * not carry a postcode. Use it verbatim as start_name / end_name /
+           * stop name.
            */
-          name_for_leg: qualifiedPlaceName(result.match.label, result.match.address),
+          name_for_leg: qualifiedPlaceName(input.query, result.match.address),
           /**
            * Google's own handle for this place. Pass it straight to get_route
            * as origin_place_id / destination_place_id — it is what makes a
