@@ -261,7 +261,6 @@ function json(body: unknown, status = 200): Response {
 }
 
 const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
-let gpxResponse: () => Promise<Response>;
 
 interface RenderOpts {
   legs?: LegWithDetails[];
@@ -297,11 +296,9 @@ beforeEach(() => {
   drawn.infoWindows = [];
   loader.importLibrary.mockReset();
   loader.importLibrary.mockImplementation(async () => ({ Map: FakeMap }));
-  gpxResponse = async () => json([]);
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith('/api/gpx')) return gpxResponse();
     if (url === '/api/me') return json({ units_pref: 'metric', timezone: 'UTC' });
     if (url === '/api/me/preferences') return json({ ok: true });
     throw new Error(`unexpected fetch ${url}`);
@@ -453,29 +450,6 @@ describe('TripMap — drawing the trip from props', () => {
     renderMap();
     await ready();
     expect(screen.getByText('Open a day to load its fuel stops')).toBeInTheDocument();
-  });
-
-  it("fetches each leg's GPX trails and draws them", async () => {
-    gpxResponse = async () =>
-      json([
-        {
-          id: 'gpx-1',
-          name: 'Gravel loop',
-          geojson: {
-            type: 'FeatureCollection',
-            features: [
-              {
-                type: 'Feature',
-                geometry: { type: 'LineString', coordinates: [[-3.7, 40.4], [-3.6, 40.5]] },
-              },
-            ],
-          },
-        },
-      ]);
-    renderMap();
-    await ready();
-    await waitFor(() => expect(live(drawn.polylines).some((p) => p.opts.zIndex === 6)).toBe(true));
-    expect(fetchMock).toHaveBeenCalledWith('/api/gpx?tripId=trip-1&legId=leg-1');
   });
 });
 

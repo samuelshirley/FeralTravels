@@ -174,7 +174,6 @@ function routeRow(r: typeof routes.$inferSelect): RouteWithLinks {
     distance_km: r.distanceKm,
     surface: r.surface,
     status: r.status,
-    gpx_trail_id: r.gpxTrailId,
     end_lat: r.endLat,
     end_lng: r.endLng,
     end_name: r.endName,
@@ -1489,7 +1488,7 @@ export async function repairLegContinuity(
 
 /**
  * Deep-copy a template trip into a new trip owned by `userId`. Returns the new trip id.
- * Copies legs, costs, links, routes, route_links, tasks, gpx trails, pois.
+ * Copies legs, costs, links, routes, route_links, tasks, pois.
  * Chat history is NOT copied.
  */
 export async function cloneTrip(sourceTripId: string, userId: string): Promise<string> {
@@ -1684,7 +1683,6 @@ export async function cloneTrip(sourceTripId: string, userId: string): Promise<s
             distanceKm: r.distanceKm,
             surface: r.surface,
             status: r.status,
-            gpxTrailId: null, // gpx not copied yet
             endLat: r.endLat,
             endLng: r.endLng,
             endName: r.endName,

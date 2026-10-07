@@ -434,20 +434,6 @@ const CASES: Record<string, Case> = {
     stranger: [403],
   },
   'DELETE tasks/[id]': { method: 'DELETE', path: () => `/api/tasks/${ids.task}`, stranger: [403] },
-  'GET gpx': {
-    method: 'GET',
-    path: () => `/api/gpx?legId=${owner.legIds[0]}`,
-    malformed: { path: () => '/api/gpx?legId=nope' },
-    stranger: [403],
-  },
-  'POST gpx': {
-    method: 'POST',
-    path: () => '/api/gpx',
-    body: () => ({ legId: owner.legIds[0] }),
-    // Not multipart.
-    malformed: { body: { legId: RANDOM_UUID } },
-  },
-  'DELETE gpx/[id]': { method: 'DELETE', path: () => `/api/gpx/${RANDOM_UUID}`, stranger: [404] },
 };
 
 /** The routes that can spend Anthropic money: refused 402 on a blocked account. */
@@ -494,8 +480,8 @@ test.describe('API contracts — stranger', () => {
     });
   }
 
-  test("your own tripId with someone else's legId reads nothing (routes, tasks, gpx)", async () => {
-    for (const path of ['/api/routes', '/api/tasks', '/api/gpx']) {
+  test("your own tripId with someone else's legId reads nothing (routes, tasks)", async () => {
+    for (const path of ['/api/routes', '/api/tasks']) {
       const res = await stranger.api.get(`${path}?tripId=${stranger.tripId}&legId=${owner.legIds[0]}`);
       expect(res.status(), `${path}: ${await res.text()}`).toBe(404);
     }
@@ -580,33 +566,6 @@ test.describe('API contracts — happy paths left in place', () => {
     } finally {
       await api.dispose();
     }
-  });
-
-  /**
-   * KNOWN PRODUCTION BUG, pinned and reported to Sam — not papered over.
-   * The upload writes the file to the app's own folder (src/lib/gpx.ts), which
-   * is read-only on Vercel. CI run 37546672143, three attempts of three:
-   *   500 {"error":"EROFS: read-only file system, open
-   *        '/var/task/src/data/gpx/trip…-ridge.gpx'"}
-   * GPX upload cannot work in production. The assertion stays 201, so the day
-   * upload works this goes red and someone has to flip `test.fail` to `test`.
-   */
-  test.fail('GPX upload stores a trail', async () => {
-    const res = await owner.api.post('/api/gpx', {
-      multipart: {
-        file: {
-          name: 'ridge.gpx',
-          mimeType: 'application/gpx+xml',
-          buffer: Buffer.from(
-            '<?xml version="1.0"?><gpx version="1.1" creator="e2e"><trk><name>Ridge</name><trkseg>' +
-              '<trkpt lat="48.07" lon="7.09"/><trkpt lat="48.08" lon="7.10"/></trkseg></trk></gpx>',
-          ),
-        },
-        tripId: owner.tripId,
-        legId: owner.legIds[0],
-      },
-    });
-    expect(res.status(), await res.text()).toBe(201);
   });
 });
 

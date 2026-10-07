@@ -29,7 +29,7 @@ it" is post-MVP — flag it before building. Full scope and what was cut:
 ## Stack
 
 An overland trip planner: Next.js 14 + an AI assistant ("Penny") planning
-multi-leg road trips — stops, routes, fuel, GPX. Why each choice and what it
+multi-leg road trips — stops, routes, fuel. Why each choice and what it
 costs: **`docs/design/stack.md`** — read it before reasoning about cost or about
 which provider serves what; this has been wrong here before, expensively.
 
@@ -145,7 +145,7 @@ api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops
+api/chat api/debug/fuel api/legs/[id]/fuel-stops
 api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
@@ -177,11 +177,12 @@ subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
 ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
-`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`.
+`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`, the
+`gpx_trails` table and `routes.gpx_trail_id` (GPX removed 2026-10-07).
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
+trips, routes, stops, vehicles, users, tasks, pois, chat, usage, admin,
 announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, jev,
 testSupport (test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
 revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).

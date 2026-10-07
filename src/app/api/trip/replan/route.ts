@@ -1420,7 +1420,6 @@ async function dispatchAction(
         distance_km: data.distance_km ?? null,
         surface: data.surface ?? null,
         status: data.status ?? null,
-        gpx_trail_id: data.gpx_trail_id ?? null,
         end_lat: data.end_lat ?? null,
         end_lng: data.end_lng ?? null,
         end_name: data.end_name ?? null,

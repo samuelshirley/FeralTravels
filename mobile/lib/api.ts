@@ -9,7 +9,6 @@ import type {
   OnboardingState,
   POI,
   Stop,
-  GPXTrail,
 } from "@/shared/types/trip";
 
 /**
@@ -364,9 +363,6 @@ export function tripApi(tripId: string) {
         body: { alt_index: altIndex },
         ...opts,
       }),
-
-    listGpxForLeg: (legId: string) =>
-      apiFetch<GPXTrail[]>("/api/gpx", { query: { tripId, legId } }),
 
     // ---- chat / onboarding ----
     listChat: (before?: number) =>

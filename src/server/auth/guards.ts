@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { headers } from 'next/headers';
 import { ZodError } from 'zod';
 import { db } from '@/server/db/client';
-import { trips, legs, routes, stops, tasks, gpxTrails, sessions, users } from '@/server/db/schema';
+import { trips, legs, routes, stops, tasks, sessions, users } from '@/server/db/schema';
 import { auth } from './index';
 import { getAccountVerdict, maybeAlertThreshold } from '@/server/payments';
 import type { AccountVerdict } from '@/server/payments';
@@ -275,18 +275,6 @@ export async function assertTaskOwnedByUser(taskId: string, userId: string): Pro
     .where(eq(tasks.id, taskId))
     .limit(1);
   if (row.length === 0) throw new NotFoundError('Task not found');
-  if (row[0].userId !== userId) throw new ForbiddenError();
-  return row[0].tripId;
-}
-
-export async function assertGpxOwnedByUser(gpxId: string, userId: string): Promise<string> {
-  const row = await db
-    .select({ tripId: gpxTrails.tripId, userId: trips.userId })
-    .from(gpxTrails)
-    .innerJoin(trips, eq(gpxTrails.tripId, trips.id))
-    .where(eq(gpxTrails.id, gpxId))
-    .limit(1);
-  if (row.length === 0) throw new NotFoundError('GPX trail not found');
   if (row[0].userId !== userId) throw new ForbiddenError();
   return row[0].tripId;
 }

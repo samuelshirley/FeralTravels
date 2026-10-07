@@ -14,7 +14,6 @@ import type { PennyContext } from '@/lib/penny/context';
 
 const ctx = {} as PennyContext;
 const LEG_ID = '00000000-0000-0000-0000-000000000001';
-const GPX_ID = '00000000-0000-0000-0000-000000000002';
 const parse = (input: unknown) => validator(ctx).safeParse(input);
 const withData = (data: Record<string, unknown>) => parse({ leg_id: LEG_ID, data });
 
@@ -63,7 +62,6 @@ describe('add_route validator — shape', () => {
       distance_km: 142.5,
       surface: 'gravel',
       status: 'option',
-      gpx_trail_id: GPX_ID,
       end_lat: 44.645,
       end_lng: -110.86,
       end_name: 'Madison Campground, WY',
@@ -115,9 +113,16 @@ describe('add_route validator — shape', () => {
     expect(withData({ label: 'A', end_source: 'penny' }).success).toBe(false);
   });
 
-  it('rejects a non-uuid gpx_trail_id and a non-URL end_source_url', () => {
-    expect(withData({ label: 'A', gpx_trail_id: 'trail-7' }).success).toBe(false);
+  it('rejects a non-URL end_source_url', () => {
     expect(withData({ label: 'A', end_source_url: 'somewhere' }).success).toBe(false);
+  });
+
+  it('has no gpx_trail_id any more: GPX was removed (Sam, 2026-10-07), so Penny is not offered it and a sent one is dropped', () => {
+    const data = (tool.input_schema.properties as { data: { properties: Record<string, unknown> } }).data;
+    expect(data.properties).not.toHaveProperty('gpx_trail_id');
+    const result = withData({ label: 'A', gpx_trail_id: '00000000-0000-0000-0000-000000000002' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.data).not.toHaveProperty('gpx_trail_id');
   });
 
   it('rejects malformed links', () => {

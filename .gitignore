@@ -13,8 +13,6 @@ tmp/
 
 # database / data
 /db/
-src/data/gpx/*
-!src/data/gpx/.gitkeep
 
 # env — never commit any .env* variants holding secrets.
 # .env.example IS tracked (it's the template with empty values) and is

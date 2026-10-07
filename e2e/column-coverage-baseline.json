@@ -18,7 +18,7 @@
     },
     {
       "gap": "gpx_trails",
-      "reason": "no test uploads a GPX trail"
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); table kept so the migration stays additive"
     },
     {
       "gap": "legs.continuity_warning",

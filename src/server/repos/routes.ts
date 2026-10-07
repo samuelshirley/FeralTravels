@@ -51,7 +51,6 @@ export async function addRoute(input: {
   distance_km?: number | null;
   surface?: string | null;
   status?: string | null;
-  gpx_trail_id?: string | null;
   sort_order?: number | null;
   end_lat?: number | null;
   end_lng?: number | null;
@@ -77,7 +76,6 @@ export async function addRoute(input: {
       distanceKm: input.distance_km ?? null,
       surface: input.surface ?? null,
       status: input.status ?? 'option',
-      gpxTrailId: input.gpx_trail_id ?? null,
       endLat: input.end_lat ?? null,
       endLng: input.end_lng ?? null,
       endName: input.end_name ?? null,
@@ -111,7 +109,6 @@ export async function updateRoute(
     distance_km: number | null;
     surface: string | null;
     status: string;
-    gpx_trail_id: string | null;
     sort_order: number;
     end_lat: number | null;
     end_lng: number | null;
@@ -127,7 +124,6 @@ export async function updateRoute(
   if (data.distance_km !== undefined) update.distanceKm = data.distance_km;
   if (data.surface !== undefined) update.surface = data.surface;
   if (data.status !== undefined) update.status = data.status;
-  if (data.gpx_trail_id !== undefined) update.gpxTrailId = data.gpx_trail_id;
   if (data.sort_order !== undefined) update.sortOrder = data.sort_order;
   if (data.end_lat !== undefined) update.endLat = data.end_lat;
   if (data.end_lng !== undefined) update.endLng = data.end_lng;
