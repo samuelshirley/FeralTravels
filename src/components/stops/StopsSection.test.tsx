@@ -43,7 +43,7 @@ const mockFuelStop: Stop = {
   sort_order: 1,
   stop_type: 'fuel',
   status: 'selected',
-  name: 'Repsol Burgos Norte',
+  name: 'Fuel stop',
   lat: 42.35,
   lng: -3.70,
   distance_from_start_km: 62,
@@ -53,7 +53,7 @@ const mockFuelStop: Stop = {
   source: 'google_places',
   source_url: null,
   alternatives: null,
-  place_id: null,
+  place_id: 'ChIJ_burgos_norte',
   google_maps_uri: null,
   forced_reason: null,
   created_at: '2024-01-01',
@@ -123,7 +123,7 @@ describe('StopsSection (refactored)', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0].textContent).toBe('Top up here: next fuel is 256 mi away');
     expect(lines[0].closest('[data-testid="stop-row"]')?.textContent).toContain(
-      'Repsol Burgos Norte'
+      'Fuel stop · 39 mi'
     );
   });
 
@@ -138,8 +138,29 @@ describe('StopsSection (refactored)', () => {
         initialStops={[mockFuelStop, mockUserStop]}
       />
     );
-    expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
+    expect(screen.getByText('Fuel stop · 62 km')).toBeInTheDocument();
     expect(screen.getByText('Camping Ciudad de León')).toBeInTheDocument();
+  });
+
+  /*
+   * A fuel row is "Fuel stop · 62 km" whatever name it carries, so a row saved
+   * before migration 0046 (a Google station name) never shows that name, and
+   * the distance is not repeated in the right-hand column.
+   */
+  it("labels a fuel row by its type, never a legacy station name, with the distance once", () => {
+    render(
+      <StopsSection
+        tripId="00000000-0000-0000-0000-000000000001"
+        legId="00000000-0000-0000-0000-000000000010"
+        legStartName="Burgos"
+        legEndName="León"
+        legEndCoords={{ lat: 42.6, lng: -5.57 }}
+        initialStops={[{ ...mockFuelStop, name: 'Repsol Burgos Norte' }]}
+      />
+    );
+    expect(screen.queryByText(/Repsol/)).not.toBeInTheDocument();
+    const row = screen.getByText('Fuel stop · 62 km').closest('[data-testid="stop-row"]');
+    expect(row?.textContent?.match(/62 km/g)).toHaveLength(1);
   });
 
   it('shows fuel planning spinner', () => {
@@ -268,7 +289,7 @@ describe('StopsSection (refactored)', () => {
         initialStops={[mockFuelStop]}
       />
     );
-    expect(screen.getByLabelText(/remove repsol burgos norte/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/remove fuel stop · 62 km/i)).toBeInTheDocument();
   });
 
   it('hides remove buttons when readonly', () => {
@@ -283,7 +304,7 @@ describe('StopsSection (refactored)', () => {
         readonly
       />
     );
-    expect(screen.queryByLabelText(/remove repsol burgos norte/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/remove fuel stop/i)).not.toBeInTheDocument();
   });
 
   it('renders StopCard with correct type labels', () => {
@@ -345,17 +366,18 @@ describe('stop rows navigate', () => {
         initialStops={[mockFuelStop]}
       />
     );
-    const link = screen.getByRole('link', { name: /Repsol Burgos Norte in Google Maps/i });
+    const link = screen.getByRole('link', { name: /Fuel stop · 62 km in Google Maps/i });
     // The link carries the row's own text — pressing the name is pressing the link.
-    expect(link).toHaveTextContent('Repsol Burgos Norte');
-    expect(link).toHaveTextContent('62 km');
+    expect(link).toHaveTextContent('Fuel stop · 62 km');
     const url = new URL(link.getAttribute('href') ?? '');
     expect(url.pathname).toBe('/maps/dir/');
     expect(url.searchParams.get('dir_action')).toBe('navigate');
     expect(url.searchParams.get('destination')).toBe('42.35,-3.7');
     expect(url.searchParams.has('origin')).toBe(false);
+    // The station itself, by place_id — never Google's stored googleMapsUri.
+    expect(url.searchParams.get('destination_place_id')).toBe('ChIJ_burgos_norte');
     // The remove control is NOT inside the link.
-    const remove = screen.getByLabelText(/remove repsol burgos norte/i);
+    const remove = screen.getByLabelText(/remove fuel stop · 62 km/i);
     expect(link.contains(remove)).toBe(false);
   });
 

@@ -102,10 +102,17 @@ export function buildMapsSearchUrl(
  */
 export function buildGoHereUrl(
   lat: number | null | undefined,
-  lng: number | null | undefined
+  lng: number | null | undefined,
+  opts?: { placeId?: string | null }
 ): string | null {
   if (lat == null || lng == null) return null;
-  return buildNavUrl({ end_lat: lat, end_lng: lng });
+  const url = buildNavUrl({ end_lat: lat, end_lng: lng });
+  // `destination_place_id` lets Maps open the place itself (hours, entrance)
+  // rather than a bare coordinate. Finn stores this as a fuel stop's link,
+  // and migration 0046 rebuilds the same URL in SQL — keep the two in step
+  // (maps.test.ts reads the migration).
+  if (!url || !opts?.placeId) return url;
+  return `${url}&${new URLSearchParams({ destination_place_id: opts.placeId }).toString()}`;
 }
 
 /** "Dog parks near this point" Google Maps search. */
@@ -131,7 +138,13 @@ export type LegDirectionsStopInput = {
 };
 
 /** A resolved waypoint with coords and name. */
-export type ResolvedWaypoint = { lat: number; lng: number; name: string; stopType?: string };
+export type ResolvedWaypoint = {
+  lat: number;
+  lng: number;
+  name: string;
+  stopType?: string;
+  distanceKm?: number | null;
+};
 
 /** Filter & sort stops into the set that appear in directions URLs. */
 function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoint[] {
@@ -155,7 +168,13 @@ function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoi
       if (ad !== bd) return ad - bd;
       return (a.sort_order ?? 0) - (b.sort_order ?? 0);
     })
-    .map((s) => ({ lat: s.lat as number, lng: s.lng as number, name: s.name, stopType: s.stop_type }));
+    .map((s) => ({
+      lat: s.lat as number,
+      lng: s.lng as number,
+      name: s.name,
+      stopType: s.stop_type,
+      distanceKm: s.distance_from_start_km ?? null,
+    }));
 }
 
 /** Sorted intermediate coords for leg directions (badge counts, tests). */
@@ -197,8 +216,17 @@ export function buildLegDirectionsUrl(input: {
   );
 }
 
-/** One navigation button — destination only, no origin (uses device GPS). */
-export type NavSegment = { label: string; url: string; stopType?: string };
+/**
+ * One navigation button — destination only, no origin (uses device GPS).
+ * A fuel stop's button is worded by the client with `fuelStopLabel(distanceKm)`,
+ * never its stored `label`.
+ */
+export type NavSegment = {
+  label: string;
+  url: string;
+  stopType?: string;
+  distanceKm?: number | null;
+};
 
 /**
  * How close two points have to be before a driver would call them the same
@@ -300,7 +328,7 @@ export function buildSegmentedNavUrls(input: {
   });
 
   // Ordered destinations: intermediate stops, then final destination.
-  type Dest = { lat: number; lng: number; name: string; stopType?: string };
+  type Dest = ResolvedWaypoint;
   const destinations: Dest[] = [
     ...resolved,
     ...(stationary
@@ -317,7 +345,7 @@ export function buildSegmentedNavUrls(input: {
       { navigate: true }
     );
     if (url) {
-      segments.push({ label: dest.name, url, stopType: dest.stopType });
+      segments.push({ label: dest.name, url, stopType: dest.stopType, distanceKm: dest.distanceKm });
     }
   }
 

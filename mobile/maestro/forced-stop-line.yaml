@@ -5,7 +5,9 @@
 # flow in the `ai` shard covers the same line end to end). The stop is written
 # by /api/test/seed `forcedFuelStop` — the row Finn writes, with its leg's fuel
 # cache stamped fresh — so no Places search runs and nothing Google does can
-# move it: TotalEnergies Château-Thierry, 95 km into day 1, gap 412 km.
+# move it: a fuel stop 95 km into day 1 (near Château-Thierry), gap 412 km.
+# Finn stores no Google station name (migration 0046), so every screen labels
+# it "Fuel stop · 95 km" — matched below with `.` for the middle dot.
 #
 # It replaces e2e/units-imperial.spec.ts too: after the km check it switches to
 # miles the way a user does (Settings), and asserts the line, the stop row and
@@ -39,6 +41,16 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'LIST'
     timeout: 30000
+
+# ── The map's next-stop sheet ───────────────────────────────────────────────
+# The label carries the distance, and the button names no station.
+- extendedWaitUntil:
+    visible:
+      text: 'Fuel stop . 95 km'
+    timeout: 30000
+- assertVisible: 'Open in Google Maps'
+- takeScreenshot: fuel-stop-sheet
+
 - tapOn: 'LIST'
 - extendedWaitUntil:
     visible:
@@ -50,7 +62,7 @@ appId: ${APP_ID}
     text: '.*Paris, France → Strasbourg, France.*'
 - scrollUntilVisible:
     element:
-      text: "FUEL: TotalEnergies Ch.teau-Thierry, 95 km\\. Top up here: next fuel is 412 km away, on the next day's drive\\. Opens in Google Maps"
+      text: "FUEL: Fuel stop . 95 km\\. Top up here: next fuel is 412 km away, on the next day's drive\\. Opens in Google Maps"
     direction: DOWN
     timeout: 20000
 # Exactly one row says why: the destination row does not.
@@ -78,13 +90,13 @@ appId: ${APP_ID}
 - runFlow:
     when:
       notVisible:
-        text: 'FUEL: TotalEnergies.*'
+        text: 'FUEL: Fuel stop.*'
     commands:
       - tapOn:
           text: '.*Paris, France → Strasbourg, France.*'
 - scrollUntilVisible:
     element:
-      text: "FUEL: TotalEnergies Ch.teau-Thierry, 59 mi\\. Top up here: next fuel is 256 mi away, on the next day's drive\\. Opens in Google Maps"
+      text: "FUEL: Fuel stop . 59 mi\\. Top up here: next fuel is 256 mi away, on the next day's drive\\. Opens in Google Maps"
     direction: DOWN
     timeout: 20000
 

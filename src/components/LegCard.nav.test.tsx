@@ -182,6 +182,13 @@ describe('LegCard navigation buttons', () => {
     expect(buttons.map((b) => b.stopType)).toEqual(['fuel', 'destination']);
   });
 
+  it('labels the fuel button "Fuel stop · <distance>", never the station name', () => {
+    renderLeg(gironaToBurgos());
+    const fuel = navButtons().find((b) => b.stopType === 'fuel');
+    expect(fuel?.text).toContain('Fuel stop · 398 km in Google Maps');
+    expect(fuel?.text).not.toContain('Repsol');
+  });
+
   it('navigates a leg with no stops at all', () => {
     gps.value = { position: { lat: 41.9794, lng: 2.8214 }, gpsStatus: 'active' };
     renderLeg(gironaToBurgos({ stops: [] } as Partial<LegWithDetails>));

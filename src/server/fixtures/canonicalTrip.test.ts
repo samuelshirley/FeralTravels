@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { decodePolyline, haversineKm } from '@/lib/polyline';
+import { buildGoHereUrl } from '@/lib/maps';
+import { FUEL_STOP_NAME } from '@/lib/forcedStopReason';
 import {
   CANONICAL_BASE_DAYS,
   CANONICAL_DRIVING_DAYS,
@@ -79,6 +81,20 @@ describe('canonical trip fixture', () => {
       // Without this the "open in Maps" link degrades to a coordinate pin.
       expect(s.googleMapsUri).toMatch(/^https?:\/\//);
       expect(s.distanceFromStartKm).not.toBeNull();
+    }
+  });
+
+  /**
+   * The fixture mirrors what Finn stores since migration 0046: no Google
+   * station name and no Google `googleMapsUri` (Maps ToS §3.2.3), but
+   * FUEL_STOP_NAME and our own drive link from coords + place_id.
+   */
+  it("stores fuel stops the way Finn does: FUEL_STOP_NAME and our drive link", () => {
+    const fuel = CANONICAL_LEGS.flatMap((l) => l.stops).filter((s) => s.stopType === 'fuel');
+    expect(fuel.length).toBeGreaterThan(0);
+    for (const s of fuel) {
+      expect(s.name).toBe(FUEL_STOP_NAME);
+      expect(s.googleMapsUri).toBe(buildGoHereUrl(s.lat, s.lng, { placeId: s.placeId }));
     }
   });
 
