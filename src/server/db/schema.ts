@@ -459,6 +459,7 @@ export const trips = pgTable(
   })
 );
 
+// 2026-10-07 (Sam): Google lat/lng and legs.geometry are kept past Google's 30-day cache limit, knowingly, until real users arrive — see docs/decisions.md "Google 30-day caching".
 export const legs = pgTable(
   'legs',
   {
@@ -650,6 +651,7 @@ export const routeLinks = pgTable(
   })
 );
 
+// 2026-10-07 (Sam): Google lat/lng and legs.geometry are kept past Google's 30-day cache limit, knowingly, until real users arrive — see docs/decisions.md "Google 30-day caching".
 /** Leg waypoints (fuel/water/food/overnight/…); `selected` rows feed Maps URLs. */
 export const stops = pgTable(
   'stops',
@@ -674,7 +676,10 @@ export const stops = pgTable(
     alternatives: jsonb('alternatives').$type<StopAlternative[]>(),
     /** Google Place ID — enables direct link construction without extra API calls. */
     placeId: text('place_id'),
-    /** Direct Google Maps link — persisted at planning time. */
+    /**
+     * Our own drive link (coords + place_id, `buildGoHereUrl`), never Google's
+     * `googleMapsUri`, which has no caching allowance (migration 0046).
+     */
     googleMapsUri: text('google_maps_uri'),
     /** Photos fetched from Places API at planning time — avoids API calls during viewing. */
     photos: jsonb('photos').$type<StopPhoto[]>(),
