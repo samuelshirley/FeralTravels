@@ -126,12 +126,17 @@ appId: ${APP_ID}
     visible: 'Delete this vehicle?'
     timeout: 10000
 # The ALERT's Delete, not a card's. With two vehicles both cards carry a
-# "Delete" button under the native alert, and those come first in the view
-# tree: the first local run tapped one of them and the alert never closed.
-# So it is the third match, and the step after proves the alert went.
+# "Delete" button under the native alert. Neither tree order nor screen order
+# picks it reliably (the first two local runs tapped a card's: no confirm,
+# then index 2 = the Spare Truck card). What only the alert's button has is
+# its container: the hierarchy dump of that run shows one node labelled
+# "Delete this vehicle?" [41,388][361,514] holding Cancel and exactly ONE
+# "Delete" [205,450][345,498]; the card buttons ([313,493], [313,583]) are
+# outside it. The step after proves the alert closed.
 - tapOn:
     text: 'Delete'
-    index: 2
+    childOf:
+      text: 'Delete this vehicle?'
 - extendedWaitUntil:
     notVisible: 'Delete this vehicle?'
     timeout: 10000
@@ -164,10 +169,11 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'Delete this vehicle?'
     timeout: 10000
-# The alert's Delete again: still two vehicles, so two card buttons first.
+# The alert's Delete again, by its container (see above).
 - tapOn:
     text: 'Delete'
-    index: 2
+    childOf:
+      text: 'Delete this vehicle?'
 - extendedWaitUntil:
     notVisible: 'Delete this vehicle?'
     timeout: 10000
