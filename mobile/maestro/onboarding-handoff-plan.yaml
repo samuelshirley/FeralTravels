@@ -115,8 +115,13 @@ appId: ${APP_ID}
     timeout: 120000
 - assertNotVisible:
     text: '^Error: .*'
-- tapOn:
-    id: 'plan-ready-open-list'
+# To the list by the bottom tab, the other way a user gets there. The line's
+# own "list view" link (plan-ready-open-list) cannot be targeted: it is a
+# <Text onPress> NESTED inside the headline <Text> (ChatPanel.tsx), and iOS
+# merges nested Text into ONE accessibility element, so its testID is never
+# exposed (local run: "Element not found"), and tapping the merged line by its
+# label would hit its centre, not the link.
+- tapOn: 'LIST'
 - extendedWaitUntil:
     visible: 'ROUTE PLAN'
     timeout: 30000
