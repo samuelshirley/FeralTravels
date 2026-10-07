@@ -488,9 +488,10 @@ async function seedCoverageColumns(userId: string, tripId: string): Promise<void
     source: 'google',
     fuelType: 'diesel',
     sourceUrl: buildGoHereUrl(49.2583, 4.0317),
-    // Names no station: Google business names are never stored (migration 0046).
+    // Coverage only: Finn writes `alternatives` null and migration 0046 clears
+    // it. A made-up name, not cached Google content; api-contracts reads it back.
     alternatives: [
-      { name: FUEL_STOP_NAME, lat: 49.2412, lng: 4.0605, place_id: null, distance_km: 3.1 },
+      { name: 'Total Access Reims', lat: 49.2412, lng: 4.0605, place_id: null, distance_km: 3.1 },
     ],
   });
   await db
