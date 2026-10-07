@@ -178,8 +178,11 @@ export default function TripCard({
 
       {editMode ? (
         <Pressable
-          accessibilityLabel="Delete trip"
+          // Named, so VoiceOver (and a Maestro flow) can tell one card's × from
+          // the next — every one read "Delete trip".
+          accessibilityLabel={`Delete trip ${name}`}
           accessibilityRole="button"
+          testID={`trip-delete-${id}`}
           onPress={() => setShowConfirm(true)}
           style={styles.deleteCorner}
           // Enlarge the touch target without growing the 28pt circle.
@@ -223,6 +226,7 @@ export default function TripCard({
               <Pressable
                 disabled={busy}
                 onPress={handleDeleteConfirm}
+                testID="trip-delete-confirm"
                 style={[styles.deleteBtn, busy && styles.deleteBtnBusy]}
               >
                 {busy ? <ActivityIndicator size="small" color={theme.onPrimary} /> : null}

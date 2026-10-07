@@ -28,6 +28,17 @@ export const distanceKmSchema = z.number().positive().max(100_000);
  */
 export const driveTimeMinutesSchema = z.number().int().positive().max(24 * 60);
 
+/**
+ * The same bounds, in the JSON Schema Anthropic sees. Kept beside the Zod
+ * schemas so the two cannot drift: the tool schemas said `minimum: 0` while the
+ * server refused 0, so Penny could send a value her own schema allowed and have
+ * it rejected. `schemaBounds.test.ts` holds every tool to these.
+ */
+export const distanceKmJson = { type: 'number', exclusiveMinimum: 0, maximum: 100_000 } as const;
+export const driveTimeMinutesJson = { type: 'integer', minimum: 1, maximum: 24 * 60 } as const;
+/** Litres of fuel: positive, like `fuel_amount_l` on update_stop. */
+export const fuelAmountLJson = { type: 'number', exclusiveMinimum: 0 } as const;
+
 export const routeStatusSchema = z.enum(['option', 'selected', 'dismissed']);
 export const stopStatusSchema = z.enum(['option', 'selected', 'dismissed']);
 export const taskStatusSchema = z.enum(['open', 'answered', 'dismissed']);

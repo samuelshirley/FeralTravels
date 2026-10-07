@@ -243,7 +243,6 @@ export default async function SettingsPage() {
                   <Stat label="Users" value={overview.totalUsers} sub={`+${overview.newUsers7d} (7d)`} />
                   <Stat label="Active trips" value={overview.totalTrips} />
                   <Stat label="Chat msgs" value={overview.totalChat} sub={`${overview.totalReplans} Penny edits`} />
-                  <Stat label="GPX trails" value={overview.totalGpx} />
                   <Stat label="AI spend 24h" value={fmtMoney(usd24)} highlight />
                   <Stat label="AI spend 7d" value={fmtMoney(usd7d)} sub={`~${fmtMoney(usd7d * (30 / 7))}/mo proj.`} />
                 </div>

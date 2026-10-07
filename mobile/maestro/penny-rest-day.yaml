@@ -1,0 +1,93 @@
+# Penny makes a rest day, for real: asked for a day off in Strasbourg with the
+# cathedral on it, she inserts a base day after day 1 and puts the cathedral on
+# it as a stop. The itinerary then shows the base day, and its stop row.
+#
+# `ai` shard: one planning turn (~$0.085) plus resolve_place's Places lookup.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it with IOS_AI=1 before trusting a green or a red.
+#
+# Its own account (suffix `ai4`): Penny rewrites the trip it plans on.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ai4
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Add one rest day in Strasbourg right after day 1, and put Strasbourg Cathedral on that rest day as a stop. Go ahead without asking me anything.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible: 'Changes applied to trip'
+    timeout: 300000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── The itinerary: three days now, the middle one a base day ────────────────
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- assertVisible:
+    text: '.* · 3 days.*'
+- scrollUntilVisible:
+    element:
+      text: '.*BASE.*Strasbourg.*'
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: '.*BASE.*Strasbourg.*'
+- scrollUntilVisible:
+    element:
+      text: 'STOP: .*(Cath.drale|Cathedral).*Opens in Google Maps'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    text: 'Remove .*(Cath.drale|Cathedral).*'
+# A base day has no drive: no fuel UI, no navigate link.
+- assertNotVisible: 'Planning fuel stops…'
+- assertNotVisible:
+    text: '.*NAVIGATE.*'

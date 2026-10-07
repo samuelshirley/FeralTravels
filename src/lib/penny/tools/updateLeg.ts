@@ -4,7 +4,9 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import { tripDriveCapHours } from '@/lib/penny/driveCap';
 import {
+  distanceKmJson,
   distanceKmSchema,
+  driveTimeMinutesJson,
   driveTimeMinutesSchema,
   latSchema,
   lngSchema,
@@ -145,8 +147,8 @@ export const tool: Anthropic.Tool = {
           end_lat: { type: 'number', minimum: -90, maximum: 90 },
           end_lng: { type: 'number', minimum: -180, maximum: 180 },
           dates: { type: 'string' },
-          distance_km: { type: 'number', minimum: 0 },
-          drive_time_minutes: { type: 'integer', minimum: 0, maximum: 24 * 60 },
+          distance_km: distanceKmJson,
+          drive_time_minutes: driveTimeMinutesJson,
           terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
           overnight: { type: 'string' },
           color: { type: 'string' },

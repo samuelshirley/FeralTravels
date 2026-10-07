@@ -3,7 +3,9 @@ import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import {
+  distanceKmJson,
   distanceKmSchema,
+  driveTimeMinutesJson,
   driveTimeMinutesSchema,
   latSchema,
   lngSchema,
@@ -22,7 +24,6 @@ const dataSchema = z
     distance_km: distanceKmSchema.nullish(),
     surface: surfaceSchema.nullish(),
     status: routeStatusSchema.nullish(),
-    gpx_trail_id: z.string().uuid().nullish(),
     end_lat: latSchema.nullish(),
     end_lng: lngSchema.nullish(),
     end_name: z.string().nullish(),
@@ -65,16 +66,15 @@ export const tool: Anthropic.Tool = {
         properties: {
           label: { type: 'string' },
           description: { type: 'string' },
-          distance_km: { type: 'number', minimum: 0 },
+          distance_km: distanceKmJson,
           surface: { type: 'string', enum: ['paved', 'gravel', 'mix'] },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
-          gpx_trail_id: { type: 'string', format: 'uuid' },
           end_lat: { type: 'number', minimum: -90, maximum: 90 },
           end_lng: { type: 'number', minimum: -180, maximum: 180 },
           end_name: { type: 'string' },
           end_source: { type: 'string', enum: ['google_places', 'manual'] },
           end_source_url: { type: 'string', format: 'uri' },
-          drive_time_minutes: { type: 'integer', minimum: 0, maximum: 24 * 60 },
+          drive_time_minutes: driveTimeMinutesJson,
           links: {
             type: 'array',
             items: {

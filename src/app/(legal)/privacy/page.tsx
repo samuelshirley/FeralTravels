@@ -74,8 +74,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Your trips.</strong> Everything you put in: where you&apos;re going, when,
-          the stops, the routes, notes, costs, and any GPX files you upload. This is the
-          product.
+          the stops, the routes, notes and costs. This is the product.
         </li>
         <li>
           <strong>Your vehicle.</strong> Its name, fuel type, and how far it goes on a tank.

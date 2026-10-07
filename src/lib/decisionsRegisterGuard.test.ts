@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -17,15 +17,23 @@ import { describe, expect, it } from 'vitest';
  * be named. The second half is the one that catches drift in practice — writing
  * a guard and forgetting to update the register leaves a decision reading NOT
  * ENFORCED while a test quietly enforces it, and the next person duplicates it.
+ *
+ * LOCAL ONLY since 2026-10-07 (Sam): docs/ is a gitignored folder in the main
+ * checkout, not in git, so CI and a fresh worktree have no register to read.
+ * Both describes SKIP when docs/decisions.md is absent — and only then; where
+ * the register exists (the main checkout, which holds the local docs/), every
+ * check runs.
  */
 
 const ROOT = join(__dirname, '..', '..');
-const register = readFileSync(join(ROOT, 'docs/decisions.md'), 'utf8');
+const REGISTER = join(ROOT, 'docs/decisions.md');
+const HAS_REGISTER = existsSync(REGISTER);
+const register = HAS_REGISTER ? readFileSync(REGISTER, 'utf8') : '';
 
 /** Every `*Guard.test.ts` in src/lib — this repo's convention for a decision guard. */
 const guards = readdirSync(join(ROOT, 'src/lib')).filter((n) => /Guard\.test\.tsx?$/.test(n));
 
-describe('the register points at tests that exist', () => {
+describe.skipIf(!HAS_REGISTER)('the register points at tests that exist', () => {
   it('names at least one test per enforced decision', () => {
     // Sanity: the register is actually populated.
     expect(register.length).toBeGreaterThan(1000);
@@ -50,7 +58,7 @@ describe('the register points at tests that exist', () => {
   });
 });
 
-describe('every guard is in the register', () => {
+describe.skipIf(!HAS_REGISTER)('every guard is in the register', () => {
   it('no guard test is missing from docs/decisions.md', () => {
     const unlisted = guards.filter((g) => !register.includes(g));
     expect(

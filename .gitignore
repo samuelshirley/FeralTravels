@@ -12,9 +12,7 @@ build/
 tmp/
 
 # database / data
-db/
-src/data/gpx/*
-!src/data/gpx/.gitkeep
+/db/
 
 # env — never commit any .env* variants holding secrets.
 # .env.example IS tracked (it's the template with empty values) and is
@@ -65,10 +63,9 @@ mobile/maestro/.local-run/
 # Scratch output from assistant sessions — never tracked.
 Claude outputs/
 
-# Claude Code briefs are throwaway prompts; they live in .claude/tasks/ (ignored
-# above). These rules stop one being recommitted at an old address.
-docs/tasks/
-docs/bugs/*-prompt.md
+# docs/ is a LOCAL folder, not in git (Sam, 2026-10-07): it lives in the main
+# checkout and agents read/write it by absolute path. See CLAUDE.md.
+docs/
 .handoff/
 
 # orchestrator state (local only)

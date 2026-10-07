@@ -88,16 +88,25 @@ export default function TestUserBlock({
   const [created, setCreated] = useState<Created | null>(null);
   const [accounts, setAccounts] = useState<{ email: string; createdAt: string }[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  /**
+   * Its own line, apart from `error`: the generator still works when the list
+   * does not, and a failed list must not read as "no test accounts" — nor, after
+   * a Delete, leave the deleted account on screen with nothing said.
+   */
+  const [listError, setListError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!armed) return;
     try {
       const res = await fetch('/api/admin/test-users');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAccounts(data.accounts ?? []);
-    } catch {
-      // A failed list is not worth an error banner — the generator still works.
+      setListError(null);
+    } catch (err) {
+      setListError(
+        `Could not load the existing test accounts (${err instanceof Error ? err.message : String(err)}).`,
+      );
     }
   }, [armed]);
 
@@ -289,6 +298,12 @@ export default function TestUserBlock({
             <code style={mono}>sam@feraltravels.com</code> inbox.
           </p>
         </div>
+      ) : null}
+
+      {listError ? (
+        <p role="alert" style={{ fontSize: 12, color: 'var(--tp-danger)', margin: '10px 0 0' }}>
+          {listError}
+        </p>
       ) : null}
 
       {accounts.length > 0 ? (

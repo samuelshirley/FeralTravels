@@ -4,8 +4,10 @@
 > what you must not break, so you can orient without scanning the codebase. It is
 > **guarded at 28 KB** (`src/lib/claudeMdGuard.test.ts`): narrative lives in
 > `docs/`, linked from the line that summarises it, so read that doc when your
-> task touches the area. Before adding anything here, read **Keeping this file
-> current**.
+> task touches the area. **`docs/` is not in git** (Sam, 2026-10-07): it is a
+> local, gitignored folder at `/Users/samuelashirley/Documents/Github/FeralTravels/docs` — read and write it by that absolute
+> path from any worktree; it is the one place in the main checkout an agent
+> may edit. Before adding anything here, read **Keeping this file current**.
 
 ## MVP scope — hold the line
 
@@ -29,7 +31,7 @@ it" is post-MVP — flag it before building. Full scope and what was cut:
 ## Stack
 
 An overland trip planner: Next.js 14 + an AI assistant ("Penny") planning
-multi-leg road trips — stops, routes, fuel, GPX. Why each choice and what it
+multi-leg road trips — stops, routes, fuel. Why each choice and what it
 costs: **`docs/design/stack.md`** — read it before reasoning about cost or about
 which provider serves what; this has been wrong here before, expensively.
 
@@ -80,7 +82,8 @@ reason to slow down or pick the cautious option. It is still live infrastructure
 never run tests or seed fixtures against the prod database.
 
 1. **Open a PR into `main`.** `ci.yml` runs unit tests, deploys a tested preview
-   on an ephemeral Neon branch (a clone of prod), runs Playwright against it, and
+   on an ephemeral Neon branch (prod's schema: migrations rehearsed on a private
+   copy, then emptied), runs Playwright against it, and
    typechecks `mobile/`. There is no single `pipeline.yml`.
 2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
@@ -144,7 +147,7 @@ api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops
+api/chat api/debug/fuel api/legs/[id]/fuel-stops
 api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
@@ -176,12 +179,12 @@ subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
 ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
-`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`,
-`stops.price_*`.
+`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`, the
+`gpx_trails` table and `routes.gpx_trail_id` (GPX removed 2026-10-07).
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
+trips, routes, stops, vehicles, users, tasks, pois, chat, usage, admin,
 announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, jev,
 testSupport (test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
 revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
@@ -214,7 +217,7 @@ What each is for and its traps: **`docs/design/scripts.md`**.
 anthropic-usage-report.ts assert-e2e-ran.mjs
 backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
 capture-nominatim-fixtures.mjs check-env.sh
-check-preview-env.mjs claude-task.sh db-reset.ts
+check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
@@ -226,7 +229,7 @@ reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts
 set-paywall-flag.mjs smoke-api.ts storekit-probe.sh
-sync-shared.mjs trial-account.ts
+sync-shared.mjs trial-account.ts wipe-preview-db.ts
 ```
 
 **Tombstones — do not recreate.** `scripts/ship.sh` and `npm run ship` are
@@ -371,8 +374,9 @@ production failures: **`docs/design/playwright-mcp.md`**.
 
 **Mutation-check every new guard test** — reintroduce the exact bug, watch it
 fail, restore; an unverified guard is decoration. Register any new
-`src/lib/*Guard.test.ts` in `docs/decisions.md` or
-`decisionsRegisterGuard.test.ts` fails the suite.
+`src/lib/*Guard.test.ts` in the local `docs/decisions.md`;
+`decisionsRegisterGuard.test.ts` checks it wherever that file exists and skips
+where it does not (CI).
 
 ## Keeping this file current
 
@@ -393,8 +397,9 @@ something in the next five minutes:
 **What does NOT go here:** everything else — why a decision was made, what a
 wrong belief cost, postmortems, measurements, migration narratives. That is the
 most valuable text in the repo and it belongs in `docs/`, in the topic file for
-that area. **Write the prose there first, then add at most one sentence here
-pointing at it.** If you are adding a paragraph, you are in the wrong file.
+that area — the LOCAL folder, by its absolute path, never in a PR. **Write the
+prose there first, then add at most one sentence here pointing at it.** If you
+are adding a paragraph, you are in the wrong file.
 
 This file was 225 KB on 2026-09-20 — nearly tripled in sixteen days, because the
 old version of this section said what to update and never what not to put here.
@@ -402,4 +407,5 @@ If a change pushes it over 28 KB, move prose out. Raise the number only for
 content the guard itself compels — an index entry, never a paragraph.
 
 Every section above links its own file, all under `docs/design/` — except
-`docs/decisions.md`, the decision register and guard-test registry.
+`docs/decisions.md`, the decision register and guard-test registry. Those links
+resolve in the local `/Users/samuelashirley/Documents/Github/FeralTravels/docs`, which git does not track.

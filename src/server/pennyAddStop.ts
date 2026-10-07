@@ -1,7 +1,13 @@
 import 'server-only';
 import { assertLegOwnedByUser, ForbiddenError, NotFoundError } from '@/server/auth/guards';
 import { addStop } from '@/server/repos/stops';
-import { pickNearestNewLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
+import { getTripFull } from '@/server/repos/trips';
+import {
+  nearbySameTurnRestLegs,
+  pickNearestNewLeg,
+  pickSameTurnRestLeg,
+  type NewLegRecord,
+} from '@/lib/penny/newLegFallback';
 import type { AddStopInput } from '@/lib/penny/tools/addStop';
 
 /**
@@ -71,8 +77,34 @@ export async function resolveLegForStopOrRoute(
 }
 
 /**
+ * A stop Penny put on a REAL leg that belongs on a rest day she created this
+ * same turn (see `pickSameTurnRestLeg`). Stops only: a route is the drive's
+ * destination, so `add_route` keeps `resolveLegForStopOrRoute`'s answer.
+ *
+ * Reads the trip only when a same-turn rest day is near the stop at all, so an
+ * ordinary add_stop costs no extra query.
+ */
+async function sameTurnRestLegFor(
+  legId: string,
+  point: { lat?: number | null; lng?: number | null },
+  tripId: string,
+  ctx: ReplanDispatchCtx
+): Promise<string | null> {
+  if (nearbySameTurnRestLegs(point, ctx.newLegs).length === 0) return null;
+  const trip = await getTripFull(tripId);
+  const leg = trip?.legs.find((l) => l.id === legId);
+  if (!leg) return null;
+  return pickSameTurnRestLeg(
+    point,
+    { id: leg.id, startLat: leg.start_lat, startLng: leg.start_lng, endLat: leg.end_lat, endLng: leg.end_lng },
+    ctx.newLegs
+  );
+}
+
+/**
  * Write a validated `add_stop` action: resolve its leg (with the same-turn
- * fallback above), then insert the stop. Returns the new stop's id.
+ * fallback above, then the same-turn rest-day re-home), then insert the stop.
+ * Returns the new stop's id.
  */
 export async function applyAddStop(
   input: AddStopInput,
@@ -81,13 +113,9 @@ export async function applyAddStop(
   ctx: ReplanDispatchCtx
 ): Promise<string> {
   const { leg_id: proposedLegId, data } = input;
-  const leg_id = await resolveLegForStopOrRoute(
-    proposedLegId,
-    { lat: data.lat, lng: data.lng },
-    tripId,
-    userId,
-    ctx
-  );
+  const point = { lat: data.lat, lng: data.lng };
+  const resolved = await resolveLegForStopOrRoute(proposedLegId, point, tripId, userId, ctx);
+  const leg_id = (await sameTurnRestLegFor(resolved, point, tripId, ctx)) ?? resolved;
   const stop = await addStop({
     leg_id,
     stop_type: data.stop_type,
