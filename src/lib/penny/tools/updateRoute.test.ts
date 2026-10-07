@@ -92,7 +92,7 @@ describe('update_route validator', () => {
     expect(withData({ end_source_url: 'camp b' }).success).toBe(false);
   });
 
-  it('strips fields add_route has but update_route does not (gpx_trail_id)', () => {
+  it('strips an unknown field such as gpx_trail_id instead of writing it', () => {
     const result = withData({ status: 'selected', gpx_trail_id: ROUTE_ID });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.data).not.toHaveProperty('gpx_trail_id');
