@@ -33,9 +33,9 @@ import { seededTripStartISO } from '../src/app/api/test/seedDates';
  * the replan route files for the malformed case is an error log for
  * /admin/errors — no model, no cost — and is not one.
  *
- * The owner's happy-path writes (a route, its link, a task, a stop, viewport
- * time, a position report) are LEFT in place: they are the rows PR #83's
- * column-coverage measurement counts on the preview.
+ * The owner's happy-path writes (a route, its link, a task and its answer, a
+ * stop, viewport time, a position report) are LEFT in place: they are the rows
+ * PR #83's column-coverage measurement counts on the preview.
  *
  * Admin routes cannot be called AS an admin from here — the allowlist is one
  * real person — so their malformed-body 400 is proven by errorResponse's unit
@@ -43,6 +43,13 @@ import { seededTripStartISO } from '../src/app/api/test/seedDates';
  */
 
 const RANDOM_UUID = '00000000-0000-4000-8000-00000000dead';
+
+/** The owner's seeded task, answered. Read back in the happy-path block. */
+const TASK_ANSWER = {
+  answer: 'Booked: pitch 14, 12–14 June',
+  answer_source_url: 'https://www.camping-strasbourg.com/booking/confirmation',
+  answer_image_url: 'https://www.camping-strasbourg.com/img/pitch-14.jpg',
+};
 
 let owner: SignedInAccount;
 let stranger: SignedInAccount;
@@ -84,6 +91,7 @@ test.beforeAll(async ({ browser }) => {
       end_lng: 7.0997,
       end_name: 'Col de la Schlucht',
       end_source: 'manual',
+      end_source_url: 'https://www.routedescretes.com/en/col-de-la-schlucht',
       drive_time_minutes: 95,
       links: [{ url: 'https://www.routedescretes.com', type: 'website', label: 'Official site' }],
     },
@@ -101,6 +109,7 @@ test.beforeAll(async ({ browser }) => {
       trip_id: owner.tripId,
       leg_id: owner.legIds[0],
       title: 'Book the Strasbourg campsite',
+      description: 'Two nights, one van, electric hook-up',
       priority: 'high',
       reference_url: 'https://www.camping-strasbourg.com',
       reference_label: 'Camping Indigo',
@@ -109,6 +118,12 @@ test.beforeAll(async ({ browser }) => {
     },
   });
   expect(task.status(), await task.text()).toBe(200);
+  const taskId = ((await task.json()) as { id: string }).id;
+
+  // ...and answered, through the same updateTask write Penny's update_task
+  // makes. Left in place: it is what fills tasks.answer* on the preview.
+  const answered = await owner.api.patch(`/api/tasks/${taskId}`, { data: TASK_ANSWER });
+  expect(answered.status(), await answered.text()).toBe(200);
 
   const stop = await owner.api.post('/api/stops', {
     data: {
@@ -142,7 +157,7 @@ test.beforeAll(async ({ browser }) => {
   ids = {
     route: routeId,
     link: ((await link.json()) as { id: string }).id,
-    task: ((await task.json()) as { id: string }).id,
+    task: taskId,
     stop: ((await stop.json()) as { id: string }).id,
     strangerRoute: ((await strangerRoute.json()) as { id: string }).id,
   };
@@ -520,10 +535,23 @@ test.describe('API contracts — happy paths left in place', () => {
     const routes = (await (await owner.api.get(`/api/routes?legId=${owner.legIds[0]}`)).json()) as {
       id: string;
       links: { id: string }[];
+      end_source: string | null;
+      end_source_url: string | null;
     }[];
     expect(routes.find((r) => r.id === ids.route)?.links.length).toBeGreaterThanOrEqual(2);
-    const tasks = (await (await owner.api.get(`/api/tasks?tripId=${owner.tripId}`)).json()) as { id: string }[];
-    expect(tasks.map((t) => t.id)).toContain(ids.task);
+    expect(routes.find((r) => r.id === ids.route)).toMatchObject({
+      end_source: 'manual',
+      end_source_url: 'https://www.routedescretes.com/en/col-de-la-schlucht',
+    });
+    const tasks = (await (await owner.api.get(`/api/tasks?tripId=${owner.tripId}`)).json()) as {
+      id: string;
+      description: string | null;
+      answer: string | null;
+      answer_source_url: string | null;
+      answer_image_url: string | null;
+    }[];
+    const task = tasks.find((t) => t.id === ids.task);
+    expect(task).toMatchObject({ description: 'Two nights, one van, electric hook-up', ...TASK_ANSWER });
     const stops = (await (await owner.api.get(`/api/stops?legId=${owner.legIds[0]}`)).json()) as {
       id: string;
       stop_type: string;

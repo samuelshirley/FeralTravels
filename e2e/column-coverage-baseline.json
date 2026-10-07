@@ -6,7 +6,7 @@
     },
     {
       "gap": "costs",
-      "reason": "legacy table: no code path writes it"
+      "reason": "written only when Penny’s update_leg sends costs (POST /api/trip/replan) and copied by cloneTrip; no flow asks Penny for a cost"
     },
     {
       "gap": "gpx_trails",
@@ -14,7 +14,7 @@
     },
     {
       "gap": "links",
-      "reason": "no test writes a leg link"
+      "reason": "no product path writes a leg link: cloneTrip only copies existing rows, and the one inserter outside it is scripts/seed-demo-trip.ts"
     },
     {
       "gap": "oauth_token_uses",
@@ -22,11 +22,7 @@
     },
     {
       "gap": "pois",
-      "reason": "no test writes a POI"
-    },
-    {
-      "gap": "routes.end_source_url",
-      "reason": "written by addRoute/updateRoute (POST/PATCH /api/routes, Penny’s add_route/update_route); api-contracts seeds a route with end_source ‘manual’ and no URL, and no flow asks Penny for an overnight option"
+      "reason": "no product path writes a POI: cloneTrip only copies existing rows, and the one inserter outside it is scripts/migrate-sqlite-to-neon.ts"
     },
     {
       "gap": "routes.gpx_trail_id",
@@ -34,7 +30,7 @@
     },
     {
       "gap": "stops.fuel_amount_l",
-      "reason": "estimate: nothing writes it today"
+      "reason": "accepted by POST/PATCH /api/stops and Penny’s update_stop, but no client sends it and Finn writes no amount; no test sets it"
     },
     {
       "gap": "stops.photos",
@@ -43,22 +39,6 @@
     {
       "gap": "subscriptions.original_transaction_id",
       "reason": "set only by the RevenueCat webhook"
-    },
-    {
-      "gap": "tasks.answer",
-      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
-    },
-    {
-      "gap": "tasks.answer_image_url",
-      "reason": "written only by updateTask (PATCH /api/tasks/[id], Penny’s update_task); no test answers a task"
-    },
-    {
-      "gap": "tasks.answer_source_url",
-      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
-    },
-    {
-      "gap": "tasks.description",
-      "reason": "written by addTask/updateTask (/api/tasks, Penny’s add_task/update_task); the seeded task and the contract rows send no description, and no flow asks Penny for a task"
     },
     {
       "gap": "users.image",
