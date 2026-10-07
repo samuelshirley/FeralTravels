@@ -30,7 +30,7 @@ import { planReadyText } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
-  getTurnByKey,
+  getTurnByKeyForUser,
   promoteTurnToRunning,
   claimNextQueuedTurn,
   markTurnDone,
@@ -389,7 +389,7 @@ export async function POST(req: Request) {
     // again — hand back the existing record so the client can apply its result
     // (done/error) or keep polling until it lands (running/queued). This is the
     // guard against a "Please try again" double-send spawning a second replan.
-    const existingTurn = await getTurnByKey(idempotencyKey);
+    const existingTurn = await getTurnByKeyForUser(idempotencyKey, userId, tripId);
     if (existingTurn) {
       return Response.json({ turn: existingTurn });
     }

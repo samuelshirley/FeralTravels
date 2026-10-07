@@ -61,14 +61,13 @@ test.describe('replan limits', () => {
   });
 
   /**
-   * KNOWN LEAK, pinned until its fix lands: replan's replay looks a turn up by
-   * key alone (src/app/api/trip/replan/route.ts, `getTurnByKey`), so another
-   * account that sends this key gets the owner's turn back — message and reply.
-   * The scoped lookup exists (`getTurnByKeyForUser`, repos/pennyTurns.ts); the
-   * one-line call-site change waits on that route's claim. Flip `test.fail` to
-   * `test` with it: the replay must then be refused, never answered.
+   * Another account that sends the owner's idempotency key gets nothing of the
+   * owner's turn: replan's replay looks the turn up by key AND user AND trip
+   * (`getTurnByKeyForUser`), and `createTurn` refuses a key that belongs to
+   * someone else with 409. Before 2026-10-07 the lookup was by key alone and
+   * handed back the owner's message and Penny's reply.
    */
-  test.fail("another account's key replays nothing of the owner's turn", async () => {
+  test("another account's key replays nothing of the owner's turn", async () => {
     const [owner, other] = await Promise.all([signedInAccount(), signedInAccount()]);
     const key = await plantedTurn(owner);
     const res = await other.api.post('/api/trip/replan', {
