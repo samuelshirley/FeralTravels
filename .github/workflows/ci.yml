@@ -390,10 +390,9 @@ jobs:
     # `ios-e2e` both `needs: preview` — no Playwright run and no simulator.
     #
     # `unit` is deliberately NOT gated. Markdown in this repo is not inert:
-    # claudeMdGuard, decisionsRegisterGuard, removedFeaturesGuard,
-    # googleAccountingGuard and oneGoogleKeyGuard all read CLAUDE.md or
-    # docs/decisions.md as TEXT, so a docs-only PR is exactly the kind that
-    # reds them.
+    # claudeMdGuard reads CLAUDE.md as TEXT, so a docs-only PR is exactly the
+    # kind that reds it. (docs/ itself is a local gitignored folder since
+    # 2026-10-07, so decisionsRegisterGuard skips here and runs locally.)
     needs: [unit, decide]
     if: needs.decide.outputs.docs_only != 'true'
     runs-on: ubuntu-latest

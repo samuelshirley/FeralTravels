@@ -4,8 +4,10 @@
 > what you must not break, so you can orient without scanning the codebase. It is
 > **guarded at 28 KB** (`src/lib/claudeMdGuard.test.ts`): narrative lives in
 > `docs/`, linked from the line that summarises it, so read that doc when your
-> task touches the area. Before adding anything here, read **Keeping this file
-> current**.
+> task touches the area. **`docs/` is not in git** (Sam, 2026-10-07): it is a
+> local, gitignored folder at `/Users/samuelashirley/Documents/Github/FeralTravels/docs` — read and write it by that absolute
+> path from any worktree; it is the one place in the main checkout an agent
+> may edit. Before adding anything here, read **Keeping this file current**.
 
 ## MVP scope — hold the line
 
@@ -372,8 +374,9 @@ production failures: **`docs/design/playwright-mcp.md`**.
 
 **Mutation-check every new guard test** — reintroduce the exact bug, watch it
 fail, restore; an unverified guard is decoration. Register any new
-`src/lib/*Guard.test.ts` in `docs/decisions.md` or
-`decisionsRegisterGuard.test.ts` fails the suite.
+`src/lib/*Guard.test.ts` in the local `docs/decisions.md`;
+`decisionsRegisterGuard.test.ts` checks it wherever that file exists and skips
+where it does not (CI).
 
 ## Keeping this file current
 
@@ -394,8 +397,9 @@ something in the next five minutes:
 **What does NOT go here:** everything else — why a decision was made, what a
 wrong belief cost, postmortems, measurements, migration narratives. That is the
 most valuable text in the repo and it belongs in `docs/`, in the topic file for
-that area. **Write the prose there first, then add at most one sentence here
-pointing at it.** If you are adding a paragraph, you are in the wrong file.
+that area — the LOCAL folder, by its absolute path, never in a PR. **Write the
+prose there first, then add at most one sentence here pointing at it.** If you
+are adding a paragraph, you are in the wrong file.
 
 This file was 225 KB on 2026-09-20 — nearly tripled in sixteen days, because the
 old version of this section said what to update and never what not to put here.
@@ -403,4 +407,5 @@ If a change pushes it over 28 KB, move prose out. Raise the number only for
 content the guard itself compels — an index entry, never a paragraph.
 
 Every section above links its own file, all under `docs/design/` — except
-`docs/decisions.md`, the decision register and guard-test registry.
+`docs/decisions.md`, the decision register and guard-test registry. Those links
+resolve in the local `/Users/samuelashirley/Documents/Github/FeralTravels/docs`, which git does not track.
