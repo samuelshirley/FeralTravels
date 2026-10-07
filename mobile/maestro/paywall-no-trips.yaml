@@ -1,0 +1,80 @@
+# The paywall SCREEN (app/paywall.tsx): a blocked account with no trips of its
+# own is sent there at launch instead of to an empty list. paywall.yaml covers
+# a blocked account that HAS trips (Penny's bubble); nothing reached this
+# screen before.
+#
+# The trip is deleted through the UI while the account is still entitled
+# (seed-account.js refuses an account that owns nothing, and sign-in waits for
+# a trip card), then the account is blocked and the app relaunched.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `pn`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: pn
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# ── Delete the only trip ────────────────────────────────────────────────────
+- tapOn: 'EDIT TRIPS'
+- tapOn:
+    id: 'trip-delete-${output.account.tripId}'
+- extendedWaitUntil:
+    visible: 'Delete trip?'
+    timeout: 10000
+- tapOn:
+    id: 'trip-delete-confirm'
+- extendedWaitUntil:
+    notVisible: 'Delete trip?'
+    timeout: 20000
+
+# ── Blocked, relaunched: the paywall screen, not the list ──────────────────
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '7'
+      SUBSCRIPTION_STATUS: ''
+- stopApp
+- launchApp
+# The typing bubble runs ~3 s before Penny's message appears.
+- extendedWaitUntil:
+    visible:
+      text: ".*That.s your seven days up.*"
+    timeout: 30000
+- assertVisible:
+    id: 'paywall-cta'
+    text: 'Keep planning'
+- assertNotVisible: '+ New trip'
+- assertNotVisible:
+    id: 'chat-composer-input'
+
+# Its sheet carries the promo box — the way out from this screen too.
+- tapOn:
+    id: 'paywall-cta'
+- extendedWaitUntil:
+    visible:
+      text: '.*Choose a plan.*'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'promo-redeemer'
+    direction: DOWN
+    timeout: 20000
+- tapOn: 'Close'

@@ -19,7 +19,6 @@ import MapView, {
 } from "react-native-maps";
 
 import { Spinner } from "@/components/ui";
-import { tripApi } from "@/lib/api";
 import { GOOGLE_MAPS_API_KEY } from "@/lib/config";
 import { theme, shadow } from "@/lib/theme";
 import { clusterPixels, type PixelPoint } from "@/shared/lib/mapClustering";
@@ -48,6 +47,7 @@ import type {
  * clustering, the zoom-preserving pan, the colors, the copy) is a faithful port.
  */
 interface TripMapProps {
+  /** Unread since trail overlays were removed (2026-10-07); the trip screen still passes it. */
   trip: Trip;
   legs: LegWithDetails[];
   pois: POI[];
@@ -92,7 +92,6 @@ const DEFAULT_LEG_COLOR = "#9184d9";
 const DESTINATION_COLOR = "#d2cefd";
 const GAP_COLOR = "#E8705C";
 const POI_COLOR = "#9690c9";
-const TRAIL_FALLBACK_COLOR = "#9690c9";
 
 /** Web-Mercator tile size — the unit google.maps.Projection works in. */
 const WORLD_TILE_PX = 256;
@@ -161,37 +160,6 @@ const FALLBACK_REGION: Region = {
   longitudeDelta: 20,
 };
 
-// ── GPX response shapes ─────────────────────────────────────────────────────
-// `/api/gpx` returns the GPXTrail row PLUS a parsed `geojson` blob and an
-// optional per-trail color. GPXTrail in shared/types doesn't model those extra
-// fields (the web casts the raw fetch the same way), so we narrow locally.
-interface GpxFeatureCollection {
-  type: "FeatureCollection";
-  features: Array<{
-    type: "Feature";
-    geometry:
-      | { type: "LineString"; coordinates: [number, number, number?][] }
-      | { type: "MultiLineString"; coordinates: [number, number, number?][][] }
-      | { type: "Point"; coordinates: [number, number, number?] };
-    properties?: Record<string, unknown>;
-  }>;
-}
-
-interface GpxTrailResponse {
-  id: string;
-  name: string;
-  geojson: GpxFeatureCollection | null;
-  color?: string | null;
-  surface?: string | null;
-}
-
-/** One decoded GPX line ready to render. */
-interface TrailLine {
-  key: string;
-  color: string;
-  coords: LatLng[];
-}
-
 /** Flatten every renderable stop (has coords, not dismissed) out of the legs. */
 function collectStopPoints(legs: LegWithDetails[]): MapStopPoint[] {
   const out: MapStopPoint[] = [];
@@ -228,11 +196,6 @@ function lineStringToCoords(
     latitude: lat,
     longitude: lng,
   }));
-}
-
-/** Same [lng, lat] → { latitude, longitude } swap for GPX feature geometry. */
-function gpxLineToCoords(line: [number, number, number?][]): LatLng[] {
-  return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
 }
 
 /**
@@ -296,7 +259,6 @@ function legRouteKey(leg: LegWithDetails): string {
 }
 
 export default function TripMap({
-  trip,
   legs,
   pois,
   selectedLegId,
@@ -311,8 +273,6 @@ export default function TripMap({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mapWidth, setMapWidth] = useState(0);
   const [region, setRegion] = useState<Region>(FALLBACK_REGION);
-  const [trails, setTrails] = useState<TrailLine[]>([]);
-  const [trailsLoading, setTrailsLoading] = useState(false);
 
   // ── Route geometry ────────────────────────────────────────────────────────
   // The web keeps a routeCacheRef keyed by leg coords because it used to call the
@@ -401,75 +361,6 @@ export default function TripMap({
         .filter((m): m is MapStopPoint => m != null)
     );
   }, [stopPoints, region, mapWidth]);
-
-  // ── GPX trail overlays ────────────────────────────────────────────────────
-  // The web re-fetches on every `trailsVersion` bump (the upload UI increments it
-  // after a successful GPX upload). This component's prop signature has no such
-  // prop, and native has no GPX upload screen yet, so we fetch once per leg
-  // whenever the LEG SET changes — keyed on leg ids, not the whole `legs` array,
-  // so unrelated churn (stops loading as days are opened) doesn't refetch.
-  const legIdsKey = useMemo(() => legs.map((l) => l.id).join(","), [legs]);
-  const legColorById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const leg of legs) m.set(leg.id, leg.color || DEFAULT_LEG_COLOR);
-    return m;
-  }, [legs]);
-
-  useEffect(() => {
-    const legIds = legIdsKey ? legIdsKey.split(",") : [];
-    if (legIds.length === 0) {
-      setTrails([]);
-      return;
-    }
-
-    let cancelled = false;
-    const api = tripApi(trip.id);
-    setTrailsLoading(true);
-
-    (async () => {
-      const collected: TrailLine[] = [];
-      for (const legId of legIds) {
-        try {
-          const raw = await api.listGpxForLeg(legId);
-          if (cancelled) return;
-          const legColor = legColorById.get(legId) || DEFAULT_LEG_COLOR;
-          (raw as unknown as GpxTrailResponse[]).forEach((trail, idx) => {
-            const trailColor = trail.color || legColor || TRAIL_FALLBACK_COLOR;
-            const baseKey = `leg:${legId}#${trail.id ?? idx}`;
-            trail.geojson?.features.forEach((feature, featureIdx) => {
-              const lines: [number, number, number?][][] = [];
-              if (feature.geometry.type === "LineString") {
-                lines.push(feature.geometry.coordinates);
-              } else if (feature.geometry.type === "MultiLineString") {
-                lines.push(...feature.geometry.coordinates);
-              }
-              lines.forEach((line, lineIdx) => {
-                const coords = gpxLineToCoords(line);
-                if (coords.length < 2) return;
-                collected.push({
-                  key: `${baseKey}:${featureIdx}:${lineIdx}`,
-                  color: trailColor,
-                  coords,
-                });
-              });
-            });
-          });
-        } catch (err) {
-          // One bad leg shouldn't blank the other legs' trails — the web warns
-          // and continues too.
-          console.warn(`GPX fetch failed for leg ${legId}:`, err);
-        }
-      }
-      if (cancelled) return;
-      setTrails(collected);
-      setTrailsLoading(false);
-    })();
-
-    return () => {
-      cancelled = true;
-      setTrailsLoading(false);
-    };
-  }, [legIdsKey, legColorById, trip.id]);
 
   // ── Fit to data ───────────────────────────────────────────────────────────
   const fitCoords = useMemo(() => {
@@ -725,18 +616,6 @@ export default function TripMap({
           />
         ))}
 
-        {/* GPX trail overlays */}
-        {trails.map((trail) => (
-          <Polyline
-            key={trail.key}
-            coordinates={trail.coords}
-            strokeColor={withAlpha(trail.color, 0.95)}
-            strokeWidth={4}
-            lineDashPattern={[2, 6]}
-            zIndex={6}
-          />
-        ))}
-
         {/* Leg start markers */}
         {legs.map((leg) => {
           if (leg.start_lat == null || leg.start_lng == null) return null;
@@ -804,13 +683,15 @@ export default function TripMap({
             />
             <Callout tooltip={false}>
               <View style={styles.callout}>
-                {/* The web hardcodes "Nordkapp" / "71.17°N — The Goal" (it shipped
-                    for one trip). Prefer the leg's real end_name when we have it
-                    and keep the web's exact copy as the fallback. */}
+                {/* The trip's real destination and the day it is reached. This
+                    fell back to the one-trip prototype's "Nordkapp / 71.17°N —
+                    The Goal" on every trip. */}
                 <Text style={styles.calloutDestination}>
-                  {lastLeg.end_name || "Nordkapp"}
+                  {lastLeg.end_name || lastLeg.title}
                 </Text>
-                <Text style={styles.calloutBody}>71.17°N — The Goal</Text>
+                {lastLeg.dates ? (
+                  <Text style={styles.calloutBody}>{lastLeg.dates}</Text>
+                ) : null}
               </View>
             </Callout>
           </Marker>
@@ -1025,11 +906,6 @@ export default function TripMap({
         </View>
       ) : null}
 
-      {trailsLoading && ready ? (
-        <View style={styles.trailsBadge} pointerEvents="none">
-          <Spinner />
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -1260,19 +1136,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: theme.subtle,
     fontVariant: ["tabular-nums"],
-  },
-  trailsBadge: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    backgroundColor: theme.surface,
-    borderRadius: 999,
-    padding: 8,
-    // The only `shadow.sm` site with no edge of its own. `sm` is an inert
-    // object now (see mobile/lib/theme.ts), so on a dark ground this floated
-    // over the map with nothing separating it from the tiles.
-    borderWidth: 1,
-    borderColor: theme.border,
-    ...shadow.sm,
   },
 });

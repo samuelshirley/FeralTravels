@@ -1,0 +1,72 @@
+{
+  "entries": [
+    {
+      "gap": "accounts",
+      "reason": "no test links an OAuth account: every exchange in oauth-exchange.spec is refused, and sign-in is OTP"
+    },
+    {
+      "gap": "costs",
+      "reason": "legacy table: no code path writes it"
+    },
+    {
+      "gap": "gpx_trails",
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); table kept so the migration stays additive"
+    },
+    {
+      "gap": "links",
+      "reason": "no test writes a leg link"
+    },
+    {
+      "gap": "oauth_token_uses",
+      "reason": "every exchange in oauth-exchange.spec is refused before a token is redeemed"
+    },
+    {
+      "gap": "pois",
+      "reason": "no test writes a POI"
+    },
+    {
+      "gap": "routes.end_source_url",
+      "reason": "written by addRoute/updateRoute (POST/PATCH /api/routes, Penny’s add_route/update_route); api-contracts seeds a route with end_source ‘manual’ and no URL, and no flow asks Penny for an overnight option"
+    },
+    {
+      "gap": "routes.gpx_trail_id",
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); column kept so the migration stays additive"
+    },
+    {
+      "gap": "stops.fuel_amount_l",
+      "reason": "estimate: nothing writes it today"
+    },
+    {
+      "gap": "stops.photos",
+      "reason": "dormant column (stop photos removed 2026-06-30), always null"
+    },
+    {
+      "gap": "subscriptions.original_transaction_id",
+      "reason": "set only by the RevenueCat webhook"
+    },
+    {
+      "gap": "tasks.answer",
+      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
+    },
+    {
+      "gap": "tasks.answer_image_url",
+      "reason": "written only by updateTask (PATCH /api/tasks/[id], Penny’s update_task); no test answers a task"
+    },
+    {
+      "gap": "tasks.answer_source_url",
+      "reason": "written by updateTask (PATCH /api/tasks/[id], Penny’s update_task) and filled by POST /api/routes/[id]/select on an open “Pick tonight’s stop” task; the only seeded task is “Book the Strasbourg campsite” and no test answers a task"
+    },
+    {
+      "gap": "tasks.description",
+      "reason": "written by addTask/updateTask (/api/tasks, Penny’s add_task/update_task); the seeded task and the contract rows send no description, and no flow asks Penny for a task"
+    },
+    {
+      "gap": "users.image",
+      "reason": "set only from an OAuth profile; sign-in in tests is OTP"
+    },
+    {
+      "gap": "verificationTokens",
+      "reason": "Auth.js magic-link table; sign-in is OTP (email_otp_codes)"
+    }
+  ]
+}

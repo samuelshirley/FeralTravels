@@ -17,7 +17,6 @@ const patchSchema = z.object({
   distance_km: z.number().nullish(),
   surface: z.string().nullish(),
   status: z.string().optional(),
-  gpx_trail_id: z.string().uuid().nullish(),
   sort_order: z.number().int().optional(),
   end_lat: z.number().min(-90).max(90).nullish(),
   end_lng: z.number().min(-180).max(180).nullish(),

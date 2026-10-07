@@ -48,7 +48,7 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
     if (!linkIdRaw) return Response.json({ error: 'linkId query param is required' }, { status: 400 });
     const linkId = parseUUID(linkIdRaw);
     if (!linkId) return Response.json({ error: 'linkId must be a valid UUID' }, { status: 400 });
-    const ok = await deleteRouteLink(linkId);
+    const ok = await deleteRouteLink(routeId, linkId);
     if (!ok) return Response.json({ error: 'Not found' }, { status: 404 });
     return Response.json({ ok: true });
   } catch (err) {

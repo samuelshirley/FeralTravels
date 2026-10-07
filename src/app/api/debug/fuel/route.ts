@@ -4,8 +4,13 @@
  *
  * Finn's data sources (all Google Maps Platform): Directions (route geometry) +
  * Places search-along-route (stations). Both use the server Google key.
+ *
+ * Admin-only: every hit fires PAID Directions + Places calls, so any signed-in
+ * user could spend on our key with no limit (found 2026-10-06). A refusal goes
+ * through errorResponse — 401 signed out, 403 not an admin, 503 when the
+ * session store is down — never the blanket 500 this used to return.
  */
-import { requireUserId } from '@/server/auth/guards';
+import { requireAdmin, errorResponse } from '@/server/auth/guards';
 import { getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { normalizeRangeKm } from '@/lib/vehicleProfile';
 import { encodePolyline, type LatLng } from '@/lib/polyline';
@@ -20,7 +25,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const userId = await requireUserId();
+    const { id: userId } = await requireAdmin();
     const results: Record<string, unknown> = {};
 
     // 1. Vehicle / range — Finn uses the stated fuel range.
@@ -96,9 +101,6 @@ export async function GET() {
 
     return Response.json(results, { status: 200 });
   } catch (err) {
-    return Response.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    return errorResponse(err);
   }
 }

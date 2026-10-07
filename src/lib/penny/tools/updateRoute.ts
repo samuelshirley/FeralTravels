@@ -3,7 +3,9 @@ import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import {
+  distanceKmJson,
   distanceKmSchema,
+  driveTimeMinutesJson,
   driveTimeMinutesSchema,
   latSchema,
   lngSchema,
@@ -28,7 +30,13 @@ const dataSchema = z.object({
   end_source_url: urlSchema.nullish(),
   drive_time_minutes: driveTimeMinutesSchema.nullish(),
   links: z.array(routeLinkSchema).nullish(),
-});
+})
+  // Both or neither, as on add_route. A lone end_lat would be merged into the
+  // row's old end_lng: a point that is nowhere either value came from.
+  .refine((d) => (d.end_lat == null) === (d.end_lng == null), {
+    message: 'end_lat and end_lng must both be set or both omitted.',
+    path: ['end_lat'],
+  });
 
 const baseSchema = z.object({
   route_id: z.string().uuid(),
@@ -55,7 +63,7 @@ export const tool: Anthropic.Tool = {
         properties: {
           label: { type: 'string' },
           description: { type: 'string' },
-          distance_km: { type: 'number', minimum: 0 },
+          distance_km: distanceKmJson,
           surface: { type: 'string', enum: ['paved', 'gravel', 'mix'] },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
           end_lat: { type: 'number', minimum: -90, maximum: 90 },
@@ -63,7 +71,7 @@ export const tool: Anthropic.Tool = {
           end_name: { type: 'string' },
           end_source: { type: 'string', enum: ['google_places', 'manual'] },
           end_source_url: { type: 'string', format: 'uri' },
-          drive_time_minutes: { type: 'integer', minimum: 0, maximum: 24 * 60 },
+          drive_time_minutes: driveTimeMinutesJson,
           links: {
             type: 'array',
             items: {

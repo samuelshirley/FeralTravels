@@ -30,7 +30,7 @@ import { planReadyText } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
-  getTurnByKey,
+  getTurnByKeyForUser,
   promoteTurnToRunning,
   claimNextQueuedTurn,
   markTurnDone,
@@ -40,7 +40,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rethrowTripNameConflict, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -389,7 +389,7 @@ export async function POST(req: Request) {
     // again — hand back the existing record so the client can apply its result
     // (done/error) or keep polling until it lands (running/queued). This is the
     // guard against a "Please try again" double-send spawning a second replan.
-    const existingTurn = await getTurnByKey(idempotencyKey);
+    const existingTurn = await getTurnByKeyForUser(idempotencyKey, userId, tripId);
     if (existingTurn) {
       return Response.json({ turn: existingTurn });
     }
@@ -1176,7 +1176,8 @@ async function dispatchAction(
       await db
         .update(trips)
         .set(tripUpdate)
-        .where(eq(trips.id, tripId));
+        .where(eq(trips.id, tripId))
+        .catch((e) => rethrowTripNameConflict(e, action.input.name ?? ''));
       // Auto-name the trip from its season/dates once a start date exists —
       // a no-op unless the trip still carries the "New trip" placeholder.
       await autoNameTripFromSeason(tripId, userId);
@@ -1419,7 +1420,6 @@ async function dispatchAction(
         distance_km: data.distance_km ?? null,
         surface: data.surface ?? null,
         status: data.status ?? null,
-        gpx_trail_id: data.gpx_trail_id ?? null,
         end_lat: data.end_lat ?? null,
         end_lng: data.end_lng ?? null,
         end_name: data.end_name ?? null,

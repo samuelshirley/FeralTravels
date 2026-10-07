@@ -260,6 +260,31 @@ describe('Maestro flow parameters', () => {
     }
   });
 
+  /**
+   * Every flow in a shard derives its own account from the shard's ONE address
+   * by an ACCOUNT_SUFFIX (seed-account.js), and /api/test/seed RESETS the
+   * account it is given. Two flows in one shard with the same suffix would be
+   * the same account: the second's seed would wipe the first's trips, and their
+   * single-use sign-in codes would collide. Across shards the base address
+   * differs, so only a clash within a shard matters.
+   */
+  it('within a shard, every flow seeds an account of its own (distinct ACCOUNT_SUFFIX)', () => {
+    for (const shard of SHARDS) {
+      const seen = new Map<string, string>();
+      for (const flow of shard.flows) {
+        const source = live(fs.readFileSync(path.join(FLOW_DIR, flow), 'utf8'));
+        for (const m of source.matchAll(/ACCOUNT_SUFFIX:\s*['"]?([a-z0-9]+)['"]?/g)) {
+          const owner = seen.get(m[1]);
+          expect(owner, `${shard.name}: ${flow} reuses suffix "${m[1]}" from ${owner}`).toBeUndefined();
+          seen.set(m[1], flow);
+        }
+      }
+    }
+    // It found something to check: the flows shard seeds one account per flow.
+    const flowsShard = SHARDS.find((s) => s.name === 'flows');
+    expect(flowsShard?.flows.length).toBeGreaterThanOrEqual(8);
+  });
+
   it('ci.yml runs launch.yaml, then each shard through its own config', () => {
     expect(CI).toMatch(/test mobile\/maestro\/launch\.yaml/);
     expect(CI).toMatch(/test mobile\/maestro \\\n\s+--config "mobile\/maestro\/shards\/\$SHARD\.yaml"/);

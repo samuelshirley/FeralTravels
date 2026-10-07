@@ -247,7 +247,6 @@ export default async function AdminPage() {
       value: overview.totalChat,
       sub: `${overview.totalReplans} Penny edits`,
     },
-    { label: 'GPX trails uploaded', value: overview.totalGpx },
     {
       label: 'New signups (24h)',
       value: overview.newUsers24h,

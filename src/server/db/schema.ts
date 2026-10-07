@@ -360,8 +360,13 @@ export const trips = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     vehicleId: uuid('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
-    /** DB-generated `lower(trim(name))`; unique per user via index (see baseline migration). */
-    tripNameCiKey: text('trip_name_ci_key'),
+    /**
+     * Postgres-generated `lower(trim(name))`, unique per user via
+     * trips_user_name_unique_idx. Never written by the app (it cannot be).
+     * Migration 0044 made it really generated: prod was built by db:push from
+     * a schema.ts that declared it plain, so it sat NULL and blocked nothing.
+     */
+    tripNameCiKey: text('trip_name_ci_key').generatedAlwaysAs(sql`lower(trim("name"))`),
     /** Free-text dates (original columns — may contain "May 28", "late May", etc.). */
     startDate: text('start_date'),
     endDate: text('end_date'),

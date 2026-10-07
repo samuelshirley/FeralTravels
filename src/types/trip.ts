@@ -244,19 +244,6 @@ export interface POI {
   status: string;
 }
 
-export interface GPXTrail {
-  id: string;
-  leg_id: string | null;
-  name: string;
-  filename: string;
-  source: string | null;
-  source_url: string | null;
-  distance_km: number | null;
-  surface: string | null;
-  verified: boolean;
-  notes: string | null;
-}
-
 export interface Link {
   id: string;
   leg_id: string;
@@ -402,7 +389,6 @@ export interface Route {
   distance_km: number | null;
   surface: string | null;
   status: string;
-  gpx_trail_id: string | null;
   // Per-route destination (for overnight options). When set, "Go" navigates
   // to this point instead of the leg's end coords.
   end_lat: number | null;

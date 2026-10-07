@@ -1,4 +1,9 @@
-# docs-drift — a REVIEWER for CLAUDE.md and docs/decisions.md, never an author.
+# docs-drift — a REVIEWER for CLAUDE.md, never an author.
+#
+# CLAUDE.md ONLY since 2026-10-07 (Sam): docs/ is no longer in git. It is a
+# local, gitignored folder in the main checkout, so docs/decisions.md and
+# docs/design/* are not in the checkout this job sees. CLAUDE.md is the one
+# tracked document an agent reads first, so it is the one reviewed here.
 #
 # WHY THIS EXISTS, precisely. On 2026-07-22 commit a0c9ee6 moved Finn from OSM
 # Overpass + OSRM to Google Places + Directions. CLAUDE.md went on saying OSM,
@@ -16,8 +21,8 @@
 # in src/lib/*Guard.test.ts and needs no model at all; this job covers only the
 # half that is prose and therefore cannot be checked by a machine.
 #
-# COST. One Claude call per PR push, over the diff plus ~35 KB of docs. It bills
-# the CI key, never the production one — the whole point of splitting them
+# COST. One Claude call per PR push, over the diff plus CLAUDE.md (~22 KB).
+# It bills the CI key, never the production one — the whole point of splitting them
 # (CLAUDE.md, "One Anthropic key was one number"). MEASURE IT in the Anthropic
 # Console after three PRs and record the number here, replacing this sentence.
 # If it is not worth what it costs, delete the job; the guard tests stay.
@@ -25,11 +30,11 @@ name: Docs drift
 
 on:
   pull_request:
-    # Skip when the diff is only docs: a docs-only PR is usually the FIX for
-    # drift, and asking a model whether the correction is stale is noise.
+    # Skip when the diff is only markdown: a markdown-only PR is usually the
+    # FIX for drift, and asking a model whether the correction is stale is
+    # noise. (docs/ is gitignored, so no PR carries it.)
     paths-ignore:
       - '**/*.md'
-      - 'docs/**'
 
 permissions:
   contents: read
@@ -51,7 +56,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Review the diff against CLAUDE.md and the decisions register
+      - name: Review the diff against CLAUDE.md
         uses: anthropics/claude-code-action@v1
         continue-on-error: true
         env:
@@ -61,9 +66,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
         with:
           prompt: |
-            Read the PR diff, CLAUDE.md and docs/decisions.md.
+            Read the PR diff and CLAUDE.md.
 
-            List every sentence in those two files that the diff makes false,
+            List every sentence in CLAUDE.md that the diff makes false,
             stale, or incomplete: a new route, script, Penny tool, table or
             guard test that is not listed; a removed one still listed as though
             it exists; a behaviour that changed but is still described the old
