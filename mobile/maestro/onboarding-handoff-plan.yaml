@@ -75,9 +75,23 @@ appId: ${APP_ID}
     visible:
       id: 'onboarding-vehicle-card'
     timeout: 30000
+# Let the card settle before typing (onboarding-wizard.yaml's asserts, which
+# double as the wait). The first local run typed the moment the card appeared,
+# and 'Hilux' was lost: the card then refused the submit with an empty name.
+- assertVisible:
+    id: 'onboarding-chip-chosen'
+    text: 'Metric \(km\)'
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+- waitForAnimationToEnd
 - tapOn:
     id: 'onboarding-vehicle-name'
 - inputText: 'Hilux'
+# Read back before submitting, so a lost keystroke fails HERE, by name.
+- assertVisible:
+    id: 'onboarding-vehicle-name'
+    text: 'Hilux'
 - tapOn: 'RANGE ON A TANK'
 - tapOn: '500 km'
 - tapOn:
