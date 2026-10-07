@@ -28,7 +28,10 @@ import { seededTripStartISO } from '../src/app/api/test/seedDates';
  * And the spend half: none of it may cost anything. Every refusal must land
  * BEFORE a paid Anthropic or Google call, so each account's paid-call count
  * (`usage_events`, read through /api/test/seed `paid-usage`) is the same at the
- * end as at the start.
+ * end as at the start. A paid call is a row that records a call actually made
+ * (isPaidCallRow in repos/testSupport.ts): the failed `anthropic:replan` row
+ * the replan route files for the malformed case is an error log for
+ * /admin/errors — no model, no cost — and is not one.
  *
  * The owner's happy-path writes (a route, its link, a task, a stop, viewport
  * time, a position report) are LEFT in place: they are the rows PR #83's

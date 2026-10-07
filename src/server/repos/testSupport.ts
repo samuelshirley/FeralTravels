@@ -558,10 +558,54 @@ async function seedReplanRequests(userId: string, requests: number): Promise<voi
   });
 }
 
+/** The fields of a `usage_events` row that say whether it was a paid call. */
+export interface UsageRowShape {
+  provider: string;
+  model: string | null;
+  costMicrocents: number | null;
+}
+
+/**
+ * Was this `usage_events` row a call actually MADE to a paid provider?
+ *
+ * NOT every Anthropic- or Google-family row is one. The replan route files a
+ * failed `anthropic:replan` row for every fatal error, so it shows in
+ * /admin/errors, including a malformed payload refused before any model was
+ * asked (model null, cost null, success false). Counting that as spend made the
+ * contract spec's "no refusal cost anything" red on a refusal that cost nothing
+ * (CI run 37551796542). How each paid path actually logs:
+ *
+ *   - `anthropic` (lib/claude.ts, the classifier, onboarding's scans): model on
+ *     every call, failed ones included, with its cost estimate;
+ *   - `anthropic:accounting-write-failed`: a REAL call whose own row could not
+ *     be written; no model and no cost, so it is named explicitly;
+ *   - `google-places`: the SKU in `model`, and a cost; `google-directions` /
+ *     `google-geocode`: no model but a cost on every row, and no row at all
+ *     unless requests > 0;
+ *   - `jev`: always cost 0 and possibly no model, but a row exists only for a
+ *     call to Jev, so every one counts;
+ *   - `penny:gate`: NOT a call. `model` holds the tier for free rule-based
+ *     decisions too; when the classifier does run it logs its own `anthropic`
+ *     row, which this already counts.
+ *   - `anthropic:replan` / `anthropic:replan-truncated`: annotations (errors,
+ *     a truncated loop), model null and no cost; the call they annotate has its
+ *     own `anthropic` row.
+ *
+ * The fixtures' synthetic rows (`anthropic:e2e-*`) are never calls.
+ */
+export function isPaidCallRow(row: UsageRowShape): boolean {
+  if (row.provider.startsWith('anthropic:e2e-')) return false;
+  if (row.provider === GATE_PROVIDER) return false;
+  if (row.provider === JEV_PROVIDER) return true;
+  if (row.provider === 'anthropic:accounting-write-failed') return true;
+  const paidFamily = row.provider.startsWith('anthropic') || row.provider.startsWith('google');
+  return paidFamily && (row.model != null || (row.costMicrocents ?? 0) > 0);
+}
+
 /**
  * TEST-ONLY: the paid calls on record for a fixture account — every
- * `usage_events` row that is an Anthropic, Google, gate-classifier or Jev
- * call, excluding the synthetic rows the fixtures plant (`anthropic:e2e-*`).
+ * `usage_events` row {@link isPaidCallRow} says was a call actually made to
+ * Anthropic, Google or Jev. Error-log and annotation rows are not calls.
  *
  * The API contract specs read it before and after their refusals, to prove a
  * refused request was refused BEFORE it reached anything that costs money.
@@ -577,21 +621,19 @@ export async function readFixturePaidUsage(
   }
   const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
   if (!user) throw new Error('readFixturePaidUsage: no such fixture user');
-  const [row] = await db
+  const rows = await db
     .select({
-      calls: sql<number>`count(*)::int`,
-      microcents: sql<number>`coalesce(sum(${usageEvents.costMicrocents}), 0)::bigint`,
+      provider: usageEvents.provider,
+      model: usageEvents.model,
+      costMicrocents: usageEvents.costMicrocents,
     })
     .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.userId, user.id),
-        // The fixtures' own synthetic rows (spend, request counts) are not calls.
-        sql`${usageEvents.provider} NOT LIKE 'anthropic:e2e-%'`,
-        sql`(${usageEvents.provider} LIKE 'anthropic%' OR ${usageEvents.provider} LIKE 'google%' OR ${usageEvents.provider} IN (${GATE_PROVIDER}, ${JEV_PROVIDER}))`,
-      ),
-    );
-  return { calls: Number(row?.calls ?? 0), microcents: Number(row?.microcents ?? 0) };
+    .where(eq(usageEvents.userId, user.id));
+  const paid = rows.filter(isPaidCallRow);
+  return {
+    calls: paid.length,
+    microcents: paid.reduce((sum, r) => sum + (r.costMicrocents ?? 0), 0),
+  };
 }
 
 /**
