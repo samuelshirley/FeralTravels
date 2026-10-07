@@ -11,8 +11,7 @@
  * that, stop as late as possible (fewer stops). See
  * `docs/design/finn-fuel-agent.md`.
  *
- * Pure functions only — no I/O. Price scoring is layered on top later; this is
- * the safety + placement skeleton.
+ * Pure functions only — no I/O. This is the safety + placement core.
  */
 
 export interface TankState {
@@ -58,8 +57,7 @@ export interface NextStopPlan<C extends FuelCandidate = FuelCandidate> {
  * past the range. If no candidate is reachable at all, flag a gap (the alarm is
  * the caller's to raise).
  *
- * Note this is placement only; once prices exist, scoring re-ranks the safe pool
- * by price/detour rather than pure distance.
+ * Distance is the only ranking: Finn does not price stations.
  */
 export function planNextStop<C extends FuelCandidate>(
   candidates: C[],
