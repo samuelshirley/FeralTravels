@@ -9,6 +9,22 @@
 # behind a guessable URL, and it keeps the project under Neon's branch limit.
 # Once the branch is gone the preview URL still resolves but can't reach a DB,
 # which is the intended end state.
+#
+# The second job deletes the dead previews themselves. The Hobby plan caps
+# Deployment Storage at 10 GB, every stored build counts against it, and every
+# CI push makes three (the app preview, the web-blocked preview, the Playwright
+# report). Nothing else ever deletes one: 481 had piled up by 2026-10-07 and
+# were cleared by hand.
+#
+# It sweeps the whole project, not just the closed PR, so a missed run is
+# caught by the next. CI deploys from the PR's merge checkout, so a preview's
+# `meta.githubCommitMessage` is `Merge <PR head sha> into <base sha>`; that sha
+# is what identifies it. A deployment is deleted only if it is not production,
+# carries that message, and its sha is not the current head of an open PR —
+# only the newest push of an open PR has a working preview. Production, the
+# open PRs' current previews, and anything without that message are never
+# touched. If the open PRs can't be listed it deletes nothing: an unknown list
+# would make every open PR's live preview look stale.
 
 name: PR cleanup
 
@@ -18,6 +34,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   delete-neon-branch:
@@ -34,3 +51,87 @@ jobs:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
           api_key: ${{ secrets.NEON_API_KEY }}
           branch: preview/pr-${{ github.event.pull_request.number }}
+
+  delete-stale-previews:
+    name: Delete stale Vercel preview deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Two PRs closing together would otherwise race to delete the same
+    # deployments and warn about each other's 404s.
+    concurrency:
+      group: vercel-preview-sweep
+      cancel-in-progress: false
+    steps:
+      # Best-effort, like the Neon step: every failure is a ::warning:: with
+      # its HTTP status, never a red run. Uses the REST API with curl, not
+      # `vercel api`, which is beta and refuses DELETE non-interactively.
+      - name: Delete previews that aren't an open PR's current head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -uo pipefail
+          API=https://api.vercel.com
+          if ! BODY="$(mktemp)" || ! CANDIDATES="$(mktemp)"; then
+            echo "::warning::Could not create temp files, so no preview was deleted."
+            exit 0
+          fi
+
+          # An empty list is valid (the PR just closed was the only one open);
+          # a failed or malformed one is not, and stops the sweep.
+          if ! PRS="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 1000 --json headRefOid)" \
+            || ! HEADS="$(jq -ce 'if type == "array" and all(.[]; (.headRefOid | type) == "string" and (.headRefOid | test("^[0-9a-f]{40}$")))
+                                  then map(.headRefOid) else error("unexpected shape") end' <<<"$PRS")"; then
+            echo "::warning::Could not list the open PRs' head commits, so no preview was deleted. Without that list every open PR's live preview would look stale."
+            exit 0
+          fi
+          echo "Open PR heads: $HEADS"
+
+          # The three conditions, each required. `target` is the hard guard:
+          # production deployments carry "production", previews null.
+          SELECT='.deployments[]
+            | select(.target != "production")
+            | select((.uid | type) == "string" and (.uid | test("^dpl_[A-Za-z0-9]+$")))
+            | select((.meta.githubCommitMessage | type) == "string")
+            | (.meta.githubCommitMessage | capture("^Merge (?<sha>[0-9a-f]{40}) into ").sha) as $sha
+            | select($sha | IN($heads[]) | not)
+            | "\(.uid) \(.url)"'
+
+          # Collect every candidate first, delete after: deleting mid-listing
+          # would shift the pages under the `until` cursor. A failed page
+          # still leaves a usable partial list, since each candidate stands
+          # on its own.
+          LISTED=0
+          UNTIL=""
+          while :; do
+            CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "$API/v6/deployments?projectId=$VERCEL_PROJECT_ID&teamId=$VERCEL_ORG_ID&limit=100${UNTIL:+&until=$UNTIL}")" || CODE="${CODE:-000}"
+            if [ "$CODE" != 200 ] || ! jq -e '.deployments | type == "array"' "$BODY" >/dev/null 2>&1; then
+              echo "::warning::Listing Vercel deployments failed (HTTP $CODE) after $LISTED; only those are swept. $(head -c 300 "$BODY")"
+              break
+            fi
+            LISTED=$((LISTED + $(jq '.deployments | length' "$BODY")))
+            jq -r --argjson heads "$HEADS" "$SELECT" "$BODY" >> "$CANDIDATES"
+            UNTIL="$(jq -r '.pagination.next // empty' "$BODY")"
+            [ -n "$UNTIL" ] || break
+          done
+
+          DELETED=0
+          FAILED=0
+          while read -r DPL URL; do
+            CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "$API/v13/deployments/$DPL?teamId=$VERCEL_ORG_ID")" || CODE="${CODE:-000}"
+            if [ "$CODE" = 200 ]; then
+              DELETED=$((DELETED + 1))
+              echo "Deleted https://$URL ($DPL)"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::warning::Could not delete https://$URL ($DPL): HTTP $CODE $(head -c 300 "$BODY")"
+            fi
+          done < "$CANDIDATES"
+
+          KEPT=$((LISTED - DELETED - FAILED))
+          echo "Listed $LISTED, kept $KEPT, deleted $DELETED, failed $FAILED."
+          echo "Vercel previews: listed $LISTED, kept $KEPT, deleted $DELETED, failed $FAILED." >> "$GITHUB_STEP_SUMMARY"
