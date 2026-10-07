@@ -485,8 +485,15 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
       layers.finalMarker.addListener('click', () => {
         const iw = layers.infoWindow;
         if (iw) {
+          // The trip's real destination. This was a hardcoded "Nordkapp /
+          // 71.17°N — The Goal" from the one-trip prototype, so every trip's
+          // last pin claimed to be Nordkapp.
+          const destination = lastLeg.end_name || lastLeg.title;
           iw.setContent(
-            '<div style="font-size: 16px; font-weight: 700; color: #333;">Nordkapp</div><div style="font-size: 12px; color: #6b6b6b;">71.17°N — The Goal</div>'
+            `<div style="font-size: 16px; font-weight: 700; color: #333;">${escapeHtml(destination)}</div>` +
+              (lastLeg.dates
+                ? `<div style="font-size: 12px; color: #6b6b6b;">${escapeHtml(lastLeg.dates)}</div>`
+                : '')
           );
           iw.open({ anchor: layers.finalMarker!, map });
         }

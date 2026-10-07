@@ -26,10 +26,20 @@ const baseSchema = z.object({
   resume_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'resume_date must be ISO YYYY-MM-DD')
+    // A real calendar day, not just the shape: "2026-13-45" passed the regex
+    // and became a progress anchor nothing could fall on.
+    .refine(isCalendarDate, 'resume_date is not a real calendar date')
     .nullish(),
   /** Optional free-text note, e.g. "stopped short, too tired to push on". */
   note: z.string().max(500).nullish(),
 });
+
+/** True when YYYY-MM-DD names a day that exists (no month 13, no 30 Feb). */
+function isCalendarDate(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
 
 export type ReportPositionInput = z.infer<typeof baseSchema>;
 

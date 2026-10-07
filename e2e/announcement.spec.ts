@@ -32,6 +32,8 @@ const BODY = 'This is a test announcement for E2E.';
 const BUTTON = 'Wow nice job Sam';
 
 test.describe('Announcement', () => {
+  // In order: the second test deactivates what the first one reads.
+  test.describe.configure({ mode: 'serial' });
   let announcementId: string | null = null;
   let parkedIds: string[] = [];
 
@@ -48,12 +50,14 @@ test.describe('Announcement', () => {
   });
 
   // Always restore: a leaked active announcement would pop a modal over every
-  // future run of every other spec.
+  // future run of every other spec. The cleanup DEACTIVATES it and keeps the
+  // dismissal (rows the column-coverage job counts); it never deletes.
   test.afterAll(async () => {
     if (!announcementId) return;
-    await withApi((ctx) =>
-      ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } }),
-    );
+    await withApi(async (ctx) => {
+      const res = await ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } });
+      if (!res.ok()) throw new Error(`cleanup failed (${res.status()}): ${await res.text()}`);
+    });
   });
 
   /**
@@ -90,5 +94,17 @@ test.describe('Announcement', () => {
     const after = await page.request.get('/api/announcements/active');
     expect(after.ok()).toBe(true);
     expect(((await after.json()) as { announcement: unknown }).announcement).toBeNull();
+  });
+
+  test('cleanup leaves the seeded announcement inactive: served to nobody', async ({ page }) => {
+    await withApi(async (ctx) => {
+      const res = await ctx.delete('/api/test/announcement', { data: { announcementId, parkedIds } });
+      expect(res.ok(), await res.text()).toBe(true);
+    });
+    // A brand-new user, who has dismissed nothing, is not served it.
+    await signInAsNewUser(page, { seedFixture: false });
+    const res = await page.request.get('/api/announcements/active');
+    const { announcement } = (await res.json()) as { announcement: { id: string } | null };
+    expect(announcement?.id ?? null).not.toBe(announcementId);
   });
 });

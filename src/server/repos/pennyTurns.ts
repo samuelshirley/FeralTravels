@@ -2,6 +2,7 @@ import 'server-only';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { pennyTurns, type PennyTurnStatus } from '@/server/db/schema';
+import { ConflictError } from '@/server/auth/errors';
 
 export type PennyTurnImage = { dataUrl: string; mediaType: string };
 
@@ -46,6 +47,34 @@ export async function getTurnByKey(idempotencyKey: string): Promise<PennyTurn | 
     .where(eq(pennyTurns.idempotencyKey, idempotencyKey))
     .limit(1);
   return row ? toTurn(row) : null;
+}
+
+/**
+ * The replay lookup a REQUEST may make: the turn for this key, but only when it
+ * is the caller's own turn on the trip they named. Null otherwise — for an
+ * unknown key and for somebody else's alike, so the answer says nothing about
+ * whether another account used that key.
+ *
+ * `getTurnByKey` alone answered any caller holding a key with that turn's
+ * message and Penny's reply (found 2026-10-07). Keys are unique, so checking
+ * the one row in code is the same as filtering in SQL.
+ */
+export async function getTurnByKeyForUser(
+  idempotencyKey: string,
+  userId: string,
+  tripId: string,
+): Promise<PennyTurn | null> {
+  const turn = await getTurnByKey(idempotencyKey);
+  if (!turn || turn.user_id !== userId || turn.trip_id !== tripId) return null;
+  return turn;
+}
+
+/** A key already spent by another user or trip: refused, never replayed. */
+function assertOwnTurn(turn: PennyTurn, input: { userId: string; tripId: string }): PennyTurn {
+  if (turn.user_id !== input.userId || turn.trip_id !== input.tripId) {
+    throw new ConflictError('That send id is already in use. Send the message again.');
+  }
+  return turn;
 }
 
 /** Postgres unique-violation SQLSTATE — raised when a 2nd turn races for the
@@ -104,8 +133,11 @@ export async function createTurn(input: {
   userMessage: string;
   images?: PennyTurnImage[] | null;
 }): Promise<{ turn: PennyTurn; created: boolean }> {
+  // A replay of the caller's own send comes back as itself. Somebody else's key
+  // is a 409, not their turn: the unique index means it can never be inserted
+  // again, and handing back its row would leak it.
   const existing = await getTurnByKey(input.idempotencyKey);
-  if (existing) return { turn: existing, created: false };
+  if (existing) return { turn: assertOwnTurn(existing, input), created: false };
 
   const inserted = await db
     .insert(pennyTurns)
@@ -126,7 +158,7 @@ export async function createTurn(input: {
 
   const row = await getTurnByKey(input.idempotencyKey);
   if (!row) throw new Error('createTurn: row vanished after conflict');
-  return { turn: row, created: false };
+  return { turn: assertOwnTurn(row, input), created: false };
 }
 
 export async function markTurnDone(

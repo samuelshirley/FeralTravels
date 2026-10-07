@@ -192,10 +192,15 @@ export async function addRouteLink(input: {
   return rowMappers.routeLinkRow(row);
 }
 
-export async function deleteRouteLink(id: string): Promise<boolean> {
+/**
+ * Scoped to the route as well as the link id. The caller has checked that the
+ * user owns `routeId`; deleting by `linkId` alone let anyone who owned ANY
+ * route delete anyone's link by its UUID (IDOR, found 2026-10-06).
+ */
+export async function deleteRouteLink(routeId: string, linkId: string): Promise<boolean> {
   const result = await db
     .delete(routeLinks)
-    .where(eq(routeLinks.id, id))
+    .where(and(eq(routeLinks.id, linkId), eq(routeLinks.routeId, routeId)))
     .returning({ id: routeLinks.id });
   return result.length > 0;
 }

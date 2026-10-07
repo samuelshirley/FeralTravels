@@ -53,6 +53,23 @@ export default function AnnouncementsClient({
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
 
+  /**
+   * Re-read the list after a change. `rows` is local state seeded once from
+   * `initialRows`, so `router.refresh()` cannot update it — a failed re-read
+   * has to be said, or the change just made looks like it never happened.
+   */
+  async function reloadRows(): Promise<boolean> {
+    try {
+      const listRes = await fetch('/api/admin/announcements');
+      if (!listRes.ok) throw new Error(`HTTP ${listRes.status}`);
+      setRows(await listRes.json());
+      return true;
+    } catch {
+      alert('Saved, but the list did not reload. Refresh the page to see it.');
+      return false;
+    }
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !body.trim() || saving) return;
@@ -72,31 +89,34 @@ export default function AnnouncementsClient({
       setBody('');
       setButtonText('Got it');
       router.refresh();
-      // Refetch rows
-      const listRes = await fetch('/api/admin/announcements');
-      if (listRes.ok) setRows(await listRes.json());
     } catch {
       alert('Failed to create announcement');
-    } finally {
       setSaving(false);
+      return;
     }
+    // Outside the try above: the announcement IS shipped by now, and telling
+    // the admin it failed would have them ship it twice.
+    await reloadRows();
+    setSaving(false);
   }
 
   async function handleToggle(id: string, active: boolean) {
     setToggling(id);
     try {
-      await fetch('/api/admin/announcements', {
+      const res = await fetch('/api/admin/announcements', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, active }),
       });
-      const listRes = await fetch('/api/admin/announcements');
-      if (listRes.ok) setRows(await listRes.json());
+      // A 4xx/5xx used to fall through to the re-read as if it had worked.
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch {
       alert('Failed to toggle');
-    } finally {
       setToggling(null);
+      return;
     }
+    await reloadRows();
+    setToggling(null);
   }
 
   return (

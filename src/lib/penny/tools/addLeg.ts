@@ -5,9 +5,11 @@ import type { PennyContext } from '@/lib/penny/context';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import { tripDriveCapHours } from '@/lib/penny/driveCap';
 import {
-  HEADING,
+  distanceKmJson,
   distanceKmSchema,
+  driveTimeMinutesJson,
   driveTimeMinutesSchema,
+  HEADING,
   latSchema,
   lngSchema,
   terrainSchema,
@@ -150,14 +152,11 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
         description: 'Optional free-text date range, e.g. "Jun 12-13".',
       },
       distance_km: {
-        type: 'number',
-        minimum: 0,
+        ...distanceKmJson,
         description: 'Total driving distance for this leg, kilometres. Use the value returned by get_route.',
       },
       drive_time_minutes: {
-        type: 'integer',
-        minimum: 0,
-        maximum: 24 * 60,
+        ...driveTimeMinutesJson,
         description:
           'Total drive time, minutes. MUST be ≤ the trip\'s daily drive cap × 60 (context.trip.daily_drive_hours, or the default when null). Use the value returned by get_route or the per-day split it provides.',
       },

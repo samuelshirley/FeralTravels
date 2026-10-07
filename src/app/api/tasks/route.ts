@@ -22,9 +22,13 @@ export async function GET(request: Request) {
     if (legIdRaw) {
       const legId = parseUUID(legIdRaw);
       if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
-      const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
-      if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
-      await assertTripReadableByUser(inferredTripId, userId);
+      // The leg's own trip decides access. A supplied tripId must name that same
+      // trip: checking only the supplied one let your own tripId plus somebody
+      // else's legId read their rows (cross-tenant read, found 2026-10-06).
+      const legTripId = await getLegTripId(legId);
+      if (!legTripId || (tripIdRaw && parseUUID(tripIdRaw) !== legTripId))
+        return Response.json({ error: 'Leg not found on this trip' }, { status: 404 });
+      await assertTripReadableByUser(legTripId, userId);
       return Response.json(await getTasksForLeg(legId));
     }
 
@@ -64,7 +68,8 @@ export async function POST(request: Request) {
     if (!tripId) return Response.json({ error: 'tripId required' }, { status: 400 });
 
     await assertTripOwnedByUser(tripId, userId);
-    if (legId) await assertLegOwnedByUser(legId, userId);
+    if (legId && (await assertLegOwnedByUser(legId, userId)) !== tripId)
+      return Response.json({ error: 'Leg not found on this trip' }, { status: 404 });
 
     const task = await addTask({
       trip_id: tripId,

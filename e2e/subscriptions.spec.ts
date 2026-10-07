@@ -500,6 +500,40 @@ test.describe('Subscriptions — revoke and undo', () => {
     await cleanupPlaywrightFixtureData(email);
   });
 
+  test('a revoke that is never undone stays revoked', async ({ page }) => {
+    /*
+     * The other ending of the round trip above, and the common one: a real
+     * refund. Nothing is undone, so the account stays shut and the row keeps
+     * its `revoked_*` and `pre_revoke_status` columns — left in place on the
+     * preview for the column-coverage measurement, which otherwise only ever
+     * sees them cleared by the undo.
+     */
+    const email = await signedInWithState(page, {
+      comped: false,
+      createdAtDaysAgo: 400,
+      anthropicSpendUsd: 0,
+      subscription: {
+        status: 'active',
+        source: 'apple_iap',
+        productId: 'com.feraltravels.ios.monthly',
+        currentPeriodEndDaysFromNow: 20,
+      },
+    });
+    const revoke = await setSubscriptionState(email, {
+      comped: false,
+      subscription: null,
+      adminAction: { action: 'revoke', reason: 'e2e: refund confirmed' },
+    });
+    expect(revoke.adminActionResult).toMatchObject({ ok: true, action: 'revoked' });
+
+    const entitlement = await readEntitlement(page);
+    expect(entitlement.state).toBe('revoked');
+    expect(entitlement.entitled).toBe(false);
+    expect(entitlement.blockReason).toBe('revoked');
+    const blocked = await attemptCreateTrip(page, playwrightName('stays-revoked'));
+    expect(blocked.status).toBe(402);
+  });
+
   test('the undo refuses an account it cannot honestly restore', async ({ page }) => {
     /*
      * A refusal is never a silent no-op: an admin who comes away believing they
