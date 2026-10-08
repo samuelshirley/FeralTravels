@@ -77,6 +77,7 @@ async function setup() {
     feasibilityVerdict: null,
     question: QUESTION,
     heldQuestion: 'Both good?',
+    handoff: false,
   });
   await markTurnDone(questionTurn.id, {
     resultResponse: QUESTION,

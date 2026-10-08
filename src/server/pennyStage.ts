@@ -74,6 +74,8 @@ export async function buildStage(input: {
   feasibilityVerdict: StagedPlan['feasibilityVerdict'];
   question: string;
   heldQuestion: string | null;
+  /** The question turn is the handoff (first full build). */
+  handoff: boolean;
 }): Promise<StagedPlan | null> {
   const trip = await getTripFull(input.tripId);
   if (!trip) return null;
@@ -87,6 +89,7 @@ export async function buildStage(input: {
     feasibilityVerdict: input.feasibilityVerdict,
     question: input.question,
     heldQuestion: input.heldQuestion,
+    handoff: input.handoff,
     stagedAt: new Date().toISOString(),
   };
 }

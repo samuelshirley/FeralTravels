@@ -48,6 +48,13 @@ export const stagedPlanSchema = z.object({
   question: z.string(),
   /** What she said she would ask, from hold_for_confirmation. Diagnostic. */
   heldQuestion: z.string().nullable(),
+  /**
+   * True when the question was asked ON the handoff turn — the first full
+   * build. The "yes" that applies it is then the first build too, and gets
+   * everything a first build gets (the plan-ready card). Trip 9a3df982 asked
+   * its first question on exactly that turn.
+   */
+  handoff: z.boolean().optional().default(false),
   /** ISO time the stage was made. */
   stagedAt: z.string(),
 });

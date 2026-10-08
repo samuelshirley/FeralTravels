@@ -110,10 +110,13 @@ const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
 describe('the plan-ready row is written on exactly one turn', () => {
   const route = () => read('src/app/api/trip/replan/route.ts');
 
-  it('only on the handoff turn, and only when something was saved', () => {
+  it('only on the first build, and only when something was saved', () => {
     // "Trip is planned" over an itinerary nothing was written to is the
     // dishonest-transcript failure this repo has already shipped once.
-    expect(route()).toMatch(/const planReady = isHandoff && appliedCount > 0;/);
+    expect(route()).toMatch(/const planReady = isFirstBuild && appliedCount > 0;/);
+    // The first build is the handoff turn, or the staged "yes" that applies a
+    // question asked ON the handoff turn (trip 9a3df982) — nothing else.
+    expect(route()).toMatch(/const isFirstBuild = isHandoff \|\| liveStage\?\.stage\.handoff === true;/);
   });
 
   it('is written BEFORE Penny’s reply, so it takes the lower seq', () => {

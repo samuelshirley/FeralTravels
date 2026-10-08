@@ -61,6 +61,7 @@ function stage(over: Partial<StagedPlan> = {}): StagedPlan {
     feasibilityVerdict: null,
     question: QUESTION,
     heldQuestion: 'Both good?',
+    handoff: false,
     stagedAt: '2026-10-08T10:48:19Z',
     ...over,
   };

@@ -613,6 +613,15 @@ async function runTurnWork(
         })
       : null;
 
+    /*
+     * The FIRST full build: the handoff turn itself, or the "yes" that applies
+     * a question asked on the handoff turn (trip 9a3df982 asked its first
+     * question there). Either way it gets what a first build gets — the
+     * plan-ready card below. A held handoff turn applies nothing, so it gets
+     * no card over its question (`appliedCount > 0` below).
+     */
+    const isFirstBuild = isHandoff || liveStage?.stage.handoff === true;
+
     let final: ReplanResult | null;
     if (liveStage) {
       final = await stagedReplanResult(liveStage, tripId, userId);
@@ -1004,7 +1013,7 @@ async function runTurnWork(
            * planned" over an empty itinerary is the honest-transcript failure
            * this repo has already shipped once.
            */
-          const planReady = isHandoff && appliedCount > 0;
+          const planReady = isFirstBuild && appliedCount > 0;
           // The pace the plan was actually built at. Read off the trip row
           // rather than recomputed: `get_route` split the days on exactly this
           // number, and a confirmation quoting a different one would be
@@ -1093,6 +1102,7 @@ async function runTurnWork(
                 feasibilityVerdict: final.feasibilityVerdict,
                 question: persistedResponse,
                 heldQuestion: final.holdQuestion,
+                handoff: isHandoff,
               })
             : null;
 
