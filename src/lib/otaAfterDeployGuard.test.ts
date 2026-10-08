@@ -133,7 +133,9 @@ describe('mobile.yml: nothing ships to a device before the production deploy (st
   });
 });
 
-describe('mobile.yml: the wait step itself (behaviour, under bash, stub gh, real git)', () => {
+// Every case here spawns bash (one to four times), which a loaded full-suite
+// run slows towards vitest's 5 s default; alone they take 0.3-1.8 s.
+describe('mobile.yml: the wait step itself (behaviour, under bash, stub gh, real git)', { timeout: 60_000 }, () => {
   const script = runBlock(step(WAIT_STEP));
   const root = mkdtempSync(path.join(tmpdir(), 'ota-wait-'));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
