@@ -128,6 +128,12 @@ export const CANONICAL_TRIP_META = {
   tripStatus: 'draft',
   preferAvoidHighways: false,
   isTemplate: false,
+  /**
+   * The onboarding `start_fuel` answer. Full: the seeded fuel stops were
+   * planned from a full tank at the start, and the seeded transcript answers
+   * the step that way.
+   */
+  startFuel: 'full',
 } as const;
 
 /**

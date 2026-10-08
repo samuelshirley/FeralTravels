@@ -43,7 +43,6 @@ describe('update_route validator', () => {
       label: 'Camp B',
       description: 'Lakeside',
       distance_km: 80,
-      surface: 'mix',
       status: 'dismissed',
       end_lat: 44.1,
       end_lng: -110.5,
@@ -84,6 +83,13 @@ describe('update_route validator', () => {
   it('rejects unknown enum values', () => {
     expect(withData({ status: 'chosen' }).success).toBe(false);
     expect(withData({ surface: 'mud' }).success).toBe(false);
+  });
+
+  it('refuses any surface and any surface claim in the description (trip 9a3df982)', () => {
+    expect(withData({ surface: 'mix' }).success).toBe(false);
+    expect(withData({ surface: 'paved' }).success).toBe(false);
+    expect(withData({ description: 'mixed surface, great views' }).success).toBe(false);
+    expect(withData({ description: 'Lakeside' }).success).toBe(true);
     expect(withData({ end_source: 'google' }).success).toBe(false);
   });
 

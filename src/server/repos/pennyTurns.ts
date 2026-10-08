@@ -1,8 +1,10 @@
 import 'server-only';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, ne, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '@/server/db/client';
 import { pennyTurns, type PennyTurnStatus } from '@/server/db/schema';
 import { ConflictError } from '@/server/auth/errors';
+import type { StoredTripIntent } from '@/lib/penny/intentDrift';
 
 export type PennyTurnImage = { dataUrl: string; mediaType: string };
 
@@ -118,6 +120,35 @@ export async function getLatestTurnForTrip(tripId: string): Promise<PennyTurn | 
 }
 
 /**
+ * The trip's latest turn created BEFORE `beforeTurnId` — or, with null, the
+ * latest turn of all (a reply that has no turn row yet). A staged "yes" is only
+ * ever honoured from this turn (lib/penny/stagedPlan.ts): any turn in between
+ * means the driver said something else, and the stage is dead.
+ */
+export async function getPreviousTurn(
+  tripId: string,
+  beforeTurnId: string | null
+): Promise<PennyTurn | null> {
+  const conditions = [eq(pennyTurns.tripId, tripId)];
+  if (beforeTurnId) {
+    const [current] = await db
+      .select({ createdAt: pennyTurns.createdAt })
+      .from(pennyTurns)
+      .where(eq(pennyTurns.id, beforeTurnId))
+      .limit(1);
+    if (!current) return null;
+    conditions.push(lt(pennyTurns.createdAt, current.createdAt), ne(pennyTurns.id, beforeTurnId));
+  }
+  const [row] = await db
+    .select()
+    .from(pennyTurns)
+    .where(and(...conditions))
+    .orderBy(desc(pennyTurns.createdAt))
+    .limit(1);
+  return row ? toTurn(row) : null;
+}
+
+/**
  * Create a turn (always `queued`), deduped on `idempotency_key`. If the key
  * already exists (a retry of the very same send), the existing row is returned
  * untouched — never a second replan for the same send. The caller then tries to
@@ -199,4 +230,33 @@ export async function claimNextQueuedTurn(tripId: string): Promise<PennyTurn | n
     .limit(1);
   if (!candidate) return null;
   return promoteTurnToRunning(candidate.id);
+}
+
+const storedTripIntentSchema = z.object({
+  places: z.array(z.string().min(1).max(200)).max(50),
+});
+
+/**
+ * The place names of the most recent `extract_trip_intent` on this trip, as
+ * the turn that made it recorded them in `result_meta.tripIntent`, or null
+ * when no finished turn has one. The next extract is compared against it so a
+ * place cannot vanish from the plan without Penny saying so — see
+ * `lib/penny/intentDrift.ts`. A stored value that does not parse reads as
+ * null — no baseline, so no warning — rather than as an older intent.
+ */
+export async function getLatestTripIntent(tripId: string): Promise<StoredTripIntent | null> {
+  const rows = await db
+    .select({ meta: pennyTurns.resultMeta })
+    .from(pennyTurns)
+    .where(
+      and(
+        eq(pennyTurns.tripId, tripId),
+        eq(pennyTurns.status, 'done'),
+        sql`(${pennyTurns.resultMeta} -> 'tripIntent') is not null`
+      )
+    )
+    .orderBy(desc(pennyTurns.createdAt))
+    .limit(1);
+  const parsed = storedTripIntentSchema.safeParse(rows[0]?.meta?.tripIntent);
+  return parsed.success ? parsed.data : null;
 }

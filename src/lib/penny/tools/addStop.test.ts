@@ -113,6 +113,23 @@ describe('add_stop duplicate-destination guard', () => {
     expect(result.success).toBe(true);
   });
 
+  it('rejects notes that claim a road surface (trip 9a3df982: a paved pass and a racing circuit, both "off-road")', () => {
+    for (const notes of ['Iconic high pass — mixed surface, great views', 'Gravel loop through the desert landscape']) {
+      const result = validator(ctx).safeParse({
+        leg_id: LEG_ID,
+        data: { stop_type: 'other', name: 'X', notes },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.issues[0].message).toMatch(/road surface/);
+    }
+    expect(
+      validator(ctx).safeParse({
+        leg_id: LEG_ID,
+        data: { stop_type: 'other', name: 'X', notes: 'Waterfall viewpoint above the village' },
+      }).success,
+    ).toBe(true);
+  });
+
   it('skips the guard when the leg has no end coords', () => {
     const noCoordsCtx = {
       legs: [{ id: LEG_ID, title: 'T', end_lat: null, end_lng: null }],

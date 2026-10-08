@@ -1,5 +1,10 @@
 import 'server-only';
 import { z } from 'zod';
+import {
+  findSurfaceClaim,
+  surfaceClaimMessage,
+  unsourcedFieldMessage,
+} from '@/lib/penny/unsourcedFacts';
 
 /**
  * Shared Zod subschemas reused across Penny's tool validators.
@@ -47,8 +52,41 @@ export const taskPrioritySchema = z.enum(['low', 'normal', 'high']);
 export const stopTypeSchema = z.enum(['fuel', 'other']);
 export const fuelTypeSchema = z.enum(['diesel', 'petrol', 'premium', 'lpg']);
 export const stopSourceSchema = z.enum(['penny', 'user', 'google_places', 'google', 'manual']);
-export const surfaceSchema = z.enum(['paved', 'gravel', 'mix']);
-export const terrainSchema = z.enum(['highway', 'mixed', 'offroad', 'urban']);
+
+/**
+ * A field Penny may not author at all: a leg's `terrain`, a route's `surface`.
+ * No tool returns a road's surface or terrain, so every value she wrote here
+ * was invented — "offroad" on a motorway day, "gravel" on a paved pass (trip
+ * 9a3df982). Any non-null value is rejected with a message she can act on, and
+ * whatever passes is dropped, so the column is never written from chat. The
+ * properties are also gone from the tool JSON schemas; this catches the model
+ * sending them anyway. See lib/penny/unsourcedFacts.ts.
+ */
+export function unsourcedFieldSchema(field: string) {
+  return z
+    .unknown()
+    .superRefine((value, ctx) => {
+      if (value != null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: unsourcedFieldMessage(field) });
+      }
+    })
+    .transform((): undefined => undefined);
+}
+
+/**
+ * Free text Penny writes INTO the plan (a stop's notes, a leg's notes, a
+ * route's description), refused when it describes a road surface — "gravel
+ * loop", "mixed surface", "unpaved". She has no source for that; see
+ * `findSurfaceClaim` in lib/penny/unsourcedFacts.ts.
+ */
+export function sourcedTextSchema(field: string) {
+  return z.string().superRefine((text, ctx) => {
+    const phrase = findSurfaceClaim(text);
+    if (phrase) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: surfaceClaimMessage(field, phrase) });
+    }
+  });
+}
 
 export const routeLinkTypeSchema = z.enum([
   'gpx',

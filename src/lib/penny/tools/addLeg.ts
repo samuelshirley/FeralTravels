@@ -12,7 +12,8 @@ import {
   HEADING,
   latSchema,
   lngSchema,
-  terrainSchema,
+  unsourcedFieldSchema,
+  sourcedTextSchema,
 } from './shared';
 
 /**
@@ -43,10 +44,10 @@ const baseSchema = z.object({
   dates: z.string().nullish(),
   distance_km: distanceKmSchema.nullish(),
   drive_time_minutes: driveTimeMinutesSchema.nullish(),
-  terrain: terrainSchema.nullish(),
+  terrain: unsourcedFieldSchema('terrain'),
   overnight: z.string().nullish(),
   color: z.string().nullish(),
-  notes: z.array(z.string()).nullish(),
+  notes: z.array(sourcedTextSchema('notes')).nullish(),
   sort_order: z.number().int().nullish(),
   /**
    * Insert this leg right AFTER an existing leg (its id from context.legs[]).
@@ -160,7 +161,6 @@ For "Barcelona → Paris → Berlin → Oslo": segment 0 covers all days from Ba
         description:
           'Total drive time, minutes. MUST be ≤ the trip\'s daily drive cap × 60 (context.trip.daily_drive_hours, or the default when null). Use the value returned by get_route or the per-day split it provides.',
       },
-      terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
       overnight: { type: 'string', description: 'Optional name of the overnight stop.' },
       color: { type: 'string' },
       notes: { type: 'array', items: { type: 'string' } },

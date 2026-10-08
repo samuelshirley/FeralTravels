@@ -182,6 +182,7 @@ function trip(extra: Partial<TripWithLegs> = {}): TripWithLegs {
     declared_range_km: null,
     declared_range_leg_id: null,
     declared_range_at: null,
+    start_fuel: 'full',
     created_at: '2026-01-01',
     updated_at: '2026-01-01',
     user_id: 'u1',

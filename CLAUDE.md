@@ -26,7 +26,8 @@ it" is post-MVP — flag it before building. Full scope and what was cut:
   Don't build these now; don't let Penny fake them.
 - One range number per vehicle (`vehicles.range_km`). Finn's rule is "don't run
   dry before the next reachable station", never "stop every range_km", and a
-  forced stop MUST carry a one-line reason. Full tank at trip start.
+  forced stop MUST carry a one-line reason. Full tank at trip start, unless
+  onboarding's last step said "find fuel at the start" (`trips.start_fuel`).
 
 ## Stack
 
@@ -198,8 +199,8 @@ What she may and may not author, and why each lock exists:
 addStop, updateStop, deleteStop, addLeg, updateLeg, deleteLeg, addRoute,
 updateRoute, deleteRoute, getRoute, resolvePlace, addTask, updateTask,
 updateVehicle, renameTrip, reportPosition, submitIdea, checkTripFeasibility,
-planFuelStops, declareFuelState, extractTripIntent — 21 tools, registered in
-`index.ts`, shared helpers in `shared.ts`.
+planFuelStops, declareFuelState, extractTripIntent, holdForConfirmation — 22
+tools, registered in `index.ts`, shared helpers in `shared.ts`.
 
 **Penny does not author derived fields.** Coordinates come only from
 `resolve_place`; leg titles are derived `start → end`; `trips.end_date` is
@@ -208,7 +209,9 @@ split is placed by the server, not by the clock** — `splitPointNames.ts` nudge
 it to the nearest town inside the daily cap so a day does not end in a hamlet;
 see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
-Settings.
+Settings. **No surface claims, no unearned `source: "user"`, no silent drops,
+and a staged "yes" never calls the model** (`hold_for_confirmation` →
+`lib/penny/stagedPlan.ts`) — see `docs/design/penny-tools.md`.
 
 ### Scripts (`scripts/`)
 

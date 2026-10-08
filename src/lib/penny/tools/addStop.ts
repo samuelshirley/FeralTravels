@@ -6,6 +6,7 @@ import { distanceToSegmentKm, haversineKm } from '@/lib/penny/geo';
 import {
   latSchema,
   lngSchema,
+  sourcedTextSchema,
   stopSourceSchema,
   stopStatusSchema,
   urlSchema,
@@ -32,7 +33,7 @@ const dataSchema = z.object({
   lat: latSchema.nullish(),
   lng: lngSchema.nullish(),
   distance_from_start_km: z.number().nonnegative().nullish(),
-  notes: z.string().nullish(),
+  notes: sourcedTextSchema('notes').nullish(),
   status: stopStatusSchema.nullish(),
   source: stopSourceSchema.nullish(),
   source_url: urlSchema.nullish(),
@@ -184,12 +185,17 @@ export const tool: Anthropic.Tool = {
             minimum: 0,
             description: 'Distance from leg start, kilometres. Must be ≤ leg.distance_km.',
           },
-          notes: { type: 'string' },
+          notes: {
+            type: 'string',
+            description:
+              'What the place IS, from resolve_place or the user. Never a road surface (gravel, unpaved, off-road, paved, "mixed surface") — no tool tells you one, and the validator rejects it.',
+          },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
           source: {
             type: 'string',
             enum: ['penny', 'user', 'google_places', 'google', 'manual'],
-            description: 'Use "user" for a place the user named/linked; "penny" only for a verify-me placeholder.',
+            description:
+              '"user" ONLY for a place the user themselves named or linked. "penny" for a place you chose (your suggestion, or your pick after "whatever you choose" / "you pick"). The server rewrites "user" to "penny" when the user never named the place.',
           },
           source_url: { type: 'string', format: 'uri' },
         },

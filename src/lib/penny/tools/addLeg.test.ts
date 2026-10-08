@@ -45,6 +45,26 @@ describe('add_leg tool', () => {
     expect(tool.input_schema.required).toEqual(['title']);
   });
 
+  describe('no unsourced terrain (trip 9a3df982)', () => {
+    it('refuses any terrain value — no tool tells her one', () => {
+      for (const terrain of ['offroad', 'mixed', 'highway', 'urban']) {
+        const parsed = validator(defaultCapCtx).safeParse({ ...driveLeg(4), terrain });
+        expect(parsed.success).toBe(false);
+        if (!parsed.success) expect(parsed.error.issues[0].message).toMatch(/Do not set terrain/);
+      }
+      expect(validator(defaultCapCtx).safeParse({ ...driveLeg(4), terrain: null }).success).toBe(true);
+    });
+
+    it('is no longer offered in the tool schema', () => {
+      expect(Object.keys(tool.input_schema.properties ?? {})).not.toContain('terrain');
+    });
+
+    it('refuses leg notes that claim a road surface', () => {
+      expect(validator(defaultCapCtx).safeParse({ ...driveLeg(4), notes: ['long gravel stretch'] }).success).toBe(false);
+      expect(validator(defaultCapCtx).safeParse({ ...driveLeg(4), notes: ['visit the old town'] }).success).toBe(true);
+    });
+  });
+
   describe('rest-leg validation', () => {
     it('rejects a rest leg with no coordinates or names', () => {
       // This is the exact malformed shape Penny emitted on Summer '26.

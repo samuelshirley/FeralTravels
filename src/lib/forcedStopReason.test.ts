@@ -49,6 +49,14 @@ describe('forcedStopLine', () => {
     const badNextDay = { kind: 'next_day_fuel_far', gap_km: Number.NaN } as ForcedStopReason;
     expect(forcedStopLine('fuel', badNextDay, 'metric')).toBeNull();
   });
+
+  it('says why the start-of-trip fill-up matters, with no distance to word in either unit', () => {
+    const startFill: ForcedStopReason = { kind: 'trip_start_fill' };
+    const line = 'Fill up here: the rest of your fuel plan starts from a full tank';
+    expect(forcedStopLine('fuel', startFill, 'metric')).toBe(line);
+    expect(forcedStopLine('fuel', startFill, 'imperial')).toBe(line);
+    expect(forcedStopLine('other', startFill, 'metric')).toBeNull();
+  });
 });
 
 describe('stopRowAccessibilityLabel', () => {

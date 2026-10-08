@@ -33,7 +33,7 @@
  * back through setup shows the form the driver actually filled in rather than a
  * flat transcript of it.
  */
-import type { ChatFormMeta } from '../types/trip';
+import type { ChatFormMeta, StartFuel } from '../types/trip';
 
 export type QuestionKind =
   | 'text'
@@ -296,7 +296,22 @@ export const UNITS_LABEL =
   'Do you want distances in metric (kilometers) or imperial (miles)?';
 
 /** Penny's line above the composite name+range card (frame 7e). */
-export const VEHICLE_SETUP_LABEL = 'Last thing — what are you driving?';
+export const VEHICLE_SETUP_LABEL = 'What are you driving?';
+
+/**
+ * The LAST step: the tank the trip starts on. Every fuel stop Finn places is
+ * computed from a full tank at the start, and nothing on screen says so — a
+ * driver leaving half-empty would get a plan that is wrong from the first
+ * stop. So the step states the assumption and offers the one alternative Finn
+ * can act on without a number the driver may not know. Tap-only (`select`):
+ * the answer is a closed set, validated server-side as an enum.
+ */
+export const START_FUEL_LABEL = "I'll plan fuel from a full tank at the start. Will you have one?";
+
+export const START_FUEL_OPTIONS: ReadonlyArray<{ value: StartFuel; label: string }> = [
+  { value: 'full', label: 'Yep, full' },
+  { value: 'fill_at_start', label: 'Find fuel at the start' },
+];
 
 /** The first-message prompt rows (frame 7b). Shapes to edit, never sent verbatim. */
 export const TRIP_INTENT_PROMPTS = [

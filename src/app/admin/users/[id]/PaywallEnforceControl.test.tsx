@@ -3,9 +3,9 @@
  *
  * Component test, not e2e: /admin is behind a one-person allowlist. Pins that
  * one tap posts the negation of the current state (no confirm step, by design),
- * the switch is disabled while in flight, a double tap sends one request, the
- * two "this will do nothing" explanations appear exactly when they are true, and
- * failures are said inline.
+ * the switch is disabled while in flight, a double tap sends one request, it
+ * shows ON and locked while the global paywall is on, the comped explanation
+ * appears exactly when it is true, and failures are said inline.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -77,12 +77,22 @@ describe('PaywallEnforceControl', () => {
     expect(screen.queryByText('This account is comped')).toBeNull();
   });
 
-  it('says enforcement is already on for everyone when the global switch is on', () => {
-    render(<PaywallEnforceControl {...base} globalOn enforced={false} />);
-    expect(screen.getByText(/Enforcement is already ON for the whole deployment/)).toBeInTheDocument();
-    cleanup();
-    render(<PaywallEnforceControl {...base} enforced={false} />);
-    expect(screen.queryByText(/Enforcement is already ON/)).toBeNull();
+  // It once showed OFF on an account the global paywall was walling — it
+  // rendered the raw override column — and read as "not under the paywall".
+  it('shows ON and is locked while the global switch is on, whatever the override', () => {
+    for (const enforced of [false, true]) {
+      render(<PaywallEnforceControl {...base} globalOn enforced={enforced} />);
+      expect(toggle()).toHaveAttribute('aria-checked', 'true');
+      expect(toggle()).toBeDisabled();
+      fireEvent.click(toggle());
+      expect(screen.getByText('On for every account while the deployment-wide paywall is on.')).toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  it('says a comped account is exempt while the global switch is on', () => {
+    render(<PaywallEnforceControl {...base} comped globalOn enforced={false} />);
+    expect(screen.getByText('This account is comped')).toBeInTheDocument();
   });
 
   it('a non-2xx shows the server error inline and does not refresh', async () => {

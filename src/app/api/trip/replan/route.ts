@@ -25,7 +25,9 @@ import {
 import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
 import { gateMessage } from '@/server/messageGate';
-import { addChatMessage } from '@/server/repos/chat';
+import { addChatMessage, getChatPage, previousAssistantMessage } from '@/server/repos/chat';
+import { previousAssistantMessage as previousAssistantFromChat } from '@/lib/penny/acceptance';
+import { buildStage, findLiveStage, stagedReplanResult } from '@/server/pennyStage';
 import { planReadyText } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
@@ -345,7 +347,29 @@ export async function POST(req: Request) {
      * message. An image has no text to judge, and the deterministic rules would
      * read the empty string as junk.
      */
-    if (message && !body.handoff) {
+    /*
+     * A deterministic "yes" to a question Penny staged is not judged at all:
+     * it can only apply writes she already validated, it costs no model call,
+     * and the gate's free reply rule does not know every phrasing of yes, so
+     * a "yea lets do them all" would otherwise reach the paid classifier.
+     * Recorded on the chat row as T1 like any allowed message.
+     */
+    const confirmsStage =
+      Boolean(message) &&
+      !body.handoff &&
+      images.length === 0 &&
+      (await findLiveStage({
+        tripId,
+        message,
+        beforeTurnId: null,
+        previousAssistant: await previousAssistantMessage(tripId),
+      })) != null;
+    if (confirmsStage) {
+      gateTierForLog = 'T1';
+      gateByForLog = 'allow_rule';
+    }
+
+    if (message && !body.handoff && !confirmsStage) {
       const gate = await gateMessage({
         userId,
         tripId,
@@ -570,20 +594,54 @@ async function runTurnWork(
       }
       return result;
     };
-    const final = await Promise.race([
-      consume(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                'Penny timed out before finishing — the request was too complex to complete in time. Try breaking it into smaller steps.',
+    /*
+     * A "yes" to a question Penny staged costs NO model call: the writes she
+     * held for it are applied straight through the pipeline below
+     * (lib/penny/stagedPlan.ts). Checked here rather than in POST so a "yes"
+     * that queued behind the question turn and is drained later still gets it.
+     * Anything that is not a live stage + a deterministic yes goes to Penny.
+     */
+    const liveStage = message && images.length === 0
+      ? await findLiveStage({
+          tripId,
+          message,
+          beforeTurnId: turnId,
+          previousAssistant: previousAssistantFromChat(
+            (await getChatPage({ tripId, limit: 6, kinds: ['ai', 'handoff'] })).messages,
+            message,
+          ),
+        })
+      : null;
+
+    /*
+     * The FIRST full build: the handoff turn itself, or the "yes" that applies
+     * a question asked on the handoff turn (trip 9a3df982 asked its first
+     * question there). Either way it gets what a first build gets — the
+     * plan-ready card below. A held handoff turn applies nothing, so it gets
+     * no card over its question (`appliedCount > 0` below).
+     */
+    const isFirstBuild = isHandoff || liveStage?.stage.handoff === true;
+
+    let final: ReplanResult | null;
+    if (liveStage) {
+      final = await stagedReplanResult(liveStage, tripId, userId);
+      send({ kind: 'text', chunk: final.response });
+    } else {
+      final = await Promise.race([
+        consume(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'Penny timed out before finishing — the request was too complex to complete in time. Try breaking it into smaller steps.',
+                ),
               ),
-            ),
-          MODEL_LOOP_BUDGET_MS,
+            MODEL_LOOP_BUDGET_MS,
+          ),
         ),
-      ),
-    ]);
+      ]);
+    }
 
     if (!final) throw new Error('replanStream finished without a result');
 
@@ -661,8 +719,18 @@ async function runTurnWork(
             final.validatedActions
           );
 
+          /*
+           * A HELD turn (Penny called hold_for_confirmation): her writes are
+           * the answer to the question she ended on, so they are staged on
+           * this turn's row — below, in `nextTurnMeta` — and nothing is
+           * dispatched now. The driver's "yes" applies them later with no
+           * model call; anything else leaves them behind.
+           */
+          const heldCount = final.held ? countQueuedMutations(final.validatedActions) : 0;
+          const holdThisTurn = heldCount > 0;
+
           const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
-          for (const action of final.validatedActions) {
+          for (const action of holdThisTurn ? [] : final.validatedActions) {
             if (feasibilityGateBlocks && action.name === 'add_leg') {
               failedCount += 1;
               const row = {
@@ -889,7 +957,10 @@ async function runTurnWork(
           // never counted as applied; counting it as "queued" here made every
           // submit_idea-only turn render the false red "nothing was saved"
           // banner). See countQueuedMutations in lib/penny/applyOutcome.ts.
-          const validatedQueuedCount = countQueuedMutations(final.validatedActions);
+          // Zero on a held turn: nothing was meant to be saved yet, and a
+          // non-zero count with nothing applied is what the client reads as
+          // the red "nothing was saved" banner.
+          const validatedQueuedCount = holdThisTurn ? 0 : countQueuedMutations(final.validatedActions);
 
           // Deterministic, DB-derived plan summary — the source of truth for the
           // plan FACTS the user sees (day counts, depart/arrive dates, totals,
@@ -942,7 +1013,7 @@ async function runTurnWork(
            * planned" over an empty itinerary is the honest-transcript failure
            * this repo has already shipped once.
            */
-          const planReady = isHandoff && appliedCount > 0;
+          const planReady = isFirstBuild && appliedCount > 0;
           // The pace the plan was actually built at. Read off the trip row
           // rather than recomputed: `get_route` split the days on exactly this
           // number, and a confirmation quoting a different one would be
@@ -1010,11 +1081,48 @@ async function runTurnWork(
              * splice would show one pace and the reload another.
              */
             planReadyPaceHours,
+            /**
+             * This turn is a question whose "yes" is staged: `heldCount` writes
+             * wait for the driver's answer (lib/penny/stagedPlan.ts).
+             */
+            held: holdThisTurn,
+            heldCount,
             /** Tool names per model call — the number of prefix re-reads this turn cost. */
             toolTrace: final.toolTrace,
             modelCalls: final.toolTrace.length,
           };
           send({ kind: 'applied', ...appliedPayload });
+
+          // The held writes, staged for the driver's "yes" (lib/penny/stagedPlan.ts).
+          const stagedPlan = holdThisTurn
+            ? await buildStage({
+                tripId,
+                actions: final.validatedActions,
+                extractIntentCalled: final.extractIntentCalled,
+                feasibilityVerdict: final.feasibilityVerdict,
+                question: persistedResponse,
+                heldQuestion: final.holdQuestion,
+                handoff: isHandoff,
+              })
+            : null;
+
+          // Stored on the turn row, never streamed — like the trace below.
+          const nextTurnMeta = {
+            /** The driver's message was a bare acceptance (lib/penny/acceptance.ts). */
+            acceptance: final.acceptance,
+            /** This turn applied a stage held by that earlier turn — no model call. */
+            ...(liveStage ? { confirmedStageTurnId: liveStage.stageTurnId } : {}),
+            /** This turn's held writes, applied only by a "yes" on the next turn. */
+            ...(stagedPlan ? { stagedPlan } : {}),
+            /**
+             * This turn's extract_trip_intent place names — the baseline the
+             * NEXT extract on the trip is compared against, so no place drops
+             * out silently (lib/penny/intentDrift.ts). Omitted when the turn
+             * made no extract, so the previous baseline stays the latest.
+             */
+            ...(final.tripIntent ? { tripIntent: final.tripIntent } : {}),
+            droppedPlaces: final.droppedPlaces,
+          };
 
           // Durable success: record the outcome on the turn row so a client
           // that dropped the stream (PWA backgrounded mid-turn) can re-attach
@@ -1030,7 +1138,7 @@ async function runTurnWork(
              * `GET /api/trips/[id]/turns` strips it back out for the same
              * reason.
              */
-            resultMeta: { ...appliedPayload, turnTrace: final.turnTrace },
+            resultMeta: { ...appliedPayload, turnTrace: final.turnTrace, ...nextTurnMeta },
           });
   } catch (err) {
     console.error('runTurnWork failed', err);

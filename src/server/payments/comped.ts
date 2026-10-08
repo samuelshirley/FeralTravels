@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users } from '@/server/db/schema';
 import { FIXTURE_EMAIL_PATTERN } from '@/server/auth/test-endpoints';
+import { isOnAdminAllowlist } from '@/server/auth/admin';
 
 /**
  * Accounts that are free forever.
@@ -19,7 +20,13 @@ const COMPED_ALLOWLIST: ReadonlyArray<string> = ['samuelashirley@gmail.com'] as 
 const COMPED_SET = new Set(COMPED_ALLOWLIST.map((e) => e.toLowerCase()));
 
 /**
- * True for the author's account and for E2E fixture addresses.
+ * True for the author's account, every admin, and E2E fixture addresses.
+ *
+ * Admins are comped by construction, not by being listed twice. When 8c8becf
+ * moved the admin to sam@feraltravels.com this list stayed on the gmail
+ * address, and the day the paywall went on the admin account was walled out
+ * of the app it administers. The admin allowlist is the source of truth for
+ * who the admin is; this reads it rather than restating it.
  *
  * The fixture pattern is `playwright-<runid>-<n>@e2e.feraltravels.com`, reused
  * from `test-endpoints.ts` rather than restated, so the two can never drift.
@@ -31,7 +38,11 @@ const COMPED_SET = new Set(COMPED_ALLOWLIST.map((e) => e.toLowerCase()));
 export function isCompedEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   const normalized = email.trim().toLowerCase();
-  return COMPED_SET.has(normalized) || FIXTURE_EMAIL_PATTERN.test(normalized);
+  return (
+    COMPED_SET.has(normalized) ||
+    isOnAdminAllowlist(normalized) ||
+    FIXTURE_EMAIL_PATTERN.test(normalized)
+  );
 }
 
 /**

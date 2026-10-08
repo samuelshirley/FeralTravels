@@ -60,7 +60,6 @@ describe('add_route validator — shape', () => {
       label: 'Madison Campground',
       description: 'Riverside, first-come first-served',
       distance_km: 142.5,
-      surface: 'gravel',
       status: 'option',
       end_lat: 44.645,
       end_lng: -110.86,
@@ -107,8 +106,22 @@ describe('add_route validator — shape', () => {
     expect(withData({ label: 'A', drive_time_minutes: 24 * 60 }).success).toBe(true);
   });
 
+  it('refuses any surface: no tool returns one, so Penny may not author it (trip 9a3df982)', () => {
+    for (const surface of ['gravel', 'paved', 'mix', 'sand']) {
+      const r = withData({ label: 'A', surface });
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.issues[0].message).toMatch(/Do not set surface/);
+    }
+    expect(withData({ label: 'A', surface: null }).success).toBe(true);
+  });
+
+  it('refuses a description that claims a road surface', () => {
+    const r = withData({ label: 'A', description: 'Gravel loop through the desert' });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].message).toMatch(/road surface/);
+  });
+
   it('rejects unknown enum values', () => {
-    expect(withData({ label: 'A', surface: 'sand' }).success).toBe(false);
     expect(withData({ label: 'A', status: 'booked' }).success).toBe(false);
     expect(withData({ label: 'A', end_source: 'penny' }).success).toBe(false);
   });

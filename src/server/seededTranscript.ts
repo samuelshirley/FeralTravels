@@ -5,13 +5,14 @@ import { getTripFull } from '@/server/repos/trips';
 import { getVehicleForUser } from '@/server/repos/vehicles';
 import { getUnitsPref } from '@/server/repos/users';
 import {
+  START_FUEL_QUESTION,
   TRIP_INTENT_QUESTION,
   UNITS_QUESTION,
   handoffIntent,
   intentScanNote,
   unitsAnswerLabel,
 } from '@/server/onboarding';
-import { buildFormMeta, type AnsweredQuestionShape } from '@/lib/onboardingForm';
+import { START_FUEL_OPTIONS, buildFormMeta, type AnsweredQuestionShape } from '@/lib/onboardingForm';
 import {
   DEFAULT_MAX_DRIVE_HOURS_PER_DAY,
   buildVehicleProfileQuestions,
@@ -47,6 +48,7 @@ import type { LegWithDetails } from '@/types/trip';
  *   form_question / form_answer   units_pick         (writeQA)
  *   form_question / form_answer   vehicle name       (writeQA, card half 1)
  *   form_question / form_answer   vehicle range      (writeQA, card half 2)
+ *   form_question / form_answer   start_fuel "Yep, full" (writeQA)
  *   handoff                       the stored intent  (api/trip/replan, handoff: true)
  *   plan_ready                    planReadyText      (api/trip/replan, first build)
  *   ai                            Penny's reply, changes_made + plan_summary
@@ -84,12 +86,6 @@ export interface SeededTranscriptFacts {
  */
 export const SEEDED_PENNY_REPLY = 'Here’s your route, day by day.';
 
-const TERRAINS = ['highway', 'mixed', 'offroad', 'urban'] as const;
-type Terrain = (typeof TERRAINS)[number];
-function terrainOf(t: string | null): Terrain | null {
-  return (TERRAINS as readonly string[]).includes(t ?? '') ? (t as Terrain) : null;
-}
-
 /** The `add_leg` call that would have written this leg. */
 function addLegActionFor(leg: LegWithDetails): ValidatedAction {
   const input: AddLegInput = {
@@ -105,7 +101,9 @@ function addLegActionFor(leg: LegWithDetails): ValidatedAction {
     dates: leg.dates,
     distance_km: leg.distance_km,
     drive_time_minutes: leg.drive_time_minutes,
-    terrain: terrainOf(leg.terrain),
+    // Not Penny's to write (`unsourcedFieldSchema` in tools/shared.ts), so the
+    // add_leg that would have written this leg carries none.
+    terrain: undefined,
     overnight: leg.overnight,
     color: leg.color,
     notes: leg.parsedNotes,
@@ -173,6 +171,8 @@ export function buildSeededTranscript(
     ...qa(UNITS_QUESTION, unitsAnswerLabel(units), units),
     ...qa(nameQ, vehicle.name, vehicle.name),
     ...qa(rangeQ, rangeLabel, shownRange),
+    // The seeded trip's stops are planned from a full tank, so it answered so.
+    ...qa(START_FUEL_QUESTION, START_FUEL_OPTIONS[0].label, START_FUEL_OPTIONS[0].value),
     { tripId, role: 'user', kind: 'handoff', content: handoffIntent(opening, origin) },
     {
       tripId,
