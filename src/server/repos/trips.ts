@@ -92,6 +92,7 @@ function tripRow(r: typeof trips.$inferSelect): Trip {
     declared_range_km: r.declaredRangeKm ?? null,
     declared_range_leg_id: r.declaredRangeLegId ?? null,
     declared_range_at: r.declaredRangeAt ? r.declaredRangeAt.toISOString() : null,
+    start_fuel: r.startFuel ?? 'full',
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),
     user_id: r.userId,
@@ -538,6 +539,16 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
    * makes it safe on screen — see the note on `rangeRemainingAtLegStarts`.
    */
   const rangeKm = vehicleRows[0]?.rangeKm ?? null;
+  // "Find fuel at the start": the tank on the first drive day is unknown, so
+  // it is read as EMPTY until Finn's start-of-trip fill-up exists on that day
+  // (with the stop there, a full tank at the day's start under-counts by the
+  // few km before it, which is the safe direction). Pessimistic on purpose
+  // — read as full, an unsourced first day would claim range to spare that
+  // the driver told us they might not have.
+  const firstDriveLegId =
+    trip.start_fuel === 'fill_at_start'
+      ? (legRows.find((row) => row.distanceKm != null && row.distanceKm > 0)?.id ?? null)
+      : null;
   const remainingAtStart = rangeRemainingAtLegStarts(
     legRows.map((row) => {
       const legStops = stopsByLeg.get(row.id) || [];
@@ -550,7 +561,9 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
         declaredBurnedKmAtStart:
           trip.declared_range_leg_id === row.id && trip.declared_range_km != null && rangeKm != null
             ? Math.max(0, rangeKm - trip.declared_range_km)
-            : null,
+            : row.id === firstDriveLegId && rangeKm != null && !latestFuel
+              ? rangeKm
+              : null,
       };
     }),
     rangeKm

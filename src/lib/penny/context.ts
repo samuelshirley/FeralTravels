@@ -10,7 +10,7 @@ import {
 import { getUnitsPref, getUserTimezone } from '@/server/repos/users';
 import { todayISOInZone } from '@/lib/dates';
 import type { UnitsPref } from '@/lib/units';
-import type { ChatMessage, LegWithDetails, TripWithLegs } from '@/types/trip';
+import type { ChatMessage, LegWithDetails, StartFuel, TripWithLegs } from '@/types/trip';
 
 /**
  * Shape of the structured context passed to Penny. Everything here is
@@ -52,6 +52,13 @@ export interface PennyContext {
       leg_id: string;
       as_of: string | null;
     } | null;
+    /**
+     * The onboarding `start_fuel` answer. `'fill_at_start'`: the driver may
+     * not leave full, so Finn puts a fill-up at the first station of the
+     * first drive day and plans the rest from a full tank there. `'full'`:
+     * Finn's default full tank at the start.
+     */
+    start_fuel: StartFuel;
   };
   /** Today's calendar date, ISO "YYYY-MM-DD" — use it to reason about progress. */
   today: string;
@@ -215,6 +222,7 @@ export async function buildPennyContext(
       current_leg_id: trip.current_leg_id,
       current_place: currentLeg?.start_name ?? null,
       daily_drive_hours: trip.daily_drive_hours ?? null,
+      start_fuel: trip.start_fuel ?? 'full',
       declared_fuel_state:
         trip.declared_range_km != null &&
         trip.declared_range_leg_id != null &&

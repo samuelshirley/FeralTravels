@@ -33,6 +33,7 @@ import {
   type PlacementResult,
 } from '@/lib/finn';
 import { legsNeedingSourcingBefore } from '@/lib/finn/sourcingOrder';
+import type { ForcedStopReason } from '@/types/trip';
 
 /**
  * Auto fuel-stop planner — **Finn** (Google Places + deterministic placement).
@@ -393,6 +394,11 @@ async function planOneLeg(
       ? declaredAnchor.burnedKm
       : await computeKmBurnedSinceLastRefuel(leg.tripId, leg.sortOrder, declaredAnchor);
 
+  // "Find fuel at the start" (the onboarding `start_fuel` answer): on the
+  // trip's first drive day, the first station is a fill-up and the rest of
+  // the plan runs from a full tank there. See [[fillsUpAtTripStart]].
+  const fillAtStart = await fillsUpAtTripStart(leg, declaredAnchor);
+
   // 4. Google Places corridor → eligibility filter → route projection → candidates.
   //
   // PAID. One Places Text Search (New) per leg searched — so the sourcing
@@ -420,7 +426,9 @@ async function planOneLeg(
 
     // Early exit (and skip this leg's Places call) when no stop can be needed:
     // the leg AND the next day's run to its first station fit in the tank.
-    if (kmAlreadyBurned + legKm + reserveKm <= range) {
+    // Never for the start-of-trip fill: the tank at the start is the one
+    // thing the driver told us not to assume.
+    if (!fillAtStart && kmAlreadyBurned + legKm + reserveKm <= range) {
       await clearAutoPlannerOptionStops(legId);
       await setFuelStatus(legId, 'ready');
       return { legId, status: 'ready', stopsCreated: 0 };
@@ -437,6 +445,7 @@ async function planOneLeg(
       kmBurnedAtStart: kmAlreadyBurned,
       candidates: stations.candidates,
       arrivalReserveKm: reserveKm,
+      fillAtStart,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -529,11 +538,7 @@ async function planOneLeg(
         googleMapsUri: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
         // Canonical km: `notes` is Penny's context, never rendered. The UI
         // words `forcedReason` itself, in the user's units.
-        notes: placed.reason
-          ? `Top up here — next fuel is ${placed.reason.gap_km} km away${
-              placed.reason.kind === 'next_day_fuel_far' ? ", on the next day's drive" : ''
-            }.`
-          : `Auto-suggested refuel ≈${distanceKm} km into the leg.`,
+        notes: fuelStopNote(placed.reason, distanceKm),
         forcedReason: placed.reason ?? null,
         alternatives: null,
       });
@@ -542,6 +547,53 @@ async function planOneLeg(
 
   await setFuelStatus(legId, 'ready');
   return { legId, status: 'ready', stopsCreated: chosen.length };
+}
+
+/**
+ * Penny's context for an auto-placed fuel stop, in canonical km. Never
+ * rendered — the UI words `forced_reason` itself, in the user's units.
+ */
+function fuelStopNote(reason: ForcedStopReason | undefined, distanceKm: number): string {
+  if (!reason) return `Auto-suggested refuel ≈${distanceKm} km into the leg.`;
+  switch (reason.kind) {
+    case 'trip_start_fill':
+      return 'Fill up here — the driver said they may not leave on a full tank, so the rest of the fuel plan starts from a full tank at this stop.';
+    case 'next_fuel_far':
+      return `Top up here — next fuel is ${reason.gap_km} km away.`;
+    case 'next_day_fuel_far':
+      return `Top up here — next fuel is ${reason.gap_km} km away, on the next day's drive.`;
+  }
+}
+
+/**
+ * Whether this leg opens with the start-of-trip fill-up: the driver answered
+ * "find fuel at the start" in onboarding (`trips.start_fuel`), and no earlier
+ * leg drives anywhere — so this is the first drive day. Measured by distance,
+ * like the tank walk: rest days and same-place legs burn nothing and do not
+ * count as "driving first".
+ *
+ * A declaration on this very leg (`declare_fuel_state`, "I have 150 km")
+ * wins: it is a number the driver gave, and this answer carried none.
+ */
+async function fillsUpAtTripStart(
+  leg: { id: string; tripId: string; sortOrder: number },
+  declaredAnchor: DeclaredTankAnchor | null
+): Promise<boolean> {
+  if (declaredAnchor?.legId === leg.id) return false;
+  const [trip] = await db
+    .select({ startFuel: trips.startFuel })
+    .from(trips)
+    .where(eq(trips.id, leg.tripId))
+    .limit(1);
+  if (trip?.startFuel !== 'fill_at_start') return false;
+  const drivenBefore = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(
+      and(eq(legs.tripId, leg.tripId), lt(legs.sortOrder, leg.sortOrder), gt(legs.distanceKm, 0))
+    )
+    .limit(1);
+  return drivenBefore.length === 0;
 }
 
 /**

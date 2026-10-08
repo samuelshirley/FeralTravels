@@ -55,6 +55,19 @@ export interface PlacementInput {
    * warning — the shortfall is that day's geography, not this one's.
    */
   arrivalReserveKm?: number;
+  /**
+   * The driver answered "find fuel at the start" in onboarding
+   * (`trips.start_fuel = 'fill_at_start'`) and this is the trip's first drive
+   * day. The first stop is then the FIRST station on the route, whatever the
+   * tank math would say — that is where the plan's full tank begins — and it
+   * carries the `trip_start_fill` reason. Everything after it is the ordinary
+   * greedy walk from a full tank.
+   *
+   * The tank before that station is unknown, so nothing here pretends to
+   * know it: the first station must still sit inside R of the start, or the
+   * leg is a gap ("fill up before you leave"), never a silent full-tank plan.
+   */
+  fillAtStart?: boolean;
 }
 
 export interface PlacedStop {
@@ -202,6 +215,26 @@ export function planLegFuelStops(input: PlacementInput): PlacementResult {
   const stops: PlacedStop[] = [];
   let anchorKm = 0; // along-leg position of the last refuel (0 = leg start)
   let burnAtAnchor = burnedAtStart;
+
+  if (input.fillAtStart) {
+    const first = sorted[0];
+    if (!first || first.alongKm > R - burnedAtStart + EPS) {
+      return {
+        kind: 'gap',
+        stops,
+        gapDetail: first
+          ? `The first fuel on this route is ${Math.round(first.alongKm)} km in — beyond safe range (${Math.round(R - burnedAtStart)} km). Fill up before you leave.`
+          : 'No fuel stations on this route to fill up at. Fill up before you leave.',
+      };
+    }
+    stops.push({
+      candidate: first,
+      arrivalBurnKm: burnedAtStart + first.alongKm,
+      reason: { kind: 'trip_start_fill' },
+    });
+    anchorKm = first.alongKm;
+    burnAtAnchor = 0; // refueled — the plan's full tank starts here
+  }
 
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     const reach = R - burnAtAnchor; // furthest drivable from the anchor

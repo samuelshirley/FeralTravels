@@ -206,6 +206,7 @@ describe('Trip data contract — fields required by the UI', () => {
         declared_range_km: null,
         declared_range_leg_id: null,
         declared_range_at: null,
+        start_fuel: 'full',
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-01T00:00:00Z',
         user_id: '00000000-0000-0000-0000-000000000099',

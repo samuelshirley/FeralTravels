@@ -142,7 +142,8 @@ describe('Spain trip da203241', () => {
       expect(monzon.result?.stops).toHaveLength(1);
       expect(monzon.result?.stops[0].reason?.kind).toBe('next_day_fuel_far');
       // At least the next morning's 28 km dry start, plus what is left of today.
-      expect(monzon.result?.stops[0].reason?.gap_km).toBeGreaterThan(28);
+      const reason = monzon.result?.stops[0].reason;
+      expect(reason?.kind === 'next_day_fuel_far' ? reason.gap_km : 0).toBeGreaterThan(28);
     });
   });
 });
