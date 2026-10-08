@@ -1,7 +1,11 @@
 # The first-trip wizard, all the way to a PLAN on screen. onboarding-wizard.yaml
 # proves the wizard and fires the hand-off, but does not wait for what the
 # hand-off produces; this one does: Penny's "Trip is planned" line, its link
-# to the list, and the list's days for the trip the driver asked for.
+# to the list, and the list's days for the trip the driver asked for — and,
+# because the driver answers the last step "Find fuel at the start", Finn's
+# fill-up at the first station of day 1 with its one-line reason. That is the
+# end-to-end proof of `trips.start_fuel`: the answer stored, Finn reading it on
+# a real Places search, and the reason worded on the phone.
 #
 # A short trip (Girona → Lyon, about 450 km at 6 h a day) to keep the turn
 # small. `ai` shard: the intent scan, the hand-off planning turn (~$0.085) and
@@ -101,6 +105,14 @@ appId: ${APP_ID}
       id: 'onboarding-vehicle-card'
     timeout: 30000
 
+# ── The starting tank: the last step, and the one that hands off ────────────
+- extendedWaitUntil:
+    visible:
+      text: "I.ll plan fuel from a full tank at the start\\. Will you have one\\?"
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn: 'Find fuel at the start'
+
 # ── The hand-off, awaited to a plan ─────────────────────────────────────────
 - extendedWaitUntil:
     visible:
@@ -134,6 +146,14 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     notVisible: 'Planning fuel stops…'
     timeout: 180000
+# Day 1 opens with the fill-up the driver asked for: the first station on the
+# route, carrying its reason (src/lib/forcedStopReason.ts). Whatever station
+# Google returns first near Girona — the name and distance are not pinned.
+- scrollUntilVisible:
+    element:
+      text: 'FUEL: .*Fill up here: the rest of your fuel plan starts from a full tank\. Opens in Google Maps'
+    direction: DOWN
+    timeout: 20000
 - scrollUntilVisible:
     element:
       text: 'DESTINATION: .*Opens in Google Maps'
