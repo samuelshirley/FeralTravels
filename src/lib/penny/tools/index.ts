@@ -24,6 +24,7 @@ import * as updateVehicle from './updateVehicle';
 import * as renameTrip from './renameTrip';
 import * as reportPosition from './reportPosition';
 import * as submitIdea from './submitIdea';
+import * as holdForConfirmation from './holdForConfirmation';
 
 export {
   addLeg,
@@ -47,6 +48,7 @@ export {
   renameTrip,
   reportPosition,
   submitIdea,
+  holdForConfirmation,
 };
 
 /**
@@ -79,6 +81,7 @@ export const TOOLS: Anthropic.Tool[] = [
   declareFuelState.tool,
   addTask.tool,
   updateTask.tool,
+  holdForConfirmation.tool,
 ];
 
 /**
@@ -124,6 +127,7 @@ export const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set([
   // declaration must be persisted before Finn re-runs. See
   // executeDeclareFuelState.
   declareFuelState.DECLARE_FUEL_STATE,
+  holdForConfirmation.HOLD_FOR_CONFIRMATION,
 ]);
 
 /**
@@ -154,6 +158,7 @@ export const VALIDATORS: Record<string, (ctx: PennyContext) => z.ZodSchema<unkno
   [resolvePlace.RESOLVE_PLACE]: resolvePlace.validator,
   [extractTripIntent.EXTRACT_TRIP_INTENT]: extractTripIntent.validator,
   [checkTripFeasibility.CHECK_TRIP_FEASIBILITY]: checkTripFeasibility.validator,
+  [holdForConfirmation.HOLD_FOR_CONFIRMATION]: holdForConfirmation.validator,
 };
 
 export type ValidatedAction =

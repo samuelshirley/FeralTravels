@@ -72,7 +72,9 @@ describe('the turn trace records the calls themselves', () => {
     // It is a server-side record of tool inputs, several KB per turn, and the
     // client has no use for it. The live `applied` event never carried it, so
     // the heal path must not start.
-    expect(route).toContain('resultMeta: { ...appliedPayload, turnTrace: final.turnTrace }');
+    // (Server-only keys for the next turn's checks may follow it — they are
+    // stored, never streamed, the same as the trace.)
+    expect(route).toMatch(/resultMeta: \{ \.\.\.appliedPayload, turnTrace: final\.turnTrace(, \.\.\.nextTurnMeta)? \}/);
     // The ONLY mention of it in the replan route is that one line — anything
     // else means it found its way onto the payload that goes over the wire.
     const mentions = route.match(/turnTrace/g) ?? [];

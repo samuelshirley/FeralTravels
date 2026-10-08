@@ -1,7 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicApiKey } from "@/lib/anthropicKey";
-import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
+import { logAnthropicUsageWithFallback, logUsageEvent } from "@/server/repos/usage";
 import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
   ACTION_TOOL_NAMES,
@@ -15,10 +15,11 @@ import {
   checkTripFeasibility as checkTripFeasibilityTool,
   planFuelStops as planFuelStopsTool,
   declareFuelState as declareFuelStateTool,
+  holdForConfirmation as holdForConfirmationTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
 import { getDirections } from "@/lib/google/directions";
-import { geocodePlace } from "@/lib/google/geocode";
+import { geocodePlace, type GeocodeMatch } from "@/lib/google/geocode";
 import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
 import { lookupPlace } from "@/lib/osm/nominatim";
 import { qualifiedPlaceName } from "@/lib/placeName";
@@ -46,6 +47,26 @@ import { PENNY_MODEL } from "@/lib/models";
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from "@/lib/vehicleProfile";
 import { tripDriveCapHours } from "@/lib/penny/driveCap";
 import { appendContinuationNudge } from "@/lib/penny/autoContinue";
+import {
+  acceptanceInstruction,
+  detectAcceptance,
+  previousAssistantMessage,
+  type Acceptance,
+  type AcceptanceKind,
+} from "@/lib/penny/acceptance";
+import { notDrivableNote, notDrivableReason } from "@/lib/penny/unsourcedFacts";
+import { gateStopAction, type NotDrivablePlace } from "@/lib/penny/stopGate";
+import {
+  dropNotice,
+  dropProposalNotice,
+  droppedPlaces,
+  dropWarning,
+  intentPlaceNames,
+  mergePlaceNames,
+  unmentionedDrops,
+  type StoredTripIntent,
+} from "@/lib/penny/intentDrift";
+import { getLatestTripIntent } from "@/server/repos/pennyTurns";
 // Re-exported for unit tests (see claude.test.ts), which pin the
 // no-double-user-turn invariant of the auto-continue plumbing.
 export { appendContinuationNudge };
@@ -245,7 +266,7 @@ Never end a response with offers to plan things the system already automates. Th
 
 Why: fuel stations are auto-planned server-side — sourced automatically when the driver opens a day in the itinerary. The user never needs to opt in. You do NOT find overnight stops, campgrounds, parks, or groceries — those are not features, so never offer them.
 
-If you genuinely need user input on a leg, ask ONE specific question grounded in concrete leg detail (e.g. "Day 3 is gravel — keep the pass or route around?"). Never offer an open menu.
+If you genuinely need user input on a leg, ask ONE specific question grounded in concrete leg detail (e.g. "Day 3 is over five hours — keep the pass or route around?"). Never offer an open menu.
 </closing_questions>
 
 <reporting_progress>
@@ -284,7 +305,7 @@ This applies whenever you changed the schedule. Skip it for pure questions and c
 <handoff_turn>
 The FIRST full build — the turn right after setup, where you create the whole trip from the driver's opening description — is the one turn where the app also renders a deterministic PLAN READY card beneath your message. That card says the trip is planned, sends them to the list view, and tells them they can paste a Google Maps link to change a day's destination.
 
-So on that turn the card owns the confirmation and the next step, and your message is ONE thing only: the honest calls you made. What you dropped and why, and any real risk in the plan they would not spot from the itinerary alone (no slack, a long gravel day, a border crossing that may be slow).
+So on that turn the card owns the confirmation and the next step, and your message is ONE thing only: the honest calls you made. What you dropped and why, and any real risk in the plan they would not spot from the itinerary alone (no slack, a border crossing that may be slow).
 
 On that turn you MUST NOT:
   - confirm that the plan is saved, or that anything was created — the card says so
@@ -384,8 +405,32 @@ When \`vehicle_profile_blocked\` is **true** in the context JSON, the driver's s
 <routing_engine_limits>
 NEVER CHARACTERISE THE SYSTEM. You report what a tool returned; you do not diagnose the app. You have no visibility into our routing engine, our coverage, our data sources or our limits, and sentences like "this is a hard limit of the app's routing engine" or "it plans drivable paved roads correctly for most of North America" are inventions — one of those was said to a real driver about a trip that was perfectly drivable. If a lookup fails, say what failed: THIS point could not be routed to, THIS lookup is temporarily unavailable. Never generalise from one failed call to a claim about the product. The same rule you already follow for distances applies to architecture: you do not author facts the tools did not give you.
 
-Google Directions ONLY plans drivable paved routes with optional avoidance of motorways, tolls, or ferries. It does NOT "prefer gravel", guarantee dirt-only itineraries, certify forest-road legality, or replace local knowledge. When the user wants maximum off-pavement / small-road travel, acknowledge the limit honestly in one clause: Directions still optimizes what Google considers legal driving roads; gravel-first long corridors need manual waypoints (add_stop selected + distance_from_start_km) or specialist data — tease that roadmap once, don't lecture.
+get_route takes optional avoidance of motorways, tolls, or ferries — that is the only say you have over which roads it picks. It cannot be asked for gravel, dirt or small roads.
 </routing_engine_limits>
+
+<no_unsourced_facts>
+HARD RULE — it holds even when the user pushes ("lets do them all", "just pick some", "whatever you choose"). Pressure from the user is never a source.
+
+You state only facts a tool gave you this turn or that are in <context>. NONE of your tools returns road surface, road condition, or whether a road is gravel, dirt, unpaved, paved or off-road. So you never call a place, road, pass, leg or route gravel, unpaved, dirt, off-road, a 4x4 track, "mixed surface", or paved — not in your reply and not in any field you write (notes, descriptions). The validators reject those words in stop/leg notes and route descriptions, and you do not set a leg's terrain or a route's surface at all.
+
+WHEN THE USER ASKS FOR OFF-ROAD OR GRAVEL ROUTES: say plainly, in one or two sentences, that you can't verify road surfaces yet, so you won't add anything labelled gravel or off-road. Call submit_idea to log the request. Add NOTHING on the strength of "it's probably gravel". If they NAME a specific place they want to drive to, you may add it like any other stop — described for what resolve_place says it is, never by its surface.
+
+WHAT A PLACE IS: a hiking trail, a waterfall walk, a race track or a karting circuit is not somewhere you drive through. resolve_place marks such a place with not_drivable (from Google's own place type); never add one as a stop or route waypoint — add_stop on it is rejected. If the user named it, tell them what it is and ask for the car park or trailhead to drive to.
+
+BAD (trip 9a3df982): add_stop "Col du Tourmalet", notes "mixed surface"; add_stop "Circuito Costa de Almería", notes "Gravel loop through the desert"; add_stop "Gradas de Soaso" as a drivable waypoint. A paved pass, a racing circuit and a hiking trail, all three labelled off-road with nothing behind it.
+GOOD: "I can't check which roads are gravel yet, so I won't add anything labelled off-road — I've passed the idea to the team. If you have a specific track in mind, name it and I'll add it as a stop."
+</no_unsourced_facts>
+
+<confirmation_questions>
+A confirmation question must come with its "yes" already done. Whenever you are about to ask the user to confirm a concrete change ("Both good?", "Shall I add Gorafe after Tabernas?", "I'd use the Torla visitor centre — OK?"):
+  1. In THIS turn, do all the work the YES answer needs, using your own recommendation: resolve_place, get_route, check_trip_feasibility when planning, then queue the add_leg / add_stop / update_* calls exactly as you would if they had already said yes.
+  2. Call hold_for_confirmation with the question.
+  3. End your message with that question. Do not say anything is saved — it is held.
+If they answer yes, the server applies those writes itself and you are not called at all. If they say anything else, the writes are discarded and you get their message with your question still in the transcript.
+Ask a question with no held writes only when there is no concrete change to prepare (they must name something you cannot pick for them, or it is a genuine either/or between two different plans).
+
+If you asked without holding and the user answers with nothing but "yes", "yup", "sounds good", "both good", "do it", "whatever you choose", "you pick" or the like, they have answered it: do what you proposed, now, with tools. Never answer an acceptance with another confirmation question about the same thing. If you offered options, take the one you recommended. When the server recognises such a reply it adds an <accepted_proposal> block to the user message quoting your previous message — follow it exactly.
+</confirmation_questions>
 
 <tool_use_protocol>
 - Tool definitions describe valid inputs. Read each tool's description carefully — it tells you when to call it.
@@ -527,7 +572,7 @@ The tool returns a verdict:
   - "no_budget" → proceed with add_leg. Don't restate counts — the card shows the day total.
   - "over_budget" → YOUR JOB IS TO FIX IT, not bounce it back to the user. You are an expert planner — adjust the plan to fit and re-run feasibility. Specific tactics, in order of preference:
       1. Reduce nights at waypoints proportionally to fit. If the user said "even time at each park" and 3 nights each doesn't fit but 2 does, use 2. If the user said "2 weeks" and "4 parks," they want all 4 parks — cut nights before cutting parks.
-      2. If reducing nights to 1 per stop still doesn't fit, THEN consider dropping the most marginal waypoint (furthest detour, weakest purpose, or the one the user seemed least committed to).
+      2. If reducing nights to 1 per stop still doesn't fit, THEN consider dropping the most marginal waypoint (furthest detour, weakest purpose, or the one the user seemed least committed to). A dropped place is NEVER silent: name it in your reply and say why. extract_trip_intent compares against the trip's previous intent and lists any place that disappeared under dropped_places — every one of those must be named in your reply, and if your reply does not, the server adds "No longer in the plan: …" under it.
       3. If even dropping a waypoint doesn't fit, the trip is genuinely impossible at these constraints — ONLY THEN stop and explain to the user: here's why it doesn't work, here's what IS realistic, and make a specific recommendation.
     When you adjust, call extract_trip_intent again with revised waypoint nights, then re-run get_route (if segments changed) and check_trip_feasibility. Keep iterating until it fits. In your final response, briefly explain the tradeoff you made QUALITATIVELY, without numbers (the plan summary card shows the day/night math): e.g. "Trimmed each park's stay a little so all four still fit your window. Want to adjust?"
 
@@ -587,7 +632,7 @@ Act on the status it returns:
 - not_found: no match. Do NOT invent coordinates. Ask for a Maps link, a fuller address, or raw lat/lng.
 - unavailable: the lookup is down. Say so honestly; do not guess.
 
-When you place a stop or leg endpoint from a resolve_place result, set source="user" (the user named it).
+WHO CHOSE IT — the stop's source. source="user" ONLY when the user themselves named or linked that exact place. A place YOU picked — one you suggested, one you chose after "whatever you choose" / "you pick" / "do them all", one you found to satisfy a general ask — is source="penny". The server checks: a source="user" stop the user never named, or any stop saved on a turn where they left the choice to you, is saved as "penny", and the tool result tells you so.
 
 THE place_id RULE — this is a data flow, not a capability:
 - resolve_place returns a place_id. It is an opaque handle. Never write one, edit one, or invent one; forward exactly what you were given.
@@ -694,6 +739,33 @@ export interface ReplanResult {
    * browser. See lib/penny/turnTrace.ts for the truncation and hashing rules.
    */
   turnTrace: TurnTrace;
+  /**
+   * Set when the driver's message was nothing but an acceptance of the question
+   * Penny had just asked ("yup", "whatever you choose") — see
+   * lib/penny/acceptance.ts. On those turns she was handed an explicit
+   * "carry it out" instruction and the first model call was forced to use a
+   * tool. Stored on the turn row for diagnosis.
+   */
+  acceptance: AcceptanceKind | null;
+  /**
+   * True when Penny called hold_for_confirmation: the validated actions are
+   * her answer to the question she ended on, to be STAGED by the route, not
+   * applied. See lib/penny/stagedPlan.ts.
+   */
+  held: boolean;
+  /** The question she said she would ask, from hold_for_confirmation. */
+  holdQuestion: string | null;
+  /**
+   * The place names of the LAST extract_trip_intent this turn, or null when it
+   * made none. The route stores it on the turn row (`result_meta.tripIntent`)
+   * so the next extract has a baseline to compare against.
+   */
+  tripIntent: StoredTripIntent | null;
+  /**
+   * Places that were in the previous intent (an earlier turn's, or an earlier
+   * call this turn) and are missing from the last one. See intentDrift.ts.
+   */
+  droppedPlaces: string[];
 }
 
 /**
@@ -756,10 +828,71 @@ export async function* replanStream(
       source: { type: "base64", media_type: mediaType, data: match[2] },
     });
   }
+  /*
+   * A bare "yes" is not something to interpret — see lib/penny/acceptance.ts.
+   * Decided here in code, from the transcript tail Penny is about to be handed
+   * anyway, with no model call. The driver's word stays as written in the
+   * transcript and in the "User request" line; the instruction rides beside it.
+   */
+  const acceptance: Acceptance | null = detectAcceptance(
+    userMessage,
+    previousAssistantMessage(context.recentChat, userMessage),
+  );
+
   userContent.push({
     type: "text",
-    text: renderContextMessage(context, userMessage, resolvedMapsLinks),
+    text: renderContextMessage(context, userMessage, resolvedMapsLinks, acceptance),
   });
+
+  /*
+   * The place names this trip's previous extract_trip_intent committed to, so a
+   * place cannot drop out of the plan without a word (lib/penny/intentDrift.ts).
+   * A failed read costs the comparison, not the turn — and is logged, so it
+   * shows in /admin/errors rather than vanishing.
+   */
+  let intentBaseline: string[] = [];
+  try {
+    intentBaseline = (await getLatestTripIntent(tripId))?.places ?? [];
+  } catch (e) {
+    await logUsageEvent({
+      userId,
+      tripId,
+      provider: "penny:intent-baseline-failed",
+      requests: 0,
+      success: false,
+      errorMessage: e instanceof Error ? e.message : String(e),
+    });
+  }
+  let latestIntentNames: string[] | null = null;
+  let latestDropped: string[] = [];
+
+  /*
+   * Places resolve_place flagged as not drivable (a race course, a hiking
+   * area), so an add_stop placed on one is refused in-loop.
+   */
+  const notDrivablePlaces: NotDrivablePlace[] = [];
+
+  /*
+   * What the driver has written that Penny can see — for deciding whether a
+   * stop she saves as source="user" is one they actually named.
+   */
+  const userTexts = [
+    ...context.recentChat.filter((m) => m.role === "user").map((m) => m.content),
+    userMessage,
+  ];
+  const pastedPoints = resolvedMapsLinks.flatMap((l) =>
+    l.resolved && l.lat != null && l.lng != null ? [{ lat: l.lat, lng: l.lng }] : [],
+  );
+  const delegated = acceptance?.kind === "delegate";
+
+  /*
+   * Set when Penny called hold_for_confirmation: this turn is a question, and
+   * every write she queued is her answer to "yes". The route stages them on
+   * the turn row instead of applying them; a later deterministic "yes" applies
+   * them with no model call at all. See lib/penny/stagedPlan.ts.
+   */
+  let held = false;
+  let holdQuestion: string | null = null;
 
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userContent },
@@ -951,7 +1084,19 @@ export async function* replanStream(
 
       for (const tu of toolUses) {
         if (LOOKUP_TOOL_NAMES.has(tu.name)) {
-          const result = await executeLookupTool(tu, context, userId);
+          const result = await executeLookupTool(tu, context, userId, {
+            intentBaseline: mergePlaceNames(intentBaseline, latestIntentNames ?? []),
+            queuedSoFar: validatedActions.filter((a) => a.name !== "submit_idea").length,
+          });
+          if (result.holdQuestion) {
+            held = true;
+            holdQuestion = result.holdQuestion;
+          }
+          if (result.notDrivable) notDrivablePlaces.push(...result.notDrivable);
+          if (result.intentPlaces) {
+            latestIntentNames = result.intentPlaces;
+            latestDropped = result.droppedPlaces ?? [];
+          }
           // Workflow tracking — must happen here in the loop because each
           // iteration creates new tool_results, and we need cumulative state.
           // We track on success only; a failed extract_trip_intent doesn't
@@ -999,15 +1144,33 @@ export async function* replanStream(
         const schema = validatorFactory(context);
         const parsed = schema.safeParse(tu.input);
         if (parsed.success) {
-          validatedActions.push({
+          const action = {
             name: tu.name as ValidatedAction["name"],
             input: parsed.data,
-          } as ValidatedAction);
+          } as ValidatedAction;
+          const gate = gateStopAction(action, {
+            context,
+            notDrivablePlaces,
+            delegated,
+            userTexts,
+            pastedPoints,
+          });
+          if (gate.rejected != null) {
+            hadValidationFailure = true;
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: tu.id,
+              is_error: true,
+              content: `Validation error: ${gate.rejected} Emit a corrected call addressing this specific issue, or leave it out.`,
+            });
+            continue;
+          }
+          validatedActions.push(action);
           toolResults.push({
             type: "tool_result",
             tool_use_id: tu.id,
             is_error: false,
-            content: "Validated and queued. Do not re-emit this call.",
+            content: gate.note ?? "Validated and queued. Do not re-emit this call.",
           });
         } else {
           hadValidationFailure = true;
@@ -1096,6 +1259,22 @@ export async function* replanStream(
       }
     }
 
+    /*
+     * A place dropped from the plan, that her reply never names: the server
+     * says it, the same way the route appends a correction when every change
+     * was rejected. Only when the turn actually queued legs — a turn that
+     * stopped to ask the driver has no new plan to report a drop from.
+     */
+    if (latestDropped.length > 0 && validatedActions.some((a) => a.name === "add_leg")) {
+      const unsaid = unmentionedDrops(textChunks.join("\n\n"), latestDropped);
+      if (unsaid.length > 0) {
+        // A held turn has not changed the plan yet — it is asking whether to.
+        const notice = held ? dropProposalNotice(unsaid) : dropNotice(unsaid);
+        textChunks.push(notice);
+        yield { kind: "text", chunk: notice };
+      }
+    }
+
     // Quick visibility on cache effectiveness. Useful when tuning breakpoints
     // and after deploying — a healthy run should show cacheReadTokens dwarfing
     // cacheCreationTokens after iteration 1. If reads stay low, caching isn't
@@ -1135,6 +1314,11 @@ export async function* replanStream(
         fuelPlanRan,
         toolTrace,
         turnTrace: buildTurnTrace(promptFingerprint(SYSTEM_PROMPT, TOOLS), tracedCalls),
+        acceptance: acceptance?.kind ?? null,
+        held,
+        holdQuestion,
+        tripIntent: latestIntentNames ? { places: latestIntentNames } : null,
+        droppedPlaces: latestDropped,
       },
     };
   } finally {
@@ -1182,12 +1366,34 @@ interface LookupResult {
    * (touched the DB), so the loop can flag `fuelPlanRan` for the route.
    */
   fuelPlanned?: boolean;
+  /**
+   * Set only by executeResolvePlace — every match or candidate it flagged as
+   * not a drivable waypoint, so the loop can refuse an add_stop placed on one.
+   */
+  notDrivable?: NotDrivablePlace[];
+  /**
+   * Set only by a successful executeExtractTripIntent — the intent's place
+   * names, and the ones it dropped relative to the baseline it was given.
+   */
+  intentPlaces?: string[];
+  droppedPlaces?: string[];
+  /** Set only by a successful hold_for_confirmation — the question she will ask. */
+  holdQuestion?: string;
+}
+
+/** Turn state a lookup needs beyond the trip context. */
+interface LookupState {
+  /** Place names the trip's previous intent(s) committed to — see intentDrift.ts. */
+  intentBaseline: string[];
+  /** Writes queued so far this turn — what a hold_for_confirmation would hold. */
+  queuedSoFar: number;
 }
 
 async function executeLookupTool(
   toolUse: Anthropic.ToolUseBlock,
   context: PennyContext,
   userId: string,
+  state: LookupState,
 ): Promise<LookupResult> {
   if (toolUse.name === resolvePlaceTool.RESOLVE_PLACE) {
     return executeResolvePlace(toolUse, context, userId);
@@ -1196,7 +1402,10 @@ async function executeLookupTool(
     return executeGetRoute(toolUse, context, userId);
   }
   if (toolUse.name === extractTripIntentTool.EXTRACT_TRIP_INTENT) {
-    return executeExtractTripIntent(toolUse, context);
+    return executeExtractTripIntent(toolUse, context, state.intentBaseline);
+  }
+  if (toolUse.name === holdForConfirmationTool.HOLD_FOR_CONFIRMATION) {
+    return executeHoldForConfirmation(toolUse, context, state.queuedSoFar);
   }
   if (toolUse.name === checkTripFeasibilityTool.CHECK_TRIP_FEASIBILITY) {
     return executeCheckTripFeasibility(toolUse, context);
@@ -1272,6 +1481,38 @@ async function executeDeclareFuelState(
       `it resets automatically once a fuel stop is passed. ` +
       `NOW call plan_fuel_stops for that same leg so Finn re-plans with the corrected tank, and report the real result. ` +
       `The vehicle's saved range numbers were NOT changed.`,
+  };
+}
+
+/**
+ * hold_for_confirmation — mark this turn as a question whose "yes" is the set
+ * of writes queued this turn. Writes nothing: the loop records the hold on the
+ * ReplanResult and the route stages instead of applying. See
+ * tools/holdForConfirmation.ts and lib/penny/stagedPlan.ts.
+ */
+async function executeHoldForConfirmation(
+  toolUse: Anthropic.ToolUseBlock,
+  context: PennyContext,
+  queuedSoFar: number,
+): Promise<LookupResult> {
+  const parsed = holdForConfirmationTool.validator(context).safeParse(toolUse.input);
+  if (!parsed.success) {
+    return {
+      is_error: true,
+      content: `Validation error on hold_for_confirmation: ${zodErrorToFeedback(parsed.error)}.`,
+    };
+  }
+  const { question } = parsed.data as holdForConfirmationTool.HoldForConfirmationInput;
+  return {
+    is_error: false,
+    holdQuestion: question,
+    content:
+      `Held. Every write you queue this turn (${queuedSoFar} so far) is applied ONLY if the user ` +
+      `answers yes — the server applies it without asking you again; anything else discards it. ` +
+      (queuedSoFar === 0
+        ? `You have queued nothing yet: queue the writes the yes answer needs now, before you finish. `
+        : ``) +
+      `Now end your message with the question. Do not say anything is saved — it is not, until they say yes.`,
   };
 }
 
@@ -1408,6 +1649,7 @@ async function executeCheckTripFeasibility(
 async function executeExtractTripIntent(
   toolUse: Anthropic.ToolUseBlock,
   context: PennyContext,
+  baseline: string[],
 ): Promise<LookupResult> {
   const schema = extractTripIntentTool.validator(context);
   const parsed = schema.safeParse(toolUse.input);
@@ -1441,12 +1683,20 @@ async function executeExtractTripIntent(
     0,
   );
 
+  // No silent drops: a place the previous intent carried and this one does not
+  // gets named back to her, with the instruction to say so — see intentDrift.ts.
+  const dropped = droppedPlaces(baseline, intent);
+  if (dropped.length > 0) warnings.unshift(dropWarning(dropped));
+
   return {
     is_error: false,
+    intentPlaces: intentPlaceNames(intent),
+    droppedPlaces: dropped,
     content: JSON.stringify({
       ok: true,
       parsed: intent,
       total_overnight_nights,
+      ...(dropped.length > 0 ? { dropped_places: dropped } : {}),
       warnings,
       next_step:
         "Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.",
@@ -1485,10 +1735,30 @@ async function executeResolvePlace(
     { userId, tripId: context.trip.id },
   );
 
+  /*
+   * A place Google itself types as a race course or a hiking area is not a
+   * drivable waypoint (trip 9a3df982 saved a racing circuit and a hiking trail
+   * as "gravel" waypoints). Flag it on the match and on every candidate — she
+   * picks candidates too — and hand the flags to the loop so an add_stop on
+   * one is refused. See lib/penny/unsourcedFacts.ts.
+   */
+  const notDrivable: NotDrivablePlace[] = [];
+  const flag = (m: GeocodeMatch): { not_drivable: string } | Record<string, never> => {
+    const reason = notDrivableReason({
+      primaryType: m.primary_type,
+      types: m.types,
+      name: m.label,
+    });
+    if (!reason) return {};
+    notDrivable.push({ lat: m.lat, lng: m.lng, label: m.label, reason });
+    return { not_drivable: notDrivableNote(reason) };
+  };
+
   switch (result.status) {
     case 'resolved':
       return {
         is_error: false,
+        notDrivable,
         content: JSON.stringify({
           status: 'resolved',
           lat: round5(result.match.lat),
@@ -1520,16 +1790,19 @@ async function executeResolvePlace(
             result.match.granularity === 'precise'
               ? 'Exact match — safe to use directly.'
               : `Only a ${result.match.granularity} centroid. Fine if the user named a city; if they named a specific place, this is too vague — ask them to sharpen it instead of pinning here.`,
+          ...flag(result.match),
           other_candidates: result.other_candidates.map((c) => ({
             label: c.label,
             address: c.address ?? null,
             place_id: c.place_id ?? null,
+            ...flag(c),
           })),
         }),
       };
     case 'ambiguous':
       return {
         is_error: false,
+        notDrivable,
         content: JSON.stringify({
           status: 'ambiguous',
           message: 'Several distinct places match — ask the user which one before adding it.',
@@ -1541,6 +1814,7 @@ async function executeResolvePlace(
             // Carried on every candidate, not just the resolved one: once the
             // user picks, the id has to be there to route with.
             place_id: c.place_id ?? null,
+            ...flag(c),
           })),
         }),
       };
@@ -1801,6 +2075,7 @@ function renderContextMessage(
   ctx: PennyContext,
   userMessage: string,
   resolvedMapsLinks: ResolvedMapsLink[] = [],
+  acceptance: Acceptance | null = null,
 ): string {
   const contextJson = JSON.stringify(ctx, null, 2);
   const request = userMessage?.trim() || "(no text — see attached image(s))";
@@ -1808,5 +2083,6 @@ function renderContextMessage(
     resolvedMapsLinks.length > 0
       ? `\n\n<resolved_maps_links>\n${JSON.stringify(resolvedMapsLinks, null, 2)}\n</resolved_maps_links>`
       : "";
-  return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}${mapsBlock}`;
+  const acceptanceBlock = acceptance ? `\n\n${acceptanceInstruction(acceptance)}` : "";
+  return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}${mapsBlock}${acceptanceBlock}`;
 }
