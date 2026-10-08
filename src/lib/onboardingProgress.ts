@@ -14,7 +14,9 @@ import { isTripDateLabel, isTripOriginLabel, isTripPaceLabel, UNITS_LABEL } from
  * that changes its mind on every screen is worse than none.
  *
  * Steps, in order: trip_intent · [trip_origin] · [trip_date] · [trip_pace]
- * · [units_pick] · vehicle. The bracketed ones are conditional, and whether
+ * · [units_pick] · [vehicle] · start_fuel. The bracketed ones are conditional,
+ * and start_fuel — the tank the trip starts on — is asked on EVERY trip, so it
+ * is always the last of the count. Whether
  * each is IN this flow is read from evidence rather than from the current
  * state:
  *
@@ -46,7 +48,11 @@ export interface OnboardingProgressInput {
    * `total` is 1 for the composite card and the question count otherwise.
    */
   vehicle: { current: number; total: number } | null;
-  /** Vehicle steps a flow that has not reached the vehicle yet will take. */
+  /**
+   * Vehicle steps a flow that has not reached the vehicle yet will take — 0
+   * when the trip's vehicle is already complete, which is every returning
+   * driver. On `start_fuel`, the vehicle steps this flow DID take.
+   */
   vehicleStepsAhead: number;
 }
 
@@ -77,7 +83,8 @@ export function computeOnboardingProgress(
   const preVehicle =
     1 + (originIn ? 1 : 0) + (dateIn ? 1 : 0) + (paceIn ? 1 : 0) + (unitsIn ? 1 : 0);
   const vehicleTotal = input.vehicle?.total ?? input.vehicleStepsAhead;
-  const total = preVehicle + vehicleTotal;
+  // + the start_fuel step, which every flow ends on.
+  const total = preVehicle + vehicleTotal + 1;
 
   let current: number;
   switch (state) {
@@ -98,7 +105,11 @@ export function computeOnboardingProgress(
       current = 2 + (originIn ? 1 : 0) + (dateIn ? 1 : 0) + (paceIn ? 1 : 0);
       break;
     case 'vehicle_new':
-      current = preVehicle + (input.vehicle?.current ?? 1);
+      // Never onto the starting-tank step's number, which always follows.
+      current = Math.min(preVehicle + (input.vehicle?.current ?? 1), preVehicle + vehicleTotal);
+      break;
+    case 'start_fuel':
+      current = total;
       break;
     default:
       // Legacy states are advanced on read before a snapshot is returned.

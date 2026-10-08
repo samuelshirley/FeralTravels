@@ -26,7 +26,8 @@ it" is post-MVP — flag it before building. Full scope and what was cut:
   Don't build these now; don't let Penny fake them.
 - One range number per vehicle (`vehicles.range_km`). Finn's rule is "don't run
   dry before the next reachable station", never "stop every range_km", and a
-  forced stop MUST carry a one-line reason. Full tank at trip start.
+  forced stop MUST carry a one-line reason. Full tank at trip start, unless
+  onboarding's last step said "find fuel at the start" (`trips.start_fuel`).
 
 ## Stack
 

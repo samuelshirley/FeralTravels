@@ -1,5 +1,6 @@
 import 'server-only';
 import { and, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '@/server/db/client';
 import { chatHistory, trips, users } from '@/server/db/schema';
 import { addChatMessage } from '@/server/repos/chat';
@@ -17,7 +18,7 @@ import { estimateRange } from '@/server/parseRangeEstimate';
 import { scanFirstMessage } from '@/server/onboardingIntentScan';
 import { miToKm, kmToMi } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
-import type { OnboardingState, OnboardingScan } from '@/types/trip';
+import { START_FUEL_VALUES, type OnboardingState, type OnboardingScan } from '@/types/trip';
 import {
   TRIP_DATE_CLARIFY_LABEL,
   TRIP_DATE_LABEL,
@@ -28,6 +29,8 @@ import {
   DAILY_DRIVE_HOURS_MAX,
   DAILY_DRIVE_HOURS_MIN,
   parseDailyDriveHours,
+  START_FUEL_LABEL,
+  START_FUEL_OPTIONS,
   UNITS_LABEL,
   VEHICLE_SETUP_LABEL,
   cityFromPlace,
@@ -59,7 +62,10 @@ import {
 //                  stated a daily driving time) → units_pick | vehicle_new
 //   trip_pace    → hours of driving a day persisted (trips.daily_drive_hours)
 //   units_pick   → metric/imperial persisted → vehicle_new
-//   vehicle_new  → the composite name+range card → done (handoff)
+//   vehicle_new  → the composite name+range card (skipped when the trip's
+//                  vehicle is already complete) → start_fuel
+//   start_fuel   → the tank the trip starts on (trips.start_fuel), asked on
+//                  EVERY trip → done (handoff)
 //
 // There is no trip-naming step: the "+ New trip" button creates the trip with a
 // placeholder name and Penny renames it to its route during planning. Legacy
@@ -201,6 +207,23 @@ export const TRIP_PACE_QUESTION: Question = {
   min: DAILY_DRIVE_HOURS_MIN,
   max: DAILY_DRIVE_HOURS_MAX,
 };
+
+/**
+ * The LAST step, on every trip: Finn plans from a full tank at the start, and
+ * this is where the driver says whether that is true. Tap-only — the answer is
+ * one of `START_FUEL_VALUES`, re-validated as an enum by `submitAnswer`, never
+ * free text. Persisted on `trips.start_fuel`; Finn reads it on the first drive
+ * day (`server/fuel.ts`).
+ */
+export const START_FUEL_QUESTION: Question = {
+  key: 'start_fuel',
+  kind: 'select',
+  label: START_FUEL_LABEL,
+  options: START_FUEL_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+};
+
+/** The `start_fuel` answer: exactly one of the two options, nothing else. */
+const startFuelAnswerSchema = z.enum(START_FUEL_VALUES);
 
 /** @deprecated Kept for backwards compatibility with old onboarding states. */
 export const HANDOFF_QUESTION = TRIP_INTENT_QUESTION;
@@ -653,13 +676,18 @@ async function progressFor(
   const unitsChosen = (await getRawUnitsPref(userId)) != null;
   // A flow that has not reached the vehicle yet: a first-run account owns no
   // vehicle, so it gets the ONE composite card. An account that already owns
-  // a partial vehicle (name, no range) takes the single steps that remain.
+  // a partial vehicle (name, no range) takes the single steps that remain. A
+  // COMPLETE vehicle takes none — the walker goes straight past it — and
+  // counting it anyway showed every returning driver a step that never came.
   let vehicleStepsAhead = 1;
-  if (!vehicle) {
-    const owned = await listVehiclesForUser(userId);
-    const only = owned.length === 1 ? owned[0] : null;
-    if (only && vehicleHasProfileValue(only, 'name') && !vehicleHasProfileValue(only, 'range_km')) {
-      vehicleStepsAhead = buildOnboardingSteps('metric').length;
+  if (state === 'start_fuel') {
+    vehicleStepsAhead = vehicleStepsTaken(askedLabels);
+  } else if (!vehicle) {
+    const flowVehicle = await vehicleForFlow(tripId, userId);
+    if (flowVehicle && vehicleHasProfileValue(flowVehicle, 'name')) {
+      vehicleStepsAhead = vehicleHasProfileValue(flowVehicle, 'range_km')
+        ? 0
+        : buildOnboardingSteps('metric').length;
     }
   }
   return computeOnboardingProgress({
@@ -671,6 +699,39 @@ async function progressFor(
     vehicle,
     vehicleStepsAhead,
   });
+}
+
+/**
+ * The vehicle the `vehicle_new` walker will complete: the trip's own, else the
+ * account's only one (the same choice `getOnboardingSnapshot` makes before it
+ * attaches it). Null when neither exists — the composite card's case.
+ */
+async function vehicleForFlow(tripId: string, userId: string): Promise<VehicleApi | null> {
+  const [row] = await db
+    .select({ vehicleId: trips.vehicleId })
+    .from(trips)
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  if (row?.vehicleId) return getVehicleForUser(userId, row.vehicleId);
+  const owned = await listVehiclesForUser(userId);
+  return owned.length === 1 ? owned[0] : null;
+}
+
+/**
+ * How many vehicle steps a flow that has moved PAST the vehicle took, read
+ * from the questions it wrote. The composite card writes both single-step
+ * labels and is one step; the range-only step (a named vehicle with no range)
+ * was counted as two all along — "2 of 2" — so it stays two; a complete
+ * vehicle wrote nothing and took none.
+ */
+function vehicleStepsTaken(askedLabels: ReadonlySet<string>): number {
+  const labels = new Set(
+    (['metric', 'imperial'] as const).flatMap((u) => buildOnboardingSteps(u).map((q) => q.label)),
+  );
+  const [nameLabel] = buildOnboardingSteps('metric').map((q) => q.label);
+  const rangeAsked = [...askedLabels].some((l) => labels.has(l) && l !== nameLabel);
+  if (askedLabels.has(nameLabel)) return 1;
+  return rangeAsked ? buildOnboardingSteps('metric').length : 0;
 }
 
 export async function getOnboardingSnapshot(
@@ -783,6 +844,15 @@ export async function getOnboardingSnapshot(
     };
   }
 
+  if (state === 'start_fuel') {
+    return {
+      state: 'start_fuel',
+      question: START_FUEL_QUESTION,
+      vehicles: [],
+      progress: await progressFor(tripId, userId, state, scan),
+    };
+  }
+
   if (state === 'trip_name') {
     // Legacy: naming is no longer part of onboarding. Advance any trip still
     // parked in this state to the next real step.
@@ -845,17 +915,19 @@ export async function getOnboardingSnapshot(
     const unitsPref = await getUnitsPref(userId);
     const next = nextVehicleOnboardingQuestion(currentVehicle, askedLabels, unitsPref, scan);
     if (!next) {
-      // All vehicle questions answered — complete onboarding. The scan stash
-      // is NOT cleared here: `completeOnboarding` runs right after this on
-      // every submit path and reads the origin out of it to build the intent
-      // Penny plans from. Clearing it here handed her "annecy france" alone
-      // and her first turn was "where are you starting from?" — the exact
-      // question the wizard had just asked. completeOnboarding clears it.
+      // All vehicle questions answered — on to the last step, the starting
+      // tank. Asked on EVERY trip, including a returning driver's whose
+      // vehicle needed nothing: it is about this trip's start, not the
+      // vehicle. The scan stash is NOT cleared here: `completeOnboarding`
+      // runs after the last answer and reads the origin out of it to build
+      // the intent Penny plans from. Clearing it early handed her "annecy
+      // france" alone and her first turn was "where are you starting from?" —
+      // the exact question the wizard had just asked.
       await db
         .update(trips)
-        .set({ onboardingState: 'done', updatedAt: new Date() })
+        .set({ onboardingState: 'start_fuel', updatedAt: new Date() })
         .where(eq(trips.id, tripId));
-      return { state: 'done', question: null, vehicles: [], progress: null };
+      return getOnboardingSnapshot(tripId, userId);
     }
     // Prefill the fuel-range questions from the first-message scan stash so the
     // driver confirms an inferred range with one tap instead of retyping. The
@@ -1362,6 +1434,21 @@ export async function submitAnswer(
       answerLabel,
       didHandoff: false,
     };
+  }
+
+  // ---- The starting tank: the last step, then the handoff ----
+  if (state === 'start_fuel' && input.questionKey === START_FUEL_QUESTION.key) {
+    const parsed = startFuelAnswerSchema.safeParse(input.value);
+    if (!parsed.success) throw new Error('Tap one of the two options.');
+    const startFuel = parsed.data;
+    await db
+      .update(trips)
+      .set({ startFuel, updatedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    const answerLabel =
+      START_FUEL_OPTIONS.find((o) => o.value === startFuel)?.label ?? startFuel;
+    await writeQA(tripId, START_FUEL_QUESTION, answerLabel, startFuel);
+    return completeOnboarding(tripId, answerLabel);
   }
 
   // ---- Legacy: 'ready' state with 'handoff' key (old clients) ----
