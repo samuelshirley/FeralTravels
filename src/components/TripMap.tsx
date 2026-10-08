@@ -19,6 +19,7 @@ interface TripMapProps {
    * The parent opens that stop in the list view (expand owning leg + scroll).
    */
   onStopSelect?: (legId: string, stopId: string) => void;
+  /** Unread since trail overlays were removed (2026-10-07); TripWorkspace still passes both. */
   trailsVersion?: number;
   tripId: string;
 }
@@ -78,18 +79,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-interface GpxFeatureCollection {
-  type: 'FeatureCollection';
-  features: Array<{
-    type: 'Feature';
-    geometry:
-      | { type: 'LineString'; coordinates: [number, number, number?][] }
-      | { type: 'MultiLineString'; coordinates: [number, number, number?][][] }
-      | { type: 'Point'; coordinates: [number, number, number?] };
-    properties?: Record<string, unknown>;
-  }>;
-}
-
 /**
  * Nocturne basemap.
  *
@@ -134,7 +123,7 @@ function stopDistanceLabel(km: number, units: UnitsPref): string {
   return secondary ? `${primary} ${secondary}` : primary;
 }
 
-export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStopSelect, trailsVersion = 0, tripId }: TripMapProps) {
+export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStopSelect }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   // directionsServiceRef removed — routes come from stored DB geometry now
@@ -147,7 +136,6 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
     stopMarkers: google.maps.Marker[];
     clusterMarkers: google.maps.Marker[];
     stopsIdleListener: google.maps.MapsEventListener | null;
-    gpxPolylines: Map<string, google.maps.Polyline[]>;
     fallbackPolyline: google.maps.Polyline | null;
     infoWindow: google.maps.InfoWindow | null;
     stopInfoWindow: google.maps.InfoWindow | null;
@@ -160,7 +148,6 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
     stopMarkers: [],
     clusterMarkers: [],
     stopsIdleListener: null,
-    gpxPolylines: new Map(),
     fallbackPolyline: null,
     infoWindow: null,
     stopInfoWindow: null,
@@ -282,8 +269,6 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         layers.stopsIdleListener.remove();
         layers.stopsIdleListener = null;
       }
-      layers.gpxPolylines.forEach((arr) => arr.forEach((p) => p.setMap(null)));
-      layers.gpxPolylines.clear();
       if (layers.fallbackPolyline) layers.fallbackPolyline.setMap(null);
       layers.fallbackPolyline = null;
       mapRef.current = null;
@@ -485,8 +470,15 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
       layers.finalMarker.addListener('click', () => {
         const iw = layers.infoWindow;
         if (iw) {
+          // The trip's real destination. This was a hardcoded "Nordkapp /
+          // 71.17°N — The Goal" from the one-trip prototype, so every trip's
+          // last pin claimed to be Nordkapp.
+          const destination = lastLeg.end_name || lastLeg.title;
           iw.setContent(
-            '<div style="font-size: 16px; font-weight: 700; color: #333;">Nordkapp</div><div style="font-size: 12px; color: #6b6b6b;">71.17°N — The Goal</div>'
+            `<div style="font-size: 16px; font-weight: 700; color: #333;">${escapeHtml(destination)}</div>` +
+              (lastLeg.dates
+                ? `<div style="font-size: 12px; color: #6b6b6b;">${escapeHtml(lastLeg.dates)}</div>`
+                : '')
           );
           iw.open({ anchor: layers.finalMarker!, map });
         }
@@ -687,78 +679,6 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
       wipe();
     };
   }, [ready, legs]);
-
-  // Fetch and render GPX trails for each leg
-  useEffect(() => {
-    if (!ready || !mapRef.current) return;
-    const map = mapRef.current;
-    const layers = layersRef.current;
-
-    let cancelled = false;
-    (async () => {
-      // On every trailsVersion bump, wipe and re-fetch all GPX overlays.
-      layers.gpxPolylines.forEach((arr) => arr.forEach((p) => p.setMap(null)));
-      layers.gpxPolylines.clear();
-
-      for (const leg of legs) {
-        const baseKey = `leg:${leg.id}`;
-
-        try {
-          const res = await fetch(`/api/gpx?tripId=${tripId}&legId=${leg.id}`);
-          if (!res.ok) continue;
-          const trails = (await res.json()) as Array<{
-            id: string;
-            name: string;
-            geojson: GpxFeatureCollection;
-            color?: string;
-            surface?: string;
-          }>;
-          if (cancelled) return;
-
-          trails.forEach((trail, idx) => {
-            const trailColor = trail.color || leg.color || '#9690c9';
-            const polylines: google.maps.Polyline[] = [];
-            trail.geojson.features.forEach((f) => {
-              const lines: [number, number, number?][][] = [];
-              if (f.geometry.type === 'LineString') lines.push(f.geometry.coordinates);
-              else if (f.geometry.type === 'MultiLineString')
-                lines.push(...f.geometry.coordinates);
-
-              lines.forEach((line) => {
-                const path = line.map(([lng, lat]) => ({ lat, lng }));
-                if (path.length < 2) return;
-                const poly = new google.maps.Polyline({
-                  path,
-                  map,
-                  strokeColor: trailColor,
-                  strokeOpacity: 0.95,
-                  strokeWeight: 4,
-                  zIndex: 6,
-                  icons: [
-                    {
-                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                      offset: '0',
-                      repeat: '10px',
-                    },
-                  ],
-                });
-                polylines.push(poly);
-              });
-            });
-            if (polylines.length) {
-              layers.gpxPolylines.set(`${baseKey}#${trail.id ?? idx}`, polylines);
-            }
-          });
-        } catch (err) {
-          console.warn(`GPX fetch failed for leg ${leg.id}:`, err);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, legs, trailsVersion, tripId]);
 
   // Fit bounds once when initial routes are available
   const fittedRef = useRef(false);

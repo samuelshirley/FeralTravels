@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -36,11 +36,31 @@ const ROOT = join(__dirname, '..', '..');
 const TOMBSTONE = /\bGONE\b|deleted|removed|does not exist|no longer|there is no\s+`/i;
 const WORKFLOW_REF = /\.github\/workflows\/([A-Za-z0-9._-]+\.ya?ml)/g;
 
-/** Tracked and untracked-but-not-ignored text files the rule covers. */
+const DOCS = join(ROOT, 'docs');
+/** docs/ is a LOCAL gitignored folder since 2026-10-07: present in the main checkout, absent in CI. */
+const HAS_DOCS = existsSync(DOCS);
+
+/** Every .md under the local docs/ folder, repo-relative. */
+function localDocs(dir = DOCS, out: string[] = []): string[] {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) localDocs(p, out);
+    else if (e.name.endsWith('.md')) out.push(relative(ROOT, p).split('\\').join('/'));
+  }
+  return out;
+}
+
+/**
+ * Tracked and untracked-but-not-ignored text files the rule covers, plus the
+ * local docs/ when it is there: git no longer lists it (it is ignored), and
+ * dropping it silently would stop checking the very files that name workflows
+ * most.
+ */
 function scannedFiles(): string[] {
-  return execSync('git ls-files --cached --others --exclude-standard', { cwd: ROOT, encoding: 'utf8' })
+  const listed = execSync('git ls-files --cached --others --exclude-standard', { cwd: ROOT, encoding: 'utf8' })
     .split('\n')
     .filter((f) => /\.(md|mjs|sh)$/.test(f));
+  return [...new Set([...listed, ...(HAS_DOCS ? localDocs() : [])])];
 }
 
 /** Workflow files named in `text` without a tombstone nearby. */
@@ -65,6 +85,10 @@ describe('every .github/workflows/*.yml named in docs and scripts exists', () =>
     expect(files).toContain('CLAUDE.md');
     expect(files).toContain('README.md');
     expect(files.some((f) => f.endsWith('.mjs'))).toBe(true);
+  });
+
+  it.skipIf(!HAS_DOCS)('scans the local docs/ folder when it is present', () => {
+    expect(scannedFiles().some((f) => f.startsWith('docs/') && f.endsWith('.md'))).toBe(true);
   });
 
   it('names no workflow that is not on disk', () => {

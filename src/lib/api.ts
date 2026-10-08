@@ -207,20 +207,6 @@ export function tripApi(tripId: string) {
     deleteTask: (taskId: string) =>
       apiFetch(`/api/tasks/${taskId}`, { method: 'DELETE', query: { tripId } }),
 
-    listGpxForLeg: (legId: string) => apiFetch(`/api/gpx`, { query: { tripId, legId } }),
-    uploadGpx: (legId: string, file: File, name?: string, source?: string, sourceUrl?: string) => {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('tripId', String(tripId));
-      form.append('legId', String(legId));
-      if (name) form.append('name', name);
-      if (source) form.append('source', source);
-      if (sourceUrl) form.append('sourceUrl', sourceUrl);
-      return apiFetch(`/api/gpx`, { body: form });
-    },
-    deleteGpx: (gpxId: string) =>
-      apiFetch(`/api/gpx/${gpxId}`, { method: 'DELETE', query: { tripId } }),
-
     listPois: () => apiFetch(`/api/pois`, { query: { tripId } }),
   };
 }

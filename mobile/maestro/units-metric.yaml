@@ -1,0 +1,60 @@
+# Display units, both ways: switch to imperial, then BACK to metric, and the
+# choice survives a relaunch. forced-stop-line.yaml proves the imperial side
+# reaches the itinerary; this proves the return trip, which nothing else does.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `um`): units are a per-account preference.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: um
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Imperial (mi)'
+    timeout: 20000
+# The seed clears units_pref, which reads as metric.
+- assertVisible: 'REFILL EVERY ~500 km'
+
+- tapOn: 'Imperial (mi)'
+- extendedWaitUntil:
+    visible: 'REFILL EVERY ~311 mi'
+    timeout: 20000
+
+- tapOn: 'Metric (km)'
+- extendedWaitUntil:
+    visible: 'REFILL EVERY ~500 km'
+    timeout: 20000
+- assertNotVisible:
+    text: '.*[0-9] mi\b.*'
+
+# ── Stored on the account, not just in the screen ───────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'REFILL EVERY ~500 km'
+    timeout: 20000

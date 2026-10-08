@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, inArray, like, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import {
   users,
@@ -8,7 +8,6 @@ import {
   legs,
   stops,
   announcements,
-  announcementDismissals,
   emailOtpCodes,
   deletedUsers,
   oauthTokenUses,
@@ -20,7 +19,7 @@ import {
   type GeoJSONLineString,
 } from '@/server/db/schema';
 import { areTestEndpointsEnabled, isFixtureEmail } from '@/server/auth/test-endpoints';
-import { SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
+import { GATE_PROVIDER, SYNTHETIC_SPEND_PROVIDER } from '@/server/payments';
 /**
  * Payments is imported through its ONE public surface, never by reaching into
  * `./entitlements` or the `subscriptions` table — the whole value of that
@@ -40,14 +39,23 @@ import type { SubscriptionSource, SubscriptionStatus } from '@/types/entitlement
 import { decryptEmail, hashEmail } from '@/server/deletedUserCrypto';
 import { seededLegDateISO, seededTripStartISO } from '@/app/api/test/seedDates';
 import {
+  gateRowFromUsage,
+  jevRowFromUsage,
+  type FixtureGateRow,
+  type FixtureJevRow,
+} from '@/app/api/test/turn/gateLedger';
+import {
   HILUX_FIXTURE_VEHICLE,
   impossibleFixtureTripReason,
 } from '@/app/api/test/fixtureVehicle';
-import { vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
+import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY, vehicleMeetsFuelPlanningMinimum } from '@/lib/vehicleProfile';
 import { addVehicle, listVehiclesForUser } from './vehicles';
+import { setUserJevOverride, type JevMode } from './jev';
+import { JEV_PROVIDER } from './usage';
 import { createTrip, addLeg } from './trips';
 import { resolveCanonicalTrip } from '@/server/fixtures/canonicalTrip';
 import { decodePolyline } from '@/lib/polyline';
+import { writeSeededTranscript } from '@/server/seededTranscript';
 
 /**
  * TEST-ONLY fixture data layer for the E2E suite.
@@ -295,9 +303,37 @@ export async function seedFixture(opts: {
    * every existing caller seeds legs with no stops, and asserts that.
    */
   forcedFuelStop?: boolean;
+  /**
+   * Force this account's Jev mode (`users.jev_mode`), for the one flow that
+   * proves Jev is asked: `mobile/maestro/penny-jev-gate.yaml`. A preview's
+   * global switch is cloned from production (off), so a per-account override
+   * is the only way a fixture reaches Jev. Omitted = left as it is. Fixture
+   * addresses only: this is the one seed option that changes how a real
+   * account's messages would be handled.
+   */
+  jevMode?: JevMode;
+  /**
+   * Write the columns no ordinary flow leaves on a preview, so PR #83's
+   * column-coverage measurement sees them — see {@link seedCoverageColumns}.
+   * Fixture addresses only. Default off.
+   */
+  coverageColumns?: boolean;
+  /**
+   * Plant this many Penny requests in the last hour, at $0, so a spec can
+   * reach replan's hourly request cap without making a single model call.
+   * See {@link seedReplanRequests}.
+   */
+  replanRequestsLastHour?: number;
 }): Promise<{ userId: string; vehicleId: string; tripId: string }> {
   assertEnabled();
+  if (opts.jevMode !== undefined && !isFixtureEmail(opts.email.trim().toLowerCase())) {
+    throw new Error('seedFixture: jevMode is for fixture addresses only');
+  }
+  if (opts.coverageColumns && !isFixtureEmail(opts.email.trim().toLowerCase())) {
+    throw new Error('seedFixture: coverageColumns is for fixture addresses only');
+  }
   const userId = await ensureUserId(opts.email, opts.userName);
+  if (opts.jevMode !== undefined) await setUserJevOverride(userId, opts.jevMode);
 
   // Reset: trips (cascades legs) then vehicles, and clear units so onboarding
   // unit tests start clean.
@@ -328,17 +364,29 @@ export async function seedFixture(opts: {
     endDate: legDates[legDates.length - 1],
     vehicleId: vehicle.id,
   });
+  // The pace is what onboarding's trip_pace step writes, and every real trip
+  // now has one; the seeded transcript's opening message names it. The flat
+  // default is what the legs below were built at.
   await db
     .update(trips)
-    .set({ onboardingState: 'done', status: 'planning' })
+    .set({ onboardingState: 'done', status: 'planning', dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY })
     .where(eq(trips.id, trip.id));
 
   for (const leg of legPreset) {
     await addLeg({ tripId: trip.id, ...leg, dates: legDates[leg.sortOrder] ?? legDates[0] });
   }
   if (opts.forcedFuelStop) await seedForcedFuelStop(trip.id);
+  if (opts.coverageColumns) await seedCoverageColumns(userId, trip.id);
+  if (opts.replanRequestsLastHour) {
+    if (!isFixtureEmail(opts.email.trim().toLowerCase())) {
+      throw new Error('seedFixture: replanRequestsLastHour is for fixture addresses only');
+    }
+    await seedReplanRequests(userId, opts.replanRequestsLastHour);
+  }
 
   await assertFixtureTripPossible(trip.id, userId, 'seedFixture');
+  // The conversation that planned it — a planned trip never opens on START HERE.
+  await writeSeededTranscript(trip.id);
   return { userId, vehicleId: vehicle.id, tripId: trip.id };
 }
 
@@ -391,9 +439,213 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
 }
 
 /**
+ * Fixture DATA for the columns no flow a test can afford leaves behind:
+ *
+ * - `stops.alternatives` / `stops.source_url` / `stops.fuel_type`: written by
+ *   a real Finn search (paid Places) or a stop edit, so a seeded fuel stop
+ *   carries one alternate, its link and its fuel;
+ * - `trips.current_*` / `progress_*` / `declared_range_*`: what the
+ *   report_position and declare_fuel_state tools write, which only a paid
+ *   Penny turn reaches;
+ * - `legs.continuity_warning` / `legs.fuel_plan_error`: written when Penny
+ *   leaves a gap between days, and when a Places search fails;
+ * - `users.jev_mode` = 'off' (Haiku only — the default behaviour, so nothing
+ *   about how this account's messages are gated changes) and
+ *   `users.penny_locked_until` in the PAST (the strikes lock, already expired,
+ *   so Penny is not paused for it);
+ * - `penny_turns.images` / `error_message`: a finished, failed turn that had
+ *   an image attached. Status 'error', so it can never hold the trip's one
+ *   `running` slot.
+ *
+ * Every value is something the app itself writes in that column; none of it
+ * is read back by a spec as behaviour. The day-1 leg's fuel cache is stamped
+ * fresh the same way {@link seedForcedFuelStop} does, so opening the trip makes
+ * no Places call.
+ */
+async function seedCoverageColumns(userId: string, tripId: string): Promise<void> {
+  const legRows = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(legs.sortOrder);
+  if (legRows.length < 2) throw new Error('seedFixture: coverageColumns needs two legs');
+  const [day1, day2] = legRows;
+
+  await db.insert(stops).values({
+    legId: day1.id,
+    sortOrder: 1001,
+    stopType: 'fuel',
+    status: 'option',
+    name: 'Esso Reims',
+    lat: 49.2583,
+    lng: 4.0317,
+    distanceFromStartKm: 144,
+    source: 'google',
+    fuelType: 'diesel',
+    sourceUrl: 'https://www.google.com/maps/search/?api=1&query=49.2583,4.0317',
+    alternatives: [
+      { name: 'Total Access Reims', lat: 49.2412, lng: 4.0605, place_id: null, distance_km: 3.1 },
+    ],
+  });
+  await db
+    .update(legs)
+    .set({ fuelStatus: 'ready', fuelPlanError: null, fuelStopsUpdatedAt: new Date() })
+    .where(eq(legs.id, day1.id));
+  await db
+    .update(legs)
+    .set({
+      continuityWarning: 'Day 2 starts 12 km from where day 1 ended.',
+      fuelStatus: 'failed',
+      fuelPlanError: 'Places search failed (fixture)',
+    })
+    .where(eq(legs.id, day2.id));
+
+  // What report_position and declare_fuel_state write: the driver is on day 1,
+  // at its start, and has said the tank holds about 320 km. The anchor date is
+  // day 1's own seeded date, never a calendar literal (seedDates.ts).
+  const now = new Date();
+  await db
+    .update(trips)
+    .set({
+      currentLegId: day1.id,
+      currentLat: 48.8566,
+      currentLng: 2.3522,
+      progressAnchorDate: seededLegDateISO(0),
+      progressUpdatedAt: now,
+      declaredRangeKm: 320,
+      declaredRangeLegId: day1.id,
+      declaredRangeAt: now,
+    })
+    .where(eq(trips.id, tripId));
+
+  await db
+    .update(users)
+    .set({ jevMode: 'off', pennyLockedUntil: new Date(Date.now() - 24 * 60 * 60 * 1000) })
+    .where(eq(users.id, userId));
+
+  await db.insert(pennyTurns).values({
+    tripId,
+    userId,
+    idempotencyKey: `e2e-coverage-${crypto.randomUUID()}`,
+    status: 'error',
+    userMessage: 'Plan around this photo of the route',
+    images: [{ dataUrl: 'data:image/png;base64,iVBORw0KGgo=', mediaType: 'image/png' }],
+    errorMessage: 'Planning failed (fixture)',
+  });
+}
+
+/**
+ * The `provider` on the request-count rows {@link seedReplanRequests} plants.
+ * `anthropic:e2e-` like {@link SYNTHETIC_SPEND_PROVIDER}, so it reads as
+ * synthetic in /admin, but a DIFFERENT string: `setSubscriptionFixtureState`
+ * replaces that provider's rows wholesale and must not wipe these.
+ */
+const REQUEST_FIXTURE_PROVIDER = 'anthropic:e2e-request-fixture';
+
+/**
+ * One `usage_events` row carrying `requests` calls and no cost. Replan's
+ * hourly cap sums `requests` over the hour (`getUserUsageSummary`), so this
+ * reaches it at $0; the daily dollar cap and every spend breaker read cost,
+ * which is zero.
+ */
+async function seedReplanRequests(userId: string, requests: number): Promise<void> {
+  await db.insert(usageEvents).values({
+    userId,
+    provider: REQUEST_FIXTURE_PROVIDER,
+    requests,
+    costMicrocents: 0,
+    success: true,
+  });
+}
+
+/** The fields of a `usage_events` row that say whether it was a paid call. */
+export interface UsageRowShape {
+  provider: string;
+  model: string | null;
+  costMicrocents: number | null;
+}
+
+/**
+ * Was this `usage_events` row a call actually MADE to a paid provider?
+ *
+ * NOT every Anthropic- or Google-family row is one. The replan route files a
+ * failed `anthropic:replan` row for every fatal error, so it shows in
+ * /admin/errors, including a malformed payload refused before any model was
+ * asked (model null, cost null, success false). Counting that as spend made the
+ * contract spec's "no refusal cost anything" red on a refusal that cost nothing
+ * (CI run 37551796542). How each paid path actually logs:
+ *
+ *   - `anthropic` (lib/claude.ts, the classifier, onboarding's scans): model on
+ *     every call, failed ones included, with its cost estimate;
+ *   - `anthropic:accounting-write-failed`: a REAL call whose own row could not
+ *     be written; no model and no cost, so it is named explicitly;
+ *   - `google-places`: the SKU in `model`, and a cost; `google-directions` /
+ *     `google-geocode`: no model but a cost on every row, and no row at all
+ *     unless requests > 0;
+ *   - `jev`: always cost 0 and possibly no model, but a row exists only for a
+ *     call to Jev, so every one counts;
+ *   - `penny:gate`: NOT a call. `model` holds the tier for free rule-based
+ *     decisions too; when the classifier does run it logs its own `anthropic`
+ *     row, which this already counts.
+ *   - `anthropic:replan` / `anthropic:replan-truncated`: annotations (errors,
+ *     a truncated loop), model null and no cost; the call they annotate has its
+ *     own `anthropic` row.
+ *
+ * The fixtures' synthetic rows (`anthropic:e2e-*`) are never calls.
+ */
+export function isPaidCallRow(row: UsageRowShape): boolean {
+  if (row.provider.startsWith('anthropic:e2e-')) return false;
+  if (row.provider === GATE_PROVIDER) return false;
+  if (row.provider === JEV_PROVIDER) return true;
+  if (row.provider === 'anthropic:accounting-write-failed') return true;
+  const paidFamily = row.provider.startsWith('anthropic') || row.provider.startsWith('google');
+  return paidFamily && (row.model != null || (row.costMicrocents ?? 0) > 0);
+}
+
+/**
+ * TEST-ONLY: the paid calls on record for a fixture account — every
+ * `usage_events` row {@link isPaidCallRow} says was a call actually made to
+ * Anthropic, Google or Jev. Error-log and annotation rows are not calls.
+ *
+ * The API contract specs read it before and after their refusals, to prove a
+ * refused request was refused BEFORE it reached anything that costs money.
+ * A count, never content.
+ */
+export async function readFixturePaidUsage(
+  email: string,
+): Promise<{ calls: number; microcents: number }> {
+  assertEnabled();
+  const normalized = email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('readFixturePaidUsage: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('readFixturePaidUsage: no such fixture user');
+  const rows = await db
+    .select({
+      provider: usageEvents.provider,
+      model: usageEvents.model,
+      costMicrocents: usageEvents.costMicrocents,
+    })
+    .from(usageEvents)
+    .where(eq(usageEvents.userId, user.id));
+  const paid = rows.filter(isPaidCallRow);
+  return {
+    calls: paid.length,
+    microcents: paid.reduce((sum, r) => sum + (r.costMicrocents ?? 0), 0),
+  };
+}
+
+/**
  * Create an ad-hoc, throwaway trip for a single spec. `name` must be supplied
  * pre-prefixed (e.g. `playwright-<runId>-...`) so {@link cleanupPlaywright}
  * sweeps it. Kinds mirror the old test-trip.ts helpers.
+ *
+ * NO SEEDED TRANSCRIPT, on purpose, for any kind. `onboarding` and
+ * `vehicle_new` are parked mid-onboarding: the wizard under test writes their
+ * chat. `blank` is past onboarding but has no days — it is the "trip with no
+ * plan yet" the Penny flows plan from, and a handoff with no plan after it is
+ * a state real users reach only when planning fails.
  */
 export async function createAdHocTrip(opts: {
   email: string;
@@ -485,9 +737,11 @@ export async function seedCanonicalTrip(opts: {
     endDate: canonical.endISO,
     vehicleId,
   });
+  // The pace too: the fixture does not carry the source's (see
+  // CANONICAL_TRIP_NOT_CARRIED), and the flat default is what it was built at.
   await db
     .update(trips)
-    .set({ ...canonical.meta })
+    .set({ ...canonical.meta, dailyDriveHours: DEFAULT_MAX_DRIVE_HOURS_PER_DAY })
     .where(eq(trips.id, trip.id));
 
   const seededLegs: Array<{ id: string; sortOrder: number; title: string }> = [];
@@ -548,6 +802,7 @@ export async function seedCanonicalTrip(opts: {
   }
 
   await assertFixtureTripPossible(trip.id, userId, 'seedCanonicalTrip');
+  await writeSeededTranscript(trip.id);
   return { tripId: trip.id, vehicleId, legs: seededLegs };
 }
 
@@ -665,16 +920,24 @@ export async function seedAnnouncement(opts: {
   return { announcementId: row.id, parkedIds };
 }
 
-/** Undo {@link seedAnnouncement}: drop the seeded announcement + its dismissals, restore parked. */
+/**
+ * Undo {@link seedAnnouncement}: DEACTIVATE the seeded announcement and restore
+ * the parked ones.
+ *
+ * Deactivated, not deleted, and its dismissals kept: the rows are what the
+ * column-coverage measurement counts on the preview, and an inactive
+ * announcement is served to nobody. What must never survive is an ACTIVE one,
+ * which would pop a modal over every later run of every other spec.
+ */
 export async function cleanupAnnouncement(opts: {
   announcementId: string;
   parkedIds?: string[];
 }): Promise<void> {
   assertEnabled();
   await db
-    .delete(announcementDismissals)
-    .where(eq(announcementDismissals.announcementId, opts.announcementId));
-  await db.delete(announcements).where(eq(announcements.id, opts.announcementId));
+    .update(announcements)
+    .set({ active: false })
+    .where(eq(announcements.id, opts.announcementId));
   if (opts.parkedIds && opts.parkedIds.length > 0) {
     await db
       .update(announcements)
@@ -1285,4 +1548,51 @@ export async function finishPennyTurn(input: {
         eq(pennyTurns.userId, user.id),
       ),
     );
+}
+
+/**
+ * TEST-ONLY: the message gate's ledger for a fixture account — its `penny:gate`
+ * rows and its `jev` rows, oldest first.
+ *
+ * It exists so `penny-jev-gate.yaml` cannot pass with Jev silently skipped.
+ * Both existing AI flows passed locally with Jev-first on while Jev was never
+ * called, because the free rules settled every message; Penny answering proves
+ * nothing about Jev. These rows do.
+ *
+ * NEVER USER TEXT: every field is picked key by key (gateLedger.ts, tested).
+ * Of a gate row only the tier and the decider leave; its reason is Haiku's own
+ * words about the message when the classifier decided.
+ */
+export async function readFixtureGateLedger(
+  email: string,
+): Promise<{ gate: FixtureGateRow[]; jev: FixtureJevRow[] }> {
+  assertEnabled();
+  const normalized = email.trim().toLowerCase();
+  if (!isFixtureEmail(normalized)) {
+    throw new Error('readFixtureGateLedger: not a fixture address');
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1);
+  if (!user) throw new Error('readFixtureGateLedger: no such fixture user');
+
+  const rows = await db
+    .select({
+      provider: usageEvents.provider,
+      model: usageEvents.model,
+      success: usageEvents.success,
+      errorMessage: usageEvents.errorMessage,
+      meta: usageEvents.meta,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.userId, user.id),
+        inArray(usageEvents.provider, [GATE_PROVIDER, JEV_PROVIDER]),
+      ),
+    )
+    .orderBy(asc(usageEvents.id));
+
+  return {
+    gate: rows.filter((r) => r.provider === GATE_PROVIDER).map(gateRowFromUsage),
+    jev: rows.filter((r) => r.provider === JEV_PROVIDER).map(jevRowFromUsage),
+  };
 }

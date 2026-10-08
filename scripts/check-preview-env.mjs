@@ -59,15 +59,21 @@ const REQUIRED = [
  * project — DATABASE_URL especially, which must point at the PR's ephemeral
  * Neon branch and never at the project default.
  */
-const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET', 'WEB_APP_ENABLED'];
+const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDPOINTS_SECRET'];
 
 /**
- * Nothing is forbidden on preview any more.
+ * Set on preview and must not be.
  *
- * `SUBSCRIPTION_TESTING` used to be, on the grounds that a preview is a public
- * URL serving a copy-on-write clone of production data. Both halves of that
- * changed: the preview database is being moved to empty-plus-migrations now
- * that `CANONICAL_TRIP` removes the need for prod rows, and the owner's point
+ * `WEB_APP_DISABLED`: ci.yml passes it only to the second, "blocked" deployment
+ * (`=1`). The ordinary preview gets none, so it runs the default production
+ * runs — the web ON — and a value on the Vercel preview environment would
+ * silently replace that default with whatever it says.
+ *
+ * `SUBSCRIPTION_TESTING` used to be on this list too, on the grounds that a
+ * preview is a public URL serving a copy-on-write clone of production data.
+ * Both halves of that changed: the preview database is being moved to
+ * empty-plus-migrations now that `CANONICAL_TRIP` removes the need for prod
+ * rows, and the owner's point
  * stands that the switch exists precisely so the subscription states can be
  * walked. What it arms (since 2026-09-21, only the admin test-account generator
  * — the fake purchase route is gone) is locked to the hardcoded
@@ -75,7 +81,12 @@ const SUPPLIED_AT_DEPLOY = ['DATABASE_URL', 'E2E_TEST_ENDPOINTS', 'E2E_TEST_ENDP
  * guard, the one-address allowlist, a verified email and an `is_admin` row, and
  * refuses to load in production at all.
  */
-const FORBIDDEN = [];
+const FORBIDDEN = [
+  [
+    'WEB_APP_DISABLED',
+    'ci.yml leaves it unset on the ordinary preview so it proves the production default (web ON). Remove it from the Vercel Preview environment.',
+  ],
+];
 
 function parseEnvFile(text) {
   const found = new Set();

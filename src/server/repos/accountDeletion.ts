@@ -30,7 +30,7 @@ export interface AccountDeletionSummary {
  * hangs off a user does so through an `ON DELETE CASCADE` foreign key — directly
  * (accounts, sessions, vehicles, trips, viewport time, announcement dismissals,
  * penny turns) or transitively through `trips` (legs, routes, stops, tasks, pois,
- * costs, links, gpx trails, chat history). So deleting the `users` row is what
+ * costs, links, chat history). So deleting the `users` row is what
  * actually erases the account, and a new child table added later inherits this
  * behaviour for free as long as it carries the same cascade.
  *

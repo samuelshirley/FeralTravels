@@ -302,6 +302,20 @@
       "when": 1788861375693,
       "tag": "0042_stop_forced_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788861435693,
+      "tag": "0043_jev_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788861495693,
+      "tag": "0044_drop_readd_trip_name_ci_key_generated",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,7 @@ import { isBlockedWebPath, webAppEnabled, WEB_ALWAYS_ALLOWED } from './webAccess
 import { PUBLIC_EXACT_PATHS, PUBLIC_PATH_PREFIXES } from './paywallPaths';
 
 /**
- * The web-off switch, and the paths it must never take with it.
+ * The web switch, and the paths it must never take with it.
  *
  * Two failure modes, and they are not symmetric. Letting a page through that
  * should be blocked is a cosmetic miss. Blocking something on the allowed list
@@ -17,19 +17,27 @@ import { PUBLIC_EXACT_PATHS, PUBLIC_PATH_PREFIXES } from './paywallPaths';
  */
 describe('webAppEnabled', () => {
   /**
-   * The bug this default fixes: production never had the variable set, so an
-   * ON-by-default switch left the web open to anyone who signed up (2026-09-24).
+   * 2026-10-01: the desktop web is back on, and merging is the release. A
+   * default that needed a Vercel variable to open would ship a locked web.
    */
-  it('defaults OFF, so a missing env var is a locked web and not an open one', () => {
-    expect(webAppEnabled({})).toBe(false);
-    expect(webAppEnabled({ WEB_APP_ENABLED: undefined })).toBe(false);
+  it('defaults ON, so a missing env var is an open web', () => {
+    expect(webAppEnabled({})).toBe(true);
+    expect(webAppEnabled({ WEB_APP_DISABLED: undefined })).toBe(true);
   });
 
-  it('is on only for the exact string "1"', () => {
-    expect(webAppEnabled({ WEB_APP_ENABLED: '1' })).toBe(true);
-    for (const v of ['0', 'false', '', 'true', ' 1']) {
-      expect(webAppEnabled({ WEB_APP_ENABLED: v }), `WEB_APP_ENABLED=${JSON.stringify(v)}`).toBe(false);
+  it('is off only for the exact string "1" — the kill switch', () => {
+    expect(webAppEnabled({ WEB_APP_DISABLED: '1' })).toBe(false);
+    for (const v of ['0', 'true', '', ' 1']) {
+      expect(webAppEnabled({ WEB_APP_DISABLED: v }), `WEB_APP_DISABLED=${JSON.stringify(v)}`).toBe(true);
     }
+  });
+
+  /**
+   * Production carried a stale `WEB_APP_ENABLED=0` from when 0 meant off. The
+   * switch was renamed so that value cannot block the web; it must stay inert.
+   */
+  it('ignores the old WEB_APP_ENABLED, so the stale production "0" cannot block', () => {
+    expect(webAppEnabled({ WEB_APP_ENABLED: '0' })).toBe(true);
   });
 });
 

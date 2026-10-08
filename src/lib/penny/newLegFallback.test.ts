@@ -76,3 +76,97 @@ describe('pickNearestNewLeg', () => {
     expect(pickNearestNewLeg(p, allNewLegs)).toBe('leg-pdx-rainier');
   });
 });
+
+import {
+  pickSameTurnRestLeg,
+  nearbySameTurnRestLegs,
+  REST_DAY_STOP_RADIUS_KM,
+  type LegEnds,
+} from './newLegFallback';
+import { haversineKm } from './geo';
+
+/**
+ * The 2026-10-07 local IOS_AI=1 run of penny-rest-day.yaml: asked for "one rest
+ * day in Strasbourg right after day 1, with Strasbourg Cathedral as a stop",
+ * Penny added the base day (start == end, Strasbourg) and then add_stop'd the
+ * cathedral onto the EXISTING Strasbourg → Stuttgart leg — the only real
+ * Strasbourg leg she knew — because the new base day had no id yet.
+ */
+describe('pickSameTurnRestLeg — a stop meant for this turn\'s rest day', () => {
+  const STRASBOURG = { lat: 48.5734, lng: 7.7521 };
+  const CATHEDRAL = { lat: 48.5818, lng: 7.7509 };
+  const newRestDay: NewLegRecord = {
+    id: 'new-base-day-strasbourg',
+    startLat: STRASBOURG.lat,
+    startLng: STRASBOURG.lng,
+    endLat: STRASBOURG.lat,
+    endLng: STRASBOURG.lng,
+  };
+  // The real, pre-existing day 2 the stop landed on (9bff… in the local DB).
+  const strasbourgToStuttgart: LegEnds = {
+    id: '9bff-existing-day-2',
+    startLat: STRASBOURG.lat,
+    startLng: STRASBOURG.lng,
+    endLat: 48.7758,
+    endLng: 9.1829,
+  };
+  const parisToStrasbourg: LegEnds = {
+    id: 'existing-day-1',
+    startLat: 48.8566,
+    startLng: 2.3522,
+    endLat: STRASBOURG.lat,
+    endLng: STRASBOURG.lng,
+  };
+
+  it('the fixture is the real geometry: the cathedral is ~0.9 km from the base day', () => {
+    const km = haversineKm(CATHEDRAL.lat, CATHEDRAL.lng, STRASBOURG.lat, STRASBOURG.lng);
+    expect(km).toBeGreaterThan(0.8);
+    expect(km).toBeLessThan(1.1);
+  });
+
+  it('(a) re-homes the cathedral from Strasbourg → Stuttgart onto the new base day', () => {
+    expect(pickSameTurnRestLeg(CATHEDRAL, strasbourgToStuttgart, [newRestDay])).toBe(newRestDay.id);
+  });
+
+  it('re-homes from the day that ENDS in the town too (the day before the stay)', () => {
+    expect(pickSameTurnRestLeg(CATHEDRAL, parisToStrasbourg, [newRestDay])).toBe(newRestDay.id);
+  });
+
+  it('(b) leaves a stop alone when no rest day was created this turn', () => {
+    expect(pickSameTurnRestLeg(CATHEDRAL, strasbourgToStuttgart, [])).toBeNull();
+    // A new DRIVE leg this turn is not a stay.
+    const newDrive: NewLegRecord = { id: 'new-drive', startLat: 48.5734, startLng: 7.7521, endLat: 48.0794, endLng: 7.3585 };
+    expect(pickSameTurnRestLeg(CATHEDRAL, strasbourgToStuttgart, [newDrive])).toBeNull();
+  });
+
+  it('(c) leaves it alone when this turn\'s rest day is in another town (Colmar)', () => {
+    const colmarRest: NewLegRecord = { id: 'new-base-day-colmar', startLat: 48.0794, startLng: 7.3585, endLat: 48.0794, endLng: 7.3585 };
+    expect(pickSameTurnRestLeg(CATHEDRAL, strasbourgToStuttgart, [colmarRest])).toBeNull();
+  });
+
+  it('(d) leaves a stop 80 km down the onward road where Penny put it', () => {
+    const pforzheim = { lat: 48.8922, lng: 8.6946 };
+    expect(haversineKm(pforzheim.lat, pforzheim.lng, STRASBOURG.lat, STRASBOURG.lng)).toBeGreaterThan(60);
+    expect(pickSameTurnRestLeg(pforzheim, strasbourgToStuttgart, [newRestDay])).toBeNull();
+  });
+
+  it('leaves it alone when the named leg does not touch the town', () => {
+    const lyonToDijon: LegEnds = { id: 'existing-lyon-dijon', startLat: 45.764, startLng: 4.8357, endLat: 47.322, endLng: 5.0415 };
+    expect(pickSameTurnRestLeg(CATHEDRAL, lyonToDijon, [newRestDay])).toBeNull();
+  });
+
+  it('leaves it alone when the named leg is itself an existing rest day in that town', () => {
+    const existingRest: LegEnds = { id: 'existing-base-day', startLat: STRASBOURG.lat, startLng: STRASBOURG.lng, endLat: STRASBOURG.lat, endLng: STRASBOURG.lng };
+    expect(pickSameTurnRestLeg(CATHEDRAL, existingRest, [newRestDay])).toBeNull();
+  });
+
+  it('leaves a stop with no coordinate alone', () => {
+    expect(pickSameTurnRestLeg({ lat: null, lng: null }, strasbourgToStuttgart, [newRestDay])).toBeNull();
+  });
+
+  it('nearbySameTurnRestLegs is empty beyond the radius, so the caller skips its read', () => {
+    expect(nearbySameTurnRestLegs(CATHEDRAL, [newRestDay])).toHaveLength(1);
+    const farPoint = { lat: STRASBOURG.lat + (REST_DAY_STOP_RADIUS_KM + 1) / 111, lng: STRASBOURG.lng };
+    expect(nearbySameTurnRestLegs(farPoint, [newRestDay])).toHaveLength(0);
+  });
+});

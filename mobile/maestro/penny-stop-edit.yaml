@@ -1,0 +1,179 @@
+# Penny edits a stop, then deletes it, and Finn re-sources the day. On a short
+# range (250 km) Paris → Strasbourg (489 km) cannot be driven on one tank, so
+# day 1 must carry a fuel stop whatever else changes on it.
+#
+#   1. "add Reims Cathedral as a stop on day 1"  → a STOP row on day 1
+#   2. "rename it to Lunch at Reims Cathedral"    → update_stop, the row renamed
+#   3. "delete that stop"                         → delete_stop, the row gone,
+#      and the day still ends with its fuel planned (a FUEL row, no failure).
+#
+# `ai` shard: three planning turns (~$0.26), a Places lookup and Finn's search.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it with IOS_AI=1 before trusting a green or a red.
+#
+# Its own account (suffix `ai5`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ai5
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: '250'
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# ── 1. Add ──────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'On day 1, add Reims Cathedral as a stop. Change nothing else, and go ahead without asking me anything.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible: 'Changes applied to trip'
+    timeout: 300000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris, France → Strasbourg, France.*'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: 'STOP: .*Reims.*'
+    commands:
+      - tapOn:
+          text: '.*Paris, France → Strasbourg, France.*'
+- scrollUntilVisible:
+    element:
+      text: 'STOP: .*Reims.*Opens in Google Maps'
+    direction: DOWN
+    timeout: 30000
+
+# ── 2. Edit ─────────────────────────────────────────────────────────────────
+- tapOn: 'CHAT'
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Rename the Reims Cathedral stop to Lunch at Reims Cathedral. Change nothing else.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- tapOn: 'LIST'
+- runFlow:
+    when:
+      notVisible:
+        text: 'STOP: .*'
+    commands:
+      - tapOn:
+          text: '.*Paris, France → Strasbourg, France.*'
+- scrollUntilVisible:
+    element:
+      text: 'STOP: Lunch at Reims Cathedral.*Opens in Google Maps'
+    direction: DOWN
+    timeout: 30000
+
+# ── 3. Delete, and the day's fuel is planned again ──────────────────────────
+- tapOn: 'CHAT'
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Delete the Lunch at Reims Cathedral stop. Change nothing else.'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'Read'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- runFlow:
+    when:
+      notVisible: 'CHAT'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 8000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 240000
+- tapOn: 'LIST'
+- runFlow:
+    when:
+      notVisible:
+        text: '(START|DESTINATION): .*'
+    commands:
+      - tapOn:
+          text: '.*Paris, France → Strasbourg, France.*'
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: 'FUEL: .*Opens in Google Maps'
+    direction: DOWN
+    timeout: 30000
+- assertNotVisible:
+    text: 'STOP: .*Reims.*'
+- assertNotVisible:
+    text: 'No fuel stations found.*'

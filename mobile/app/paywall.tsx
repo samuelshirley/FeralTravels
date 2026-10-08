@@ -130,7 +130,12 @@ export default function PaywallScreen() {
               </Text>
             ))}
 
-            <Pressable accessibilityRole="button" onPress={onButtonPress} style={styles.cta}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onButtonPress}
+              style={styles.cta}
+              testID="paywall-cta"
+            >
               <Text style={styles.ctaText}>
                 {paywall?.buttonLabel ?? (sellable ? "Keep planning" : "Email support")}
               </Text>

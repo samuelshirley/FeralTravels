@@ -10,12 +10,14 @@
 #                Mobile workflow publishes mobile/ over the air on merge:
 #                without this job the first thing to catch a type error in the
 #                app is a tester's phone.
-#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` (copy-on-write
-#                clone of PROD data), run migrations on it, and deploy a Vercel
-#                PREVIEW pointed at it. One preview per PR, refreshed on every
-#                push, torn down when the PR closes (pr-cleanup.yml). Prod's DB
-#                is never touched. The URL is posted as a sticky PR comment and
-#                to the run summary. It deploys BEFORE the tests intentionally,
+#   2. preview — create an EPHEMERAL Neon branch `preview/pr-<N>` as a
+#                copy-on-write clone of PROD, run migrations on it (the
+#                rehearsal), EMPTY it (wipe-preview-db.ts), and deploy a Vercel
+#                PREVIEW pointed at it: prod's schema, fixture data only. One
+#                preview per PR, refreshed on every push, torn down when the PR
+#                closes (pr-cleanup.yml). Prod's DB is never touched. The URL
+#                is posted as a sticky PR comment and to the run summary. It
+#                deploys BEFORE the tests intentionally,
 #                so you get a clickable preview even when a spec is red
 #                (test bug vs app bug).
 #   3. e2e     — full Playwright suite against that exact preview URL
@@ -30,6 +32,34 @@
 # migrates prod and ships that commit with no human step — so this workflow is
 # the only thing standing in front of prod.
 #
+# FAIL FAST (Sam, 2026-10-02): "If anything fails on the PR, immediately stop
+# the rest of the jobs and investigate the failure so we aren't wasting time or
+# tokens." ONE watcher job, `Stop the run at the first failure`, starts with
+# the run (no `needs`) and runs .github/scripts/fail-fast.mjs, which polls this
+# run attempt's jobs every ~15s and cancels the run (`gh run cancel` — hence
+# `actions: write` below) as soon as any other job has concluded `failure`, so
+# a red Unit tests does not leave the macOS shards and the Penny-spending `ai`
+# shard running on a PR that is already red. The iOS matrix is `fail-fast: true`
+# as well (GitHub's own matrix fail-fast leaves the failed shard `failure`).
+#
+# WHY A WATCHER and not a stop step at the end of each job (the first version):
+# `gh run cancel` cancels every job not yet completed, INCLUDING the one that
+# asked, so a job cancelling its own run rewrites its own `failure` as
+# `cancelled`. Run 36988769859: `iOS e2e · account` failed, cancelled the run,
+# and came out `cancelled` with everything else — nothing showed as failed, the
+# iOS comment could not name the cause. The watcher cancels only after the
+# failed job has COMPLETED, so it keeps `failure` in the checks list and in the
+# PR comment. Cost: one ubuntu runner for the length of the run (free on this
+# public repo). Its step is `continue-on-error`, so it can never turn a run
+# red. Two jobs run after a cancel by design (`if: always()`): `iOS e2e
+# (simulator)`, whose PR comment names the job that failed and the jobs
+# cancelled as a result, and the leaked-preview cleanup; the watcher neither
+# waits on them nor counts them. `DB column coverage` also runs after a cancel
+# (`always()`), report-only there, so the cleanup that waits for it still
+# runs. src/lib/ciFailFast.test.ts holds all of this.
+# A cancelled run concludes `cancelled`, which the deploy gate and auto-merge
+# both read as not green.
+#
 # There is NO auth bypass anywhere: e2e signs in as fresh fixture users through
 # the real OTP flow, reading the code the app generated from the guarded
 # /api/test/otp endpoint — nothing is minted, nothing is granted. The /api/test/* endpoints only seed/reset
@@ -39,11 +69,20 @@
 # x-e2e-test-secret header (E2E_TEST_ENDPOINTS_SECRET), the Playwright runner
 # sends it. No extra repo secret to manage; it rotates every run.
 #
-# NOTE: preview deployments carry a clone of REAL production data on a public
-# URL (Vercel Deployment Protection is off — the Hobby plan can't protect
-# previews without also protecting prod). pr-cleanup.yml deletes the DB branch
-# on PR close to bound the exposure window, and next.config.js sends
-# X-Robots-Tag: noindex on every non-production deployment.
+# NO CUSTOMER DATA ON A PREVIEW (Sam, 2026-09-30/10-01). Preview deployments
+# are public (Vercel Deployment Protection is off — the Hobby plan can't
+# protect previews without also protecting prod) and run unreviewed code with
+# /api/test/* armed. Until 2026-10 they also served a full clone of prod's
+# users, sessions, trips and chats. Now the clone exists only for the migration
+# rehearsal, on a branch no deployment points at yet, and the preview job
+# empties it and checks it is empty BEFORE the first `vercel deploy` — a wipe
+# that fails fails the job, so no URL ever points at real rows
+# (src/lib/previewWipeGuard.test.ts holds that order). Everything on a preview
+# is written by fixtures and the tests, and Sam's bar for those is "every
+# column / row of unique data type ... every db table":
+# scripts/column-coverage.ts measures it against
+# e2e/column-coverage-baseline.json. pr-cleanup.yml still deletes the branch on
+# PR close, and next.config.js still sends X-Robots-Tag: noindex.
 #
 # REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
 #   NEON_API_KEY, NEON_PROJECT_ID   (from the Neon GitHub integration)
@@ -99,14 +138,42 @@ concurrency:
   group: ci-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# `actions: write` is for the fail-fast watcher (gh run cancel) and the iOS
+# summary's read of this run's jobs; see FAIL FAST above.
 permissions:
   contents: read
   pull-requests: write
+  actions: write
 
 env:
   NEON_BRANCH: preview/pr-${{ github.event.pull_request.number }}
 
 jobs:
+  # FAIL FAST — see the header. No `needs`: it starts with the run and watches
+  # every other job. Its deadlines nest (script 165 min < step 170 < job 180),
+  # all past the longest run (~77 min; a labelled AI run longer), so it stops
+  # watching on its own terms; the step's `continue-on-error` keeps even a
+  # timeout from turning the run red. Its own conclusion means nothing — after
+  # a cancel it is `cancelled` like the rest — and every reader of this run's
+  # jobs (the iOS comment, fail-fast.mjs) leaves it out by name.
+  fail-fast:
+    name: Stop the run at the first failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Watch this run's jobs
+        continue-on-error: true
+        timeout-minutes: 170
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAIL_FAST_DEADLINE_MINUTES: '165'
+        run: node .github/scripts/fail-fast.mjs
+
   # Is this PR documentation only? The jobs that DEPLOY something or DRIVE a
   # browser are gated on the answer; see scripts/decide-docs-only.mjs for the
   # rule, the fail-safe direction, and why the workflow still runs at all.
@@ -319,22 +386,21 @@ jobs:
   preview:
     name: Deploy tested preview
     # A docs-only PR skips the whole deployed half of this pipeline: no Neon
-    # branch cloned from production, no Vercel preview, and — because `e2e` and
+    # branch, no Vercel preview, and — because `e2e` and
     # `ios-e2e` both `needs: preview` — no Playwright run and no simulator.
     #
     # `unit` is deliberately NOT gated. Markdown in this repo is not inert:
-    # claudeMdGuard, decisionsRegisterGuard, removedFeaturesGuard,
-    # googleAccountingGuard and oneGoogleKeyGuard all read CLAUDE.md or
-    # docs/decisions.md as TEXT, so a docs-only PR is exactly the kind that
-    # reds them.
+    # claudeMdGuard reads CLAUDE.md as TEXT, so a docs-only PR is exactly the
+    # kind that reds it. (docs/ itself is a local gitignored folder since
+    # 2026-10-07, so decisionsRegisterGuard skips here and runs locally.)
     needs: [unit, decide]
     if: needs.decide.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
-      # The same build, deployed a second time with WEB_APP_ENABLED unset, so
-      # the configuration production actually runs gets tested too.
+      # The same build, deployed a second time with WEB_APP_DISABLED=1, so the
+      # kill switch is proven to block.
       blocked_url: ${{ steps.deploy.outputs.blocked_url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -348,9 +414,12 @@ jobs:
       - run: npm ci
 
       # Recreate this PR's branch from prod on every push: drop the old one
-      # (ignore if absent — first push), then re-create it so the preview shows
-      # CURRENT prod data and none of the previous run's fixture junk. E2E seeds
-      # its users into this branch over HTTP; prod is untouched.
+      # (ignore if absent — first push), then re-create it so the migration
+      # rehearsal below runs against CURRENT prod — schema, journal and real
+      # rows — and the preview starts with none of the previous run's fixtures.
+      # The real rows live only until the wipe step, before any deployment
+      # exists (see NO CUSTOMER DATA in the header). E2E seeds its users into
+      # this branch over HTTP; prod is untouched.
       - name: Delete previous Neon branch for this PR
         continue-on-error: true
         uses: neondatabase/delete-branch-action@v3
@@ -372,6 +441,26 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: npm run db:migrate
+
+      # EMPTY THE BRANCH, then prove it is empty — after the rehearsal, before
+      # the first `vercel deploy`. No customer data on a preview (Sam,
+      # 2026-09-30/10-01): it is a public URL running unreviewed code with
+      # /api/test/* armed. Every table in `public` is truncated except the few
+      # with no personal data that the preview needs (KEEP_TABLES in
+      # src/lib/columnCoverage.ts: the deployment switches and the OAuth
+      # providers' public keys); the journal in schema `drizzle` is left alone.
+      #
+      # FAIL CLOSED: no continue-on-error and no `if:`, so a failed wipe or a
+      # row left behind stops the job here and no preview deploys. The script
+      # refuses to run unless PREVIEW_DB_WIPE_CONFIRM equals NEON_BRANCH and
+      # names a preview/pr-<N> branch — the URL cannot say which branch it is,
+      # so the workflow that made the branch states it.
+      # src/lib/previewWipeGuard.test.ts holds all of this.
+      - name: Empty the PR branch (no customer data on a preview)
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+          PREVIEW_DB_WIPE_CONFIRM: ${{ env.NEON_BRANCH }}
+        run: npx tsx scripts/wipe-preview-db.ts
 
       # Turn paywall enforcement ON for the tested preview.
       #
@@ -428,19 +517,11 @@ jobs:
           # worth asserting on.
           node scripts/check-preview-env.mjs
           vercel build --token="${{ secrets.VERCEL_TOKEN }}"
-          # WEB_APP_ENABLED="1" is passed here, so this preview runs with the web
-          # app ON. The web is OFF unless the variable is exactly "1"
-          # (src/lib/webAccess.ts), so dropping this line blocks every browser
-          # spec below.
-          #
-          # It was blocked for a day, to match where production is heading. The cost
-          # was the whole web UI suite: `existing-trip`, `onboarding-flow`,
-          # `penny-plan-trip`, `lazy-fuel-sourcing`, `vehicle-crud` and
-          # `subscriptions` were all paused, because each would be redirected to
-          # /get-the-app before its first assertion. That is the only automated
-          # proof that Penny plans a trip, that fuel sources lazily, that the
-          # paywall blocks and that vehicles can be managed — traded for one
-          # spec's worth of edge-redirect coverage.
+          # WEB_APP_DISABLED is deliberately NOT passed here, so this preview runs
+          # the default production runs: the web app ON (it is on unless the
+          # variable is exactly "1" — src/lib/webAccess.ts). A value on the
+          # Vercel Preview environment would replace that default, so
+          # check-preview-env.mjs above refuses one.
           #
           # The flag is fixed per deployment, so ONE preview cannot test both
           # states; the blocked side is the second deployment below.
@@ -457,26 +538,16 @@ jobs:
           URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
-            -e WEB_APP_ENABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
           # A SECOND deployment of the same prebuilt artifact, with the web app
-          # switched OFF.
+          # switched OFF by WEB_APP_DISABLED="1" — the kill switch.
           #
           # One deployment can only be in one state, so a suite running against
-          # one of them can only ever prove half of a switch. The half it does
-          # not prove is the half that ships: production runs with
-          # WEB_APP_ENABLED unset, and until this existed nothing had ever
-          # executed that configuration — the block was argued from unit tests
-          # and a local reading of middleware.
-          #
-          # WEB_APP_ENABLED is deliberately NOT passed, so this deployment proves
-          # the DEFAULT blocks. It used to pass "0" while production had the
-          # variable unset and the default was ON: CI proved "0" blocked, and
-          # production served the whole web app to anyone who signed up
-          # (2026-09-24). Testing the value production does not have is how
-          # that went unseen.
+          # one of them can only ever prove half of a switch. The ordinary
+          # preview above proves the default (unset, as production runs it)
+          # opens the web; this one proves "1" closes it.
           #
           # Cheap, because everything expensive is already done. Same prebuilt
           # bundle, same Neon branch, same secret; only the env differs. It adds
@@ -487,6 +558,7 @@ jobs:
           BLOCKED_URL="$(vercel deploy --prebuilt --token="${{ secrets.VERCEL_TOKEN }}" \
             -e DATABASE_URL="${{ steps.neon.outputs.db_url }}" \
             -e E2E_TEST_ENDPOINTS="1" \
+            -e WEB_APP_DISABLED="1" \
             -e E2E_TEST_ENDPOINTS_SECRET="$SECRET")"
           echo "blocked_url=$BLOCKED_URL" >> "$GITHUB_OUTPUT"
           echo "Preview (web blocked): $BLOCKED_URL"
@@ -525,7 +597,7 @@ jobs:
               '',
               `**${url}**`,
               '',
-              `Test the changes here before merging. Fresh clone of the production database (Neon branch \`${branch}\`), rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
+              `Test the changes here before merging. Production's schema, migrated, then emptied: fixture data only, no customer data (Neon branch \`${branch}\`). Rebuilt on every push and deleted when this PR closes — nothing you do here touches prod.`,
               '',
               '⚠️ **Use this URL, not one from an earlier push.** The Neon branch is dropped and recreated on every push, so older preview deployments still point at a database that no longer exists. They fail as an apparent sign-out — you get bounced to `/login` mid-session and signing in again does not help.',
               '',
@@ -592,7 +664,7 @@ jobs:
       - name: Run Playwright against the preview
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}
-          # The second deployment — same build, WEB_APP_ENABLED unset. Its presence
+          # The second deployment — same build, WEB_APP_DISABLED=1. Its presence
           # adds the `web-blocked` Playwright project, so ONE `npm run e2e`
           # covers both sides of the switch: one browser resolution, one
           # playwright-results.json, one PR comment, one skip-guard.
@@ -624,8 +696,10 @@ jobs:
       # got switched off, and a suite testing nothing shipped green for two
       # weeks. If you find yourself raising it, the question to answer first is
       # what the suite has started depending on that it doesn't control.
+      # `!cancelled()`, not `always()`: in a job fail-fast stopped mid-suite the
+      # skip count means nothing, and a second red line would hide the real one.
       - name: Assert the suite actually ran
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           E2E_MAX_SKIPPED: '0'
         run: node scripts/assert-e2e-ran.mjs
@@ -702,15 +776,16 @@ jobs:
       # Per-spec results + a link to the report, as a sticky PR comment.
       #
       # The HTML report is a directory, so it can't be inlined, and it is
-      # deliberately NOT published to a URL: its screenshots and videos are of
-      # a preview backed by a CLONE OF PRODUCTION DATA. The artifact link is
-      # behind repo auth; a Pages or Vercel deploy of it would not be.
+      # deliberately NOT published to a URL. The artifact link is behind repo
+      # auth; a Pages or Vercel deploy of it would not be.
       - name: Comment E2E results on the PR
         if: always()
         uses: actions/github-script@v7
         env:
           ARTIFACT_URL: ${{ steps.report.outputs.artifact-url }}
           REPORT_URL: ${{ steps.publish.outputs.url }}
+          # `cancelled` when another job failed and FAIL FAST stopped this one.
+          JOB_STATUS: ${{ job.status }}
         with:
           script: |
             const { execFileSync } = require('node:child_process');
@@ -730,8 +805,12 @@ jobs:
             }
             const pr = context.payload.pull_request;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const stopped = process.env.JOB_STATUS === 'cancelled'
+              ? '> [!NOTE]\n> **Stopped early.** Another job in this run failed and fail-fast cancelled this one, so the results below are partial. The iOS comment and the [CI run](' + runUrl + ') name the job that failed.\n'
+              : '';
             const body = [
               marker,
+              ...(stopped ? [stopped] : []),
               table,
               `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`,
             ].join('\n');
@@ -899,9 +978,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 40
     strategy:
-      # Every shard reports. A red `core` must not cancel a `trips` that would
-      # have said something different about the same commit.
-      fail-fast: false
+      # A red shard cancels the others (Sam, 2026-10-02 — see FAIL FAST in the
+      # header). This used to be `false`, so every shard reported on the same
+      # commit; Sam chose not paying for macOS shards and the `ai` shard's
+      # Penny spend on a PR that is already red over that. The cancelled
+      # shards still upload their recordings and outcome (`if: always()`), and
+      # the summary below names them as cancelled, not failed.
+      fail-fast: true
       matrix:
         # Chosen by the decide job from mobile/maestro/shards/*.yaml; `ai` is in
         # it only on a run started by the `ai-tests` label (see decide).
@@ -1206,6 +1289,11 @@ jobs:
     # The check name the PR has always shown. The deploy gate reads the run's
     # overall conclusion, and branch protection requires only Decide scope and
     # Unit tests, so the shard count can change without touching either.
+    #
+    # Runs after a FAIL FAST cancel too (`always()` on the job AND on the steps
+    # that must run: a step's default `success()` is false in a cancelled run,
+    # so without it the comment would silently not be written). By the time it
+    # starts, every shard it reports on has finished.
     name: iOS e2e (simulator)
     needs: [decide, ios-e2e]
     if: always() && needs.decide.outputs.docs_only != 'true'
@@ -1213,16 +1301,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/download-artifact@v4
+        if: always()
         with:
           pattern: ios-shard-*
           merge-multiple: true
           path: shards
 
       - name: Comment iOS results on the PR
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         env:
           SHARDS: ${{ needs.decide.outputs.ios_shards }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
             const fs = require('fs');
@@ -1237,21 +1327,63 @@ jobs:
                 results[r.shard] = r;
               } catch { /* a malformed file reads as "did not run" below */ }
             }
+
+            // FAIL FAST: did a failed job stop this run? Asked of the run's own
+            // jobs, because the shard files cannot say — a shard cancelled
+            // before it started leaves none. Left out: the two jobs that run
+            // after a cancel by design, and the fail-fast watcher, which
+            // outlives every job it watches and is cancelled by its own cancel —
+            // none of the three is the cause, and none was stopped by it.
+            const afterCancel = new Set(['iOS e2e (simulator)', 'Drop the preview database if the PR has closed', 'Stop the run at the first failure']);
+            let failed = [];
+            let cancelled = [];
+            let jobsError = '';
+            try {
+              const jobs = (await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                ...context.repo, run_id: context.runId, attempt_number: Number(process.env.RUN_ATTEMPT), per_page: 100,
+              })).filter((j) => !afterCancel.has(j.name));
+              failed = jobs.filter((j) => j.conclusion === 'failure').map((j) => j.name);
+              // Still running at this point means being cancelled: everything
+              // this job needs has finished.
+              cancelled = jobs.filter((j) => j.conclusion === 'cancelled' || j.status !== 'completed').map((j) => j.name);
+            } catch (err) {
+              jobsError = err.message;
+            }
+            const stoppedEarly = failed.length > 0 && cancelled.length > 0;
+            const names = (list) => list.map((n) => `\`${n}\``).join(', ');
+
             const icon = { success: '✅', failure: '❌', cancelled: '⚪', skipped: '⚪' };
             const lines = ['### 📱 iOS e2e (simulator)', '', '| Shard | Result |', '|---|---|'];
             let allGreen = expected.length > 0;
+            let shardFailed = false;
             for (const shard of expected) {
               const r = results[shard];
               const outcome = r?.outcome || 'did not run';
               if (outcome !== 'success') allGreen = false;
+              if (outcome === 'failure') shardFailed = true;
+              // Skipped, cancelled mid-flow or never started: in a stopped run
+              // all three are the cancel, not a verdict on this shard.
+              const stopped = stoppedEarly && outcome !== 'success' && outcome !== 'failure';
+              const label = stopped ? 'cancelled (stopped early)' : outcome;
               const link = r?.artifactUrl ? ` · [recordings](${r.artifactUrl})` : '';
               const retry = r?.harnessRetried ? ' · ⚠️ harness retried once' : '';
-              lines.push(`| \`${shard}\` | ${icon[outcome] || '⚪'} ${outcome}${link}${retry} |`);
+              lines.push(`| \`${shard}\` | ${icon[stopped ? 'cancelled' : outcome] || '⚪'} ${label}${link}${retry} |`);
             }
             lines.push('');
-            lines.push(allGreen
-              ? "**Passed.** Every shard ran its flows on a booted simulator against this PR's own preview."
-              : '**Not green.** A failed shard\'s recordings hold a screenshot of the screen it died on — the fastest way in.');
+            if (allGreen) {
+              lines.push("**Passed.** Every shard ran its flows on a booted simulator against this PR's own preview.");
+            } else if (stoppedEarly) {
+              lines.push(`**Stopped early: ${names(failed)} failed**, so fail-fast cancelled the rest of the run. Start with that failure; a cancelled shard says nothing about this commit.`);
+              lines.push('', `Cancelled as a result: ${names(cancelled)}.`);
+              if (shardFailed) {
+                lines.push('', "The failed shard's recordings hold a screenshot of the screen it died on.");
+              }
+            } else {
+              lines.push('**Not green.** A failed shard\'s recordings hold a screenshot of the screen it died on — the fastest way in.');
+            }
+            if (jobsError) {
+              lines.push('', `⚠️ Could not read this run's jobs, so cannot say whether a failure elsewhere stopped it: ${jobsError}`);
+            }
             if (!expected.includes('ai')) {
               lines.push('', 'The Penny flows (`ai` shard) did not run — add the `ai-tests` label to run them.');
             }
@@ -1279,3 +1411,114 @@ jobs:
         run: |
           echo "Shards: $RESULT"
           [ "$RESULT" = "success" ]
+
+  # ── DB column coverage ─────────────────────────────────────────────────────
+  #
+  # Sam, 2026-10-01: "we need to be testing in a way that confirms every column
+  # / row of unique data type ... every db table". The preview's real rows are
+  # wiped before it deploys, so once Playwright and every iOS shard have run,
+  # whatever is in `preview/pr-<N>` was written by fixtures and the tests.
+  # scripts/column-coverage.ts counts rows per table and non-null values per
+  # column, and compares the gaps with e2e/column-coverage-baseline.json.
+  #
+  # GATED only on the run the `ai-tests` label started (the decide job's
+  # condition), because Penny's tables are written only then and that is the
+  # run the deploy gate reads — and only when the suites it measures passed, so
+  # a partial run is reported, never judged. Every other run reports.
+  #
+  # NOT a required check (see the branch-protection note in
+  # docs/design/deploy-pipeline.md): it is skipped on docs-only PRs. Its own
+  # connection string, fetched from the Neon API, because GitHub drops a job
+  # output carrying the masked db_url. drop-preview-db waits for it, and runs
+  # whether it passed, failed or was skipped (`always()`).
+  db-coverage:
+    name: DB column coverage
+    needs: [decide, preview, e2e, ios-e2e-summary]
+    if: always() && needs.decide.outputs.docs_only != 'true' && needs.preview.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Connect to ${{ env.NEON_BRANCH }}
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          API="https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID"
+          neon() { curl -fsS -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$API$1"; }
+          BRANCH_ID="$(neon /branches | jq -r --arg n "$NEON_BRANCH" '.branches[] | select(.name == $n) | .id')"
+          [ -n "$BRANCH_ID" ] || { echo "::error::No Neon branch named $NEON_BRANCH"; exit 1; }
+          # The database the preview uses: create-branch-action's default
+          # (neondb) when it exists, else the branch's first database. Fetched
+          # and picked in separate assignments so `set -e` sees either failing
+          # (inside `read <<<"$(…)"` it did not, run 37479797728).
+          DATABASES="$(neon "/branches/$BRANCH_ID/databases")"
+          PICK="$(printf '%s' "$DATABASES" | jq -r '[.databases[] | select(.name == "neondb")] + .databases | first | "\(.name) \(.owner_name)"')"
+          read -r DB ROLE <<<"$PICK"
+          if [ -z "${DB:-}" ] || [ "$DB" = null ] || [ -z "${ROLE:-}" ] || [ "$ROLE" = null ]; then
+            echo "::error::Neon listed no usable database on $NEON_BRANCH (got database '${DB:-}', owner '${ROLE:-}'), so there is nothing to measure"
+            exit 1
+          fi
+          URI="$(neon "/connection_uri?branch_id=$BRANCH_ID&database_name=$DB&role_name=$ROLE" | jq -r .uri)"
+          [ -n "$URI" ] && [ "$URI" != null ] || { echo "::error::Neon returned no connection string"; exit 1; }
+          echo "::add-mask::$URI"
+          echo "DATABASE_URL=$URI" >> "$GITHUB_ENV"
+          echo "Connected to $NEON_BRANCH (database $DB)"
+
+      - name: Measure which tables and columns the tests wrote
+        env:
+          COVERAGE_GATE: ${{ (github.event.action == 'labeled' && github.event.label.name == 'ai-tests' && needs.e2e.result == 'success' && needs.ios-e2e-summary.result == 'success') && '1' || '0' }}
+        run: npx tsx scripts/column-coverage.ts
+
+  # ── The leaked preview database ────────────────────────────────────────────
+  #
+  # A CI run can outlive its PR. PR #79 (2026-10-01) got the `ai-tests` label at
+  # 11:36:30 and merged at 11:36:31: pr-cleanup.yml dropped `preview/pr-79` on
+  # the close, then this run's preview job — already going — created it again,
+  # and nothing was left to drop it. A clone of production data sat behind a
+  # public preview URL until someone noticed.
+  #
+  # So the last thing a run does is ask GitHub whether its PR is STILL open (the
+  # live state — the event payload is frozen at the run's start) and, if not,
+  # drop the branch again. It needs every job that uses the preview (the
+  # coverage job included), so it runs after the last of them. It must never turn CI red and is never a required
+  # check: every step is `continue-on-error`. It runs after a FAIL FAST cancel
+  # too (`always()` on the job and its steps).
+  drop-preview-db:
+    name: Drop the preview database if the PR has closed
+    needs: [decide, preview, e2e, ios-e2e, db-coverage]
+    if: always() && needs.decide.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Is the PR still open?
+        id: pr
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          if ! STATE="$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state --jq .state 2>&1)"; then
+            echo "::warning::Could not read PR #$PR's state, so ${NEON_BRANCH} was left alone (pr-cleanup.yml drops it when the PR closes): $STATE"
+            exit 0
+          fi
+          echo "PR #$PR is $STATE"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+
+      - name: Delete ${{ env.NEON_BRANCH }} (the PR closed while this run was going)
+        if: always() && steps.pr.outputs.state != '' && steps.pr.outputs.state != 'OPEN'
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: ${{ env.NEON_BRANCH }}

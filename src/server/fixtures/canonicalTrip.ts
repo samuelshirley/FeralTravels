@@ -25,7 +25,7 @@ import { CANONICAL_LEG_GEOMETRY } from './canonicalTripGeometry';
  * `npx tsx scripts/extract-canonical-trip.ts <tripId> --apply`.
  *
  * WHAT IS DELIBERATELY NOT COPIED. Nothing that ties it to a person: no user id,
- * no chat transcript (generated instead, see `seedTranscript`), no created_at.
+ * no chat transcript (generated instead, see `writeSeededTranscript`), no created_at.
  *
  * NO DATE IS WRITTEN DOWN. `startISO` defaults to `seededTripStartISO()` —
  * today + 14 — and every leg date is derived from it by index, so a trip seeded
@@ -135,8 +135,8 @@ export const CANONICAL_TRIP_META = {
  *
  *   - `id`, `userId`, `vehicleId`, and every child row id — a seed makes new ones.
  *   - `createdAt` / `updatedAt` — the seed happened now, not last August.
- *   - `tripNameCiKey` — derived from the name by the repo layer; deriving it
- *     twice is how the two get to disagree.
+ *   - `tripNameCiKey` — generated from the name by Postgres (migration 0044);
+ *     it cannot be written at all.
  *   - `startDateParsed` / `endDateParsed` — derived from the ISO dates, same
  *     argument.
  *   - `lastKnownLat/Lng`, `positionUpdatedAt`, `currentLegId`, `currentLat/Lng`,
@@ -148,9 +148,10 @@ export const CANONICAL_TRIP_META = {
  *     way that test says what it is testing.
  *   - `declaredRangeKm` / `declaredRangeLegId` / `declaredRangeAt` — a
  *     conversational override from one particular day.
- *   - The chat transcript — generated per-seed by `seedTranscript` instead. The
- *     real one is a conversation about real calendar days ("leaving on
- *     September 15th") and cloning it verbatim is the bug fixed in 732eda4.
+ *   - The chat transcript — generated per-seed by `writeSeededTranscript`
+ *     (src/server/seededTranscript.ts) instead. The real one is a conversation
+ *     about real calendar days ("leaving on September 15th") and cloning it
+ *     verbatim is the bug fixed in 732eda4.
  *   - `pendingIntent`, `onboardingScan` — mid-flight onboarding state, and this
  *     trip is past onboarding.
  */
@@ -162,8 +163,9 @@ export const CANONICAL_TRIP_NOT_CARRIED = [
   'declaredRangeKm', 'declaredRangeLegId', 'declaredRangeAt',
   'pendingIntent', 'onboardingScan',
   'startDate', 'endDate',
-  // The driver's onboarding pace answer; null means the flat 8h default,
-  // which is what the canonical plan was built on.
+  // The driver's onboarding pace answer. Not copied from the source trip:
+  // `seedCanonicalTrip` sets the flat 8h default, which is what the canonical
+  // plan was built on and what the seeded transcript says was asked for.
   'dailyDriveHours',
 ] as const;
 

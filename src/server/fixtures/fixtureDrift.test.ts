@@ -145,7 +145,7 @@ describe('canonical fixture does not silently go stale', () => {
      * fixture. Each is a decision; adding one here is how you record it.
      */
     const notInFixture: Record<string, string> = {
-      chatHistory: 'generated per-seed by seedTranscript — cloning the real transcript ships stale calendar dates (see 732eda4)',
+      chatHistory: 'generated per-seed by writeSeededTranscript (server/seededTranscript.ts) — cloning the real transcript ships stale calendar dates (see 732eda4)',
       routes: 'the source trip has none; nav links are derived from leg endpoints at render time',
       routeLinks: 'child of routes, which the fixture does not carry',
       costs: 'the source trip has none',
@@ -154,7 +154,7 @@ describe('canonical fixture does not silently go stale', () => {
       pois: 'points of interest are fetched, not planned — a seeded trip has none',
       usageEvents: 'accounting, not trip content; the subscription fixture writes these',
       pennyTurns: 'the turn queue — idempotency keys and results of requests already served. The source trip has three; they are a record of HTTP calls, not of an itinerary, and a freshly seeded account has made none. A spec about turn resilience seeds its own.',
-      gpxTrails: 'uploaded track files. The source trip has none, and a fixture has no business shipping binary route data.',
+      gpxTrails: 'dormant: GPX removed 2026-10-07 (Sam); table kept so the migration stays additive',
     };
 
     const inFixture = new Set(['legs', 'stops']);

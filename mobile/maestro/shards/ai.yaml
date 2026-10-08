@@ -12,8 +12,16 @@
 flows:
   - penny-plan-trip.yaml
   - penny-maps-link.yaml
+  - penny-jev-gate.yaml
+  - penny-rest-day.yaml
+  - penny-stop-edit.yaml
+  - onboarding-handoff-plan.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
     - penny-plan-trip
     - penny-maps-link
+    - penny-jev-gate
+    - penny-rest-day
+    - penny-stop-edit
+    - onboarding-handoff-plan

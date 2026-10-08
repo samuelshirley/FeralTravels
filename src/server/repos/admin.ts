@@ -7,7 +7,6 @@ import {
   trips,
   legs,
   chatHistory,
-  gpxTrails,
   usageEvents,
   userViewportTime,
   vehicles,
@@ -45,7 +44,6 @@ export async function getAdminOverview() {
     [{ totalLegs }],
     [{ totalChat }],
     [{ totalReplans }],
-    [{ totalGpx }],
     [{ totalVehicles }],
     [{ newUsers24h }],
     [{ newUsers7d }],
@@ -67,7 +65,6 @@ export async function getAdminOverview() {
       .select({ totalReplans: sql<number>`COUNT(*)::int` })
       .from(chatHistory)
       .where(sql`${chatHistory.role} = 'assistant' AND ${chatHistory.changesMade} IS NOT NULL`),
-    db.select({ totalGpx: sql<number>`COUNT(*)::int` }).from(gpxTrails),
     db.select({ totalVehicles: sql<number>`COUNT(*)::int` }).from(vehicles),
     db
       .select({ newUsers24h: sql<number>`COUNT(*)::int` })
@@ -97,7 +94,6 @@ export async function getAdminOverview() {
     totalLegs,
     totalChat,
     totalReplans,
-    totalGpx,
     totalVehicles,
     newUsers24h,
     newUsers7d,

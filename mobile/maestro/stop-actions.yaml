@@ -1,0 +1,98 @@
+# Remove a stop from a day: the × on the stop row, the native confirm, and the
+# row is gone — and still gone after a relaunch.
+#
+# Remove only. Selecting an option stop and swapping a fuel stop for one of its
+# alternates have no control in the native app (useStopActions defines them;
+# nothing renders them), so there is nothing to tap. Their routes are covered
+# over HTTP by e2e/api-contracts.spec.ts.
+#
+# $0: the seeded forced fuel stop's leg has its fuel cache stamped fresh, so
+# opening the day makes no Places search, and deleting a stop replans nothing.
+#
+# UNPROVEN: written from the source (2026-10-07) by a session that could not
+# reach a simulator. Run it locally before trusting a green or a red.
+#
+# Its own account (suffix `sa`): it deletes the stop it looks at.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: sa
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: '1'
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris, France → Strasbourg, France.*'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: 'FUEL: TotalEnergies.*'
+    commands:
+      - tapOn:
+          text: '.*Paris, France → Strasbourg, France.*'
+- scrollUntilVisible:
+    element:
+      text: 'Remove TotalEnergies Ch.teau-Thierry'
+    direction: DOWN
+    timeout: 20000
+
+- tapOn: 'Remove TotalEnergies Ch.teau-Thierry'
+- extendedWaitUntil:
+    visible: 'Delete this stop?'
+    timeout: 10000
+- tapOn: 'Delete'
+- extendedWaitUntil:
+    notVisible:
+      text: 'FUEL: TotalEnergies.*'
+    timeout: 20000
+- assertNotVisible: 'Remove TotalEnergies Ch.teau-Thierry'
+
+# ── Gone on the server ──────────────────────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible:
+      text: '.*Paris, France → Strasbourg, France.*'
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible:
+        text: '(START|DESTINATION): .*'
+    commands:
+      - tapOn:
+          text: '.*Paris, France → Strasbourg, France.*'
+- scrollUntilVisible:
+    element:
+      text: 'DESTINATION: .*'
+    direction: DOWN
+    timeout: 20000
+- assertNotVisible:
+    text: 'FUEL: TotalEnergies.*'

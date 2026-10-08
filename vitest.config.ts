@@ -1,6 +1,6 @@
 import path from 'node:path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 const alias = { '@': path.resolve(__dirname, 'src') };
 
@@ -32,7 +32,12 @@ const alias = { '@': path.resolve(__dirname, 'src') };
  * splitting into projects is about splitting the CI jobs, not about
  * unlocking parallelism that wasn't already there.
  *
- * `npm run test` still runs both, which is what you want locally.
+ * - `pg` — the repo round trips in `src/test/pg/`, against an in-process
+ *   PGlite carrying the real schema. Still `npm run test`, still no service and
+ *   no network; its own project only because it pushes the schema once in a
+ *   `globalSetup` that the logic tests should not pay for.
+ *
+ * `npm run test` runs all three, which is what you want locally.
  * If a `.test.ts` ever genuinely needs a DOM (renderHook, Testing Library),
  * move it to `.test.tsx` rather than putting jsdom back on the unit project.
  */
@@ -46,10 +51,22 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['src/**/*.test.ts'],
+          exclude: [...configDefaults.exclude, 'src/test/pg/**'],
           // next-auth imports `next/server` with no extension, which Node's
           // ESM loader cannot resolve against next@14's export map; let Vite
           // resolve it instead. `appleProvider.test.ts` needs the REAL
           // next-auth so that its `customFetch` is the runtime's own symbol.
+          server: { deps: { inline: ['next-auth'] } },
+        },
+      },
+      {
+        plugins: [react()],
+        resolve: { alias },
+        test: {
+          name: 'pg',
+          environment: 'node',
+          include: ['src/test/pg/**/*.test.ts'],
+          globalSetup: ['./src/test/pg/globalSetup.ts'],
           server: { deps: { inline: ['next-auth'] } },
         },
       },

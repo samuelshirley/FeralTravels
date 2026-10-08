@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api';
 
 interface Announcement {
   id: string;
@@ -42,13 +43,12 @@ export default function AnnouncementModal() {
     if (!announcement || dismissing) return;
     setDismissing(true);
     try {
-      await fetch('/api/announcements/dismiss', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ announcementId: announcement.id }),
-      });
+      await apiFetch('/api/announcements/dismiss', { body: { announcementId: announcement.id } });
     } catch {
-      // Best-effort — if it fails, they'll see it again next visit
+      // apiFetch has already put the failure in front of the user through the
+      // global ErrorNotifier (a toast for 4xx, the modal for 5xx / offline).
+      // The popup still closes: keeping it up would trap them behind an overlay
+      // they cannot clear while offline, and it comes back next visit anyway.
     }
     setVisible(false);
     // Wait for fade-out animation before unmounting

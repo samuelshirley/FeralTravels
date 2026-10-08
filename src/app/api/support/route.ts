@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Resend } from 'resend';
 import { auth } from '@/server/auth';
-import { requireUser } from '@/server/auth/guards';
+import { errorResponse, requireUser } from '@/server/auth/guards';
+import { isFixtureRecipient } from '@/server/auth/test-endpoints';
 
 const supportSchema = z.object({
   message: z.string().min(1, 'Message is required').max(5000),
@@ -12,11 +13,15 @@ export async function POST(req: Request) {
   // requireUser() accepts the web session cookie OR the mobile bearer token,
   // so Contact Support works from both clients. auth() is still consulted for
   // the display NAME, which only exists on the cookie path.
+  //
+  // A refusal goes through errorResponse: 401 signed out, but 503 when the
+  // session store is down — never a 401 for that, which the app answers by
+  // clearing its keychain (CLAUDE.md, "A database failure is not a sign-out").
   let user: { id: string; email: string | null };
   try {
     user = await requireUser();
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  } catch (err) {
+    return errorResponse(err);
   }
   const session = await auth();
 
@@ -27,6 +32,17 @@ export async function POST(req: Request) {
       { error: parsed.error.issues[0]?.message ?? 'Invalid input' },
       { status: 400 },
     );
+  }
+
+  /*
+   * An E2E fixture sender (`playwright-*@e2e.feraltravels.com`, and only while
+   * test endpoints are enabled — never on production) is answered as sent
+   * without mailing anyone. The support-form flow runs on every PR push, and
+   * without this each push would land a fake request in the support inbox.
+   * Same rule, and same reason, as the OTP send's transport skip.
+   */
+  if (user.email && isFixtureRecipient(user.email)) {
+    return NextResponse.json({ ok: true });
   }
 
   const apiKey = process.env.AUTH_RESEND_KEY;

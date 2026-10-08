@@ -30,7 +30,7 @@ import { planReadyText } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
-  getTurnByKey,
+  getTurnByKeyForUser,
   promoteTurnToRunning,
   claimNextQueuedTurn,
   markTurnDone,
@@ -40,13 +40,14 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rethrowTripNameConflict, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
 import { invalidateLegFuelCache } from '@/server/fuel';
 import { tryParseToISO } from '@/lib/dates';
 import { computePlanSummary } from '@/lib/penny/planSummary';
+import { actionToLegacyChange } from '@/lib/penny/legacyChange';
 import { countQueuedMutations } from '@/lib/penny/applyOutcome';
 import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
 import {
@@ -388,7 +389,7 @@ export async function POST(req: Request) {
     // again — hand back the existing record so the client can apply its result
     // (done/error) or keep polling until it lands (running/queued). This is the
     // guard against a "Please try again" double-send spawning a second replan.
-    const existingTurn = await getTurnByKey(idempotencyKey);
+    const existingTurn = await getTurnByKeyForUser(idempotencyKey, userId, tripId);
     if (existingTurn) {
       return Response.json({ turn: existingTurn });
     }
@@ -1175,7 +1176,8 @@ async function dispatchAction(
       await db
         .update(trips)
         .set(tripUpdate)
-        .where(eq(trips.id, tripId));
+        .where(eq(trips.id, tripId))
+        .catch((e) => rethrowTripNameConflict(e, action.input.name ?? ''));
       // Auto-name the trip from its season/dates once a start date exists —
       // a no-op unless the trip still carries the "New trip" placeholder.
       await autoNameTripFromSeason(tripId, userId);
@@ -1418,7 +1420,6 @@ async function dispatchAction(
         distance_km: data.distance_km ?? null,
         surface: data.surface ?? null,
         status: data.status ?? null,
-        gpx_trail_id: data.gpx_trail_id ?? null,
         end_lat: data.end_lat ?? null,
         end_lng: data.end_lng ?? null,
         end_name: data.end_name ?? null,
@@ -1601,65 +1602,4 @@ function haversineKm(
       Math.cos((lat2 * Math.PI) / 180) *
       Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// ---------------------------------------------------------------------------
-// Legacy `changes` envelope shim
-//
-// The frontend (ChatPanel) reads `data.changes.changes[]` to decide whether
-// Penny proposed any changes. Until we update the client, keep emitting the
-// pre-existing `{ action, ...flat }` shape so probes like
-// `Array.isArray(data?.changes?.changes)` keep working.
-// ---------------------------------------------------------------------------
-function actionToLegacyChange(action: ValidatedAction): Record<string, unknown> {
-  switch (action.name) {
-    case 'update_vehicle':
-      return { action: 'update_vehicle', data: action.input.data };
-    case 'add_leg':
-      return { action: 'add_leg', data: action.input };
-    case 'delete_leg':
-      return { action: 'delete_leg', leg_id: action.input.leg_id };
-    case 'update_leg':
-      return { action: 'update_leg', leg_id: action.input.leg_id, data: action.input.data };
-    case 'add_route':
-      return { action: 'add_route', leg_id: action.input.leg_id, data: action.input.data };
-    case 'update_route':
-      return {
-        action: 'update_route',
-        route_id: action.input.route_id,
-        data: action.input.data,
-      };
-    case 'delete_route':
-      return { action: 'delete_route', route_id: action.input.route_id };
-    case 'add_stop':
-      return { action: 'add_stop', leg_id: action.input.leg_id, data: action.input.data };
-    case 'update_stop':
-      return { action: 'update_stop', stop_id: action.input.stop_id, data: action.input.data };
-    case 'delete_stop':
-      return { action: 'delete_stop', stop_id: action.input.stop_id };
-    case 'add_task':
-      return {
-        action: 'add_task',
-        leg_id: action.input.leg_id ?? null,
-        data: action.input.data,
-      };
-    case 'update_task':
-      return { action: 'update_task', task_id: action.input.task_id, data: action.input.data };
-    case 'rename_trip':
-      return {
-        action: 'rename_trip',
-        ...(action.input.name !== undefined ? { name: action.input.name } : {}),
-        ...(action.input.start_date ? { start_date: action.input.start_date } : {}),
-      };
-    case 'report_position':
-      return {
-        action: 'report_position',
-        lat: action.input.lat,
-        lng: action.input.lng,
-        ...(action.input.place_name ? { place_name: action.input.place_name } : {}),
-        ...(action.input.next_leg_id ? { next_leg_id: action.input.next_leg_id } : {}),
-      };
-    case 'submit_idea':
-      return { action: 'submit_idea', idea: action.input.idea };
-  }
 }

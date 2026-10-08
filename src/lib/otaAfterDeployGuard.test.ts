@@ -103,16 +103,26 @@ describe('mobile.yml: nothing ships to a device before the production deploy (st
 
   it('may read Actions runs', () => {
     // With `permissions:` set, an unlisted scope is `none` and `gh run list`
-    // is refused — which the step would report as a timeout 45 minutes later.
+    // is refused — which the step would report as a timeout 135 minutes later.
     expect(mobile).toMatch(/^permissions:\n(?: {2}.*\n)*? {2}actions: read$/m);
   });
 
   it('waits longer than a deploy may take, and a native build still fits after it', () => {
-    // Native runs measured at 84 and 74 minutes (2026-09). A job killed
-    // mid-build leaves an EAS build nothing tracks.
+    // Sized from deploy-production.yml, so the two cannot drift: the deploy's
+    // own job timeout (its CI wait + its work), plus the WORK of an earlier
+    // deploy it queues behind, plus 5 slack. The earlier deploy's CI wait
+    // overlaps this commit's CI, so only its work is serial. Native runs
+    // measured at 84 and 74 minutes (2026-09); a job killed mid-build leaves
+    // an EAS build nothing tracks.
+    const deployS = minutes(deploy, 'deploy') * 60;
+    const ciWait = deploy.match(/^ {10}WAIT_SECONDS: '(\d+)'$/m);
+    expect(ciWait, 'deploy-production.yml has no WAIT_SECONDS').not.toBeNull();
+    const deployWorkS = deployS - Number(ciWait![1]);
+    expect(deployWorkS).toBeGreaterThanOrEqual(15 * 60);
     const waitS = envValue(wait, 'WAIT_SECONDS')!;
-    expect(waitS).toBeGreaterThanOrEqual(minutes(deploy, 'deploy') * 60 * 2);
+    expect(waitS).toBeGreaterThanOrEqual(deployS + deployWorkS + 5 * 60);
     expect(waitS + 90 * 60 + 15 * 60).toBeLessThanOrEqual(minutes(mobile, 'ship') * 60);
+    expect(minutes(mobile, 'ship')).toBeLessThanOrEqual(360);
   });
 
   it('keeps the push trigger, so the classifier still has github.event.before', () => {
@@ -123,7 +133,9 @@ describe('mobile.yml: nothing ships to a device before the production deploy (st
   });
 });
 
-describe('mobile.yml: the wait step itself (behaviour, under bash, stub gh, real git)', () => {
+// Every case here spawns bash (one to four times), which a loaded full-suite
+// run slows towards vitest's 5 s default; alone they take 0.3-1.8 s.
+describe('mobile.yml: the wait step itself (behaviour, under bash, stub gh, real git)', { timeout: 60_000 }, () => {
   const script = runBlock(step(WAIT_STEP));
   const root = mkdtempSync(path.join(tmpdir(), 'ota-wait-'));
   afterAll(() => rmSync(root, { recursive: true, force: true }));

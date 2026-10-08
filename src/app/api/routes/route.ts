@@ -21,9 +21,13 @@ export async function GET(request: Request) {
     if (!legIdRaw) return Response.json({ error: 'legId is required' }, { status: 400 });
     const legId = parseUUID(legIdRaw);
     if (!legId) return Response.json({ error: 'legId must be a valid UUID' }, { status: 400 });
-    const inferredTripId = tripIdRaw ? parseUUID(tripIdRaw) : await getLegTripId(legId);
-    if (!inferredTripId) return Response.json({ error: 'Trip not found for leg' }, { status: 404 });
-    await assertTripReadableByUser(inferredTripId, userId);
+    // The leg's own trip decides access. A supplied tripId must name that same
+    // trip: checking only the supplied one let your own tripId plus somebody
+    // else's legId read their rows (cross-tenant read, found 2026-10-06).
+    const legTripId = await getLegTripId(legId);
+    if (!legTripId || (tripIdRaw && parseUUID(tripIdRaw) !== legTripId))
+      return Response.json({ error: 'Leg not found on this trip' }, { status: 404 });
+    await assertTripReadableByUser(legTripId, userId);
     return Response.json(await getRoutesForLeg(legId));
   } catch (err) {
     return errorResponse(err);
@@ -38,7 +42,6 @@ const createSchema = z.object({
   distance_km: z.number().nullish(),
   surface: z.string().nullish(),
   status: z.string().nullish(),
-  gpx_trail_id: z.string().uuid().nullish(),
   sort_order: z.number().int().nullish(),
   end_lat: z.number().min(-90).max(90).nullish(),
   end_lng: z.number().min(-180).max(180).nullish(),
@@ -69,7 +72,6 @@ export async function POST(request: Request) {
       distance_km: body.distance_km ?? null,
       surface: body.surface ?? null,
       status: body.status ?? null,
-      gpx_trail_id: body.gpx_trail_id ?? null,
       sort_order: body.sort_order ?? null,
       end_lat: body.end_lat ?? null,
       end_lng: body.end_lng ?? null,

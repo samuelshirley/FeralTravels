@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "gap": "accounts",
+      "reason": "no test links an OAuth account: every exchange in oauth-exchange.spec is refused, and sign-in is OTP"
+    },
+    {
+      "gap": "costs",
+      "reason": "written only when Penny’s update_leg sends costs (POST /api/trip/replan) and copied by cloneTrip; no flow asks Penny for a cost"
+    },
+    {
+      "gap": "gpx_trails",
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); table kept so the migration stays additive"
+    },
+    {
+      "gap": "links",
+      "reason": "no product path writes a leg link: cloneTrip only copies existing rows, and the one inserter outside it is scripts/seed-demo-trip.ts"
+    },
+    {
+      "gap": "oauth_token_uses",
+      "reason": "every exchange in oauth-exchange.spec is refused before a token is redeemed"
+    },
+    {
+      "gap": "pois",
+      "reason": "no product path writes a POI: cloneTrip only copies existing rows, and the one inserter outside it is scripts/migrate-sqlite-to-neon.ts"
+    },
+    {
+      "gap": "routes.gpx_trail_id",
+      "reason": "dormant: GPX removed 2026-10-07 (Sam); column kept so the migration stays additive"
+    },
+    {
+      "gap": "stops.fuel_amount_l",
+      "reason": "accepted by POST/PATCH /api/stops and Penny’s update_stop, but no client sends it and Finn writes no amount; no test sets it"
+    },
+    {
+      "gap": "stops.photos",
+      "reason": "dormant column (stop photos removed 2026-06-30), always null"
+    },
+    {
+      "gap": "subscriptions.original_transaction_id",
+      "reason": "set only by the RevenueCat webhook"
+    },
+    {
+      "gap": "users.image",
+      "reason": "set only from an OAuth profile; sign-in in tests is OTP"
+    },
+    {
+      "gap": "verificationTokens",
+      "reason": "Auth.js magic-link table; sign-in is OTP (email_otp_codes)"
+    }
+  ]
+}

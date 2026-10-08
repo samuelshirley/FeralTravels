@@ -146,12 +146,19 @@ export async function updateVehicle(
   return updated;
 }
 
+/**
+ * Why a delete was refused. `not_found` covers "not yours" too — the caller
+ * must not be able to tell another account's vehicle from a missing one — and
+ * is the route's 404; the other two are the caller's own account rules (400).
+ */
+export type DeleteVehicleRefusal = 'not_found' | 'last_vehicle' | 'default_vehicle';
+
 export async function deleteVehicle(
   userId: string,
   vehicleId: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; reason: DeleteVehicleRefusal; error: string }> {
   const owned = await getVehicleForUser(userId, vehicleId);
-  if (!owned) return { ok: false, error: 'Vehicle not found' };
+  if (!owned) return { ok: false, reason: 'not_found', error: 'Vehicle not found' };
 
   const allRows = await db
     .select({ id: vehicles.id })
@@ -160,12 +167,14 @@ export async function deleteVehicle(
   if (allRows.length <= 1) {
     return {
       ok: false,
+      reason: 'last_vehicle',
       error: 'You need at least one vehicle. Add another first.',
     };
   }
   if (owned.is_default && allRows.length > 1) {
     return {
       ok: false,
+      reason: 'default_vehicle',
       error: 'This is your default vehicle. Set another as default first.',
     };
   }

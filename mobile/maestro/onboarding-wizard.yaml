@@ -23,6 +23,7 @@ appId: ${APP_ID}
       SEED_CANONICAL: ''
       FORCED_FUEL_STOP: ''
       RANGE_KM: ''
+      JEV_MODE: ''
       EXTRA_TRIP_KIND: onboarding
       EXTRA_TRIP_NAME: E2E Fixture Onboarding Trip
 

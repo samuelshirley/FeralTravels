@@ -93,6 +93,14 @@ export const users = pgTable('users', {
    */
   paywallEnforced: boolean('paywall_enforced').default(false).notNull(),
   /**
+   * Which classifier the message gate asks for THIS account: `null` follows the
+   * global `app_meta.jev_mode` row, `'on'` forces Jev-first, `'compare'`
+   * forces compare (Haiku decides, Jev only logged), `'off'` forces Haiku
+   * only. Anything else reads as null. Read and written only through
+   * `src/server/repos/jev.ts`; see `docs/design/jev.md`.
+   */
+  jevMode: text('jev_mode'),
+  /**
    * When this account first finished trip onboarding — vehicle supplied, range
    * set, handed off to Penny. Null means they never have.
    *
@@ -352,8 +360,13 @@ export const trips = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     vehicleId: uuid('vehicle_id').references(() => vehicles.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
-    /** DB-generated `lower(trim(name))`; unique per user via index (see baseline migration). */
-    tripNameCiKey: text('trip_name_ci_key'),
+    /**
+     * Postgres-generated `lower(trim(name))`, unique per user via
+     * trips_user_name_unique_idx. Never written by the app (it cannot be).
+     * Migration 0044 made it really generated: prod was built by db:push from
+     * a schema.ts that declared it plain, so it sat NULL and blocked nothing.
+     */
+    tripNameCiKey: text('trip_name_ci_key').generatedAlwaysAs(sql`lower(trim("name"))`),
     /** Free-text dates (original columns — may contain "May 28", "late May", etc.). */
     startDate: text('start_date'),
     endDate: text('end_date'),
@@ -775,6 +788,13 @@ export const usageEvents = pgTable(
     costMicrocents: bigint('cost_microcents', { mode: 'number' }),
     success: boolean('success').default(true).notNull(),
     errorMessage: text('error_message'),
+    /**
+     * Structured facts about the call, for rows whose provider has any. Only
+     * `provider = 'jev'` writes it today: `{mode, choice, top, margin,
+     * latencyMs, settled, deferredReason, echoedModel}`, plus `source,
+     * wouldSettle, haikuTier, agree` on compare rows — never user text.
+     */
+    meta: jsonb('meta'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({

@@ -4,8 +4,10 @@
 > what you must not break, so you can orient without scanning the codebase. It is
 > **guarded at 28 KB** (`src/lib/claudeMdGuard.test.ts`): narrative lives in
 > `docs/`, linked from the line that summarises it, so read that doc when your
-> task touches the area. Before adding anything here, read **Keeping this file
-> current**.
+> task touches the area. **`docs/` is not in git** (Sam, 2026-10-07): it is a
+> local, gitignored folder at `/Users/samuelashirley/Documents/Github/FeralTravels/docs` — read and write it by that absolute
+> path from any worktree; it is the one place in the main checkout an agent
+> may edit. Before adding anything here, read **Keeping this file current**.
 
 ## MVP scope — hold the line
 
@@ -29,7 +31,7 @@ it" is post-MVP — flag it before building. Full scope and what was cut:
 ## Stack
 
 An overland trip planner: Next.js 14 + an AI assistant ("Penny") planning
-multi-leg road trips — stops, routes, fuel, GPX. Why each choice and what it
+multi-leg road trips — stops, routes, fuel. Why each choice and what it
 costs: **`docs/design/stack.md`** — read it before reasoning about cost or about
 which provider serves what; this has been wrong here before, expensively.
 
@@ -40,6 +42,10 @@ which provider serves what; this has been wrong here before, expensively.
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
   resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
+- **Jev (optional, OFF by default):** a self-hosted typed-decision server for
+  the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
+  logged), JEV FIRST (it may settle only a confident T1, else Haiku) —
+  **`docs/design/jev.md`**.
 - **Maps / geo:** Google — client JS, server Directions, Places (New)
   `searchText` for name→coords, Places Text Search along-route for Finn's
   stations. **These calls are PAID.** Coords→name is Nominatim: the Geocoding
@@ -49,6 +55,7 @@ which provider serves what; this has been wrong here before, expensively.
   never propose "use the server key" as a fix.
 - **Payments:** Apple IAP via RevenueCat (`mobile/`)
 - **Tests:** Vitest (unit) · Playwright (web e2e) · Maestro (iOS e2e, simulator)
+  · PGlite (real-Postgres repo round trips, in-process, in `npm run test`)
 - **Language:** TypeScript throughout, Zod for validation
 
 ## Commands
@@ -76,7 +83,8 @@ reason to slow down or pick the cautious option. It is still live infrastructure
 never run tests or seed fixtures against the prod database.
 
 1. **Open a PR into `main`.** `ci.yml` runs unit tests, deploys a tested preview
-   on an ephemeral Neon branch (a clone of prod), runs Playwright against it, and
+   on an ephemeral Neon branch (prod's schema: migrations rehearsed on a private
+   copy, then emptied), runs Playwright against it, and
    typechecks `mobile/`. There is no single `pipeline.yml`.
 2. **Merge the PR — that IS the deploy.** `deploy-production.yml` re-verifies CI
    was green for the PR's head SHA, migrates prod, deploys via Vercel.
@@ -90,8 +98,8 @@ never run tests or seed fixtures against the prod database.
 - **Only the newest preview URL works** — a stale one fails as a fake sign-out
   (`/login`) because its database was dropped. Take it from the sticky comment.
 - **The Anthropic-spending e2e flows are behind the `ai-tests` label** — the
-  iOS `ai` shard (`penny-plan-trip`, `penny-maps-link`); add it when you are
-  ready to merge.
+  iOS `ai` shard (`penny-plan-trip`, `penny-maps-link`, `penny-jev-gate`); add
+  it when you are ready to merge.
 - **Claude commits** finished work (after `tsc --noEmit` + `npm run test` pass);
   **Sam pushes, opens the PR, and merges.** Keep commits scoped, and **run the
   unit tests after EVERY code change**, not just before a commit.
@@ -124,6 +132,7 @@ src/
     db/               # schema.ts (all tables), client.ts (Neon)
     repos/            # Data access layer (see Repos)
     payments/         # BOUNDED MODULE — index.ts is the only public surface
+    jev/              # BOUNDED MODULE — Jev tier classifier; docs/design/jev.md
     auth/             # guards.ts admin.ts otp.ts test-endpoints.ts
                       # sessionStore.ts otp-email.ts magic-email.ts
   types/trip.ts       # Shared TypeScript types
@@ -133,12 +142,13 @@ middleware.ts  scripts/  drizzle/  e2e/  mobile/
 ### API Routes
 
 ```
-api/admin/announcements api/admin/paywall api/admin/paywall/user
+api/admin/announcements api/admin/jev api/admin/jev/user api/admin/paywall
+api/admin/paywall/user
 api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/gpx api/gpx/[id] api/legs/[id]/fuel-stops
+api/chat api/debug/fuel api/legs/[id]/fuel-stops
 api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
@@ -170,14 +180,14 @@ subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
 ipRequestCounters, oauthProviderKeys
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
-`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`,
-`stops.price_*`.
+`trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`, the
+`gpx_trails` table and `routes.gpx_trail_id` (GPX removed 2026-10-07).
 
 ### Repos (`src/server/repos/`)
 
-trips, routes, stops, vehicles, users, tasks, pois, chat, gpx, usage, admin,
-announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, testSupport
-(test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
+trips, routes, stops, vehicles, users, tasks, pois, chat, usage, admin,
+announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, jev,
+testSupport (test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
 revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
 
 ### Penny Tools (`src/lib/penny/tools/`)
@@ -208,7 +218,7 @@ What each is for and its traps: **`docs/design/scripts.md`**.
 anthropic-usage-report.ts assert-e2e-ran.mjs
 backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
 capture-nominatim-fixtures.mjs check-env.sh
-check-preview-env.mjs claude-task.sh db-reset.ts
+check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
@@ -220,7 +230,7 @@ reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts
 set-paywall-flag.mjs smoke-api.ts storekit-probe.sh
-sync-shared.mjs trial-account.ts
+sync-shared.mjs trial-account.ts wipe-preview-db.ts
 ```
 
 **Tombstones — do not recreate.** `scripts/ship.sh` and `npm run ship` are
@@ -233,7 +243,8 @@ Open a PR instead. `seed-e2e-fixture.ts` and `cleanup-e2e.ts` were also
 What each proves: **`docs/design/e2e-tests.md`**.
 
 legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion,
-subscriptions, vehicle-crud, announcement, breakers — server contracts only.
+subscriptions, vehicle-crud, announcement, breakers, api-contracts,
+fuel-cascade, money-limits — server contracts only.
 The screens are Maestro flows on the phone (below) since 2026-09-27.
 
 **E2E auth: no session bypass exists.** Every authenticated spec signs in through
@@ -251,7 +262,10 @@ reappears in `src/`.
 `onboarding-range.yaml`, `trip-itinerary.yaml`, `forced-stop-line.yaml`,
 `maps-link-stop.yaml`, `rest-day-stop.yaml`, `vehicles.yaml`, `paywall.yaml`,
 `account-deletion.yaml`, `settings-location.yaml`, `penny-plan-trip.yaml`,
-`penny-maps-link.yaml`, `screenshots.yaml` — Maestro flows driving a real iOS
+`penny-maps-link.yaml`, `penny-jev-gate.yaml`, `screenshots.yaml`, `delete-trip.yaml`,
+`onboarding-handoff-plan.yaml`, `paywall-no-trips.yaml`, `penny-rest-day.yaml`,
+`penny-stop-edit.yaml`, `promo-redeem.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
+`support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs
@@ -365,8 +379,9 @@ production failures: **`docs/design/playwright-mcp.md`**.
 
 **Mutation-check every new guard test** — reintroduce the exact bug, watch it
 fail, restore; an unverified guard is decoration. Register any new
-`src/lib/*Guard.test.ts` in `docs/decisions.md` or
-`decisionsRegisterGuard.test.ts` fails the suite.
+`src/lib/*Guard.test.ts` in the local `docs/decisions.md`;
+`decisionsRegisterGuard.test.ts` checks it wherever that file exists and skips
+where it does not (CI).
 
 ## Keeping this file current
 
@@ -387,8 +402,9 @@ something in the next five minutes:
 **What does NOT go here:** everything else — why a decision was made, what a
 wrong belief cost, postmortems, measurements, migration narratives. That is the
 most valuable text in the repo and it belongs in `docs/`, in the topic file for
-that area. **Write the prose there first, then add at most one sentence here
-pointing at it.** If you are adding a paragraph, you are in the wrong file.
+that area — the LOCAL folder, by its absolute path, never in a PR. **Write the
+prose there first, then add at most one sentence here pointing at it.** If you
+are adding a paragraph, you are in the wrong file.
 
 This file was 225 KB on 2026-09-20 — nearly tripled in sixteen days, because the
 old version of this section said what to update and never what not to put here.
@@ -396,4 +412,5 @@ If a change pushes it over 28 KB, move prose out. Raise the number only for
 content the guard itself compels — an index entry, never a paragraph.
 
 Every section above links its own file, all under `docs/design/` — except
-`docs/decisions.md`, the decision register and guard-test registry.
+`docs/decisions.md`, the decision register and guard-test registry. Those links
+resolve in the local `/Users/samuelashirley/Documents/Github/FeralTravels/docs`, which git does not track.

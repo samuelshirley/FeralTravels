@@ -220,9 +220,10 @@ jobs:
     runs-on: ubuntu-latest
     # Measured 2026-09: native runs took 84 and 74 minutes end to end, the
     # build step nearly all of it, against the old ceiling of 90. The deploy
-    # wait can add up to 45 in front of it; a job killed mid-build leaves an
-    # EAS build nothing tracks. 45 + 90 + 15 of setup and slack.
-    timeout-minutes: 150
+    # wait can add up to 135 in front of it (WAIT_SECONDS below); a job killed
+    # mid-build leaves an EAS build nothing tracks. 135 + 90 + 15 of setup and
+    # slack, under GitHub's 360 cap.
+    timeout-minutes: 240
     concurrency:
       # Serialised rather than cancel-in-progress: a cancelled run can leave a
       # build running on EAS that nothing is tracking any more. Job-level so a
@@ -361,15 +362,20 @@ jobs:
       # concurrency group does to a pending run when a newer merge queues behind
       # it — and a later deploy of a main commit that CONTAINS this one
       # succeeded. Failure, any other conclusion, no run at all, a cancellation
-      # no later deploy covers, or 45 minutes without an answer (the deploy's
-      # own 20, another 20 queued behind an earlier deploy, 5 slack) fails the
-      # job with the reason, and nothing reaches a device.
+      # no later deploy covers, or 135 minutes without an answer fails the job
+      # with the reason, and nothing reaches a device.
+      #
+      # 135 = the deploy's own 110 (it may wait 90 for CI, then 20 of work) +
+      # 20 for the work of an earlier deploy it queues behind + 5 slack. Not
+      # 110 twice: both CI waits run concurrently with this commit's own CI
+      # and so both end within 90 min of this merge; only the two 20s of work
+      # are serial after that.
       - name: Wait for the production deploy of this commit
         id: deploy_wait
         if: steps.native.outputs.decision == 'js-only' || steps.native.outputs.decision == 'native' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-          WAIT_SECONDS: '2700'
+          WAIT_SECONDS: '8100'
           POLL_SECONDS: '20'
           # Both workflows start from the same push; a run that is not listed
           # after this long was never created. Also how long a cancelled deploy

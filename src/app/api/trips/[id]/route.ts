@@ -18,6 +18,7 @@ import {
   deleteTrip,
   assertTripNameAvailable,
   assertTripDurationWithinLimit,
+  rethrowTripNameConflict,
 } from '@/server/repos/trips';
 import { rowMappers } from '@/server/repos/trips';
 import { invalidateTripFuelCache } from '@/server/fuel';
@@ -129,7 +130,13 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       update.preferAvoidHighways = body.prefer_avoid_highways;
     if (body.daily_drive_hours !== undefined) update.dailyDriveHours = body.daily_drive_hours;
 
-    await db.update(trips).set(update).where(eq(trips.id, tripId));
+    // A rename that races another past the check above loses at the unique
+    // index; report it as the same 409, not a 500.
+    await db
+      .update(trips)
+      .set(update)
+      .where(eq(trips.id, tripId))
+      .catch((e) => rethrowTripNameConflict(e, body.name ?? ''));
 
     if (body.vehicle_id !== undefined) {
       // Vehicle (and therefore range) changed → existing per-leg fuel plans are
