@@ -16,9 +16,9 @@ interface Props {
    */
   comped: boolean;
   /**
-   * The deployment-wide switch. When it is ON everybody is enforced already
-   * and this control changes nothing observable, which is worth saying for the
-   * same reason.
+   * The deployment-wide switch. When it is ON every account is enforced, so
+   * the switch shows ON and is locked — an off switch beside an account that
+   * is walled reads as "this account is not under the paywall".
    */
   globalOn: boolean;
 }
@@ -52,9 +52,13 @@ export default function PaywallEnforceControl({
   const [error, setError] = useState<string | null>(null);
   // State is async, a ref is not — same re-entrancy guard the revoke dialog uses.
   const inFlight = useRef(false);
+  // What the switch shows is whether the paywall applies to this account, not
+  // the raw override column: the global switch turns it on for everybody.
+  const on = globalOn || enforced;
+  const locked = globalOn;
 
   async function toggle() {
-    if (inFlight.current) return;
+    if (locked || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -85,18 +89,19 @@ export default function PaywallEnforceControl({
             Force the paywall on this account
           </div>
           <div style={{ fontSize: 11, color: 'var(--tp-subtle)', lineHeight: 1.5, maxWidth: '62ch' }}>
-            Enforces the paywall for {userLabel} even while the deployment-wide switch is
-            off. Nobody else is affected.
+            {locked
+              ? 'On for every account while the deployment-wide paywall is on.'
+              : `Enforces the paywall for ${userLabel} even while the deployment-wide switch is off. Nobody else is affected.`}
           </div>
         </div>
 
         <button
           type="button"
           role="switch"
-          aria-checked={enforced}
+          aria-checked={on}
           aria-label={`Force the paywall on ${userLabel}`}
           onClick={toggle}
-          disabled={busy}
+          disabled={busy || locked}
           data-testid="admin-paywall-override-toggle"
           style={{
             position: 'relative',
@@ -105,9 +110,9 @@ export default function PaywallEnforceControl({
             height: 26,
             borderRadius: 999,
             border: '1px solid var(--tp-border)',
-            background: enforced ? 'var(--tp-primary)' : 'var(--tp-surface-muted)',
-            cursor: busy ? 'default' : 'pointer',
-            opacity: busy ? 0.6 : 1,
+            background: on ? 'var(--tp-primary)' : 'var(--tp-surface-muted)',
+            cursor: busy || locked ? 'default' : 'pointer',
+            opacity: busy || locked ? 0.6 : 1,
             transition: 'background 160ms ease',
             padding: 0,
           }}
@@ -117,7 +122,7 @@ export default function PaywallEnforceControl({
             style={{
               position: 'absolute',
               top: 2,
-              left: enforced ? 22 : 2,
+              left: on ? 22 : 2,
               width: 20,
               height: 20,
               borderRadius: '50%',
@@ -129,12 +134,12 @@ export default function PaywallEnforceControl({
       </div>
 
       {/*
-        Both of these are "you pressed it and nothing happened" explanations,
-        shown BEFORE that happens. Each is the true reason the flag is inert,
-        and neither is a reason to change the precedence — see the comment on
+        A "the switch is on and nothing happened" explanation, shown BEFORE
+        that happens. It is the true reason the account is not walled, and not
+        a reason to change the precedence — see the comment on
         `users.paywall_enforced`.
       */}
-      {comped && enforced && (
+      {comped && on && (
         <p
           style={{
             margin: '12px 0 0',
@@ -147,16 +152,9 @@ export default function PaywallEnforceControl({
           }}
         >
           <strong style={{ color: 'var(--tp-text)' }}>This account is comped</strong>, so it is
-          entitled before the paywall switch is ever consulted and this override does nothing.
-          Comped is the author&apos;s account and the E2E fixtures. Use a disposable account
+          entitled before the paywall switch is ever consulted and is never walled. Comped is
+          every admin, the author&apos;s account and the E2E fixtures. Use a disposable account
           instead — <code>npm run test-user -- --days 8</code>.
-        </p>
-      )}
-
-      {globalOn && (
-        <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--tp-muted)', lineHeight: 1.6 }}>
-          Enforcement is already ON for the whole deployment, so this account is walled either
-          way. The override matters only while the global switch is off.
         </p>
       )}
 
