@@ -84,12 +84,6 @@ export interface SeededTranscriptFacts {
  */
 export const SEEDED_PENNY_REPLY = 'Here’s your route, day by day.';
 
-const TERRAINS = ['highway', 'mixed', 'offroad', 'urban'] as const;
-type Terrain = (typeof TERRAINS)[number];
-function terrainOf(t: string | null): Terrain | null {
-  return (TERRAINS as readonly string[]).includes(t ?? '') ? (t as Terrain) : null;
-}
-
 /** The `add_leg` call that would have written this leg. */
 function addLegActionFor(leg: LegWithDetails): ValidatedAction {
   const input: AddLegInput = {
@@ -105,7 +99,9 @@ function addLegActionFor(leg: LegWithDetails): ValidatedAction {
     dates: leg.dates,
     distance_km: leg.distance_km,
     drive_time_minutes: leg.drive_time_minutes,
-    terrain: terrainOf(leg.terrain),
+    // Not Penny's to write (`unsourcedFieldSchema` in tools/shared.ts), so the
+    // add_leg that would have written this leg carries none.
+    terrain: undefined,
     overnight: leg.overnight,
     color: leg.color,
     notes: leg.parsedNotes,

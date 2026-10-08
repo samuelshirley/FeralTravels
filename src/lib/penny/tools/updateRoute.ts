@@ -11,7 +11,8 @@ import {
   lngSchema,
   routeLinkSchema,
   routeStatusSchema,
-  surfaceSchema,
+  sourcedTextSchema,
+  unsourcedFieldSchema,
   urlSchema,
 } from './shared';
 
@@ -19,9 +20,9 @@ export const UPDATE_ROUTE = 'update_route' as const;
 
 const dataSchema = z.object({
   label: z.string().min(1).nullish(),
-  description: z.string().nullish(),
+  description: sourcedTextSchema('description').nullish(),
   distance_km: distanceKmSchema.nullish(),
-  surface: surfaceSchema.nullish(),
+  surface: unsourcedFieldSchema('surface'),
   status: routeStatusSchema.nullish(),
   end_lat: latSchema.nullish(),
   end_lng: lngSchema.nullish(),
@@ -64,7 +65,6 @@ export const tool: Anthropic.Tool = {
           label: { type: 'string' },
           description: { type: 'string' },
           distance_km: distanceKmJson,
-          surface: { type: 'string', enum: ['paved', 'gravel', 'mix'] },
           status: { type: 'string', enum: ['option', 'selected', 'dismissed'] },
           end_lat: { type: 'number', minimum: -90, maximum: 90 },
           end_lng: { type: 'number', minimum: -180, maximum: 180 },

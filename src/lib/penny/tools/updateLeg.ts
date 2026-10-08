@@ -10,7 +10,8 @@ import {
   driveTimeMinutesSchema,
   latSchema,
   lngSchema,
-  terrainSchema,
+  unsourcedFieldSchema,
+  sourcedTextSchema,
 } from './shared';
 
 export const UPDATE_LEG = 'update_leg' as const;
@@ -27,10 +28,10 @@ const dataSchema = z.object({
   dates: z.string().nullish(),
   distance_km: distanceKmSchema.nullish(),
   drive_time_minutes: driveTimeMinutesSchema.nullish(),
-  terrain: terrainSchema.nullish(),
+  terrain: unsourcedFieldSchema('terrain'),
   overnight: z.string().nullish(),
   color: z.string().nullish(),
-  notes: z.array(z.string()).nullish(),
+  notes: z.array(sourcedTextSchema('notes')).nullish(),
   // Re-tag a leg's group membership. Pass null for both to ungroup.
   // See addLeg for the grouping semantics.
   segment_index: z.number().int().min(0).nullish(),
@@ -149,7 +150,6 @@ export const tool: Anthropic.Tool = {
           dates: { type: 'string' },
           distance_km: distanceKmJson,
           drive_time_minutes: driveTimeMinutesJson,
-          terrain: { type: 'string', enum: ['highway', 'mixed', 'offroad', 'urban'] },
           overnight: { type: 'string' },
           color: { type: 'string' },
           notes: { type: 'array', items: { type: 'string' } },

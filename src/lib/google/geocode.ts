@@ -31,9 +31,18 @@ import 'server-only';
 const SEARCH_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText';
 const FETCH_TIMEOUT_MS = 5000;
 
-/** Places (New) fields we need back. Keep tight — field mask drives billing SKU. */
-const FIELD_MASK =
-  'places.location,places.displayName,places.formattedAddress,places.types,places.id';
+/**
+ * Places (New) fields we need back. Keep tight — field mask drives billing SKU.
+ *
+ * Every field here is Text Search Pro except `places.id` (Essentials IDs Only,
+ * which Pro includes), so this mask bills exactly one SKU. `places.primaryType`
+ * was added 2026-10-08 and is ALSO Pro — checked against the field→SKU table on
+ * Google's Text Search (New) page — so it changed nothing on the bill. It is
+ * what lets resolve_place tell a place that IS a hiking area from a national
+ * park that merely lists `hiking_area` among its types.
+ */
+export const FIELD_MASK =
+  'places.location,places.displayName,places.formattedAddress,places.types,places.primaryType,places.id';
 
 /** Two precise candidates farther apart than this count as genuinely different places. */
 const AMBIGUITY_KM = 2;
@@ -58,6 +67,15 @@ export interface GeocodeMatch {
   granularity: GeocodeGranularity;
   /** Google place_id, useful for dedupe / building a Maps link. */
   place_id?: string;
+  /**
+   * Google's own Places (New) types for the place, as sent (`places.types` is
+   * already in the field mask, so this costs nothing). Read by resolve_place to
+   * flag places that are not drivable waypoints — a race course, a hiking area
+   * (`lib/penny/unsourcedFacts.ts`). Absent when Google sent none.
+   */
+  types?: string[];
+  /** Google's single primary type for the place, when it sent one. */
+  primary_type?: string;
 }
 
 export type GeocodeResult =
@@ -85,6 +103,7 @@ interface RawPlace {
   location?: { latitude?: number; longitude?: number };
   displayName?: { text?: string };
   types?: string[];
+  primaryType?: string;
 }
 
 const PRECISE_TYPES = new Set([
@@ -143,6 +162,8 @@ function toMatch(p: RawPlace): GeocodeMatch | null {
     address: p.formattedAddress?.trim() || undefined,
     granularity: classifyGranularity(p.types),
     place_id: p.id || undefined,
+    ...(p.types && p.types.length > 0 ? { types: [...p.types] } : {}),
+    ...(p.primaryType ? { primary_type: p.primaryType } : {}),
   };
 }
 
