@@ -4,7 +4,9 @@
 # /api/test/trip `vehicle_new` parks a trip on the range step with a vehicle
 # that has a name and no range — the single-question numeric step, which is
 # where the client-side bounds (200–1500 km, vehicleProfile.ts) apply. The
-# accepted answer is then read back where a user would look for it: Settings.
+# accepted answer moves the wizard on to its last step, the starting tank, which
+# this flow answers; the range is then read back where a user would look for
+# it: Settings.
 appId: ${APP_ID}
 ---
 - runScript:
@@ -58,6 +60,20 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: 'SETTINGS'
     timeout: 8000
+
+# A complete vehicle is not the end: the starting tank is asked on every trip.
+- extendedWaitUntil:
+    visible:
+      text: "I.ll plan fuel from a full tank at the start\\. Will you have one\\?"
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn: 'Yep, full'
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
+      text: 'Yep, full'
+    direction: UP
+    timeout: 30000
 
 # Stored on the trip's vehicle: Settings lists it at 400 km.
 - tapOn: 'SETTINGS'

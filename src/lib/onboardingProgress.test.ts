@@ -19,29 +19,29 @@ const base = {
 };
 
 describe('computeOnboardingProgress', () => {
-  it('a first-run flow reads 1 of 5 on the greeting: intent, date, pace, units, vehicle', () => {
+  it('a first-run flow reads 1 of 6 on the greeting: intent, date, pace, units, vehicle, starting tank', () => {
     expect(computeOnboardingProgress({ ...base, state: 'trip_intent' })).toEqual({
       current: 1,
-      total: 5,
+      total: 6,
     });
   });
 
   it('a message that states the pace drops that step', () => {
     expect(
       computeOnboardingProgress({ ...base, state: 'trip_date', paceSkipped: true }),
-    ).toEqual({ current: 2, total: 4 });
+    ).toEqual({ current: 2, total: 5 });
   });
 
   it('units already chosen removes a step before it is reached', () => {
     expect(
       computeOnboardingProgress({ ...base, state: 'trip_intent', unitsChosen: true }),
-    ).toEqual({ current: 1, total: 4 });
+    ).toEqual({ current: 1, total: 5 });
   });
 
   it('the origin step joins the count the moment it is asked', () => {
     expect(computeOnboardingProgress({ ...base, state: 'trip_origin' })).toEqual({
       current: 2,
-      total: 6,
+      total: 7,
     });
   });
 
@@ -49,7 +49,7 @@ describe('computeOnboardingProgress', () => {
     const askedLabels = new Set([TRIP_INTENT_LABEL, tripOriginLabelFor('Girona')]);
     expect(computeOnboardingProgress({ ...base, state: 'trip_date', askedLabels })).toEqual({
       current: 3,
-      total: 6,
+      total: 7,
     });
   });
 
@@ -57,15 +57,15 @@ describe('computeOnboardingProgress', () => {
     const askedLabels = new Set([TRIP_INTENT_LABEL, TRIP_ORIGIN_LABEL, TRIP_PACE_LABEL]);
     expect(
       computeOnboardingProgress({ ...base, state: 'trip_origin', dateSkipped: true }),
-    ).toEqual({ current: 2, total: 5 });
+    ).toEqual({ current: 2, total: 6 });
     expect(
       computeOnboardingProgress({ ...base, state: 'units_pick', askedLabels, dateSkipped: true }),
-    ).toEqual({ current: 4, total: 5 });
+    ).toEqual({ current: 4, total: 6 });
   });
 
   it('the total does NOT shrink when units are chosen mid-flow', () => {
     // The bug: "units not yet chosen" was the only thing counting the units
-    // step, so answering it made the total drop from 5 to 3 on the next card.
+    // step, so answering it made the total drop on the next card.
     const askedLabels = new Set([TRIP_INTENT_LABEL, TRIP_DATE_LABEL, TRIP_PACE_LABEL, UNITS_LABEL]);
     expect(
       computeOnboardingProgress({
@@ -75,7 +75,7 @@ describe('computeOnboardingProgress', () => {
         unitsChosen: true,
         vehicle: { current: 1, total: 1 },
       }),
-    ).toEqual({ current: 5, total: 5 });
+    ).toEqual({ current: 5, total: 6 });
   });
 
   it('a vehicle with a name and no range counts its remaining questions', () => {
@@ -88,14 +88,14 @@ describe('computeOnboardingProgress', () => {
         unitsChosen: true,
         vehicle: { current: 2, total: 2 },
       }),
-    ).toEqual({ current: 6, total: 6 });
+    ).toEqual({ current: 6, total: 7 });
   });
 
   it('the estimator interstitial has no number', () => {
     expect(computeOnboardingProgress({ ...base, state: 'range_help' })).toBeNull();
   });
 
-  it('the counter never runs past the total', () => {
+  it('the counter never runs past the vehicle steps, which the starting tank follows', () => {
     const askedLabels = new Set([TRIP_INTENT_LABEL, TRIP_DATE_LABEL]);
     expect(
       computeOnboardingProgress({
@@ -105,6 +105,46 @@ describe('computeOnboardingProgress', () => {
         unitsChosen: true,
         vehicle: { current: 3, total: 1 },
       }),
-    ).toEqual({ current: 3, total: 3 });
+    ).toEqual({ current: 3, total: 4 });
+  });
+
+  it('the starting tank is the last step of a first-run flow', () => {
+    const askedLabels = new Set([
+      TRIP_INTENT_LABEL,
+      tripOriginLabelFor('Girona'),
+      TRIP_DATE_LABEL,
+      TRIP_PACE_LABEL,
+      UNITS_LABEL,
+    ]);
+    expect(
+      computeOnboardingProgress({
+        ...base,
+        state: 'start_fuel',
+        askedLabels,
+        unitsChosen: true,
+        vehicleStepsAhead: 1,
+      }),
+    ).toEqual({ current: 7, total: 7 });
+  });
+
+  it('a returning driver (units set, vehicle complete) counts no vehicle step, before or after', () => {
+    const returning = { ...base, unitsChosen: true, vehicleStepsAhead: 0 };
+    // intent, date, pace, starting tank — no phantom vehicle step to skip over.
+    expect(computeOnboardingProgress({ ...returning, state: 'trip_intent' })).toEqual({
+      current: 1,
+      total: 4,
+    });
+    const askedLabels = new Set([TRIP_INTENT_LABEL, TRIP_DATE_LABEL]);
+    expect(computeOnboardingProgress({ ...returning, state: 'trip_pace', askedLabels })).toEqual({
+      current: 3,
+      total: 4,
+    });
+    expect(
+      computeOnboardingProgress({
+        ...returning,
+        state: 'start_fuel',
+        askedLabels: new Set([...askedLabels, TRIP_PACE_LABEL]),
+      }),
+    ).toEqual({ current: 4, total: 4 });
   });
 });

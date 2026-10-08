@@ -9,6 +9,7 @@ export type OnboardingState =
   | 'vehicle_pick'   // legacy only — no longer part of onboarding flow
   | 'vehicle_new'
   | 'range_help'     // "I don't know my range" → estimate-and-confirm interstitial
+  | 'start_fuel'     // the LAST step: leaving on a full tank, or find fuel at the start
   | 'preferences'    // legacy only
   | 'ready'          // legacy only
   | 'done';
@@ -41,6 +42,17 @@ export interface OnboardingScan {
   /** The opening message stated a daily driving time ("5 h days"); `trip_pace` was skipped. */
   pace_skipped?: boolean;
 }
+
+/**
+ * The tank the trip starts on — the onboarding `start_fuel` answer, stored on
+ * `trips.start_fuel`. Finn's tank math starts every trip full; that is the
+ * whole of `'full'`. `'fill_at_start'` is a driver who is NOT sure they are
+ * leaving full: Finn puts a fill-up at the first station on the first drive
+ * day (reason `trip_start_fill`) and plans the rest from a full tank there.
+ */
+export type StartFuel = 'full' | 'fill_at_start';
+
+export const START_FUEL_VALUES = ['full', 'fill_at_start'] as const satisfies readonly StartFuel[];
 
 // ── Nightly replan types ──────────────────────────────────────────────────
 
@@ -98,6 +110,8 @@ export interface Trip {
   /** Leg whose START the declaration anchors to (plain uuid — stale after leg deletion, then ignored). */
   declared_range_leg_id: string | null;
   declared_range_at: string | null;
+  /** The onboarding `start_fuel` answer. See `StartFuel`. */
+  start_fuel: StartFuel;
   created_at: string;
   updated_at: string;
   user_id: string;
@@ -445,10 +459,15 @@ export interface StopAlternative {
  * - `next_fuel_far` — the next station on this day's drive is beyond range;
  * - `next_day_fuel_far` — today would make it without this stop, but the next
  *   drive day's first station would not; `gap_km` runs to that station.
+ * - `trip_start_fill` — the driver answered "find fuel at the start" in
+ *   onboarding (`trips.start_fuel = 'fill_at_start'`): the first station on the
+ *   first drive day, where the rest of the plan's full tank begins. No
+ *   distance — the stop card already shows how far in it is.
  */
 export type ForcedStopReason =
   | { kind: 'next_fuel_far'; gap_km: number }
-  | { kind: 'next_day_fuel_far'; gap_km: number };
+  | { kind: 'next_day_fuel_far'; gap_km: number }
+  | { kind: 'trip_start_fill' };
 
 export interface Stop {
   id: string;

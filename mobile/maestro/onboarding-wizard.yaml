@@ -1,11 +1,11 @@
 # The whole first-trip wizard, on a brand-new account that owns no vehicle:
-# destination, origin, date (by chip), pace, units, the vehicle card — then the
-# hand-off to Penny, and a relaunch proving the answers were stored rather than
-# held in memory. Replaces e2e/onboarding-flow.spec.ts (its calendar test is
+# destination, origin, date (by chip), pace, units, the vehicle card, the
+# starting tank — then the hand-off to Penny, and a relaunch proving the answers
+# were stored rather than held in memory. Replaces e2e/onboarding-flow.spec.ts (its calendar test is
 # onboarding-date-picker.yaml, in the `core` shard).
 #
-# ONE ANTHROPIC TURN, deliberately NOT behind the ai-tests label: submitting the
-# vehicle card hands the trip to Penny, and that hand-off is what this flow
+# ONE ANTHROPIC TURN, deliberately NOT behind the ai-tests label: answering the
+# last step (the starting tank) hands the trip to Penny, and that hand-off is what this flow
 # exists to reach. The owner chose to keep paying for it on every push when it
 # was the web spec (2026-09-08; aiSpecGate.test.ts) and the reason still holds —
 # it is the wizard's only end-to-end coverage. The intent scan on the first
@@ -121,6 +121,30 @@ appId: ${APP_ID}
     notVisible:
       id: 'onboarding-vehicle-card'
     timeout: 30000
+
+# ── The starting tank (the last step, on every trip) ────────────────────────
+# Tap-only: the composer is locked, the two chips are the whole answer. The
+# non-default chip, so the relaunch below proves the stored value is the one
+# tapped rather than the column's default.
+- extendedWaitUntil:
+    visible:
+      text: "I.ll plan fuel from a full tank at the start\\. Will you have one\\?"
+    timeout: 30000
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+- assertVisible: 'Yep, full'
+- waitForAnimationToEnd
+- tapOn: 'Find fuel at the start'
+# Up, not "visible", for the reason given under the vehicle answer below: the
+# hand-off this tap fires can scroll the chat past it within seconds.
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
+      text: 'Find fuel at the start'
+    direction: UP
+    timeout: 30000
+
 # Live, the card's answer is ONE bubble, "Hilux · 500 km": the client holds one
 # answer while the server writes two steps (clientRecordsAnsweredStep,
 # src/lib/onboardingForm.ts). The two-step redraw — Hilux's bubble, the range's
@@ -152,6 +176,12 @@ appId: ${APP_ID}
       visible: 'CHAT'
     commands:
       - tapOn: 'CHAT'
+- scrollUntilVisible:
+    element:
+      id: 'onboarding-chip-chosen'
+      text: 'Find fuel at the start'
+    direction: UP
+    timeout: 30000
 - scrollUntilVisible:
     element:
       id: 'onboarding-chip-chosen'

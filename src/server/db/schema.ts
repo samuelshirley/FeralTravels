@@ -19,7 +19,7 @@ import {
 import { sql } from 'drizzle-orm';
 import type { AdapterAccountType } from 'next-auth/adapters';
 import type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus } from '@/types/entitlement';
-import type { ForcedStopReason } from '@/types/trip';
+import type { ForcedStopReason, StartFuel } from '@/types/trip';
 
 export type { PreRevokeStatus, SubscriptionSource, SubscriptionStatus };
 
@@ -438,6 +438,18 @@ export const trips = pgTable(
     declaredRangeKm: doublePrecision('declared_range_km'),
     declaredRangeLegId: uuid('declared_range_leg_id'),
     declaredRangeAt: timestamp('declared_range_at', { withTimezone: true }),
+    /**
+     * The tank the trip STARTS on — the onboarding `start_fuel` answer
+     * (migration 0045). `'full'` is Finn's default and the whole of it;
+     * `'fill_at_start'` makes Finn place a fill-up at the first station of the
+     * first drive day (forced reason `trip_start_fill`) and plan the rest of
+     * the trip from a full tank there. Not the declared columns above: those
+     * hold a km NUMBER anchored to a leg, and this answer is given before any
+     * leg exists and carries no number — inventing one would be authoring the
+     * driver's tank. A later `declare_fuel_state` on the first drive day wins
+     * (it is a real number). docs/design/finn-fuel-agent.md.
+     */
+    startFuel: text('start_fuel').$type<StartFuel>().default('full').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },

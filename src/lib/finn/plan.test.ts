@@ -257,3 +257,78 @@ describe('planLegFuelStops', () => {
     });
   });
 });
+
+describe('planLegFuelStops — fill at the start ("Find fuel at the start")', () => {
+  it('fills up at the FIRST station even when the leg fits on a full tank, with the start-fill reason', () => {
+    // 300 km on a 500 km range needs no stop from a full tank — the default
+    // plan proves it. The driver said they may not be leaving full.
+    const base = {
+      legLengthKm: 300,
+      rangeKm: 500,
+      kmBurnedAtStart: 0,
+      candidates: [c('a', 12), c('b', 4), c('d', 150)],
+    };
+    expect(planLegFuelStops(base).stops).toHaveLength(0);
+
+    const r = planLegFuelStops({ ...base, fillAtStart: true });
+    expect(r.kind).toBe('planned');
+    expect(r.stops).toHaveLength(1);
+    expect(r.stops[0].candidate.id).toBe('b');
+    expect(r.stops[0].reason).toEqual({ kind: 'trip_start_fill' });
+  });
+
+  it('plans the rest of the leg from a full tank at that station', () => {
+    // Fill at 5, then a full 500 km from there: the end (695 km on) is out of
+    // reach, so the farthest station within 505 km of the start (480) is next.
+    const r = planLegFuelStops({
+      legLengthKm: 700,
+      rangeKm: 500,
+      kmBurnedAtStart: 0,
+      candidates: [c('first', 5), c('mid', 250), c('late', 480), c('end', 650)],
+      fillAtStart: true,
+    });
+    expect(r.kind).toBe('planned');
+    expect(r.stops.map((s) => s.candidate.id)).toEqual(['first', 'late']);
+    // Burned since the fill, not since the trip start.
+    expect(r.stops[1].arrivalBurnKm).toBe(475);
+    expect(r.stops[1].reason).toBeUndefined();
+  });
+
+  it('still carries the next day forward: the reserve applies after the fill', () => {
+    const r = planLegFuelStops({
+      legLengthKm: 450,
+      rangeKm: 500,
+      kmBurnedAtStart: 0,
+      candidates: [c('first', 3), c('late', 400)],
+      arrivalReserveKm: 100,
+      fillAtStart: true,
+    });
+    // 447 km from the fill to the end + 100 km of reserve > 500: top up late.
+    expect(r.stops.map((s) => s.candidate.id)).toEqual(['first', 'late']);
+    expect(r.stops[1].reason?.kind).toBe('next_day_fuel_far');
+  });
+
+  it('a first station beyond range is a gap that says to fill up before leaving, never a silent full-tank plan', () => {
+    const r = planLegFuelStops({
+      legLengthKm: 900,
+      rangeKm: 500,
+      kmBurnedAtStart: 0,
+      candidates: [c('far', 620)],
+      fillAtStart: true,
+    });
+    expect(r.kind).toBe('gap');
+    expect(r.stops).toHaveLength(0);
+    if (r.kind === 'gap') expect(r.gapDetail).toMatch(/620 km in.*Fill up before you leave/);
+  });
+
+  it('no station on the route is a gap too', () => {
+    const r = planLegFuelStops({
+      legLengthKm: 200,
+      rangeKm: 500,
+      kmBurnedAtStart: 0,
+      candidates: [],
+      fillAtStart: true,
+    });
+    expect(r.kind).toBe('gap');
+  });
+});

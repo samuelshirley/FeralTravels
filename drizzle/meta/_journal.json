@@ -316,6 +316,13 @@
       "when": 1788861495693,
       "tag": "0044_drop_readd_trip_name_ci_key_generated",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791459767256,
+      "tag": "0045_trip_start_fuel",
+      "breakpoints": true
     }
   ]
 }

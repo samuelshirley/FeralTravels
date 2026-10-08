@@ -9,7 +9,7 @@ vi.mock('@/server/repos/trips', () => ({ getTripFull: vi.fn() }));
 vi.mock('@/server/repos/vehicles', () => ({ getVehicleForUser: vi.fn() }));
 
 import { buildSeededTranscript, SEEDED_PENNY_REPLY, type SeededTranscriptFacts } from './seededTranscript';
-import { TRIP_INTENT_QUESTION, UNITS_QUESTION } from '@/server/onboarding';
+import { START_FUEL_QUESTION, TRIP_INTENT_QUESTION, UNITS_QUESTION } from '@/server/onboarding';
 import { computePlanSummary } from '@/lib/penny/planSummary';
 import { PLAN_READY_HEADLINE } from '@/lib/planReady';
 import { buildVehicleProfileQuestions } from '@/lib/vehicleProfile';
@@ -83,6 +83,8 @@ describe('buildSeededTranscript', () => {
       'user:form_answer',
       'assistant:form_question', // vehicle range
       'user:form_answer',
+      'assistant:form_question', // start_fuel, the last step on every trip
+      'user:form_answer',
       'user:handoff',
       'assistant:plan_ready',
       'assistant:ai', // Penny's reply
@@ -93,7 +95,13 @@ describe('buildSeededTranscript', () => {
     const rows = buildSeededTranscript(facts(), NOW);
     const [nameQ, rangeQ] = buildVehicleProfileQuestions('metric');
     const questions = rows.filter((r) => r.kind === 'form_question').map((r) => r.content);
-    expect(questions).toEqual([TRIP_INTENT_QUESTION.label, UNITS_QUESTION.label, nameQ.label, rangeQ.label]);
+    expect(questions).toEqual([
+      TRIP_INTENT_QUESTION.label,
+      UNITS_QUESTION.label,
+      nameQ.label,
+      rangeQ.label,
+      START_FUEL_QUESTION.label,
+    ]);
   });
 
   it('puts form_meta on every form_answer, and on nothing else', () => {
@@ -112,6 +120,8 @@ describe('buildSeededTranscript', () => {
     const answers = rows.filter((r) => r.kind === 'form_answer');
     expect(answers[1].formMeta?.selected).toBe('metric');
     expect(answers[3].content).toBe('500 km');
+    // Planned from a full tank, so the starting-tank step answered "full".
+    expect(answers[4].formMeta?.selected).toBe('full');
   });
 
   it('hands off the opening message plus its origin, as completeOnboarding does', () => {
