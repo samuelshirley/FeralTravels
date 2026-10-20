@@ -10,6 +10,8 @@
  * `instanceof` still matches — there is exactly one class object per error.
  */
 
+import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '@/lib/aiConsent';
+
 export class HttpError extends Error {
   status: number;
   /**
@@ -126,6 +128,19 @@ export class CircuitOpenError extends HttpError {
     message = 'Penny is paused right now. Nothing is wrong with your account.'
   ) {
     super(503, message, { code: CIRCUIT_OPEN_CODE, breaker, retryAfterSeconds });
+  }
+}
+
+/**
+ * 403 `ai_consent_required`. The account is real, entitled and owns the trip —
+ * it has just not agreed to its content being sent to Anthropic (App Review
+ * 5.1.2(i)). 403 with a `code`, never 401 (the app clears the keychain) and
+ * never 402 (the paywall's word); both clients branch on the code to reopen
+ * the consent sheet. Thrown only by `src/server/aiConsent.ts`.
+ */
+export class AiConsentRequiredError extends HttpError {
+  constructor() {
+    super(403, AI_CONSENT_REQUIRED_MESSAGE, { code: AI_CONSENT_REQUIRED_CODE });
   }
 }
 

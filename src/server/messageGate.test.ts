@@ -35,6 +35,7 @@ vi.mock('@/server/repos/jev', () => ({ effectiveJevMode: vi.fn(), logJevUsage: v
 vi.mock('@/server/jev', () => ({ jevClassifyTier: vi.fn(), startJevClassifyTier: vi.fn() }));
 
 import { gateMessage } from './messageGate';
+import type { AiConsentProof } from '@/server/aiConsent';
 import { previousAssistantMessage } from '@/server/repos/chat';
 import { logUsageEvent } from '@/server/repos/usage';
 import { classifyMessage } from '@/server/pennyClassifier';
@@ -42,7 +43,12 @@ import { effectiveJevMode } from '@/server/repos/jev';
 import { jevClassifyTier } from '@/server/jev';
 
 const PENNY = 'I can push the start back a day, so day 1 is Saturday. Want me to do that?';
-const run = (message: string) => gateMessage({ userId: 'u1', tripId: 't1', message });
+/**
+ * A stand-in proof. The classifier is mocked, so `assertAiConsent` never sees
+ * it; what this file checks is that the gate hands it on untouched.
+ */
+const CONSENT = Object.freeze({ userId: 'u1' }) as unknown as AiConsentProof;
+const run = (message: string) => gateMessage({ userId: 'u1', tripId: 't1', message, consent: CONSENT });
 
 function gateRowText() {
   const calls = vi.mocked(logUsageEvent).mock.calls.filter(([a]) => a.provider === 'penny:gate');
@@ -84,6 +90,8 @@ describe('a bare reply straight after Penny', () => {
     await run('yes do that');
     expect(classifyMessage).toHaveBeenCalledTimes(1);
     expect(vi.mocked(classifyMessage).mock.calls[0][1]).toMatchObject({ previousAssistant: null });
+    // The consent proof reaches the Anthropic call it exists for.
+    expect(vi.mocked(classifyMessage).mock.calls[0][4]).toBe(CONSENT);
   });
 });
 

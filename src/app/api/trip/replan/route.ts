@@ -25,6 +25,7 @@ import {
 import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
 import { gateMessage } from '@/server/messageGate';
+import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { addChatMessage } from '@/server/repos/chat';
 import { planReadyText } from '@/lib/planReady';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
@@ -269,6 +270,15 @@ export async function POST(req: Request) {
     await assertTripOwnedByUser(tripId, userId);
 
     /**
+     * 403 `ai_consent_required` until this user agreed to their messages,
+     * photos, trip and position going to Anthropic (App Review 5.1.2(i)).
+     * Before the message gate, which is itself an Anthropic call, and before
+     * the turn record, so a refused send leaves nothing behind. The proof it
+     * returns is what `gateMessage` and `replanStream` demand.
+     */
+    const consent = await requireAiConsent(userId);
+
+    /**
      * THE GLOBAL CIRCUIT BREAKER, before anything that can reach Anthropic.
      *
      * The per-user caps below are the wrong tool for the threat this guards
@@ -351,6 +361,7 @@ export async function POST(req: Request) {
         tripId,
         message,
         isAdmin: isAdminUser,
+        consent,
       });
       if (gate.blocked) {
         // Both bubbles, so the transcript is honest: the driver's message is
@@ -460,7 +471,7 @@ export async function POST(req: Request) {
           // original client closes (the function isn't cancelled on disconnect:
           // there's no vercel.json supportsCancellation flag).
           await runTurnWork(
-            { turnId: turn.id, tripId, userId, message, images: turnImages, handoff: body.handoff },
+            { turnId: turn.id, tripId, userId, message, images: turnImages, handoff: body.handoff, consent },
             send,
           );
           await drainQueuedTurns(tripId);
@@ -542,6 +553,8 @@ async function runTurnWork(
      * first turn on a trip with nothing else in flight to queue behind.
      */
     handoff?: boolean;
+    /** This turn's user's agreement to send it to Anthropic — `src/server/aiConsent.ts`. */
+    consent: AiConsentProof;
   },
   send: (e: Record<string, unknown>) => void
 ): Promise<void> {
@@ -561,7 +574,7 @@ async function runTurnWork(
     // writing an outer `let`) so it stays correctly typed through the race.
     const consume = async (): Promise<ReplanResult | null> => {
       let result: ReplanResult | null = null;
-      for await (const ev of replanStream(message, tripId, images, userId)) {
+      for await (const ev of replanStream(message, tripId, images, userId, ctx.consent)) {
         if (ev.kind === 'done') {
           result = ev.result;
           continue;
@@ -1083,6 +1096,16 @@ async function drainQueuedTurns(tripId: string): Promise<void> {
   for (let i = 0; i < MAX_DRAIN_TURNS; i++) {
     const claimed = await claimNextQueuedTurn(tripId);
     if (!claimed) return;
+    // A queued turn was accepted by a request that passed requireAiConsent,
+    // but it runs later and possibly for a request that is not its own, so
+    // the agreement is asked for again for the turn's own user.
+    let consent: AiConsentProof;
+    try {
+      consent = await requireAiConsent(claimed.user_id);
+    } catch (err) {
+      await markTurnError(claimed.id, err instanceof Error ? err.message : String(err));
+      continue;
+    }
     await runTurnWork(
       {
         turnId: claimed.id,
@@ -1090,6 +1113,7 @@ async function drainQueuedTurns(tripId: string): Promise<void> {
         userId: claimed.user_id,
         message: claimed.user_message,
         images: claimed.images ?? [],
+        consent,
       },
       () => {}
     );

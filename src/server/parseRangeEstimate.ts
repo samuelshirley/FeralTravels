@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { anthropicApiKey } from '@/lib/anthropicKey';
 import { RANGE_ESTIMATE_MODEL } from '@/lib/models';
 import {
@@ -82,6 +83,12 @@ export interface RangeEstimate {
 interface EstimateOpts {
   userId?: string;
   tripId?: string;
+  /**
+   * The user's agreement to send this text to Anthropic — see
+   * `src/server/aiConsent.ts`. Required: there is no way to call the model
+   * without one.
+   */
+  consent: AiConsentProof;
 }
 
 /**
@@ -91,8 +98,9 @@ interface EstimateOpts {
  */
 export async function estimateRange(
   text: string,
-  opts: EstimateOpts = {},
+  opts: EstimateOpts,
 ): Promise<RangeEstimate> {
+  assertAiConsent(opts.consent, opts.userId);
   const anthropic = getClient();
   if (!anthropic) return { km: null, basis: '' };
   const trimmed = text.trim();

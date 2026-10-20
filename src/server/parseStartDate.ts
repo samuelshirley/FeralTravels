@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { anthropicApiKey } from '@/lib/anthropicKey';
 import { tryParseToISO } from '@/lib/dates';
 import { DATE_PARSE_MODEL } from '@/lib/models';
@@ -80,6 +81,12 @@ interface ResolveOpts {
   /** For usage accounting; logging is skipped when absent. */
   userId?: string;
   tripId?: string;
+  /**
+   * The user's agreement to send this text to Anthropic — see
+   * `src/server/aiConsent.ts`. Required: there is no way to call the model
+   * without one.
+   */
+  consent: AiConsentProof;
 }
 
 /**
@@ -131,8 +138,9 @@ export interface LLMDateResult {
  */
 export async function parseDateWithLLM(
   text: string,
-  opts: ResolveOpts = {},
+  opts: ResolveOpts,
 ): Promise<LLMDateResult> {
+  assertAiConsent(opts.consent, opts.userId);
   const anthropic = getClient();
   if (!anthropic) return { iso: null, exact: false };
   const trimmed = text.trim();
@@ -225,7 +233,7 @@ export interface ResolvedStartDate {
  */
 export async function resolveStartDate(
   text: string,
-  opts: ResolveOpts = {},
+  opts: ResolveOpts,
 ): Promise<ResolvedStartDate> {
   const now = opts.now ?? new Date();
   const deterministic = tryParseToISO(text, now);

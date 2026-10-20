@@ -13,6 +13,7 @@ import {
 import { getUnitsPref, getRawUnitsPref, setUnitsPref } from '@/server/repos/users';
 import { extractDateFromText, formatDate, parseISODate, todayISO } from '@/lib/dates';
 import { resolveStartDate } from '@/server/parseStartDate';
+import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { estimateRange } from '@/server/parseRangeEstimate';
 import { scanFirstMessage } from '@/server/onboardingIntentScan';
 import { miToKm, kmToMi } from '@/lib/units';
@@ -486,6 +487,7 @@ async function runRangeHelp(
   text: string,
   unitsPref: UnitsPref,
   alreadyInHelp: boolean,
+  consent: AiConsentProof,
 ): Promise<SubmitAnswerResult> {
   const isImperial = unitsPref === 'imperial';
   const unit = isImperial ? 'mi' : 'km';
@@ -499,7 +501,7 @@ async function runRangeHelp(
     buildFormMeta(RANGE_HELP_QUESTION, text, text),
   );
 
-  const { km, basis } = await estimateRange(text, { userId, tripId });
+  const { km, basis } = await estimateRange(text, { userId, tripId, consent });
 
   if (km != null) {
     await db
@@ -930,8 +932,17 @@ export interface SubmitAnswerResult {
 export async function submitAnswer(
   tripId: string,
   userId: string,
-  input: SubmitAnswerInput
+  input: SubmitAnswerInput,
+  /**
+   * Several answers go to Anthropic (the intent scan, the date parser, the
+   * range estimator), so the whole call needs the user's agreement — see
+   * `src/server/aiConsent.ts`. Checked here as well as at each model call, so
+   * an answer that happens not to reach the model still cannot be submitted
+   * by a caller that skipped the consent check.
+   */
+  consent: AiConsentProof,
 ): Promise<SubmitAnswerResult> {
+  assertAiConsent(consent, userId);
   const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (!trip || trip.userId !== userId) throw new Error('Trip not found');
   const state = trip.onboardingState as OnboardingState;
@@ -941,7 +952,7 @@ export async function submitAnswer(
     const text = typeof input.value === 'string' ? input.value.trim() : '';
     if (!text) throw new Error('Tell me a bit about your vehicle or tank so I can help.');
     const unitsPref = await getUnitsPref(userId);
-    return runRangeHelp(tripId, userId, text, unitsPref, true);
+    return runRangeHelp(tripId, userId, text, unitsPref, true, consent);
   }
 
   // ---- Trip intent (first question) ----
@@ -954,7 +965,7 @@ export async function submitAnswer(
     // or prefill those questions. The LLM only transcribes; every field is
     // re-validated below. Never throws — an all-null result just means we fall
     // through to asking everything as before.
-    const scan = await scanFirstMessage(text, { userId, tripId });
+    const scan = await scanFirstMessage(text, { userId, tripId, consent });
 
     // Record the opening Q/A bubble.
     await writeQA(tripId, TRIP_INTENT_QUESTION, text, text);
@@ -1068,7 +1079,7 @@ export async function submitAnswer(
     );
     // Record the answer under whichever question the user was actually shown.
     const askedQuestion = clarifyAsked ? TRIP_DATE_CLARIFY_QUESTION : TRIP_DATE_QUESTION;
-    const { iso, assumed } = await resolveStartDate(text, { userId, tripId });
+    const { iso, assumed } = await resolveStartDate(text, { userId, tripId, consent });
 
     // No usable date AND we haven't nudged yet → ask ONE clarifying question and
     // stay on the step. We never persist null; if they still give nothing next
@@ -1271,7 +1282,7 @@ export async function submitAnswer(
 
       // Non-numeric range ⇒ the helper, with the name already safe.
       if (isNonNumericRangeAnswer(rawRange)) {
-        return runRangeHelp(tripId, userId, rawRange.trim(), unitsPref, false);
+        return runRangeHelp(tripId, userId, rawRange.trim(), unitsPref, false, consent);
       }
       if (rawRange === null || rawRange === undefined || rawRange === '') {
         throw new Error('This field is required.');
@@ -1313,7 +1324,7 @@ export async function submitAnswer(
       vehicle &&
       isNonNumericRangeAnswer(input.value)
     ) {
-      return runRangeHelp(tripId, userId, input.value.trim(), unitsPref, false);
+      return runRangeHelp(tripId, userId, input.value.trim(), unitsPref, false, consent);
     }
 
     const vehicleRecord = (vehicle ?? {}) as unknown as Record<string, unknown>;

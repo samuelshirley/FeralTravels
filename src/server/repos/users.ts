@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq, gt } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users } from '@/server/db/schema';
 import { asUnitsPref, type UnitsPref } from '@/lib/units';
@@ -171,4 +171,33 @@ export async function lockedAccounts(
     .where(gt(users.pennyLockedUntil, now))
     .limit(50);
   return rows.flatMap((r) => (r.lockedUntil ? [{ ...r, lockedUntil: r.lockedUntil }] : []));
+}
+
+/**
+ * When this account agreed to its content being sent to Anthropic, or null if
+ * it has not. The only reader is `src/server/aiConsent.ts` (and `/api/me`, to
+ * tell the client whether to show the sheet).
+ */
+export async function getAiConsentAt(userId: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ aiConsentAt: users.aiConsentAt })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.aiConsentAt ?? null;
+}
+
+/**
+ * Record the agreement. Idempotent and first-write-wins: agreeing again (a
+ * second device, a retried request) keeps the original moment, which is the
+ * one that answers "when did they agree".
+ */
+export async function recordAiConsent(userId: string, now: Date = new Date()): Promise<Date> {
+  await db
+    .update(users)
+    .set({ aiConsentAt: now })
+    .where(and(eq(users.id, userId), isNull(users.aiConsentAt)));
+  const recorded = await getAiConsentAt(userId);
+  if (!recorded) throw new Error(`recordAiConsent: no user ${userId}`);
+  return recorded;
 }

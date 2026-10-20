@@ -105,6 +105,10 @@ export const SHARED_FILES = [
   // project is the only test runner, and every branch of it is a way to strand
   // a launch on the splash or to skip the system dialog (App Review 5.1.1(iv)).
   ['src/lib/launchLocation.ts', 'mobile/shared/lib/launchLocation.ts'],
+  // The third-party-AI consent (App Review 5.1.2(i)): the 403 code the server
+  // refuses with and the sheet's copy. Both panels show the same sheet and
+  // branch on the same code, so neither can have its own spelling of either.
+  ['src/lib/aiConsent.ts', 'mobile/shared/lib/aiConsent.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {
