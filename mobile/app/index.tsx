@@ -1,7 +1,14 @@
-import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { AppState, Image, StyleSheet, View } from "react-native";
 import { router, type Href } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as Location from "expo-location";
+import LocationPrimer from "@/components/LocationPrimer";
+import {
+  resolveLaunchLocation,
+  type LaunchPermission,
+  type LaunchLocationOutcome,
+} from "@/shared/lib/launchLocation";
 import { getToken } from "@/lib/auth";
 import { listTrips } from "@/lib/api";
 import { fetchEntitlement } from "@/lib/entitlement";
@@ -13,7 +20,7 @@ import { theme } from "@/lib/theme";
  * not. The token might be expired — apiFetch clears it on any 401 and the
  * screens bounce back here, so the gate stays dumb and fast.
  *
- * The gate paints nothing of its own. _layout holds the native splash
+ * The gate paints nothing of its own but the splash. _layout holds the native splash
  * (preventAutoHideAsync) and this screen releases it only once the route
  * decision is made, so the purple splash runs straight into /trips or
  * /sign-in. It used to render a cream "Feral Travels" title + spinner, which
@@ -21,9 +28,19 @@ import { theme } from "@/lib/theme";
  * two. The purple fill below is a backstop for the frame between `replace`
  * and the destination's first paint — it must never be visible as a screen.
  *
- * It also owns ONE piece of product logic, and it owns it because it is the
- * only thing in the app that runs exactly once per launch: an account past its
- * seven days is sent to Penny's chat rather than to a list it cannot use.
+ * It owns TWO pieces of product logic, because it is the only thing in the app
+ * that runs exactly once per launch:
+ *
+ *  - LOCATION IS ASKED HERE, on the purple Finn splash (Sam's rule), and the
+ *    app does not route anywhere until the user has answered iOS's own dialog,
+ *    Allow or Don't Allow. When iOS has not been asked yet, LocationPrimer
+ *    explains first and its only control, Continue, raises that dialog — App
+ *    Review 5.1.1(iv) forbids a pre-prompt with a way past it. The whole
+ *    decision is shared/lib/launchLocation.ts, tested in the root suite. While
+ *    the primer is up this screen draws its own copy of the splash, because
+ *    the native splash sits ABOVE React and would hide the sheet.
+ *  - An account past its seven days is sent to Penny's chat rather than to a
+ *    list it cannot use.
  *
  * That decision used to live in the trips list, latched behind a module-level
  * flag meaning "already done this app open". The flag was never reset, and a
@@ -48,32 +65,96 @@ import { theme } from "@/lib/theme";
 const LAUNCH_CHECK_TIMEOUT_MS = 2500;
 
 export default function Gate() {
+  const [primerVisible, setPrimerVisible] = useState(false);
+  const continueRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // getToken already swallows keychain failures and returns null, so a
-      // signed-out result is the worst case here — never a hang.
-      const token = await getToken();
+      // Both run at once: the route decision costs a round trip, and it is
+      // made while the user reads the primer. Neither alone lets launch go on.
+      const located = askLocationAtLaunch({
+        showPrimer: () =>
+          new Promise<void>((resolve) => {
+            continueRef.current = resolve;
+            if (cancelled) return;
+            setPrimerVisible(true);
+            // The sheet is React; the native splash covers React. Lift it —
+            // this screen's own splash copy is what shows under the sheet.
+            SplashScreen.hideAsync().catch(() => {});
+          }),
+        hidePrimer: () => {
+          continueRef.current = null;
+          if (!cancelled) setPrimerVisible(false);
+        },
+      });
+      const [, destination] = await Promise.all([located, routeDestination()]);
       if (cancelled) return;
-      if (!token) {
-        go("/sign-in");
-        return;
-      }
-      const blocked = await Promise.race([
-        blockedDestination(),
-        new Promise<Href | null>((resolve) =>
-          setTimeout(() => resolve(null), LAUNCH_CHECK_TIMEOUT_MS)
-        ),
-      ]);
-      if (cancelled) return;
-      go(blocked ?? "/trips");
+      go(destination);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  return <View style={styles.container} />;
+  return (
+    <View style={styles.container}>
+      {/* The native splash, redrawn: same art, same 300pt width, centred on the
+          same purple — so lifting the native one changes nothing on screen. */}
+      <Image
+        source={require("../assets/splash-icon.png")}
+        style={styles.splashArt}
+        resizeMode="contain"
+        accessibilityIgnoresInvertColors
+      />
+      <LocationPrimer visible={primerVisible} onContinue={() => continueRef.current?.()} />
+    </View>
+  );
+}
+
+/** Where launch goes once the location question is settled. */
+async function routeDestination(): Promise<Href> {
+  // getToken already swallows keychain failures and returns null, so a
+  // signed-out result is the worst case here — never a hang.
+  const token = await getToken();
+  if (!token) return "/sign-in";
+  const blocked = await Promise.race([
+    blockedDestination(),
+    new Promise<Href | null>((resolve) =>
+      setTimeout(() => resolve(null), LAUNCH_CHECK_TIMEOUT_MS)
+    ),
+  ]);
+  return blocked ?? "/trips";
+}
+
+function toLaunchPermission(r: Location.LocationPermissionResponse): LaunchPermission {
+  return { status: r.status as LaunchPermission["status"], canAskAgain: r.canAskAgain };
+}
+
+/**
+ * expo-location, AppState and the primer, handed to the shared decision. The
+ * only `requestForegroundPermissionsAsync` reachable at launch is here, after
+ * Continue.
+ */
+function askLocationAtLaunch(ui: {
+  showPrimer: () => Promise<void>;
+  hidePrimer: () => void;
+}): Promise<LaunchLocationOutcome> {
+  return resolveLaunchLocation({
+    read: async () => toLaunchPermission(await Location.getForegroundPermissionsAsync()),
+    servicesEnabled: () => Location.hasServicesEnabledAsync(),
+    request: async () => toLaunchPermission(await Location.requestForegroundPermissionsAsync()),
+    showPrimer: ui.showPrimer,
+    hidePrimer: ui.hidePrimer,
+    onForeground: (cb) => {
+      const sub = AppState.addEventListener("change", (next) => {
+        if (next === "active") cb();
+      });
+      return () => sub.remove();
+    },
+    // Never let the question strand the launch: the shared code already turns
+    // every native failure into "go on", this is the belt to those braces.
+  }).catch((): LaunchLocationOutcome => "unaskable");
 }
 
 function go(href: Href) {
@@ -114,5 +195,13 @@ async function blockedDestination(): Promise<Href | null> {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.splash },
+  container: {
+    flex: 1,
+    backgroundColor: theme.splash,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // app.config.js: expo-splash-screen imageWidth 300, resizeMode contain, on a
+  // square 1024px master.
+  splashArt: { width: 300, height: 300 },
 });

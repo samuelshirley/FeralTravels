@@ -27,17 +27,11 @@ appId: ${APP_ID}
 
 # REACH SETTINGS FROM THE TRIPS LIST, NOT THROUGH THE TRIP.
 #
-# The obvious route — open the trip, tap the `SETTINGS` tab, as
-# `chat-keyboard.yaml` does — destroys the thing this flow exists to test. The
-# trip screen mounts `DeviceLocationProvider` WITH prompting, so it raises the
-# location dialog on mount; nothing in the flow answers it, navigating away
-# dismisses it, and iOS counts that as the one ask it allows. By the time
-# Settings renders, the app is on `canAskAgain: false` and the button reads
-# "Open Settings" — which is exactly what this failed on, and it is not a
-# state any first-run user would be in.
-#
-# The trips list never prompts, so this arrives at Settings with the dialog
-# unspent. `simctl privacy … reset location` in the runner covers the state
+# Historical (build 12): the trip screen used to raise the location dialog on
+# mount, so reaching Settings THROUGH a trip spent the dialog first. Since the
+# question moved to launch (app/index.tsx) nothing after launch prompts on its
+# own, and with `location: never` launch has nothing to ask either; the trips
+# list route is kept because it is the shorter walk. `simctl privacy … reset location` in the runner covers the state
 # left behind by PREVIOUS runs; this covers the state this run would create.
 # (The old wording of this comment referred to a "Turn on" button; the
 # control is a switch now, and the branches below read the hint under it.)
@@ -122,6 +116,10 @@ appId: ${APP_ID}
 #
 # If a future runtime restores the not-determined state, the first branch
 # starts running on its own and proves the stronger property.
+#
+# Since location moved to launch, "never asked" at Settings is reachable only
+# when launch could not ask (Location Services off device-wide). The launch
+# question itself is location-primer-allow/-deny.yaml.
 - assertVisible:
     id: 'settings-location-status'
 

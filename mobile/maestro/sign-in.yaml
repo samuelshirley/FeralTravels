@@ -32,9 +32,10 @@ appId: ${APP_ID}
     # flow silently asserts nothing.
     clearState: true
     permissions:
-      # Location is asked for on the trip screen. Left DENIED on purpose: the
-      # chat flow must not depend on a permission dialog it did not open, and a
-      # granted-location app pops the primer over the composer.
+      # Location is asked AT LAUNCH, on the splash (primer -> iOS dialog), and
+      # launch waits for the answer. Pre-set to DENIED so that question is
+      # already settled and no flow that runs this one meets the primer; the
+      # location-primer-* flows are the ones that answer it themselves.
       # `never`, not `deny`. Maestro validates this per-permission, and
       # `location` is the special case: it takes always/inuse/never/
       # location-always, while allow/deny/unset belong to 'all'. `deny`

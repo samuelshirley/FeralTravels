@@ -42,9 +42,9 @@ configurePurchases();
 /**
  * Root shell. Mirrors the providers the web mounts around every signed-in
  * page: units (+ the one-time timezone sync) and the single global error
- * surface. DeviceLocationProvider is deliberately NOT here — the web mounts it
- * only inside the trip workspace, so location is requested when it is actually
- * needed rather than on cold start.
+ * surface. DeviceLocationProvider is not here — it is the trip workspace's
+ * live watch, as on the web. The location QUESTION is asked before any of
+ * this routes anywhere, on the splash, by app/index.tsx.
  */
 export default function RootLayout() {
   // Same five Inter weights the web requests in src/app/layout.tsx.

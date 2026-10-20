@@ -267,7 +267,7 @@ reappears in `src/`.
 `onboarding-handoff-plan.yaml`, `paywall-no-trips.yaml`, `penny-rest-day.yaml`,
 `penny-stop-edit.yaml`, `promo-redeem.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
 `support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml`,
-`chat-attach-photo.yaml` — Maestro flows driving a real iOS
+`chat-attach-photo.yaml`, `location-primer-allow.yaml`, `location-primer-deny.yaml` — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs

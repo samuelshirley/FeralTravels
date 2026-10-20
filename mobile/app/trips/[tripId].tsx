@@ -164,10 +164,9 @@ export default function TripWorkspaceScreen() {
   const readonly = meId ? trip.user_id !== meId : trip.is_template;
 
   return (
-    // The provider owns the app's single location pipeline: the one deliberate
-    // prompt and the live watch. Mounted here rather than at the root so a
-    // cold start never asks — only opening a trip does. Read-only templates
-    // don't prompt at all, matching the web.
+    // The provider owns the live watch (and the "turn on location" tap). It
+    // never prompts on mount: launch already asked (app/index.tsx). Read-only
+    // templates get no watch and no affordance, matching the web.
     <DeviceLocationProvider promptAllowed={!readonly}>
       <Workspace
         tripId={tripId}

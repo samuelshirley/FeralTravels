@@ -16,6 +16,7 @@ prove you can see it while typing, which is exactly the bug that shipped
 | `chat-keyboard.yaml` | behaviour | The regression: composer reachable and operable **while the keyboard is up**. |
 | `maps-link-stop.yaml` | behaviour | A real Google share link (fetched live) lands as a stop on the Porto → Lisbon day. Seeds via `seed-maps-link-stop.js`; no Anthropic call. |
 | `chat-tab-in-flight.yaml`, `onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `settings-location.yaml` | behaviour | Regression flows — each file's header says which bug. |
+| `location-primer-allow.yaml`, `location-primer-deny.yaml` | behaviour | Launch asks for location on the splash: primer (Continue only) → iOS dialog → launch waits for the answer; Allow, and Don't Allow with the itinerary and Penny still usable. Need a not-determined permission (`all: unset`). |
 | `chat-attach-photo.yaml` | behaviour | The attach button opens iOS's photo picker with Photos access DENIED, and no Photos permission alert ever appears (5.1.1). |
 | `trip-itinerary.yaml` | behaviour | Trips list, day cards, drive link, fuel sourced for today on its own and another day on open, the map. |
 | `forced-stop-line.yaml` | behaviour | Finn's forced-stop reason on the stop row, in km, then in mi after switching units — and no km anywhere. |

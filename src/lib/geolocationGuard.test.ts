@@ -8,8 +8,10 @@ import { describe, expect, it } from 'vitest';
  *
  * Web: `DeviceLocationContext` owns the single on-load prompt, the live
  * `watchPosition`, the Permissions-API `onchange` subscription and the one
- * reverse geocode per session. Native: `mobile/lib/location.tsx`, plus the
- * Settings row that can open iOS Settings.
+ * reverse geocode per session. Native: `mobile/lib/location.tsx` (the watch),
+ * the launch gate `mobile/app/index.tsx` (the one launch-time QUESTION, before
+ * anything routes — App Review 5.1.1(iv); it never watches), plus the Settings
+ * row that can open iOS Settings.
  *
  * The bug this prevents: `useNextStop` used to check the permission ONCE at
  * card-expand, so a state of 'prompt' (dialog on screen, unanswered) locked it
@@ -25,6 +27,7 @@ const ROOT = join(__dirname, '..', '..');
 const OWNERS = [
   'src/components/DeviceLocationContext.tsx',
   'mobile/lib/location.tsx',
+  'mobile/app/index.tsx',
   'mobile/components/LocationSection.tsx',
 ];
 

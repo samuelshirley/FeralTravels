@@ -570,11 +570,10 @@ export default function LegCard({
                     <Text style={styles.navListLabel}>FINDING YOUR LOCATION…</Text>
                   ) : enablePath !== "none" &&
                     (gpsStatus === "denied" || gpsStatus === "unavailable") ? (
-                    /* Without a way back, "Not now" in LocationPrimer is a
-                       one-way door — nothing else in the app can re-enable
-                       location. enablePath picks the branch that actually does
-                       something, and its "none" case keeps the control off
-                       read-only template trips, which never prompt. */
+                    /* The way back from a "Don't Allow" at launch, on the
+                       screen where location matters. enablePath picks the
+                       branch that actually does something, and its "none"
+                       case keeps the control off read-only template trips. */
                     <Pressable
                       accessibilityRole="button"
                       onPress={() => {

@@ -2,6 +2,9 @@
 # simulator and its own fixture account (see the ios-e2e job in ci.yml).
 #
 # ORDER MATTERS, and flowsOrder is what enforces it:
+#   - the two location-primer flows run FIRST: each launches with the location
+#     permission unset and answers the launch dialog itself; every later flow
+#     relaunches with `location: never`.
 #   - settings-location runs LAST: it spends the location dialog for the
 #     install, and `canAskAgain` does not come back. It also DENIES at the end —
 #     granting would let report_position re-anchor the fixture trip.
@@ -11,6 +14,8 @@
 # `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
 # checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
 flows:
+  - location-primer-allow.yaml
+  - location-primer-deny.yaml
   - chat-keyboard.yaml
   - chat-tab-in-flight.yaml
   - onboarding-flash.yaml
@@ -20,6 +25,8 @@ flows:
 executionOrder:
   continueOnFailure: true
   flowsOrder:
+    - location-primer-allow
+    - location-primer-deny
     - chat-keyboard
     - chat-tab-in-flight
     - onboarding-flash

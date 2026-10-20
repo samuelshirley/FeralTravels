@@ -1,0 +1,79 @@
+# Launch asks for location on the splash — the DENY path, and the app stays
+# fully usable without location. (App Review 5.1.1(iv); Sam's rule.)
+#
+# Same primer -> Continue -> system dialog as location-primer-allow.yaml, then
+# "Don't Allow". Launch must go on, and planning must work: the trip's
+# itinerary renders, each day's nav block offers the way back ("LOCATION OFF"),
+# and Penny's composer is there.
+#
+# NEEDS A NOT-DETERMINED PERMISSION — read the CAUTION in
+# location-primer-allow.yaml before reading a red first wait as an app bug.
+appId: ${APP_ID}
+---
+- clearKeychain
+- launchApp:
+    clearState: true
+    permissions:
+      all: unset
+
+- assertNotVisible:
+    id: 'fatal-error-modal'
+
+- extendedWaitUntil:
+    visible:
+      id: 'location-primer'
+    timeout: 30000
+- assertNotVisible:
+    id: 'signin-email'
+
+- tapOn:
+    id: 'location-primer-continue'
+
+- extendedWaitUntil:
+    visible: '.*Allow While Using.*'
+    timeout: 15000
+- assertNotVisible:
+    id: 'signin-email'
+
+# `Don.t Allow` as a REGEX — iOS renders a typographic apostrophe.
+- tapOn: 'Don.t Allow'
+
+# "Don't Allow" is an answer: launch goes on.
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+
+# Sign in. sign-in.yaml relaunches with `location: never` — the same denied
+# state this flow just produced — so no dialog and no primer on the way in.
+- runFlow: sign-in.yaml
+
+# Planning without location: the itinerary, the day's drive, the way back.
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- assertVisible:
+    text: '.*Paris, France → Strasbourg, France, 489 km.*'
+- tapOn:
+    text: '.*Paris, France → Strasbourg, France.*'
+- extendedWaitUntil:
+    visible:
+      text: '.*LOCATION OFF.*'
+    timeout: 20000
+
+# Penny is reachable too — planning is her job.
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+- assertVisible:
+    id: 'chat-composer-send'
+- assertNotVisible:
+    id: 'location-primer'
