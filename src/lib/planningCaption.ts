@@ -28,8 +28,12 @@ export function planningCaption(
   if (entitlement?.state !== 'trial') return PLANNING_VIDEO_COPY;
   const days = entitlement.trialDaysRemaining;
   if (days <= 0) return PLANNING_VIDEO_COPY;
-  if (days === 1) return "Building this trip now — it's the last day of your free trial.";
-  return `Building this trip now, you have ${spell(days)} more days on your free trial.`;
+  // "free days", never "free trial": there is no StoreKit introductory offer,
+  // and "trial" beside an App Store subscription reads as Apple's — one that
+  // converts into a charge (Guideline 3.1.2 / 2.3.1, 2026-10-20). Nothing has
+  // been charged and nothing will be without a purchase.
+  if (days === 1) return "Building this trip now — it's your last free day. No payment taken.";
+  return `Building this trip now, you have ${spell(days)} more free days. No payment taken.`;
 }
 
 function spell(n: number): string {

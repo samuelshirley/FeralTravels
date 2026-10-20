@@ -48,11 +48,15 @@ function status(overrides: Partial<PlanStatus> = {}): PlanStatus {
 const line = (o: Partial<PlanStatus> = {}) => planStatusLine(status(o), NOW);
 
 describe('planStatusLine', () => {
-  it('counts the trial down AND says the date it ends', () => {
-    // Two different questions — "how long have I got" and "when do I decide
-    // by" — and the card has room for both.
+  it('counts the free days down and says no payment was taken — never "Free trial"', () => {
+    // There is no StoreKit introductory offer. "Free trial" beside an App Store
+    // subscription reads as Apple's free trial, one that turns into a charge
+    // (Guideline 3.1.2 / 2.3.1, 2026-10-20); this is free access, no card.
     expect(line({ state: 'trial', trialDaysRemaining: 5, trialEndsAt: '2026-09-09T00:00:00Z' })).toBe(
-      'Free trial — 5 days left, ends 9 Sep'
+      'Free for your first 7 days — 5 days left. No payment taken.'
+    );
+    expect(line({ state: 'trial', trialDaysRemaining: 5, trialEndsAt: null })).toBe(
+      'Free for your first 7 days — 5 days left. No payment taken.'
     );
   });
 
@@ -61,14 +65,23 @@ describe('planStatusLine', () => {
     // any part of a day and 0 only happens in the moment the state flips.
     // Neither is a full day; promising one would be a lie the user can catch.
     const trial = { state: 'trial' as const, trialEndsAt: '2026-09-03T00:00:00Z' };
-    expect(line({ ...trial, trialDaysRemaining: 1 })).toBe('Free trial — ends today');
-    expect(line({ ...trial, trialDaysRemaining: 0 })).toBe('Free trial — ends today');
+    expect(line({ ...trial, trialDaysRemaining: 1 })).toBe(
+      'Free for your first 7 days — ends today. No payment taken.'
+    );
+    expect(line({ ...trial, trialDaysRemaining: 0 })).toBe(
+      'Free for your first 7 days — ends today. No payment taken.'
+    );
   });
 
-  it('falls back to the day count when the trial has no end date', () => {
-    expect(line({ state: 'trial', trialDaysRemaining: 5, trialEndsAt: null })).toBe(
-      'Free trial — 5 days left'
-    );
+  it('says the free days ended, in the same words, whichever way they ended', () => {
+    expect(line({ state: 'trial_spent' })).toBe('Your free first 7 days have ended');
+    expect(line({ state: 'trial_expired' })).toBe('Your free first 7 days have ended');
+  });
+
+  it('no state says "trial" to the reader', () => {
+    for (const state of ALL_STATES) {
+      expect(line({ state, trialDaysRemaining: 3 }), state).not.toMatch(/trial/i);
+    }
   });
 
   it('names the plan and the renewal date', () => {

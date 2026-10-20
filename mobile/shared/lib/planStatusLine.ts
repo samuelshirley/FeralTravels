@@ -79,8 +79,15 @@ function planLabel(plan: PlanStatus['plan'], source: SubscriptionSource | null):
   return 'Subscribed';
 }
 
+/**
+ * The free period's name. Seven days from sign-up (`TRIAL_DAYS` in the payments
+ * module, which this mirrored file cannot import — `planStatusLine.test.ts`
+ * pins the two together).
+ */
+export const FREE_PERIOD = 'Free for your first 7 days';
+
 export function planStatusLine(status: PlanStatus, now: Date): string {
-  const { state, trialDaysRemaining, trialEndsAt, plan, currentPeriodEnd, source } = status;
+  const { state, trialDaysRemaining, plan, currentPeriodEnd, source } = status;
 
   /**
    * The date clause, or nothing at all.
@@ -100,26 +107,27 @@ export function planStatusLine(status: PlanStatus, now: Date): string {
 
   switch (state) {
     case 'trial': {
-      const until = on(trialEndsAt);
+      // NOT "Free trial". The app has no StoreKit introductory offer: the first
+      // seven days are free access that takes no payment details at all, and
+      // "Free trial" beside an App Store subscription reads as Apple's free
+      // trial — one that converts into a charge (Guideline 3.1.2 / 2.3.1,
+      // 2026-10-20). So it says what it is, and that nothing has been taken.
+      //
       // `trialDaysRemaining` is whole days rounded UP and floored at 0, so 1
       // means "some part of one day left" — "1 day left" over-promises a full
-      // day and "0 days left" reads as already over. Both are wrong; the honest
-      // word is "today", and on the last day the date adds nothing.
-      if (trialDaysRemaining <= 1) return 'Free trial — ends today';
-      // The count answers "how long have I got", the date answers "when do I
-      // need to decide by". They are different questions and both fit.
-      return until
-        ? `Free trial — ${trialDaysRemaining} days left, ends ${until}`
-        : `Free trial — ${trialDaysRemaining} days left`;
+      // day and "0 days left" reads as already over. The honest word is
+      // "today".
+      if (trialDaysRemaining <= 1) return `${FREE_PERIOD} — ends today. No payment taken.`;
+      return `${FREE_PERIOD} — ${trialDaysRemaining} days left. No payment taken.`;
     }
 
-    // The trial can end two ways and the distinction matters to us, not to the
-    // reader: `trial_spent` is our $1 Anthropic ceiling, `trial_expired` is the
-    // seventh day. Telling somebody their trial ended because of what it cost
-    // us invites an argument about a number they cannot see.
+    // The free period can end two ways and the distinction matters to us, not
+    // to the reader: `trial_spent` is our $1 Anthropic ceiling, `trial_expired`
+    // is the seventh day. Telling somebody it ended because of what it cost us
+    // invites an argument about a number they cannot see.
     case 'trial_spent':
     case 'trial_expired':
-      return 'Free trial ended';
+      return 'Your free first 7 days have ended';
 
     case 'subscribed':
     // `subscribed_watch` is an ADMIN alert threshold. Nothing about it is
