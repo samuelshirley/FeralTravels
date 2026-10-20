@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: 'What Feral Travels collects, why, who else sees it, and how to delete all of it.',
 };
 
-const UPDATED = '20 August 2026';
+const UPDATED = '20 October 2026';
 const CONTACT = 'sam@feraltravels.com';
 
 /**
@@ -33,6 +33,23 @@ const CONTACT = 'sam@feraltravels.com';
  *     against something: DeviceLocationContext for the location section,
  *     repos/accountDeletion.ts for what a deletion leaves behind,
  *     lib/avatarUrl.ts for the profile picture.
+ *
+ * "Who else sees it" is checked the same way, one provider at a time, and
+ * `legalPagesGuard.test.ts` fails if a name drops off it:
+ *   Anthropic   — lib/claude.ts (Penny: messages, photos, penny/context.ts with
+ *                 device_location), server/onboarding.ts → parseStartDate,
+ *                 parseRangeEstimate, onboardingIntentScan; server/messageGate.ts.
+ *                 No email or name is in any of those payloads.
+ *   RevenueCat  — mobile/lib/purchases.ts `Purchases.logIn(users.id)`; nothing
+ *                 else is set on the customer. Webhook: api/webhooks/revenuecat.
+ *   Apple       — StoreKit (the charge), mobile/lib/oauth.ts (Sign in with
+ *                 Apple), server/auth/appleTokens.ts (revoke on deletion),
+ *                 mobile/lib/location.tsx (reverse geocode via expo-location),
+ *                 mobile/components/TripMap.tsx (Apple Maps: no Google key).
+ *   Google      — lib/google/* server-side, lib/reverseGeocode.ts (web only).
+ *   Resend      — auth/otp-email.ts, api/support, payments/alerts.ts.
+ *   Nominatim   — lib/osm/nominatim.ts, from claude.ts's split-point naming.
+ *   Vercel      — hosting, and <Analytics /> in app/layout.tsx (web only).
  */
 export default function PrivacyPage() {
   return (
@@ -103,6 +120,11 @@ export default function PrivacyPage() {
           photos you attach.
         </li>
         <li>
+          <strong>Your plan</strong>, if you subscribe: which one, when it renews or ends,
+          and Apple&apos;s transaction numbers for it. Never your card — Apple takes the
+          payment and I don&apos;t see how you paid.
+        </li>
+        <li>
           <strong>The plumbing:</strong> sign-in sessions, the one-time codes, which screens
           were open and for how long, and errors. This is how I keep the thing working and
           stop the AI bill getting away from me.
@@ -127,41 +149,63 @@ export default function PrivacyPage() {
       </p>
 
       <h2>Who else sees it</h2>
-      <p>Only the companies needed to run this, each doing exactly one job:</p>
+      <p>Only the companies needed to run this, each for the job named here:</p>
       <ul>
         <li>
-          <strong>Anthropic</strong> — runs Penny. Gets your messages and the trip context
-          she needs to answer, which includes your itinerary and your current position when
-          it&apos;s available.
+          <strong>Anthropic (Claude)</strong> — the AI that runs Penny. To write her
+          replies it gets your messages, the photos you attach, and the trip context she
+          needs to answer: your itinerary, your vehicle, and your phone&apos;s current
+          position when you&apos;ve shared it. It also reads your answers to the trip set-up
+          questions when they&apos;re typed in your own words, like a start date or how far
+          your vehicle goes. It does not get your email address or your name.{' '}
+          <strong>The app asks your permission before anything is sent to Anthropic</strong>,
+          and nothing goes until you say yes.
         </li>
         <li>
-          <strong>Google</strong> — maps, directions and place lookups, which means the
-          coordinates and place names in your plan, and your phone&apos;s position when
-          it&apos;s turned into a place name. Google sign-in if you use it, and your profile
-          picture if you have one.
+          <strong>Apple</strong> — takes the payment when you subscribe, through the App
+          Store, and handles renewals, cancellations and refunds. Sign in with Apple, if you
+          use it: Apple gives me your email address, or a private relay address if you chose
+          one, and your name if you let it. When you delete your account I tell Apple to
+          revoke that sign-in. In the iOS app, Apple also draws the map and turns your
+          phone&apos;s position into a place name.
         </li>
         <li>
-          <strong>Apple</strong> — Sign in with Apple, if you use it.
+          <strong>RevenueCat</strong> — keeps track of App Store subscriptions for me. It
+          gets your account&apos;s ID, a random number rather than your email or name, and
+          your purchase events from Apple: which plan, the price, the dates, and
+          Apple&apos;s transaction numbers. It tells my server when you subscribe, renew,
+          cancel or get a refund.
         </li>
         <li>
-          <strong>Resend</strong> — sends the sign-in emails.
+          <strong>Google</strong> — routes, road distances, and place and fuel-station
+          searches, done from my server. Those get the coordinates and place names in your
+          plan, including your phone&apos;s position when a route starts from where you
+          are, and nothing that identifies you. On the website, Google also draws the map
+          and turns your position into a place name. Google sign-in, if you use it: Google
+          gives me your email address, your name and the web address of your profile
+          picture.
+        </li>
+        <li>
+          <strong>OpenStreetMap (Nominatim)</strong> — turns a coordinate back into a town
+          name when a long driving day is split. Coordinates only.
+        </li>
+        <li>
+          <strong>Resend</strong> — sends email. It gets your address to send your sign-in
+          codes. It also carries anything you send from the support form to me, with your
+          name and email address so I can reply, and a note to me if an account&apos;s AI
+          costs pass a limit, which names that account&apos;s email address.
         </li>
         <li>
           <strong>Neon</strong> — hosts the database all of this sits in.
         </li>
         <li>
-          <strong>Vercel</strong> — hosts the website, and counts visits without cookies.
+          <strong>Vercel</strong> — hosts the website and the server the app talks to, so
+          every request passes through it. On the website it also counts visits, without
+          cookies.
         </li>
         <li>
-          <strong>Google Maps</strong> — maps, road routing, and the fuel stations
-          along your route. These get coordinates and nothing that identifies you.
-        </li>
-        <li>
-          <strong>OpenStreetMap (Nominatim)</strong> — turns a coordinate back into a
-          place name when a driving day is split. Coordinates only.
-        </li>
-        <li>
-          <strong>Expo</strong> — builds and delivers updates to the iOS app.
+          <strong>Expo</strong> — builds the iOS app and delivers its updates. It sees which
+          version of the app your phone is running, not who you are.
         </li>
       </ul>
       <p>
@@ -182,6 +226,10 @@ export default function PrivacyPage() {
           <strong>Sign-in sessions:</strong> 30 days, or until you sign out.
         </li>
         <li>
+          <strong>Your plan:</strong> until you delete your account. The purchase notices
+          behind it are kept after that — see below.
+        </li>
+        <li>
           <strong>Errors, usage records, and the log of each request to Penny:</strong>{' '}
           right now, indefinitely. There is no automatic clear-out yet, and I&apos;d rather
           say so than claim one exists. They go when your account goes.
@@ -196,7 +244,11 @@ export default function PrivacyPage() {
         picture, and your sign-in details all go at once. You don&apos;t have to email
         anyone, explain yourself, or click through a screen trying to talk you out of it.
       </p>
-      <p>Two things outlive the deletion, and I&apos;d rather tell you than have you find out:</p>
+      <p>
+        Deleting your account does not cancel an App Store subscription. Apple bills it, so
+        cancel it in your Apple Account settings as well.
+      </p>
+      <p>Three things outlive the deletion, and I&apos;d rather tell you than have you find out:</p>
       <ul>
         <li>
           <strong>A record that the account existed.</strong> It holds when the account was
@@ -212,6 +264,13 @@ export default function PrivacyPage() {
           <strong>Cost and usage rows,</strong> unlinked from you, so I can still see what
           the service costs to run. Any text in them that could carry something you wrote or
           somewhere you drove is erased at the same time.
+        </li>
+        <li>
+          <strong>Purchase notices,</strong> if you ever subscribed: the messages Apple and
+          RevenueCat sent about your plan — which plan, the price, the dates and the
+          transaction numbers. They carry your old account&apos;s ID number but not your
+          email address or name, and they&apos;re kept so a payment can still be traced if
+          there&apos;s ever a question about it.
         </li>
       </ul>
 

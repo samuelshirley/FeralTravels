@@ -22,7 +22,7 @@ import { test, expect } from '@playwright/test';
 
 const PAGES = [
   { path: '/privacy', heading: 'Privacy', title: /Privacy Policy/i },
-  { path: '/terms', heading: 'Terms of Service', title: /Terms of Service/i },
+  { path: '/terms', heading: 'Terms of Use', title: /Terms of Use/i },
   { path: '/support', heading: 'Support', title: /Support/i },
 ] as const;
 
@@ -104,13 +104,64 @@ test.describe('public legal pages', () => {
     // rather than paraphrased — an earlier version of this test looked for
     // "anonymised", a word the policy has never used, and failed on wording
     // it had invented itself.
-    expect(body).toContain('two things outlive the deletion');
+    expect(body).toContain('three things outlive the deletion');
     // The two `deleted_users` email columns: emailHash and emailEncrypted.
     expect(body).toContain('one-way fingerprint');
     expect(body).toContain('encrypted');
     // usage_events: kept, user_id detached, error_message scrubbed.
     expect(body).toContain('unlinked from you');
     expect(body).toContain('erased');
+    // subscription_events: user_id set null, verbatim store payload kept.
+    expect(body).toContain('purchase notices');
+  });
+
+  test('/privacy names every third party that receives personal data', async ({ page }) => {
+    // Guidelines 5.1.1(i) and 5.1.2(i). Each name is an entry in the list a
+    // reviewer reads, checked against the code by legalPagesGuard.test.ts;
+    // this proves the rendered page a stranger gets carries all of them.
+    await page.goto('/privacy');
+
+    await expect(page.getByRole('heading', { name: 'Who else sees it' })).toBeVisible();
+    const list = page
+      .getByRole('heading', { name: 'Who else sees it' })
+      .locator('xpath=following-sibling::ul[1]');
+    const text = await list.innerText();
+
+    for (const provider of [
+      'Anthropic (Claude)',
+      'Apple',
+      'RevenueCat',
+      'Google',
+      'OpenStreetMap (Nominatim)',
+      'Resend',
+      'Neon',
+      'Vercel',
+      'Expo',
+    ]) {
+      await expect(list.locator('li > strong', { hasText: provider }).first()).toBeVisible();
+    }
+    expect(text).toContain('The app asks your permission before anything is sent to Anthropic');
+  });
+
+  test('/terms carries the subscription terms Apple checks for', async ({ page }) => {
+    // Guideline 3.1.2(c): a functional Terms of Use for an auto-renewable
+    // subscription. The page used to say the service was free.
+    await page.goto('/terms');
+
+    const body = await page.locator('article').innerText();
+    expect(body).not.toMatch(/currently free/i);
+    expect(body).toContain('7 days of free access');
+    expect(body).toContain('charged to your Apple Account when you confirm the purchase');
+    expect(body).toContain('renews automatically');
+    expect(body).toMatch(/cancel at least 24 hours before the current period ends/);
+    expect(body).toContain('Refunds are handled by Apple');
+    expect(body).toContain('Settings → Delete account');
+
+    const eula = page.getByRole('link', { name: 'standard licence terms for apps' });
+    await expect(eula).toHaveAttribute(
+      'href',
+      'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
+    );
   });
 
   test('the sign-in page links out to the legal pages', async ({ page }) => {
