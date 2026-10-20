@@ -204,12 +204,8 @@ export default function SubscriptionSection() {
         ) : null}
       </Card>
 
-      {/*
-        No `onRedeemed`, so no promo box. A code is redeemed on the surface that
-        blocked you, which is where somebody who was given one has been told to
-        look; a redemption field on Settings would be a second place to keep
-        right for no one who needs it.
-      */}
+      {/* The same sheet as every paywall: plans, renewal terms, Restore, and
+          Apple's offer-code redemption (the only code path on iOS). */}
       {sheetOpen ? (
         <PurchaseSheet flow={flow} onClose={() => setSheetOpen(false)} />
       ) : null}

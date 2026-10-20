@@ -2441,19 +2441,7 @@ export default function ChatPanel({
           A capped or revoked account never reaches it — that button is a
           mailto. */}
       {purchaseSheetOpen && entitlement && !paywallSupportOnly ? (
-        <PurchaseSheet
-          flow={purchaseFlow}
-          // The sheet has already confirmed entitlement with the server; this
-          // brings the transcript's own state in line — the same updates the
-          // purchase path makes, and for the same reason.
-          onRedeemed={() => {
-            void (async () => {
-              const fresh = await fetchEntitlement();
-              if (fresh) onEntitled(fresh);
-            })();
-          }}
-          onClose={() => setPurchaseSheetOpen(false)}
-        />
+        <PurchaseSheet flow={purchaseFlow} onClose={() => setPurchaseSheetOpen(false)} />
       ) : null}
     </View>
   );

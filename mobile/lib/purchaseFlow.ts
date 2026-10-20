@@ -3,6 +3,8 @@ import { Linking } from "react-native";
 import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
 import {
   getStorePlans,
+  onStoreEntitlementActive,
+  presentOfferCodeRedemption,
   purchase,
   purchasesAvailable,
   restore,
@@ -10,6 +12,9 @@ import {
 } from "@/lib/purchases";
 import {
   MANAGE_SUBSCRIPTIONS_URL,
+  OFFER_CODE_CONFIRMING_MESSAGE,
+  OFFER_CODE_CONFIRM_TIMEOUT_MESSAGE,
+  OFFER_CODE_UNAVAILABLE_MESSAGE,
   PURCHASE_CONFIRMING_MESSAGE,
   PURCHASE_CONFIRM_TIMEOUT_MESSAGE,
   purchaseOutcomeMessage,
@@ -20,6 +25,7 @@ import {
   manageSubscriptionAvailable,
   resolvePurchaseMode,
   type PurchaseMode,
+  type SheetPlan,
   type StoreAnswer,
   type UnavailableReason,
 } from "@/shared/lib/purchaseMode";
@@ -54,8 +60,12 @@ export type PurchasePhase =
   | { kind: "idle" }
   /** Apple's sheet is up. Ours must not be dismissible underneath it. */
   | { kind: "purchasing"; productId: string }
-  /** Charged. Waiting for the webhook to reach our server. */
-  | { kind: "confirming" }
+  /**
+   * Charged (or a code redeemed, or a restore found something). Waiting for the
+   * webhook to reach our server. `cause` picks the copy: an offer code may have
+   * cost nothing, so "Payment received" would be untrue for it.
+   */
+  | { kind: "confirming"; cause: "purchase" | "offer_code" | "restore" }
   | { kind: "restoring" };
 
 /**
@@ -66,17 +76,18 @@ export type PurchasePhase =
  *  `store`        RevenueCat is configured and returned at least one package
  *                 whose product id the server sells.
  *  `unavailable`  not that, and `unavailableReason` says WHICH way. The sheet
- *                 shows prices and says there is nothing to tap, because a
- *                 button that cannot take money is worse than no button — and
- *                 it says why, because "no key in this build", "the agreement
- *                 is not signed" and "the ids do not match" are fixed in three
- *                 different places.
+ *                 shows NO prices and no rows — the server's fallbacks are US
+ *                 prices with no renewal terms behind them — only the reason,
+ *                 Restore and the legal links.
  */
 export type { PurchaseMode, UnavailableReason };
 
 export interface PurchaseFlow {
-  /** What to render, in the server's order, with the store's prices. */
-  plans: PaywallProduct[];
+  /**
+   * What to render, in the server's order, with the store's prices. EMPTY in
+   * every mode but `store` — see `ResolvedPurchaseMode`.
+   */
+  plans: readonly SheetPlan[];
   plansLoading: boolean;
   mode: PurchaseMode;
   /** Why `mode` is `unavailable`; null in every other mode and while loading. */
@@ -97,6 +108,11 @@ export interface PurchaseFlow {
   /** Something happened that is not wrong. Not red. */
   notice: string | null;
   buy: (productId: string) => void;
+  /**
+   * Opens Apple's offer-code sheet (iOS). The ONLY code-redemption path in the
+   * app — Guideline 3.1.1; see `presentOfferCodeRedemption`.
+   */
+  redeemOfferCode: () => void;
   restorePurchases: () => void;
   manageSubscription: () => void;
   clearMessages: () => void;
@@ -204,6 +220,47 @@ export function usePurchaseFlow({
     }
   }, [onEntitled]);
 
+  /**
+   * An offer code is redeemed in APPLE's sheet, which tells us nothing when it
+   * closes. A successful redemption reaches RevenueCat as a transaction, and
+   * the SDK reports it as a customer-info update with the entitlement active —
+   * that is the cue to start the same server wait a purchase uses. Armed only
+   * by a redemption this flow presented, so an ordinary customer-info refresh
+   * (every launch) does not start a wait nobody asked for.
+   */
+  const awaitingOfferCode = useRef(false);
+  const phaseKind = useRef<PurchasePhase["kind"]>("idle");
+  phaseKind.current = phase.kind;
+  useEffect(() => {
+    return onStoreEntitlementActive(() => {
+      if (!awaitingOfferCode.current || phaseKind.current !== "idle" || !alive.current) return;
+      awaitingOfferCode.current = false;
+      setError(null);
+      setNotice(null);
+      setPhase({ kind: "confirming", cause: "offer_code" });
+      void (async () => {
+        try {
+          const ok = await waitForEntitlement();
+          if (alive.current && !ok) setNotice(OFFER_CODE_CONFIRM_TIMEOUT_MESSAGE);
+        } finally {
+          if (alive.current) setPhase({ kind: "idle" });
+        }
+      })();
+    });
+  }, [waitForEntitlement]);
+
+  const redeemOfferCode = useCallback(() => {
+    if (phase.kind !== "idle") return;
+    setError(null);
+    setNotice(null);
+    void (async () => {
+      const outcome = await presentOfferCodeRedemption();
+      if (!alive.current) return;
+      if (outcome.kind === "presented") awaitingOfferCode.current = true;
+      else setError(OFFER_CODE_UNAVAILABLE_MESSAGE);
+    })();
+  }, [phase.kind]);
+
   const buy = useCallback(
     (productId: string) => {
       if (phase.kind !== "idle") return;
@@ -228,7 +285,7 @@ export function usePurchaseFlow({
           }
 
           if (!alive.current) return;
-          setPhase({ kind: "confirming" });
+          setPhase({ kind: "confirming", cause: "purchase" });
           const ok = await waitForEntitlement();
           if (!alive.current) return;
           if (!ok) setNotice(PURCHASE_CONFIRM_TIMEOUT_MESSAGE);
@@ -265,7 +322,7 @@ export function usePurchaseFlow({
           return;
         }
 
-        setPhase({ kind: "confirming" });
+        setPhase({ kind: "confirming", cause: "restore" });
         // A restore usually finds a subscription our server already knows about,
         // so the first poll answers. It still goes through the wait because a
         // restore can also be the first time RevenueCat associates the purchase
@@ -307,8 +364,14 @@ export function usePurchaseFlow({
     // While the wait is on, the waiting copy IS the notice. It has to say the
     // money part first: this reader has just watched Apple confirm a charge,
     // and anything reading like "processing…" invites a second attempt.
-    notice: phase.kind === "confirming" ? PURCHASE_CONFIRMING_MESSAGE : notice,
+    notice:
+      phase.kind === "confirming"
+        ? phase.cause === "offer_code"
+          ? OFFER_CODE_CONFIRMING_MESSAGE
+          : PURCHASE_CONFIRMING_MESSAGE
+        : notice,
     buy,
+    redeemOfferCode,
     restorePurchases,
     manageSubscription,
     clearMessages,

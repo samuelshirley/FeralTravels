@@ -68,12 +68,22 @@ export interface StorePlanLike {
    * keeps the server's title, so a row is never untitled.
    */
   title: string;
-  /** Apple's localized price string, e.g. "$2.69", "2,00 €". For display only. */
+  /**
+   * Apple's localized price string, e.g. "$2.69", "2,00 €". For display only.
+   * A blank one drops the plan: the sheet never prints a price the store did
+   * not give it.
+   */
   priceLabel: string;
   /** The same price as a number, in `currencyCode` — what arithmetic uses. */
   price: number;
   /** ISO 4217, from the store: "USD", "EUR", "CAD". */
   currencyCode: string;
+  /**
+   * RevenueCat's `product.pricePerMonthString`: the price over one month,
+   * formatted by StoreKit's own formatter ("$1.83" for $22.00 a year). Null
+   * for a product RevenueCat cannot spread (not a subscription).
+   */
+  pricePerMonthLabel: string | null;
 }
 
 /**
@@ -90,17 +100,73 @@ export type UnavailableReason =
   | 'no_match'
   | 'no_plans';
 
-export interface ResolvedPurchaseMode {
-  mode: PurchaseMode;
-  /** Set only when `mode === 'unavailable'`. */
-  unavailableReason: UnavailableReason | null;
+/**
+ * One row of the purchase sheet: everything Guideline 3.1.2(c) wants beside the
+ * control that buys it — the subscription's title, its length, and its price —
+ * plus, for the annual plan, what that works out to per month.
+ *
+ * Built ONLY by the store branch of `resolvePurchaseMode`, from a StoreKit
+ * answer. There is no constructor that takes the server's fallback strings, so
+ * a sheet cannot print "$2.69" in front of somebody Apple will charge €2.
+ */
+export interface SheetPlan {
+  id: string;
+  /** App Store Connect's localized display name; the server's when blank. */
+  title: string;
+  period: 'month' | 'year';
+  /** "1 month" / "1 year" — the subscription's length, said outright. */
+  length: string;
+  /** Server-authored, e.g. "per month". */
+  cadence: string;
+  /** Apple's `priceString`. Never the server's fallback. */
+  priceLabel: string;
   /**
-   * What to render, in the server's order. In `store` mode these carry the
-   * store's prices; otherwise they are the server's fallback strings.
+   * Annual only: "$1.83/month, billed annually", from StoreKit's
+   * `pricePerMonthString`. Absent when the store gave no per-month figure.
    */
-  plans: PaywallProduct[];
-  /** True while the store has not answered yet (and there is a store to ask). */
-  plansLoading: boolean;
+  perMonth?: string;
+  /** The annual saving, from the store's two prices — see `annualSavingsNote`. */
+  note?: string;
+}
+
+/**
+ * The two shapes the sheet can be in. A discriminated union rather than one
+ * record with a mode flag, so that "unavailable with plan rows" is not a value
+ * this type can hold: `plans` is the empty tuple there, and `tsc` refuses any
+ * branch that tries to hand the sheet a row without a store answer behind it.
+ *
+ * That is the 2026-10-20 fix. Unavailable mode used to render the server's
+ * `fallbackUsdLabel` ("$2.69", "$22.00") with no renewal terms — a price that
+ * is wrong in every storefront but one, beside nothing Apple wants with it.
+ */
+export type ResolvedPurchaseMode =
+  | {
+      mode: 'store';
+      unavailableReason: null;
+      plans: SheetPlan[];
+      plansLoading: false;
+    }
+  | {
+      mode: 'unavailable';
+      /** Null only while the store is still being asked. */
+      unavailableReason: UnavailableReason | null;
+      plans: readonly [];
+      /** True while the store has not answered yet (and there is a store to ask). */
+      plansLoading: boolean;
+    };
+
+/** The subscription's length, from its period. Exhaustive, so a third period fails `tsc`. */
+export function planLength(period: SheetPlan['period']): string {
+  switch (period) {
+    case 'month':
+      return '1 month';
+    case 'year':
+      return '1 year';
+    default: {
+      const exhaustive: never = period;
+      return exhaustive;
+    }
+  }
 }
 
 export function resolvePurchaseMode({
@@ -119,28 +185,27 @@ export function resolvePurchaseMode({
   locale?: string;
 }): ResolvedPurchaseMode {
   if (storeAnswer.kind === 'pending') {
-    return {
-      mode: 'unavailable',
-      unavailableReason: null,
-      plans: withoutNotes(serverPlans),
-      plansLoading: true,
-    };
+    return { mode: 'unavailable', unavailableReason: null, plans: [], plansLoading: true };
   }
 
   if (storeAnswer.kind === 'no_key') {
-    return unavailable('no_key', serverPlans);
+    return unavailable('no_key');
   }
 
   if (storeAnswer.kind === 'error') {
-    return unavailable('store_error', serverPlans);
+    return unavailable('store_error');
   }
 
   if (serverPlans.length === 0) {
-    return unavailable('no_plans', serverPlans);
+    return unavailable('no_plans');
   }
 
-  if (storeAnswer.plans.length === 0) {
-    return unavailable('store_empty', serverPlans);
+  // A package whose price string is blank is a package with no price to show.
+  // It is treated as absent rather than rendered with an empty price — the sheet
+  // prints only what the store said.
+  const priced = storeAnswer.plans.filter((s) => s.priceLabel.trim() !== '');
+  if (priced.length === 0) {
+    return unavailable('store_empty');
   }
 
   /**
@@ -157,7 +222,7 @@ export function resolvePurchaseMode({
    * asymmetry is diagnostic (a single mistyped product id looks like this).
    * NONE surviving is a different failure and gets its own reason.
    */
-  const storeFor = (p: PaywallProduct) => storeAnswer.plans.find((s) => s.productId === p.id);
+  const storeFor = (p: PaywallProduct) => priced.find((s) => s.productId === p.id);
   const monthly = serverPlans.find((p) => p.period === 'month');
   const annual = serverPlans.find((p) => p.period === 'year');
   const monthlyStore = monthly && storeFor(monthly);
@@ -165,48 +230,41 @@ export function resolvePurchaseMode({
   const saving =
     monthlyStore && annualStore ? annualSavingsNote(monthlyStore, annualStore, locale) : undefined;
 
-  // Any `note` the payload carried is dropped: only the store's own prices may
-  // produce one.
-  const merged: PaywallProduct[] = withoutNotes(serverPlans).flatMap((p) => {
+  // Built field by field rather than spread from the server's product, so
+  // nothing the payload carries — its fallback `priceLabel`, a stale `note` —
+  // can ride through onto the sheet.
+  const merged: SheetPlan[] = serverPlans.flatMap((p) => {
     const store = storeFor(p);
     if (!store) return [];
-    const note = p.period === 'year' ? saving : undefined;
-    const title = store.title?.trim() || p.title;
-    return [{ ...p, title, priceLabel: store.priceLabel, ...(note ? { note } : {}) }];
+    const perMonthLabel = store.pricePerMonthLabel?.trim();
+    const row: SheetPlan = {
+      id: p.id,
+      title: store.title?.trim() || p.title,
+      period: p.period,
+      length: planLength(p.period),
+      cadence: p.cadence,
+      priceLabel: store.priceLabel,
+    };
+    if (p.period === 'year' && perMonthLabel) row.perMonth = `${perMonthLabel}/month, billed annually`;
+    if (p.period === 'year' && saving) row.note = saving;
+    return [row];
   });
 
   if (merged.length === 0) {
-    return unavailable('no_match', serverPlans);
+    return unavailable('no_match');
   }
 
   return { mode: 'store', unavailableReason: null, plans: merged, plansLoading: false };
 }
 
-function unavailable(
-  reason: UnavailableReason,
-  serverPlans: PaywallProduct[]
-): ResolvedPurchaseMode {
-  // The fallback prices are still rendered: the reader learns what a plan
-  // costs, roughly, and the sentence under them says why it cannot be bought
-  // here. An empty sheet would say nothing at all.
-  return {
-    mode: 'unavailable',
-    unavailableReason: reason,
-    plans: withoutNotes(serverPlans),
-    plansLoading: false,
-  };
-}
-
 /**
- * No saving without the store. The server's fallback labels are US prices — a
- * rough indication of cost, wrong in every other storefront — and a sum over
- * them would be a precise-looking number that is not true for the reader.
+ * No rows at all. The server's fallback prices are US prices — wrong in every
+ * other storefront — and an unavailable sheet cannot say what the renewal
+ * terms are for a price it cannot sell. The sheet shows the reason, Restore and
+ * the legal links instead (`unavailableMessage`).
  */
-function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
-  return plans.map(({ note: _ignored, ...rest }) => {
-    void _ignored;
-    return rest;
-  });
+function unavailable(reason: UnavailableReason): ResolvedPurchaseMode {
+  return { mode: 'unavailable', unavailableReason: reason, plans: [], plansLoading: false };
 }
 
 /**
@@ -368,3 +426,4 @@ export function manageSubscriptionAvailable(
   if (!entitlement) return false;
   return canManageAppleSubscription(entitlement.state, entitlement.source);
 }
+

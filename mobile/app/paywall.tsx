@@ -49,9 +49,9 @@ export default function PaywallScreen() {
 
   /**
    * The purchase, the wait for the webhook and the restore all live in the
-   * hook — this screen only says where to go once the server agrees. Same
-   * destination as a redeemed promo code: this screen exists only to sell, so
-   * the moment there is nothing left to sell, leave.
+   * hook — this screen only says where to go once the server agrees (an App
+   * Store purchase, restore or offer code): this screen exists only to sell,
+   * so the moment there is nothing left to sell, leave.
    */
   const flow = usePurchaseFlow({
     entitlement,
@@ -145,14 +145,7 @@ export default function PaywallScreen() {
       </ScrollView>
 
       {sheetOpen && entitlement ? (
-        <PurchaseSheet
-          flow={flow}
-          onRedeemed={() => {
-            setSheetOpen(false);
-            router.replace("/trips");
-          }}
-          onClose={() => setSheetOpen(false)}
-        />
+        <PurchaseSheet flow={flow} onClose={() => setSheetOpen(false)} />
       ) : null}
     </View>
   );

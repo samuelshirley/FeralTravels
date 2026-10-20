@@ -3,26 +3,29 @@ import {
   ActivityIndicator,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { API_BASE_URL } from "@/lib/config";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
-import type { PaywallProduct } from "@/shared/types/entitlement";
-import {
-  PROMO_CTA_LABEL,
-  PROMO_PLACEHOLDER,
-  PROMO_PROMPT,
-} from "@/shared/lib/promoCopy";
-import { fetchEntitlement, redeemPromoCode } from "@/lib/entitlement";
 import type { PurchaseFlow } from "@/lib/purchaseFlow";
-import { unavailableMessage } from "@/shared/lib/purchaseMode";
+import { unavailableMessage, type SheetPlan } from "@/shared/lib/purchaseMode";
+
+/**
+ * Guideline 3.1.2(c)'s renewal terms, verbatim on every purchase surface and in
+ * every mode. Exported so `purchaseDisclosureGuard.test.ts` can hold the
+ * wording and its placement.
+ */
+export const AUTO_RENEW_DISCLOSURE =
+  "Payment is charged to your Apple Account at confirmation of purchase. Subscriptions renew " +
+  "automatically unless cancelled at least 24 hours before the end of the current period. " +
+  "Manage or cancel in your Apple Account settings.";
 
 /**
  * The developer's five-way reading of an unavailable sheet — dev builds ONLY.
@@ -66,22 +69,29 @@ const purchaseDiagnostics: typeof import("@/shared/lib/purchaseDiagnostics") | n
  *  3. Restore purchases and Manage subscription have no web counterpart at all.
  *     Both are App Store obligations (Guideline 3.1.1 for restore, 3.1.2 for
  *     the management link) and both are meaningless in a browser.
+ *  4. No promo-code field. The web's promo box unlocks the paid tier
+ *     through our own promo endpoint, which on iOS is a Guideline 3.1.1
+ *     rejection (digital access sold or granted outside in-app purchase). Codes
+ *     on iOS are App Store offer codes, redeemed in Apple's own sheet — the
+ *     "Redeem offer code" control below. `iosPromoRedeemGuard.test.ts`.
+ *
+ * Fits a short window. App Review used an iPad in iPhone compatibility mode, a
+ * window shorter than any iPhone the layout was drawn on: everything below the
+ * header is in ONE ScrollView that shrinks to the sheet's max height, and
+ * nothing in it has a fixed height.
  */
 export default function PurchaseSheet({
   flow,
   onClose,
-  onRedeemed,
 }: {
   /** The whole purchase flow — see `usePurchaseFlow`. */
   flow: PurchaseFlow;
   onClose: () => void;
-  /**
-   * Fired only after the server has CONFIRMED entitlement, never on the 200
-   * from the redeem call. Optional, so a sheet with no promo path renders none.
-   */
-  onRedeemed?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // A legal page that would not open. Shown INSIDE the sheet: the app's global
+  // toast (ErrorProvider) renders under a Modal, where nobody would see it.
+  const [linkError, setLinkError] = useState<string | null>(null);
   const {
     busy,
     phase,
@@ -143,47 +153,39 @@ export default function PurchaseSheet({
             keyboardShouldPersistTaps="handled"
           >
             {/*
-              The spinner wins over the fallback prices while the store is being
-              asked, even though `plans` already holds the server's list. Showing
-              "$2" for a second and then swapping it for "€2,49" is worse than
-              waiting: the first number is wrong for that reader, and a price
-              that changes under them is the one thing a purchase sheet must
-              never do.
+              Rows ONLY in store mode, and only ever with the store's prices.
+              `flow.plans` is empty in every other mode — the type says so
+              (`ResolvedPurchaseMode`) — because the server's fallbacks are US
+              prices with nothing behind them: "$2.69" in front of somebody
+              Apple will charge €2, with no renewal terms, is the 3.1.2 problem.
             */}
             {plansLoading ? (
               <View style={styles.plansLoading}>
                 <ActivityIndicator size="small" color={theme.primary} />
                 <Text style={styles.plansLoadingText}>Getting prices from the App Store…</Text>
               </View>
-            ) : (
+            ) : mode === "store" ? (
               <View style={styles.plans}>
                 {plans.map((p) => (
                   <PlanRow
                     key={p.id}
                     product={p}
-                    actionable={mode !== "unavailable"}
                     busy={busy}
                     pending={purchasingId === p.id}
                     onSelect={() => flow.buy(p.id)}
                   />
                 ))}
               </View>
-            )}
-
-            {/*
-              Guideline 3.1.2 wants the subscription's length and price next to
-              the thing that buys it, plus reachable Terms and Privacy. The
-              length is on each row as the cadence; this is the renewal
-              sentence, which a price alone does not say.
-            */}
-            {mode === "store" ? (
-              <Text style={styles.renewalNote}>
-                Plans renew automatically until cancelled. Manage or cancel any time in your
-                Apple Account.
-              </Text>
             ) : null}
 
-            {onRedeemed ? <PromoRedeemer onRedeemed={onRedeemed} /> : null}
+            {/*
+              Guideline 3.1.2(c): the renewal terms, in every mode — not only
+              when rows are tappable. Each row carries the title, length and
+              price; this says how the charge and the renewal work.
+            */}
+            <Text testID="purchase-renewal-terms" style={styles.renewalNote}>
+              {AUTO_RENEW_DISCLOSURE}
+            </Text>
 
             {/*
               The customer's line says what THEY can do and never why we cannot
@@ -229,6 +231,25 @@ export default function PurchaseSheet({
                 )}
               </Pressable>
               {/*
+                App Store offer codes, redeemed in Apple's own sheet — the only
+                code path on iOS (Guideline 3.1.1). Access arrives the way a
+                purchase's does: a webhook, then the server poll. iOS only:
+                there is no such sheet anywhere else.
+              */}
+              {Platform.OS === "ios" ? (
+                <Pressable
+                  testID="redeem-offer-code"
+                  accessibilityRole="button"
+                  onPress={flow.redeemOfferCode}
+                  disabled={busy}
+                  style={styles.secondary}
+                >
+                  <Text style={[styles.secondaryText, busy ? styles.secondaryTextOff : null]}>
+                    Redeem offer code
+                  </Text>
+                </Pressable>
+              ) : null}
+              {/*
                 Only for an account with a subscription at Apple. The link is
                 Apple's own subscriptions screen, which for a trial account —
                 no row has ever existed — is an empty list. Guideline 3.1.2
@@ -249,11 +270,30 @@ export default function PurchaseSheet({
               ) : null}
             </View>
 
+            {/*
+              Guideline 3.1.2(c) wants functional links to the Terms of Use
+              (EULA) and the Privacy Policy on the sheet, and App Review has to
+              be able to SEE them: primary-coloured, underlined, full names.
+            */}
             <View style={styles.legalRow}>
-              <LegalLink label="Terms" path="/terms" />
-              <Text style={styles.legalDot}>·</Text>
-              <LegalLink label="Privacy" path="/privacy" />
+              <LegalLink
+                testID="purchase-terms-link"
+                label="Terms of Use (EULA)"
+                path="/terms"
+                onError={setLinkError}
+              />
+              <LegalLink
+                testID="purchase-privacy-link"
+                label="Privacy Policy"
+                path="/privacy"
+                onError={setLinkError}
+              />
             </View>
+            {linkError ? (
+              <Text testID="purchase-link-error" accessibilityRole="alert" style={styles.linkError}>
+                {linkError}
+              </Text>
+            ) : null}
 
             {/*
               Two channels, not one. `notice` is "this happened and nothing is
@@ -288,11 +328,29 @@ export default function PurchaseSheet({
  * brand verification both fetch them anonymously. Opening them in the system
  * browser rather than porting them is the same call the support page makes.
  */
-function LegalLink({ label, path }: { label: string; path: string }) {
+function LegalLink({
+  label,
+  path,
+  testID,
+  onError,
+}: {
+  label: string;
+  path: string;
+  testID: string;
+  /** Never swallowed: the reader is told the address, so they can type it. */
+  onError: (message: string) => void;
+}) {
+  const url = `${API_BASE_URL}${path}`;
   return (
     <Pressable
+      testID={testID}
       accessibilityRole="link"
-      onPress={() => void Linking.openURL(`${API_BASE_URL}${path}`).catch(() => {})}
+      onPress={() => {
+        onError("");
+        void Linking.openURL(url).catch(() =>
+          onError(`Couldn't open ${label}. It's at ${url}`)
+        );
+      }}
       hitSlop={8}
     >
       <Text style={styles.legalLink}>{label}</Text>
@@ -300,25 +358,35 @@ function LegalLink({ label, path }: { label: string; path: string }) {
   );
 }
 
-/** One price. Pressable only where a purchase can actually be completed. */
+/**
+ * One plan, as Apple sells it: title, price and cadence, and the length — plus
+ * the per-month figure on the annual plan. Rendered only in store mode, so it
+ * is always a real purchase control.
+ */
 function PlanRow({
   product,
-  actionable,
   busy,
   pending,
   onSelect,
 }: {
-  product: PaywallProduct;
-  actionable: boolean;
+  product: SheetPlan;
   busy: boolean;
   pending: boolean;
   onSelect: () => void;
 }) {
   // The title is the subscription's own name, above its price and length —
-  // the three things Guideline 3.1.2(c) wants together. Without it the row was
-  // a price under the APP's name, and 1.0 (12) was rejected for exactly that.
-  const inner = (
-    <>
+  // the things Guideline 3.1.2(c) wants together. Without it the row was a
+  // price under the APP's name, and 1.0 (12) was rejected for exactly that.
+  const detail = product.perMonth ? `${product.length} · ${product.perMonth}` : product.length;
+  return (
+    <Pressable
+      testID={`purchase-${product.id}`}
+      accessibilityRole="button"
+      accessibilityLabel={`${product.title}, ${product.priceLabel} ${product.cadence}, ${detail}`}
+      onPress={onSelect}
+      disabled={busy}
+      style={[styles.planRow, busy && !pending ? styles.planRowDim : null]}
+    >
       <View style={styles.planCopy}>
         <Text testID={`plan-title-${product.period}`} style={styles.planTitle}>
           {product.title}
@@ -327,6 +395,9 @@ function PlanRow({
           <Text style={styles.planPriceLabel}>{product.priceLabel}</Text>
           <Text style={styles.planCadence}>{product.cadence}</Text>
         </View>
+        <Text testID={`plan-length-${product.period}`} style={styles.planDetail}>
+          {detail}
+        </Text>
       </View>
       <View style={styles.planTrailing}>
         {product.note ? (
@@ -336,122 +407,7 @@ function PlanRow({
         ) : null}
         {pending ? <ActivityIndicator size="small" color={theme.primary} /> : null}
       </View>
-    </>
-  );
-
-  if (!actionable) {
-    // A plain View, not a disabled button: there is nothing wrong with this
-    // account, the price simply isn't purchasable yet. A greyed-out button
-    // would read as "you can't have this".
-    return <View style={styles.planRow}>{inner}</View>;
-  }
-
-  return (
-    <Pressable
-      testID={`purchase-${product.id}`}
-      accessibilityRole="button"
-      accessibilityLabel={`${product.title}, ${product.priceLabel} ${product.cadence}`}
-      onPress={onSelect}
-      disabled={busy}
-      style={[styles.planRow, busy && !pending ? styles.planRowDim : null]}
-    >
-      {inner}
     </Pressable>
-  );
-}
-
-/**
- * The third way through this sheet: a code, instead of a price.
- *
- * Native mirror of the web `PromoRedeemer`. It sits under the two plans because
- * it is the minority path, but it is a peer of them rather than a footnote —
- * hence a real field and a real button, not a "have a code?" link that has to be
- * opened first. Hiding the one control a comped user was told to look for
- * behind a disclosure is a small cruelty.
- *
- * `keyboardShouldPersistTaps="handled"` is already set on the ScrollView above,
- * which is what lets the Redeem button take a tap while the keyboard is up
- * instead of the first tap merely dismissing it.
- */
-function PromoRedeemer({ onRedeemed }: { onRedeemed: () => void }) {
-  const [code, setCode] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const disabled = pending || code.trim().length === 0;
-
-  async function submit() {
-    if (disabled) return;
-    setPending(true);
-    setError(null);
-    try {
-      await redeemPromoCode(code);
-      // The 200 says a row was written. Entitlement is a different question and
-      // the server is the one that answers it — believing the first would
-      // unblock the app on our own say-so.
-      const fresh = await fetchEntitlement();
-      if (!fresh?.entitled) {
-        setError("That worked, but your plan hasn't switched on yet. Give it a moment.");
-        return;
-      }
-      onRedeemed();
-    } catch (err) {
-      // The server sends copy per refusal code, and it already says the useful
-      // thing — which address, or that the code is spent. Rendered verbatim
-      // rather than re-worded here, so there is one place to change it.
-      setError(err instanceof Error ? err.message : "Could not redeem that code");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <View testID="promo-redeemer" style={styles.promoWrap}>
-      <View style={styles.promoDivider}>
-        <View style={styles.promoRule} />
-        <Text style={styles.promoLabel}>{PROMO_PROMPT.toUpperCase()}</Text>
-        <View style={styles.promoRule} />
-      </View>
-
-      <View style={styles.promoRow}>
-        <TextInput
-          testID="promo-input"
-          value={code}
-          onChangeText={setCode}
-          placeholder={PROMO_PLACEHOLDER}
-          placeholderTextColor={theme.subtle}
-          // No autocapitalize fight and no autocorrect: the server normalizes,
-          // and a keyboard "helpfully" rewriting a random string is how a valid
-          // code arrives mangled.
-          autoCapitalize="characters"
-          autoCorrect={false}
-          editable={!pending}
-          returnKeyType="go"
-          onSubmitEditing={() => void submit()}
-          style={styles.promoInput}
-        />
-        <Pressable
-          testID="promo-submit"
-          accessibilityRole="button"
-          onPress={() => void submit()}
-          disabled={disabled}
-          style={[styles.promoButton, disabled ? styles.promoButtonOff : null]}
-        >
-          {pending ? (
-            <ActivityIndicator size="small" color={theme.onPrimary} />
-          ) : (
-            <Text style={[styles.promoButtonText, disabled ? styles.promoButtonTextOff : null]}>
-              {PROMO_CTA_LABEL}
-            </Text>
-          )}
-        </Pressable>
-      </View>
-
-      {error ? (
-        <Text testID="promo-error" style={styles.promoError}>
-          {error}
-        </Text>
-      ) : null}
-    </View>
   );
 }
 
@@ -491,7 +447,9 @@ const styles = StyleSheet.create({
   closeX: { fontFamily: font.regular, fontSize: 22, lineHeight: 24, color: theme.subtle },
   closeXOff: { opacity: 0.4 },
 
-  scroll: { marginTop: 18 },
+  // Shrinks to whatever the sheet's maxHeight leaves after the header, and
+  // never grows past its content: a short window scrolls instead of clipping.
+  scroll: { marginTop: 18, flexGrow: 0, flexShrink: 1 },
   scrollContent: { paddingBottom: 4 },
   plans: { gap: 8 },
   plansLoading: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 14 },
@@ -514,7 +472,8 @@ const styles = StyleSheet.create({
   planPrice: { flexDirection: "row", alignItems: "baseline", gap: 6, minWidth: 0, flexShrink: 1 },
   planPriceLabel: { fontFamily: font.bold, fontSize: 17, color: theme.text },
   planCadence: { fontFamily: font.regular, fontSize: 13, color: theme.muted },
-  planTrailing: { flexDirection: "row", alignItems: "center", gap: 8 },
+  planDetail: { fontFamily: font.regular, fontSize: 12.5, color: theme.muted },
+  planTrailing: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 },
   planNote: {
     paddingVertical: 3,
     paddingHorizontal: 8,
@@ -524,11 +483,11 @@ const styles = StyleSheet.create({
   planNoteText: { fontFamily: font.semibold, fontSize: 11, color: theme.success },
 
   renewalNote: {
-    marginTop: 10,
+    marginTop: 12,
     fontFamily: font.regular,
-    fontSize: 11.5,
-    lineHeight: 17,
-    color: theme.subtle,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: theme.muted,
   },
 
   secondaryRow: {
@@ -542,46 +501,29 @@ const styles = StyleSheet.create({
   secondaryText: { fontFamily: font.semibold, fontSize: 13, color: theme.primary },
   secondaryTextOff: { opacity: 0.45 },
 
-  legalRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
-  legalLink: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
-  legalDot: { fontFamily: font.regular, fontSize: 11.5, color: theme.subtle },
-
-  promoWrap: { marginTop: 14 },
-  promoDivider: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
-  promoRule: { flex: 1, height: 1, backgroundColor: theme.border },
-  promoLabel: { fontFamily: font.regular, fontSize: 10.5, letterSpacing: 0.8, color: theme.subtle },
-  promoRow: { flexDirection: "row", gap: 6 },
-  promoInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    borderRadius: theme.radiusSm,
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surfaceMuted,
-    color: theme.text,
-    fontFamily: font.regular,
-    fontSize: 13,
-  },
-  promoButton: {
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: theme.radiusSm,
-    backgroundColor: theme.primary,
-    alignItems: "center",
+  legalRow: {
+    marginTop: 4,
+    flexDirection: "row",
     justifyContent: "center",
-    minWidth: 82,
+    alignItems: "center",
+    flexWrap: "wrap",
+    columnGap: 18,
+    rowGap: 6,
   },
-  promoButtonOff: { backgroundColor: theme.border },
-  promoButtonText: { fontFamily: font.semibold, fontSize: 13, color: theme.onPrimary },
-  promoButtonTextOff: { color: theme.subtle },
-  promoError: {
-    marginTop: 8,
+  linkError: {
+    marginTop: 6,
+    textAlign: "center",
     fontFamily: font.regular,
-    fontSize: 11.5,
-    lineHeight: 17,
+    fontSize: 12.5,
+    lineHeight: 18,
     color: theme.danger,
+  },
+  legalLink: {
+    fontFamily: font.semibold,
+    fontSize: 13,
+    color: theme.primary,
+    textDecorationLine: "underline",
+    paddingVertical: 6,
   },
 
   notWiredText: {

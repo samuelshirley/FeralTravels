@@ -1,0 +1,83 @@
+# Codes on iOS are App Store OFFER CODES, redeemed in Apple's own sheet — and
+# the Settings plan line tells a free-period account the truth about it.
+#
+# Replaced promo-redeem.yaml on 2026-10-20. The custom FERAL-XXXX-XXXX field
+# unlocked the paid tier through our own endpoint, which is a Guideline 3.1.1
+# rejection on iOS; Sam moved codes to App Store Connect offer codes. Apple's
+# redemption sheet is system UI that Maestro cannot drive reliably, so this
+# flow asserts the control exists where the old field was, and the old field
+# does not. In a build with NO RevenueCat key the control cannot open Apple's
+# sheet, and it must say so rather than do nothing — asserted when that is the
+# build under test.
+#
+# Also: a free-period account's plan line says "Free for your first 7 days —
+# N days left. No payment taken." — never "Free trial", which beside an App
+# Store subscription reads as Apple's free trial (Guideline 3.1.2 / 2.3.1).
+#
+# UNPROVEN on a simulator: written 2026-10-20 by a session with no simulator.
+#
+# Its own account (suffix `oc`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: oc
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# Two days into the free period: entitled, no subscription row. Written AFTER
+# sign-in (fixture addresses are comped, and sign-in re-sets that).
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '2'
+      SUBSCRIPTION_STATUS: ''
+
+# ── Settings -> Plan: the free period, worded as what it is ────────────────
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'settings-view-plans'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    text: 'Free for your first 7 days — \d days left\. No payment taken\.'
+- assertNotVisible:
+    text: '.*Free trial.*'
+
+# ── View plans: full disclosure, Apple's offer-code button, no promo field ──
+- tapOn:
+    id: 'settings-view-plans'
+- runFlow: purchase-sheet.yaml
+
+# A build with no RevenueCat key cannot open Apple's sheet: the tap must say so.
+- runFlow:
+    when:
+      visible:
+        text: '.*Plans can.t be bought on this device right now\. Email.*'
+    commands:
+      - tapOn:
+          id: 'redeem-offer-code'
+      - extendedWaitUntil:
+          visible:
+            text: 'Offer codes can.t be redeemed on this device right now\..*'
+          timeout: 10000
+- tapOn: 'Close'
