@@ -63,8 +63,38 @@ export function sanitizePennyText(text: string): string {
   // Code fences that now wrap nothing but whitespace.
   out = out.replace(/```[a-zA-Z]*\s*```/g, '');
 
+  out = stripPennyMarkdown(out);
+
   // Collapse 3+ newlines left by removals, then trim.
   out = out.replace(/\n{3,}/g, '\n\n').trim();
 
   return out;
+}
+
+/**
+ * Penny's bubbles are plain text on both clients — the web renders `content`
+ * as-is and so does the phone — so markdown arrives as literal symbols. The
+ * prompt forbids it, and Haiku uses it anyway, most often on a list of
+ * questions: "1. **How many days total** for the trip?" reached an App Review
+ * device that way (2026-10-20) and reads as broken.
+ *
+ * Stripped HERE, before the text is streamed or persisted, so both clients and
+ * every reload get the same clean string, rather than teaching two renderers
+ * a markdown subset. What goes: bold and italic markers, heading hashes, and
+ * `*`/`-` bullets (to "• "). What stays: numbered lists ("1. ") — already
+ * plain text — and any asterisk that is not wrapping a word (5 * 4, a lone *).
+ */
+export function stripPennyMarkdown(text: string): string {
+  return (
+    text
+      // **bold** and __bold__ (non-greedy, on one line).
+      .replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, '$1')
+      .replace(/__(?=\S)([^_\n]+?)(?<=\S)__/g, '$1')
+      // *italic*: an asterisk hugging a word on both sides, not mid-word.
+      .replace(/(^|[^\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?!\w)/g, '$1$2')
+      // # Headings at the start of a line.
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+      // "* item" / "- item" bullets.
+      .replace(/^([ \t]*)[*-][ \t]+(?=\S)/gm, '$1• ')
+  );
 }

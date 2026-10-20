@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeLeakedToolCall, sanitizePennyText } from './sanitize';
+import { looksLikeLeakedToolCall, sanitizePennyText, stripPennyMarkdown } from './sanitize';
 
 describe('looksLikeLeakedToolCall', () => {
   it('detects an <invoke> tool call written as text', () => {
@@ -56,5 +56,29 @@ describe('sanitizePennyText', () => {
   it('leaves clean prose untouched', () => {
     const input = 'Saved — kept your full Innsbruck stay. Want to adjust anything?';
     expect(sanitizePennyText(input)).toBe(input);
+  });
+});
+
+describe('stripPennyMarkdown — Penny bubbles are plain text', () => {
+  it('drops the bold markers from the exact reply seen on the App Review device', () => {
+    const raw =
+      'A few things before I plan:\n\n' +
+      '1. **How many days total** for the trip?\n' +
+      '2. **Fuel range** — roughly how far on a full tank?\n' +
+      '3. **Back to Girona**, or ending elsewhere?';
+    expect(stripPennyMarkdown(raw)).toBe(
+      'A few things before I plan:\n\n' +
+        '1. How many days total for the trip?\n' +
+        '2. Fuel range — roughly how far on a full tank?\n' +
+        '3. Back to Girona, or ending elsewhere?',
+    );
+    // And through the backstop every chunk passes (src/lib/claude.ts).
+    expect(sanitizePennyText(raw)).not.toContain('**');
+  });
+
+  it('drops italics, headings and bullet markers but keeps what is not markdown', () => {
+    expect(stripPennyMarkdown('## Day 1\n* Fuel in *Figueres*\n- __Rest__ day')).toBe('Day 1\n• Fuel in Figueres\n• Rest day');
+    expect(stripPennyMarkdown('5 * 4 = 20, and a lone * stays')).toBe('5 * 4 = 20, and a lone * stays');
+    expect(stripPennyMarkdown('snake_case_name stays')).toBe('snake_case_name stays');
   });
 });
