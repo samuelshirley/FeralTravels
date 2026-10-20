@@ -1,0 +1,175 @@
+# The third-party-AI consent sheet (App Review 5.1.2(i), revised 2026-10-16),
+# both answers, on a brand-new account (suffix `aic`) — the state an App
+# Reviewer, including the demo account, starts in.
+#
+#   Not now → nothing is sent: Penny's setup question does not advance, her
+#   composer is disabled with one line and a Review link, a suggestion chip
+#   asks again instead of filling the composer, and the rest of the app (the
+#   trips list, Settings, account deletion) still works.
+#   Review → Agree → the held answer goes, and after a relaunch the next answer
+#   goes straight through: the agreement is stored, never asked again.
+#
+# ONE Haiku intent-scan call (~$0.0015) once agreed — the same first answer
+# onboarding-wizard.yaml pays for on every push.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: aic
+      SEED_CANONICAL: ''
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: onboarding
+      EXTRA_TRIP_NAME: E2E Fixture Consent Trip
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+
+# ── The first answer is held by the sheet ───────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Road trip to Berlin'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible:
+      id: 'ai-consent-sheet'
+    timeout: 20000
+- assertVisible: "Penny uses Anthropic's Claude"
+- assertVisible:
+    id: 'ai-consent-body'
+    text: '.*sent to Anthropic, which runs the Claude AI model.*'
+- assertVisible:
+    id: 'ai-consent-privacy'
+    text: 'Privacy Policy'
+
+# ── Not now ─────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'ai-consent-not-now'
+- extendedWaitUntil:
+    notVisible:
+      id: 'ai-consent-sheet'
+    timeout: 10000
+- assertVisible:
+    id: 'ai-consent-declined'
+- assertVisible: ".*Penny can't plan until you agree.*"
+- assertVisible:
+    id: 'chat-composer-send'
+    enabled: false
+# Nothing was sent: the setup did not move on to the origin question.
+- assertNotVisible: 'Where are you starting from?'
+
+# Review reopens the sheet — the one-line way back.
+- tapOn:
+    id: 'ai-consent-review'
+- extendedWaitUntil:
+    visible:
+      id: 'ai-consent-sheet'
+    timeout: 10000
+- tapOn:
+    id: 'ai-consent-not-now'
+- extendedWaitUntil:
+    notVisible:
+      id: 'ai-consent-sheet'
+    timeout: 10000
+
+# A suggestion asks again rather than becoming a message. (Keyboard down
+# first — tapping the thread clears it, screenshots.yaml — so the chip is
+# not under it.)
+- tapOn:
+    point: '50%,25%'
+- waitForAnimationToEnd
+- tapOn: 'Pyrenees loop with 3 rest days'
+- extendedWaitUntil:
+    visible:
+      id: 'ai-consent-sheet'
+    timeout: 10000
+- tapOn:
+    id: 'ai-consent-not-now'
+- extendedWaitUntil:
+    notVisible:
+      id: 'ai-consent-sheet'
+    timeout: 10000
+- assertNotVisible: 'Where are you starting from?'
+
+# ── The rest of the app still works ─────────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'delete-account-open'
+    direction: DOWN
+    timeout: 20000
+
+# ── Review → Agree: the answer goes ─────────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Road trip to Berlin'
+- tapOn:
+    id: 'chat-composer-send'
+- runFlow: ai-consent-agree.yaml
+- extendedWaitUntil:
+    visible: 'Where are you starting from?'
+    timeout: 30000
+
+# ── Stored, not remembered: no sheet after a relaunch ───────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- runFlow:
+    when:
+      visible: 'CHAT'
+    commands:
+      - tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible: 'Where are you starting from?'
+    timeout: 30000
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Girona'
+- tapOn:
+    id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'When are you setting off?'
+    timeout: 30000
+- assertNotVisible:
+    id: 'ai-consent-sheet'

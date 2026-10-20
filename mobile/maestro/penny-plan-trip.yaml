@@ -57,6 +57,9 @@ appId: ${APP_ID}
 - inputText: 'Plan this as a two-day drive, no rest days, and go ahead without asking me anything. Day 1: drive from Alta, Norway to the North Cape Hall (Nordkapphallen) at the tip of Nordkapp. Day 2: drive from the North Cape Hall back to Alta.'
 - tapOn:
     id: 'chat-composer-send'
+# A fresh account's first send: the AI consent sheet (App Review 5.1.2(i))
+# holds it until Agree.
+- runFlow: ai-consent-agree.yaml
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000

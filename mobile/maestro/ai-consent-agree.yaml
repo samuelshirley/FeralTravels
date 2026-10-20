@@ -1,0 +1,27 @@
+# SUBFLOW — run right after the first thing a fresh account sends to Penny (a
+# setup answer, a chip, a message). The "Penny uses Anthropic's Claude" sheet
+# (App Review 5.1.2(i)) MUST be on screen: this asserts it, its copy and its
+# privacy link, then agrees, and the send it held goes ahead. One place, so a
+# copy or testID change is one edit. Not listed in a shard (it runs inside the
+# flows that call it — maestroFlowParams.test.ts).
+#
+# The account's agreement is stored server-side, so the sheet never comes back
+# for it: a flow calls this once, at its first send.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: 'ai-consent-sheet'
+    timeout: 20000
+- assertVisible: "Penny uses Anthropic's Claude"
+- assertVisible:
+    id: 'ai-consent-body'
+    text: '.*your messages, any photos you attach, your trip details and your current location are sent to Anthropic.*'
+- assertVisible:
+    id: 'ai-consent-privacy'
+- tapOn:
+    id: 'ai-consent-agree'
+- extendedWaitUntil:
+    notVisible:
+      id: 'ai-consent-sheet'
+    timeout: 20000

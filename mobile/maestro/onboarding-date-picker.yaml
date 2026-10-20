@@ -37,6 +37,8 @@ appId: ${APP_ID}
 - inputText: 'Porto'
 - tapOn:
     id: 'chat-composer-send'
+# Shared shard account: chat-keyboard.yaml normally agreed already.
+- runFlow: ai-consent-if-asked.yaml
 - extendedWaitUntil:
     visible: 'Where are you starting from?'
     timeout: 30000

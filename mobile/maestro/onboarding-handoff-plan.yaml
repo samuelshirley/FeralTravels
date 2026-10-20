@@ -42,6 +42,9 @@ appId: ${APP_ID}
 - inputText: 'Road trip to Lyon'
 - tapOn:
     id: 'chat-composer-send'
+# A fresh account's first send: the AI consent sheet (App Review 5.1.2(i))
+# holds it until Agree.
+- runFlow: ai-consent-agree.yaml
 - extendedWaitUntil:
     visible: 'Where are you starting from?'
     timeout: 30000

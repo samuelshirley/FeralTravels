@@ -1,4 +1,5 @@
-import { Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect } from "react";
+import { Keyboard, Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { API_BASE_URL } from "@/lib/config";
 import { theme, shadow } from "@/lib/theme";
@@ -28,6 +29,11 @@ export default function AiConsentSheet({
   onNotNow: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // The sheet opens on a tap of Send, usually with the keyboard up; on iOS the
+  // keyboard sits above a modal and would cover Agree / Not now.
+  useEffect(() => {
+    Keyboard.dismiss();
+  }, []);
   return (
     <Modal visible transparent animationType="slide" onRequestClose={() => (saving ? undefined : onNotNow())}>
       <View style={styles.backdrop}>

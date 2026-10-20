@@ -125,3 +125,56 @@ describe('one definition of the code and the copy', () => {
     }
   });
 });
+
+describe('the Maestro flows drive the real sheet', () => {
+  const FLOW_DIR = 'mobile/maestro';
+  const flows = fs.readdirSync(path.join(ROOT, FLOW_DIR)).filter((f) => f.endsWith('.yaml'));
+  const appSource = read('mobile/components/AiConsentSheet.tsx') + read('mobile/components/ChatPanel.tsx');
+
+  it('every consent testID a flow names exists in the app', () => {
+    for (const f of flows) {
+      const src = read(`${FLOW_DIR}/${f}`);
+      for (const m of src.matchAll(/id: '(ai-consent-[a-z-]+)'/g)) {
+        expect(appSource, `${f} looks for ${m[1]}, which the app no longer renders`).toContain(`testID="${m[1]}"`);
+      }
+    }
+  });
+
+  it('ai-consent.yaml (both answers) runs in a shard, and checks Not now before Agree', () => {
+    const shards = fs.readdirSync(path.join(ROOT, FLOW_DIR, 'shards')).map((s) => read(`${FLOW_DIR}/shards/${s}`));
+    expect(shards.some((s) => /^\s+- ai-consent\.yaml$/m.test(s))).toBe(true);
+    const flow = read(`${FLOW_DIR}/ai-consent.yaml`);
+    const notNow = flow.indexOf("id: 'ai-consent-not-now'");
+    const agree = flow.indexOf('runFlow: ai-consent-agree.yaml');
+    expect(notNow).toBeGreaterThan(-1);
+    expect(agree).toBeGreaterThan(notNow);
+    expect(flow).toContain("id: 'ai-consent-declined'");
+    expect(flow).toContain("id: 'ai-consent-review'");
+    expect(flow).toContain("id: 'delete-account-open'");
+  });
+
+  it('every fresh-account flow that sends to Penny agrees at its first send', () => {
+    // A fresh account has not agreed, so without this the sheet would sit over
+    // the flow's next assertion. The shard-shared core account agrees in
+    // chat-keyboard.yaml (first in the shard); its later flows use the
+    // tolerant ai-consent-if-asked.yaml.
+    const STRICT = [
+      'chat-keyboard.yaml',
+      'onboarding-handoff-plan.yaml',
+      'onboarding-range.yaml',
+      'onboarding-wizard.yaml',
+      'penny-jev-gate.yaml',
+      'penny-maps-link.yaml',
+      'penny-plan-trip.yaml',
+      'penny-rest-day.yaml',
+      'penny-stop-edit.yaml',
+    ];
+    for (const f of STRICT) {
+      const src = read(`${FLOW_DIR}/${f}`);
+      const send = src.indexOf("- tapOn:\n    id: 'chat-composer-send'");
+      const agree = src.indexOf('- runFlow: ai-consent-agree.yaml');
+      expect(agree, `${f} never agrees to the AI consent sheet`).toBeGreaterThan(-1);
+      expect(agree, `${f} agrees before it sends anything`).toBeGreaterThan(send);
+    }
+  });
+});

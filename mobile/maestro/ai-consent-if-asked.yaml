@@ -1,0 +1,25 @@
+# SUBFLOW — for flows on a SHARED shard account (core shard), where an earlier
+# flow normally agreed already (chat-keyboard.yaml runs first and agrees through
+# ai-consent-agree.yaml). With `continueOnFailure`, that earlier flow may have
+# died before agreeing, so this agrees if — and only if — the sheet is up.
+# The strict check of the sheet itself lives in ai-consent-agree.yaml and
+# ai-consent.yaml; this one only keeps a later flow from failing on someone
+# else's failure.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: 'ai-consent-sheet'
+    timeout: 3000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'ai-consent-sheet'
+    commands:
+      - tapOn:
+          id: 'ai-consent-agree'
+      - extendedWaitUntil:
+          notVisible:
+            id: 'ai-consent-sheet'
+          timeout: 20000

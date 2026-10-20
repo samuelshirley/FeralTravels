@@ -50,6 +50,9 @@ appId: ${APP_ID}
 - inputText: '400'
 - tapOn:
     id: 'chat-composer-send'
+# The first answer that reaches the server (50 was refused on the phone), so
+# the AI consent sheet holds it until Agree.
+- runFlow: ai-consent-agree.yaml
 - extendedWaitUntil:
     notVisible: 'Must be at least 200.'
     timeout: 10000
