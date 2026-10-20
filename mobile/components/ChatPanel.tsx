@@ -1525,11 +1525,13 @@ export default function ChatPanel({
   const pickImages = async () => {
     // Drag-and-drop and paste have no phone equivalent — the picker is the only
     // attach path.
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      notify("Photo access is off — turn it on in Settings to attach images.");
-      return;
-    }
+    //
+    // NO PERMISSION REQUEST. With `allowsEditing` off, expo-image-picker opens
+    // PHPickerViewController, which runs out of process and hands back only
+    // what the user picks — iOS needs no Photos permission for it. Asking first
+    // raised a full-library prompt for access the app never uses (5.1.1), and
+    // a "Don't Allow" there locked out a picker that would have worked.
+    // photoPermissionGuard.test.ts keeps it out.
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       base64: true,

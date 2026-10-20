@@ -15,6 +15,7 @@ flows:
   - chat-tab-in-flight.yaml
   - onboarding-flash.yaml
   - onboarding-date-picker.yaml
+  - chat-attach-photo.yaml
   - settings-location.yaml
 executionOrder:
   continueOnFailure: true
@@ -23,4 +24,5 @@ executionOrder:
     - chat-tab-in-flight
     - onboarding-flash
     - onboarding-date-picker
+    - chat-attach-photo
     - settings-location

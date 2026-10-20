@@ -16,6 +16,7 @@ prove you can see it while typing, which is exactly the bug that shipped
 | `chat-keyboard.yaml` | behaviour | The regression: composer reachable and operable **while the keyboard is up**. |
 | `maps-link-stop.yaml` | behaviour | A real Google share link (fetched live) lands as a stop on the Porto → Lisbon day. Seeds via `seed-maps-link-stop.js`; no Anthropic call. |
 | `chat-tab-in-flight.yaml`, `onboarding-flash.yaml`, `onboarding-date-picker.yaml`, `settings-location.yaml` | behaviour | Regression flows — each file's header says which bug. |
+| `chat-attach-photo.yaml` | behaviour | The attach button opens iOS's photo picker with Photos access DENIED, and no Photos permission alert ever appears (5.1.1). |
 | `trip-itinerary.yaml` | behaviour | Trips list, day cards, drive link, fuel sourced for today on its own and another day on open, the map. |
 | `forced-stop-line.yaml` | behaviour | Finn's forced-stop reason on the stop row, in km, then in mi after switching units — and no km anywhere. |
 | `rest-day-stop.yaml` | behaviour | A base day lists its stops (#67), and a note saves with the keyboard up (#70). |
