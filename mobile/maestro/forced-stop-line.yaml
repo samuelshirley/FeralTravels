@@ -42,8 +42,11 @@ appId: ${APP_ID}
     visible: 'LIST'
     timeout: 30000
 
-# ── The map's next-stop sheet ───────────────────────────────────────────────
-# The label carries the distance, and the button names no station.
+# ── NEXT STOP on the list, then the map's next-stop sheet ───────────────────
+# The label carries the distance, and the button names no station. The list's
+# NEXT STOP is matched by its accessibility label, which says where a tap goes.
+- assertVisible: 'Fuel stop . 95 km in Google Maps'
+- tapOn: 'MAP'
 - extendedWaitUntil:
     visible:
       text: 'Fuel stop . 95 km'
