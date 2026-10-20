@@ -58,6 +58,82 @@ afterEach(() => vi.unstubAllEnvs());
 
 const MONTHLY = PRODUCTS[0].id;
 
+describe("App Review's demo account (Guideline 2.1 — full access)", () => {
+  /**
+   * Device check, 2026-10-20: the review account, created weeks before review,
+   * signed in to "That's your seven days up". While `APPLE_REVIEW_SIGNIN=1` it
+   * is entitled through the public surface, with no subscription row written,
+   * and switching the flag off makes it an ordinary lapsed account again.
+   */
+  async function lapsedReviewAccount() {
+    const user = await seedUser('appletest@feraltravels.com');
+    const { db } = await testDb();
+    await db
+      .update(users)
+      .set({ createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) })
+      .where(eq(users.id, user.id));
+    await setPaywallEnabled(true);
+    return user;
+  }
+
+  it('is entitled while the flag is armed — state unchanged, no subscription row', async () => {
+    vi.stubEnv('APPLE_REVIEW_SIGNIN', '1');
+    const user = await lapsedReviewAccount();
+    expect(await hasEntitlement(user.id)).toBe(true);
+    expect(await getAccountVerdict(user.id)).toMatchObject({
+      state: 'trial_expired',
+      entitled: true,
+      blockReason: null,
+      source: null,
+    });
+    expect(await getSubscriptionRow(user.id)).toBeNull();
+  });
+
+  it('is an ordinary lapsed account with the flag off', async () => {
+    vi.stubEnv('APPLE_REVIEW_SIGNIN', '');
+    const user = await lapsedReviewAccount();
+    expect(await hasEntitlement(user.id)).toBe(false);
+    expect((await getAccountVerdict(user.id)).blockReason).toBe('trial_over');
+  });
+
+  it('gives nobody else anything, armed or not', async () => {
+    vi.stubEnv('APPLE_REVIEW_SIGNIN', '1');
+    const other = await seedUser('appletest@feraltravels.com.evil.com');
+    const { db } = await testDb();
+    await db
+      .update(users)
+      .set({ createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) })
+      .where(eq(users.id, other.id));
+    await setPaywallEnabled(true);
+    expect(await hasEntitlement(other.id)).toBe(false);
+  });
+
+  it('a sandbox purchase still lands: the real apple_iap row shows through as subscribed', async () => {
+    vi.stubEnv('APPLE_REVIEW_SIGNIN', '1');
+    const user = await lapsedReviewAccount();
+    const now = Date.now();
+    const result = await applySubscriptionEvent({
+      eventId: `evt-review-${now}`,
+      type: 'INITIAL_PURCHASE',
+      appUserId: user.id,
+      transferredFrom: [],
+      transferredTo: [],
+      productId: MONTHLY,
+      periodEndMs: now + 30 * 24 * 60 * 60 * 1000,
+      eventTimeMs: now,
+      store: 'APP_STORE',
+      originalTransactionId: '2000000999999999',
+      payload: {},
+    });
+    expect(result.outcome).toBe('applied');
+    expect(await getAccountVerdict(user.id)).toMatchObject({
+      state: 'subscribed',
+      entitled: true,
+      source: 'apple_iap',
+    });
+  });
+});
+
 describe('subscriptions via the RevenueCat webhook', () => {
   it('an INITIAL_PURCHASE writes the row and the audit event exactly', async () => {
     const user = await seedUser();
