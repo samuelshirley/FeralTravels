@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Image,
+  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TypingBubble } from "@/components/chat/Indicators";
@@ -32,12 +41,21 @@ const SUPPORT_EMAIL = "support@feraltravels.com";
  * Users who DO have trips never come here. They keep the trips list, their
  * itineraries stay readable, and the same paywall message meets them inside any
  * trip's chat — see the `paywall` flag in ChatPanel.
+ *
+ * No dead ends (Guideline 5.1.1(v) and 2.1, 2026-10-20). This screen is the
+ * whole app for a blocked account with no trips, so it carries:
+ *  - "Account settings", always — sign-out and account deletion live there and
+ *    neither may sit behind a paywall (`PlanRequiredOverlay` has the same link);
+ *  - a real pull-to-refresh, because the copy tells people to pull;
+ *  - a "Try again" CTA when the entitlement could not be fetched, instead of a
+ *    button that did nothing with no payload to open a sheet from.
  */
 export default function PaywallScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Penny types before she speaks, the way she does on a first trip. The delay
   // is the same 3s the onboarding greeting uses (ChatPanel's `isFirstQuestion`
@@ -62,6 +80,7 @@ export default function PaywallScreen() {
   });
 
   const load = useCallback(async () => {
+    if (timer.current) clearTimeout(timer.current);
     const payload = await fetchEntitlement();
     setEntitlement(payload);
     setLoading(false);
@@ -90,13 +109,30 @@ export default function PaywallScreen() {
     };
   }, []);
 
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
+
   const paywall = entitlement?.paywall ?? null;
   const reason = entitlement?.blockReason ?? null;
   // Nothing to sell a capped or revoked account — the answer is a human, not a
   // price list. Same branch as the in-chat button.
   const sellable = reason !== "usage_cap" && reason !== "revoked";
 
+  // The fetch failed: there is no payload to sell from, so the one useful tap
+  // is asking again. Without this branch the button did nothing at all.
+  const failed = !loading && entitlement === null;
+
   function onButtonPress() {
+    if (failed) {
+      void refresh();
+      return;
+    }
     if (sellable) {
       flow.clearMessages();
       setSheetOpen(true);
@@ -118,7 +154,16 @@ export default function PaywallScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refresh()}
+            tintColor={theme.primary}
+          />
+        }
+      >
         <View style={styles.spacer} />
         {loading || typing ? (
           <TypingBubble />
@@ -137,11 +182,24 @@ export default function PaywallScreen() {
               testID="paywall-cta"
             >
               <Text style={styles.ctaText}>
-                {paywall?.buttonLabel ?? (sellable ? "Keep planning" : "Email support")}
+                {failed
+                  ? "Try again"
+                  : paywall?.buttonLabel ?? (sellable ? "Keep planning" : "Email support")}
               </Text>
             </Pressable>
           </View>
         )}
+
+        {/* The way out that is not a purchase, in every state including a
+            failed load. Settings holds sign-out and account deletion. */}
+        <Pressable
+          testID="paywall-account-settings"
+          accessibilityRole="button"
+          onPress={() => router.push("/settings")}
+          style={styles.settingsLink}
+        >
+          <Text style={styles.settingsLinkText}>Account settings</Text>
+        </Pressable>
       </ScrollView>
 
       {sheetOpen && entitlement ? (
@@ -153,11 +211,12 @@ export default function PaywallScreen() {
 
 /**
  * Only reachable when the entitlement fetch failed outright, which is why it
- * says nothing specific about trials or prices — we do not know which of them
- * applies. A blank screen would be worse.
+ * says nothing specific about the account — we do not know what applies. Both
+ * ways to retry it names are real: the ScrollView's RefreshControl and the CTA,
+ * which reads "Try again" in this state.
  */
 function fallbackMessage(): string {
-  return "I can't plan on this account right now. Pull to reload, or get in touch and we'll sort it out.";
+  return "I couldn't check this account just now. Pull down or tap Try again — or email support@feraltravels.com and we'll sort it out.";
 }
 
 const styles = StyleSheet.create({
@@ -214,4 +273,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   ctaText: { fontFamily: font.bold, fontSize: 14, color: theme.onPrimary },
+
+  settingsLink: { alignSelf: "center", marginTop: 16, paddingVertical: 8, paddingHorizontal: 12 },
+  settingsLinkText: { fontFamily: font.medium, fontSize: 13, color: theme.primary },
 });

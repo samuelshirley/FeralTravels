@@ -1,7 +1,8 @@
 # The paywall SCREEN (app/paywall.tsx): a blocked account with no trips of its
 # own is sent there at launch instead of to an empty list. paywall.yaml covers
 # a blocked account that HAS trips (Penny's bubble); nothing reached this
-# screen before.
+# screen before. Also holds the screen's ways out (2026-10-20, Guidelines
+# 5.1.1(v) and 2.1): pull-to-refresh and the Account settings link.
 #
 # The trip is deleted through the UI while the account is still entitled
 # (seed-account.js refuses an account that owns nothing, and sign-in waits for
@@ -65,9 +66,41 @@ appId: ${APP_ID}
 - assertNotVisible:
     id: 'chat-composer-input'
 
-# Its sheet: the same full disclosure as every purchase surface, with Apple's
-# offer-code button where the promo box was.
+# ── Pull-to-refresh is real (the failure copy tells people to pull) ────────
+# A pull re-fetches the entitlement; the account is still blocked, so the same
+# message and CTA come back rather than a blank or stuck screen.
+- swipe:
+    direction: DOWN
+- extendedWaitUntil:
+    visible:
+      text: ".*That.s your seven days up.*"
+    timeout: 30000
+- assertVisible:
+    id: 'paywall-cta'
+    text: 'Keep planning'
+
+# ── Its sheet: the same full disclosure as every purchase surface ──────────
 - tapOn:
     id: 'paywall-cta'
 - runFlow: purchase-sheet.yaml
 - tapOn: 'Close'
+
+# ── No dead end: Account settings is on this screen (sign-out, deletion) ───
+# NOT driven here: the "Try again" CTA, which only appears when the
+# entitlement fetch FAILS — nothing in the fixture API can make it fail for one
+# account. paywallDeadEndGuard.test.ts holds that branch.
+- assertVisible:
+    id: 'paywall-account-settings'
+    text: 'Account settings'
+- tapOn:
+    id: 'paywall-account-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'delete-account-open'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    id: 'delete-account-open'
