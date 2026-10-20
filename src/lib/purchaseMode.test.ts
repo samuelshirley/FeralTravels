@@ -13,12 +13,14 @@ import type { PaywallProduct } from '@/types/entitlement';
 /** What `/api/me/entitlement` sends: the US fallbacks, and no saving. */
 const MONTHLY: PaywallProduct = {
   id: 'com.feraltravels.ios.monthly',
+  title: 'Feral Travels monthly',
   priceLabel: '$2.69',
   cadence: 'per month',
   period: 'month',
 };
 const ANNUAL: PaywallProduct = {
   id: 'com.feraltravels.ios.annual',
+  title: 'Feral Travels annual',
   priceLabel: '$22.00',
   cadence: 'per year',
   period: 'year',
@@ -29,11 +31,12 @@ const SERVER = [MONTHLY, ANNUAL];
 function storefront(
   currencyCode: string,
   monthly: [number, string],
-  annual: [number, string]
+  annual: [number, string],
+  titles: [string, string] = ['Feral Travels monthly', 'Feral Travels annual']
 ): StoreAnswer {
   const plans: StorePlanLike[] = [
-    { productId: ANNUAL.id, price: annual[0], priceLabel: annual[1], currencyCode },
-    { productId: MONTHLY.id, price: monthly[0], priceLabel: monthly[1], currencyCode },
+    { productId: ANNUAL.id, title: titles[1], price: annual[0], priceLabel: annual[1], currencyCode },
+    { productId: MONTHLY.id, title: titles[0], price: monthly[0], priceLabel: monthly[1], currencyCode },
   ];
   return { kind: 'packages', plans };
 }
@@ -53,7 +56,9 @@ function resolve(storeAnswer: StoreAnswer, serverPlans = SERVER, locale = 'en-US
 function only(productId: string): StoreAnswer {
   return {
     kind: 'packages',
-    plans: [{ productId, priceLabel: '$2.69', price: 2.69, currencyCode: 'USD' }],
+    plans: [
+      { productId, title: 'Feral Travels monthly', priceLabel: '$2.69', price: 2.69, currencyCode: 'USD' },
+    ],
   };
 }
 
@@ -126,6 +131,44 @@ describe('resolvePurchaseMode', () => {
   });
 });
 
+describe('the subscription title (Guideline 3.1.2(c))', () => {
+  /**
+   * App Review rejected 1.0 (12) on 2026-10-19 because the purchase sheet named
+   * no subscription: each row was a price and a cadence under the APP's name.
+   * Every row must carry the auto-renewing subscription's own title, in every
+   * mode, because every mode renders rows.
+   */
+  it("store: each row carries the STORE's title — App Store Connect's localized display name", () => {
+    const r = resolve(storefront('EUR', [2, '2,00 €'], [20, '20,00 €'], ['Feral Travels mensual', 'Feral Travels anual']));
+    expect(r.mode).toBe('store');
+    expect(r.plans.map((p) => p.title)).toEqual(['Feral Travels mensual', 'Feral Travels anual']);
+  });
+
+  it("store: a blank store title falls back to the server's, never to an untitled row", () => {
+    const r = resolve(storefront('USD', [2.69, '$2.69'], [22, '$22.00'], ['', '   ']));
+    expect(r.plans.map((p) => p.title)).toEqual(['Feral Travels monthly', 'Feral Travels annual']);
+  });
+
+  it('every mode that renders rows renders titled rows', () => {
+    const answers: StoreAnswer[] = [
+      US,
+      EUROPE,
+      CANADA,
+      { kind: 'pending' },
+      { kind: 'no_key' },
+      { kind: 'error' },
+      { kind: 'packages', plans: [] },
+      only('com.feraltravels.app.monthly'),
+      only(MONTHLY.id),
+    ];
+    for (const answer of answers) {
+      const r = resolve(answer);
+      expect(r.plans.length, answer.kind).toBeGreaterThan(0);
+      for (const p of r.plans) expect(p.title.trim(), `${answer.kind} ${p.id}`).not.toBe('');
+    }
+  });
+});
+
 describe('the annual saving', () => {
   /**
    * Computed from the STORE's two numbers, never from constants.ts: a price
@@ -139,16 +182,30 @@ describe('the annual saving', () => {
     expect(note(resolve(US))).toBe('Save $10.28 a year');
   });
 
-  it('Europe: €2 × 12 − €20 is €4, without decimals', () => {
-    expect(note(resolve(EUROPE, SERVER, 'en-IE'))).toBe('Save €4 a year');
-    // The sign's position is the reader's locale, not ours.
-    expect(note(resolve(EUROPE, SERVER, 'de-DE'))).toBe('Save 4\u00a0€ a year');
+  it('Europe: €2 × 12 − €20 is €4, without decimals, written the way the store writes €20', () => {
+    // The store's label is "20,00 €", so the saving is "4 €" — whatever the
+    // device is set to. The badge sits beside that price and must read like it.
+    for (const device of ['en-IE', 'en-US', 'de-DE', 'es-ES']) {
+      expect(note(resolve(EUROPE, SERVER, device)), device).toBe('Save 4\u00a0€ a year');
+    }
   });
 
-  it('Canada: CA$3 × 12 − CA$30 is CA$6, written the way the reader writes it', () => {
-    // A US-English device must tell CAD from USD; a Canadian one calls it "$".
-    expect(note(resolve(CANADA, SERVER, 'en-US'))).toBe('Save CA$6 a year');
+  it('Canada: CA$3 × 12 − CA$30 is $6, the way the Canadian storefront writes its own prices', () => {
+    expect(note(resolve(CANADA, SERVER, 'en-US'))).toBe('Save $6 a year');
     expect(note(resolve(CANADA, SERVER, 'en-CA'))).toBe('Save $6 a year');
+  });
+
+  it("follows the STOREFRONT, not the device: a US storefront on a Spanish phone is '$10.28'", () => {
+    // Seen on a real iPhone 2026-10-20: "$22.00 per year" beside
+    // "Save 10,28 US$ a year" — the price in the storefront's format, the
+    // saving in the device's (es-ES).
+    expect(note(resolve(US, SERVER, 'es-ES'))).toBe('Save $10.28 a year');
+    expect(note(resolve(US, SERVER, 'de-DE'))).toBe('Save $10.28 a year');
+  });
+
+  it("a storefront format we cannot reproduce gets no badge rather than a guessed one", () => {
+    const odd = storefront('USD', [2.69, 'USD 2.69'], [22, 'USD ~22~']);
+    expect(note(resolve(odd, SERVER, 'en-US'))).toBeUndefined();
   });
 
   it('only on the annual plan', () => {
@@ -185,24 +242,24 @@ describe('the annual saving', () => {
   });
 
   it('refuses when there is no honest figure', () => {
-    const usd = (price: number) => ({ price, currencyCode: 'USD' });
+    const usd = (price: number) => ({ price, currencyCode: 'USD', priceLabel: `$${price.toFixed(2)}` });
     // Two currencies cannot be subtracted.
-    expect(annualSavingsNote(usd(2.69), { price: 20, currencyCode: 'EUR' })).toBeUndefined();
+    expect(annualSavingsNote(usd(2.69), { price: 20, currencyCode: 'EUR', priceLabel: '20,00 €' })).toBeUndefined();
     // An annual plan that saves nothing, or costs more, is not a saving.
     expect(annualSavingsNote(usd(2), usd(24))).toBeUndefined();
     expect(annualSavingsNote(usd(2), usd(30))).toBeUndefined();
     expect(annualSavingsNote(usd(Number.NaN), usd(22))).toBeUndefined();
-    expect(annualSavingsNote(usd(2.69), { price: 22, currencyCode: '' })).toBeUndefined();
+    expect(annualSavingsNote(usd(2.69), { price: 22, currencyCode: '', priceLabel: '$22.00' })).toBeUndefined();
   });
 
   it('float noise cannot turn a whole saving into cents, or cents into a whole', () => {
     // 0.1 × 12 is 1.2000000000000002 in floating point.
-    expect(annualSavingsNote({ price: 0.1, currencyCode: 'USD' }, { price: 0.2, currencyCode: 'USD' }, 'en-US')).toBe('Save $1 a year');
-    expect(annualSavingsNote({ price: 2.99, currencyCode: 'USD' }, { price: 29.99, currencyCode: 'USD' }, 'en-US')).toBe('Save $5.89 a year');
+    expect(annualSavingsNote({ price: 0.1, currencyCode: 'USD' }, { price: 0.2, currencyCode: 'USD', priceLabel: '$0.20' }, 'en-US')).toBe('Save $1 a year');
+    expect(annualSavingsNote({ price: 2.99, currencyCode: 'USD' }, { price: 29.99, currencyCode: 'USD', priceLabel: '$29.99' }, 'en-US')).toBe('Save $5.89 a year');
   });
 
   it('a zero-decimal currency comes out without decimals', () => {
-    expect(annualSavingsNote({ price: 400, currencyCode: 'JPY' }, { price: 4000, currencyCode: 'JPY' }, 'ja-JP')).toBe('Save ￥800 a year');
+    expect(annualSavingsNote({ price: 400, currencyCode: 'JPY' }, { price: 4000, currencyCode: 'JPY', priceLabel: '￥4,000' }, 'ja-JP')).toBe('Save ￥800 a year');
   });
 });
 

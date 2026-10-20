@@ -62,6 +62,12 @@ export type StoreAnswer =
  */
 export interface StorePlanLike {
   productId: string;
+  /**
+   * The product's localized display name from App Store Connect, e.g. "Feral
+   * Travels monthly". May be blank if the metadata is missing; the merge then
+   * keeps the server's title, so a row is never untitled.
+   */
+  title: string;
   /** Apple's localized price string, e.g. "$2.69", "2,00 €". For display only. */
   priceLabel: string;
   /** The same price as a number, in `currencyCode` — what arithmetic uses. */
@@ -105,7 +111,11 @@ export function resolvePurchaseMode({
   storeAnswer: StoreAnswer;
   /** `entitlement.products`, or [] when there is no entitlement payload. */
   serverPlans: PaywallProduct[];
-  /** BCP 47 locale for the saving's formatting. Omitted = the device's own. */
+  /**
+   * The device's BCP 47 locale, tried FIRST when working out how the storefront
+   * writes a price (see `annualSavingsNote`). It never decides the format by
+   * itself. Omitted = the runtime's default.
+   */
   locale?: string;
 }): ResolvedPurchaseMode {
   if (storeAnswer.kind === 'pending') {
@@ -135,9 +145,11 @@ export function resolvePurchaseMode({
 
   /**
    * The server decides WHAT is for sale and how it reads; the store decides
-   * what it COSTS. Merged in the server's order so the cadence, the note and
-   * the ordering stay server-authored, while `priceLabel` becomes Apple's own
-   * localized string.
+   * what it COSTS and what it is CALLED. Merged in the server's order so the
+   * cadence and the ordering stay server-authored, while `priceLabel` and
+   * `title` become Apple's own localized strings — the title falling back to
+   * the server's when the store's is blank, because an untitled row is the
+   * Guideline 3.1.2(c) rejection of 2026-10-19.
    *
    * A server plan with no matching store package is DROPPED: Apple cannot sell
    * it, so offering it would produce a tap that can only fail. ONE plan
@@ -159,7 +171,8 @@ export function resolvePurchaseMode({
     const store = storeFor(p);
     if (!store) return [];
     const note = p.period === 'year' ? saving : undefined;
-    return [{ ...p, priceLabel: store.priceLabel, ...(note ? { note } : {}) }];
+    const title = store.title?.trim() || p.title;
+    return [{ ...p, title, priceLabel: store.priceLabel, ...(note ? { note } : {}) }];
   });
 
   if (merged.length === 0) {
@@ -197,14 +210,63 @@ function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
 }
 
 /**
+ * Locales tried, after the device's own, to find how the STOREFRONT writes a
+ * price. The app is sold in the US, Canada and Europe (App Store availability is
+ * set to exactly those), so these are each of those regions' languages plus an
+ * English variant of each: Apple formats with the App Store account's storefront
+ * and language, which need not match the device. A storefront outside this set
+ * still matches whenever one of these happens to write its currency the same
+ * way; when none does, there is no badge.
+ */
+const STOREFRONT_LOCALES = [
+  'en-US', 'es-US', 'en-CA', 'fr-CA',
+  'en-GB', 'en-IE', 'ga-IE', 'en-MT', 'mt-MT',
+  'de-DE', 'en-DE', 'de-AT', 'en-AT', 'de-CH', 'fr-CH', 'it-CH', 'en-CH', 'de-LU', 'fr-LU',
+  'fr-FR', 'en-FR', 'fr-BE', 'nl-BE', 'en-BE', 'nl-NL', 'en-NL',
+  'es-ES', 'ca-ES', 'en-ES', 'pt-PT', 'en-PT', 'it-IT', 'en-IT',
+  'sv-SE', 'en-SE', 'da-DK', 'en-DK', 'nb-NO', 'en-NO', 'fi-FI', 'en-FI', 'is-IS',
+  'pl-PL', 'en-PL', 'cs-CZ', 'en-CZ', 'sk-SK', 'hu-HU', 'en-HU', 'ro-RO', 'bg-BG',
+  'el-GR', 'en-GR', 'el-CY', 'en-CY', 'hr-HR', 'sl-SI', 'en-SI', 'et-EE', 'lv-LV', 'lt-LT',
+];
+
+/** Spaces differ between Apple and Intl (U+00A0, U+202F) and say nothing about format. */
+const normalizeSpaces = (s: string) => s.replace(/[\s\u00a0\u202f]+/g, ' ').trim();
+
+/**
+ * The locale that writes `price` in `currency` EXACTLY as the store's own label
+ * does — i.e. the storefront's format — or undefined when none of the
+ * candidates reproduces it.
+ */
+function storefrontLocale(
+  price: number,
+  currency: string,
+  label: string,
+  deviceLocale?: string
+): string | undefined {
+  const target = normalizeSpaces(label);
+  const candidates = [...(deviceLocale ? [deviceLocale] : []), ...STOREFRONT_LOCALES];
+  for (const candidate of candidates) {
+    try {
+      const written = new Intl.NumberFormat(candidate, { style: 'currency', currency }).format(price);
+      if (normalizeSpaces(written) === target) return candidate;
+    } catch {
+      // A locale this runtime does not know is simply not a candidate.
+    }
+  }
+  return undefined;
+}
+
+/**
  * "Save €4 a year", from the STORE's two prices: monthly × 12 − annual, in the
- * store's currency, formatted for the viewer's locale.
+ * store's currency, written the way the STOREFRONT writes its prices.
  *
  * Every figure comes from StoreKit, so a price changed in App Store Connect is
- * reflected here with no code change. The currency sign comes from
- * `Intl.NumberFormat`, never from us: EUR in `en-IE` is "€4", in `de-DE`
- * "4 €"; CAD is "CA$6" to a US-English reader and "$6" to a Canadian one,
- * which is how each of them writes it.
+ * reflected here with no code change. The FORMAT comes from StoreKit too: the
+ * badge sits beside Apple's own price string, so it is written in whichever
+ * locale reproduces that string exactly. Formatting with the device's locale
+ * instead put "Save 10,28 US$ a year" beside "$22.00 per year" on a
+ * Spanish-language iPhone with a US App Store account (2026-10-20). The device
+ * locale is only tried first, as the likeliest match.
  *
  * A whole saving drops the decimals ("€4", not "€4.00"), the way the prices
  * themselves are advertised; anything else keeps the currency's own
@@ -213,13 +275,14 @@ function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
  *
  * Returns undefined — no badge — whenever there is no honest figure: the two
  * prices in different currencies, a price that is not a finite number, a
- * currency code that is not ISO 4217-shaped, or an annual plan that does not
- * actually save anything.
+ * currency code that is not ISO 4217-shaped, an annual plan that does not
+ * actually save anything, or a store label no known locale reproduces (a
+ * guessed format beside Apple's is the bug this replaced).
  */
 export function annualSavingsNote(
   monthly: Pick<StorePlanLike, 'price' | 'currencyCode'>,
-  annual: Pick<StorePlanLike, 'price' | 'currencyCode'>,
-  locale?: string
+  annual: Pick<StorePlanLike, 'price' | 'currencyCode' | 'priceLabel'>,
+  deviceLocale?: string
 ): string | undefined {
   const currency = annual.currencyCode;
   if (monthly.currencyCode !== currency || !/^[A-Z]{3}$/.test(currency)) return undefined;
@@ -227,6 +290,9 @@ export function annualSavingsNote(
 
   const cents = Math.round((monthly.price * 12 - annual.price) * 100);
   if (cents <= 0) return undefined;
+
+  const locale = storefrontLocale(annual.price, currency, annual.priceLabel, deviceLocale);
+  if (!locale) return undefined;
 
   const whole = cents % 100 === 0;
   const amount = new Intl.NumberFormat(locale, {

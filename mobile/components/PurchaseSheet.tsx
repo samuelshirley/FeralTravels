@@ -314,11 +314,19 @@ function PlanRow({
   pending: boolean;
   onSelect: () => void;
 }) {
+  // The title is the subscription's own name, above its price and length —
+  // the three things Guideline 3.1.2(c) wants together. Without it the row was
+  // a price under the APP's name, and 1.0 (12) was rejected for exactly that.
   const inner = (
     <>
-      <View style={styles.planPrice}>
-        <Text style={styles.planPriceLabel}>{product.priceLabel}</Text>
-        <Text style={styles.planCadence}>{product.cadence}</Text>
+      <View style={styles.planCopy}>
+        <Text testID={`plan-title-${product.period}`} style={styles.planTitle}>
+          {product.title}
+        </Text>
+        <View style={styles.planPrice}>
+          <Text style={styles.planPriceLabel}>{product.priceLabel}</Text>
+          <Text style={styles.planCadence}>{product.cadence}</Text>
+        </View>
       </View>
       <View style={styles.planTrailing}>
         {product.note ? (
@@ -342,7 +350,7 @@ function PlanRow({
     <Pressable
       testID={`purchase-${product.id}`}
       accessibilityRole="button"
-      accessibilityLabel={`${product.priceLabel} ${product.cadence}`}
+      accessibilityLabel={`${product.title}, ${product.priceLabel} ${product.cadence}`}
       onPress={onSelect}
       disabled={busy}
       style={[styles.planRow, busy && !pending ? styles.planRowDim : null]}
@@ -501,6 +509,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
   },
   planRowDim: { opacity: 0.5 },
+  planCopy: { gap: 2, minWidth: 0, flexShrink: 1 },
+  planTitle: { fontFamily: font.medium, fontSize: 13, color: theme.text },
   planPrice: { flexDirection: "row", alignItems: "baseline", gap: 6, minWidth: 0, flexShrink: 1 },
   planPriceLabel: { fontFamily: font.bold, fontSize: 17, color: theme.text },
   planCadence: { fontFamily: font.regular, fontSize: 13, color: theme.muted },

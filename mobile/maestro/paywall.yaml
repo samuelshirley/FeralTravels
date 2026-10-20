@@ -74,6 +74,15 @@ appId: ${APP_ID}
     timeout: 30000
 - assertVisible:
     text: '.*per year.*'
+# Each row names the subscription it buys (Guideline 3.1.2(c) — the 1.0 (12)
+# rejection, 2026-10-19). This build has no store, so these are the server's
+# fallback titles; a store build shows App Store Connect's display names.
+- assertVisible:
+    id: 'plan-title-month'
+    text: 'Feral Travels monthly'
+- assertVisible:
+    id: 'plan-title-year'
+    text: 'Feral Travels annual'
 - tapOn: 'Close'
 
 # The trips list is covered too: no new trip on a blocked account.

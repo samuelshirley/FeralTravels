@@ -204,6 +204,12 @@ export class PurchaserUnknownError extends Error {
 export interface StorePlan {
   /** The App Store product id — matches `PRODUCTS` in constants.ts. */
   productId: string;
+  /**
+   * `product.title` — the subscription's localized display name from App Store
+   * Connect ("Feral Travels monthly"). Guideline 3.1.2(c) requires it on the
+   * sheet; `resolvePurchaseMode` falls back to the server's when it is blank.
+   */
+  title: string;
   /** Apple's localized price string, e.g. "$2.69", "2,00 €", "CA$3.00". */
   priceLabel: string;
   /** The same price as a number, in `currencyCode`. */
@@ -268,6 +274,7 @@ export async function getStorePlans(): Promise<StorePlan[]> {
   }
   return packages.map((p) => ({
     productId: p.product.identifier,
+    title: p.product.title,
     priceLabel: p.product.priceString,
     price: p.product.price,
     currencyCode: p.product.currencyCode,
