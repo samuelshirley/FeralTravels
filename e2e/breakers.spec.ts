@@ -98,6 +98,11 @@ test.describe.serial('Global circuit breakers', () => {
     const page = await browser.newPage();
     await login(page, email);
     tripId = await firstTripId(page);
+    // Agree to Anthropic through the real endpoint, the way the consent sheet
+    // does: without it replan answers 403 ai_consent_required before it ever
+    // reaches the breaker this file is about.
+    const consent = await page.request.patch('/api/me/preferences', { data: { ai_consent: true } });
+    expect(consent.status(), await consent.text()).toBe(200);
     await page.close();
   });
 

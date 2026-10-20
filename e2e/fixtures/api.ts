@@ -100,10 +100,25 @@ export interface SignedInAccount extends SeededAccount {
   legIds: string[];
 }
 
-/** Seed, sign in through OTP, and read back the seeded trip's leg ids. */
-export async function signedInAccount(seed: Record<string, unknown> = {}): Promise<SignedInAccount> {
+/**
+ * Seed, sign in through OTP, and read back the seeded trip's leg ids.
+ *
+ * The account then AGREES to its content going to Anthropic, through the same
+ * `PATCH /api/me/preferences { ai_consent: true }` the consent sheet sends —
+ * without it every Penny route answers 403 `ai_consent_required` before the
+ * limit or contract a spec is about. `{ aiConsent: false }` skips that, for
+ * the specs that prove the refusal itself.
+ */
+export async function signedInAccount(
+  seed: Record<string, unknown> = {},
+  opts: { aiConsent?: boolean } = {},
+): Promise<SignedInAccount> {
   const account = await seedAccount(seed);
   const api = await bearerContext(await signInWithOtp(account.email));
+  if (opts.aiConsent !== false) {
+    const consent = await api.patch('/api/me/preferences', { data: { ai_consent: true } });
+    expect(consent.status(), `ai_consent for ${account.email}: ${await consent.text()}`).toBe(200);
+  }
   const trip = await api.get(`/api/trip?tripId=${account.tripId}`);
   expect(trip.status(), await trip.text()).toBe(200);
   const body = (await trip.json()) as { legs?: { id: string }[] };
