@@ -427,3 +427,49 @@ export function manageSubscriptionAvailable(
   return canManageAppleSubscription(entitlement.state, entitlement.source);
 }
 
+/**
+ * Whether the server has RECORDED an App Store subscription for this account —
+ * the condition a purchase, a restore or an offer-code redemption waits for
+ * before the app treats it as done.
+ *
+ * Not `entitled`. A trial account is already entitled, so "wait until
+ * entitled" answered yes on the first poll after a purchase, before the
+ * RevenueCat webhook had arrived: the sheet closed and Settings went on saying
+ * the account was in its free period — a purchase that looked like it did
+ * nothing (Guideline 2.1(b), 2026-10-20). The webhook writes a row with
+ * `source: 'apple_iap'`; that row, in a state that means it is live, is the
+ * server's own word that Apple's subscription has landed.
+ *
+ * `subscribed_capped` counts: the subscription is real and recorded, and
+ * what pauses planning there is our usage ceiling, which a second purchase
+ * would not lift. `cancelled_in_period` counts for a restore of a subscription
+ * whose renewal was turned off. `comped` (the author's account, the fixtures)
+ * masks every row's state, so for it the Apple row's existence is all there is
+ * to go on. Exhaustive over `AccountState`.
+ */
+export function appleSubscriptionConfirmed(
+  entitlement: { state: AccountState; source: SubscriptionSource | null } | null
+): boolean {
+  if (!entitlement || entitlement.source !== 'apple_iap') return false;
+  const { state } = entitlement;
+  switch (state) {
+    case 'subscribed':
+    case 'subscribed_watch':
+    case 'subscribed_capped':
+    case 'cancelled_in_period':
+    case 'billing_grace':
+    case 'comped':
+      return true;
+    case 'trial':
+    case 'trial_spent':
+    case 'trial_expired':
+    case 'expired':
+    case 'refunded':
+    case 'revoked':
+      return false;
+    default: {
+      const exhaustive: never = state;
+      return exhaustive;
+    }
+  }
+}

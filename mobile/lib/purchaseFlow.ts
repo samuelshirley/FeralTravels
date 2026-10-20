@@ -22,6 +22,7 @@ import {
 } from "@/shared/lib/purchaseOutcome";
 import { nextEntitlementPoll } from "@/shared/lib/entitlementPolling";
 import {
+  appleSubscriptionConfirmed,
   manageSubscriptionAvailable,
   resolvePurchaseMode,
   type PurchaseMode,
@@ -54,6 +55,12 @@ import type { PaywallProduct } from "@/shared/types/entitlement";
  *
  * The failure this prevents is specific and awful: a user who has paid, sitting
  * in front of a paywall, with a working "buy" button in front of them.
+ *
+ * And the server's answer it waits for is NOT `entitled`. A trial account is
+ * entitled before it buys anything, so waiting for `entitled` returned on the
+ * first poll — before the webhook — and Settings went on describing the free
+ * period after a purchase (2026-10-20, Guideline 2.1(b)). It waits for
+ * `appleSubscriptionConfirmed`: the server holding an App Store row.
  */
 
 export type PurchasePhase =
@@ -125,9 +132,10 @@ export function usePurchaseFlow({
   /** The server's verdict, which carries the plans, their copy and the flag. */
   entitlement: EntitlementPayload | null;
   /**
-   * Fired ONCE, with a fresh payload the server has confirmed is entitled.
-   * Never fired on a 200 from a purchase or redeem call — that is the whole
-   * point of the hook.
+   * Fired ONCE, with a fresh payload in which the server has RECORDED the App
+   * Store subscription (`appleSubscriptionConfirmed`) — so the payload already
+   * names the plan and its renewal date. Never fired on the store's own word;
+   * that is the whole point of the hook.
    */
   onEntitled: (fresh: EntitlementPayload) => void;
 }): PurchaseFlow {
@@ -213,7 +221,7 @@ export function usePurchaseFlow({
       await new Promise((r) => setTimeout(r, decision.waitMs));
       if (!alive.current) return false;
       const fresh = await fetchEntitlement();
-      if (fresh?.entitled) {
+      if (appleSubscriptionConfirmed(fresh) && fresh) {
         if (alive.current) onEntitled(fresh);
         return true;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   annualSavingsNote,
+  appleSubscriptionConfirmed,
   manageSubscriptionAvailable,
   planLength,
   resolvePurchaseMode,
@@ -405,3 +406,39 @@ describe('length and per-month price on every row (Guideline 3.1.2(c))', () => {
   });
 });
 
+describe('appleSubscriptionConfirmed — what a purchase waits for (Guideline 2.1(b))', () => {
+  /**
+   * After a purchase the app used to stop waiting as soon as the account was
+   * `entitled` — which a trial account already is — so the sheet closed before
+   * the webhook and Settings still described the free period. It now waits for
+   * the server to hold the App Store row.
+   */
+  it('a trial account is NOT confirmed, though it is entitled — whatever the source says', () => {
+    for (const source of ['apple_iap', 'promo', 'admin', 'fake', null] as const) {
+      expect(appleSubscriptionConfirmed({ state: 'trial', source }), String(source)).toBe(false);
+    }
+  });
+
+  it('confirmed once the server holds a live apple_iap row', () => {
+    for (const state of [
+      'subscribed',
+      'subscribed_watch',
+      'subscribed_capped',
+      'cancelled_in_period',
+      'billing_grace',
+      'comped',
+    ] as const) {
+      expect(appleSubscriptionConfirmed({ state, source: 'apple_iap' }), state).toBe(true);
+    }
+  });
+
+  it('not confirmed by a promo, an admin grant, a test row, or a lapsed Apple row', () => {
+    for (const source of ['promo', 'admin', 'fake', null] as const) {
+      expect(appleSubscriptionConfirmed({ state: 'subscribed', source }), String(source)).toBe(false);
+    }
+    for (const state of ['expired', 'refunded', 'revoked', 'trial_expired', 'trial_spent'] as const) {
+      expect(appleSubscriptionConfirmed({ state, source: 'apple_iap' }), state).toBe(false);
+    }
+    expect(appleSubscriptionConfirmed(null)).toBe(false);
+  });
+});
