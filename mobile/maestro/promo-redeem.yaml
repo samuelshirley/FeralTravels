@@ -50,7 +50,19 @@ appId: ${APP_ID}
 - assertVisible:
     id: 'chat-composer-send'
     enabled: false
-- tapOn: 'Keep planning'
+# On a cold launch the chat list can stop short of the newest message, leaving
+# this button under the composer/tab bar. Maestro still counts it visible and
+# taps its coordinates, which hit the tab bar. Scroll it into reach the way a
+# user would ("See Penny's message above") before tapping.
+- scrollUntilVisible:
+    element:
+      id: 'chat-paywall-button'
+    direction: DOWN
+    visibilityPercentage: 100
+    centerElement: true
+    timeout: 20000
+- tapOn:
+    id: 'chat-paywall-button'
 - extendedWaitUntil:
     visible:
       text: '.*Choose a plan.*'

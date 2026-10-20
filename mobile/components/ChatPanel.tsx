@@ -2284,6 +2284,7 @@ export default function ChatPanel({
                     show her message and simply have no prices to offer. */}
                 {msg.paywall && entitlement?.paywall ? (
                   <Pressable
+                    testID="chat-paywall-button"
                     accessibilityRole="button"
                     onPress={() => {
                       if (paywallSupportOnly) {
