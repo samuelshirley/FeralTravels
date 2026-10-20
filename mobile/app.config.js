@@ -313,10 +313,10 @@ module.exports = {
         // No custom cryptography: HTTPS only. Declaring it here stops App
         // Store Connect asking on every single upload.
         ITSAppUsesNonExemptEncryption: false,
-        NSLocationWhenInUseUsageDescription:
-          'Feral Travels uses your location to anchor your trip progress and plan fuel stops along your route.',
-        NSPhotoLibraryUsageDescription:
-          'Feral Travels lets you attach photos to your messages with Penny so she can see what you are looking at.',
+        // NO `*UsageDescription` keys here. Every purpose string is set through
+        // its plugin's option below, because the plugin is what would otherwise
+        // write a generic default — and a key set in both places silently takes
+        // whichever the plugin chose. One place per key, next to its switch.
         ...(reversedClientId
           ? { CFBundleURLTypes: [{ CFBundleURLSchemes: [reversedClientId] }] }
           : {}),
@@ -357,7 +357,30 @@ module.exports = {
           backgroundColor: '#55346F',
         },
       ],
-      'expo-secure-store',
+      /*
+       * PURPOSE STRINGS — every one in the binary is chosen here, and every one
+       * this app does not need is switched OFF rather than left at a plugin
+       * default. Build 12 shipped five it should not have, all from defaults:
+       *
+       *   NSCameraUsageDescription      "Allow $(PRODUCT_NAME) to access your camera"
+       *   NSMicrophoneUsageDescription  "Allow $(PRODUCT_NAME) to access your microphone"
+       *   NSLocationAlwaysUsageDescription  "Allow $(PRODUCT_NAME) to access your location"
+       *   NSLocationAlwaysAndWhenInUseUsageDescription  (asked for, never used)
+       *   NSFaceIDUsageDescription      "Allow $(PRODUCT_NAME) to access your Face ID biometric data."
+       *
+       * Guideline 5.1.1(ii)/(iii): a generic string, or a key for data the app
+       * never asks for, is a rejection on its own. `false` is the plugins' own
+       * off switch — @expo/config-plugins' `applyPermissions` DELETES a key
+       * whose option is `false`, even one set elsewhere — read off the
+       * installed plugin source, not assumed.
+       *
+       * Enforced on the RESOLVED config (what prebuild writes), not on this
+       * text: scripts/ios-usage-strings.mjs, run by the Mobile typecheck job,
+       * and src/lib/iosInfoPlistGuard.test.ts.
+       */
+      // Face ID: nothing calls SecureStore with `requireAuthentication`; the
+      // keychain holds a session token behind the device passcode only.
+      ['expo-secure-store', { faceIDPermission: false }],
       'expo-web-browser',
       // The only video in the app is Penny's muted, looping dog-fetch clip
       // (components/chat/PennyPlanningVideo). Both flags are stated as false
@@ -366,18 +389,38 @@ module.exports = {
       // Review asks about and this app cannot justify.
       ['expo-video', { supportsBackgroundPlayback: false, supportsPictureInPicture: false }],
       ...(APPLE_SIGNIN ? ['expo-apple-authentication'] : []),
+      // Foreground only. Nothing reads location in the background (no task,
+      // no `startLocationUpdatesAsync`), so the two Always keys are deleted
+      // and the background mode is stated off rather than omitted.
       [
         'expo-location',
         {
-          locationAlwaysAndWhenInUsePermission:
+          locationWhenInUsePermission:
             'Feral Travels uses your location to anchor your trip progress and plan fuel stops along your route.',
+          locationAlwaysAndWhenInUsePermission: false,
+          locationAlwaysPermission: false,
+          isIosBackgroundLocationEnabled: false,
         },
       ],
+      // The attach button opens PHPicker, which runs out of process and needs
+      // NO Photos permission — so the app never asks for one (ChatPanel). The
+      // key stays, with a true and specific string, because the picker module
+      // still LINKS `PHPhotoLibrary.requestAuthorization`, and a binary that
+      // references a protected API with no purpose string is refused at upload
+      // (ITMS-90683). Camera and microphone are OFF: the app has no camera
+      // path. The module does link `AVCaptureDevice.requestAccess` too, so the
+      // same ITMS-90683 check could flag the missing camera key at upload; if
+      // App Store Connect's processing email for the build names
+      // NSCameraUsageDescription, that is the cause — a refused upload, seen in
+      // minutes, rather than a 5.1.1 rejection for a generic string, seen days
+      // later in review. There is no honest camera purpose to write instead.
       [
         'expo-image-picker',
         {
           photosPermission:
             'Feral Travels lets you attach photos to your messages with Penny so she can see what you are looking at.',
+          cameraPermission: false,
+          microphonePermission: false,
         },
       ],
     ],

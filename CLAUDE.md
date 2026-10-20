@@ -222,7 +222,8 @@ check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
-ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh lifetime-spend.ts
+ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
+lifetime-spend.ts
 make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
 pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
 prune-branches.sh
