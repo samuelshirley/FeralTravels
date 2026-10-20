@@ -16,6 +16,7 @@ import {
 import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
 import {
+  ApiError,
   authHeaders,
   tripApi,
   type OnboardingQuestion,
@@ -74,6 +75,9 @@ import { BlinkingCursor, TypingBubble } from "@/components/chat/Indicators";
 import { bubbleRadius, getGroupPosition } from "@/components/chat/format";
 import { startTurnStream, type TurnStreamHandle } from "@/components/chat/turnStream";
 import { font } from "@/lib/typography";
+import AiConsentSheet from "@/components/AiConsentSheet";
+import { useAiConsent } from "@/lib/useAiConsent";
+import { AI_CONSENT_COPY, AI_CONSENT_REQUIRED_CODE } from "@/shared/lib/aiConsent";
 import {
   deriveApplyOutcome,
   type AppliedEvent,
@@ -465,6 +469,15 @@ export default function ChatPanel({
   const [vehicleName, setVehicleName] = useState("");
   const [vehicleRange, setVehicleRange] = useState("");
   const attachImagesAllowed = !isOnboarding && !readonly;
+  /*
+   * "Penny uses Anthropic's Claude" (App Review 5.1.2(i)). `ensure()` is
+   * awaited before anything that sends to Penny — the composer, every setup
+   * answer and chip, the engine below — so the sheet is the first thing a new
+   * account meets, and "Not now" leaves Penny's composer disabled with a way
+   * back. The server refuses regardless (403 ai_consent_required).
+   */
+  const aiConsent = useAiConsent(!readonly);
+  const aiConsentDeclined = aiConsent.status === "declined";
 
   // ── scrolling ───────────────────────────────────────────────────────────
   //
@@ -945,6 +958,8 @@ export default function ChatPanel({
     // appended, so a blocked send leaves no half-sent message behind.
     if (paywalledRef.current) return;
     if (!trimmed && attachedImages.length === 0) return;
+    // Nothing reaches Penny (and so Anthropic) before the user agreed.
+    if (!(await aiConsent.ensure())) return;
 
     const userMsgId = existingUserMsgId ?? `optimistic-${Date.now()}`;
     const assistantMsgId = `optimistic-${Date.now() + 1}`;
@@ -1106,6 +1121,14 @@ export default function ChatPanel({
         if (res.status === 402 && res.body?.code === PAYWALL_ERROR_CODE) {
           setDeliveryStatus("responded");
           await showPaywallOnBubble(assistantMsgId, res.body);
+          return;
+        }
+        // The server has no agreement on record: say so in the bubble and
+        // reopen the consent sheet, rather than a red "Error:".
+        if (res.status === 403 && res.body?.code === AI_CONSENT_REQUIRED_CODE) {
+          setDeliveryStatus("responded");
+          failAssistant(AI_CONSENT_COPY.declinedLine);
+          aiConsent.requiredByServer();
           return;
         }
 
@@ -1323,6 +1346,9 @@ export default function ChatPanel({
     value: string | number | { name: string; range_km: string },
   ) => {
     if (!onboardingSnapshot?.question || onboardingSubmitting) return;
+    // Setup answers go to Anthropic too (the intent scan, the date and range
+    // parsers): the very first one, chip or typed, waits for the agreement.
+    if (!(await aiConsent.ensure())) return;
     // Captured BEFORE the request: the response replaces the snapshot with the
     // NEXT question, and the step being recorded is this one. Same builder the
     // server calls when it persists the row, so the widget on screen now is the
@@ -1398,6 +1424,15 @@ export default function ChatPanel({
         setInput("");
       }
     } catch (e: unknown) {
+      if (
+        e instanceof ApiError &&
+        e.status === 403 &&
+        (e.payload as { code?: unknown } | null)?.code === AI_CONSENT_REQUIRED_CODE
+      ) {
+        // Not an error bubble: the answer was never sent. Ask again.
+        aiConsent.requiredByServer();
+        return;
+      }
       const errorMsg = e instanceof Error ? e.message : String(e);
       // Show the user's answer and Penny's error as chat bubbles so the
       // conversation flow is visible, rather than a tiny error label near the
@@ -1586,6 +1621,8 @@ export default function ChatPanel({
       return;
     }
     if (!trimmed && attachedImages.length === 0) return;
+    // Before the composer is cleared, so "Not now" keeps what was typed.
+    if (!(await aiConsent.ensure())) return;
     setInput("");
     setImages([]);
     setInputHeight(34);
@@ -1621,6 +1658,7 @@ export default function ChatPanel({
   const hasComposerText = input.trim().length > 0;
   const sendEnabled =
     !paywalled &&
+    !aiConsentDeclined &&
     !onboardingComposerBusy &&
     ((!onboardingUiActive && (hasComposerText || images.length > 0)) ||
       (onboardingUiActive && !!onboardingQuestion && !onboardingSelectStep && hasComposerText));
@@ -1866,8 +1904,13 @@ export default function ChatPanel({
                 key={prompt}
                 disabled={onboardingComposerBusy}
                 onPress={() => {
-                  setInput(prompt);
-                  inputRef.current?.focus();
+                  void (async () => {
+                    // A suggestion is the first thing many people tap: ask
+                    // before it becomes their first message to Penny.
+                    if (!(await aiConsent.ensure())) return;
+                    setInput(prompt);
+                    inputRef.current?.focus();
+                  })();
                 }}
                 style={[
                   styles.promptRow,
@@ -2366,6 +2409,15 @@ export default function ChatPanel({
         </View>
       ) : null}
 
+      {aiConsent.sheetOpen ? (
+        <AiConsentSheet
+          saving={aiConsent.saving}
+          error={aiConsent.error}
+          onAgree={() => void aiConsent.agree()}
+          onNotNow={aiConsent.notNow}
+        />
+      ) : null}
+
       {readonly ? (
         <View style={styles.readonlyBar}>
           <Text style={styles.readonlyText}>
@@ -2381,6 +2433,19 @@ export default function ChatPanel({
         <>
 
           <View testID="chat-composer" style={styles.composerWrap}>
+            {aiConsentDeclined ? (
+              <View testID="ai-consent-declined" style={styles.consentDeclinedRow}>
+                <Text style={styles.consentDeclinedText}>{AI_CONSENT_COPY.declinedLine}</Text>
+                <Pressable
+                  testID="ai-consent-review"
+                  accessibilityRole="button"
+                  onPress={aiConsent.open}
+                  hitSlop={8}
+                >
+                  <Text style={styles.consentDeclinedLink}>{AI_CONSENT_COPY.declinedAction}</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {onboardingError && onboardingPhase !== "error" ? (
               <Text style={styles.composerError}>{onboardingError}</Text>
             ) : null}
@@ -2406,7 +2471,9 @@ export default function ChatPanel({
                 // range_help) — is typed into a multiline field. Always-on here
                 // is the native equivalent.
                 multiline
-                editable={!onboardingComposerDisabled && !onboardingSelectStep && !paywalled}
+                editable={
+                  !onboardingComposerDisabled && !onboardingSelectStep && !paywalled && !aiConsentDeclined
+                }
                 placeholder={placeholder}
                 placeholderTextColor={theme.subtle}
                 // Auto-grow: one line (34pt) up to ~8 lines (200pt), after which
@@ -2449,6 +2516,16 @@ export default function ChatPanel({
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, backgroundColor: theme.surfaceMuted },
+
+  consentDeclinedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+  },
+  consentDeclinedText: { flex: 1, fontFamily: font.regular, fontSize: 12.5, color: theme.muted },
+  consentDeclinedLink: { fontFamily: font.medium, fontSize: 13, color: theme.accent400 },
 
   header: {
     paddingVertical: 12,

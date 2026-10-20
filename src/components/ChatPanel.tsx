@@ -8,7 +8,10 @@ import type {
   OnboardingState,
   PlanSummary,
 } from '@/types/trip';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
+import AiConsentDialog from '@/components/AiConsentDialog';
+import { useAiConsent } from '@/components/useAiConsent';
+import { AI_CONSENT_COPY, AI_CONSENT_REQUIRED_CODE } from '@/lib/aiConsent';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm } from '@/lib/units';
 import { formatDate, parseISODate } from '@/lib/dates';
@@ -577,6 +580,15 @@ export default function ChatPanel({
   const { place: devicePlace } = useDeviceLocation();
   const deviceCity = cityFromPlace(devicePlace);
   const attachImagesAllowed = !isOnboarding;
+  /*
+   * "Penny uses Anthropic's Claude" (App Review 5.1.2(i)). `ensure()` is
+   * awaited before anything that sends to Penny — the composer, every setup
+   * answer and suggestion, the send engine — and "Not now" disables the
+   * composer with a way back. Mirrors mobile/components/ChatPanel.tsx. The
+   * server refuses regardless (403 ai_consent_required).
+   */
+  const aiConsent = useAiConsent(!readonly);
+  const aiConsentDeclined = aiConsent.status === 'declined';
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   // Latest messages, readable from event handlers (visibilitychange reconcile)
   // without re-binding the listener on every message change.
@@ -1267,6 +1279,8 @@ export default function ChatPanel({
     handoff = false,
   ): Promise<void> => {
     if (!trimmed && attachedImages.length === 0) return;
+    // Nothing reaches Penny (and so Anthropic) before the user agreed.
+    if (!(await aiConsent.ensure())) return;
 
     const userMsgId = existingUserMsgId ?? `optimistic-${Date.now()}`;
     const assistantMsgId = `optimistic-${Date.now() + 1}`;
@@ -1482,6 +1496,13 @@ export default function ChatPanel({
           await showPaywallOnBubble(assistantMsgId, data as Partial<PaywallErrorBody>);
           return;
         }
+        // No agreement on record: say so and reopen the consent dialog.
+        if (res.status === 403 && (data as { code?: string }).code === AI_CONSENT_REQUIRED_CODE) {
+          setDeliveryStatus('responded');
+          failAssistant(AI_CONSENT_COPY.declinedLine);
+          aiConsent.requiredByServer();
+          return;
+        }
 
         const errMsg = (data as { error?: string }).error ?? `Request failed (${res.status})`;
         setDeliveryStatus('responded');
@@ -1695,6 +1716,9 @@ export default function ChatPanel({
 
   async function submitOnboardingPost(questionKey: string, value: unknown) {
     if (!onboardingSnapshot?.question || onboardingSubmitting) return;
+    // Setup answers go to Anthropic too (the intent scan, the date and range
+    // parsers): the very first one waits for the agreement.
+    if (!(await aiConsent.ensure())) return;
     // Captured BEFORE the request: the response replaces the snapshot with the
     // NEXT question, and the step we are recording is this one. Same builder
     // the server calls when it persists the row, so the widget the driver sees
@@ -1783,6 +1807,15 @@ export default function ChatPanel({
         setInput('');
       }
     } catch (e: unknown) {
+      if (
+        e instanceof ApiError &&
+        e.status === 403 &&
+        (e.payload as { code?: unknown } | null)?.code === AI_CONSENT_REQUIRED_CODE
+      ) {
+        // Not an error bubble: the answer was never sent. Ask again.
+        aiConsent.requiredByServer();
+        return;
+      }
       const errorMsg = e instanceof Error ? e.message : String(e);
       // Show the user's answer and Penny's error as chat bubbles so the
       // conversation flow is visible, rather than just a tiny error label
@@ -1933,6 +1966,8 @@ export default function ChatPanel({
       return;
     }
     if (!trimmed && attachedImages.length === 0) return;
+    // Before the composer is cleared, so "Not now" keeps what was typed.
+    if (!(await aiConsent.ensure())) return;
     setInput('');
     setImages([]);
 
@@ -2380,8 +2415,13 @@ export default function ChatPanel({
                 disabled={onboardingComposerBusy}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
-                  setInput(prompt);
-                  textareaRef.current?.focus();
+                  void (async () => {
+                    // A suggestion is often the first thing tapped: ask before
+                    // it becomes the first message to Penny.
+                    if (!(await aiConsent.ensure())) return;
+                    setInput(prompt);
+                    textareaRef.current?.focus();
+                  })();
                 }}
                 style={{
                   ...buttonStyle('secondary'),
@@ -3299,6 +3339,30 @@ export default function ChatPanel({
             e.target.value = '';
           }}
         />
+        {aiConsentDeclined && (
+          <div
+            data-testid="ai-consent-declined"
+            style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--tp-muted)', marginBottom: 8 }}
+          >
+            <span style={{ flex: 1 }}>{AI_CONSENT_COPY.declinedLine}</span>
+            <button
+              type="button"
+              data-testid="ai-consent-review"
+              onClick={aiConsent.open}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 13, color: 'var(--tp-accent-400)' }}
+            >
+              {AI_CONSENT_COPY.declinedAction}
+            </button>
+          </div>
+        )}
+        {aiConsent.sheetOpen && (
+          <AiConsentDialog
+            saving={aiConsent.saving}
+            error={aiConsent.error}
+            onAgree={() => void aiConsent.agree()}
+            onNotNow={aiConsent.notNow}
+          />
+        )}
         {onboardingError && onboardingPhase !== 'error' && (
           <div style={{ fontSize: 12, color: 'var(--tp-danger)', marginBottom: 8 }}>{onboardingError}</div>
         )}
@@ -3381,7 +3445,7 @@ export default function ChatPanel({
                       ? onboardingQuestion.placeholder ?? 'Type your answer…'
                       : 'Ask Penny…'
             }
-            disabled={onboardingComposerDisabled || paywalled}
+            disabled={onboardingComposerDisabled || paywalled || aiConsentDeclined}
             rows={1}
             style={{
               flex: 1,
@@ -3433,6 +3497,7 @@ export default function ChatPanel({
             disabled={
               Boolean(
                 paywalled ||
+                  aiConsentDeclined ||
                   onboardingComposerBusy ||
                   (!onboardingUiActive &&
                     !input.trim() &&

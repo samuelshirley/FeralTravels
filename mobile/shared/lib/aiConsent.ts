@@ -51,3 +51,120 @@ export const AI_CONSENT_COPY = {
 
 /** Where the privacy policy lives, relative to the server's origin. */
 export const PRIVACY_POLICY_PATH = '/privacy';
+
+/**
+ * The consent sheet's state machine, shared by both panels (each wraps it in
+ * a small React hook: `src/components/useAiConsent.ts`,
+ * `mobile/lib/useAiConsent.ts`). Pure — the two network calls are injected —
+ * so the root vitest project tests the logic the phone runs.
+ *
+ *   unknown  — not asked the server yet
+ *   needed   — the server says this account has not agreed
+ *   granted  — agreed; stored server-side, so never asked again anywhere
+ *   declined — "Not now" on this screen: Penny's composer is disabled, with a
+ *              one-line way back to the sheet
+ */
+export type AiConsentStatus = 'unknown' | 'needed' | 'granted' | 'declined';
+
+export interface AiConsentSnapshot {
+  status: AiConsentStatus;
+  sheetOpen: boolean;
+  saving: boolean;
+  error: string | null;
+}
+
+export interface AiConsentController {
+  get(): AiConsentSnapshot;
+  /** Read the server's answer once; a failure leaves the status `unknown`. */
+  load(): Promise<void>;
+  /**
+   * Resolves true once this account has agreed — at once if known, else after
+   * Agree is tapped AND the server stored it. False on Not now. Every send to
+   * Penny awaits this first.
+   */
+  ensure(): Promise<boolean>;
+  open(): void;
+  agree(): Promise<void>;
+  notNow(): void;
+  /** The server answered 403 `ai_consent_required`: back to asking. */
+  requiredByServer(): void;
+}
+
+export function createAiConsentController(deps: {
+  /** True/false from `GET /api/me`'s `ai_consent`; throws when it cannot tell. */
+  fetchConsent: () => Promise<boolean>;
+  /** `PATCH /api/me/preferences { ai_consent: true }`; throws on failure. */
+  saveConsent: () => Promise<void>;
+  onChange: (snapshot: AiConsentSnapshot) => void;
+}): AiConsentController {
+  let state: AiConsentSnapshot = { status: 'unknown', sheetOpen: false, saving: false, error: null };
+  let waiting: Array<(agreed: boolean) => void> = [];
+
+  const set = (patch: Partial<AiConsentSnapshot>) => {
+    state = { ...state, ...patch };
+    deps.onChange(state);
+  };
+  const settle = (agreed: boolean) => {
+    const resolvers = waiting;
+    waiting = [];
+    for (const resolve of resolvers) resolve(agreed);
+  };
+  /** Null when the server could not answer: the sheet then asks instead. */
+  const ask = async (): Promise<boolean | null> => {
+    try {
+      return await deps.fetchConsent();
+    } catch {
+      // Not swallowed: an unanswered question is treated as "not agreed", so
+      // the worst case is the sheet for someone who already agreed — and
+      // agreeing again is idempotent server-side.
+      return null;
+    }
+  };
+  const open = () => set({ sheetOpen: true, error: null });
+
+  return {
+    get: () => state,
+    async load() {
+      const agreed = await ask();
+      if (agreed === null || state.status !== 'unknown') return;
+      set({ status: agreed ? 'granted' : 'needed' });
+    },
+    async ensure() {
+      if (state.status === 'granted') return true;
+      if (state.status === 'unknown') {
+        const agreed = await ask();
+        if (agreed) {
+          set({ status: 'granted' });
+          return true;
+        }
+      }
+      return new Promise<boolean>((resolve) => {
+        waiting.push(resolve);
+        open();
+      });
+    },
+    open,
+    async agree() {
+      if (state.saving) return;
+      set({ saving: true, error: null });
+      try {
+        await deps.saveConsent();
+      } catch {
+        // Shown in the sheet, which stays open so Agree can be retried.
+        set({ saving: false, error: AI_CONSENT_COPY.saveFailed });
+        return;
+      }
+      set({ status: 'granted', sheetOpen: false, saving: false, error: null });
+      settle(true);
+    },
+    notNow() {
+      if (state.saving) return;
+      set({ status: 'declined', sheetOpen: false, error: null });
+      settle(false);
+    },
+    requiredByServer() {
+      set({ status: 'declined' });
+      open();
+    },
+  };
+}
