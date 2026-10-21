@@ -189,6 +189,25 @@ export const PURCHASE_CONFIRM_TIMEOUT_MESSAGE =
   'purchases. You have not been charged twice.';
 
 /**
+ * The same wait, after an App Store OFFER CODE rather than a purchase. Its own
+ * pair of lines because a code may cost nothing: "Payment received" would be
+ * untrue to exactly the person redeeming a free month.
+ */
+export const OFFER_CODE_CONFIRMING_MESSAGE = 'Code accepted — switching your plan on…';
+export const OFFER_CODE_CONFIRM_TIMEOUT_MESSAGE =
+  'Apple accepted your code. Switching your plan on is taking longer than usual — reopen the ' +
+  'app shortly, or tap Restore purchases.';
+
+/**
+ * Apple's offer-code sheet could not be opened. Restore is not offered: the
+ * likeliest cause is the same one that stops a purchase on this device, and
+ * that stops a restore too.
+ */
+export const OFFER_CODE_UNAVAILABLE_MESSAGE =
+  "Offer codes can't be redeemed on this device right now. Email support@feraltravels.com and " +
+  "we'll sort it out.";
+
+/**
  * Apple's own deep link to the Manage Subscriptions screen.
  *
  * `itms-apps:` rather than `https://apps.apple.com/...`: the https form opens

@@ -198,6 +198,8 @@ export function exchangeOAuth(payload: {
 export interface Me {
   units_pref?: string | null;
   timezone?: string | null;
+  /** Agreed to Penny's content going to Anthropic (lib/useAiConsent.ts). */
+  ai_consent?: boolean;
 }
 
 export const getMe = () => apiFetch<Me>("/api/me");

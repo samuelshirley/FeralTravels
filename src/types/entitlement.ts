@@ -133,6 +133,14 @@ export interface EntitlementPayload {
 
 export interface PaywallProduct {
   id: string;
+  /**
+   * The auto-renewing subscription's own name, e.g. "Feral Travels monthly".
+   * REQUIRED, and rendered on every plan row: Guideline 3.1.2(c) wants the
+   * subscription's title beside its length and price, and App Review rejected
+   * 1.0 (12) on 2026-10-19 for a sheet that named only the app. In store mode
+   * it is the store's localized display name; the server's is the fallback.
+   */
+  title: string;
   /** e.g. "$2.69" — the US fallback from the server, or the store's own string. */
   priceLabel: string;
   /** e.g. "per month" */

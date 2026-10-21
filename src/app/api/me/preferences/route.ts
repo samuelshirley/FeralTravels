@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireUserId, errorResponse } from '@/server/auth/guards';
-import { setUnitsPref, setUserTimezone } from '@/server/repos/users';
+import { recordAiConsent, setUnitsPref, setUserTimezone } from '@/server/repos/users';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +14,13 @@ const patchSchema = z.object({
    * client value never blocks a units update.
    */
   timezone: z.string().min(1).max(64).optional(),
+  /**
+   * The consent sheet's "Agree" (App Review 5.1.2(i)): this account's
+   * messages, photos, trip details and location may go to Anthropic.
+   * `true` only — there is no way to send `false`, because "Not now" writes
+   * nothing and the absence of a timestamp is the refusal.
+   */
+  ai_consent: z.literal(true).optional(),
 });
 
 /**
@@ -33,10 +40,12 @@ export async function PATCH(req: Request) {
     if (body.timezone !== undefined) {
       timezone = await setUserTimezone(userId, body.timezone);
     }
+    if (body.ai_consent === true) await recordAiConsent(userId);
     return Response.json({
       ok: true,
       units_pref: body.units_pref ?? null,
       timezone,
+      ...(body.ai_consent === true ? { ai_consent: true } : {}),
     });
   } catch (err) {
     return errorResponse(err);

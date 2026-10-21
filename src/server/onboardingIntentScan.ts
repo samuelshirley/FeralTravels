@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { anthropicApiKey } from '@/lib/anthropicKey';
 import { ONBOARDING_SCAN_MODEL } from '@/lib/models';
 import { validateRangeKm } from '@/lib/vehicleProfile';
@@ -151,6 +152,12 @@ interface ScanOpts {
   /** For usage accounting; logging is skipped when absent. */
   userId?: string;
   tripId?: string;
+  /**
+   * The user's agreement to send this text to Anthropic — see
+   * `src/server/aiConsent.ts`. Required: there is no way to call the model
+   * without one.
+   */
+  consent: AiConsentProof;
 }
 
 /**
@@ -160,8 +167,9 @@ interface ScanOpts {
  */
 export async function scanFirstMessage(
   text: string,
-  opts: ScanOpts = {},
+  opts: ScanOpts,
 ): Promise<OnboardingScanResult> {
+  assertAiConsent(opts.consent, opts.userId);
   const anthropic = getClient();
   if (!anthropic) return emptyResult();
   const trimmed = text.trim();
@@ -246,6 +254,7 @@ export async function scanFirstMessage(
       now: opts.now,
       userId: opts.userId,
       tripId: opts.tripId,
+      consent: opts.consent,
     });
     startDate = resolved.iso ? resolved : null;
     if (!startDate) startDatePhrase = null;

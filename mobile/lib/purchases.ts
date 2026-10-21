@@ -1,6 +1,7 @@
 import Purchases, {
   LOG_LEVEL,
   PURCHASES_ERROR_CODE,
+  type CustomerInfo,
   type PurchasesPackage,
 } from "react-native-purchases";
 import { getIdentity } from "@/lib/api";
@@ -204,12 +205,24 @@ export class PurchaserUnknownError extends Error {
 export interface StorePlan {
   /** The App Store product id — matches `PRODUCTS` in constants.ts. */
   productId: string;
+  /**
+   * `product.title` — the subscription's localized display name from App Store
+   * Connect ("Feral Travels monthly"). Guideline 3.1.2(c) requires it on the
+   * sheet; `resolvePurchaseMode` falls back to the server's when it is blank.
+   */
+  title: string;
   /** Apple's localized price string, e.g. "$2.69", "2,00 €", "CA$3.00". */
   priceLabel: string;
   /** The same price as a number, in `currencyCode`. */
   price: number;
   /** ISO 4217, e.g. "USD", "EUR", "CAD". */
   currencyCode: string;
+  /**
+   * `product.pricePerMonthString` — the price spread over one month, formatted
+   * by the store ("$1.83" for $22.00 a year). The annual row shows it as
+   * "$1.83/month, billed annually"; null when RevenueCat has no figure.
+   */
+  pricePerMonthLabel: string | null;
 }
 
 /** Packages held by product id so `purchase()` can find the one to buy. */
@@ -268,9 +281,11 @@ export async function getStorePlans(): Promise<StorePlan[]> {
   }
   return packages.map((p) => ({
     productId: p.product.identifier,
+    title: p.product.title,
     priceLabel: p.product.priceString,
     price: p.product.price,
     currencyCode: p.product.currencyCode,
+    pricePerMonthLabel: p.product.pricePerMonthString ?? null,
   }));
 }
 
@@ -337,6 +352,66 @@ export async function restore(): Promise<RestoreOutcome> {
       ? outcome
       : { kind: "failed", reason: "unknown" };
   }
+}
+
+/**
+ * Apple's own offer-code sheet — the ONLY way a code is redeemed on iOS.
+ *
+ * App Review rejected the custom "HAVE A CODE?" field under Guideline 3.1.1: it
+ * unlocked the paid tier through our own promo endpoint, not through
+ * in-app purchase. Offer codes are minted in App Store Connect and redeemed by
+ * StoreKit, so a redemption is an App Store transaction like any purchase:
+ * RevenueCat sees it, its webhook writes the `apple_iap` row, and the app learns
+ * of it the same way it learns of a purchase (`onStoreEntitlementActive` below,
+ * then the server poll in `purchaseFlow.ts`).
+ *
+ * `presentCodeRedemptionSheet` is a method of the native module already linked
+ * for purchases — no new native code. It resolves as soon as the sheet is UP,
+ * not when a code is redeemed; Apple's sheet reports its own result to the
+ * user, and a successful redemption reaches us as a customer-info update.
+ *
+ * Identified first, for the reason every purchase is: a code redeemed under an
+ * anonymous RevenueCat id is a subscription nobody's account receives.
+ */
+export async function presentOfferCodeRedemption(): Promise<OfferCodeOutcome> {
+  try {
+    await requirePurchaserId();
+  } catch (err) {
+    return {
+      kind: "failed",
+      reason: err instanceof PurchasesUnavailableError ? "misconfigured" : "unknown",
+    };
+  }
+  try {
+    await Purchases.presentCodeRedemptionSheet();
+    return { kind: "presented" };
+  } catch {
+    return { kind: "failed", reason: "unknown" };
+  }
+}
+
+export type OfferCodeOutcome =
+  | { kind: "presented" }
+  | { kind: "failed"; reason: "misconfigured" | "unknown" };
+
+/**
+ * Calls `onActive` whenever RevenueCat's customer info shows this app's
+ * entitlement active — which is how an offer-code redemption, finished in
+ * Apple's sheet, announces itself. It is a HINT to go and ask our server, never
+ * access: `purchaseFlow.ts` still waits for the server's own record.
+ *
+ * Returns the unsubscribe. A build with no key has nothing to listen to.
+ */
+export function onStoreEntitlementActive(onActive: () => void): () => void {
+  if (!configured) return () => {};
+  const listener = (info: CustomerInfo) => {
+    const active = info.entitlements.active;
+    if (active[REVENUECAT_ENTITLEMENT_ID] || active[REVENUECAT_LEGACY_ENTITLEMENT_ID]) onActive();
+  };
+  Purchases.addCustomerInfoUpdateListener(listener);
+  return () => {
+    Purchases.removeCustomerInfoUpdateListener(listener);
+  };
 }
 
 /**

@@ -39,6 +39,9 @@ appId: ${APP_ID}
 - inputText: 'Add one rest day in Strasbourg right after day 1, and put Strasbourg Cathedral on that rest day as a stop. Go ahead without asking me anything.'
 - tapOn:
     id: 'chat-composer-send'
+# A fresh account's first send: the AI consent sheet (App Review 5.1.2(i))
+# holds it until Agree.
+- runFlow: ai-consent-agree.yaml
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000

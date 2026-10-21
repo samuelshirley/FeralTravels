@@ -101,6 +101,9 @@ appId: ${APP_ID}
 - inputText: 'How is the fuel looking on day one?'
 - tapOn:
     id: 'chat-composer-send'
+# Agree to the AI consent sheet if this account has not yet (a re-run on the
+# same account has), so the screenshot shows the chat, not the sheet.
+- runFlow: ai-consent-if-asked.yaml
 
 # ── Waiting her out, using only what the app actually renders ───────────────
 #

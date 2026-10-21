@@ -7,6 +7,7 @@ import VehicleProfileSection from "@/components/VehicleProfileSection";
 import LocationSection from "@/components/LocationSection";
 import DeleteAccountSection from "@/components/DeleteAccountSection";
 import SubscriptionSection from "@/components/SubscriptionSection";
+import { LegalSection } from "@/components/LegalLinks";
 import { Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
 import { useSignedInEmail } from "@/lib/identity";
@@ -114,6 +115,14 @@ export default function SettingsScreen() {
         <View style={styles.sectionRule} />
 
         <SubscriptionSection />
+
+        {/*
+          Guideline 5.1.1(i): the privacy policy has to be easy to reach inside
+          the app, not only from the purchase sheet's footer. Above the danger
+          zone, which stays last.
+        */}
+        <LegalSection />
+        <View style={styles.sectionRule} />
 
         {/*
           Last thing on the screen, same as the web. Apple 5.1.1(v) requires

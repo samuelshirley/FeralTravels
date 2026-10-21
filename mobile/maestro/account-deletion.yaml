@@ -32,6 +32,19 @@ appId: ${APP_ID}
     visible: 'Vehicle profile'
     timeout: 20000
 
+# Guideline 5.1.1(i): Privacy Policy and Terms of Use reachable from Settings,
+# not only from the purchase sheet. Just above the danger zone, so they are
+# scrolled past on the way to it. Asserted, not tapped: each opens Safari.
+- scrollUntilVisible:
+    element:
+      id: 'settings-terms-link'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    id: 'settings-privacy-link'
+- assertVisible: 'Privacy Policy'
+- assertVisible: 'Terms of Use'
+
 - scrollUntilVisible:
     element:
       id: 'delete-account-open'

@@ -1,5 +1,6 @@
 import 'server-only';
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { anthropicApiKey } from '@/lib/anthropicKey';
 import { CLASSIFY_MODEL } from '@/lib/models';
 import { logAnthropicUsageWithFallback } from '@/server/repos/usage';
@@ -83,10 +84,13 @@ export interface ClassifyResult extends GateDecision {
  */
 export async function classifyMessage(
   message: string,
-  ctx: ClassifyContext = {},
-  userId?: string,
-  tripId?: string | null
+  ctx: ClassifyContext,
+  userId: string | undefined,
+  tripId: string | null | undefined,
+  /** The user's agreement to send this message to Anthropic — `src/server/aiConsent.ts`. */
+  consent: AiConsentProof
 ): Promise<ClassifyResult> {
+  assertAiConsent(consent, userId);
   const client = getClient();
   if (!client) {
     return { tier: 'T1', by: 'error', reason: 'no api key', microcents: 0 };

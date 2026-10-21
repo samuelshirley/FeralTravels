@@ -1,0 +1,51 @@
+# The attach button opens the system photo picker WITHOUT asking for Photos
+# access (App Review 5.1.1).
+#
+# It used to call `requestMediaLibraryPermissionsAsync()` first. iOS's PHPicker
+# runs out of process and needs no permission, so that call only raised a
+# full-library prompt the app had no use for — and after a "Don't Allow" the
+# button said "Photo access is off" instead of opening a picker that would have
+# worked. src/lib/photoPermissionGuard.test.ts keeps the call out of the source;
+# this proves the behaviour on a device.
+#
+# PHOTOS IS DENIED ON PURPOSE. With access denied, the old code never reaches
+# the picker (it stops at "Photo access is off"), and with access never asked it
+# raises the system alert asserted absent below — so the regression fails this
+# flow either way, whatever Maestro's default for the permission is.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+# Relaunch WITHOUT clearState (the keychain keeps the session) so this flow, and
+# only this flow, sets the Photos permission. Location stays `never`, like
+# every other flow — see sign-in.yaml for why `never` and not `deny`.
+- launchApp:
+    permissions:
+      location: never
+      photos: deny
+
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 30000
+
+# The paperclip has no visible text; its accessibilityLabel is what Maestro
+# exposes.
+- tapOn: 'Attach image'
+
+# iOS's own picker, with its own Cancel. Only a real launchImageLibraryAsync
+# can put it on screen.
+- extendedWaitUntil:
+    visible: 'Cancel'
+    timeout: 15000
+- assertNotVisible: '.*Would Like to Access Your Photos.*'
+- assertNotVisible: '.*Photo access is off.*'
+
+- tapOn: 'Cancel'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer'
+    timeout: 10000

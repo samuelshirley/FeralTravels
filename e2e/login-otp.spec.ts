@@ -16,7 +16,8 @@ import {
  *      read back over HTTP rather than out of our own database.
  *   1b. And that the mail is DELIVERABLE, not merely delivered — SES's
  *      authentication verdicts (spf/dkim/dmarc) come back on the received
- *      message and are asserted below. See fixtures/mailbox.ts for what that
+ *      message as Resend's structured `authentication` field and are
+ *      asserted below. See fixtures/mailbox.ts for what that
  *      does and doesn't cover.
  *   2. The delivered mail actually contains the code, in both parts: the
  *      subject line the phone shows on the lock screen, and a body a human
@@ -69,18 +70,24 @@ test.describe('Email OTP login — real delivery', () => {
 
     expect(message.to, 'delivered to the address we typed').toContain(email);
 
-    // Deliverability, not just delivery. Resend sends via Amazon SES and
-    // receives on SES inbound, so the message arrives stamped with SES's own
-    // verdicts. These are what actually break in production — a DNS edit that
-    // drops the SPF include, a DKIM key rotated without updating the record —
-    // and they break SILENTLY: authentication failures get filed as spam
-    // rather than bounced, so the first signal is a user who can't sign in.
-    // If Resend ever stops surfacing this header, relax these three lines
-    // deliberately; don't let them rot into a check of nothing.
-    const auth = message.headers['authentication-results'] ?? '';
-    expect(auth, 'no authentication-results header on the received message').not.toBe('');
-    expect(auth, `SPF did not pass — ${auth}`).toContain('spf=pass');
-    expect(auth, `DMARC did not pass — ${auth}`).toContain('dmarc=pass');
+    // Deliverability, not just delivery. The message arrives stamped with
+    // Resend's own spf/dkim/dmarc verdicts. These are what actually break in
+    // production — a DNS edit that drops the SPF include, a DKIM key rotated
+    // without updating the record — and they break SILENTLY: authentication
+    // failures get filed as spam rather than bounced, so the first signal is a
+    // user who can't sign in. The verdicts used to be read from SES's
+    // `authentication-results` header; that header disappeared ~2026-10, and
+    // they now come from Resend's structured `authentication` field. If that
+    // field ever disappears, change this deliberately; don't let it rot into a
+    // check of nothing.
+    const verdicts = JSON.stringify(message.authentication);
+    expect(
+      message.authentication,
+      'Resend returned no authentication verdicts on the received message',
+    ).not.toBeNull();
+    expect(message.authentication?.spf, `SPF did not pass — ${verdicts}`).toBe('pass');
+    expect(message.authentication?.dkim, `DKIM did not pass — ${verdicts}`).toBe('pass');
+    expect(message.authentication?.dmarc, `DMARC did not pass — ${verdicts}`).toBe('pass');
 
     // The subject is what shows on a lock screen, so the code has to be in it.
     // It is also where the spec takes the code FROM: the HTML body renders it

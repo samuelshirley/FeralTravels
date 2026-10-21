@@ -62,12 +62,28 @@ export type StoreAnswer =
  */
 export interface StorePlanLike {
   productId: string;
-  /** Apple's localized price string, e.g. "$2.69", "2,00 €". For display only. */
+  /**
+   * The product's localized display name from App Store Connect, e.g. "Feral
+   * Travels monthly". May be blank if the metadata is missing; the merge then
+   * keeps the server's title, so a row is never untitled.
+   */
+  title: string;
+  /**
+   * Apple's localized price string, e.g. "$2.69", "2,00 €". For display only.
+   * A blank one drops the plan: the sheet never prints a price the store did
+   * not give it.
+   */
   priceLabel: string;
   /** The same price as a number, in `currencyCode` — what arithmetic uses. */
   price: number;
   /** ISO 4217, from the store: "USD", "EUR", "CAD". */
   currencyCode: string;
+  /**
+   * RevenueCat's `product.pricePerMonthString`: the price over one month,
+   * formatted by StoreKit's own formatter ("$1.83" for $22.00 a year). Null
+   * for a product RevenueCat cannot spread (not a subscription).
+   */
+  pricePerMonthLabel: string | null;
 }
 
 /**
@@ -84,17 +100,88 @@ export type UnavailableReason =
   | 'no_match'
   | 'no_plans';
 
-export interface ResolvedPurchaseMode {
-  mode: PurchaseMode;
-  /** Set only when `mode === 'unavailable'`. */
-  unavailableReason: UnavailableReason | null;
+/**
+ * One row of the purchase sheet: everything Guideline 3.1.2(c) wants beside the
+ * control that buys it — the subscription's title, its length, and its price —
+ * plus, for the annual plan, what that works out to per month.
+ *
+ * Built ONLY by the store branch of `resolvePurchaseMode`, from a StoreKit
+ * answer. There is no constructor that takes the server's fallback strings, so
+ * a sheet cannot print "$2.69" in front of somebody Apple will charge €2.
+ */
+export interface SheetPlan {
+  id: string;
+  /** App Store Connect's localized display name; the server's when blank. */
+  title: string;
+  period: 'month' | 'year';
+  /** "1 month" / "1 year" — the subscription's length, said outright. */
+  length: string;
+  /** Server-authored, e.g. "per month". */
+  cadence: string;
+  /** Apple's `priceString`. Never the server's fallback. */
+  priceLabel: string;
   /**
-   * What to render, in the server's order. In `store` mode these carry the
-   * store's prices; otherwise they are the server's fallback strings.
+   * Annual only: "$1.83/month, billed annually", from StoreKit's
+   * `pricePerMonthString`. Absent when the store gave no per-month figure.
    */
-  plans: PaywallProduct[];
-  /** True while the store has not answered yet (and there is a store to ask). */
-  plansLoading: boolean;
+  perMonth?: string;
+  /** The annual saving, from the store's two prices — see `annualSavingsNote`. */
+  note?: string;
+}
+
+/**
+ * The two shapes the sheet can be in. A discriminated union rather than one
+ * record with a mode flag, so that "unavailable with plan rows" is not a value
+ * this type can hold: `plans` is the empty tuple there, and `tsc` refuses any
+ * branch that tries to hand the sheet a row without a store answer behind it.
+ *
+ * That is the 2026-10-20 fix. Unavailable mode used to render the server's
+ * `fallbackUsdLabel` ("$2.69", "$22.00") with no renewal terms — a price that
+ * is wrong in every storefront but one, beside nothing Apple wants with it.
+ */
+export type ResolvedPurchaseMode =
+  | {
+      mode: 'store';
+      unavailableReason: null;
+      plans: SheetPlan[];
+      plansLoading: false;
+    }
+  | {
+      mode: 'unavailable';
+      /** Null only while the store is still being asked. */
+      unavailableReason: UnavailableReason | null;
+      plans: readonly [];
+      /** True while the store has not answered yet (and there is a store to ask). */
+      plansLoading: boolean;
+    };
+
+/** The subscription's length, from its period. Exhaustive, so a third period fails `tsc`. */
+export function planLength(period: SheetPlan['period']): string {
+  switch (period) {
+    case 'month':
+      return '1 month';
+    case 'year':
+      return '1 year';
+    default: {
+      const exhaustive: never = period;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * The service's name is always on the row, whatever App Store Connect's
+ * Display Name says. 3.1.2(c) asks for the "title of publication or service";
+ * the products' Display Names are "Monthly" / "Annual", which name the plan but
+ * not the service, and they cannot be edited while the subscription sits in
+ * review. So a store title that does not already carry the service name gets it
+ * prefixed ("Feral Travels Monthly"); a blank one falls back to the server's.
+ */
+export const SERVICE_NAME = 'Feral Travels';
+export function serviceTitle(storeTitle: string | null | undefined, serverTitle: string): string {
+  const t = storeTitle?.trim() ?? '';
+  if (t === '') return serverTitle;
+  return t.toLowerCase().includes(SERVICE_NAME.toLowerCase()) ? t : `${SERVICE_NAME} ${t}`;
 }
 
 export function resolvePurchaseMode({
@@ -105,39 +192,44 @@ export function resolvePurchaseMode({
   storeAnswer: StoreAnswer;
   /** `entitlement.products`, or [] when there is no entitlement payload. */
   serverPlans: PaywallProduct[];
-  /** BCP 47 locale for the saving's formatting. Omitted = the device's own. */
+  /**
+   * The device's BCP 47 locale, tried FIRST when working out how the storefront
+   * writes a price (see `annualSavingsNote`). It never decides the format by
+   * itself. Omitted = the runtime's default.
+   */
   locale?: string;
 }): ResolvedPurchaseMode {
   if (storeAnswer.kind === 'pending') {
-    return {
-      mode: 'unavailable',
-      unavailableReason: null,
-      plans: withoutNotes(serverPlans),
-      plansLoading: true,
-    };
+    return { mode: 'unavailable', unavailableReason: null, plans: [], plansLoading: true };
   }
 
   if (storeAnswer.kind === 'no_key') {
-    return unavailable('no_key', serverPlans);
+    return unavailable('no_key');
   }
 
   if (storeAnswer.kind === 'error') {
-    return unavailable('store_error', serverPlans);
+    return unavailable('store_error');
   }
 
   if (serverPlans.length === 0) {
-    return unavailable('no_plans', serverPlans);
+    return unavailable('no_plans');
   }
 
-  if (storeAnswer.plans.length === 0) {
-    return unavailable('store_empty', serverPlans);
+  // A package whose price string is blank is a package with no price to show.
+  // It is treated as absent rather than rendered with an empty price — the sheet
+  // prints only what the store said.
+  const priced = storeAnswer.plans.filter((s) => s.priceLabel.trim() !== '');
+  if (priced.length === 0) {
+    return unavailable('store_empty');
   }
 
   /**
    * The server decides WHAT is for sale and how it reads; the store decides
-   * what it COSTS. Merged in the server's order so the cadence, the note and
-   * the ordering stay server-authored, while `priceLabel` becomes Apple's own
-   * localized string.
+   * what it COSTS and what it is CALLED. Merged in the server's order so the
+   * cadence and the ordering stay server-authored, while `priceLabel` and
+   * `title` become Apple's own localized strings — the title falling back to
+   * the server's when the store's is blank, because an untitled row is the
+   * Guideline 3.1.2(c) rejection of 2026-10-19.
    *
    * A server plan with no matching store package is DROPPED: Apple cannot sell
    * it, so offering it would produce a tap that can only fail. ONE plan
@@ -145,7 +237,7 @@ export function resolvePurchaseMode({
    * asymmetry is diagnostic (a single mistyped product id looks like this).
    * NONE surviving is a different failure and gets its own reason.
    */
-  const storeFor = (p: PaywallProduct) => storeAnswer.plans.find((s) => s.productId === p.id);
+  const storeFor = (p: PaywallProduct) => priced.find((s) => s.productId === p.id);
   const monthly = serverPlans.find((p) => p.period === 'month');
   const annual = serverPlans.find((p) => p.period === 'year');
   const monthlyStore = monthly && storeFor(monthly);
@@ -153,58 +245,101 @@ export function resolvePurchaseMode({
   const saving =
     monthlyStore && annualStore ? annualSavingsNote(monthlyStore, annualStore, locale) : undefined;
 
-  // Any `note` the payload carried is dropped: only the store's own prices may
-  // produce one.
-  const merged: PaywallProduct[] = withoutNotes(serverPlans).flatMap((p) => {
+  // Built field by field rather than spread from the server's product, so
+  // nothing the payload carries — its fallback `priceLabel`, a stale `note` —
+  // can ride through onto the sheet.
+  const merged: SheetPlan[] = serverPlans.flatMap((p) => {
     const store = storeFor(p);
     if (!store) return [];
-    const note = p.period === 'year' ? saving : undefined;
-    return [{ ...p, priceLabel: store.priceLabel, ...(note ? { note } : {}) }];
+    const perMonthLabel = store.pricePerMonthLabel?.trim();
+    const row: SheetPlan = {
+      id: p.id,
+      title: serviceTitle(store.title, p.title),
+      period: p.period,
+      length: planLength(p.period),
+      cadence: p.cadence,
+      priceLabel: store.priceLabel,
+    };
+    if (p.period === 'year' && perMonthLabel) row.perMonth = `${perMonthLabel}/month, billed annually`;
+    if (p.period === 'year' && saving) row.note = saving;
+    return [row];
   });
 
   if (merged.length === 0) {
-    return unavailable('no_match', serverPlans);
+    return unavailable('no_match');
   }
 
   return { mode: 'store', unavailableReason: null, plans: merged, plansLoading: false };
 }
 
-function unavailable(
-  reason: UnavailableReason,
-  serverPlans: PaywallProduct[]
-): ResolvedPurchaseMode {
-  // The fallback prices are still rendered: the reader learns what a plan
-  // costs, roughly, and the sentence under them says why it cannot be bought
-  // here. An empty sheet would say nothing at all.
-  return {
-    mode: 'unavailable',
-    unavailableReason: reason,
-    plans: withoutNotes(serverPlans),
-    plansLoading: false,
-  };
+/**
+ * No rows at all. The server's fallback prices are US prices — wrong in every
+ * other storefront — and an unavailable sheet cannot say what the renewal
+ * terms are for a price it cannot sell. The sheet shows the reason, Restore and
+ * the legal links instead (`unavailableMessage`).
+ */
+function unavailable(reason: UnavailableReason): ResolvedPurchaseMode {
+  return { mode: 'unavailable', unavailableReason: reason, plans: [], plansLoading: false };
 }
 
 /**
- * No saving without the store. The server's fallback labels are US prices — a
- * rough indication of cost, wrong in every other storefront — and a sum over
- * them would be a precise-looking number that is not true for the reader.
+ * Locales tried, after the device's own, to find how the STOREFRONT writes a
+ * price. The app is sold in the US, Canada and Europe (App Store availability is
+ * set to exactly those), so these are each of those regions' languages plus an
+ * English variant of each: Apple formats with the App Store account's storefront
+ * and language, which need not match the device. A storefront outside this set
+ * still matches whenever one of these happens to write its currency the same
+ * way; when none does, there is no badge.
  */
-function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
-  return plans.map(({ note: _ignored, ...rest }) => {
-    void _ignored;
-    return rest;
-  });
+const STOREFRONT_LOCALES = [
+  'en-US', 'es-US', 'en-CA', 'fr-CA',
+  'en-GB', 'en-IE', 'ga-IE', 'en-MT', 'mt-MT',
+  'de-DE', 'en-DE', 'de-AT', 'en-AT', 'de-CH', 'fr-CH', 'it-CH', 'en-CH', 'de-LU', 'fr-LU',
+  'fr-FR', 'en-FR', 'fr-BE', 'nl-BE', 'en-BE', 'nl-NL', 'en-NL',
+  'es-ES', 'ca-ES', 'en-ES', 'pt-PT', 'en-PT', 'it-IT', 'en-IT',
+  'sv-SE', 'en-SE', 'da-DK', 'en-DK', 'nb-NO', 'en-NO', 'fi-FI', 'en-FI', 'is-IS',
+  'pl-PL', 'en-PL', 'cs-CZ', 'en-CZ', 'sk-SK', 'hu-HU', 'en-HU', 'ro-RO', 'bg-BG',
+  'el-GR', 'en-GR', 'el-CY', 'en-CY', 'hr-HR', 'sl-SI', 'en-SI', 'et-EE', 'lv-LV', 'lt-LT',
+];
+
+/** Spaces differ between Apple and Intl (U+00A0, U+202F) and say nothing about format. */
+const normalizeSpaces = (s: string) => s.replace(/[\s\u00a0\u202f]+/g, ' ').trim();
+
+/**
+ * The locale that writes `price` in `currency` EXACTLY as the store's own label
+ * does — i.e. the storefront's format — or undefined when none of the
+ * candidates reproduces it.
+ */
+function storefrontLocale(
+  price: number,
+  currency: string,
+  label: string,
+  deviceLocale?: string
+): string | undefined {
+  const target = normalizeSpaces(label);
+  const candidates = [...(deviceLocale ? [deviceLocale] : []), ...STOREFRONT_LOCALES];
+  for (const candidate of candidates) {
+    try {
+      const written = new Intl.NumberFormat(candidate, { style: 'currency', currency }).format(price);
+      if (normalizeSpaces(written) === target) return candidate;
+    } catch {
+      // A locale this runtime does not know is simply not a candidate.
+    }
+  }
+  return undefined;
 }
 
 /**
  * "Save €4 a year", from the STORE's two prices: monthly × 12 − annual, in the
- * store's currency, formatted for the viewer's locale.
+ * store's currency, written the way the STOREFRONT writes its prices.
  *
  * Every figure comes from StoreKit, so a price changed in App Store Connect is
- * reflected here with no code change. The currency sign comes from
- * `Intl.NumberFormat`, never from us: EUR in `en-IE` is "€4", in `de-DE`
- * "4 €"; CAD is "CA$6" to a US-English reader and "$6" to a Canadian one,
- * which is how each of them writes it.
+ * reflected here with no code change. The FORMAT comes from StoreKit too: the
+ * badge sits beside Apple's own price string, so it is written in whichever
+ * locale reproduces that string exactly. Formatting with the device's locale
+ * instead put "Save 10,28 US$ a year" beside "$22.00 per year" on a
+ * Spanish-language iPhone with a US App Store account (2026-10-20). The device
+ * locale is only tried first, as the likeliest match.
  *
  * A whole saving drops the decimals ("€4", not "€4.00"), the way the prices
  * themselves are advertised; anything else keeps the currency's own
@@ -213,13 +348,14 @@ function withoutNotes(plans: PaywallProduct[]): PaywallProduct[] {
  *
  * Returns undefined — no badge — whenever there is no honest figure: the two
  * prices in different currencies, a price that is not a finite number, a
- * currency code that is not ISO 4217-shaped, or an annual plan that does not
- * actually save anything.
+ * currency code that is not ISO 4217-shaped, an annual plan that does not
+ * actually save anything, or a store label no known locale reproduces (a
+ * guessed format beside Apple's is the bug this replaced).
  */
 export function annualSavingsNote(
   monthly: Pick<StorePlanLike, 'price' | 'currencyCode'>,
-  annual: Pick<StorePlanLike, 'price' | 'currencyCode'>,
-  locale?: string
+  annual: Pick<StorePlanLike, 'price' | 'currencyCode' | 'priceLabel'>,
+  deviceLocale?: string
 ): string | undefined {
   const currency = annual.currencyCode;
   if (monthly.currencyCode !== currency || !/^[A-Z]{3}$/.test(currency)) return undefined;
@@ -227,6 +363,9 @@ export function annualSavingsNote(
 
   const cents = Math.round((monthly.price * 12 - annual.price) * 100);
   if (cents <= 0) return undefined;
+
+  const locale = storefrontLocale(annual.price, currency, annual.priceLabel, deviceLocale);
+  if (!locale) return undefined;
 
   const whole = cents % 100 === 0;
   const amount = new Intl.NumberFormat(locale, {
@@ -301,4 +440,51 @@ export function manageSubscriptionAvailable(
   // user it protects would otherwise be sent to an empty list.
   if (!entitlement) return false;
   return canManageAppleSubscription(entitlement.state, entitlement.source);
+}
+
+/**
+ * Whether the server has RECORDED an App Store subscription for this account —
+ * the condition a purchase, a restore or an offer-code redemption waits for
+ * before the app treats it as done.
+ *
+ * Not `entitled`. A trial account is already entitled, so "wait until
+ * entitled" answered yes on the first poll after a purchase, before the
+ * RevenueCat webhook had arrived: the sheet closed and Settings went on saying
+ * the account was in its free period — a purchase that looked like it did
+ * nothing (Guideline 2.1(b), 2026-10-20). The webhook writes a row with
+ * `source: 'apple_iap'`; that row, in a state that means it is live, is the
+ * server's own word that Apple's subscription has landed.
+ *
+ * `subscribed_capped` counts: the subscription is real and recorded, and
+ * what pauses planning there is our usage ceiling, which a second purchase
+ * would not lift. `cancelled_in_period` counts for a restore of a subscription
+ * whose renewal was turned off. `comped` (the author's account, the fixtures)
+ * masks every row's state, so for it the Apple row's existence is all there is
+ * to go on. Exhaustive over `AccountState`.
+ */
+export function appleSubscriptionConfirmed(
+  entitlement: { state: AccountState; source: SubscriptionSource | null } | null
+): boolean {
+  if (!entitlement || entitlement.source !== 'apple_iap') return false;
+  const { state } = entitlement;
+  switch (state) {
+    case 'subscribed':
+    case 'subscribed_watch':
+    case 'subscribed_capped':
+    case 'cancelled_in_period':
+    case 'billing_grace':
+    case 'comped':
+      return true;
+    case 'trial':
+    case 'trial_spent':
+    case 'trial_expired':
+    case 'expired':
+    case 'refunded':
+    case 'revoked':
+      return false;
+    default: {
+      const exhaustive: never = state;
+      return exhaustive;
+    }
+  }
 }

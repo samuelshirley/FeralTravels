@@ -3,6 +3,7 @@ import { login } from './fixtures/auth';
 import {
   anonymousContext,
   bearerContext,
+  fixturePost,
   paidUsage,
   seedAccount,
   send,
@@ -594,6 +595,64 @@ test.describe('API contracts — happy paths left in place', () => {
     } finally {
       await api.dispose();
     }
+  });
+});
+
+/**
+ * App Review 5.1.2(i): an account that has not agreed to its content going to
+ * Anthropic is refused 403 `ai_consent_required` by every Penny route — never
+ * 401 (the app would sign out) and never 402 (the paywall) — and the refusal
+ * costs nothing. Agreeing through the consent sheet's own request lifts it.
+ * The unit-level version, with the model call observed, is
+ * src/test/pg/aiConsent.test.ts.
+ */
+test.describe('API contracts — AI consent', () => {
+  test('without consent, onboarding and replan are 403 ai_consent_required and spend nothing', async () => {
+    const fresh = await signedInAccount({}, { aiConsent: false });
+    try {
+      const me = (await (await fresh.api.get('/api/me')).json()) as { ai_consent: boolean };
+      expect(me.ai_consent).toBe(false);
+      const before = await paidUsage(fresh.email);
+      for (const [path, body] of [
+        [`/api/trips/${fresh.tripId}/onboarding`, { questionKey: 'trip_date', value: 'next week' }],
+        ['/api/trip/replan', { tripId: fresh.tripId, message: 'Add a day in Colmar' }],
+        ['/api/trip/replan', { tripId: fresh.tripId, message: 'Plan my trip', handoff: true }],
+      ] as const) {
+        const res = await fresh.api.post(path, { data: body });
+        const text = await res.text();
+        expect(res.status(), `${path}: ${text}`).toBe(403);
+        expect((JSON.parse(text) as { code?: string }).code, path).toBe('ai_consent_required');
+      }
+      expect((await paidUsage(fresh.email)).calls).toBe(before.calls);
+
+      // Agree exactly as the sheet does; /api/me now says so.
+      const agreed = await fresh.api.patch('/api/me/preferences', { data: { ai_consent: true } });
+      expect(agreed.status(), await agreed.text()).toBe(200);
+      const after = (await (await fresh.api.get('/api/me')).json()) as { ai_consent: boolean };
+      expect(after.ai_consent).toBe(true);
+
+      // And the refusal is gone, at $0: replan replays a planted turn (the
+      // money-limits idiom) instead of answering 403.
+      const { idempotencyKey } = await fixturePost<{ idempotencyKey: string }>('/api/test/turn', {
+        action: 'seed',
+        email: fresh.email,
+        tripId: fresh.tripId,
+        status: 'done',
+        message: 'Plan my trip',
+      });
+      const retry = await fresh.api.post('/api/trip/replan', {
+        data: { tripId: fresh.tripId, message: 'Plan my trip', handoff: true, idempotencyKey },
+      });
+      expect(retry.status(), await retry.text()).toBe(200);
+      expect((await paidUsage(fresh.email)).calls).toBe(before.calls);
+    } finally {
+      await fresh.api.dispose();
+    }
+  });
+
+  test('a decline is not a request: ai_consent false is 400', async () => {
+    const res = await owner.api.patch('/api/me/preferences', { data: { ai_consent: false } });
+    expect(res.status(), await res.text()).toBe(400);
   });
 });
 

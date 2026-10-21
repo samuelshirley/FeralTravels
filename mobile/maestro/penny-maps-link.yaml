@@ -49,6 +49,9 @@ appId: ${APP_ID}
 - inputText: 'Girona, Spain to Annecy, France, all in one driving day. Go ahead without asking me anything.'
 - tapOn:
     id: 'chat-composer-send'
+# A fresh account's first send: the AI consent sheet (App Review 5.1.2(i))
+# holds it until Agree.
+- runFlow: ai-consent-agree.yaml
 - extendedWaitUntil:
     visible: 'Read'
     timeout: 30000

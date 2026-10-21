@@ -60,6 +60,7 @@ export async function GET() {
        */
       products: PRODUCTS.map((p) => ({
         id: p.id,
+        title: p.title,
         priceLabel: p.fallbackUsdLabel,
         cadence: p.cadence,
         period: p.period,

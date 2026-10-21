@@ -3,51 +3,56 @@ import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
 /**
- * In-app explainer shown immediately before the iOS location alert.
+ * The sheet shown at launch, over the Finn splash, before iOS's location
+ * dialog — and only when iOS has not been asked yet (shared/lib/launchLocation).
  *
- * iOS gives an app exactly one shot at that alert. A "Don't Allow" there is
- * only reversible through Settings, which almost nobody does — so the OS
- * prompt is spent only on someone who has already said yes in UI we control,
- * where "Not now" is cheap and recoverable. This is why the ask stays inside
- * the trip workspace rather than moving to cold start: here the user has seen
- * their route, so the reason for asking is legible.
+ * ONE CONTROL, and it always leads to the system dialog. App Review 5.1.1(iv):
+ * a pre-permission screen may explain, but it may not offer a way past the
+ * system prompt. Build 12's version had "Turn on location" and "Not now", and
+ * "Not now" skipped the dialog — that is the rejection pattern, and its whole
+ * design (spend the one-shot OS prompt only on someone who already said yes)
+ * is what Apple forbids. The user's real choice is Allow or Don't Allow, in
+ * iOS's own dialog, and the app does not go on until they make it.
+ *
+ * There is no dismiss either: `onRequestClose` (Android's back button) is
+ * Continue, not a skip. locationPrimerGuard.test.ts holds all of this.
  *
  * Sheet chrome is AnnouncementModal's, so the app has one modal language.
  */
 export default function LocationPrimer({
   visible,
-  onEnable,
-  onDecline,
+  onContinue,
 }: {
   visible: boolean;
-  onEnable: () => void;
-  onDecline: () => void;
+  onContinue: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDecline}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onContinue}>
       <View style={styles.backdrop}>
-        <View style={styles.sheet}>
+        <View style={styles.sheet} testID="location-primer">
           <View style={styles.accentBar}>
             <View style={[styles.accentHalf, { backgroundColor: theme.primary }]} />
             <View style={[styles.accentHalf, { backgroundColor: theme.accentWarm }]} />
           </View>
 
           <View style={styles.body}>
-            <Text style={styles.title}>Know where you are on the route?</Text>
+            <Text style={styles.title}>Know where you are on the route</Text>
             <Text style={styles.bodyText}>
-              With location on, Feral Travels knows which day you&apos;re on and which stop is
-              next — and Finn can plan fuel from where you actually are, not from where the plan
-              says you should be.
+              With location, Feral Travels knows which day you&apos;re on and which stop is next
+              — and Finn plans fuel from where you actually are, not from where the plan says you
+              should be.
             </Text>
             <Text style={styles.note}>
-              iOS will ask you to confirm on the next screen. You can change this any time.
+              iOS asks next. You can change your answer later in Settings.
             </Text>
 
-            <Pressable accessibilityRole="button" onPress={onEnable} style={styles.cta}>
-              <Text style={styles.ctaText}>Turn on location</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={onDecline} style={styles.secondary}>
-              <Text style={styles.secondaryText}>Not now</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onContinue}
+              style={styles.cta}
+              testID="location-primer-continue"
+            >
+              <Text style={styles.ctaText}>Continue</Text>
             </Pressable>
           </View>
         </View>
@@ -105,6 +110,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   ctaText: { fontSize: 14, fontFamily: font.semibold, color: theme.onPrimary },
-  secondary: { paddingVertical: 12, alignItems: "center" },
-  secondaryText: { fontSize: 14, fontFamily: font.medium, color: theme.muted },
 });

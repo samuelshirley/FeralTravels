@@ -5,14 +5,20 @@ import type { AccountState } from '@/types/entitlement';
 describe('planningCaption', () => {
   it('tells a trial user how long they have left, in words', () => {
     expect(planningCaption({ state: 'trial', trialDaysRemaining: 7 })).toBe(
-      'Building this trip now, you have seven more days on your free trial.',
+      'Building this trip now, you have seven more free days. No payment taken.',
     );
   });
 
   it('says "last day" rather than "one more days" on the final day', () => {
     expect(planningCaption({ state: 'trial', trialDaysRemaining: 1 })).toBe(
-      "Building this trip now — it's the last day of your free trial.",
+      "Building this trip now — it's your last free day. No payment taken.",
     );
+  });
+
+  it('never calls the free days a "trial" — there is no App Store free trial', () => {
+    for (let d = 1; d <= 7; d++) {
+      expect(planningCaption({ state: 'trial', trialDaysRemaining: d })).not.toMatch(/trial/i);
+    }
   });
 
   it('falls back to the plain caption at zero days', () => {

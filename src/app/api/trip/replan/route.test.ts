@@ -61,6 +61,12 @@ vi.mock('@/server/repos/usage', () => ({
 }));
 vi.mock('@/server/repos/chat', () => ({ addChatMessage: m.addChatMessage }));
 vi.mock('@/server/messageGate', () => ({ gateMessage: vi.fn() }));
+// Both accounts here have agreed to Anthropic; the refusal without it is
+// src/app/api/aiConsentRoutes.test.ts.
+vi.mock('@/server/repos/users', async (orig) => ({
+  ...(await orig<typeof import('@/server/repos/users')>()),
+  getAiConsentAt: vi.fn(async () => new Date('2026-10-01T00:00:00Z')),
+}));
 
 import { POST } from './route';
 import { jsonRequest } from '@/test/routeHarness';

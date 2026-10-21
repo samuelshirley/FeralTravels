@@ -1,7 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import * as Location from "expo-location";
-import * as SecureStore from "expo-secure-store";
-import LocationPrimer from "@/components/LocationPrimer";
 
 /**
  * Native mirror of src/components/DeviceLocationContext.tsx.
@@ -10,10 +8,15 @@ import LocationPrimer from "@/components/LocationPrimer";
  * then a live watch. Same `gpsStatus` vocabulary as the web so the shared
  * `useNextStop` hook works unchanged on both platforms.
  *
- * Unlike the web, the OS alert here is one-shot: iOS shows it once per install
- * and a "Don't Allow" is only reversible in Settings. So the mount effect no
- * longer fires it directly — it shows our own primer first (LocationPrimer)
- * and spends the OS prompt only on a user who already agreed.
+ * IT NEVER ASKS ON MOUNT. Location is asked once, at launch, on the splash
+ * (app/index.tsx + shared/lib/launchLocation.ts), and launch does not go on
+ * until iOS has an answer — so by the time a trip screen mounts this, the
+ * permission is granted or denied and there is nothing to ask. The only prompt
+ * from here is `request()`, behind an explicit "turn on location" tap, for the
+ * one state launch could not settle (Location Services off device-wide).
+ *
+ * Build 12 asked here instead, through a primer with a "Not now" that skipped
+ * the system dialog — App Review 5.1.1(iv).
  */
 export type GpsStatus = "pending" | "active" | "denied" | "unavailable";
 
@@ -65,36 +68,6 @@ export function useDeviceLocation(): DeviceLocation {
   );
 }
 
-/**
- * Whether the user has been through our primer. Remembered so that opening a
- * second trip doesn't re-nag someone who said "Not now" — but `request()`
- * clears it, so an explicit "turn on location" tap always gets through.
- *
- * SecureStore rather than AsyncStorage purely because it is already a
- * dependency (lib/auth uses it); this value is not a secret.
- */
-const CONSENT_KEY = "location.primer.v1";
-type Consent = "accepted" | "declined";
-
-async function readConsent(): Promise<Consent | null> {
-  try {
-    const v = await SecureStore.getItemAsync(CONSENT_KEY);
-    return v === "accepted" || v === "declined" ? v : null;
-  } catch {
-    // Unreadable keychain — treat as undecided and show the primer again.
-    return null;
-  }
-}
-
-async function writeConsent(v: Consent): Promise<void> {
-  try {
-    await SecureStore.setItemAsync(CONSENT_KEY, v);
-  } catch {
-    // Best effort. Worst case the primer reappears next launch, which is a
-    // nag — never a wrong permission state.
-  }
-}
-
 export function DeviceLocationProvider({
   promptAllowed = true,
   children,
@@ -137,7 +110,6 @@ export function DeviceLocationProvider({
     };
   }, [position]);
   const [enablePath, setEnablePath] = useState<EnablePath>("none");
-  const [primerVisible, setPrimerVisible] = useState(false);
   const subRef = useRef<Location.LocationSubscription | null>(null);
 
   async function start() {
@@ -174,10 +146,10 @@ export function DeviceLocationProvider({
   }
 
   /**
-   * Spend the OS prompt. Only called once consent exists — either from the
-   * primer or from an explicit "turn on location" tap.
+   * Raise the system dialog — only ever from an explicit "turn on location"
+   * tap, which IS the request.
    */
-  async function askOs() {
+  async function request() {
     const services = await Location.hasServicesEnabledAsync().catch(() => false);
     if (!services) {
       // Location Services off device-wide. Not something the app prompt can
@@ -196,32 +168,6 @@ export function DeviceLocationProvider({
     await start();
   }
 
-  /**
-   * Public escape hatch. Tapping a "turn on location" control IS consent, so
-   * this skips the primer and overwrites a remembered "Not now" — otherwise
-   * that choice would be a one-way door inside the app.
-   */
-  async function request() {
-    setPrimerVisible(false);
-    await writeConsent("accepted");
-    await askOs();
-  }
-
-  function handleEnable() {
-    setPrimerVisible(false);
-    void (async () => {
-      await writeConsent("accepted");
-      await askOs();
-    })();
-  }
-
-  function handleDecline() {
-    setPrimerVisible(false);
-    setEnablePath("prompt");
-    setGpsStatus("denied");
-    void writeConsent("declined");
-  }
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -235,31 +181,12 @@ export function DeviceLocationProvider({
         await start();
         return;
       }
-      // iOS has already been asked and won't ask again. Showing the primer
-      // here would promise a prompt that never arrives.
-      if (existing && !existing.canAskAgain) {
-        setEnablePath("settings");
-        setGpsStatus("denied");
-        return;
-      }
-      // From here on the OS alert is still spendable, so a "turn on location"
-      // control is worth offering however the user answers the primer.
-      setEnablePath("prompt");
-      const consent = await readConsent();
-      if (cancelled) return;
-      if (consent === "declined") {
-        setGpsStatus("denied");
-        return;
-      }
-      if (consent === "accepted") {
-        // Said yes before but the OS prompt never resolved (app killed
-        // mid-alert, or a fresh install of a reinstalled app). Go straight
-        // there — re-explaining would be repetitive.
-        await askOs();
-        return;
-      }
-      // Undecided: leave gpsStatus "pending" and let the primer decide.
-      setPrimerVisible(true);
+      // Not granted. Launch has already put the question to iOS, so this is
+      // a "Don't Allow" (only Settings can undo it) — or, rarely, still
+      // unasked because Location Services were off at launch, where a tap can
+      // raise the dialog. Either way: nothing is asked on mount.
+      setEnablePath(existing && !existing.canAskAgain ? "settings" : "prompt");
+      setGpsStatus("denied");
     })();
     return () => {
       cancelled = true;
@@ -272,11 +199,6 @@ export function DeviceLocationProvider({
   return (
     <Ctx.Provider value={{ position, place, placeResolved, gpsStatus, enablePath, request }}>
       {children}
-      <LocationPrimer
-        visible={primerVisible}
-        onEnable={handleEnable}
-        onDecline={handleDecline}
-      />
     </Ctx.Provider>
   );
 }

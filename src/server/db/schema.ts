@@ -139,6 +139,16 @@ export const users = pgTable('users', {
    * it fires.
    */
   pennyLockedUntil: timestamp('penny_locked_until', { withTimezone: true }),
+  /**
+   * When this account agreed to its messages, photos, trip details and
+   * location being sent to Anthropic (App Review 5.1.2(i), revised
+   * 2026-10-16: explicit permission before personal data reaches a
+   * third-party AI). Null means they have not, and every route that would
+   * send their content to Anthropic answers 403 `ai_consent_required`
+   * instead (`src/server/aiConsent.ts`). Written once by the consent sheet
+   * through `PATCH /api/me/preferences`; a decline writes nothing.
+   */
+  aiConsentAt: timestamp('ai_consent_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

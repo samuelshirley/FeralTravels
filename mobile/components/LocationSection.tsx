@@ -9,12 +9,13 @@ import { font } from "@/lib/typography";
  *
  * WHY IT IS HERE AND NOT ONLY ON THE TRIP SCREEN. `LegCard` offers a way back
  * from a denied permission, but only inside an expanded day of a live trip —
- * so a driver who tapped "Not now" once had to know to open a day to find it
- * again. Settings is where someone goes when they think a permission is wrong.
+ * so a driver who answered "Don't Allow" at launch had to know to open a day to
+ * find it again. Settings is where someone goes when they think a permission
+ * is wrong.
  *
  * It reads the permission DIRECTLY rather than through `useDeviceLocation`:
- * that provider is mounted per trip screen (deliberately, so a cold start
- * never prompts), and Settings sits outside it.
+ * that provider is mounted per trip screen (the trip's live watch), and
+ * Settings sits outside it.
  *
  * `getForegroundPermissionsAsync` READS without prompting, which is what a
  * settings row must do — a screen that raises a system dialog just by being

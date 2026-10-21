@@ -77,6 +77,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 
 import { gateMessage, type GateOutcome } from '@/server/messageGate';
+import type { AiConsentProof } from '@/server/aiConsent';
 import { classifyMessage } from '@/server/pennyClassifier';
 import {
   effectiveJevMode,
@@ -118,6 +119,9 @@ function haikuSays(tier: MessageTier) {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
+/** Stand-in proof: the classifier is mocked, so nothing verifies it here. */
+const CONSENT = Object.freeze({ userId: 'user-1' }) as unknown as AiConsentProof;
+
 function useFetch(impl: (url: string, init: RequestInit) => Promise<Response>) {
   fetchMock = vi.fn(impl);
   vi.stubGlobal('fetch', fetchMock);
@@ -125,7 +129,7 @@ function useFetch(impl: (url: string, init: RequestInit) => Promise<Response>) {
 
 async function run(strikes = 0) {
   vi.mocked(getStrikeState).mockResolvedValue({ strikes, lockedUntil: null });
-  return gateMessage({ userId: USER, tripId: TRIP, message: MESSAGE });
+  return gateMessage({ userId: USER, tripId: TRIP, message: MESSAGE, consent: CONSENT });
 }
 
 function jevRows() {
@@ -462,7 +466,7 @@ describe('compare mode: Haiku decides, Jev is only written down', () => {
       });
     });
     vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
-    const pending = gateMessage({ userId: USER, tripId: TRIP, message: MESSAGE });
+    const pending = gateMessage({ userId: USER, tripId: TRIP, message: MESSAGE, consent: CONSENT });
 
     await vi.waitFor(() => expect(classifyMessage).toHaveBeenCalledTimes(1));
     expect(fetchesWhenHaikuAsked).toBe(1);

@@ -34,11 +34,13 @@ import 'server-only';
  * ── What this account is NOT ────────────────────────────────────────────────
  *
  *   - NOT on `ADMIN_ALLOWLIST` (`server/auth/admin.ts`).
- *   - NOT comped (`server/payments/comped.ts`). It lands in the ordinary
- *     seven-day trial, so the reviewer can reach Settings → Plan → View plans
- *     and complete a sandbox purchase. Comping it would recreate the exact
- *     rejection §2 of the review notes is about — an entitled account has no
- *     paywall, and for a while that meant no screen in the app showed a price.
+ *   - NOT comped (`server/payments/comped.ts`). It IS entitled while armed —
+ *     `payments/reviewAccess.ts`, applied in `getAccountVerdict` — because an
+ *     account created before review is past its seven days by the time the
+ *     reviewer signs in, and "That's your seven days up" is a Guideline 2.1
+ *     rejection (2026-10-20). Its STATE is kept, not replaced with `comped`:
+ *     comped masks the subscription row, so a sandbox purchase would appear to
+ *     do nothing. Settings → Plan → View plans opens the sheet in every state.
  *   - NOT related to `FIXTURE_EMAIL_PATTERN` or the `/api/test/*` endpoints.
  *     Those are hard-off on production with no override and stay that way; this
  *     is deliberately a separate mechanism on a separate domain, because they

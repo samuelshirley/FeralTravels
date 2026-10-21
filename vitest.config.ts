@@ -67,6 +67,7 @@ export default defineConfig({
           environment: 'node',
           include: ['src/test/pg/**/*.test.ts'],
           globalSetup: ['./src/test/pg/globalSetup.ts'],
+          setupFiles: ['./src/test/pg/setup.ts'],
           server: { deps: { inline: ['next-auth'] } },
         },
       },

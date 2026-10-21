@@ -1,0 +1,94 @@
+# Subflow: everything Guideline 3.1.2(c) wants on an OPEN purchase sheet, in
+# whichever mode this build is in. Called by paywall.yaml (Penny's bubble),
+# paywall-no-trips.yaml (the paywall screen) and offer-code.yaml (Settings ->
+# View plans), so every surface that opens the sheet is held to the same list.
+#
+# Two modes, one of which must hold:
+#   store        a build with a RevenueCat key whose store answered — each row
+#                is a button whose label reads "<title>, <Apple's price>
+#                <cadence>, <length>", the annual one adding "<x>/month,
+#                billed annually". (A Pressable merges its children into one
+#                accessibility element, so the row's label is what is asserted.)
+#   unavailable  no key, or no store answer — NO row and NO price of any kind
+#                (the server's US fallbacks used to render here, 2026-10-20).
+# Both: the renewal terms, Terms of Use (EULA), Privacy Policy, Restore, and
+# Apple's offer-code button — and never the old FERAL-XXXX-XXXX field.
+#
+# UNPROVEN on a simulator: written 2026-10-20 by a session with no simulator.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      text: '.*Choose a plan.*'
+    timeout: 20000
+# Wait out the store request: the spinner wins over everything else.
+- extendedWaitUntil:
+    notVisible: 'Getting prices from the App Store…'
+    timeout: 30000
+- assertVisible:
+    id: 'purchase-com\.feraltravels\.ios\.monthly|purchase-unavailable'
+
+# ── store mode: title, price, cadence, length; per-month on the annual ─────
+- runFlow:
+    when:
+      visible:
+        id: 'purchase-com\.feraltravels\.ios\.monthly'
+    commands:
+      - assertVisible:
+          id: 'purchase-com\.feraltravels\.ios\.monthly'
+          text: '.+, .*\d.* per month, 1 month'
+      - assertVisible:
+          id: 'purchase-com\.feraltravels\.ios\.annual'
+          text: '.+, .*\d.* per year, 1 year · .*\d.*/month, billed annually'
+      - assertNotVisible:
+          id: 'purchase-unavailable'
+
+# ── unavailable mode: the reason, and no row and no price ─────────────────
+- runFlow:
+    when:
+      visible:
+        id: 'purchase-unavailable'
+    commands:
+      - assertNotVisible:
+          id: 'purchase-com\.feraltravels\.ios\..*'
+      - assertNotVisible:
+          id: 'plan-title-.*'
+      - assertNotVisible:
+          text: '.*per (month|year).*'
+      - assertNotVisible:
+          text: '.*\$2\.69.*'
+      - assertNotVisible:
+          text: '.*\$22\.00.*'
+
+# ── every mode ─────────────────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: 'purchase-renewal-terms'
+    direction: DOWN
+    timeout: 15000
+- assertVisible:
+    id: 'purchase-renewal-terms'
+    text: 'Payment is charged to your Apple Account at confirmation of purchase\. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period\. Manage or cancel in your Apple Account settings\.'
+- scrollUntilVisible:
+    element:
+      id: 'purchase-privacy-link'
+    direction: DOWN
+    timeout: 15000
+- assertVisible:
+    id: 'restore-purchases'
+- assertVisible:
+    id: 'redeem-offer-code'
+    text: 'Redeem offer code'
+- assertVisible:
+    id: 'purchase-terms-link'
+    text: 'Terms of Use \(EULA\)'
+- assertVisible:
+    id: 'purchase-privacy-link'
+    text: 'Privacy Policy'
+# The custom promo field is gone (Guideline 3.1.1).
+- assertNotVisible:
+    id: 'promo-input'
+- assertNotVisible:
+    id: 'promo-redeemer'
+- assertNotVisible:
+    text: '.*HAVE A CODE.*'

@@ -352,6 +352,13 @@ jobs:
         working-directory: mobile
       - run: npx tsc --noEmit
         working-directory: mobile
+      # Guideline 5.1.1(ii)/(iii): the purpose strings the binary would carry,
+      # read off the RESOLVED config (the plugins' defaults are the risk, and
+      # they never appear in app.config.js). Here because this is the job with
+      # mobile/node_modules; src/lib/iosInfoPlistGuard.test.ts pins that it is.
+      - name: Info.plist carries only specific, needed purpose strings
+        working-directory: mobile
+        run: node ../scripts/ios-usage-strings.mjs
       # Decision E12: a release build must not CONTAIN the purchase sheet's
       # developer diagnostics ("the App Store isn't offering these plans yet"
       # read by an App Review tester is a rejection). PurchaseSheet reaches

@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicApiKey } from "@/lib/anthropicKey";
+import { assertAiConsent, type AiConsentProof } from "@/server/aiConsent";
 import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
 import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
@@ -717,10 +718,11 @@ export type ReplanEvent =
 export async function replan(
   userMessage: string,
   tripId: string,
-  images: InputImage[] = [],
-  userId?: string,
+  images: InputImage[],
+  userId: string,
+  consent: AiConsentProof,
 ): Promise<ReplanResult> {
-  for await (const ev of replanStream(userMessage, tripId, images, userId)) {
+  for await (const ev of replanStream(userMessage, tripId, images, userId, consent)) {
     if (ev.kind === "done") return ev.result;
   }
   throw new Error("replanStream finished without yielding done");
@@ -729,10 +731,17 @@ export async function replan(
 export async function* replanStream(
   userMessage: string,
   tripId: string,
-  images: InputImage[] = [],
-  userId?: string,
+  images: InputImage[],
+  userId: string,
+  /**
+   * The user's agreement to send their messages, photos, trip and position to
+   * Anthropic (App Review 5.1.2(i)) — see `src/server/aiConsent.ts`. Checked
+   * before the trip context is even built.
+   */
+  consent: AiConsentProof,
 ): AsyncGenerator<ReplanEvent, void, void> {
   if (!userId) throw new Error("userId is required for Penny replan");
+  assertAiConsent(consent, userId);
   const context = await buildPennyContext(tripId, userId);
   if (!context) throw new Error("Trip not found");
 
@@ -934,6 +943,16 @@ export async function* replanStream(
             validatedActions.length > 0
               ? "Done — take a look at the updated plan."
               : "Sorry, I couldn't apply that cleanly — could you rephrase and try again?";
+          // Say WHY the bubble is a fallback, in the runtime log, so a failed
+          // hand-off can be diagnosed after its preview database is gone (PR 90
+          // run 39604238894: 164 output tokens, no tool call, this fallback, and
+          // nothing left to say whether the text was leaked tool-call markup).
+          // Shape only — never Penny's text, which carries the user's trip.
+          console.warn(
+            `[penny.fallback] tripId=${tripId} actions=${validatedActions.length} ` +
+              `leakedMarkup=${looksLikeLeakedToolCall(joined)} leakRetries=${leakRetryCount} ` +
+              `rawChars=${joined.length} chunks=${iterationText.length} stop=${response.stop_reason}`
+          );
           textChunks.push(fallback);
           yield { kind: "text", chunk: fallback };
         }

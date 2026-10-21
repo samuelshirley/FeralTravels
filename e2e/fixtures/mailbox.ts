@@ -19,10 +19,15 @@
  * before this was written (2026-08-15). The worry was that mail Resend both
  * sends and receives might never leave their network, making a pass here
  * worthless as evidence about real deliverability. It doesn't work that way:
- * Resend sends via Amazon SES and receives on SES inbound, so the message
- * makes a real SMTP hop and arrives carrying SES's own verdict headers. A
- * probe came back with `spf=pass`, `dkim=pass header.i=@feraltravels.com` and
- * `dmarc=pass header.from=feraltravels.com`, plus a full Received chain.
+ * the message makes a real SMTP hop and Resend's receiver stamps it with
+ * spf/dkim/dmarc verdicts. A probe came back with all three passing, plus a
+ * full Received chain.
+ *
+ * Those verdicts first arrived as SES's `authentication-results` header. Resend
+ * stopped forwarding that header around 2026-10 (inbound moved off SES
+ * receipt; new mail carries `x-kumoref` instead), but the same verdicts come
+ * back on every message — old and new — as a structured `authentication`
+ * field, which is what `DeliveredMessage.authentication` reads.
  *
  * The spec asserts those verdicts, which turns this from a smoke test into a
  * genuine deliverability check: if the sending domain's SPF include is dropped
@@ -84,8 +89,26 @@ export interface DeliveredMessage {
   html: string;
   text: string;
   to: string[];
-  /** Lower-cased header names → values. Carries SES's spf/dkim/dmarc verdicts. */
+  /** Lower-cased header names → values. */
   headers: Record<string, string>;
+  /**
+   * Resend's own receiver verdicts (`spf`/`dkim`/`dmarc`, lower-cased, e.g.
+   * `pass`) — the structured replacement for SES's `authentication-results`
+   * header, which Resend stopped forwarding around 2026-10 (inbound moved off
+   * SES receipt; new mail carries `x-kumoref`). Null when the field is absent.
+   */
+  authentication: Record<string, string> | null;
+}
+
+/** Verdict values arrive as plain strings; lower-case them. Null if the field is missing. */
+function normalizeAuthentication(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+      k.toLowerCase(),
+      String(v ?? '').toLowerCase(),
+    ]),
+  );
 }
 
 /** Header names arrive lower-cased today; normalize so a lookup can't miss. */
@@ -167,6 +190,7 @@ export async function waitForMessage(
         text: String(full.text ?? ''),
         to: normalizeTo(full.to ?? hit.to),
         headers: normalizeHeaders(full.headers),
+        authentication: normalizeAuthentication(full.authentication),
       };
     }
     await new Promise((r) => setTimeout(r, pollMs));

@@ -14,6 +14,7 @@ import {
 import { useRouter } from "expo-router";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { Banner, Button, Card, Eyebrow } from "@/components/ui";
+import { LegalFooter } from "@/components/LegalLinks";
 import { theme } from "@/lib/theme";
 import { ApiError, requestOtp, verifyOtp, type SessionResult } from "@/lib/api";
 import { setToken, setSignedInEmail } from "@/lib/auth";
@@ -418,14 +419,19 @@ export default function SignInScreen() {
 
               {/* Guideline 4.8 / Apple HIG: Sign in with Apple must sit at
                   least as prominently as any other third-party option, so it
-                  goes above Google. */}
+                  goes above Google.
+
+                  WHITE, not BLACK: the HIG asks for the style that contrasts
+                  with the background, and this card is near-black — a black
+                  button on it was an outline-less shape the eye slid past.
+                  `legalPagesGuard.test.ts` fails if BLACK comes back. */}
               {showApple ? (
                 <AppleAuthentication.AppleAuthenticationButton
                   buttonType={
                     AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
                   }
                   buttonStyle={
-                    AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                    AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
                   }
                   cornerRadius={theme.radiusSm}
                   style={styles.appleButton}
@@ -547,6 +553,9 @@ export default function SignInScreen() {
             </>
           )}
         </Card>
+
+        {/* Outside the card, under both steps, like the web /login footer. */}
+        <LegalFooter />
       </ScrollView>
     </KeyboardAvoidingView>
   );

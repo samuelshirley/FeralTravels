@@ -1,0 +1,58 @@
+# Launch asks for location ON THE SPLASH, and does not go on until iOS's own
+# dialog is answered — the ALLOW path. (App Review 5.1.1(iv); Sam's rule.)
+#
+# The primer in front of the dialog has ONE control, Continue, and it always
+# raises the system dialog. Build 12's had "Not now", which skipped the dialog —
+# the rejection pattern. src/lib/locationPrimerGuard.test.ts pins the wiring and
+# src/lib/launchLocation.test.ts every branch; this is the device proof.
+#
+# NEEDS A NOT-DETERMINED PERMISSION. `clearState` does not reset it (system
+# state, per bundle id), so the launch sets `all: unset` itself. CAUTION, read
+# before trusting a red run: settings-location.yaml records that an iOS 26.5
+# simulator once reported denied/canAskAgain:false on a freshly erased device
+# and that `simctl privacy reset` could not undo it. If THIS flow fails at the
+# first wait with the sign-in screen up instead of the primer, that is the
+# state it found — check it before reading it as the app skipping the primer.
+#
+# Stops at the sign-in screen and signs nobody in: a granted location would
+# let report_position re-anchor the shard's fixture trip (see screenshots.yaml).
+appId: ${APP_ID}
+---
+- clearKeychain
+- launchApp:
+    clearState: true
+    permissions:
+      all: unset
+
+- assertNotVisible:
+    id: 'fatal-error-modal'
+
+# The primer, over the splash — and NOT the sign-in screen: launch is waiting.
+- extendedWaitUntil:
+    visible:
+      id: 'location-primer'
+    timeout: 30000
+- assertNotVisible:
+    id: 'signin-email'
+- assertNotVisible: 'Not now'
+
+- tapOn:
+    id: 'location-primer-continue'
+
+# iOS's dialog — its text can only be on screen if the app asked iOS.
+- extendedWaitUntil:
+    visible: '.*Allow While Using.*'
+    timeout: 15000
+# Still waiting: the primer is gone, the dialog is up, launch has not routed.
+- assertNotVisible:
+    id: 'signin-email'
+
+- tapOn: '.*Allow While Using.*'
+
+# Answered — launch goes on.
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+- assertNotVisible:
+    id: 'location-primer'

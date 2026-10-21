@@ -53,13 +53,11 @@ export const SHARED_FILES = [
   // about which day a cell is — off by one at a month edge, or UTC-shifted on
   // one platform only.
   ['src/lib/calendarGrid.ts', 'mobile/shared/lib/calendarGrid.ts'],
-  // Both halves of the promo flow. The app must normalize a typed code exactly
-  // as the server does — if the two disagreed, a user would type something the
-  // app accepts and the server rejects, and the error would read as a bad code
-  // rather than a bug. The copy travels for the reason nativeErrorCopyGuard
-  // exists: an error code with no copy in a client shows "Something went wrong".
-  ['src/lib/promoCode.ts', 'mobile/shared/lib/promoCode.ts'],
-  ['src/lib/promoCopy.ts', 'mobile/shared/lib/promoCopy.ts'],
+  // promoCode.ts and promoCopy.ts are NOT mirrored (removed 2026-10-20). The
+  // iOS app redeems codes only through Apple's offer-code sheet — a custom code
+  // that unlocks the paid tier is a Guideline 3.1.1 rejection — so the app has
+  // no use for the server's promo vocabulary, and not shipping it is what keeps
+  // a promo field from creeping back. iosPromoRedeemGuard.test.ts.
   // The in-app-purchase vocabulary and its copy, plus the rule for how long the
   // app waits on the webhook. Nothing on the web can buy anything, so these
   // live in src/lib for ONE reason: the root vitest project is the only test
@@ -102,6 +100,15 @@ export const SHARED_FILES = [
   // The forced-fuel-stop line: both stop cards word Finn's reason through this
   // one function, so the two clients cannot disagree on it or on its units.
   ['src/lib/forcedStopReason.ts', 'mobile/shared/lib/forcedStopReason.ts'],
+  // The launch-time location question: primer -> Continue -> system dialog ->
+  // wait for a real answer. Shared for the usual reason — the root vitest
+  // project is the only test runner, and every branch of it is a way to strand
+  // a launch on the splash or to skip the system dialog (App Review 5.1.1(iv)).
+  ['src/lib/launchLocation.ts', 'mobile/shared/lib/launchLocation.ts'],
+  // The third-party-AI consent (App Review 5.1.2(i)): the 403 code the server
+  // refuses with and the sheet's copy. Both panels show the same sheet and
+  // branch on the same code, so neither can have its own spelling of either.
+  ['src/lib/aiConsent.ts', 'mobile/shared/lib/aiConsent.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

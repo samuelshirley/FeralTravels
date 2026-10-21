@@ -1,3 +1,4 @@
+import type { AiConsentProof } from '@/server/aiConsent';
 import 'server-only';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
@@ -123,6 +124,11 @@ export async function gateMessage(input: {
   /** Admins are never gated. They are the ones debugging it. */
   isAdmin?: boolean;
   now?: Date;
+  /**
+   * The user's agreement to send their message to Anthropic (the Haiku
+   * classifier) — `src/server/aiConsent.ts`.
+   */
+  consent: AiConsentProof;
 }): Promise<GateOutcome> {
   const now = input.now ?? new Date();
 
@@ -164,7 +170,7 @@ export async function gateMessage(input: {
 
   if (!decision) {
     const haiku = async (): Promise<GateDecision> => {
-      const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId);
+      const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId, input.consent);
       return { tier: classified.tier, by: classified.by, reason: classified.reason };
     };
     const { mode, source } = await effectiveJevMode(input.userId);

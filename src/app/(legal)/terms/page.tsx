@@ -2,29 +2,89 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Terms of Service — Feral Travels',
-  description: 'The terms you agree to by using Feral Travels, including the limits of its routing and fuel estimates.',
+  title: 'Terms of Use — Feral Travels',
+  description:
+    'The terms you agree to by using Feral Travels: the subscription, renewal, cancellation and refunds, deleting your account, and the limits of its routing and fuel estimates.',
 };
 
-const UPDATED = '19 August 2026';
+const UPDATED = '20 October 2026';
 const CONTACT = 'sam@feraltravels.com';
+const APPLE_STANDARD_EULA = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+
+/**
+ * The app's Terms of Use — its EULA, for Guideline 3.1.2(c).
+ *
+ * Every subscription sentence below is checkable against the code, and must
+ * stay that way: TRIAL_DAYS and TRIAL_CEILING_MICROCENTS
+ * (server/payments/constants.ts) for the free access and what ends it early,
+ * resolveAccountState (server/payments/states.ts) for "cancelled keeps access
+ * to the end of the period" and "a refund ends it", PlanRequiredOverlay (never
+ * mounted on Settings) for what still works without a plan, and server/deleteAccount.ts — which never
+ * touches Apple's billing — for "deleting the account does not cancel the
+ * subscription". `legalPagesGuard.test.ts` holds the facts Apple checks for.
+ */
 
 export default function TermsPage() {
   return (
     <>
-      <h1>Terms of Service</h1>
+      <h1>Terms of Use</h1>
       <p className="updated">Last updated {UPDATED}</p>
 
       <p>
         Feral Travels is operated by Samuel Shirley, an individual based in Spain
-        (&quot;we&quot;). By creating an account or using the website or the iOS app, you
-        agree to these terms. If you do not, do not use the service.
+        (&quot;we&quot;). These are the terms of use for the website and the iOS app, and
+        they are the app&apos;s end-user licence agreement. By creating an account or using
+        the service, you agree to them. If you do not, do not use the service.
       </p>
 
       <h2>What the service is</h2>
       <p>
         Feral Travels helps you plan and follow long road trips: routes, daily legs, stops,
         vehicles, and fuel planning, with an assistant called Penny you can talk to.
+      </p>
+
+      <h2>Free access, then a subscription</h2>
+      <p>
+        A new account gets 7 days of free access from the day it is created. No payment is
+        taken and you do not give a card. Every message to Penny costs us money, so very
+        heavy use can end the free access sooner. The app tells you when it has ended.
+      </p>
+      <p>
+        After that, using the app needs a subscription, monthly or annual. Without one,
+        Settings stays open, so you can always subscribe, restore a purchase, sign out or
+        delete your account.
+      </p>
+      <ul>
+        <li>
+          Subscriptions are sold through Apple&apos;s App Store, at the price the app shows
+          for your country before you buy.
+        </li>
+        <li>Payment is charged to your Apple Account when you confirm the purchase.</li>
+        <li>
+          The subscription renews automatically at the end of each month or year unless you
+          cancel at least 24 hours before the current period ends. The renewal is charged
+          to your Apple Account within the 24 hours before the period ends.
+        </li>
+        <li>
+          You manage and cancel it in your Apple Account settings: on iPhone, Settings →
+          your name → Subscriptions. If you cancel, you keep access until the end of the
+          period you have paid for.
+        </li>
+        <li>
+          Refunds are handled by Apple, under Apple&apos;s policies, at{' '}
+          <a href="https://reportaproblem.apple.com" target="_blank" rel="noreferrer">
+            reportaproblem.apple.com
+          </a>
+          . If Apple refunds a payment, the access it paid for ends.
+        </li>
+        <li>
+          Deleting your account does not cancel the subscription. Apple bills it, so cancel
+          it in your Apple Account settings too.
+        </li>
+      </ul>
+      <p>
+        A subscription covers normal use of Penny. If an account&apos;s use goes far past
+        that, Penny can be paused for it, and the app says so.
       </p>
 
       <h2>Your account</h2>
@@ -82,7 +142,7 @@ export default function TermsPage() {
 
       <h2>Availability</h2>
       <p>
-        The service is currently free and provided as-is. There is no uptime guarantee,
+        The service is provided as-is. There is no uptime guarantee,
         features may change or be removed, and it depends on third-party providers that can
         fail independently of us. If the service is ever discontinued, you will be given
         reasonable notice and a way to export your trips.
@@ -102,9 +162,22 @@ export default function TermsPage() {
 
       <h2>Ending it</h2>
       <p>
-        You can stop using the service and ask for your account and data to be deleted at
-        any time — email <a href={`mailto:${CONTACT}`}>{CONTACT}</a>. We may close an
-        account that breaches these terms.
+        You can delete your account at any time, yourself, in the app or on the website:
+        Settings → Delete account. It is immediate and cannot be undone. Your trips,
+        vehicles, conversations with Penny and sign-in details go at once. The{' '}
+        <Link href="/privacy">Privacy Policy</Link> sets out the little that is kept
+        afterwards. Deleting the account does not cancel an App Store subscription; cancel
+        that in your Apple Account settings.
+      </p>
+      <p>We may close an account that breaches these terms.</p>
+
+      <h2>Apple&apos;s standard terms</h2>
+      <p>
+        If you got the app from the App Store, Apple&apos;s{' '}
+        <a href={APPLE_STANDARD_EULA} target="_blank" rel="noreferrer">
+          standard licence terms for apps
+        </a>{' '}
+        also apply. Apple is not responsible for the app or for supporting it — we are.
       </p>
 
       <h2>Changes</h2>

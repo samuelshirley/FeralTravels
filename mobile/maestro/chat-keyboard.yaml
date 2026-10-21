@@ -61,6 +61,9 @@ appId: ${APP_ID}
 - assertVisible: 'keyboard visibility check'
 - tapOn:
     id: 'chat-composer-send'
+# The first send on this shard's account: the AI consent sheet (App Review
+# 5.1.2(i)) holds it until Agree. Later flows in the shard find it agreed.
+- runFlow: ai-consent-agree.yaml
 
 # Sent means the composer was operable. This DOES start a Penny turn and spend
 # one Anthropic call — the Playwright suite already spends several, and a real

@@ -222,7 +222,8 @@ check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
-ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh lifetime-spend.ts
+ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
+lifetime-spend.ts
 make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
 pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
 prune-branches.sh
@@ -264,8 +265,10 @@ reappears in `src/`.
 `account-deletion.yaml`, `settings-location.yaml`, `penny-plan-trip.yaml`,
 `penny-maps-link.yaml`, `penny-jev-gate.yaml`, `screenshots.yaml`, `delete-trip.yaml`,
 `onboarding-handoff-plan.yaml`, `paywall-no-trips.yaml`, `penny-rest-day.yaml`,
-`penny-stop-edit.yaml`, `promo-redeem.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
-`support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml` — Maestro flows driving a real iOS
+`penny-stop-edit.yaml`, `offer-code.yaml`, `purchase-sheet.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
+`support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml`,
+`chat-attach-photo.yaml`, `location-primer-allow.yaml`, `location-primer-deny.yaml`, `ai-consent.yaml`
+(+ subflows `ai-consent-agree.yaml`, `ai-consent-if-asked.yaml`) — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs

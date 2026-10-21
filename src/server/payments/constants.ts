@@ -65,10 +65,16 @@ export const CAP_WINDOW_DAYS = 365;
  * numbers and is not shown at all without them (`annualSavingsNote` in
  * src/lib/purchaseMode.ts). Keep them in step with the US storefront, and
  * `displayPrice` in mobile/storekit/FeralTravels.storekit with them.
+ *
+ * `title` is likewise only the fallback for the subscription's name (Guideline
+ * 3.1.2(c)): the sheet prefers StoreKit's localized display name. Keep it equal
+ * to the products' English display name in App Store Connect and `displayName`
+ * in the .storekit file.
  */
 export const PRODUCTS = [
   {
     id: 'com.feraltravels.ios.monthly',
+    title: 'Feral Travels monthly',
     period: 'month',
     fallbackUsdPrice: 2.69,
     fallbackUsdLabel: '$2.69',
@@ -76,6 +82,7 @@ export const PRODUCTS = [
   },
   {
     id: 'com.feraltravels.ios.annual',
+    title: 'Feral Travels annual',
     period: 'year',
     fallbackUsdPrice: 22.0,
     fallbackUsdLabel: '$22.00',

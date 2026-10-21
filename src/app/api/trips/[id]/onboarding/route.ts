@@ -6,6 +6,7 @@ import {
   errorResponse,
 } from '@/server/auth/guards';
 import { getOnboardingSnapshot, submitAnswer } from '@/server/onboarding';
+import { requireAiConsent } from '@/server/aiConsent';
 import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -64,7 +65,11 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     if (!tripId) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     await assertTripOwnedByUser(tripId, userId);
     const body = answerSchema.parse(await req.json());
-    const result = await submitAnswer(tripId, userId, body);
+    // 403 `ai_consent_required` until the user agreed to their answers going
+    // to Anthropic (App Review 5.1.2(i)). After ownership and the payload, so
+    // a stranger still gets the ownership 403 and a bad body its 400.
+    const consent = await requireAiConsent(userId);
+    const result = await submitAnswer(tripId, userId, body, consent);
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);

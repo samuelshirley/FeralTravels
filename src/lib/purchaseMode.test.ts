@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   annualSavingsNote,
+  appleSubscriptionConfirmed,
   manageSubscriptionAvailable,
+  planLength,
   resolvePurchaseMode,
   unavailableMessage,
   type StoreAnswer,
@@ -13,12 +15,14 @@ import type { PaywallProduct } from '@/types/entitlement';
 /** What `/api/me/entitlement` sends: the US fallbacks, and no saving. */
 const MONTHLY: PaywallProduct = {
   id: 'com.feraltravels.ios.monthly',
+  title: 'Feral Travels monthly',
   priceLabel: '$2.69',
   cadence: 'per month',
   period: 'month',
 };
 const ANNUAL: PaywallProduct = {
   id: 'com.feraltravels.ios.annual',
+  title: 'Feral Travels annual',
   priceLabel: '$22.00',
   cadence: 'per year',
   period: 'year',
@@ -29,19 +33,36 @@ const SERVER = [MONTHLY, ANNUAL];
 function storefront(
   currencyCode: string,
   monthly: [number, string],
-  annual: [number, string]
+  annual: [number, string],
+  titles: [string, string] = ['Feral Travels monthly', 'Feral Travels annual'],
+  annualPerMonth: string | null = null
 ): StoreAnswer {
   const plans: StorePlanLike[] = [
-    { productId: ANNUAL.id, price: annual[0], priceLabel: annual[1], currencyCode },
-    { productId: MONTHLY.id, price: monthly[0], priceLabel: monthly[1], currencyCode },
+    {
+      productId: ANNUAL.id,
+      title: titles[1],
+      price: annual[0],
+      priceLabel: annual[1],
+      currencyCode,
+      pricePerMonthLabel: annualPerMonth,
+    },
+    {
+      productId: MONTHLY.id,
+      title: titles[0],
+      price: monthly[0],
+      priceLabel: monthly[1],
+      currencyCode,
+      pricePerMonthLabel: monthly[1],
+    },
   ];
   return { kind: 'packages', plans };
 }
 
-// The three storefronts as priced in App Store Connect, 2026-09.
-const US = storefront('USD', [2.69, '$2.69'], [22, '$22.00']);
-const EUROPE = storefront('EUR', [2, '2,00 €'], [20, '20,00 €']);
-const CANADA = storefront('CAD', [3, '$3.00'], [30, '$30.00']);
+// The three storefronts as priced in App Store Connect, 2026-09, with
+// RevenueCat's `pricePerMonthString` for the annual product.
+const US = storefront('USD', [2.69, '$2.69'], [22, '$22.00'], undefined, '$1.83');
+const EUROPE = storefront('EUR', [2, '2,00 €'], [20, '20,00 €'], undefined, '1,67 €');
+const CANADA = storefront('CAD', [3, '$3.00'], [30, '$30.00'], undefined, '$2.50');
 
 const STORE_BOTH = EUROPE;
 
@@ -53,9 +74,27 @@ function resolve(storeAnswer: StoreAnswer, serverPlans = SERVER, locale = 'en-US
 function only(productId: string): StoreAnswer {
   return {
     kind: 'packages',
-    plans: [{ productId, priceLabel: '$2.69', price: 2.69, currencyCode: 'USD' }],
+    plans: [
+      {
+        productId,
+        title: 'Feral Travels monthly',
+        priceLabel: '$2.69',
+        price: 2.69,
+        currencyCode: 'USD',
+        pricePerMonthLabel: '$2.69',
+      },
+    ],
   };
 }
+
+/** Every store answer that cannot sell — each must render no row and no price. */
+const FAILURES: StoreAnswer[] = [
+  { kind: 'pending' },
+  { kind: 'no_key' },
+  { kind: 'error' },
+  { kind: 'packages', plans: [] },
+  only('com.feraltravels.app.monthly'),
+];
 
 describe('resolvePurchaseMode', () => {
   it('store: both plans match, in the SERVER order with the STORE prices', () => {
@@ -81,35 +120,35 @@ describe('resolvePurchaseMode', () => {
     expect(r.mode).toBe('unavailable');
     expect(r.unavailableReason).toBeNull();
     expect(r.plansLoading).toBe(true);
-    expect(r.plans).toEqual(SERVER);
+    expect(r.plans).toEqual([]);
   });
 
   it('no_key: the build never configured the SDK', () => {
     const r = resolve({ kind: 'no_key' });
     expect(r.mode).toBe('unavailable');
     expect(r.unavailableReason).toBe('no_key');
-    expect(r.plans).toEqual(SERVER);
+    expect(r.plans).toEqual([]);
   });
 
   it('store_error: the offerings call threw', () => {
     const r = resolve({ kind: 'error' });
     expect(r.unavailableReason).toBe('store_error');
-    expect(r.plans).toEqual(SERVER);
+    expect(r.plans).toEqual([]);
   });
 
   it('store_empty: RevenueCat answered with no packages (the agreement / metadata case)', () => {
     const r = resolve({ kind: 'packages', plans: [] });
     expect(r.mode).toBe('unavailable');
     expect(r.unavailableReason).toBe('store_empty');
-    expect(r.plans).toEqual(SERVER);
+    expect(r.plans).toEqual([]);
   });
 
   it('no_match: packages came back and none is a plan the server sells', () => {
     const r = resolve(only('com.feraltravels.app.monthly'));
     expect(r.mode).toBe('unavailable');
     expect(r.unavailableReason).toBe('no_match');
-    // The server's rows still render, with the fallback prices.
-    expect(r.plans).toEqual(SERVER);
+    // No rows: the server's fallback prices are never shown.
+    expect(r.plans).toEqual([]);
   });
 
   it('no_plans: the server gave nothing to sell, whatever the store said', () => {
@@ -126,6 +165,35 @@ describe('resolvePurchaseMode', () => {
   });
 });
 
+describe('the subscription title (Guideline 3.1.2(c))', () => {
+  /**
+   * App Review rejected 1.0 (12) on 2026-10-19 because the purchase sheet named
+   * no subscription: each row was a price and a cadence under the APP's name.
+   * Every row must carry the auto-renewing subscription's own title, in every
+   * mode, because every mode renders rows.
+   */
+  it("store: each row carries the STORE's title — App Store Connect's localized display name", () => {
+    const r = resolve(storefront('EUR', [2, '2,00 €'], [20, '20,00 €'], ['Feral Travels mensual', 'Feral Travels anual']));
+    expect(r.mode).toBe('store');
+    expect(r.plans.map((p) => p.title)).toEqual(['Feral Travels mensual', 'Feral Travels anual']);
+  });
+
+  it("store: a blank store title falls back to the server's, never to an untitled row", () => {
+    const r = resolve(storefront('USD', [2.69, '$2.69'], [22, '$22.00'], ['', '   ']));
+    expect(r.plans.map((p) => p.title)).toEqual(['Feral Travels monthly', 'Feral Travels annual']);
+  });
+
+  it('every row the store mode renders is titled — and no other mode renders rows', () => {
+    for (const answer of [US, EUROPE, CANADA, only(MONTHLY.id)]) {
+      const r = resolve(answer);
+      expect(r.mode).toBe('store');
+      expect(r.plans.length).toBeGreaterThan(0);
+      for (const p of r.plans) expect(p.title.trim(), p.id).not.toBe('');
+    }
+    for (const answer of FAILURES) expect(resolve(answer).plans, answer.kind).toEqual([]);
+  });
+});
+
 describe('the annual saving', () => {
   /**
    * Computed from the STORE's two numbers, never from constants.ts: a price
@@ -139,39 +207,44 @@ describe('the annual saving', () => {
     expect(note(resolve(US))).toBe('Save $10.28 a year');
   });
 
-  it('Europe: €2 × 12 − €20 is €4, without decimals', () => {
-    expect(note(resolve(EUROPE, SERVER, 'en-IE'))).toBe('Save €4 a year');
-    // The sign's position is the reader's locale, not ours.
-    expect(note(resolve(EUROPE, SERVER, 'de-DE'))).toBe('Save 4\u00a0€ a year');
+  it('Europe: €2 × 12 − €20 is €4, without decimals, written the way the store writes €20', () => {
+    // The store's label is "20,00 €", so the saving is "4 €" — whatever the
+    // device is set to. The badge sits beside that price and must read like it.
+    for (const device of ['en-IE', 'en-US', 'de-DE', 'es-ES']) {
+      expect(note(resolve(EUROPE, SERVER, device)), device).toBe('Save 4\u00a0€ a year');
+    }
   });
 
-  it('Canada: CA$3 × 12 − CA$30 is CA$6, written the way the reader writes it', () => {
-    // A US-English device must tell CAD from USD; a Canadian one calls it "$".
-    expect(note(resolve(CANADA, SERVER, 'en-US'))).toBe('Save CA$6 a year');
+  it('Canada: CA$3 × 12 − CA$30 is $6, the way the Canadian storefront writes its own prices', () => {
+    expect(note(resolve(CANADA, SERVER, 'en-US'))).toBe('Save $6 a year');
     expect(note(resolve(CANADA, SERVER, 'en-CA'))).toBe('Save $6 a year');
+  });
+
+  it("follows the STOREFRONT, not the device: a US storefront on a Spanish phone is '$10.28'", () => {
+    // Seen on a real iPhone 2026-10-20: "$22.00 per year" beside
+    // "Save 10,28 US$ a year" — the price in the storefront's format, the
+    // saving in the device's (es-ES).
+    expect(note(resolve(US, SERVER, 'es-ES'))).toBe('Save $10.28 a year');
+    expect(note(resolve(US, SERVER, 'de-DE'))).toBe('Save $10.28 a year');
+  });
+
+  it("a storefront format we cannot reproduce gets no badge rather than a guessed one", () => {
+    const odd = storefront('USD', [2.69, 'USD 2.69'], [22, 'USD ~22~']);
+    expect(note(resolve(odd, SERVER, 'en-US'))).toBeUndefined();
   });
 
   it('only on the annual plan', () => {
     expect(resolve(US).plans.find((p) => p.id === MONTHLY.id)?.note).toBeUndefined();
   });
 
-  it('no badge in unavailable mode — the fallbacks are no basis for arithmetic', () => {
+  it('no badge in unavailable mode — there are no rows to carry one', () => {
     // Even a payload that still carries a server-authored note (an older
     // server) must not put a figure on the sheet the store has not given us.
     const stale = [MONTHLY, { ...ANNUAL, note: 'Save $4 a year' }];
-    const answers: StoreAnswer[] = [
-      { kind: 'pending' },
-      { kind: 'no_key' },
-      { kind: 'error' },
-      { kind: 'packages', plans: [] },
-      only('com.feraltravels.app.monthly'),
-    ];
-    for (const answer of answers) {
+    for (const answer of FAILURES) {
       const r = resolve(answer, stale);
       expect(r.mode, answer.kind).toBe('unavailable');
-      expect(r.plans.map((p) => p.note), answer.kind).toEqual([undefined, undefined]);
-      // The fallback prices themselves still render.
-      expect(r.plans.map((p) => p.priceLabel)).toEqual(['$2.69', '$22.00']);
+      expect(JSON.stringify(r), answer.kind).not.toContain('Save');
     }
   });
 
@@ -185,24 +258,24 @@ describe('the annual saving', () => {
   });
 
   it('refuses when there is no honest figure', () => {
-    const usd = (price: number) => ({ price, currencyCode: 'USD' });
+    const usd = (price: number) => ({ price, currencyCode: 'USD', priceLabel: `$${price.toFixed(2)}` });
     // Two currencies cannot be subtracted.
-    expect(annualSavingsNote(usd(2.69), { price: 20, currencyCode: 'EUR' })).toBeUndefined();
+    expect(annualSavingsNote(usd(2.69), { price: 20, currencyCode: 'EUR', priceLabel: '20,00 €' })).toBeUndefined();
     // An annual plan that saves nothing, or costs more, is not a saving.
     expect(annualSavingsNote(usd(2), usd(24))).toBeUndefined();
     expect(annualSavingsNote(usd(2), usd(30))).toBeUndefined();
     expect(annualSavingsNote(usd(Number.NaN), usd(22))).toBeUndefined();
-    expect(annualSavingsNote(usd(2.69), { price: 22, currencyCode: '' })).toBeUndefined();
+    expect(annualSavingsNote(usd(2.69), { price: 22, currencyCode: '', priceLabel: '$22.00' })).toBeUndefined();
   });
 
   it('float noise cannot turn a whole saving into cents, or cents into a whole', () => {
     // 0.1 × 12 is 1.2000000000000002 in floating point.
-    expect(annualSavingsNote({ price: 0.1, currencyCode: 'USD' }, { price: 0.2, currencyCode: 'USD' }, 'en-US')).toBe('Save $1 a year');
-    expect(annualSavingsNote({ price: 2.99, currencyCode: 'USD' }, { price: 29.99, currencyCode: 'USD' }, 'en-US')).toBe('Save $5.89 a year');
+    expect(annualSavingsNote({ price: 0.1, currencyCode: 'USD' }, { price: 0.2, currencyCode: 'USD', priceLabel: '$0.20' }, 'en-US')).toBe('Save $1 a year');
+    expect(annualSavingsNote({ price: 2.99, currencyCode: 'USD' }, { price: 29.99, currencyCode: 'USD', priceLabel: '$29.99' }, 'en-US')).toBe('Save $5.89 a year');
   });
 
   it('a zero-decimal currency comes out without decimals', () => {
-    expect(annualSavingsNote({ price: 400, currencyCode: 'JPY' }, { price: 4000, currencyCode: 'JPY' }, 'ja-JP')).toBe('Save ￥800 a year');
+    expect(annualSavingsNote({ price: 400, currencyCode: 'JPY' }, { price: 4000, currencyCode: 'JPY', priceLabel: '￥4,000' }, 'ja-JP')).toBe('Save ￥800 a year');
   });
 });
 
@@ -258,5 +331,143 @@ describe('manageSubscriptionAvailable', () => {
 
   it('hides it for a promo row — nothing exists at Apple to manage', () => {
     expect(manageSubscriptionAvailable({ state: 'subscribed', source: 'promo' })).toBe(false);
+  });
+});
+
+describe('no price the store did not supply (Guideline 3.1.2 — 2026-10-20)', () => {
+  /**
+   * Unavailable mode used to render the server's `fallbackUsdLabel` ("$2.69",
+   * "$22.00") with no renewal terms: a US price in front of every storefront,
+   * beside nothing Apple requires with it. Now no row, and no price string of
+   * any kind, can come out of a resolution the store did not price.
+   */
+  const FALLBACK_LABELS = SERVER.map((p) => p.priceLabel);
+
+  it('no failure mode carries a row, a price string or a server fallback label', () => {
+    const answers: StoreAnswer[] = [...FAILURES, { kind: 'packages', plans: [] }];
+    for (const answer of answers) {
+      for (const serverPlans of [SERVER, []]) {
+        const r = resolve(answer, serverPlans);
+        expect(r.mode, answer.kind).toBe('unavailable');
+        expect(r.plans, answer.kind).toEqual([]);
+        const json = JSON.stringify(r);
+        for (const label of FALLBACK_LABELS) expect(json, answer.kind).not.toContain(label);
+        expect(json, answer.kind).not.toMatch(/[$€£]|\d[.,]\d\d/);
+      }
+    }
+  });
+
+  it("store mode's price is ALWAYS the store's string, never the server's", () => {
+    // A storefront whose prices happen to differ from the fallbacks in every
+    // character, so a leaked fallback cannot hide.
+    const r = resolve(storefront('GBP', [1.99, '£1.99'], [19.99, '£19.99'], undefined, '£1.67'));
+    expect(r.plans.map((p) => p.priceLabel)).toEqual(['£1.99', '£19.99']);
+    expect(JSON.stringify(r)).not.toContain('$');
+  });
+
+  it('a package with a blank price string is not rendered — and none priced means store_empty', () => {
+    const blankAnnual = storefront('USD', [2.69, '$2.69'], [22, '  '], undefined, '$1.83');
+    const r = resolve(blankAnnual);
+    expect(r.mode).toBe('store');
+    expect(r.plans.map((p) => p.id)).toEqual([MONTHLY.id]);
+
+    const allBlank = storefront('USD', [2.69, ''], [22, ''], undefined, '$1.83');
+    const none = resolve(allBlank);
+    expect(none.mode).toBe('unavailable');
+    expect(none.unavailableReason).toBe('store_empty');
+    expect(none.plans).toEqual([]);
+  });
+});
+
+describe('length and per-month price on every row (Guideline 3.1.2(c))', () => {
+  it('says each plan\'s length outright', () => {
+    const r = resolve(US);
+    expect(r.plans.map((p) => p.length)).toEqual(['1 month', '1 year']);
+    expect(planLength('month')).toBe('1 month');
+    expect(planLength('year')).toBe('1 year');
+  });
+
+  it("the annual row carries the store's per-month price, billed annually", () => {
+    const annual = (a: StoreAnswer) => resolve(a).plans.find((p) => p.period === 'year');
+    expect(annual(US)?.perMonth).toBe('$1.83/month, billed annually');
+    expect(annual(EUROPE)?.perMonth).toBe('1,67 €/month, billed annually');
+    expect(annual(CANADA)?.perMonth).toBe('$2.50/month, billed annually');
+  });
+
+  it('the monthly row has no per-month line — its price already is one', () => {
+    expect(resolve(US).plans.find((p) => p.period === 'month')?.perMonth).toBeUndefined();
+  });
+
+  it('no per-month line when the store gave no figure — never one we computed', () => {
+    const noFigure = storefront('USD', [2.69, '$2.69'], [22, '$22.00'], undefined, null);
+    expect(resolve(noFigure).plans.find((p) => p.period === 'year')?.perMonth).toBeUndefined();
+    const blank = storefront('USD', [2.69, '$2.69'], [22, '$22.00'], undefined, ' ');
+    expect(resolve(blank).plans.find((p) => p.period === 'year')?.perMonth).toBeUndefined();
+  });
+});
+
+describe('appleSubscriptionConfirmed — what a purchase waits for (Guideline 2.1(b))', () => {
+  /**
+   * After a purchase the app used to stop waiting as soon as the account was
+   * `entitled` — which a trial account already is — so the sheet closed before
+   * the webhook and Settings still described the free period. It now waits for
+   * the server to hold the App Store row.
+   */
+  it('a trial account is NOT confirmed, though it is entitled — whatever the source says', () => {
+    for (const source of ['apple_iap', 'promo', 'admin', 'fake', null] as const) {
+      expect(appleSubscriptionConfirmed({ state: 'trial', source }), String(source)).toBe(false);
+    }
+  });
+
+  it('confirmed once the server holds a live apple_iap row', () => {
+    for (const state of [
+      'subscribed',
+      'subscribed_watch',
+      'subscribed_capped',
+      'cancelled_in_period',
+      'billing_grace',
+      'comped',
+    ] as const) {
+      expect(appleSubscriptionConfirmed({ state, source: 'apple_iap' }), state).toBe(true);
+    }
+  });
+
+  it('not confirmed by a promo, an admin grant, a test row, or a lapsed Apple row', () => {
+    for (const source of ['promo', 'admin', 'fake', null] as const) {
+      expect(appleSubscriptionConfirmed({ state: 'subscribed', source }), String(source)).toBe(false);
+    }
+    for (const state of ['expired', 'refunded', 'revoked', 'trial_expired', 'trial_spent'] as const) {
+      expect(appleSubscriptionConfirmed({ state, source: 'apple_iap' }), state).toBe(false);
+    }
+    expect(appleSubscriptionConfirmed(null)).toBe(false);
+  });
+});
+
+describe('serviceTitle — the service is named on every row (3.1.2(c))', () => {
+  it('prefixes the service to the Display Name App Store Connect has today', async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('Monthly', 'Feral Travels monthly')).toBe('Feral Travels Monthly');
+    expect(serviceTitle('Annual', 'Feral Travels annual')).toBe('Feral Travels Annual');
+  });
+  it('leaves a title that already names the service alone, in any case', async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('Feral Travels Monthly', 'x')).toBe('Feral Travels Monthly');
+    expect(serviceTitle('FERAL TRAVELS annual', 'x')).toBe('FERAL TRAVELS annual');
+  });
+  it("falls back to the server's title when the store's is blank or missing", async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('  ', 'Feral Travels monthly')).toBe('Feral Travels monthly');
+    expect(serviceTitle(undefined, 'Feral Travels annual')).toBe('Feral Travels annual');
+  });
+});
+
+describe('the sheet rows carry the service name with the real App Store Display Names', () => {
+  it('turns "Monthly" / "Annual" into "Feral Travels Monthly" / "Feral Travels Annual"', () => {
+    const asc = storefront('USD', [2.69, '$2.69'], [22, '$22.00'], ['Monthly', 'Annual'], '$1.83');
+    const mode = resolve(asc);
+    expect(mode.mode).toBe('store');
+    const titles = mode.plans.map((p) => p.title);
+    expect(titles).toEqual(expect.arrayContaining(['Feral Travels Monthly', 'Feral Travels Annual']));
+    expect(titles).toHaveLength(2);
   });
 });

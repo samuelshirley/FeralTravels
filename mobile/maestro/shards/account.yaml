@@ -12,6 +12,7 @@ flows:
   - vehicles.yaml
   - paywall.yaml
   - account-deletion.yaml
+  - ai-consent.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -20,3 +21,4 @@ executionOrder:
     - vehicles
     - paywall
     - account-deletion
+    - ai-consent

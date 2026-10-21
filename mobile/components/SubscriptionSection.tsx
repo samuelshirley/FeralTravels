@@ -96,11 +96,14 @@ export default function SubscriptionSection() {
   const flow = usePurchaseFlow({
     entitlement,
     onEntitled: (fresh) => {
-      // Close on the SERVER's word, the same as every other surface. For an
-      // account that was already entitled when the sheet opened — a trial user
-      // buying early, a reviewer in sandbox — the first poll answers yes
-      // immediately, so this fires as soon as the charge clears. That is
-      // correct: there is nothing left to wait for.
+      // Fires only once the server has RECORDED the App Store subscription
+      // (`appleSubscriptionConfirmed`), not merely when the account is
+      // entitled. A trial account is entitled before it buys anything, so
+      // waiting for `entitled` closed the sheet on the first poll — before the
+      // webhook — and this card went on describing the free period after a
+      // purchase (Guideline 2.1(b), 2026-10-20). `fresh` names the plan and its
+      // renewal date, so the status line below reads "Monthly plan — renews …"
+      // the moment the sheet closes.
       setSheetOpen(false);
       setEntitlement(fresh);
     },
@@ -204,12 +207,8 @@ export default function SubscriptionSection() {
         ) : null}
       </Card>
 
-      {/*
-        No `onRedeemed`, so no promo box. A code is redeemed on the surface that
-        blocked you, which is where somebody who was given one has been told to
-        look; a redemption field on Settings would be a second place to keep
-        right for no one who needs it.
-      */}
+      {/* The same sheet as every paywall: plans, renewal terms, Restore, and
+          Apple's offer-code redemption (the only code path on iOS). */}
       {sheetOpen ? (
         <PurchaseSheet flow={flow} onClose={() => setSheetOpen(false)} />
       ) : null}
