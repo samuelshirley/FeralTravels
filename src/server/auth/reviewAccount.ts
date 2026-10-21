@@ -34,11 +34,16 @@ import 'server-only';
  * ── What this account is NOT ────────────────────────────────────────────────
  *
  *   - NOT on `ADMIN_ALLOWLIST` (`server/auth/admin.ts`).
- *   - NOT comped (`server/payments/comped.ts`). It lands in the ordinary
- *     seven-day trial, so the reviewer can reach Settings → Plan → View plans
- *     and complete a sandbox purchase. Comping it would recreate the exact
- *     rejection §2 of the review notes is about — an entitled account has no
- *     paywall, and for a while that meant no screen in the app showed a price.
+ *   - NOT comped (`server/payments/comped.ts`): comped outranks every
+ *     subscription row, so a reviewer's sandbox purchase would appear to do
+ *     nothing.
+ *   - NOT exempt from the paywall. It follows the same rules as every account.
+ *     Its access during review comes from a real promo code minted in /admin for
+ *     this address, which `claimPromoOnSignIn` redeems on the next sign-in — the
+ *     Ambassador-plan state any redeemer is in. A sandbox purchase from
+ *     Settings → Plan → View plans then overwrites that row with `apple_iap`,
+ *     as it would for anyone. (A code-level exemption shipped 2026-10-20 and was
+ *     reverted 2026-10-21: it made a state no real user can reach.)
  *   - NOT related to `FIXTURE_EMAIL_PATTERN` or the `/api/test/*` endpoints.
  *     Those are hard-off on production with no override and stay that way; this
  *     is deliberately a separate mechanism on a separate domain, because they
@@ -77,9 +82,10 @@ export function isReviewAccountSignIn(
 /**
  * The address test on its own, WITHOUT the flag.
  *
- * Separate because the two callers that exempt this address from a gate — the
- * send ladder and the sign-up breaker — must only do so when the feature is
- * armed, and reading the flag in one place keeps that honest. Exported so the
+ * Separate because the one caller that exempts this address from a gate — the
+ * OTP send ladder, so a reviewer tapping "resend" is never locked out — must
+ * only do so when the feature is armed, and reading the flag in one place keeps
+ * that honest. Exported so the
  * guard can prove the address comparison is case-insensitive and exact.
  */
 export function isReviewAccountEmail(email: string | null | undefined): boolean {

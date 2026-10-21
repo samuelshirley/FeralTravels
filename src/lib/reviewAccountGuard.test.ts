@@ -29,7 +29,7 @@
  * went red on that property alone.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // The same escape hatch `server/auth/test-endpoints.test.ts` uses, for the same
@@ -157,7 +157,6 @@ describe('the review account is an ordinary trial account', () => {
 
 describe('it is wired into the two places that matter, and only under the flag', () => {
   const otp = readFileSync(join(ROOT, 'src/server/auth/otp.ts'), 'utf8');
-  const breaker = readFileSync(join(ROOT, 'src/server/payments/breakerCheck.ts'), 'utf8');
 
   it('verifyOtpCode accepts the fixed code only via isReviewAccountSignIn', () => {
     const fn = otp.slice(otp.indexOf('export async function verifyOtpCode'));
@@ -176,18 +175,26 @@ describe('it is wired into the two places that matter, and only under the flag',
     expect(guard).toBeLessThan(ladder);
   });
 
-  it('the sign-up breaker exempts it, or a reviewer is refused on first use', () => {
-    expect(breaker).toMatch(/isReviewAccountSignIn\(normalized\)\)\s*return;/);
-  });
 
-  it('nothing else in src/ consults it', () => {
-    // Three call sites, by design. A fourth is a new place this address is
-    // special, and should be a deliberate decision rather than a diff nobody
-    // reads.
-    const files = ['src/server/auth/otp.ts', 'src/server/payments/breakerCheck.ts'];
-    const callers = files.filter((f) =>
+  it('nothing else in src/ consults it — above all, not the entitlement path', () => {
+    // Sign-in (otp) only: the fixed code, because App Store Connect asks for a
+    // password and this app has none. A second caller is a new
+    // place this address is special. The one this exists to stop: an
+    // entitlement exemption (2026-10-20, reverted 2026-10-21), which put the
+    // account in a state no real user can reach — free period over, never
+    // subscribed, paywall on, yet let in. Its access comes from a real promo
+    // code bound to the address instead (claimed on sign-in), a state any
+    // redeemer is in, and a sandbox purchase replaces it like anyone's.
+    const allowed = ['src/server/auth/otp.ts', 'src/server/auth/reviewAccount.ts'];
+    const walk = (dir: string): string[] =>
+      readdirSync(join(ROOT, dir), { withFileTypes: true }).flatMap((e) => {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) return walk(rel);
+        return /\.(ts|tsx)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [rel] : [];
+      });
+    const callers = walk('src').filter((f) =>
       readFileSync(join(ROOT, f), 'utf8').includes('isReviewAccountSignIn'),
     );
-    expect(callers.sort()).toEqual(files.sort());
+    expect(callers.sort()).toEqual(allowed.sort());
   });
 });

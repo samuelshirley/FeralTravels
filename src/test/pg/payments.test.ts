@@ -19,6 +19,7 @@ import {
   alertAlreadyFired,
   applySubscriptionEvent,
   BREAKERS,
+  claimPromoOnSignIn,
   createPromoCode,
   getAccountVerdict,
   getSubscriptionRow,
@@ -299,5 +300,46 @@ describe('app_meta switches', () => {
       { key: 'paywall_enabled', value: '0' },
       { key: 'penny_locked', value: '1' },
     ]);
+  });
+});
+
+describe("App Review's demo account gets access the way any account does: a promo code", () => {
+  // 2026-10-21: the code-level exemption for appletest@feraltravels.com was
+  // reverted. Its access during review is a promo code minted for the address,
+  // claimed on sign-in — and a reviewer's sandbox purchase must then show as a
+  // real Apple subscription, which a comped account would have masked.
+  it('past its free week, a bound code claimed at sign-in entitles it; a sandbox purchase replaces the promo', async () => {
+    await setPaywallEnabled(true);
+    const user = await seedUser('appletest@feraltravels.com');
+    await rawQuery(`update users set created_at = '2026-01-01T00:00:00Z' where id = $1`, [user.id]);
+    const now = new Date('2026-10-21T12:00:00Z');
+
+    // Past seven days, no plan: the paywall applies to it like anyone.
+    expect(await getAccountVerdict(user.id, now)).toMatchObject({ entitled: false });
+
+    await createPromoCode({ email: 'appletest@feraltravels.com', createdBy: 'sam@feraltravels.com', grantMonths: 12 });
+    await claimPromoOnSignIn({ userId: user.id, email: 'appletest@feraltravels.com', now });
+    expect(await getAccountVerdict(user.id, now)).toMatchObject({ state: 'subscribed', entitled: true, source: 'promo' });
+
+    const result = await applySubscriptionEvent({
+      eventId: 'evt-review-1',
+      type: 'INITIAL_PURCHASE',
+      appUserId: user.id,
+      transferredFrom: [],
+      transferredTo: [],
+      productId: MONTHLY,
+      periodEndMs: Date.parse('2026-11-21T12:00:00Z'),
+      eventTimeMs: now.getTime(),
+      store: 'APP_STORE',
+      originalTransactionId: '2000000999999999',
+      payload: { event: { id: 'evt-review-1' } },
+    });
+    expect(result).toMatchObject({ outcome: 'applied' });
+    expect(await getAccountVerdict(user.id, now)).toMatchObject({
+      state: 'subscribed',
+      entitled: true,
+      source: 'apple_iap',
+      productId: MONTHLY,
+    });
   });
 });
