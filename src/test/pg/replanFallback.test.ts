@@ -80,6 +80,8 @@ import { createTrip } from '@/server/repos/trips';
 import { recordAiConsent } from '@/server/repos/users';
 import { getChatPage } from '@/server/repos/chat';
 import { POST } from '@/app/api/trip/replan/route';
+import { POST as testTurnPOST } from '@/app/api/test/turn/route';
+import { fallbackResendFor } from '@/lib/pennyFallbackRetry';
 import { jsonRequest } from '@/test/routeHarness';
 import { rawQuery, resetDb, seedUser, testDb } from './harness';
 
@@ -240,5 +242,68 @@ describe('"Try again" — the same message again, as a normal send', () => {
       ['user', 'handoff', null],
       ['assistant', 'ai', null],
     ]);
+  });
+});
+
+/*
+ * The Maestro flow (penny-try-again.yaml) opens a trip whose latest reply is a
+ * fallback without asking Penny to fail: /api/test/turn's `fallback` action
+ * plants the two rows. Held here to the shape the route itself writes — so the
+ * app, reading the real transcript, offers the button for the right reason —
+ * and to the test-endpoint guards.
+ */
+describe("/api/test/turn action 'fallback'", () => {
+  const FIXTURE = `playwright-fb-${crypto.randomUUID().slice(0, 8)}@e2e.feraltravels.com`;
+  const saved = { on: process.env.E2E_TEST_ENDPOINTS, secret: process.env.E2E_TEST_ENDPOINTS_SECRET };
+  beforeEach(() => {
+    process.env.E2E_TEST_ENDPOINTS = '1';
+    delete process.env.E2E_TEST_ENDPOINTS_SECRET;
+  });
+  afterEach(() => {
+    if (saved.on === undefined) delete process.env.E2E_TEST_ENDPOINTS;
+    else process.env.E2E_TEST_ENDPOINTS = saved.on;
+    if (saved.secret !== undefined) process.env.E2E_TEST_ENDPOINTS_SECRET = saved.secret;
+  });
+
+  const plant = (email: string, tripId: string) =>
+    testTurnPOST(
+      jsonRequest('/api/test/turn', 'POST', { action: 'fallback', email, tripId, message: 'SELECT name FROM trips' }),
+    );
+
+  async function fixtureTrip(email: string): Promise<string> {
+    const user = await seedUser(email);
+    return (await createTrip({ userId: user.id, name: `Fixture ${crypto.randomUUID().slice(0, 8)}` })).id;
+  }
+
+  it('writes the message and a flagged fallback, which the shared rule offers to resend', async () => {
+    const tripId = await fixtureTrip(FIXTURE);
+    const res = await plant(FIXTURE, tripId);
+    expect(res.status).toBe(200);
+    const { messages } = await getChatPage({ tripId });
+    expect(messages.map((msg) => [msg.role, msg.kind, msg.fallback_meta])).toEqual([
+      ['user', 'ai', null],
+      ['assistant', 'ai', { images: 0 }],
+    ]);
+    expect(fallbackResendFor(messages)).toMatchObject({
+      assistantId: messages[1].id,
+      text: 'SELECT name FROM trips',
+      images: [],
+      handoff: false,
+    });
+  });
+
+  it('is a 404 with the test endpoints off, and writes nothing', async () => {
+    const tripId = await fixtureTrip(FIXTURE);
+    delete process.env.E2E_TEST_ENDPOINTS;
+    expect((await plant(FIXTURE, tripId)).status).toBe(404);
+    expect(await chatRows(tripId)).toEqual([]);
+  });
+
+  it('refuses a non-fixture address, and a trip the fixture does not own', async () => {
+    const realTrip = await fixtureTrip(`someone-${crypto.randomUUID().slice(0, 8)}@pg.test`);
+    expect((await plant(`someone-else@pg.test`, realTrip)).status).toBe(400);
+    await seedUser(FIXTURE);
+    expect((await plant(FIXTURE, realTrip)).status).toBe(400);
+    expect(await chatRows(realTrip)).toEqual([]);
   });
 });
