@@ -943,6 +943,16 @@ export async function* replanStream(
             validatedActions.length > 0
               ? "Done — take a look at the updated plan."
               : "Sorry, I couldn't apply that cleanly — could you rephrase and try again?";
+          // Say WHY the bubble is a fallback, in the runtime log, so a failed
+          // hand-off can be diagnosed after its preview database is gone (PR 90
+          // run 39604238894: 164 output tokens, no tool call, this fallback, and
+          // nothing left to say whether the text was leaked tool-call markup).
+          // Shape only — never Penny's text, which carries the user's trip.
+          console.warn(
+            `[penny.fallback] tripId=${tripId} actions=${validatedActions.length} ` +
+              `leakedMarkup=${looksLikeLeakedToolCall(joined)} leakRetries=${leakRetryCount} ` +
+              `rawChars=${joined.length} chunks=${iterationText.length} stop=${response.stop_reason}`
+          );
           textChunks.push(fallback);
           yield { kind: "text", chunk: fallback };
         }
