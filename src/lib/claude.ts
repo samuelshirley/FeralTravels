@@ -18,6 +18,9 @@ import {
   declareFuelState as declareFuelStateTool,
 } from "@/lib/penny/tools";
 import { zodErrorToFeedback } from "@/lib/penny/tools/shared";
+import * as addStopTool from "@/lib/penny/tools/addStop";
+import { randomUUID } from "node:crypto";
+import type { NewLegRecord } from "@/lib/penny/newLegFallback";
 import { getDirections } from "@/lib/google/directions";
 import { geocodePlace } from "@/lib/google/geocode";
 import { planFuelStopsForLeg, invalidateLegFuelCache } from "@/server/fuel";
@@ -1015,7 +1018,12 @@ export async function* replanStream(
         }
 
         const validatorFactory = VALIDATORS[tu.name];
-        const schema = validatorFactory(context);
+        // add_stop also sees the legs queued earlier this turn, so a stop for a
+        // same-turn base day is not refused at the drive next to it.
+        const schema =
+          tu.name === addStopTool.ADD_STOP
+            ? addStopTool.validator(context, { sameTurnLegs: queuedLegRecords(validatedActions) })
+            : validatorFactory(context);
         const parsed = schema.safeParse(tu.input);
         if (parsed.success) {
           validatedActions.push({
@@ -1026,7 +1034,10 @@ export async function* replanStream(
             type: "tool_result",
             tool_use_id: tu.id,
             is_error: false,
-            content: "Validated and queued. Do not re-emit this call.",
+            content:
+              tu.name === "add_leg"
+                ? queuedLegToolResult(randomUUID())
+                : "Validated and queued. Do not re-emit this call.",
           });
         } else {
           hadValidationFailure = true;
@@ -1471,6 +1482,42 @@ async function executeExtractTripIntent(
         "Now call get_route in PARALLEL for each segment between waypoints (origin → wp1, wp1 → wp2, …, wpN → destination). Then sum min_driving_days across all results, add total_overnight_nights, compare to time_budget_days. If the sum exceeds the budget, STOP and ask the user to extend the trip or drop a stop — do NOT call add_leg.",
     }),
   };
+}
+
+/**
+ * What Penny reads back for a queued `add_leg`. The leg has no id until the
+ * turn is saved, and a stop for it in the SAME turn ("a base day in Strasbourg
+ * with the cathedral on it") needs one: without it she guessed "TBD_rest_leg_id"
+ * (refused as not a uuid) or named the drive next door (PR #92's ai run,
+ * 2026-10-21). The placeholder resolves to no real leg, so dispatch maps it onto
+ * the nearest leg created this turn (`resolveLegForStopOrRoute`).
+ */
+export function queuedLegToolResult(placeholderLegId: string): string {
+  return (
+    "Validated and queued. Do not re-emit this call. This leg has no id until the turn is saved; " +
+    `to put a stop or route on it in this turn, use leg_id "${placeholderLegId}".`
+  );
+}
+
+/**
+ * The legs this turn's validated `add_leg` calls queued, as the add_stop
+ * validator needs them. They have no real id until dispatch, so each gets a
+ * placeholder no real leg can share.
+ */
+function queuedLegRecords(actions: readonly ValidatedAction[]): NewLegRecord[] {
+  return actions.flatMap((a, i) =>
+    a.name === "add_leg"
+      ? [
+          {
+            id: `queued-leg-${i}`,
+            startLat: a.input.start_lat ?? null,
+            startLng: a.input.start_lng ?? null,
+            endLat: a.input.end_lat ?? null,
+            endLng: a.input.end_lng ?? null,
+          },
+        ]
+      : []
+  );
 }
 
 /**
