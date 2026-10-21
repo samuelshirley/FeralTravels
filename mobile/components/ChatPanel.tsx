@@ -78,6 +78,7 @@ import { font } from "@/lib/typography";
 import AiConsentSheet from "@/components/AiConsentSheet";
 import { useAiConsent } from "@/lib/useAiConsent";
 import { AI_CONSENT_COPY, AI_CONSENT_REQUIRED_CODE } from "@/shared/lib/aiConsent";
+import { fallbackResendFor, TRY_AGAIN_LABEL, type FallbackResend } from "@/shared/lib/pennyFallbackRetry";
 import {
   deriveApplyOutcome,
   type AppliedEvent,
@@ -409,6 +410,14 @@ export default function ChatPanel({
   const [inputHeight, setInputHeight] = useState(34);
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [loading, setLoading] = useState(false);
+  /** A "Try again" tap is being sent — the button is disabled until it settles. Mirrors the web. */
+  const [retrying, setRetrying] = useState(false);
+  /**
+   * Inline on the fallback bubble when a "Try again" tap threw before the send
+   * could show its own outcome. Keyed to the bubble: a throw after the resent
+   * message was appended has already hidden the button. Mirrors the web.
+   */
+  const [retryError, setRetryError] = useState<{ assistantId: string; message: string } | null>(null);
   /** True while Penny's typing animation plays before an onboarding question. */
   const [introTyping, setIntroTyping] = useState(false);
 
@@ -658,6 +667,7 @@ export default function ChatPanel({
                 applyError: outcome.applyError,
                 partialApplyWarning: outcome.partialApplyWarning,
                 plan_summary: ev.planSummary ?? null,
+                fallback_meta: ev.fallback ?? null,
                 truncated: ev.truncated,
                 streaming: false,
               }
@@ -994,7 +1004,10 @@ export default function ChatPanel({
         trip_id: tripId,
         role: "user",
         content: trimmed,
-        kind: "ai",
+        // The hand-off is held as the same hidden `handoff` row the server
+        // writes, so the live transcript and a reloaded one carry the same
+        // rows — which is what lets "Try again" resend it as a hand-off.
+        kind: handoff ? "handoff" : "ai",
         changes_made: null,
         created_at: new Date().toISOString(),
         imageDataUrls: attachedImages.map((i) => i.dataUrl),
@@ -1027,7 +1040,7 @@ export default function ChatPanel({
         : null;
       setMessages((prev) => [
         ...prev,
-        ...(handoff ? [] : [tempUserMsg]),
+        tempUserMsg,
         ...(planningNotice ? [planningNotice] : []),
         pendingAssistantMsg,
       ]);
@@ -1599,6 +1612,41 @@ export default function ChatPanel({
 
   // Thin wrapper — the composer path pulls text/images out of local state,
   // clears them, and delegates to the shared engine.
+  /**
+   * Resend the message Penny fell back on, exactly as it was sent — words,
+   * photos, and as a hand-off when it was one — through `sendChatMessage`, the
+   * normal send path (consent gate, idempotency key, stream, error bubbles).
+   * Mirrors the web panel's `retryFallback`.
+   */
+  const retryFallback = async (resend: FallbackResend) => {
+    if (retrying || loading) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await sendChatMessage(
+        resend.text,
+        resend.images.map((img, i) => ({
+          id: `retry-${Date.now()}-${i}`,
+          dataUrl: img.dataUrl,
+          mediaType: img.mediaType,
+          name: "photo",
+        })),
+        undefined,
+        // The hand-off was the full-trip build; its retry is the same wait.
+        resend.handoff,
+        resend.handoff
+      );
+    } catch (err) {
+      setRetryError({
+        assistantId: resend.assistantId,
+        message: `Couldn't send that again: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      onActivity("error");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const sendMessage = async () => {
     // Belt to the engine's braces. The field is not editable and the send
     // button is disabled behind the paywall, but returning here as well means a
@@ -1685,6 +1733,13 @@ export default function ChatPanel({
   // without meta — everything written before the column existed, and every
   // ordinary chat message — pass through untouched. Mirrors the web.
   const transcript = buildTranscript(collapseOnboardingSteps(visibleMessages));
+  /*
+   * "Try again" on Penny's dead end — the shared rule, from the server's
+   * `fallback_meta` flag, never from her sentence. Read off `visibleMessages`
+   * so the paywall bubble, when there is one, is the latest Penny message.
+   */
+  const fallbackResend: FallbackResend | null =
+    readonly || paywalled ? null : fallbackResendFor(visibleMessages);
   // The bubble the current setup question lives in — the LAST form_question
   // whose text is the question the snapshot is asking. Its chips / card render
   // inside that bubble (frames 7b–7e). Mirrors the web.
@@ -2320,6 +2375,35 @@ export default function ChatPanel({
                   </View>
                 ) : null}
 
+                {fallbackResend && fallbackResend.assistantId === msg.id ? (
+                  <Pressable
+                    testID="penny-try-again"
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: retrying || loading }}
+                    onPress={() => void retryFallback(fallbackResend)}
+                    disabled={retrying || loading}
+                    style={[
+                      styles.continueButton,
+                      styles.tryAgainButton,
+                      retrying || loading ? styles.continueButtonOff : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.continueButtonText,
+                        retrying || loading ? styles.continueButtonTextOff : null,
+                      ]}
+                    >
+                      {TRY_AGAIN_LABEL}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {retryError && retryError.assistantId === msg.id ? (
+                  <Text testID="penny-try-again-error" accessibilityRole="alert" style={styles.tryAgainError}>
+                    {retryError.message}
+                  </Text>
+                ) : null}
+
                 {/* The paywall's action, inside Penny's bubble — the same shape
                     as the truncated card's "Continue planning" above: her
                     words, then the one thing to do about them. The label is the
@@ -2711,6 +2795,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   continueButtonTextOff: { color: theme.subtle },
+  tryAgainButton: { marginTop: 8 },
+  tryAgainError: { fontFamily: font.regular, fontSize: 11, color: theme.danger, marginTop: 6, lineHeight: 15 },
 
   receipt: { fontFamily: font.regular, fontSize: 11, color: theme.muted, marginTop: 2, alignSelf: "flex-end" },
   receiptRead: { color: theme.primary },

@@ -43,6 +43,12 @@ export interface AppliedEvent {
    * splice composes the same paragraphs the stored row holds.
    */
   planReadyPaceHours?: number | null;
+  /**
+   * Set when this reply is Penny's dead end — the same flag the server writes
+   * on the row (`fallback_meta`), so the live bubble offers "Try again" exactly
+   * as the reloaded one does.
+   */
+  fallback?: ChatFallbackMeta | null;
   truncated: boolean;
 }
 
