@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { forcedStopLine, stopRowAccessibilityLabel } from './forcedStopReason';
+import { forcedStopLine, fuelStopLabel, FUEL_STOP_NAME, stopRowAccessibilityLabel } from './forcedStopReason';
 import type { ForcedStopReason } from '@/types/trip';
 
 const far: ForcedStopReason = { kind: 'next_fuel_far', gap_km: 412 };
@@ -56,27 +56,60 @@ describe('stopRowAccessibilityLabel', () => {
 
   it('carries the forced-stop reason, because the label hides the line on screen', () => {
     const label = stopRowAccessibilityLabel(
-      { kicker: 'FUEL', name: 'TotalEnergies Château-Thierry', distanceKm: 95, forcedLine: forcedStopLine('fuel', forced, 'metric') },
+      { kicker: 'FUEL', name: FUEL_STOP_NAME, stopType: 'fuel', distanceKm: 95, forcedLine: forcedStopLine('fuel', forced, 'metric') },
       'metric'
     );
     expect(label).toBe(
-      "FUEL: TotalEnergies Château-Thierry, 95 km. Top up here: next fuel is 412 km away, on the next day's drive. Opens in Google Maps"
+      "FUEL: Fuel stop · 95 km. Top up here: next fuel is 412 km away, on the next day's drive. Opens in Google Maps"
     );
   });
 
   it('speaks miles to an imperial user, and never km', () => {
     const label = stopRowAccessibilityLabel(
-      { kicker: 'FUEL', name: 'TotalEnergies Château-Thierry', distanceKm: 95, forcedLine: forcedStopLine('fuel', forced, 'imperial') },
+      { kicker: 'FUEL', name: FUEL_STOP_NAME, stopType: 'fuel', distanceKm: 95, forcedLine: forcedStopLine('fuel', forced, 'imperial') },
       'imperial'
     );
-    expect(label).toContain('59 mi.');
+    expect(label).toContain('Fuel stop · 59 mi.');
     expect(label).toContain('next fuel is 256 mi away');
     expect(label).not.toMatch(/\bkm\b/);
   });
 
   it('a row with no distance or reason is just the kicker, the place and where the tap goes', () => {
     expect(
-      stopRowAccessibilityLabel({ kicker: 'STOP', name: 'Praça do Comércio', distanceKm: null, forcedLine: null }, 'metric')
+      stopRowAccessibilityLabel({ kicker: 'STOP', name: 'Praça do Comércio', stopType: 'other', distanceKm: null, forcedLine: null }, 'metric')
     ).toBe('STOP: Praça do Comércio. Opens in Google Maps');
+  });
+
+  it("an 'other' stop keeps its own name and the distance after it", () => {
+    expect(
+      stopRowAccessibilityLabel({ kicker: 'STOP', name: 'Praça do Comércio', stopType: 'other', distanceKm: 40, forcedLine: null }, 'metric')
+    ).toBe('STOP: Praça do Comércio, 40 km. Opens in Google Maps');
+  });
+
+  it('a legacy fuel row that still carries a station name is read as the fuel label, not the name', () => {
+    const label = stopRowAccessibilityLabel(
+      { kicker: 'FUEL', name: 'TotalEnergies Château-Thierry', stopType: 'fuel', distanceKm: 95, forcedLine: null },
+      'metric'
+    );
+    expect(label).toBe('FUEL: Fuel stop · 95 km. Opens in Google Maps');
+    expect(label).not.toContain('TotalEnergies');
+  });
+});
+
+describe('fuelStopLabel', () => {
+  it('is "Fuel stop · <km>" for a metric user', () => {
+    expect(fuelStopLabel(212, 'metric')).toBe('Fuel stop · 212 km');
+  });
+
+  it('is "Fuel stop · <mi>", and no km, for an imperial user', () => {
+    const label = fuelStopLabel(212, 'imperial');
+    expect(label).toBe('Fuel stop · 132 mi'); // 212 × 0.621371 = 131.7
+    expect(label).not.toMatch(/\bkm\b/);
+  });
+
+  it('is just "Fuel stop" when the distance is unknown', () => {
+    expect(fuelStopLabel(null, 'metric')).toBe('Fuel stop');
+    expect(fuelStopLabel(undefined, 'imperial')).toBe('Fuel stop');
+    expect(fuelStopLabel(Number.NaN, 'metric')).toBe('Fuel stop');
   });
 });

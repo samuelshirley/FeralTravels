@@ -11,7 +11,8 @@ import { useRouter } from "expo-router";
 import { Card } from "@/components/ui";
 import { deleteTrip, isAuthError } from "@/lib/api";
 import { useUnits } from "@/lib/units";
-import { approxDistance, formatKm } from "@/shared/lib/units";
+import { approxDistance } from "@/shared/lib/units";
+import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
 import { theme, shadow } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -141,8 +142,7 @@ export default function TripCard({
             <View style={styles.nextStopRow}>
               <View style={styles.nextStopDot} />
               <Text style={styles.nextStopText} numberOfLines={1}>
-                Next: fuel at {nextStop.name}
-                {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ""}
+                Next: {fuelStopLabel(nextStop.distance_km, units)}
               </Text>
             </View>
           ) : null}

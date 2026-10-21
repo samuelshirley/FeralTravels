@@ -10,6 +10,24 @@ import type { ForcedStopReason, StopType } from '../types/trip';
 import { formatKm, type UnitsPref } from '../lib/units';
 
 /**
+ * The name Finn stores on every fuel stop. Google's station name is never
+ * saved (Maps ToS §3.2.3 forbids caching business names), so the row carries
+ * this and the place_id; `fuelStopLabel` is what the user reads.
+ */
+export const FUEL_STOP_NAME = 'Fuel stop';
+
+/**
+ * "Fuel stop · 212 km" / "Fuel stop · 132 mi", or "Fuel stop" with no
+ * distance. The ONE label for a fuel stop on every screen, web and iOS. Callers
+ * decide fuel by `stop_type === 'fuel'`, never by the stored name, so rows
+ * saved before migration 0046 render the same way.
+ */
+export function fuelStopLabel(distanceKm: number | null | undefined, units: UnitsPref): string {
+  if (distanceKm == null || !Number.isFinite(distanceKm)) return FUEL_STOP_NAME;
+  return `${FUEL_STOP_NAME} · ${formatKm(distanceKm, units)}`;
+}
+
+/**
  * "Top up here: next fuel is 412 km away" / "…256 mi away" — with ", on the
  * next day's drive" when the stop is for tomorrow's first stretch — or null
  * when there is nothing to say: not a fuel stop, not forced, or a reason this
@@ -44,17 +62,26 @@ export function forcedStopLine(
  * nowhere else. So the label carries every line the row shows, in the same
  * units, and still says where the tap goes.
  *
- * "FUEL: TotalEnergies Château-Thierry, 95 km. Top up here: next fuel is 412 km
- * away, on the next day's drive. Opens in Google Maps"
+ * "FUEL: Fuel stop · 95 km. Top up here: next fuel is 412 km away, on the next
+ * day's drive. Opens in Google Maps" — a fuel row's name is `fuelStopLabel`,
+ * which already carries the distance, so it is not said twice.
  */
 export function stopRowAccessibilityLabel(
-  row: { kicker: string; name: string; distanceKm: number | null; forcedLine: string | null },
+  row: {
+    kicker: string;
+    name: string;
+    distanceKm: number | null;
+    forcedLine: string | null;
+    stopType: StopType;
+  },
   units: UnitsPref
 ): string {
   const head =
-    row.distanceKm != null
-      ? `${row.kicker}: ${row.name}, ${formatKm(row.distanceKm, units)}.`
-      : `${row.kicker}: ${row.name}.`;
+    row.stopType === 'fuel'
+      ? `${row.kicker}: ${fuelStopLabel(row.distanceKm, units)}.`
+      : row.distanceKm != null
+        ? `${row.kicker}: ${row.name}, ${formatKm(row.distanceKm, units)}.`
+        : `${row.kicker}: ${row.name}.`;
   return [head, row.forcedLine ? `${row.forcedLine}.` : null, 'Opens in Google Maps']
     .filter(Boolean)
     .join(' ');

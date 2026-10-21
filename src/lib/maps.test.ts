@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assertDestinationReachable,
+  buildGoHereUrl,
   buildNavUrl,
   buildSegmentedNavUrls,
   buildLegDirectionsUrl,
@@ -381,4 +384,60 @@ describe('assertDestinationReachable on a stationary leg', () => {
       /Route to Destination/
     );
   });
+});
+
+describe('buildGoHereUrl with a place_id', () => {
+  it('adds destination_place_id to the same drive URL', () => {
+    const url = new URL(buildGoHereUrl(41.7616363, -1.1494891, { placeId: 'ChIJ_repsol' }) ?? '');
+    expect(url.pathname).toBe('/maps/dir/');
+    expect(url.searchParams.get('destination')).toBe('41.7616363,-1.1494891');
+    expect(url.searchParams.get('destination_place_id')).toBe('ChIJ_repsol');
+    expect(url.searchParams.get('dir_action')).toBe('navigate');
+    expect(url.searchParams.has('origin')).toBe(false);
+  });
+
+  it('is the plain drive URL when the place_id is null or absent', () => {
+    expect(buildGoHereUrl(41.76, -1.15, { placeId: null })).toBe(buildGoHereUrl(41.76, -1.15));
+    expect(buildGoHereUrl(41.76, -1.15)).not.toContain('destination_place_id');
+  });
+
+  it('is null without coordinates, place_id or not', () => {
+    expect(buildGoHereUrl(null, -1.15, { placeId: 'ChIJ_repsol' })).toBeNull();
+  });
+});
+
+/**
+ * Migration 0046 rebuilds every saved fuel stop's link in SQL. If it drifts
+ * from `buildGoHereUrl`, rows rewritten by the migration and rows Finn writes
+ * afterwards point at different URLs for the same station.
+ */
+describe('migration 0046 builds the same URL as buildGoHereUrl', () => {
+  const sql = readFileSync(
+    join(__dirname, '..', '..', 'drizzle', '0046_fuel_stops_drop_google_names.sql'),
+    'utf8'
+  );
+  const shape =
+    /'(https:[^']+destination=)' \|\| "lat"::text \|\| '([^']+)' \|\| "lng"::text\s*\|\| '([^']+)'\s*\|\| CASE WHEN "place_id" IS NOT NULL AND "place_id" <> ''\s*THEN '([^']+)' \|\| "place_id"/g;
+  const matches = [...sql.matchAll(shape)];
+
+  it('writes the one URL shape to both google_maps_uri and source_url', () => {
+    expect(matches).toHaveLength(2);
+    expect(matches[0].slice(1)).toEqual(matches[1].slice(1));
+  });
+
+  /** What Postgres produces for one row, by the migration's own literals. */
+  function sqlUrl(lat: number, lng: number, placeId: string | null): string {
+    const [, head, comma, tail, placeParam] = matches[0];
+    return `${head}${lat}${comma}${lng}${tail}${placeId ? `${placeParam}${placeId}` : ''}`;
+  }
+
+  for (const [lat, lng, placeId] of [
+    [41.7616363, -1.1494891, 'ChIJ5y1fJp4WWg0RtD8tYgS7RgQ'],
+    [49.0436, 3.4011, null],
+    [-33.8688, 151.2093, 'ChIJP3Sa8ziYEmsRUKgyFmh9AQM'],
+  ] as const) {
+    it(`matches for (${lat}, ${lng}, ${placeId})`, () => {
+      expect(sqlUrl(lat, lng, placeId)).toBe(buildGoHereUrl(lat, lng, { placeId }));
+    });
+  }
 });

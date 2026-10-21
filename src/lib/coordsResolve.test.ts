@@ -253,10 +253,13 @@ describe('resolveCoordsFromInput app-link interstitial', () => {
       });
 
       const result = await resolveCoordsFromInput('https://maps.app.goo.gl/8C3LKU9kAJDxpvAt8?g_st=ic');
+      // The name is the text from the user's link that was searched for, never
+      // Places' displayName ('Saupstad Hundepark'): a Google business name is
+      // not ours to store (Maps ToS §3.2.3).
       expect(result).toMatchObject({
         lat: 63.3456,
         lng: 10.3701,
-        name: 'Saupstad Hundepark',
+        name: 'Saupstad Hundepark (kommunal), Kongsvegen 132, 7088 Heimdal, Norway',
         source: 'google_maps',
       });
     } finally {

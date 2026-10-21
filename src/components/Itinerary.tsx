@@ -11,7 +11,8 @@ import { useUnits } from './UnitsContext';
 import LegCard from './LegCard';
 import Distance from './Distance';
 import { buildGoHereUrl } from '@/lib/maps';
-import { approxDistance, formatKm } from '@/lib/units';
+import { fuelStopLabel } from '@/lib/forcedStopReason';
+import { approxDistance } from '@/lib/units';
 import {
   CollapseAllIcon,
   DisclosureIcon,
@@ -415,10 +416,9 @@ export default function Itinerary({
       .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
     if (!stop || stop.lat == null || stop.lng == null) return null;
     return {
-      name: stop.name,
       distanceKm: stop.distance_from_start_km,
       // Turn-by-turn from wherever the device is — not a dropped pin.
-      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+      href: buildGoHereUrl(stop.lat, stop.lng, { placeId: stop.place_id }) as string,
     };
   }, [legs]);
 
@@ -903,7 +903,7 @@ export default function Itinerary({
           href={nextStop.href}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label={`${nextStop.name} in Google Maps`}
+          aria-label={`${fuelStopLabel(nextStop.distanceKm, units)} in Google Maps`}
           style={{
             ...buttonStyle(),
             display: 'flex',
@@ -938,8 +938,7 @@ export default function Itinerary({
                 whiteSpace: 'nowrap',
               }}
             >
-              {nextStop.name} · fuel
-              {nextStop.distanceKm != null ? ` · ${formatKm(nextStop.distanceKm, units)}` : ''}
+              {fuelStopLabel(nextStop.distanceKm, units)}
             </span>
           </span>
           <span aria-hidden style={{ lineHeight: 0, flexShrink: 0 }}>

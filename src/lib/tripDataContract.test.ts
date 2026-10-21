@@ -67,7 +67,8 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
     sort_order: 0,
     stop_type: 'fuel',
     status: 'option',
-    name: 'Repsol Perpignan',
+    // What Finn stores (migration 0046): no Google station name, no Google link.
+    name: 'Fuel stop',
     lat: 42.6887,
     lng: 2.8948,
     distance_from_start_km: 62,
@@ -78,7 +79,8 @@ function makeStop(overrides: Partial<Stop> = {}): Stop {
     source_url: null,
     alternatives: null,
     place_id: 'ChIJ_test_place_id',
-    google_maps_uri: 'https://www.google.com/maps/place/?q=place_id:ChIJ_test_place_id',
+    google_maps_uri:
+      'https://www.google.com/maps/dir/?api=1&destination=42.6887%2C2.8948&travelmode=driving&dir_action=navigate&destination_place_id=ChIJ_test_place_id',
     forced_reason: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',

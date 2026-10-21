@@ -55,6 +55,8 @@ import { JEV_PROVIDER } from './usage';
 import { createTrip, addLeg } from './trips';
 import { resolveCanonicalTrip } from '@/server/fixtures/canonicalTrip';
 import { decodePolyline } from '@/lib/polyline';
+import { buildGoHereUrl } from '@/lib/maps';
+import { FUEL_STOP_NAME } from '@/lib/forcedStopReason';
 import { writeSeededTranscript } from '@/server/seededTranscript';
 
 /**
@@ -424,11 +426,14 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
     sortOrder: 1000,
     stopType: 'fuel',
     status: 'option',
-    name: 'TotalEnergies Château-Thierry',
+    // What Finn stores: never the station's name or Google's link.
+    name: FUEL_STOP_NAME,
     lat: 49.0464,
     lng: 3.4031,
     distanceFromStartKm: 95,
     source: 'google',
+    googleMapsUri: buildGoHereUrl(49.0464, 3.4031),
+    sourceUrl: buildGoHereUrl(49.0464, 3.4031),
     notes: "Top up here — next fuel is 412 km away, on the next day's drive.",
     forcedReason: { kind: 'next_day_fuel_far', gap_km: 412 },
   });
@@ -476,13 +481,15 @@ async function seedCoverageColumns(userId: string, tripId: string): Promise<void
     sortOrder: 1001,
     stopType: 'fuel',
     status: 'option',
-    name: 'Esso Reims',
+    name: FUEL_STOP_NAME,
     lat: 49.2583,
     lng: 4.0317,
     distanceFromStartKm: 144,
     source: 'google',
     fuelType: 'diesel',
-    sourceUrl: 'https://www.google.com/maps/search/?api=1&query=49.2583,4.0317',
+    sourceUrl: buildGoHereUrl(49.2583, 4.0317),
+    // Coverage only: Finn writes `alternatives` null and migration 0046 clears
+    // it. A made-up name, not cached Google content; api-contracts reads it back.
     alternatives: [
       { name: 'Total Access Reims', lat: 49.2412, lng: 4.0605, place_id: null, distance_km: 3.1 },
     ],

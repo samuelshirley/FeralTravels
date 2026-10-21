@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PennyContext } from '@/lib/penny/context';
 import { distanceToSegmentKm, haversineKm } from '@/lib/penny/geo';
+import { pickSameTurnRestLeg, type NewLegRecord } from '@/lib/penny/newLegFallback';
 import {
   latSchema,
   lngSchema,
@@ -85,12 +86,22 @@ export function duplicateDestinationRejectionMessage(name: string, legTitle: str
 }
 
 /**
+ * What the turn loop knows that the context does not: the legs Penny's earlier
+ * `add_leg` calls in THIS turn queued. They have no real id until dispatch.
+ */
+export type AddStopTurn = { sameTurnLegs?: readonly NewLegRecord[] };
+
+/**
  * Cross-leg validator:
  * 1. distance_from_start_km must be ≤ leg.distance_km
  * 2. stop lat/lng must be within a reasonable corridor of the assigned leg
- * 3. stop must not duplicate the leg's destination (see above)
+ * 3. stop must not duplicate the leg's destination (see above) — unless it is
+ *    bound for a base day queued this turn, which dispatch re-homes it onto
+ *    (`pickSameTurnRestLeg`): "a base day in Strasbourg with the cathedral on
+ *    it" names day 1, which ENDS in Strasbourg, 0.94 km from the cathedral.
+ *    Rejecting it there left the base day empty (PR #92's ai run, 2026-10-21).
  */
-export function validator(ctx: PennyContext) {
+export function validator(ctx: PennyContext, turn: AddStopTurn = {}) {
   return baseSchema.superRefine((input, refCtx) => {
     const leg = ctx.legs.find((l) => l.id === input.leg_id);
 
@@ -147,7 +158,19 @@ export function validator(ctx: PennyContext) {
         leg.end_lat,
         leg.end_lng
       );
-      if (distToEndKm <= DUPLICATE_DESTINATION_RADIUS_KM) {
+      const boundForSameTurnBaseDay =
+        pickSameTurnRestLeg(
+          { lat: input.data.lat, lng: input.data.lng },
+          {
+            id: leg.id,
+            startLat: leg.start_lat ?? null,
+            startLng: leg.start_lng ?? null,
+            endLat: leg.end_lat,
+            endLng: leg.end_lng,
+          },
+          turn.sameTurnLegs ?? []
+        ) != null;
+      if (distToEndKm <= DUPLICATE_DESTINATION_RADIUS_KM && !boundForSameTurnBaseDay) {
         refCtx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['data', 'lat'],

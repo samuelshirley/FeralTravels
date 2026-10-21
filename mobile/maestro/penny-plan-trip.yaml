@@ -119,7 +119,7 @@ appId: ${APP_ID}
     timeout: 180000
 - scrollUntilVisible:
     element:
-      text: "FUEL: .*, [0-9]+ km\\. Top up here: next fuel is [0-9]+ km away, on the next day's drive\\. Opens in Google Maps"
+      text: "FUEL: Fuel stop . [0-9]+ km\\. Top up here: next fuel is [0-9]+ km away, on the next day's drive\\. Opens in Google Maps"
     direction: DOWN
     timeout: 20000
 - assertNotVisible:
@@ -157,7 +157,7 @@ appId: ${APP_ID}
           text: '.*Alta.* → .*(Nordkapp|North Cape).*'
 - scrollUntilVisible:
     element:
-      text: "FUEL: .*, [0-9]+ mi\\. Top up here: next fuel is [0-9]+ mi away, on the next day's drive\\. Opens in Google Maps"
+      text: "FUEL: Fuel stop . [0-9]+ mi\\. Top up here: next fuel is [0-9]+ mi away, on the next day's drive\\. Opens in Google Maps"
     direction: DOWN
     timeout: 20000
 - assertNotVisible:

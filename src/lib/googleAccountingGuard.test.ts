@@ -112,7 +112,44 @@ describe('the usage logger the wrapper depends on', () => {
   it('records the provider names the admin dashboard reads', () => {
     expect(usage).toContain("provider: 'google-places'");
     expect(usage).toContain("'google-directions'");
-    expect(usage).toContain("'google-geocode'");
+  });
+
+  it('prices Directions with more than 10 waypoints as Advanced', () => {
+    expect(usage).toMatch(/GOOGLE_DIRECTIONS_ADVANCED_PER_CALL_USD = 0\.010/);
+    expect(usage).toMatch(/GOOGLE_DIRECTIONS_ADVANCED_ABOVE_WAYPOINTS = 10;/);
+  });
+});
+
+/**
+ * The geocoder IS a Places Text Search call (`places:searchText`), billed at
+ * the Text Search Pro price and sharing Finn's monthly free calls. Until
+ * 2026-10-07 it logged as `google-geocode` at $0.005 — a sixth of its price,
+ * with its own phantom free tier.
+ */
+describe('each call is logged as the SKU Google bills it as', () => {
+  function body(fn: string): string {
+    const start = wrapperSrc.indexOf(`export async function ${fn}`);
+    expect(start, `${fn} is missing from the wrapper`).toBeGreaterThanOrEqual(0);
+    const next = wrapperSrc.indexOf('export async function', start + 1);
+    return wrapperSrc.slice(start, next === -1 ? undefined : next);
+  }
+
+  it('geocodePlaceAccounted logs a text-search Places row', () => {
+    const geocode = body('geocodePlaceAccounted');
+    expect(geocode).toContain('logGooglePlacesUsage(');
+    expect(geocode).toContain("endpoint: 'text-search'");
+    expect(geocode).not.toContain('logGoogleApiUsage(');
+    expect(wrapperSrc).not.toContain("'google-geocode'");
+  });
+
+  it('getDirectionsAccounted passes the waypoint count on both paths', () => {
+    const directions = body('getDirectionsAccounted');
+    const hits = directions.match(/waypoints: options\.waypoints\?\.length \?\? 0/g) ?? [];
+    expect(hits.length).toBe(2);
+  });
+
+  it('never logs an empty-string user id (it fails the users FK and the row is lost)', () => {
+    expect(wrapperSrc).not.toMatch(/userId: [^,\n]*\?\? ''/);
   });
 });
 

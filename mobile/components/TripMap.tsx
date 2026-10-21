@@ -28,6 +28,7 @@ import { formatDate, parseISODate } from "@/shared/lib/dates";
 import { useUnits } from "@/lib/units";
 import { formatKm } from "@/shared/lib/units";
 import { buildGoHereUrl } from "@/shared/lib/maps";
+import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
 import { CrosshairIcon, ExternalLinkIcon, NavigateIcon } from "@/components/icons";
 import type {
   GeoJSONLineString,
@@ -523,12 +524,11 @@ export default function TripMap({
     const legKm = leg.distance_km ?? null;
     const fromStart = stop.distance_from_start_km ?? 0;
     return {
-      name: stop.name,
       fromStartKm: fromStart,
       toEndKm: legKm != null ? Math.max(0, legKm - fromStart) : null,
       endName: leg.end_name,
       // Turn-by-turn from wherever the device is — not a dropped pin.
-      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+      href: buildGoHereUrl(stop.lat, stop.lng, { placeId: stop.place_id }) as string,
       legLabel: formatDate(parseISODate(leg.date_iso), units) || null,
       legStart: leg.start_name,
       legEnd: leg.end_name,
@@ -758,8 +758,10 @@ export default function TripMap({
                     >
                       {isFuel ? "FUEL" : "STOP"}
                     </Text>
-                    <Text style={styles.calloutTitle}>{p.name}</Text>
-                    {p.distanceKm != null ? (
+                    <Text style={styles.calloutTitle}>
+                      {isFuel ? fuelStopLabel(p.distanceKm, units) : p.name}
+                    </Text>
+                    {!isFuel && p.distanceKm != null ? (
                       <Text style={styles.calloutBody}>
                         {formatKm(p.distanceKm, units)} from start
                       </Text>
@@ -863,15 +865,16 @@ export default function TripMap({
       {ready && sheetStop ? (
         <View style={styles.sheet}>
           <Text style={styles.sheetKicker}>NEXT STOP · FUEL</Text>
+          {/* "Fuel stop · 95 km": the label carries the distance from
+              start, so the meta line only says what is left of the day. */}
           <Text style={styles.sheetName} numberOfLines={1}>
-            {sheetStop.name}
+            {fuelStopLabel(sheetStop.fromStartKm, units)}
           </Text>
-          <Text style={styles.sheetMeta} numberOfLines={1}>
-            {formatKm(sheetStop.fromStartKm, units)} from start
-            {sheetStop.toEndKm != null && sheetStop.endName
-              ? ` · ${formatKm(sheetStop.toEndKm, units)} to ${sheetStop.endName}`
-              : ""}
-          </Text>
+          {sheetStop.toEndKm != null && sheetStop.endName ? (
+            <Text style={styles.sheetMeta} numberOfLines={1}>
+              {formatKm(sheetStop.toEndKm, units)} to {sheetStop.endName}
+            </Text>
+          ) : null}
 
           {/* Full width, on its OWN row: at 402px a labelled button and the
               two-clause meta line above cannot share a row without the
@@ -879,11 +882,11 @@ export default function TripMap({
           <Pressable
             onPress={() => void Linking.openURL(sheetStop.href)}
             accessibilityRole="link"
-            accessibilityLabel={`Open ${sheetStop.name} in Google Maps`}
+            accessibilityLabel="Open in Google Maps"
             style={styles.sheetAction}
           >
             <NavigateIcon color={theme.accent300} size={15} />
-            <Text style={styles.sheetActionText}>Open {sheetStop.name} in Google Maps</Text>
+            <Text style={styles.sheetActionText}>Open in Google Maps</Text>
             <ExternalLinkIcon color={theme.accent300} size={13} />
           </Pressable>
 

@@ -134,61 +134,41 @@ export async function logUsageEvent(input: {
   });
 }
 
-// Google Places API (New) per-call pricing in USD. Tied to which fields we
-// request via X-Goog-FieldMask:
-//   - "essentials"  → only id, displayName, location, primaryType (~$0.005)
-//   - "pro"         → adds googleMapsUri or other Pro-tier fields  (~$0.025)
-//   - "enterprise"  → reviews, contact info, etc. (not used here)  (~$0.040)
-// We pick the SKU at the call site so the bill estimate matches what we
-// asked Google for. Update when Google's price page changes.
+// Google Places API (New) per-call list price in USD, keyed by the SKU stored
+// in `usage_events.model`. Both callers of `places:searchText` — Finn's
+// along-route station search and the name→coords geocode — bill as Text Search
+// Pro, so they share this one row. Nearby Search is not called anywhere.
+// Checked against Google's price page 2026-10-06; update when it changes.
 // https://developers.google.com/maps/billing-and-pricing/pricing
 const GOOGLE_PLACES_PRICING_PER_CALL_USD: Record<string, number> = {
-  'nearby-search-essentials': 0.005,
-  'nearby-search-pro': 0.025,
-  'nearby-search-enterprise': 0.040,
   'text-search': 0.032,
 };
 
-export type GooglePlacesEndpoint =
-  | 'nearby-search-essentials'
-  | 'nearby-search-pro'
-  | 'nearby-search-enterprise'
-  | 'text-search';
+export type GooglePlacesEndpoint = 'text-search';
 
 /**
- * Per-SKU monthly free-call allowance from Google Maps Platform's free tier.
- * Each SKU has its own monthly allowance (NOT a shared $200 credit anymore as
- * of 2024-2025). We subtract these from the calendar-month call counts when
- * rendering "billable" Google spend on the admin dashboard.
+ * Per-SKU monthly free-call allowance (Google gives each SKU its own, not a
+ * shared credit). Subtracted from the calendar-month call count when the admin
+ * dashboard shows "billable" Google spend. The allowance is per SKU, so Finn
+ * and the geocoder draw on the same 5,000.
  *
- * IMPORTANT: This only tracks Places Nearby Search calls. Other Google API
- * costs NOT tracked here include:
- *   - Directions API ($5/1000 requests) — called by get_route + add_leg
- *   - Maps JavaScript API (Dynamic Maps $7/1000 loads)
- * (The Place Photos + Street View "stop photos" feature was removed 2026-06-30.)
- * The dashboard underreports total Google spend. Cross-check against
- * Google Cloud Console → Billing → Reports monthly.
- *
- * Defaults are env-configurable. Verify against
- * https://developers.google.com/maps/billing-and-pricing/pricing
+ * Directions is logged per call (`logGoogleApiUsage`) but its free tier is not
+ * subtracted; Maps JavaScript loads are not logged at all. Cross-check against
+ * Google Cloud Console → Billing → Reports.
  */
 export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, number> = {
-  'nearby-search-essentials': Number(
-    process.env.GOOGLE_PLACES_FREE_CALLS_ESSENTIALS_PER_MONTH ?? 10000
-  ),
-  'nearby-search-pro': Number(
-    process.env.GOOGLE_PLACES_FREE_CALLS_PRO_PER_MONTH ?? 5000
-  ),
-  'nearby-search-enterprise': Number(
-    process.env.GOOGLE_PLACES_FREE_CALLS_ENTERPRISE_PER_MONTH ?? 1000
-  ),
   'text-search': Number(
     process.env.GOOGLE_PLACES_FREE_CALLS_TEXT_SEARCH_PER_MONTH ?? 5000
   ),
 };
 
 export interface LogGooglePlacesUsageInput {
-  userId: string;
+  /**
+   * Null when the caller does not know the user. Never `''`: `user_id` is a
+   * foreign key to `users`, so an empty string fails the insert and the row is
+   * lost (the caller's `record` swallows the error).
+   */
+  userId: string | null;
   tripId?: string | null;
   endpoint: GooglePlacesEndpoint;
   /** How many Places calls this row covers — usually batched per leg/replan. */
@@ -199,15 +179,15 @@ export interface LogGooglePlacesUsageInput {
 
 /**
  * Record Google Places usage so it appears alongside Anthropic spend in
- * usageEvents / admin dashboards. Costs are estimated from the field-mask
- * tier passed in `endpoint`; the request count is what actually hit Google.
+ * usageEvents / admin dashboards. Cost is the list price of the SKU passed in
+ * `endpoint`; the request count is what actually hit Google.
  *
  * No-op when `requests <= 0` so we don't write empty rows from legs that
  * skipped planning.
  */
 export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
   if (input.requests <= 0) return;
-  const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[input.endpoint] ?? 0.005;
+  const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[input.endpoint] ?? 0.032;
   const usd = perCall * input.requests;
   await db.insert(usageEvents).values({
     userId: input.userId,
@@ -224,37 +204,41 @@ export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
 }
 
 /**
- * Per-call USD for the non-Places Google APIs Finn and Penny use. Same caveat as
- * the Places table above: these are OUR estimate from Google's price page, not a
- * bill, and each SKU has its own monthly free allowance we do not subtract here.
- * The REQUEST COUNTS are the trustworthy number; treat the dollars as an
- * order of magnitude until someone reconciles them against the Cloud console.
+ * Per-call USD for Directions, the one non-Places Google API the server calls.
+ * Our estimate from Google's price page, not a bill, and its free allowance is
+ * not subtracted here. More than 10 waypoints bills as Directions Advanced.
  */
-const GOOGLE_API_PRICING_PER_CALL_USD: Record<string, number> = {
-  'google-directions': 0.005,
-  'google-geocode': 0.005,
-};
+const GOOGLE_DIRECTIONS_PER_CALL_USD = 0.005;
+const GOOGLE_DIRECTIONS_ADVANCED_PER_CALL_USD = 0.010;
+const GOOGLE_DIRECTIONS_ADVANCED_ABOVE_WAYPOINTS = 10;
 
 /**
- * Record one call to a paid Google API other than Places.
+ * Record one call to Google Directions.
  *
  * Exists because `logGooglePlacesUsage` had NO caller between 2026-06-29 and
- * 2026-09-09 and Directions/Geocoding never had one at all — so the app's entire
- * Google spend was invisible in `usage_events` while CLAUDE.md was
- * simultaneously claiming those calls were free. Counting them is what makes
- * that claim checkable.
+ * 2026-09-09 and Directions never had one at all — so the app's entire Google
+ * spend was invisible in `usage_events` while CLAUDE.md was simultaneously
+ * claiming those calls were free. Counting them is what makes that claim
+ * checkable. (Rows with provider `google-geocode` predate 2026-10-07, when the
+ * geocoder moved to the `text-search` Places SKU it actually bills as.)
  */
 export async function logGoogleApiUsage(input: {
-  provider: 'google-directions' | 'google-geocode';
+  provider: 'google-directions';
   userId?: string | null;
   tripId?: string | null;
   requests?: number;
+  /** Waypoints on the request; more than 10 is the dearer Advanced SKU. */
+  waypoints?: number;
   success?: boolean;
   errorMessage?: string | null;
 }) {
   const requests = input.requests ?? 1;
   if (requests <= 0) return;
-  const usd = (GOOGLE_API_PRICING_PER_CALL_USD[input.provider] ?? 0.005) * requests;
+  const perCall =
+    (input.waypoints ?? 0) > GOOGLE_DIRECTIONS_ADVANCED_ABOVE_WAYPOINTS
+      ? GOOGLE_DIRECTIONS_ADVANCED_PER_CALL_USD
+      : GOOGLE_DIRECTIONS_PER_CALL_USD;
+  const usd = perCall * requests;
   await db.insert(usageEvents).values({
     userId: input.userId ?? null,
     tripId: input.tripId ?? null,
