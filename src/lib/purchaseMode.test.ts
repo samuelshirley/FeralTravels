@@ -442,3 +442,32 @@ describe('appleSubscriptionConfirmed — what a purchase waits for (Guideline 2.
     expect(appleSubscriptionConfirmed(null)).toBe(false);
   });
 });
+
+describe('serviceTitle — the service is named on every row (3.1.2(c))', () => {
+  it('prefixes the service to the Display Name App Store Connect has today', async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('Monthly', 'Feral Travels monthly')).toBe('Feral Travels Monthly');
+    expect(serviceTitle('Annual', 'Feral Travels annual')).toBe('Feral Travels Annual');
+  });
+  it('leaves a title that already names the service alone, in any case', async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('Feral Travels Monthly', 'x')).toBe('Feral Travels Monthly');
+    expect(serviceTitle('FERAL TRAVELS annual', 'x')).toBe('FERAL TRAVELS annual');
+  });
+  it("falls back to the server's title when the store's is blank or missing", async () => {
+    const { serviceTitle } = await import('./purchaseMode');
+    expect(serviceTitle('  ', 'Feral Travels monthly')).toBe('Feral Travels monthly');
+    expect(serviceTitle(undefined, 'Feral Travels annual')).toBe('Feral Travels annual');
+  });
+});
+
+describe('the sheet rows carry the service name with the real App Store Display Names', () => {
+  it('turns "Monthly" / "Annual" into "Feral Travels Monthly" / "Feral Travels Annual"', () => {
+    const asc = storefront('USD', [2.69, '$2.69'], [22, '$22.00'], ['Monthly', 'Annual'], '$1.83');
+    const mode = resolve(asc);
+    expect(mode.mode).toBe('store');
+    const titles = mode.plans.map((p) => p.title);
+    expect(titles).toEqual(expect.arrayContaining(['Feral Travels Monthly', 'Feral Travels Annual']));
+    expect(titles).toHaveLength(2);
+  });
+});

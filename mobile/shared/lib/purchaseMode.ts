@@ -169,6 +169,21 @@ export function planLength(period: SheetPlan['period']): string {
   }
 }
 
+/**
+ * The service's name is always on the row, whatever App Store Connect's
+ * Display Name says. 3.1.2(c) asks for the "title of publication or service";
+ * the products' Display Names are "Monthly" / "Annual", which name the plan but
+ * not the service, and they cannot be edited while the subscription sits in
+ * review. So a store title that does not already carry the service name gets it
+ * prefixed ("Feral Travels Monthly"); a blank one falls back to the server's.
+ */
+export const SERVICE_NAME = 'Feral Travels';
+export function serviceTitle(storeTitle: string | null | undefined, serverTitle: string): string {
+  const t = storeTitle?.trim() ?? '';
+  if (t === '') return serverTitle;
+  return t.toLowerCase().includes(SERVICE_NAME.toLowerCase()) ? t : `${SERVICE_NAME} ${t}`;
+}
+
 export function resolvePurchaseMode({
   storeAnswer,
   serverPlans,
@@ -239,7 +254,7 @@ export function resolvePurchaseMode({
     const perMonthLabel = store.pricePerMonthLabel?.trim();
     const row: SheetPlan = {
       id: p.id,
-      title: store.title?.trim() || p.title,
+      title: serviceTitle(store.title, p.title),
       period: p.period,
       length: planLength(p.period),
       cadence: p.cadence,
