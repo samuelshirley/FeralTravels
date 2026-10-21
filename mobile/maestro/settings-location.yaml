@@ -60,18 +60,25 @@ appId: ${APP_ID}
 # nodes that have not been scrolled to. A TEXT assertion is the one that
 # actually needs pixels, so the flow read as "the section is there but the
 # button is missing" when the button was merely off-screen.
-# An explicit SWIPE, not `scrollUntilVisible`.
+# `scrollUntilVisible` WITH `centerElement: true`, not a fixed swipe.
 #
-# `scrollUntilVisible` completed here without swiping once, then the text
-# assertion below failed: Maestro resolves the element against the view
-# HIERARCHY, which already contained the button at coordinates past the bottom
-# of the screen, so its "is it visible yet" test was satisfied before it
-# started. Same weak-visibility trap `chat-keyboard.yaml` documents — and the
-# reason the tap below is the real gate, since a tap only lands on something
-# genuinely on screen.
-- swipe:
-    start: 50%, 80%
-    end: 50%, 25%
+# Plain `scrollUntilVisible` completed here without swiping once: Maestro
+# resolves the element against the view HIERARCHY, which already held the
+# switch at coordinates past the bottom of the screen (the weak-visibility trap
+# `chat-keyboard.yaml` documents). So this used a fixed 80%→25% swipe — which
+# broke on 2026-10-20 when a Legal section made Settings taller: the swipe then
+# scrolled the switch up to y≈22pt, UNDER the status bar, the tap landed on the
+# status bar, iOS scrolled the page back to the top, and the Settings app never
+# opened (PR 90 run 39420844149, step-040 screenshot). A fixed distance is only
+# right for one page length. `centerElement` keeps scrolling until the switch
+# is mid-screen, which a hierarchy hit alone does not satisfy — the same form
+# `vehicle-edit-delete.yaml` relies on.
+- scrollUntilVisible:
+    element:
+      id: 'settings-location-enable'
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
 
 # Settle after the swipe before anything is asserted or tapped.
 #
