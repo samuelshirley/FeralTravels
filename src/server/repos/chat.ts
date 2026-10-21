@@ -2,7 +2,7 @@ import 'server-only';
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory } from '@/server/db/schema';
-import type { ChatFormMeta, ChatKind, ChatMessage, PlanSummary } from '@/types/trip';
+import type { ChatFallbackMeta, ChatFormMeta, ChatKind, ChatMessage, PlanSummary } from '@/types/trip';
 
 function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
   return {
@@ -15,6 +15,7 @@ function chatRow(r: typeof chatHistory.$inferSelect): ChatMessage {
     changes_made: r.changesMade,
     plan_summary: r.planSummary ?? null,
     form_meta: r.formMeta ?? null,
+    fallback_meta: r.fallbackMeta ?? null,
     created_at: r.createdAt.toISOString(),
   };
 }
@@ -79,18 +80,28 @@ export async function getChatPage(params: {
  * chat row when it is an assistant row, else null.
  *
  * The message gate runs BEFORE the driver's new message is written
- * (`api/trip/replan`), so the newest row is whatever came just before it. Only
- * the content is returned; the gate reads it to tell a bare reply ("yes do
- * that") from junk, and hands it to the classifier for the same reason.
+ * (`api/trip/replan`), so the newest row is whatever came just before it. The
+ * gate reads `content` to tell a bare reply ("yes do that") from junk, and
+ * hands it to the classifier for the same reason. It reads `fellBack` so a
+ * driver tapping "Try again" — which resends their message word for word — is
+ * not refused as an exact repeat: after Penny's dead end, the same sentence
+ * again is the retry she asked for.
  */
-export async function previousAssistantMessage(tripId: string): Promise<string | null> {
+export async function previousAssistantRow(
+  tripId: string,
+): Promise<{ content: string; fellBack: boolean } | null> {
   const [row] = await db
-    .select({ role: chatHistory.role, content: chatHistory.content })
+    .select({
+      role: chatHistory.role,
+      content: chatHistory.content,
+      fallbackMeta: chatHistory.fallbackMeta,
+    })
     .from(chatHistory)
     .where(eq(chatHistory.tripId, tripId))
     .orderBy(desc(chatHistory.seq))
     .limit(1);
-  return row?.role === 'assistant' ? row.content : null;
+  if (row?.role !== 'assistant') return null;
+  return { content: row.content, fellBack: row.fallbackMeta != null };
 }
 
 export async function addChatMessage(
@@ -120,6 +131,11 @@ export async function addChatMessage(
    * it is about.
    */
   gate?: { tier: 'T1' | 'T2' | 'T3'; by: string } | null,
+  /**
+   * Assistant rows only: this reply is Penny's dead end. The structured flag
+   * both clients render "Try again" from — see `ChatFallbackMeta`.
+   */
+  fallbackMeta?: ChatFallbackMeta | null,
 ): Promise<ChatMessage> {
   const [row] = await db
     .insert(chatHistory)
@@ -133,6 +149,7 @@ export async function addChatMessage(
       formMeta: formMeta ?? null,
       gateTier: gate?.tier ?? null,
       gateBy: gate?.by ?? null,
+      fallbackMeta: fallbackMeta ?? null,
     })
     .returning();
   return chatRow(row);

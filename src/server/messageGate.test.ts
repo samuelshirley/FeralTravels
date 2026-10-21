@@ -24,7 +24,7 @@ const h = vi.hoisted(() => {
 vi.mock('server-only', () => ({}));
 vi.mock('@/server/db/client', () => ({ db: h.chain }));
 vi.mock('@/server/payments', () => ({ GATE_PROVIDER: 'penny:gate' }));
-vi.mock('@/server/repos/chat', () => ({ previousAssistantMessage: vi.fn() }));
+vi.mock('@/server/repos/chat', () => ({ previousAssistantRow: vi.fn() }));
 vi.mock('@/server/repos/users', () => ({
   getStrikeState: vi.fn(async () => ({ strikes: 0, lockedUntil: null })),
   setStrikeState: vi.fn(async () => undefined),
@@ -36,7 +36,7 @@ vi.mock('@/server/jev', () => ({ jevClassifyTier: vi.fn(), startJevClassifyTier:
 
 import { gateMessage } from './messageGate';
 import type { AiConsentProof } from '@/server/aiConsent';
-import { previousAssistantMessage } from '@/server/repos/chat';
+import { previousAssistantRow } from '@/server/repos/chat';
 import { logUsageEvent } from '@/server/repos/usage';
 import { classifyMessage } from '@/server/pennyClassifier';
 import { effectiveJevMode } from '@/server/repos/jev';
@@ -77,7 +77,7 @@ beforeEach(() => {
 
 describe('a bare reply straight after Penny', () => {
   it('is let through by the free rule: no model is asked, nothing is struck', async () => {
-    vi.mocked(previousAssistantMessage).mockResolvedValue(PENNY);
+    vi.mocked(previousAssistantRow).mockResolvedValue({ content: PENNY, fellBack: false });
     const out = await run('yes do that');
     expect(out).toMatchObject({ tier: 'T1', by: 'allow_rule', blocked: false });
     expect(gateRowText()).toBe('T1 by allow_rule: reply to Penny');
@@ -86,7 +86,7 @@ describe('a bare reply straight after Penny', () => {
   });
 
   it('is still judged by the classifier when Penny has not spoken', async () => {
-    vi.mocked(previousAssistantMessage).mockResolvedValue(null);
+    vi.mocked(previousAssistantRow).mockResolvedValue(null);
     await run('yes do that');
     expect(classifyMessage).toHaveBeenCalledTimes(1);
     expect(vi.mocked(classifyMessage).mock.calls[0][1]).toMatchObject({ previousAssistant: null });
@@ -100,14 +100,14 @@ describe("Penny's previous message reaches the classifiers", () => {
   const MESSAGE = 'hmm, what about the other way round';
 
   it('Haiku is given it', async () => {
-    vi.mocked(previousAssistantMessage).mockResolvedValue(PENNY);
+    vi.mocked(previousAssistantRow).mockResolvedValue({ content: PENNY, fellBack: false });
     await run(MESSAGE);
     expect(vi.mocked(classifyMessage).mock.calls[0][1]).toMatchObject({ previousAssistant: PENNY });
   });
 
   it('Jev is given it, in Jev-first mode, and so is Haiku when Jev defers', async () => {
     vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'on', source: 'user' });
-    vi.mocked(previousAssistantMessage).mockResolvedValue(PENNY);
+    vi.mocked(previousAssistantRow).mockResolvedValue({ content: PENNY, fellBack: false });
     await run(MESSAGE);
     expect(vi.mocked(jevClassifyTier).mock.calls[0][1]).toMatchObject({ previousAssistant: PENNY });
     expect(vi.mocked(classifyMessage).mock.calls[0][1]).toMatchObject({ previousAssistant: PENNY });

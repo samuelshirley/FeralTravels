@@ -58,7 +58,7 @@ import {
   type OverriddenEdit,
   type OverrideCheckAction,
 } from '@/lib/penny/editOverride';
-import type { PlanSummary } from '@/types/trip';
+import type { ChatFallbackMeta, PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 import { resolveLegTitle } from '@/lib/legTitle';
 import { getDirectionsAccounted } from '@/server/google/accounted';
@@ -987,6 +987,16 @@ async function runTurnWork(
               'plan_ready',
             );
           }
+          /*
+           * Penny's dead end, marked as a FACT on the row and on the payload,
+           * so both clients offer "Try again" from structure rather than by
+           * matching her sentence — and the button is still there after a
+           * reload or a heal. `images` says whether the message it answered
+           * carried photos, which the transcript does not keep.
+           */
+          const fallbackMeta: ChatFallbackMeta | null = final.fallback
+            ? { images: images.length }
+            : null;
           await addChatMessage(
             tripId,
             'assistant',
@@ -994,6 +1004,9 @@ async function runTurnWork(
             assistantChangesMade,
             'ai',
             planSummary,
+            null,
+            null,
+            fallbackMeta,
           );
 
           // Terminal event. Same shape as the old JSON response so the
@@ -1030,6 +1043,8 @@ async function runTurnWork(
              * splice would show one pace and the reload another.
              */
             planReadyPaceHours,
+            /** Set when this reply is Penny's dead end — the client offers "Try again". */
+            fallback: fallbackMeta,
             /** Tool names per model call — the number of prefix re-reads this turn cost. */
             toolTrace: final.toolTrace,
             modelCalls: final.toolTrace.length,

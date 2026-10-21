@@ -209,6 +209,13 @@ export interface GateInput {
    * when it is hers, else null. Only then can a bare reply be read as one.
    */
   previousAssistant?: string | null;
+  /**
+   * That message was Penny's dead end ("couldn't apply that cleanly"), read
+   * from the row's structured `fallback_meta`, never from its text. "Try
+   * again" resends the driver's message word for word, so the exact-repeat
+   * rule must not refuse it — that resend is the retry Penny asked for.
+   */
+  previousAssistantFellBack?: boolean;
 }
 
 /**
@@ -245,9 +252,16 @@ export function decideDeterministically(input: GateInput): GateDecision | null {
    * the same sentence is almost always retrying a message that failed, so this
    * is deliberately EXACT (after trimming and case-folding) rather than fuzzy —
    * "same again please" is a real message and must not match.
+   *
+   * Not straight after Penny's dead end: there the repeat IS the retry she
+   * asked for, and it is what "Try again" sends. Without this exception every
+   * tap was refused with the T3 line and a strike (reproduced 2026-10-21).
    */
   const folded = text.toLowerCase();
-  if (input.recentMessages.some((m) => m.trim().toLowerCase() === folded)) {
+  if (
+    !input.previousAssistantFellBack &&
+    input.recentMessages.some((m) => m.trim().toLowerCase() === folded)
+  ) {
     return { tier: 'T3', by: 'deny_rule', reason: 'exact repeat' };
   }
 

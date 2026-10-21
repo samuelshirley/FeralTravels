@@ -259,3 +259,50 @@ describe('the free reply rule', () => {
     expect(isBareReply('yes, but via the coast')).toBe(false);
   });
 });
+
+/*
+ * "Try again" on Penny's dead end resends the driver's message word for word.
+ * Before this exception the exact-repeat rule refused every tap: the newest
+ * chat rows are [her fallback, the message], so the resend matched itself —
+ * T3, the refusal line, and a strike (reproduced 2026-10-21 through the real
+ * route, src/test/pg/replanFallback.test.ts).
+ */
+describe('a resend straight after Penny fell back', () => {
+  const FALLBACK = "Sorry, I couldn't apply that cleanly — could you rephrase and try again?";
+  const MESSAGE = 'Add a night in Porto';
+
+  it('is not refused as an exact repeat', () => {
+    expect(
+      decideDeterministically({
+        message: MESSAGE,
+        tripNames: [],
+        recentMessages: [FALLBACK, MESSAGE],
+        previousAssistant: FALLBACK,
+        previousAssistantFellBack: true,
+      }),
+    ).not.toMatchObject({ reason: 'exact repeat' });
+  });
+
+  it('is judged by everything else as usual: junk is still junk', () => {
+    expect(
+      decideDeterministically({
+        message: 'SELECT * FROM trips',
+        tripNames: [],
+        recentMessages: [FALLBACK, 'SELECT * FROM trips'],
+        previousAssistant: FALLBACK,
+        previousAssistantFellBack: true,
+      }),
+    ).toMatchObject({ tier: 'T3', reason: 'sql' });
+  });
+
+  it('the exemption is the structured flag, not the sentence: the same text without it is a repeat', () => {
+    expect(
+      decideDeterministically({
+        message: MESSAGE,
+        tripNames: [],
+        recentMessages: [FALLBACK, MESSAGE],
+        previousAssistant: FALLBACK,
+      }),
+    ).toMatchObject({ tier: 'T3', reason: 'exact repeat' });
+  });
+});

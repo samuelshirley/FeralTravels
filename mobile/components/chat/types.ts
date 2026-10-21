@@ -1,4 +1,4 @@
-import type { ChatFormMeta, ChatMessage, PlanSummary } from "@/shared/types/trip";
+import type { ChatFallbackMeta, ChatFormMeta, ChatMessage, PlanSummary } from "@/shared/types/trip";
 
 /**
  * Native mirror of the chat types in src/components/ChatPanel.tsx.
@@ -64,13 +64,19 @@ export type DeliveryStatus =
   | "typing"
   | "responded";
 
-export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary" | "form_meta"> {
+export interface UIMessage extends Omit<ChatMessage, "seq" | "plan_summary" | "form_meta" | "fallback_meta"> {
   /**
    * The answered onboarding step this row records. Optional HERE and required
    * on `ChatMessage`, deliberately: the server contract should not go soft just
    * because the optimistic literals in ChatPanel don't set it.
    */
   form_meta?: ChatFormMeta | null;
+  /**
+   * Set on Penny's dead-end reply — from the persisted row, or from the live
+   * `applied` event's `fallback`. Drives the "Try again" button; optional for
+   * the same reason as `form_meta`.
+   */
+  fallback_meta?: ChatFallbackMeta | null;
   /** Sequential ordering number — 0 or absent for optimistic (unsaved) messages. */
   seq?: number;
   /** `data:` URIs of images the user attached to this message. */
