@@ -125,7 +125,7 @@ describe('the address and the code are literals, not configuration', () => {
   });
 });
 
-describe('the review account is not an admin, not comped, not a fixture', () => {
+describe('the review account is an ordinary trial account', () => {
   // Read as SOURCE rather than imported: `admin.ts` and `comped.ts` both pull
   // in the db client, and a guard about two hardcoded allowlists should not
   // need a database to answer. Both lists are literal arrays, so the absence
@@ -138,12 +138,11 @@ describe('the review account is not an admin, not comped, not a fixture', () => 
     expect(admin).not.toContain(REVIEW_ACCOUNT_EMAIL);
   });
 
-  it('is not on the comped allowlist — comped would mask the row a sandbox purchase writes', () => {
-    // It IS entitled (applyReviewAccess), but by keeping its real state: a
-    // comped state masks every subscription row, so after a sandbox purchase
-    // Settings would go on saying "On the house" and the purchase would look
-    // like it did nothing. The sheet is reachable from Settings -> Plan ->
-    // View plans in every state, so entitlement no longer hides the prices.
+  it('is not on the comped allowlist, so it still sees the paywall and can buy', () => {
+    // If it were comped the reviewer would be entitled, every paywall would be
+    // hidden from them, and the only place a price appears is Settings -> Plan
+    // -> View plans. That is the "unable to locate the in-app purchases"
+    // rejection §2 of the review notes is about.
     expect(comped).toMatch(/COMPED_ALLOWLIST/);
     expect(comped).not.toContain(REVIEW_ACCOUNT_EMAIL);
   });
@@ -181,26 +180,11 @@ describe('it is wired into the two places that matter, and only under the flag',
     expect(breaker).toMatch(/isReviewAccountSignIn\(normalized\)\)\s*return;/);
   });
 
-  it('entitlement entitles it under the flag, through the payments module, writing no row', () => {
-    // 2026-10-20: the account was past its seven days at review time and the
-    // reviewer met "That's your seven days up" — a Guideline 2.1 rejection.
-    const ent = readFileSync(join(ROOT, 'src/server/payments/entitlements.ts'), 'utf8');
-    const fn = ent.slice(ent.indexOf('export async function getAccountVerdict'));
-    const body = fn.slice(0, fn.indexOf('\nexport '));
-    expect(body).toMatch(/return applyReviewAccess\(verdict, isReviewAccountSignIn\(user\.email\)\);/);
-    const access = readFileSync(join(ROOT, 'src/server/payments/reviewAccess.ts'), 'utf8');
-    expect(access).not.toMatch(/upsertSubscription|insert\(|state:/);
-  });
-
   it('nothing else in src/ consults it', () => {
-    // Four call sites, by design: sign-in (otp), the sign-up breaker, and
-    // entitlement. A fifth is a new place this address is special, and should
-    // be a deliberate decision rather than a diff nobody reads.
-    const files = [
-      'src/server/auth/otp.ts',
-      'src/server/payments/breakerCheck.ts',
-      'src/server/payments/entitlements.ts',
-    ];
+    // Three call sites, by design. A fourth is a new place this address is
+    // special, and should be a deliberate decision rather than a diff nobody
+    // reads.
+    const files = ['src/server/auth/otp.ts', 'src/server/payments/breakerCheck.ts'];
     const callers = files.filter((f) =>
       readFileSync(join(ROOT, f), 'utf8').includes('isReviewAccountSignIn'),
     );
