@@ -29,6 +29,7 @@ import { gateMessage } from '@/server/messageGate';
 import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { addChatMessage } from '@/server/repos/chat';
 import { planReadyText } from '@/lib/planReady';
+import { IMAGE_ONLY_PLACEHOLDER } from '@/lib/pennyFallbackRetry';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
@@ -412,7 +413,7 @@ export async function POST(req: Request) {
       tripId,
       userId,
       idempotencyKey,
-      userMessage: message || '(image only)',
+      userMessage: message || IMAGE_ONLY_PLACEHOLDER,
       images: turnImages,
     });
     if (!created) {
@@ -424,7 +425,7 @@ export async function POST(req: Request) {
     await addChatMessage(
       tripId,
       'user',
-      message || '(image only)',
+      message || IMAGE_ONLY_PLACEHOLDER,
       null,
       body.handoff ? 'handoff' : 'ai',
       null,
