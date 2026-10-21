@@ -3,6 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs, trips } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
+import { reportPennyFallback } from '@/server/pennyFallbackAlert';
 import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
 import { restLegBlockedFields, restLegEditRejectionMessage } from '@/lib/penny/tools/updateLeg';
@@ -626,6 +627,12 @@ async function runTurnWork(
               success: recovered,
               errorMessage: `Penny emitted tool-call markup as text; retried=${final.leakRetryCount}; recovered=${recovered}`,
             }).catch((e) => console.warn('logUsageEvent (tool-call-leak) failed:', e));
+          }
+
+          // The "couldn't apply that cleanly" dead end: record it and tell the
+          // owner (production, at most hourly). Never throws — see pennyFallbackAlert.
+          if (final.fallback) {
+            await reportPennyFallback({ userId, tripId, fallback: final.fallback });
           }
 
           let appliedCount = 0;
