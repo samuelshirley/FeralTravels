@@ -98,6 +98,7 @@ export default function PurchaseSheet({
     mode,
     unavailableReason,
     manageSubscriptionAvailable,
+    existingAccess,
     plans,
     plansLoading,
     error,
@@ -152,6 +153,20 @@ export default function PurchaseSheet({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
+            {/*
+              An account that already has access it did not buy at Apple (a
+              promo, a comp) can still buy a plan — App Review's demo account
+              must be able to — so the sheet says what buying would mean for
+              them, above the plans, before any row is tapped.
+            */}
+            {existingAccess ? (
+              <View style={styles.existingAccessBox}>
+                <Text testID="sheet-existing-access" style={styles.noticeText}>
+                  {existingAccess}
+                </Text>
+              </View>
+            ) : null}
+
             {/*
               Rows ONLY in store mode, and only ever with the store's prices.
               `flow.plans` is empty in every other mode — the type says so
@@ -548,6 +563,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: theme.surfaceMuted,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: theme.radiusSm,
+  },
+  existingAccessBox: {
+    marginBottom: 12,
     paddingVertical: 8,
     paddingHorizontal: 10,
     backgroundColor: theme.surfaceMuted,

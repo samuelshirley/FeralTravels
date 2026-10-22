@@ -178,3 +178,40 @@ export function planStatusLine(status: PlanStatus, now: Date): string {
     }
   }
 }
+
+/**
+ * The line above the plans in the purchase sheet, for an account that ALREADY
+ * has access it did not buy at Apple — or null for everybody else.
+ *
+ * The sheet stays reachable for these accounts on purpose: App Review's demo
+ * account is on a promo and must be able to find and buy the subscriptions
+ * (Guideline 2.1), and a promo user may choose to subscribe. But nothing on the
+ * sheet said that buying starts billing on top of access they already have, so
+ * a promo user could pay without meaning to. This says it, once, above the
+ * plans (Sam, 2026-10-22).
+ *
+ * Apple-billed plans (`apple_iap`, and `fake`, which stands in for one in the
+ * E2E fixtures) get nothing: moving between them is Apple's own
+ * upgrade/crossgrade, which its payment sheet explains. Accounts without access
+ * get nothing: the sheet is a sale to them, not a duplicate.
+ */
+export function existingAccessNotice(status: PlanStatus, now: Date): string | null {
+  const BILLING = 'A plan you buy now starts billing today.';
+  const { state, source, currentPeriodEnd } = status;
+
+  if (state === 'comped') return `You already have access at no cost. ${BILLING}`;
+
+  const hasAccess =
+    state === 'subscribed' || state === 'subscribed_watch' || state === 'cancelled_in_period';
+  if (!hasAccess) return null;
+
+  if (source === 'promo') {
+    const d = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
+    const ends = d && !Number.isNaN(d.getTime()) ? formatPlanDate(d, now) : null;
+    return ends
+      ? `You're on the Ambassador plan until ${ends}. ${BILLING}`
+      : `You're on the Ambassador plan. ${BILLING}`;
+  }
+  if (source === 'admin') return `You already have access at no cost. ${BILLING}`;
+  return null;
+}

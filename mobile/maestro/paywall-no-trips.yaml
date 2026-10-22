@@ -52,6 +52,7 @@ appId: ${APP_ID}
       COMPED: '0'
       CREATED_DAYS_AGO: '7'
       SUBSCRIPTION_STATUS: ''
+      SUBSCRIPTION_SOURCE: ''
 - stopApp
 - launchApp
 # The typing bubble runs ~3 s before Penny's message appears.
