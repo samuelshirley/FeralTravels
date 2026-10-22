@@ -27,7 +27,7 @@ import {
   type Me,
 } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
-import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
+import { refreshEntitlement, rememberEntitlement, useEntitlement } from "@/lib/entitlement";
 import PlanRequiredOverlay from "@/components/PlanRequiredOverlay";
 import AccountButton from "@/components/AccountButton";
 import { useIdentity } from "@/lib/identity";
@@ -37,6 +37,13 @@ import { todayISO } from "@/shared/lib/dates";
 import { isTripCompleted } from "@/shared/lib/tripCompletion";
 import { groupByStartDate, mostRecentlyActive } from "@/shared/lib/tripsListDates";
 import { font } from "@/lib/typography";
+import {
+  cacheKeys,
+  removeCached,
+  revalidate,
+  updateCached,
+  useCached,
+} from "@/shared/lib/resourceCache";
 
 /**
  * Native mirror of src/app/trips/page.tsx + TripsList.tsx + NewTripButton.tsx.
@@ -84,10 +91,15 @@ export default function TripsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const [meId, setMeId] = useState<string | null>(null);
-  const [me, setMe] = useState<MeWithId | null>(null);
-  const [trips, setTrips] = useState<Trip[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  /*
+   * The list, the account and the verdict come from the resource cache, not
+   * from screen state: coming back to this screen used to draw an empty list
+   * and a spinner while it refetched (screen recording, 2026-10-22). It still
+   * refetches on every focus, below, and replaces what is shown in place.
+   */
+  const meId = useCached<MeWithId>(cacheKeys.me)?.id ?? null;
+  const trips = useCached<Trip[]>(cacheKeys.trips) ?? null;
+  const [loading, setLoading] = useState(trips === null);
   const [refreshing, setRefreshing] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [cloning, setCloning] = useState<string | null>(null);
@@ -100,7 +112,7 @@ export default function TripsScreen() {
    * overlay below needs the prices and the copy that came with it. Null means
    * "couldn't ask" and never blocks — see PlanRequiredOverlay.
    */
-  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  const entitlement = useEntitlement();
 
   /**
    * One auto-create per mount, and only ever one.
@@ -130,14 +142,10 @@ export default function TripsScreen() {
   const load = useCallback(async () => {
     try {
       const [tripsRes, meRes, verdict] = await Promise.all([
-        listTrips(),
-        getMe() as Promise<MeWithId>,
-        fetchEntitlement(),
+        revalidate(cacheKeys.trips, listTrips, (list) => Array.isArray(list)),
+        revalidate(cacheKeys.me, getMe as () => Promise<MeWithId>),
+        refreshEntitlement(),
       ]);
-      setTrips(tripsRes);
-      setMe(meRes);
-      setMeId(meRes.id ?? null);
-      setEntitlement(verdict);
 
       const mine = meRes.id
         ? tripsRes.filter((t) => t.user_id === meRes.id)
@@ -167,7 +175,7 @@ export default function TripsScreen() {
     } catch (err) {
       if (!handleAuthError(err)) {
         // Non-auth failures already surfaced through the global error notifier.
-        setTrips((prev) => prev ?? []);
+        updateCached<Trip[]>(cacheKeys.trips, (prev) => prev ?? []);
       }
     } finally {
       setLoading(false);
@@ -250,7 +258,9 @@ export default function TripsScreen() {
   }
 
   function handleTripDeleted(id: string) {
-    setTrips((prev) => (prev ? prev.filter((t) => t.id !== id) : prev));
+    updateCached<Trip[]>(cacheKeys.trips, (prev) => (prev ? prev.filter((t) => t.id !== id) : prev));
+    removeCached(cacheKeys.trip(id));
+    removeCached(cacheKeys.pois(id));
   }
 
   async function handleSignOut() {
@@ -426,7 +436,7 @@ export default function TripsScreen() {
           const latest = mostRecentlyActive(myTrips);
           router.replace(latest ? `/trips/${latest.id}?chat=1` : "/paywall");
         }}
-        onEntitled={setEntitlement}
+        onEntitled={rememberEntitlement}
       />
     </>
   );

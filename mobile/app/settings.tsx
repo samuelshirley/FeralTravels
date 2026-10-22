@@ -12,6 +12,7 @@ import SubscriptionSection from "@/components/SubscriptionSection";
 import { LegalSection } from "@/components/LegalLinks";
 import { Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
+import { cacheKeys, revalidate, useCached } from "@/shared/lib/resourceCache";
 import { useSignedInEmail } from "@/lib/identity";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
@@ -27,12 +28,12 @@ import { font } from "@/lib/typography";
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const me = useCached<Me>(cacheKeys.me) ?? null;
+  const [loading, setLoading] = useState(me === null);
 
   const load = useCallback(async () => {
     try {
-      setMe(await getMe());
+      await revalidate(cacheKeys.me, getMe);
     } catch (e) {
       // 401 = the token is dead. The global error surface stays quiet on 401
       // by design, so the redirect has to happen here.
