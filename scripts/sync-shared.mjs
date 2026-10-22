@@ -25,6 +25,7 @@ export const SHARED_FILES = [
   ['src/lib/validation.ts', 'mobile/shared/lib/validation.ts'],
   ['src/lib/polyline.ts', 'mobile/shared/lib/polyline.ts'],
   ['src/lib/mapClustering.ts', 'mobile/shared/lib/mapClustering.ts'],
+  ['src/lib/mapDayMarkers.ts', 'mobile/shared/lib/mapDayMarkers.ts'],
   ['src/lib/useNextStop.ts', 'mobile/shared/lib/useNextStop.ts'],
   ['src/lib/sillyErrors.ts', 'mobile/shared/lib/sillyErrors.ts'],
   ['src/lib/models.ts', 'mobile/shared/lib/models.ts'],
