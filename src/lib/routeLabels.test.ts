@@ -125,9 +125,13 @@ describe('mobile navigation labels', () => {
      * Every header-less screen in this app can push Settings (BottomNav,
      * TripHeader, StopsSection, trips/index, PlanRequiredOverlay), so the rule
      * applies to every screen that renders a header at all.
+     *
+     * Since 2026-10-22 NO screen renders the native header (the iOS 27 empty
+     * back button; `nativeHeaderGuard.test.ts` forbids one coming back), so
+     * this loop normally has nothing to check. It stays as the second line of
+     * defence if a header is ever reintroduced.
      */
     const withHeader = screens.filter((s) => !/headerShown:\s*false/.test(s.options));
-    expect(withHeader.length).toBeGreaterThan(0);
     for (const { name, options } of withHeader) {
       expect(
         /headerBackTitle:\s*"[^"]+"/.test(options),

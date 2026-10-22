@@ -121,15 +121,15 @@ export default function RootLayout() {
             */}
             <Stack.Screen name="paywall" options={{ headerShown: false }} />
             {/*
-              "Back", not "Trip". Settings is pushed from BottomNav, TripHeader,
-              StopsSection, trips/index and PlanRequiredOverlay — so it is
-              reached from the trips LIST as often as from inside a trip, and
-              "Back to trip" would be a lie on half of those paths.
+              Settings draws its OWN header, like trips/index and the trip
+              workspace. On iOS 27 (an iPhone 16 Pro Max on 27.0.1, 2026-10-22)
+              the native stack's back button rendered as an empty Liquid Glass
+              pill — no chevron, no "Back" — while the same build drew it
+              correctly on the iOS 26.5 simulators. react-native-screens 4.16
+              predates iOS 27; a header the app draws itself cannot be emptied
+              by UIKit. `nativeHeaderGuard.test.ts` keeps every route this way.
             */}
-            <Stack.Screen
-              name="settings"
-              options={{ title: "Settings", headerBackTitle: "Back" }}
-            />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>
