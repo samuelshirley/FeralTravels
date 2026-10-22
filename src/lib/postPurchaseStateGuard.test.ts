@@ -44,7 +44,10 @@ describe('post-purchase state (Guideline 2.1(b))', () => {
 
   it('Settings stores the confirmed payload and builds its status line from it', () => {
     const section = readFileSync(path.join(ROOT, 'mobile/components/SubscriptionSection.tsx'), 'utf8');
-    expect(section).toMatch(/onEntitled: \(fresh\) => \{[\s\S]*?setEntitlement\(fresh\);[\s\S]*?\}/);
+    // Stored in the resource cache since 2026-10-22, so the card and every
+    // other screen reading the verdict see the confirmed plan at once.
+    expect(section).toMatch(/onEntitled: \(fresh\) => \{[\s\S]*?rememberEntitlement\(fresh\);[\s\S]*?\}/);
+    expect(section).toMatch(/const entitlement = useEntitlement\(\);/);
     expect(section).toMatch(/planStatusLine\(\s*\{\s*state: entitlement\.state/);
   });
 });

@@ -10,6 +10,7 @@ import {
   updateVehicle,
   type Vehicle,
 } from "@/lib/api";
+import { cacheKeys, revalidate, useCached } from "@/shared/lib/resourceCache";
 import { theme } from "@/lib/theme";
 import { useUnits } from "@/lib/units";
 import { kmToMi, miToKm, type UnitsPref, approxDistance } from "@/shared/lib/units";
@@ -99,7 +100,9 @@ function coerceError(q: VehicleProfileQuestion, displayRaw: unknown): string | n
 export default function VehicleProfileSection() {
   const router = useRouter();
   const { units } = useUnits();
-  const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
+  // From the resource cache: Settings shows the vehicles it already knows on
+  // arrival instead of "Loading vehicles…", and `load` refreshes them in place.
+  const vehicles = useCached<Vehicle[]>(cacheKeys.vehicles) ?? null;
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
   const [saving, setSaving] = useState(false);
@@ -117,8 +120,7 @@ export default function VehicleProfileSection() {
 
   const load = useCallback(async () => {
     try {
-      const list = await listVehicles();
-      setVehicles(list);
+      await revalidate(cacheKeys.vehicles, listVehicles, (list) => Array.isArray(list));
     } catch (e) {
       if (handleAuthError(e)) return;
       setError(e instanceof ApiError ? e.message : "Failed to load vehicles.");

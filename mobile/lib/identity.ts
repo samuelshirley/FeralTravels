@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getIdentity, type Identity } from "@/lib/api";
 import { getSignedInEmail } from "@/lib/auth";
+import { cacheKeys, getCached, setCached } from "@/shared/lib/resourceCache";
 
 /**
  * Who is signed in, for the account button and menu.
@@ -23,7 +24,9 @@ import { getSignedInEmail } from "@/lib/auth";
  * the user over.
  */
 export function useIdentity(): Identity {
-  const [identity, setIdentity] = useState<Identity>({
+  // Starts from the last answer the server gave (resource cache), so the avatar
+  // and name do not blink in on every screen that mounts this hook.
+  const [identity, setIdentity] = useState<Identity>(() => getCached<Identity>(cacheKeys.identity) ?? {
     // `id` stays null until the server answers, deliberately. It is the string
     // RevenueCat is configured with, and the keychain has no copy of it — a
     // guess here would be worse than nothing. `mobile/lib/purchases.ts` reads
@@ -48,6 +51,7 @@ export function useIdentity(): Identity {
     void getIdentity()
       .then((remote) => {
         if (cancelled) return;
+        setCached(cacheKeys.identity, remote);
         setIdentity((prev) => ({
           id: remote.id,
           email: remote.email ?? prev.email,

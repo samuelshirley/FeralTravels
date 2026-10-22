@@ -1,0 +1,92 @@
+# THE REGRESSION FLOW for the screen recording of 2026-10-22: "when I click back
+# to trips I see a loading spinner, and when I click on the trip I see Loading
+# trip". Read before changing.
+#
+# Two bugs, one shape: every way BACK in the app built a NEW screen.
+#  - "‹ Trips" pushed a brand-new trips list (it slid in from the right, empty,
+#    and refetched behind a spinner), so every round trip grew the stack.
+#  - LIST/MAP/CHAT on Settings pushed a SECOND copy of the trip that was still
+#    open underneath it: "Loading trip", a cold map, every open day closed.
+# And every screen held its server data in useState, so every new screen was a
+# cold load. navigationGuard.test.ts and resourceCacheGuard.test.ts hold the
+# structure; this flow drives it the way a driver does.
+#
+# WHAT IS DETERMINISTIC HERE, and what is not. "The same screen came back" is
+# asserted through state only that screen instance holds: a day opened in the
+# itinerary. A new instance opens with every day closed, so `START: Paris` can
+# only be on screen if the pop landed on the original. The "no Loading trip"
+# check on re-opening is one-sided: with the cache the trip renders on its
+# first frame, so it can never be seen; without it a fast network could still
+# hide it from Maestro, which is why the structure is guarded in unit tests.
+#
+# Runs in the `trips` shard AFTER trip-itinerary, on the same seeded two-leg
+# trip, so day 1's fuel is already sourced and this flow spends nothing.
+appId: ${APP_ID}
+---
+- runFlow: sign-in.yaml
+
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+
+# ── Open a day: state only THIS instance of the trip screen holds ───────────
+- assertNotVisible:
+    text: 'START: Paris.*'
+- tapOn:
+    text: '.*Paris, France → Strasbourg, France.*'
+- extendedWaitUntil:
+    visible:
+      text: 'START: Paris.*'
+    timeout: 20000
+
+# ── Settings, then MAP, then LIST: the same trip screen, day still open ─────
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Settings'
+    timeout: 20000
+- tapOn: 'MAP'
+- extendedWaitUntil:
+    visible: 'Recenter the map on the whole route'
+    timeout: 30000
+- assertNotVisible:
+    text: '(?i)loading trip.*'
+- tapOn: 'LIST'
+- assertVisible:
+    text: 'START: Paris.*'
+
+# A second Settings → MAP. The tab arrives in the route params; the workspace
+# clears them once applied, or this second request (same value as the first)
+# would be ignored and the driver left on the list.
+- tapOn: 'SETTINGS'
+- extendedWaitUntil:
+    visible: 'Settings'
+    timeout: 20000
+- tapOn: 'MAP'
+- extendedWaitUntil:
+    visible: 'Recenter the map on the whole route'
+    timeout: 30000
+- tapOn: 'LIST'
+- assertVisible:
+    text: 'START: Paris.*'
+
+# ── Back to trips, and into the trip again ──────────────────────────────────
+- tapOn: 'Back to trips'
+- extendedWaitUntil:
+    visible: '+ New trip'
+    timeout: 20000
+- assertVisible:
+    text: '.*${TRIP_NAME}.*'
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+# Drawn from the cache on the first frame: there is no "Loading trip" to see.
+- assertNotVisible:
+    text: '(?i)loading trip.*'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000

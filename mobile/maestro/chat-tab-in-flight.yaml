@@ -68,9 +68,25 @@ appId: ${APP_ID}
     timeout: 30000
 - assertNotVisible: '+ New trip'
 
-# BUG 2, on the mount that came back. This one is genuinely fresh — the trip
-# screen is pushed anew — so nothing it holds in memory could carry the answer
-# across; it has to have asked the server.
+# Still THINKING on the screen we came back to. Since 2026-10-22 CHAT from
+# Settings POPS back to the trip that was open (it used to push a second copy
+# of it; navigationGuard.test.ts), so this is the same mount as before.
 - assertVisible:
     id: 'penny-status'
     text: 'THINKING'
+
+# BUG 2, on a genuinely FRESH mount: back to the list, which pops the trip
+# screen off the stack entirely, then into the trip again, which builds a new
+# one. Its screen state starts empty; THINKING has to come from outside it.
+- tapOn: 'Back to trips'
+- extendedWaitUntil:
+    visible: '+ New trip'
+    timeout: 20000
+- tapOn:
+    text: '.*${TRIP_NAME}.*'
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'THINKING'
+    timeout: 20000

@@ -15,6 +15,7 @@ import {
 import { UnitsProvider } from "@/lib/units";
 import { ErrorProvider } from "@/lib/errors";
 import { configurePurchases } from "@/lib/purchases";
+import { configureResourceCache } from "@/lib/cache";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 
@@ -38,6 +39,14 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
  * behaves exactly as it did before StoreKit existed.
  */
 configurePurchases();
+
+/**
+ * Load the resource cache from disk before the first screen reads it, so a
+ * cold launch renders the trips list and the trip from what the phone already
+ * knows while each screen asks the server again. Synchronous and guarded; a
+ * missing or broken file is a cold load, never a crash. lib/cache.ts.
+ */
+configureResourceCache();
 
 /**
  * Root shell. Mirrors the providers the web mounts around every signed-in
@@ -111,7 +120,20 @@ export default function RootLayout() {
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
             {/* trips/index draws its own header — see the note at the top of that file. */}
             <Stack.Screen name="trips/index" options={{ headerShown: false }} />
-            <Stack.Screen name="trips/[tripId]" options={{ headerShown: false }} />
+            {/*
+              `getId` makes a trip screen unique per trip id. Without it the
+              stack matches `trips/[tripId]` by NAME alone, so popping back to
+              "trip B" could land on trip A's screen, and pushing a trip that is
+              already open would stack a second copy of it.
+            */}
+            <Stack.Screen
+              name="trips/[tripId]"
+              options={{ headerShown: false }}
+              getId={({ params }) => {
+                const id = (params as { tripId?: string | string[] } | undefined)?.tripId;
+                return Array.isArray(id) ? id[0] : id;
+              }}
+            />
             {/*
               Was missing entirely, which is the same bug one step further along:
               undeclared, so it took the default options, so it drew a native
@@ -121,15 +143,15 @@ export default function RootLayout() {
             */}
             <Stack.Screen name="paywall" options={{ headerShown: false }} />
             {/*
-              "Back", not "Trip". Settings is pushed from BottomNav, TripHeader,
-              StopsSection, trips/index and PlanRequiredOverlay — so it is
-              reached from the trips LIST as often as from inside a trip, and
-              "Back to trip" would be a lie on half of those paths.
+              Settings draws its OWN header, like trips/index and the trip
+              workspace. On iOS 27 (an iPhone 16 Pro Max on 27.0.1, 2026-10-22)
+              the native stack's back button rendered as an empty Liquid Glass
+              pill — no chevron, no "Back" — while the same build drew it
+              correctly on the iOS 26.5 simulators. react-native-screens 4.16
+              predates iOS 27; a header the app draws itself cannot be emptied
+              by UIKit. `nativeHeaderGuard.test.ts` keeps every route this way.
             */}
-            <Stack.Screen
-              name="settings"
-              options={{ title: "Settings", headerBackTitle: "Back" }}
-            />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

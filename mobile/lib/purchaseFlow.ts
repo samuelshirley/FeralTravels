@@ -21,6 +21,7 @@ import {
   restoreOutcomeMessage,
 } from "@/shared/lib/purchaseOutcome";
 import { nextEntitlementPoll } from "@/shared/lib/entitlementPolling";
+import { existingAccessNotice } from "@/shared/lib/planStatusLine";
 import {
   appleSubscriptionConfirmed,
   manageSubscriptionAvailable,
@@ -107,6 +108,12 @@ export interface PurchaseFlow {
    * purchase that created the row.
    */
   manageSubscriptionAvailable: boolean;
+  /**
+   * Shown above the plans when the account already has access it did not buy
+   * at Apple (a promo, a comp): buying now starts billing today. Null for
+   * everybody else — see `existingAccessNotice`.
+   */
+  existingAccess: string | null;
   phase: PurchasePhase;
   /** True while anything is in flight; the sheet must not be dismissed. */
   busy: boolean;
@@ -366,6 +373,20 @@ export function usePurchaseFlow({
     mode,
     unavailableReason,
     manageSubscriptionAvailable: manageSubscriptionAvailable(entitlement),
+    existingAccess: entitlement
+      ? existingAccessNotice(
+          {
+            state: entitlement.state,
+            trialDaysRemaining: entitlement.trialDaysRemaining,
+            trialEndsAt: entitlement.trialEndsAt,
+            plan: entitlement.plan,
+            source: entitlement.source,
+            currentPeriodEnd: entitlement.currentPeriodEnd,
+            autoRenew: entitlement.autoRenew,
+          },
+          new Date()
+        )
+      : null,
     phase,
     busy: phase.kind !== "idle",
     error,

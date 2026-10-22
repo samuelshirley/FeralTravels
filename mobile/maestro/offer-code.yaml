@@ -45,6 +45,7 @@ appId: ${APP_ID}
       COMPED: '0'
       CREATED_DAYS_AGO: '2'
       SUBSCRIPTION_STATUS: ''
+      SUBSCRIPTION_SOURCE: ''
 
 # ── Settings -> Plan: the free period, worded as what it is ────────────────
 - tapOn: 'Account menu.*'
@@ -67,6 +68,9 @@ appId: ${APP_ID}
 - tapOn:
     id: 'settings-view-plans'
 - runFlow: purchase-sheet.yaml
+# A free-period account has nothing to lose by buying: no existing-access line.
+- assertNotVisible:
+    id: 'sheet-existing-access'
 
 # A build with no RevenueCat key cannot open Apple's sheet: the tap must say so.
 - runFlow:
@@ -80,4 +84,44 @@ appId: ${APP_ID}
           visible:
             text: 'Offer codes can.t be redeemed on this device right now\..*'
           timeout: 10000
+- tapOn: 'Close'
+
+# ── An Ambassador (promo) account: the plans stay reachable, with a warning ──
+# App Review's demo account is on a promo and must be able to buy (2.1), so
+# View plans stays — but the sheet says buying starts billing on top of the
+# access they already have (Sam, 2026-10-22; existingAccessNoticeGuard).
+- runScript:
+    file: set-subscription.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      COMPED: '0'
+      CREATED_DAYS_AGO: '30'
+      SUBSCRIPTION_STATUS: active
+      SUBSCRIPTION_SOURCE: promo
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: '+ New trip'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- tapOn:
+    id: 'account-menu-settings'
+- extendedWaitUntil:
+    visible: 'Vehicle profile'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'settings-view-plans'
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    text: 'Ambassador plan — ends .*'
+- tapOn:
+    id: 'settings-view-plans'
+- extendedWaitUntil:
+    visible:
+      id: 'sheet-existing-access'
+      text: "You're on the Ambassador plan until .*\\. A plan you buy now starts billing today\\."
+    timeout: 20000
+- runFlow: purchase-sheet.yaml
 - tapOn: 'Close'

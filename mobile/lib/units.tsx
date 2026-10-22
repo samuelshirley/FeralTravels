@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { getMe, updatePreferences } from "@/lib/api";
 import { asUnitsPref, type UnitsPref } from "@/shared/lib/units";
+import { cacheKeys, getCached, revalidate, updateCached } from "@/shared/lib/resourceCache";
+import type { Me } from "@/lib/api";
 
 /**
  * Native mirror of src/components/UnitsContext.tsx — same contract, same
@@ -19,14 +21,22 @@ const UnitsContext = createContext<UnitsContextValue | null>(null);
 let tzSynced = false;
 
 export function UnitsProvider({ children }: { children: React.ReactNode }) {
-  const [units, setUnitsState] = useState<UnitsPref>("metric");
-  const [loading, setLoading] = useState(true);
+  /*
+   * Seeded from the cached account, so an imperial driver's first frame is in
+   * miles. It used to start at "metric" on every launch and flip once /api/me
+   * answered, so every distance on the first screen was drawn twice.
+   */
+  const seeded = getCached<Me>(cacheKeys.me);
+  const [units, setUnitsState] = useState<UnitsPref>(
+    seeded ? asUnitsPref(seeded.units_pref) : "metric"
+  );
+  const [loading, setLoading] = useState(!seeded);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const me = await getMe();
+        const me = await revalidate(cacheKeys.me, getMe);
         if (!cancelled) setUnitsState(asUnitsPref(me.units_pref));
       } catch {
         // Fall through with 'metric' — display still works.
@@ -69,8 +79,11 @@ export function UnitsProvider({ children }: { children: React.ReactNode }) {
       const prev = units;
       setUnitsState(next); // optimistic — the toggle feels instant
       setLoading(true);
+      const patch = (pref: UnitsPref) =>
+        updateCached<Me>(cacheKeys.me, (me) => (me ? { ...me, units_pref: pref } : me));
       try {
         await updatePreferences({ units_pref: next });
+        patch(next); // the next launch opens in the units just chosen
       } catch (err) {
         setUnitsState(prev); // roll back so the toggle reflects truth
         throw err;

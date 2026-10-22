@@ -8,6 +8,7 @@
 # checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
 flows:
   - trip-itinerary.yaml
+  - back-is-back.yaml
   - forced-stop-line.yaml
   - maps-link-stop.yaml
   - rest-day-stop.yaml
@@ -16,6 +17,7 @@ executionOrder:
   continueOnFailure: true
   flowsOrder:
     - trip-itinerary
+    - back-is-back
     - forced-stop-line
     - maps-link-stop
     - rest-day-stop

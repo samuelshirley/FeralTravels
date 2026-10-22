@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import { resetPennyRuns } from "@/shared/lib/pennyRunStore";
 import { forgetLastOpenTrip } from "@/shared/lib/lastOpenTrip";
+import { resetResourceCache } from "@/shared/lib/resourceCache";
 
 /**
  * Session token storage. The token is a real server-side session (same
@@ -32,6 +33,13 @@ export async function getToken(): Promise<string | null> {
 }
 
 export async function setToken(token: string): Promise<void> {
+  /*
+   * A new session starts with an empty resource cache, memory and disk. Sign-out
+   * already empties it (clearToken), but a sign-in is the boundary that cannot
+   * be missed: whatever path left the previous session, the next account must
+   * never be drawn from the previous one's trips. resourceCacheGuard.test.ts.
+   */
+  resetResourceCache();
   await SecureStore.setItemAsync(TOKEN_KEY, token);
   listeners.forEach((fn) => fn(token));
 }
@@ -46,6 +54,8 @@ export async function clearToken(): Promise<void> {
    */
   resetPennyRuns();
   forgetLastOpenTrip();
+  // Memory AND the file on disk: the trips, the trip plans, the vehicles.
+  resetResourceCache();
   try {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
     await SecureStore.deleteItemAsync(EMAIL_KEY);

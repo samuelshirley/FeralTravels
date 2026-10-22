@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ChevronLeftIcon } from "@/components/icons";
 import BottomNav from "@/components/BottomNav";
 import UnitsToggle from "@/components/UnitsToggle";
 import VehicleProfileSection from "@/components/VehicleProfileSection";
@@ -10,6 +12,7 @@ import SubscriptionSection from "@/components/SubscriptionSection";
 import { LegalSection } from "@/components/LegalLinks";
 import { Eyebrow, Spinner } from "@/components/ui";
 import { getMe, isAuthError, type Me } from "@/lib/api";
+import { cacheKeys, revalidate, useCached } from "@/shared/lib/resourceCache";
 import { useSignedInEmail } from "@/lib/identity";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
@@ -24,12 +27,13 @@ import { font } from "@/lib/typography";
  */
 export default function SettingsScreen() {
   const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const insets = useSafeAreaInsets();
+  const me = useCached<Me>(cacheKeys.me) ?? null;
+  const [loading, setLoading] = useState(me === null);
 
   const load = useCallback(async () => {
     try {
-      setMe(await getMe());
+      await revalidate(cacheKeys.me, getMe);
     } catch (e) {
       // 401 = the token is dead. The global error surface stays quiet on 401
       // by design, so the redirect has to happen here.
@@ -54,6 +58,33 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.root}>
+      {/*
+        The screen's own header — see the note on this route in app/_layout.tsx
+        for why it is not the native stack's. "Back", not "Trip": Settings is
+        pushed from BottomNav, TripHeader, StopsSection, trips/index and
+        PlanRequiredOverlay, so it is reached from the trips LIST as often as
+        from inside a trip. A cold deep link has nothing to go back to, so that
+        one goes to the trips list.
+      */}
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <Pressable
+          testID="settings-back"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/trips"))}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={8}
+          style={styles.backLink}
+        >
+          <ChevronLeftIcon color={theme.text} />
+          <Text style={styles.backLabel}>Back</Text>
+        </Pressable>
+        <Text style={styles.headerTitle} accessibilityRole="header">
+          Settings
+        </Text>
+        {/* Balances the back control so the title centres on the screen. */}
+        <View style={styles.headerSide} />
+      </View>
+
       {/* "handled": with the range keypad up, a tap on Save otherwise only
           dismissed the keyboard and the vehicle was not saved (vehicles.yaml). */}
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -144,6 +175,23 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    backgroundColor: theme.bg,
+  },
+  backLink: { width: 72, flexDirection: "row", alignItems: "center", gap: 6 },
+  backLabel: { fontSize: 14, fontFamily: font.bold, color: theme.text },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontFamily: font.semibold,
+    color: theme.text,
+  },
+  headerSide: { width: 72 },
   root: { flex: 1, backgroundColor: theme.bg },
   content: { padding: 16, paddingTop: 24, paddingBottom: 80 },
   title: { fontSize: 26, fontFamily: font.medium, color: theme.text, marginBottom: 8 },

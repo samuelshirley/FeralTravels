@@ -10,6 +10,7 @@ import { apiFetch, ApiError } from "@/lib/api";
  */
 import type { EntitlementPayload } from "../shared/types/entitlement";
 import { PAYWALL_ERROR_CODE } from "../shared/types/entitlement";
+import { refreshEntitlementWith } from "../shared/lib/entitlementCache";
 
 export type { EntitlementPayload };
 export { PAYWALL_ERROR_CODE };
@@ -35,6 +36,17 @@ export async function fetchEntitlement(): Promise<EntitlementPayload | null> {
     return null;
   }
 }
+
+/**
+ * Ask again and keep the answer in the resource cache. The fail-open rule
+ * (a failed lookup drops a held "blocked" verdict) lives in the shared module,
+ * where the root suite executes it: shared/lib/entitlementCache.ts.
+ */
+export function refreshEntitlement(): Promise<EntitlementPayload | null> {
+  return refreshEntitlementWith(fetchEntitlement);
+}
+
+export { rememberEntitlement, useEntitlement } from "../shared/lib/entitlementCache";
 
 /**
  * True when a thrown ApiError is the paywall rather than any other 402.
