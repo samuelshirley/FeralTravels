@@ -3,6 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { legs, costs, trips } from '@/server/db/schema';
 import { replanStream, type ReplanEvent } from '@/lib/claude';
+import { reportPennyFallback } from '@/server/pennyFallbackAlert';
 import type { ReplanResult } from '@/lib/claude';
 import type { ValidatedAction } from '@/lib/penny/tools';
 import { restLegBlockedFields, restLegEditRejectionMessage } from '@/lib/penny/tools/updateLeg';
@@ -28,6 +29,7 @@ import { gateMessage } from '@/server/messageGate';
 import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { addChatMessage } from '@/server/repos/chat';
 import { planReadyText } from '@/lib/planReady';
+import { IMAGE_ONLY_PLACEHOLDER } from '@/lib/pennyFallbackRetry';
 import { DEFAULT_MAX_DRIVE_HOURS_PER_DAY } from '@/lib/vehicleProfile';
 import {
   createTurn,
@@ -57,7 +59,7 @@ import {
   type OverriddenEdit,
   type OverrideCheckAction,
 } from '@/lib/penny/editOverride';
-import type { PlanSummary } from '@/types/trip';
+import type { ChatFallbackMeta, PlanSummary } from '@/types/trip';
 import type { GeoJSONLineString } from '@/server/db/schema';
 import { resolveLegTitle } from '@/lib/legTitle';
 import { getDirectionsAccounted } from '@/server/google/accounted';
@@ -411,7 +413,7 @@ export async function POST(req: Request) {
       tripId,
       userId,
       idempotencyKey,
-      userMessage: message || '(image only)',
+      userMessage: message || IMAGE_ONLY_PLACEHOLDER,
       images: turnImages,
     });
     if (!created) {
@@ -423,7 +425,7 @@ export async function POST(req: Request) {
     await addChatMessage(
       tripId,
       'user',
-      message || '(image only)',
+      message || IMAGE_ONLY_PLACEHOLDER,
       null,
       body.handoff ? 'handoff' : 'ai',
       null,
@@ -626,6 +628,12 @@ async function runTurnWork(
               success: recovered,
               errorMessage: `Penny emitted tool-call markup as text; retried=${final.leakRetryCount}; recovered=${recovered}`,
             }).catch((e) => console.warn('logUsageEvent (tool-call-leak) failed:', e));
+          }
+
+          // The "couldn't apply that cleanly" dead end: record it and tell the
+          // owner (production, at most hourly). Never throws — see pennyFallbackAlert.
+          if (final.fallback) {
+            await reportPennyFallback({ userId, tripId, fallback: final.fallback });
           }
 
           let appliedCount = 0;
@@ -980,6 +988,16 @@ async function runTurnWork(
               'plan_ready',
             );
           }
+          /*
+           * Penny's dead end, marked as a FACT on the row and on the payload,
+           * so both clients offer "Try again" from structure rather than by
+           * matching her sentence — and the button is still there after a
+           * reload or a heal. `images` says whether the message it answered
+           * carried photos, which the transcript does not keep.
+           */
+          const fallbackMeta: ChatFallbackMeta | null = final.fallback
+            ? { images: images.length }
+            : null;
           await addChatMessage(
             tripId,
             'assistant',
@@ -987,6 +1005,9 @@ async function runTurnWork(
             assistantChangesMade,
             'ai',
             planSummary,
+            null,
+            null,
+            fallbackMeta,
           );
 
           // Terminal event. Same shape as the old JSON response so the
@@ -1023,6 +1044,8 @@ async function runTurnWork(
              * splice would show one pace and the reload another.
              */
             planReadyPaceHours,
+            /** Set when this reply is Penny's dead end — the client offers "Try again". */
+            fallback: fallbackMeta,
             /** Tool names per model call — the number of prefix re-reads this turn cost. */
             toolTrace: final.toolTrace,
             modelCalls: final.toolTrace.length,

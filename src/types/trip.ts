@@ -305,6 +305,23 @@ export interface ChatFormMeta {
   answerLabel: string;
 }
 
+/**
+ * Set on an assistant row that is Penny's dead end — "Sorry, I couldn't apply
+ * that cleanly" — so both clients can offer "Try again" from a structured flag
+ * rather than by matching her sentence. Written by the replan route on the
+ * same turn that streams it (`applied.fallback`), so the live bubble and the
+ * reloaded one agree.
+ */
+export interface ChatFallbackMeta {
+  /**
+   * How many photos the message that produced this reply carried. Photos are
+   * not stored in the transcript, so after a reload a client that no longer
+   * holds them cannot resend that message exactly, and offers no button
+   * rather than a resend without them.
+   */
+  images: number;
+}
+
 export interface ChatMessage {
   id: string;
   /** Sequential ordering number for cursor-based pagination. */
@@ -329,6 +346,8 @@ export interface ChatMessage {
    * onboarding step as the widget it was, chosen option lit. See ChatFormMeta.
    */
   form_meta: ChatFormMeta | null;
+  /** Set on Penny's dead-end reply only. See ChatFallbackMeta. */
+  fallback_meta: ChatFallbackMeta | null;
   created_at: string;
 }
 

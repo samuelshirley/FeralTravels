@@ -3,7 +3,7 @@ import 'server-only';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory, legs, stops, trips, vehicles } from '@/server/db/schema';
-import { previousAssistantMessage } from '@/server/repos/chat';
+import { previousAssistantRow } from '@/server/repos/chat';
 import { logUsageEvent } from '@/server/repos/usage';
 import { getStrikeState, setStrikeState } from '@/server/repos/users';
 import { GATE_PROVIDER } from '@/server/payments';
@@ -150,17 +150,19 @@ export async function gateMessage(input: {
     };
   }
 
-  const [vocab, recent, previousAssistant] = await Promise.all([
+  const [vocab, recent, previousRow] = await Promise.all([
     tripVocabulary(input.tripId),
     recentUserMessages(input.tripId),
-    previousAssistantMessage(input.tripId),
+    previousAssistantRow(input.tripId),
   ]);
+  const previousAssistant = previousRow?.content ?? null;
 
   let decision = decideDeterministically({
     message: input.message,
     tripNames: vocab.names,
     recentMessages: recent,
     previousAssistant,
+    previousAssistantFellBack: previousRow?.fellBack ?? false,
   });
 
   // Penny's previous message travels to BOTH classifiers (Jev's question is

@@ -1526,6 +1526,43 @@ export async function seedPennyTurn(input: {
   return { idempotencyKey };
 }
 
+/**
+ * TEST-ONLY: plant Penny's dead end on a fixture user's trip — the user's
+ * message, then the "couldn't apply that cleanly" reply carrying the
+ * structured `fallback_meta` flag, exactly the two rows the replan route
+ * writes for a fallback turn (`src/test/pg/replanFallback.test.ts` holds the
+ * route to that shape).
+ *
+ * It exists so penny-try-again.yaml can open a trip whose latest reply offers
+ * "Try again" without asking Penny to fail, which costs an Anthropic call and
+ * cannot be made to happen on demand. Nothing the APP does is faked: it loads
+ * the transcript from the real API and decides from the flag.
+ *
+ * Same guards as the rest of `/api/test/*` (`fixtureUserOwningTrip`: enabled,
+ * fixture address, trip owned by it). The text is planted for realism only —
+ * the button reads the flag, never the sentence.
+ */
+export async function seedFallbackReply(input: {
+  email: string;
+  tripId: string;
+  message: string;
+}): Promise<void> {
+  await fixtureUserOwningTrip(input.email, input.tripId);
+  await db.insert(chatHistory).values({
+    tripId: input.tripId,
+    role: 'user',
+    content: input.message,
+    kind: 'ai',
+  });
+  await db.insert(chatHistory).values({
+    tripId: input.tripId,
+    role: 'assistant',
+    content: "Sorry, I couldn't apply that cleanly — could you rephrase and try again?",
+    kind: 'ai',
+    fallbackMeta: { images: 0 },
+  });
+}
+
 /** TEST-ONLY: move a planted turn to a terminal status, to end a spec cleanly. */
 export async function finishPennyTurn(input: {
   email: string;

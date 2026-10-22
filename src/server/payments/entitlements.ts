@@ -8,8 +8,6 @@ import { planReactivation, preRevokeStatusFor, type ReactivationPlan } from './r
 import { anthropicMicrocentsInWindow } from './usage';
 import { resolveAccountState, trialDaysRemaining, type AccountVerdict } from './states';
 import { enforcementApplies, paywallEnabled } from './switch';
-import { applyReviewAccess } from './reviewAccess';
-import { isReviewAccountSignIn } from '@/server/auth/reviewAccount';
 
 /**
  * Apply the master switch to a true verdict.
@@ -58,8 +56,6 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
       .select({
         createdAt: users.createdAt,
         comped: users.comped,
-        // Only to recognise App Review's demo account — see `applyReviewAccess`.
-        email: users.email,
         // Read in the query that was already being made: the per-account
         // override costs nothing on the hot path it gates.
         paywallEnforced: users.paywallEnforced,
@@ -99,9 +95,7 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
     );
   }
 
-  // App Review's demo account, while `APPLE_REVIEW_SIGNIN=1`, is entitled
-  // whatever its state — no row written; see `reviewAccess.ts`.
-  const verdict = await applySwitch(
+  return await applySwitch(
     resolveAccountState({
       now,
       createdAt: user.createdAt,
@@ -119,7 +113,6 @@ export async function getAccountVerdict(userId: string, now = new Date()): Promi
     }),
     { forcedForUser: user.paywallEnforced }
   );
-  return applyReviewAccess(verdict, isReviewAccountSignIn(user.email));
 }
 
 /**

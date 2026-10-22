@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { isTestRequestAuthorized } from '@/server/auth/test-endpoints';
-import { finishPennyTurn, readFixtureGateLedger, seedPennyTurn } from '@/server/repos/testSupport';
+import {
+  finishPennyTurn,
+  readFixtureGateLedger,
+  seedFallbackReply,
+  seedPennyTurn,
+} from '@/server/repos/testSupport';
 
 /**
  * TEST-ONLY: plant a `penny_turns` row for a fixture user's trip, so a spec can
@@ -12,6 +17,10 @@ import { finishPennyTurn, readFixtureGateLedger, seedPennyTurn } from '@/server/
  * ALWAYS false on Vercel production with no override; plus the per-run HMAC in
  * x-e2e-test-secret, and a fixture-address check inside the repo because this
  * one WRITES rows.
+ *
+ * `action: 'fallback'` plants Penny's dead end instead — the user's message
+ * and the reply flagged `fallback_meta` — so penny-try-again.yaml can open a
+ * trip whose latest reply offers "Try again" without asking Penny to fail.
  *
  * `action: 'gate-ledger'` READS instead: the fixture account's `penny:gate`
  * and `jev` usage rows — tier and decider, Jev's choice, top probability,
@@ -43,6 +52,12 @@ const bodySchema = z.union([
     action: z.literal('gate-ledger'),
     email: z.string().email(),
   }),
+  z.object({
+    action: z.literal('fallback'),
+    email: z.string().email(),
+    tripId: z.string().uuid(),
+    message: z.string().min(1).max(500),
+  }),
 ]);
 
 export async function POST(req: Request) {
@@ -51,6 +66,10 @@ export async function POST(req: Request) {
     const body = bodySchema.parse(await req.json());
     if (body.action === 'gate-ledger') {
       return Response.json({ ok: true, ...(await readFixtureGateLedger(body.email)) });
+    }
+    if (body.action === 'fallback') {
+      await seedFallbackReply(body);
+      return Response.json({ ok: true });
     }
     if (body.action === 'finish') {
       await finishPennyTurn(body);

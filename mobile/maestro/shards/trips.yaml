@@ -11,6 +11,7 @@ flows:
   - forced-stop-line.yaml
   - maps-link-stop.yaml
   - rest-day-stop.yaml
+  - penny-try-again.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -18,3 +19,4 @@ executionOrder:
     - forced-stop-line
     - maps-link-stop
     - rest-day-stop
+    - penny-try-again

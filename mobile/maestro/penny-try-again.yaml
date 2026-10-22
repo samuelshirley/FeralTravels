@@ -1,0 +1,81 @@
+# "Try again" on Penny's dead end ("Sorry, I couldn't apply that cleanly —
+# could you rephrase and try again?"), on the phone.
+#
+# The button is rendered from the SERVER'S flag on the reply
+# (`chat_history.fallback_meta`), never from her sentence, so it has to be
+# there on a trip opened cold — which is what this flow does. Tapping it must
+# resend the driver's previous message through the normal send path: the AI
+# consent sheet (this account has never agreed), the replan request, the
+# message gate.
+#
+# NO AI SPEND, and so not in the `ai` shard: seed-fallback-turn.js plants the
+# fallback rather than asking Penny to fail, and the planted message is one the
+# gate's deterministic deny rules refuse, so the resend is answered with the T3
+# line and no model call. Its own account (seed-account.js), so the strike that
+# earns lands nowhere another flow can feel it.
+#
+# What this does NOT prove: Penny answering a real resend — that is a model
+# call. ChatPanel.tryAgain.test.tsx (web) and src/test/pg/replanFallback.test.ts
+# (the route, including that a word-for-word resend is not refused as an exact
+# repeat) cover it without one.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: ta
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+- runScript:
+    file: seed-fallback-turn.js
+    env:
+      ACCOUNT_EMAIL: ${output.account.email}
+      FALLBACK_TRIP_ID: ${output.account.tripId}
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'CHAT'
+    timeout: 30000
+- tapOn: 'CHAT'
+- extendedWaitUntil:
+    visible:
+      id: 'chat-composer-input'
+    timeout: 30000
+
+# Her dead end is the latest reply, and it offers the button.
+- extendedWaitUntil:
+    visible:
+      text: '.*apply that cleanly.*'
+    timeout: 30000
+- assertVisible:
+    id: 'penny-try-again'
+    text: 'Try again'
+    enabled: true
+
+- tapOn:
+    id: 'penny-try-again'
+
+# A fresh account: the resend waits for the agreement, like any first send.
+- runFlow: ai-consent-agree.yaml
+
+# The resend reached the server through the normal pipeline and was answered:
+# the gate's T3 line, under the resent message. The button has gone — a newer
+# message follows the fallback, and the latest reply is not one.
+- extendedWaitUntil:
+    visible:
+      text: '.*I only work on your trip.*'
+    timeout: 30000
+- assertNotVisible:
+    id: 'penny-try-again'

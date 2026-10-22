@@ -39,6 +39,7 @@ import {
   type TurnTrace,
 } from "@/lib/penny/turnTrace";
 import { looksLikeLeakedToolCall, sanitizePennyText } from "@/lib/penny/sanitize";
+import { pennyFallbackFor, type PennyFallback } from "@/lib/penny/fallback";
 import {
   resolveMapsLinksInMessage,
   type ResolvedMapsLink,
@@ -627,6 +628,7 @@ interface InputImage {
   mediaType: string;
 }
 
+
 export interface ReplanResult {
   /** Conversational text Penny says to the user (sum of all text blocks across iterations). */
   response: string;
@@ -652,6 +654,13 @@ export interface ReplanResult {
    * never ran. Distinguishes recovered leaks (false) from lost ones (true).
    */
   leakSanitized: boolean;
+  /**
+   * Set when this turn ended on "Sorry, I couldn't apply that cleanly" — no tool
+   * call, nothing applied, and no text left after sanitizing. The user sees a
+   * dead end, so the dispatcher records and alerts on it (`pennyFallbackAlert`).
+   * Shape only, never Penny's text. Null on every other turn.
+   */
+  fallback: PennyFallback | null;
   /**
    * True if Penny called extract_trip_intent at any point in this turn.
    * Used by the dispatcher to decide whether the feasibility gate applies:
@@ -779,6 +788,7 @@ export async function* replanStream(
   let retryCount = 0;
   let leakRetryCount = 0;
   let leakSanitized = false;
+  let fallbackInfo: PennyFallback | null = null;
   let truncated = false;
   // How many times we've auto-continued a truncated pass this turn.
   let autoContinues = 0;
@@ -948,6 +958,12 @@ export async function* replanStream(
           // run 39604238894: 164 output tokens, no tool call, this fallback, and
           // nothing left to say whether the text was leaked tool-call markup).
           // Shape only — never Penny's text, which carries the user's trip.
+          fallbackInfo = pennyFallbackFor({
+            appliedActions: validatedActions.length,
+            iterationText,
+            leakRetryCount,
+            stopReason: response.stop_reason,
+          });
           console.warn(
             `[penny.fallback] tripId=${tripId} actions=${validatedActions.length} ` +
               `leakedMarkup=${looksLikeLeakedToolCall(joined)} leakRetries=${leakRetryCount} ` +
@@ -1148,6 +1164,7 @@ export async function* replanStream(
         failedValidations,
         truncated,
         leakRetryCount,
+        fallback: fallbackInfo,
         leakSanitized,
         extractIntentCalled,
         feasibilityVerdict,

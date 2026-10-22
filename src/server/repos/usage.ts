@@ -399,3 +399,12 @@ export async function getUsageByUser(hours: number, limit = 50) {
     .limit(limit);
   return rows;
 }
+
+/** How many `provider` rows were written at or after `since`. */
+export async function countUsageEventsSince(provider: string, since: Date): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(usageEvents)
+    .where(and(eq(usageEvents.provider, provider), gte(usageEvents.createdAt, since)));
+  return row?.n ?? 0;
+}

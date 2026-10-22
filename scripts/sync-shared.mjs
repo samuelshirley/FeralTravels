@@ -109,6 +109,10 @@ export const SHARED_FILES = [
   // refuses with and the sheet's copy. Both panels show the same sheet and
   // branch on the same code, so neither can have its own spelling of either.
   ['src/lib/aiConsent.ts', 'mobile/shared/lib/aiConsent.ts'],
+  // "Try again" on Penny's dead end: which bubble offers it and exactly what it
+  // resends. One decision for both panels, keyed on the server's fallback flag,
+  // never on her sentence (pennyTryAgainGuard.test.ts).
+  ['src/lib/pennyFallbackRetry.ts', 'mobile/shared/lib/pennyFallbackRetry.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

@@ -766,6 +766,14 @@ export const chatHistory = pgTable(
      */
     gateTier: text('gate_tier').$type<'T1' | 'T2' | 'T3' | null>(),
     gateBy: text('gate_by'),
+    /**
+     * On assistant rows only: set when this reply is Penny's dead end ("Sorry,
+     * I couldn't apply that cleanly — …"), the turn that made no tool call and
+     * whose text sanitized to nothing. Both clients render a "Try again"
+     * button from THIS, never from the reply's text, so the button survives a
+     * reload. Null on every other row. See `ChatFallbackMeta`.
+     */
+    fallbackMeta: jsonb('fallback_meta').$type<import('@/types/trip').ChatFallbackMeta | null>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
