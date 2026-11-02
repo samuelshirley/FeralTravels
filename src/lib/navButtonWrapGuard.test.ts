@@ -43,6 +43,14 @@ import { join } from 'node:path';
 
 const root = join(__dirname, '..', '..');
 const legCard = readFileSync(join(root, 'mobile/components/LegCard.tsx'), 'utf8');
+/**
+ * The button's styles moved out of LegCard on 2026-11-02 (with the label) so
+ * the first-launch intro can draw the same button without importing a card
+ * that fetches fuel. The properties are read where they now live, and the
+ * first test below pins LegCard to that module, so the guard still follows
+ * what the card renders.
+ */
+const navButton = readFileSync(join(root, 'mobile/components/GoogleMapsNavButton.tsx'), 'utf8');
 
 /**
  * The body of a single `StyleSheet.create` entry, e.g. `navButton: { … }`.
@@ -53,7 +61,7 @@ const legCard = readFileSync(join(root, 'mobile/components/LegCard.tsx'), 'utf8'
  */
 function styleBlock(source: string, name: string): string {
   const start = source.indexOf(`${name}: {`);
-  expect(start, `${name} is gone from the LegCard stylesheet`).toBeGreaterThan(-1);
+  expect(start, `${name} is gone from the stylesheet`).toBeGreaterThan(-1);
   let depth = 0;
   for (let i = source.indexOf('{', start); i < source.length; i++) {
     if (source[i] === '{') depth++;
@@ -66,29 +74,36 @@ function styleBlock(source: string, name: string): string {
 }
 
 describe('the day nav buttons cannot overflow the card', () => {
+  it("LegCard's nav button styles are the shared ones this file reads", () => {
+    for (const name of ['navButton', 'navButtonText', 'navNextChip']) {
+      expect(legCard).toMatch(new RegExp(`\\b${name}: navButtonStyles\\.${name},`));
+    }
+    expect(legCard).toMatch(/from "@\/components\/GoogleMapsNavButton"/);
+  });
+
   it('navButton is capped at the container width', () => {
     // Without this the button is content-sized with no upper bound and the
     // card's overflow:hidden does the truncating.
-    expect(styleBlock(legCard, 'navButton')).toMatch(/maxWidth:\s*["']100%["']/);
+    expect(styleBlock(navButton, 'navButton')).toMatch(/maxWidth:\s*["']100%["']/);
   });
 
   it('navButtonText is the thing that gives, so the label wraps', () => {
     // RN defaults flexShrink to 0. Without this the row never yields and the
     // text pushes the button past the card instead of wrapping.
-    expect(styleBlock(legCard, 'navButtonText')).toMatch(/flexShrink:\s*1/);
+    expect(styleBlock(navButton, 'navButtonText')).toMatch(/flexShrink:\s*1/);
   });
 
   it('the NEXT chip never shrinks', () => {
     // The chip sits at the clipped end. It must keep its natural size so the
     // label is what wraps.
-    expect(styleBlock(legCard, 'navNextChip')).toMatch(/flexShrink:\s*0/);
+    expect(styleBlock(navButton, 'navNextChip')).toMatch(/flexShrink:\s*0/);
   });
 
   it('the label is never truncated instead of wrapped', () => {
     // Sam asked for wrap, not ellipsis: all of the text stays visible and the
     // button grows to a second line. `numberOfLines` on the label, or
     // `ellipsizeMode`, would hide part of a station name the driver needs.
-    const block = styleBlock(legCard, 'navButtonText');
+    const block = styleBlock(navButton, 'navButtonText');
     expect(block).not.toMatch(/textOverflow|ellipsis/);
     // The JSX must not cap the label's line count either.
     const jsx = legCard.slice(legCard.indexOf('navButtons.map('));

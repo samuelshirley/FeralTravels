@@ -53,9 +53,11 @@ appId: ${APP_ID}
 - assertNotVisible:
     id: 'fatal-error-modal'
 
-# The sign-in screen is the app's first render and needs no server to draw.
-# If this times out, the app crashed on launch or never installed — check
+# A cleared keychain is a fresh install, so the first render is the
+# first-launch intro, then sign-in — neither needs a server to draw. If the
+# intro wait times out, the app crashed on launch or never installed — check
 # `xcrun simctl diagnose` and the build log, not the flows.
+- runFlow: intro-have-account.yaml
 - extendedWaitUntil:
     visible:
       id: 'signin-email'

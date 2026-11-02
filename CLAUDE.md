@@ -268,8 +268,9 @@ reappears in `src/`.
 `penny-stop-edit.yaml`, `offer-code.yaml`, `purchase-sheet.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
 `support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml`,
 `chat-attach-photo.yaml`, `location-primer-allow.yaml`, `location-primer-deny.yaml`, `ai-consent.yaml`,
-`penny-try-again.yaml`
-(+ subflows `ai-consent-agree.yaml`, `ai-consent-if-asked.yaml`) — Maestro flows driving a real iOS
+`penny-try-again.yaml`, `intro-create-trip.yaml`
+(+ subflows `ai-consent-agree.yaml`, `ai-consent-if-asked.yaml`, `intro-have-account.yaml`,
+`sign-in-otp.yaml`) — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
 (Xcode pairing, Release-vs-Debug, the keychain, the software keyboard). CI runs
@@ -328,6 +329,9 @@ The incident behind each — the part that stops it being re-broken — is in
   at render and is invisible to `tsc` (`serverClientBoundaryGuard.test.ts`).
 - **No `any` types.** Zod for API input; CSS Modules for styles; server
   components by default, `"use client"` only when needed.
+- **First-launch intro** (`mobile/app/intro.tsx`): reached only from the launch
+  gate's no-token branch; `clearToken()` never deletes its flag; it imports no
+  API client, map or video (`introGuard.test.ts`, `docs/design/first-launch-intro.md`).
 - **Native:** `KeyboardAvoidingView` lives at the SCREEN root, never inside
   `ChatPanel`, which never adds `insets.bottom` (its host owns the safe area).
 - **Env vars:** copy `.env.example` to `.env`; never commit it. Admin access is a

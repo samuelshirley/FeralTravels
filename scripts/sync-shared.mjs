@@ -113,6 +113,15 @@ export const SHARED_FILES = [
   // resends. One decision for both panels, keyed on the server's fallback flag,
   // never on her sentence (pennyTryAgainGuard.test.ts).
   ['src/lib/pennyFallbackRetry.ts', 'mobile/shared/lib/pennyFallbackRetry.ts'],
+  // The first-launch intro (docs/design/first-launch-intro.md). The launch
+  // gate's routing decision — /intro only from the no-token branch — the
+  // region-to-units read the intro draws its distances in, and the real trip
+  // it draws. Shared for the usual reason: the root vitest project is the only
+  // test runner, and each is a way to show the intro to the wrong person, in
+  // the wrong units, or with numbers nobody measured.
+  ['src/lib/launchDestination.ts', 'mobile/shared/lib/launchDestination.ts'],
+  ['src/lib/introUnits.ts', 'mobile/shared/lib/introUnits.ts'],
+  ['src/lib/introFixture.ts', 'mobile/shared/lib/introFixture.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

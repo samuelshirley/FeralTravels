@@ -25,6 +25,8 @@ appId: ${APP_ID}
     timeout: 30000
 - assertNotVisible:
     id: 'signin-email'
+- assertNotVisible:
+    id: 'intro-page-1'
 
 - tapOn:
     id: 'location-primer-continue'
@@ -34,15 +36,15 @@ appId: ${APP_ID}
     timeout: 15000
 - assertNotVisible:
     id: 'signin-email'
+- assertNotVisible:
+    id: 'intro-page-1'
 
 # `Don.t Allow` as a REGEX — iOS renders a typographic apostrophe.
 - tapOn: 'Don.t Allow'
 
-# "Don't Allow" is an answer: launch goes on.
-- extendedWaitUntil:
-    visible:
-      id: 'signin-email'
-    timeout: 30000
+# "Don't Allow" is an answer: launch goes on — to the first-launch intro (a
+# cleared keychain is a fresh install), then sign-in.
+- runFlow: intro-have-account.yaml
 
 # Sign in. sign-in.yaml relaunches with `location: never` — the same denied
 # state this flow just produced — so no dialog and no primer on the way in.
