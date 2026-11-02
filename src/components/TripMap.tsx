@@ -6,6 +6,7 @@ import type { LegWithDetails, POI, Stop, StopType } from '@/types/trip';
 import { clusterPixels, type PixelPoint } from '@/lib/mapClustering';
 import { useUnits } from '@/components/UnitsContext';
 import { formatKm, formatKmDual, type UnitsPref } from '@/lib/units';
+import { fuelStopLabel } from '@/lib/forcedStopReason';
 
 let optionsConfigured = false;
 
@@ -549,6 +550,9 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
 
     const renderStopMarker = (p: MapStopPoint) => {
       const isFuel = p.type === 'fuel';
+      // "Fuel stop · 212 km" carries the distance, so a fuel stop has no
+      // separate "from start" line.
+      const label = isFuel ? fuelStopLabel(p.distanceKm, unitsRef.current) : p.name;
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         map,
@@ -563,7 +567,7 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
           scale: 5,
           anchor: new google.maps.Point(0, 0),
         },
-        title: p.name,
+        title: label,
         zIndex: 8,
       });
       marker.addListener('click', () => {
@@ -573,8 +577,8 @@ export default function TripMap({ legs, pois, selectedLegId, onLegSelect, onStop
         const html = `
           <div style="min-width: 160px; font-family: var(--tp-font-sans);">
             <div style="font-size: 10px; color: ${isFuel ? FUEL_STOP_COLOR : '#b2b6ca'}; font-weight: 700; letter-spacing: 0.06em;">${isFuel ? 'FUEL' : 'STOP'}</div>
-            <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(p.name)}</div>
-            ${p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${stopDistanceLabel(p.distanceKm, unitsRef.current)} from start</div>` : ''}
+            <div style="font-size: 13px; font-weight: 600; margin: 2px 0; color: #333;">${escapeHtml(label)}</div>
+            ${!isFuel && p.distanceKm != null ? `<div style="font-size: 11px; color: #6b6b6b;">${stopDistanceLabel(p.distanceKm, unitsRef.current)} from start</div>` : ''}
             <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Click to open in list</div>
           </div>`;
         marker.addListener('mouseover', () => {

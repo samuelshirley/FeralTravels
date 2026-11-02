@@ -53,6 +53,7 @@ export async function getDirectionsAccounted(
       logGoogleApiUsage({
         provider: 'google-directions',
         ...who,
+        waypoints: options.waypoints?.length ?? 0,
         success: res.ok,
         errorMessage: res.ok ? null : `${res.kind}: ${res.message}`,
       }),
@@ -66,6 +67,7 @@ export async function getDirectionsAccounted(
       logGoogleApiUsage({
         provider: 'google-directions',
         ...who,
+        waypoints: options.waypoints?.length ?? 0,
         success: false,
         errorMessage: err instanceof Error ? err.message : String(err),
       }),
@@ -85,7 +87,7 @@ export async function searchFuelAlongRouteAccounted(
     const stations = await searchFuelAlongRoute(encodedPolyline, deps);
     record(
       logGooglePlacesUsage({
-        userId: who.userId ?? '',
+        userId: who.userId ?? null,
         tripId: who.tripId ?? null,
         endpoint: 'text-search',
         requests: 1,
@@ -96,7 +98,7 @@ export async function searchFuelAlongRouteAccounted(
   } catch (err) {
     record(
       logGooglePlacesUsage({
-        userId: who.userId ?? '',
+        userId: who.userId ?? null,
         tripId: who.tripId ?? null,
         endpoint: 'text-search',
         requests: 1,
@@ -109,7 +111,11 @@ export async function searchFuelAlongRouteAccounted(
   }
 }
 
-/** Places (New) Text Search for name→coords, counted. */
+/**
+ * Places (New) Text Search for name→coords, counted. It is the same
+ * `places:searchText` SKU Finn uses, so it logs as `text-search` and shares
+ * Finn's monthly free calls.
+ */
 export async function geocodePlaceAccounted(
   query: string,
   opts: GeocodeOptions = {},
@@ -121,13 +127,15 @@ export async function geocodePlaceAccounted(
   const reached = !(res.status === 'unavailable' && /no google maps api key/i.test(res.reason));
   if (reached) {
     record(
-      logGoogleApiUsage({
-        provider: 'google-geocode',
-        ...who,
+      logGooglePlacesUsage({
+        userId: who.userId ?? null,
+        tripId: who.tripId ?? null,
+        endpoint: 'text-search',
+        requests: 1,
         success: res.status === 'resolved' || res.status === 'ambiguous',
         errorMessage: res.status === 'unavailable' ? res.reason : null,
       }),
-      'geocode',
+      'geocode text-search',
     );
   }
   return res;

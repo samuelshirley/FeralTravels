@@ -124,3 +124,58 @@ describe('add_stop duplicate-destination guard', () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe('add_stop for a base day queued this same turn', () => {
+  // PR #92's ai run, 2026-10-21: "one rest day in Strasbourg right after day 1,
+  // with Strasbourg Cathedral on it". Penny queued the base day, then add_stop'd
+  // the cathedral onto day 1 (Paris → Strasbourg), the only real leg she knew in
+  // town. The cathedral is 0.95 km from day 1's end, so the guard refused it and
+  // the base day stayed empty. Dispatch re-homes such a stop onto the base day
+  // (pickSameTurnRestLeg), so the guard must not refuse it first.
+  const STRASBOURG = { lat: 48.5734, lng: 7.7521 };
+  const CATHEDRAL = { lat: 48.58188, lng: 7.75103 };
+  const day1Ctx = {
+    legs: [
+      {
+        id: LEG_ID,
+        title: 'Paris, France → Strasbourg, France',
+        distance_km: 489,
+        start_lat: 48.8566,
+        start_lng: 2.3522,
+        end_lat: STRASBOURG.lat,
+        end_lng: STRASBOURG.lng,
+      },
+    ],
+  } as unknown as PennyContext;
+  const cathedralOnDay1 = {
+    leg_id: LEG_ID,
+    data: { stop_type: 'other', name: 'Strasbourg Cathedral', ...CATHEDRAL, status: 'selected' },
+  };
+  const baseDayInStrasbourg = {
+    id: 'queued-leg-0',
+    startLat: STRASBOURG.lat,
+    startLng: STRASBOURG.lng,
+    endLat: STRASBOURG.lat,
+    endLng: STRASBOURG.lng,
+  };
+
+  it('is still refused at the drive\'s end when no base day was queued', () => {
+    expect(validator(day1Ctx).safeParse(cathedralOnDay1).success).toBe(false);
+    expect(validator(day1Ctx, { sameTurnLegs: [] }).safeParse(cathedralOnDay1).success).toBe(false);
+  });
+
+  it('is accepted when a base day in that town was queued this turn', () => {
+    const result = validator(day1Ctx, { sameTurnLegs: [baseDayInStrasbourg] }).safeParse(cathedralOnDay1);
+    expect(result.success).toBe(true);
+  });
+
+  it('is still refused when the queued leg is a drive, not a stay', () => {
+    const driveOut = { ...baseDayInStrasbourg, endLat: 48.7758, endLng: 9.1829 }; // → Stuttgart
+    expect(validator(day1Ctx, { sameTurnLegs: [driveOut] }).safeParse(cathedralOnDay1).success).toBe(false);
+  });
+
+  it('is still refused when the queued base day is in another town', () => {
+    const colmar = { id: 'queued-leg-0', startLat: 48.0794, startLng: 7.3585, endLat: 48.0794, endLng: 7.3585 };
+    expect(validator(day1Ctx, { sameTurnLegs: [colmar] }).safeParse(cathedralOnDay1).success).toBe(false);
+  });
+});

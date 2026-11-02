@@ -25,6 +25,7 @@ export const SHARED_FILES = [
   ['src/lib/validation.ts', 'mobile/shared/lib/validation.ts'],
   ['src/lib/polyline.ts', 'mobile/shared/lib/polyline.ts'],
   ['src/lib/mapClustering.ts', 'mobile/shared/lib/mapClustering.ts'],
+  ['src/lib/mapDayMarkers.ts', 'mobile/shared/lib/mapDayMarkers.ts'],
   ['src/lib/useNextStop.ts', 'mobile/shared/lib/useNextStop.ts'],
   ['src/lib/sillyErrors.ts', 'mobile/shared/lib/sillyErrors.ts'],
   ['src/lib/models.ts', 'mobile/shared/lib/models.ts'],
@@ -45,6 +46,12 @@ export const SHARED_FILES = [
   // project is the only test runner, and the web has the identical bug.
   ['src/lib/pennyRunStore.ts', 'mobile/shared/lib/pennyRunStore.ts'],
   ['src/lib/lastOpenTrip.ts', 'mobile/shared/lib/lastOpenTrip.ts'],
+  // The resource cache: what the server last said, so a screen renders on
+  // arrival instead of behind a spinner. Native-only in use today, shared for
+  // the usual reason: the root vitest project is the only test runner, and it
+  // can execute this file but not the expo-file-system backend beside it.
+  ['src/lib/resourceCache.ts', 'mobile/shared/lib/resourceCache.ts'],
+  ['src/lib/entitlementCache.ts', 'mobile/shared/lib/entitlementCache.ts'],
   // The trips list's date headers: both lists must group, and hide the
   // placeholder date, identically.
   ['src/lib/tripsListDates.ts', 'mobile/shared/lib/tripsListDates.ts'],

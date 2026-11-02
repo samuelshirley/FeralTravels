@@ -5,7 +5,11 @@ import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
 import { buildGoHereUrl } from "@/shared/lib/maps";
 import { formatKm } from "@/shared/lib/units";
-import { forcedStopLine, stopRowAccessibilityLabel } from "@/shared/lib/forcedStopReason";
+import {
+  forcedStopLine,
+  fuelStopLabel,
+  stopRowAccessibilityLabel,
+} from "@/shared/lib/forcedStopReason";
 import { useUnits } from "@/lib/units";
 import StopCard from "@/components/StopCard";
 import { useStopActions } from "@/components/useStopActions";
@@ -137,8 +141,10 @@ export default function StopsSection({
     type Row = {
       key: string;
       kicker: string;
+      /** A fuel row's is `fuelStopLabel`, which already carries the distance. */
       name: string;
       distanceKm: number | null;
+      stopType: StopType;
       markerColor: string;
       isFuel: boolean;
       isEndpoint: boolean;
@@ -156,6 +162,7 @@ export default function StopsSection({
         kicker: "START",
         name: legStartName,
         distanceKm: 0,
+        stopType: "other",
         // A hollow neutral ring: you have already been here.
         markerColor: theme.borderStrong,
         isFuel: false,
@@ -171,12 +178,13 @@ export default function StopsSection({
       rows.push({
         key: String(stop.id),
         kicker: fuel ? "FUEL" : "STOP",
-        name: stop.name,
+        name: fuel ? fuelStopLabel(stop.distance_from_start_km, units) : stop.name,
         distanceKm: stop.distance_from_start_km,
+        stopType: stop.stop_type,
         markerColor: fuel ? theme.primary : theme.muted,
         isFuel: fuel,
         isEndpoint: false,
-        href: mapsHref(stop.lat, stop.lng),
+        href: mapsHref(stop.lat, stop.lng, { placeId: stop.place_id }),
         stop,
         forcedLine: forcedStopLine(stop.stop_type, stop.forced_reason, units),
       });
@@ -188,6 +196,7 @@ export default function StopsSection({
         kicker: "DESTINATION",
         name: legEndName,
         distanceKm: legDistanceKm ?? null,
+        stopType: "other",
         markerColor: theme.primary,
         isFuel: false,
         isEndpoint: true,
@@ -317,7 +326,7 @@ export default function StopsSection({
                 </View>
 
                 <Text style={styles.timelineDistance}>
-                  {row.distanceKm != null ? formatKm(row.distanceKm, units) : ""}
+                  {row.distanceKm != null && !row.isFuel ? formatKm(row.distanceKm, units) : ""}
                 </Text>
 
                 {row.href ? (

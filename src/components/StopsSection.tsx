@@ -8,7 +8,7 @@ import { classifyFuelPlanError } from '@/lib/fuelPlanErrorSemantics';
 import { apiFetch } from '@/lib/api';
 import { buildGoHereUrl } from '@/lib/maps';
 import { formatKm } from '@/lib/units';
-import { forcedStopLine } from '@/lib/forcedStopReason';
+import { forcedStopLine, fuelStopLabel } from '@/lib/forcedStopReason';
 import { useUnits } from '@/components/UnitsContext';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
@@ -153,8 +153,10 @@ export default function StopsSection({
     type Row = {
       key: string;
       kicker: string;
+      /** A fuel row's is `fuelStopLabel`, which already carries the distance. */
       name: string;
       distanceKm: number | null;
+      isFuel: boolean;
       markerColor: string;
       icon: React.ReactNode;
       href: string | null;
@@ -171,6 +173,7 @@ export default function StopsSection({
         kicker: 'START',
         name: legStartName,
         distanceKm: 0,
+        isFuel: false,
         // A hollow neutral ring: you have already been here.
         markerColor: 'var(--tp-border-strong)',
         icon: null,
@@ -185,11 +188,12 @@ export default function StopsSection({
       rows.push({
         key: String(stop.id),
         kicker: fuel ? 'FUEL' : 'STOP',
-        name: stop.name,
+        name: fuel ? fuelStopLabel(stop.distance_from_start_km, units) : stop.name,
         distanceKm: stop.distance_from_start_km,
+        isFuel: fuel,
         markerColor: fuel ? 'var(--tp-primary)' : 'var(--tp-muted)',
         icon: fuel ? <FuelIcon size={12} /> : <PlaceIcon size={12} />,
-        href: mapsHref(stop.lat, stop.lng),
+        href: mapsHref(stop.lat, stop.lng, { placeId: stop.place_id }),
         stop,
         forcedLine: forcedStopLine(stop.stop_type, stop.forced_reason, units),
       });
@@ -201,6 +205,7 @@ export default function StopsSection({
         kicker: 'DESTINATION',
         name: legEndName,
         distanceKm: legDistanceKm ?? null,
+        isFuel: false,
         markerColor: 'var(--tp-primary)',
         icon: <PlaceIcon size={12} />,
         href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
@@ -408,7 +413,7 @@ export default function StopsSection({
                     flexShrink: 0,
                   }}
                 >
-                  {row.distanceKm != null ? formatKm(row.distanceKm, units) : ''}
+                  {row.distanceKm != null && !row.isFuel ? formatKm(row.distanceKm, units) : ''}
                 </div>
 
                 {row.href && (
@@ -539,7 +544,7 @@ export default function StopsSection({
                   name={stop.name}
                   distanceFromStartKm={stop.distance_from_start_km}
                   forcedReason={stop.forced_reason}
-                  googleMapsUri={buildGoHereUrl(stop.lat, stop.lng)}
+                  googleMapsUri={buildGoHereUrl(stop.lat, stop.lng, { placeId: stop.place_id })}
                   lat={stop.lat}
                   lng={stop.lng}
                 />

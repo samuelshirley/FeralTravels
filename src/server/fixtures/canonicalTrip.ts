@@ -182,7 +182,7 @@ export const CANONICAL_LEGS: readonly CanonicalLeg[] = [
     fuelStatus: "ready", fuelCacheAgeHours: 1,
     label: null,
     stops: [
-      {"stopType":"fuel","status":"option","name":"Cepsa service station","lat":41.772832,"lng":-1.2168759999999998,"distanceFromStartKm":404,"source":"google","googleMapsUri":"https://maps.google.com/?cid=9080798630375727777&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA","placeId":"ChIJN-4JNefXWw0RoSJmAD56BX4","fuelType":null,"notes":"Auto-suggested refuel ≈404 km into the leg."}
+      {"stopType":"fuel","status":"option","name":"Fuel stop","lat":41.772832,"lng":-1.2168759999999998,"distanceFromStartKm":404,"source":"google","googleMapsUri":"https://www.google.com/maps/dir/?api=1&destination=41.772832%2C-1.2168759999999998&travelmode=driving&dir_action=navigate&destination_place_id=ChIJN-4JNefXWw0RoSJmAD56BX4","placeId":"ChIJN-4JNefXWw0RoSJmAD56BX4","fuelType":null,"notes":"Auto-suggested refuel ≈404 km into the leg."}
     ],
   },
   {
@@ -208,7 +208,7 @@ export const CANONICAL_LEGS: readonly CanonicalLeg[] = [
     fuelStatus: "ready", fuelCacheAgeHours: 200,
     label: null,
     stops: [
-      {"stopType":"fuel","status":"option","name":"Galp","lat":40.846779399999996,"lng":-6.0500023999999994,"distanceFromStartKm":37,"source":"google","googleMapsUri":"https://maps.google.com/?cid=2732039511127569119&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA","placeId":"ChIJA2wRWtjBPg0R3zIX3XUn6iU","fuelType":null,"notes":"Auto-suggested refuel ≈37 km into the leg."}
+      {"stopType":"fuel","status":"option","name":"Fuel stop","lat":40.846779399999996,"lng":-6.0500023999999994,"distanceFromStartKm":37,"source":"google","googleMapsUri":"https://www.google.com/maps/dir/?api=1&destination=40.846779399999996%2C-6.0500023999999994&travelmode=driving&dir_action=navigate&destination_place_id=ChIJA2wRWtjBPg0R3zIX3XUn6iU","placeId":"ChIJA2wRWtjBPg0R3zIX3XUn6iU","fuelType":null,"notes":"Auto-suggested refuel ≈37 km into the leg."}
     ],
   },
   {
@@ -258,7 +258,7 @@ export const CANONICAL_LEGS: readonly CanonicalLeg[] = [
     fuelStatus: "ready", fuelCacheAgeHours: 200,
     label: null,
     stops: [
-      {"stopType":"fuel","status":"option","name":"Bombas de Gasolina Intermarché","lat":40.122862399999995,"lng":-8.5025259,"distanceFromStartKm":125,"source":"google","googleMapsUri":"https://maps.google.com/?cid=3932578603224186255&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA","placeId":"ChIJS7yTPWFYIg0Rj716aGdTkzY","fuelType":null,"notes":"Auto-suggested refuel ≈125 km into the leg."}
+      {"stopType":"fuel","status":"option","name":"Fuel stop","lat":40.122862399999995,"lng":-8.5025259,"distanceFromStartKm":125,"source":"google","googleMapsUri":"https://www.google.com/maps/dir/?api=1&destination=40.122862399999995%2C-8.5025259&travelmode=driving&dir_action=navigate&destination_place_id=ChIJS7yTPWFYIg0Rj716aGdTkzY","placeId":"ChIJS7yTPWFYIg0Rj716aGdTkzY","fuelType":null,"notes":"Auto-suggested refuel ≈125 km into the leg."}
     ],
   },
   {

@@ -11,6 +11,8 @@
 //   COMPED               '1' | '0'
 //   CREATED_DAYS_AGO     trial age in days, as digits ('7' = trial over)
 //   SUBSCRIPTION_STATUS  '' | 'active' | 'expired' | … — '' writes no row
+//   SUBSCRIPTION_SOURCE  '' | 'promo' | 'admin' — '' = 'fake' (an Apple
+//                        purchase as far as the client can tell)
 var headers = { 'content-type': 'application/json' };
 if (typeof TEST_SECRET !== 'undefined' && TEST_SECRET) {
   headers['x-e2e-test-secret'] = TEST_SECRET;
@@ -25,7 +27,7 @@ var body = {
 if (SUBSCRIPTION_STATUS) {
   body.subscription = {
     status: SUBSCRIPTION_STATUS,
-    source: 'fake',
+    source: SUBSCRIPTION_SOURCE || 'fake',
     autoRenew: true,
     currentPeriodEndDaysFromNow: 30,
   };

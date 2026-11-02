@@ -284,8 +284,8 @@ async function resolveShortLink(url: string, who: CallerRef): Promise<ResolveOut
     const pageTitle = extractPlaceNameFromHtml(html);
     const embeddedQuery = extractEmbeddedMapsQuery(html) ?? undefined;
     // The name we keep. og:title / the redirect's q= are what the user shared;
-    // the embedded q= is usually "Name, full address" and yields to Places'
-    // label when a lookup is needed.
+    // without them, the text from the link we searched for. Never Places'
+    // displayName: a Google business name is not ours to store (ToS §3.2.3).
     const sharedName = pageTitle ?? hint;
     const nameHint = sharedName ?? embeddedQuery;
 
@@ -314,7 +314,7 @@ async function resolveShortLink(url: string, who: CallerRef): Promise<ResolveOut
     for (const candidate of candidates.slice(0, MAX_GEOCODE_ATTEMPTS)) {
       const geo = await geocodeName(candidate, url, who);
       if (geo) {
-        return { ok: true, coords: { ...geo, name: sharedName ?? geo.name }, via: 'geocode', hops };
+        return { ok: true, coords: { ...geo, name: sharedName ?? candidate }, via: 'geocode', hops };
       }
     }
     return { ok: false, stage: 'geocode_miss', hops, hint: nameHint };
@@ -509,7 +509,8 @@ async function geocodeName(name: string, sourceUrl: string, who: CallerRef): Pro
   return {
     lat: result.match.lat,
     lng: result.match.lng,
-    name: result.match.label,
+    // The text we searched for, never Google's displayName.
+    name,
     source: 'google_maps',
     source_url: sourceUrl,
   };

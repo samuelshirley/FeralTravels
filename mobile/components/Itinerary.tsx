@@ -15,8 +15,9 @@ import LegCard from "@/components/LegCard";
 import { Distance } from "@/components/ui";
 import { updateTrip } from "@/lib/api";
 import { useUnits } from "@/lib/units";
-import { approxDistance, formatKm } from "@/shared/lib/units";
+import { approxDistance } from "@/shared/lib/units";
 import { buildGoHereUrl } from "@/shared/lib/maps";
+import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
 import { theme, shadow } from "@/lib/theme";
 import {
   CollapseAllIcon,
@@ -320,10 +321,9 @@ export default function Itinerary({
       .sort((a, b) => (a.distance_from_start_km ?? 0) - (b.distance_from_start_km ?? 0))[0];
     if (!stop || stop.lat == null || stop.lng == null) return null;
     return {
-      name: stop.name,
       distanceKm: stop.distance_from_start_km,
       // Turn-by-turn from wherever the device is — not a dropped pin.
-      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+      href: buildGoHereUrl(stop.lat, stop.lng, { placeId: stop.place_id }) as string,
     };
   }, [legs]);
 
@@ -653,19 +653,19 @@ export default function Itinerary({
    * accessible label says so: the glyph alone cannot announce that tapping
    * leaves the app.
    */
+  const nextStopLabel = nextStop ? fuelStopLabel(nextStop.distanceKm, units) : null;
   const nextStopRow =
     nextStop && !completed && !readonly ? (
       <Pressable
         onPress={() => void Linking.openURL(nextStop.href)}
         accessibilityRole="link"
-        accessibilityLabel={`${nextStop.name} in Google Maps`}
+        accessibilityLabel={`${nextStopLabel} in Google Maps`}
         style={styles.nextStopButton}
       >
         <View style={styles.nextStopTextWrap}>
           <Text style={styles.nextStopKicker}>NEXT STOP</Text>
           <Text style={styles.nextStopName} numberOfLines={1}>
-            {nextStop.name} · fuel
-            {nextStop.distanceKm != null ? ` · ${formatKm(nextStop.distanceKm, units)}` : ""}
+            {nextStopLabel}
           </Text>
         </View>
         <NavigateIcon color={theme.accent300} size={18} />

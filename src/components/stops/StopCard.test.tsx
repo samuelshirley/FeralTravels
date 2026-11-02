@@ -6,11 +6,22 @@ import type { StopCardProps } from './StopCard';
 
 afterEach(cleanup);
 
+const DRIVE_URL =
+  'https://www.google.com/maps/dir/?api=1&destination=42.3441%2C-3.6969&travelmode=driving&dir_action=navigate&destination_place_id=ChIJ_burgos';
+
 const baseProps: StopCardProps = {
   stopType: 'fuel',
-  name: 'Repsol Burgos Norte',
+  name: 'Fuel stop',
   distanceFromStartKm: 62,
-  googleMapsUri: 'https://www.google.com/maps/place/Repsol+Burgos',
+  googleMapsUri: DRIVE_URL,
+};
+
+/** A place the user added keeps its own name and a separate distance line. */
+const otherProps: StopCardProps = {
+  stopType: 'other',
+  name: 'Burgos Cathedral',
+  distanceFromStartKm: 62,
+  googleMapsUri: DRIVE_URL,
 };
 
 describe('StopCard', () => {
@@ -19,9 +30,35 @@ describe('StopCard', () => {
     expect(screen.getByText('FUEL')).toBeInTheDocument();
   });
 
-  it('renders stop name', () => {
-    render(<StopCard {...baseProps} />);
-    expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
+  it('labels a fuel stop "Fuel stop · <distance>", with no separate distance line', () => {
+    render(
+      <UnitsProvider initialUnits="metric">
+        <StopCard {...baseProps} />
+      </UnitsProvider>
+    );
+    expect(screen.getByText('Fuel stop · 62 km')).toBeInTheDocument();
+    expect(screen.queryByText(/from start/)).not.toBeInTheDocument();
+  });
+
+  it('labels a fuel stop in miles, and no km, for an imperial user', () => {
+    render(
+      <UnitsProvider initialUnits="imperial">
+        <StopCard {...baseProps} />
+      </UnitsProvider>
+    );
+    expect(screen.getByText('Fuel stop · 39 mi')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\bkm\b/);
+  });
+
+  it("never shows a Google station name a legacy fuel row still carries", () => {
+    render(<StopCard {...baseProps} name="Repsol Burgos Norte" />);
+    expect(screen.queryByText(/Repsol/)).not.toBeInTheDocument();
+    expect(screen.getByText('Fuel stop · 62 km')).toBeInTheDocument();
+  });
+
+  it("renders a user-added stop's own name", () => {
+    render(<StopCard {...otherProps} />);
+    expect(screen.getByText('Burgos Cathedral')).toBeInTheDocument();
   });
 
   /**
@@ -34,7 +71,7 @@ describe('StopCard', () => {
   it('renders distance from start in km for a metric user', () => {
     render(
       <UnitsProvider initialUnits="metric">
-        <StopCard {...baseProps} />
+        <StopCard {...otherProps} />
       </UnitsProvider>
     );
     expect(screen.getByText(/from start/).textContent).toBe('62 km from start');
@@ -58,7 +95,7 @@ describe('StopCard', () => {
     // reversed on 2026-09-04: an imperial user sees miles and nothing else.
     render(
       <UnitsProvider initialUnits="imperial">
-        <StopCard {...baseProps} />
+        <StopCard {...otherProps} />
       </UnitsProvider>
     );
     const text = screen.getByText(/from start/).textContent ?? '';
@@ -70,7 +107,7 @@ describe('StopCard', () => {
   it('renders nothing unit-shaped when there is no distance', () => {
     render(
       <UnitsProvider initialUnits="imperial">
-        <StopCard {...baseProps} distanceFromStartKm={null} />
+        <StopCard {...otherProps} distanceFromStartKm={null} />
       </UnitsProvider>
     );
     expect(screen.queryByText(/from start/)).not.toBeInTheDocument();
@@ -79,7 +116,7 @@ describe('StopCard', () => {
   it('opens Google Maps in new tab when clicked', () => {
     render(<StopCard {...baseProps} />);
     const link = screen.getByRole('link');
-    expect(link).toHaveAttribute('href', 'https://www.google.com/maps/place/Repsol+Burgos');
+    expect(link).toHaveAttribute('href', DRIVE_URL);
     expect(link).toHaveAttribute('target', '_blank');
   });
 
@@ -90,7 +127,7 @@ describe('StopCard', () => {
 
   it('handles null distance', () => {
     render(<StopCard {...baseProps} distanceFromStartKm={null} />);
-    expect(screen.getByText('Repsol Burgos Norte')).toBeInTheDocument();
+    expect(screen.getByText('Fuel stop')).toBeInTheDocument();
     expect(screen.queryByText(/km from start/)).not.toBeInTheDocument();
   });
 

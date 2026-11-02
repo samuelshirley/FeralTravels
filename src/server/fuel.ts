@@ -10,6 +10,8 @@ import {
   type LatLng,
 } from '@/lib/polyline';
 import { normalizeRangeKm } from '@/lib/vehicleProfile';
+import { buildGoHereUrl } from '@/lib/maps';
+import { FUEL_STOP_NAME } from '@/lib/forcedStopReason';
 import { FUEL_CACHE_TTL_MS } from '@/lib/fuelCache';
 import {
   kmBurnedSinceLastRefuel,
@@ -49,8 +51,12 @@ import { legsNeedingSourcingBefore } from '@/lib/finn/sourcingOrder';
  *      User-picked / user-authored stops are never touched.
  *
  * All data comes from the Google Maps Platform key already used for routing.
- * We persist only the Google `place_id` (ToS-storable) plus the coords/name of
- * the stop the user sees. No fuel pricing (removed at the Google cutover).
+ * We persist the Google `place_id` (ToS-storable) and the coords — never the
+ * station's name or Google's `googleMapsUri` (Maps ToS §3.2.3 forbids caching
+ * business names; the URI has no caching allowance). The row's name is
+ * FUEL_STOP_NAME and its link is our own drive URL from coords + place_id;
+ * clients label it "Fuel stop · 212 km" via `fuelStopLabel`. Finn may still
+ * READ a station's name in memory (the truck filter). No fuel pricing.
  *
  * Fails loudly (`fuel_status='failed'` + `fuel_plan_error`) when the vehicle has
  * no range data, the route can't be decoded, or the Places call errors. A
@@ -136,11 +142,6 @@ async function failLeg(
     errorMessage: reason,
   }).catch((e) => console.error('[finn] failed to log fuel failure to usage_events:', e));
   return { legId, status: 'failed', reason };
-}
-
-/** Single-destination Google Maps link built from coords (fallback when a place has no googleMapsUri). */
-function mapsCoordUrl(lat: number, lng: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }
 
 /** Convert a stored GeoJSON LineString (lng,lat order) to LatLng[]. */
@@ -512,21 +513,22 @@ async function planOneLeg(
       if (matchesExistingSelected(station.lat, station.lng, existingSelected)) continue;
 
       const distanceKm = Math.round(placed.candidate.alongKm);
-      const name = station.name ?? station.brand ?? 'Fuel station';
+      // Our own drive link, never Google's googleMapsUri (see the header).
+      const driveUrl = buildGoHereUrl(station.lat, station.lng, { placeId: station.placeId });
       await tx.insert(stops).values({
         legId,
         sortOrder: sortOrder++,
         stopType: 'fuel',
         status: 'option',
-        name,
+        name: FUEL_STOP_NAME,
         lat: station.lat,
         lng: station.lng,
         distanceFromStartKm: distanceKm,
         fuelType: null,
         source: 'google',
-        sourceUrl: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
+        sourceUrl: driveUrl,
         placeId: station.placeId,
-        googleMapsUri: station.googleMapsUri ?? mapsCoordUrl(station.lat, station.lng),
+        googleMapsUri: driveUrl,
         // Canonical km: `notes` is Penny's context, never rendered. The UI
         // words `forcedReason` itself, in the user's units.
         notes: placed.reason

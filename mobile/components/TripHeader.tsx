@@ -11,6 +11,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { clearToken } from "@/lib/auth";
 import { getMe, listVehicles, type Me, type Vehicle } from "@/lib/api";
+import { cacheKeys, revalidate, useCached } from "@/shared/lib/resourceCache";
 import AccountButton from "@/components/AccountButton";
 import { useIdentity } from "@/lib/identity";
 import SupportModal from "@/components/SupportModal";
@@ -33,18 +34,6 @@ interface Props {
   readonly?: boolean;
 }
 
-/**
- * Vehicle list cache — mirrors src/lib/vehicleCache.ts. The chip mounts on
- * every workspace open and the list almost never changes, so one fetch per app
- * launch is enough.
- */
-let vehiclesPromise: Promise<Vehicle[]> | null = null;
-function fetchVehicles(): Promise<Vehicle[]> {
-  if (!vehiclesPromise) {
-    vehiclesPromise = listVehicles().catch(() => []);
-  }
-  return vehiclesPromise;
-}
 
 export default function TripHeader({
   tripName,
@@ -56,29 +45,28 @@ export default function TripHeader({
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
-  const [me, setMe] = useState<Me | null>(null);
-
   useEffect(() => {
-    let cancelled = false;
-    getMe()
-      .then((m) => {
-        if (!cancelled) setMe(m);
-      })
-      .catch(() => {
-        // The menu still works without a name/email header.
-      });
-    return () => {
-      cancelled = true;
-    };
+    revalidate<Me>(cacheKeys.me, getMe).catch(() => {
+      // The menu still works without a name/email header.
+    });
   }, []);
 
   const identity = useIdentity();
   const signedInEmail = identity.email;
 
+  /*
+   * The trips list is RETURNED to, never pushed. `push` builds a brand-new
+   * list on top of the stack every time: it slid in from the right, started
+   * empty, showed a spinner while it refetched, and the stack grew by a screen
+   * on every round trip (screen recording, 2026-10-22). `dismissTo` pops back
+   * to the list that is already there, or replaces this screen with one when
+   * the trip was opened without a list beneath it. `navigationGuard.test.ts`.
+   */
   const go = useCallback(
     (path: "/trips" | "/settings") => {
       setMenuOpen(false);
-      router.push(path);
+      if (path === "/trips") router.dismissTo("/trips");
+      else router.push(path);
     },
     [router]
   );
@@ -94,7 +82,7 @@ export default function TripHeader({
       <View style={styles.left}>
         {/* Inside a trip the brand slot is a one-tap way back to the trip list. */}
         <Pressable
-          onPress={() => router.push("/trips")}
+          onPress={() => router.dismissTo("/trips")}
           accessibilityRole="button"
           accessibilityLabel="Back to trips"
           hitSlop={8}
@@ -210,16 +198,17 @@ export default function TripHeader({
  * onboarding or changed in Settings. Renders nothing until one is assigned.
  */
 function VehicleChip({ vehicleId }: { vehicleId: string | null }) {
-  const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
-
+  /*
+   * The same cached list Settings edits. This used to be a module-level promise
+   * fetched once per launch and never again, so a vehicle renamed in Settings
+   * kept its old name on this chip until the app was killed. Now the chip draws
+   * the held list at once and refreshes it on every workspace open.
+   */
+  const vehicles = useCached<Vehicle[]>(cacheKeys.vehicles) ?? null;
   useEffect(() => {
-    let cancelled = false;
-    fetchVehicles().then((list) => {
-      if (!cancelled) setVehicles(list);
+    revalidate(cacheKeys.vehicles, listVehicles, (list) => Array.isArray(list)).catch(() => {
+      // No chip is the fallback; nothing here is worth interrupting the user.
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const current = vehicles?.find((v) => v.id === vehicleId) ?? null;

@@ -12,7 +12,9 @@
 # UNPROVEN: written from the source (2026-10-07) by a session that could not
 # reach a simulator. Run it locally before trusting a green or a red.
 #
-# Its own account (suffix `sa`): it deletes the stop it looks at.
+# Its own account (suffix `sa`): it deletes the stop it looks at. The stop is
+# labelled "Fuel stop · 95 km" (no Google station name since migration 0046);
+# `.` matches the middle dot.
 appId: ${APP_ID}
 ---
 - runScript:
@@ -44,26 +46,26 @@ appId: ${APP_ID}
 - runFlow:
     when:
       notVisible:
-        text: 'FUEL: TotalEnergies.*'
+        text: 'FUEL: Fuel stop.*'
     commands:
       - tapOn:
           text: '.*Paris, France → Strasbourg, France.*'
 - scrollUntilVisible:
     element:
-      text: 'Remove TotalEnergies Ch.teau-Thierry'
+      text: 'Remove Fuel stop . 95 km'
     direction: DOWN
     timeout: 20000
 
-- tapOn: 'Remove TotalEnergies Ch.teau-Thierry'
+- tapOn: 'Remove Fuel stop . 95 km'
 - extendedWaitUntil:
     visible: 'Delete this stop?'
     timeout: 10000
 - tapOn: 'Delete'
 - extendedWaitUntil:
     notVisible:
-      text: 'FUEL: TotalEnergies.*'
+      text: 'FUEL: Fuel stop . 95 km.*'
     timeout: 20000
-- assertNotVisible: 'Remove TotalEnergies Ch.teau-Thierry'
+- assertNotVisible: 'Remove Fuel stop . 95 km'
 
 # ── Gone on the server ──────────────────────────────────────────────────────
 - stopApp
@@ -95,4 +97,4 @@ appId: ${APP_ID}
     direction: DOWN
     timeout: 20000
 - assertNotVisible:
-    text: 'FUEL: TotalEnergies.*'
+    text: 'FUEL: Fuel stop . 95 km.*'

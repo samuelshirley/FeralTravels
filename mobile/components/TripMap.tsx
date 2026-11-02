@@ -22,12 +22,15 @@ import { Spinner } from "@/components/ui";
 import { GOOGLE_MAPS_API_KEY } from "@/lib/config";
 import { theme, shadow } from "@/lib/theme";
 import { clusterPixels, type PixelPoint } from "@/shared/lib/mapClustering";
+import { dayStartMarkers } from "@/shared/lib/mapDayMarkers";
+import { FinishFlagIcon, FuelIcon, PlaceIcon } from "@/components/icons";
 import { haversineKm } from "@/shared/lib/polyline";
 import { font } from "@/lib/typography";
 import { formatDate, parseISODate } from "@/shared/lib/dates";
 import { useUnits } from "@/lib/units";
 import { formatKm } from "@/shared/lib/units";
 import { buildGoHereUrl } from "@/shared/lib/maps";
+import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
 import { CrosshairIcon, ExternalLinkIcon, NavigateIcon } from "@/components/icons";
 import type {
   GeoJSONLineString,
@@ -332,6 +335,8 @@ export default function TripMap({
   // shared/lib/mapClustering) so dense fuel runs collapse into a count bubble
   // when zoomed out and resolve into individual, tappable markers when zoomed in.
   const stopPoints = useMemo(() => collectStopPoints(legs), [legs]);
+  const dayMarkers = useMemo(() => dayStartMarkers(legs), [legs]);
+  const legsById = useMemo(() => new Map(legs.map((leg) => [leg.id, leg])), [legs]);
 
   /**
    * Recomputed whenever `region` changes, and `region` is only written by
@@ -523,12 +528,11 @@ export default function TripMap({
     const legKm = leg.distance_km ?? null;
     const fromStart = stop.distance_from_start_km ?? 0;
     return {
-      name: stop.name,
       fromStartKm: fromStart,
       toEndKm: legKm != null ? Math.max(0, legKm - fromStart) : null,
       endName: leg.end_name,
       // Turn-by-turn from wherever the device is — not a dropped pin.
-      href: buildGoHereUrl(stop.lat, stop.lng) as string,
+      href: buildGoHereUrl(stop.lat, stop.lng, { placeId: stop.place_id }) as string,
       legLabel: formatDate(parseISODate(leg.date_iso), units) || null,
       legStart: leg.start_name,
       legEnd: leg.end_name,
@@ -616,33 +620,48 @@ export default function TripMap({
           />
         ))}
 
-        {/* Leg start markers */}
-        {legs.map((leg) => {
-          if (leg.start_lat == null || leg.start_lng == null) return null;
-          const isSelected = leg.id === selectedLegId;
+        {/*
+          Day markers. CIRCLES ARE DAYS and carry the day number; squares
+          (below) are stops. Days that start from the same place share one
+          marker ("2–3"), or a base day's number would sit hidden under the
+          next day's. shared/lib/mapDayMarkers.ts.
+        */}
+        {dayMarkers.map((marker) => {
+          const isSelected = selectedLegId != null && marker.legIds.includes(selectedLegId);
+          // Tapping opens the selected day if it starts here, else the earliest.
+          const legId = isSelected && selectedLegId ? selectedLegId : marker.legIds[0];
+          const leg = legsById.get(legId);
+          if (!leg) return null;
           const color = leg.color || DEFAULT_LEG_COLOR;
-          const size = isSelected ? 18 : 14;
+          const size = isSelected ? 26 : 22;
           return (
             <Marker
-              key={`leg:${leg.id}`}
-              coordinate={{ latitude: leg.start_lat, longitude: leg.start_lng }}
+              key={`day:${marker.key}`}
+              testID={`map-day-${marker.label}`}
+              coordinate={{ latitude: marker.lat, longitude: marker.lng }}
               // Custom marker views anchor at the pin tip by default; these are
               // dots, so center them on the coordinate.
               anchor={{ x: 0.5, y: 0.5 }}
               zIndex={isSelected ? 20 : 5}
-              onPress={() => onLegSelect(leg.id)}
+              onPress={() => onLegSelect(legId)}
             >
               <View
+                accessibilityLabel={`Day ${marker.label}`}
                 style={[
                   styles.dot,
+                  styles.dayDot,
                   {
-                    width: size,
+                    minWidth: size,
                     height: size,
                     borderRadius: size / 2,
                     backgroundColor: color,
                   },
                 ]}
-              />
+              >
+                <Text style={[styles.dayDotLabel, isSelected && styles.dayDotLabelSelected]}>
+                  {marker.label}
+                </Text>
+              </View>
               {/* The web opens this content in a hover InfoWindow. A phone has no
                   hover, so the same content becomes a Callout: the marker tap
                   fires onLegSelect AND pops the callout, giving touch users both
@@ -672,15 +691,14 @@ export default function TripMap({
           <Marker
             key="final-destination"
             coordinate={{ latitude: lastLeg.end_lat, longitude: lastLeg.end_lng }}
-            anchor={{ x: 0.5, y: 0.5 }}
+            // The flagpole's foot is the coordinate, so on a round trip the
+            // flag stands beside day 1's number instead of covering it.
+            anchor={{ x: 0.12, y: 0.92 }}
             zIndex={30}
           >
-            <View
-              style={[
-                styles.destinationDot,
-                { backgroundColor: lastLeg.color || DESTINATION_COLOR },
-              ]}
-            />
+            <View style={styles.finishFlag} accessibilityLabel="Destination">
+              <FinishFlagIcon color={lastLeg.color || DESTINATION_COLOR} />
+            </View>
             <Callout tooltip={false}>
               <View style={styles.callout}>
                 {/* The trip's real destination and the day it is reached. This
@@ -740,14 +758,22 @@ export default function TripMap({
                 zIndex={8}
                 onPress={() => onStopSelect(p.legId, p.stopId)}
               >
-                {/* Square glyph so stops read differently from the round leg /
-                    destination dots. Gold = fuel, slate = user-added. */}
+                {/* SQUARES ARE STOPS. The glyph says which kind: the fuel pump
+                    and the pin the itinerary already uses for the same stop. */}
                 <View
+                  testID={isFuel ? "map-stop-fuel" : "map-stop-other"}
+                  accessibilityLabel={isFuel ? `Fuel stop: ${p.name}` : `Stop: ${p.name}`}
                   style={[
-                    styles.stopSquare,
+                    styles.stopBadge,
                     { backgroundColor: isFuel ? FUEL_STOP_COLOR : OTHER_STOP_COLOR },
                   ]}
-                />
+                >
+                  {isFuel ? (
+                    <FuelIcon color={theme.bg} size={12} />
+                  ) : (
+                    <PlaceIcon color={theme.bg} size={12} />
+                  )}
+                </View>
                 <Callout tooltip={false}>
                   <View style={styles.callout}>
                     <Text
@@ -758,8 +784,10 @@ export default function TripMap({
                     >
                       {isFuel ? "FUEL" : "STOP"}
                     </Text>
-                    <Text style={styles.calloutTitle}>{p.name}</Text>
-                    {p.distanceKm != null ? (
+                    <Text style={styles.calloutTitle}>
+                      {isFuel ? fuelStopLabel(p.distanceKm, units) : p.name}
+                    </Text>
+                    {!isFuel && p.distanceKm != null ? (
                       <Text style={styles.calloutBody}>
                         {formatKm(p.distanceKm, units)} from start
                       </Text>
@@ -786,11 +814,12 @@ export default function TripMap({
               zIndex={9}
               onPress={() => void handleClusterPress(members)}
             >
+              {/* A square, like the stops it stands for: a number in a CIRCLE
+                  is a day, so a round cluster read as "day 3". */}
               <View
-                style={[
-                  styles.cluster,
-                  { width: size, height: size, borderRadius: size / 2 },
-                ]}
+                testID="map-stop-cluster"
+                accessibilityLabel={`${count} stops`}
+                style={[styles.cluster, { width: size, height: size }]}
               >
                 <Text style={styles.clusterLabel}>{count}</Text>
               </View>
@@ -863,15 +892,16 @@ export default function TripMap({
       {ready && sheetStop ? (
         <View style={styles.sheet}>
           <Text style={styles.sheetKicker}>NEXT STOP · FUEL</Text>
+          {/* "Fuel stop · 95 km": the label carries the distance from
+              start, so the meta line only says what is left of the day. */}
           <Text style={styles.sheetName} numberOfLines={1}>
-            {sheetStop.name}
+            {fuelStopLabel(sheetStop.fromStartKm, units)}
           </Text>
-          <Text style={styles.sheetMeta} numberOfLines={1}>
-            {formatKm(sheetStop.fromStartKm, units)} from start
-            {sheetStop.toEndKm != null && sheetStop.endName
-              ? ` · ${formatKm(sheetStop.toEndKm, units)} to ${sheetStop.endName}`
-              : ""}
-          </Text>
+          {sheetStop.toEndKm != null && sheetStop.endName ? (
+            <Text style={styles.sheetMeta} numberOfLines={1}>
+              {formatKm(sheetStop.toEndKm, units)} to {sheetStop.endName}
+            </Text>
+          ) : null}
 
           {/* Full width, on its OWN row: at 402px a labelled button and the
               two-clause meta line above cannot share a row without the
@@ -879,11 +909,11 @@ export default function TripMap({
           <Pressable
             onPress={() => void Linking.openURL(sheetStop.href)}
             accessibilityRole="link"
-            accessibilityLabel={`Open ${sheetStop.name} in Google Maps`}
+            accessibilityLabel="Open in Google Maps"
             style={styles.sheetAction}
           >
             <NavigateIcon color={theme.accent300} size={15} />
-            <Text style={styles.sheetActionText}>Open {sheetStop.name} in Google Maps</Text>
+            <Text style={styles.sheetActionText}>Open in Google Maps</Text>
             <ExternalLinkIcon color={theme.accent300} size={13} />
           </Pressable>
 
@@ -926,13 +956,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: theme.bg,
   },
-  destinationDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 3,
-    borderColor: theme.bg,
-  },
   poiDot: {
     width: 8,
     height: 8,
@@ -942,9 +965,28 @@ const styles = StyleSheet.create({
     backgroundColor: POI_COLOR,
     opacity: 0.7,
   },
-  stopSquare: {
-    width: 10,
-    height: 10,
+  dayDot: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  dayDotLabel: {
+    color: theme.bg,
+    fontSize: 11,
+    fontFamily: font.bold,
+    // Tabular so "1" and "11" sit centred the same way.
+    fontVariant: ["tabular-nums"],
+  },
+  dayDotLabelSelected: { fontSize: 13 },
+  finishFlag: {
+    padding: 2,
+  },
+  stopBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1.5,
     borderColor: theme.bg,
   },
@@ -952,6 +994,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: CLUSTER_COLOR,
+    borderRadius: 7,
     borderWidth: 2,
     borderColor: theme.bg,
   },
