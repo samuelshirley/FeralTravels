@@ -58,6 +58,24 @@ export function registerGlobalErrorReporter(fn: GlobalErrorReporter | null): voi
   globalErrorReporter = fn;
 }
 
+/**
+ * Hand an error from a `skipGlobalErrorReport` call to the global surface after
+ * all. For a caller that handles ONE status itself (the sign-in hand-off treats
+ * a 402 as "go to the trips list") and must not swallow any other.
+ */
+export function reportToGlobalErrorSurface(err: unknown, path: string): void {
+  if (!globalErrorReporter) return;
+  if (err instanceof ApiError) {
+    globalErrorReporter(err, {
+      path,
+      status: err.status === 0 ? null : err.status,
+      errorId: err.errorId ?? undefined,
+    });
+  } else {
+    globalErrorReporter(err, { path, status: null });
+  }
+}
+
 function buildUrl(path: string, query?: ApiOptions["query"]): string {
   let qs = "";
   if (query) {
@@ -260,7 +278,8 @@ export const deleteAccount = (confirm: string): Promise<{ ok: boolean }> =>
 // ---------------------------------------------------------------------------
 
 export const listTrips = () => apiFetch<Trip[]>("/api/trips");
-export const createTrip = () => apiFetch<Trip>("/api/trips", { body: {} });
+export const createTrip = (opts?: Pick<ApiOptions, "skipGlobalErrorReport">) =>
+  apiFetch<Trip>("/api/trips", { body: {}, ...opts });
 export const cloneTrip = (tripId: string) =>
   apiFetch<{ id: string }>(`/api/trips/${tripId}/clone`, { body: {} });
 export const deleteTrip = (tripId: string) =>

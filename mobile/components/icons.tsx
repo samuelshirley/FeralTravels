@@ -1,5 +1,6 @@
 import type { IconWeight } from "phosphor-react-native";
 import {
+  ArrowRightIcon as PhosphorArrowRightIcon,
   ArrowSquareOutIcon,
   ArrowUpIcon,
   ArrowsInLineVerticalIcon,
@@ -192,4 +193,9 @@ export function PlusIcon({ color, size = 13, weight = "regular" }: IconProps) {
 /** Recenter the map on the whole route. */
 export function CrosshairIcon({ color, size = 16, weight = "regular" }: IconProps) {
   return <CrosshairSimpleIcon color={color} size={size} weight={weight} />;
+}
+
+/** A hand-off forward — the intro's "Create trip" (Nocturne 7e's `ArrowRight`). */
+export function ArrowRightIcon({ color, size = 16, weight = "regular" }: IconProps) {
+  return <PhosphorArrowRightIcon color={color} size={size} weight={weight} />;
 }

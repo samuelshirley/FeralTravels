@@ -117,6 +117,9 @@ export default function RootLayout() {
               answer here.
             */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
+            {/* First launch only (app/index.tsx -> shared/lib/launchDestination.ts).
+                Its pages and buttons are the whole screen; no header. */}
+            <Stack.Screen name="intro" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
             {/* trips/index draws its own header — see the note at the top of that file. */}
             <Stack.Screen name="trips/index" options={{ headerShown: false }} />

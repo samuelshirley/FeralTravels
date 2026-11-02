@@ -1,0 +1,26 @@
+# SUBFLOW. A fresh install meets the first-launch intro (app/intro.tsx) right
+# after the launch gate, before sign-in — every flow that starts from a
+# cleared keychain passes through here on its way to `signin-email`.
+#
+# Unconditional on purpose: a cleared keychain has no intro flag, so the intro
+# MUST show. A `when: visible` here would also pass if the intro stopped
+# appearing, which is a regression this suite should name, not absorb.
+#
+# Takes the intro's quiet exit, "I already have an account": it records the
+# intro as seen and opens plain sign-in. intro-create-trip.yaml covers the
+# other exit.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: 'intro-page-1'
+    timeout: 30000
+# The intro, not sign-in: launch routed here because there is no token.
+- assertNotVisible:
+    id: 'signin-email'
+- tapOn:
+    id: 'intro-have-account'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 15000

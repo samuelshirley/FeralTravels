@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { formatKmDual } from "@/shared/lib/units";
 import { useUnits } from "@/lib/units";
@@ -65,6 +66,8 @@ export function Button({
   disabled,
   variant = "primary",
   style,
+  trailing,
+  testID,
 }: {
   label: string;
   onPress: () => void;
@@ -72,12 +75,16 @@ export function Button({
   disabled?: boolean;
   variant?: "primary" | "secondary" | "danger";
   style?: ViewStyle;
+  /** A glyph after the label, e.g. ArrowRight on a hand-off button. */
+  trailing?: ReactNode;
+  testID?: string;
 }) {
   const isOff = busy || disabled;
   return (
     <Pressable
       onPress={onPress}
       disabled={isOff}
+      testID={testID}
       style={({ pressed }) => [
         styles.button,
         variant === "secondary" && styles.buttonSecondary,
@@ -100,15 +107,18 @@ export function Button({
           }
         />
       ) : (
-        <Text
-          style={[
-            styles.buttonText,
-            variant === "secondary" && styles.buttonTextSecondary,
-            variant === "danger" && styles.buttonTextDanger,
-          ]}
-        >
-          {label}
-        </Text>
+        <View style={styles.buttonRow}>
+          <Text
+            style={[
+              styles.buttonText,
+              variant === "secondary" && styles.buttonTextSecondary,
+              variant === "danger" && styles.buttonTextDanger,
+            ]}
+          >
+            {label}
+          </Text>
+          {trailing ?? null}
+        </View>
       )}
     </Pressable>
   );
@@ -197,6 +207,7 @@ const styles = StyleSheet.create({
   },
   buttonDangerPressed: { backgroundColor: theme.dangerMuted, borderColor: theme.danger },
   buttonDisabled: { opacity: 0.6 },
+  buttonRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   buttonText: { fontSize: 14, fontFamily: font.semibold, color: theme.accent300 },
   buttonTextSecondary: { color: theme.text },
   buttonTextDanger: { color: theme.danger },
