@@ -439,8 +439,10 @@ describe('TripMap — drawing the trip from props', () => {
     await waitFor(() =>
       expect(live(drawn.markers).filter((m) => m.opts.title)).toHaveLength(1)
     );
-    const stopMarker = live(drawn.markers).find((m) => m.opts.title === 'Repsol Burgos');
+    // A fuel stop is labelled by type and distance, never a station name.
+    const stopMarker = live(drawn.markers).find((m) => m.opts.title === 'Fuel stop · 100 km');
     expect(stopMarker).toBeDefined();
+    expect(live(drawn.markers).some((m) => String(m.opts.title ?? '').includes('Repsol'))).toBe(false);
     stopMarker?.trigger('click');
     expect(onStopSelect).toHaveBeenCalledWith('leg-1', 's1');
     expect(screen.queryByText('Open a day to load its fuel stops')).not.toBeInTheDocument();
@@ -473,7 +475,7 @@ describe('TripMap — units in the info windows', () => {
     expect(drawn.infoWindows[0].content).not.toMatch(/\bkm\b/);
   });
 
-  it('imperial: the stop hover tooltip gives miles from start and no km', async () => {
+  it('imperial: the fuel stop hover tooltip is "Fuel stop · 100 mi", once, and no km', async () => {
     vi.stubGlobal(
       'matchMedia',
       vi.fn((q: string) => ({
@@ -488,8 +490,37 @@ describe('TripMap — units in the info windows', () => {
       legs: [leg('leg-1', { stops: [stop('s1', { name: 'Repsol', distance_from_start_km: 161 })] })],
     });
     await ready();
-    await waitFor(() => expect(live(drawn.markers).some((m) => m.opts.title === 'Repsol')).toBe(true));
-    live(drawn.markers).find((m) => m.opts.title === 'Repsol')?.trigger('mouseover');
+    const title = 'Fuel stop · 100 mi';
+    await waitFor(() => expect(live(drawn.markers).some((m) => m.opts.title === title)).toBe(true));
+    live(drawn.markers).find((m) => m.opts.title === title)?.trigger('mouseover');
+    const tooltip = drawn.infoWindows[1].content;
+    expect(tooltip).toContain(title);
+    expect(tooltip).not.toContain('from start');
+    expect(tooltip).not.toContain('Repsol');
+    expect(tooltip).not.toMatch(/\bkm\b/);
+  });
+
+  it('imperial: a user-added stop tooltip keeps its name and gives miles from start', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((q: string) => ({
+        matches: q === '(hover: hover)',
+        media: q,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }))
+    );
+    renderMap({
+      units: 'imperial',
+      legs: [
+        leg('leg-1', {
+          stops: [stop('s1', { stop_type: 'other', name: 'Mirador', distance_from_start_km: 161 })],
+        }),
+      ],
+    });
+    await ready();
+    await waitFor(() => expect(live(drawn.markers).some((m) => m.opts.title === 'Mirador')).toBe(true));
+    live(drawn.markers).find((m) => m.opts.title === 'Mirador')?.trigger('mouseover');
     const tooltip = drawn.infoWindows[1].content;
     expect(tooltip).toContain('100 mi from start');
     expect(tooltip).not.toMatch(/\bkm\b/);

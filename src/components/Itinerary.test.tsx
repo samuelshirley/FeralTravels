@@ -254,7 +254,9 @@ describe('Itinerary — header', () => {
   it('imperial: the distances are miles and no "km" appears anywhere', () => {
     const { container } = renderItinerary({ units: 'imperial' });
     expect(screen.getByText(/~497 mi · 2 days · 1 fuel/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Repsol Burgos in Google Maps' })).toHaveTextContent('100 mi');
+    expect(screen.getByRole('link', { name: 'Fuel stop · 100 mi in Google Maps' })).toHaveTextContent(
+      'Fuel stop · 100 mi'
+    );
     expect(container.textContent).not.toMatch(/\bkm\b/);
   });
 
@@ -387,9 +389,11 @@ describe('Itinerary — expand, focus and navigate', () => {
 
   it('NEXT STOP links the first fuel stop of the current day as a drive, not a pin', () => {
     renderItinerary({ units: 'metric' });
-    const link = screen.getByRole('link', { name: 'Repsol Burgos in Google Maps' });
+    // Labelled by type and distance; the fixture's legacy station name never shows.
+    const link = screen.getByRole('link', { name: 'Fuel stop · 161 km in Google Maps' });
     expect(link).toHaveTextContent('NEXT STOP');
-    expect(link).toHaveTextContent('Repsol Burgos · fuel · 161 km');
+    expect(link).toHaveTextContent('Fuel stop · 161 km');
+    expect(link).not.toHaveTextContent('Repsol');
     const href = link.getAttribute('href') ?? '';
     expect(href).toContain('travelmode=driving');
     expect(href).toContain('dir_action=navigate');

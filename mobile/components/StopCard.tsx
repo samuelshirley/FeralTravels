@@ -2,7 +2,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ForcedStopReason, StopType } from "@/shared/types/trip";
 import { buildGoHereUrl } from "@/shared/lib/maps";
 import { formatKm } from "@/shared/lib/units";
-import { forcedStopLine } from "@/shared/lib/forcedStopReason";
+import { forcedStopLine, fuelStopLabel } from "@/shared/lib/forcedStopReason";
 import { useUnits } from "@/lib/units";
 import { Spinner } from "@/components/ui";
 import { theme } from "@/lib/theme";
@@ -63,6 +63,9 @@ export default function StopCard({
   forcedReason,
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
+  // A fuel stop's label carries its distance ("Fuel stop · 212 km"); Google's
+  // station name is never stored or shown.
+  const fuel = stopType === "fuel";
 
   const { units } = useUnits();
   const forcedLine = forcedStopLine(stopType, forcedReason, units);
@@ -77,9 +80,9 @@ export default function StopCard({
       <View style={styles.text}>
         <Text style={[styles.type, { color: display.color }]}>{display.label}</Text>
         <Text style={styles.name} numberOfLines={1}>
-          {name}
+          {fuel ? fuelStopLabel(distanceFromStartKm, units) : name}
         </Text>
-        {distanceFromStartKm != null ? (
+        {!fuel && distanceFromStartKm != null ? (
           <Text style={styles.distance}>
             {formatKm(distanceFromStartKm, units)} from start
           </Text>

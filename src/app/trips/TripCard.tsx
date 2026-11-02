@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
-import { approxDistance, formatKm } from '@/lib/units';
+import { approxDistance } from '@/lib/units';
+import { fuelStopLabel } from '@/lib/forcedStopReason';
 import { useUnits } from '@/components/UnitsContext';
 import Spinner from '@/components/Spinner';
 import { buttonStyle } from '@/components/ui/buttonStyle';
@@ -184,8 +185,7 @@ export default function TripCard({
                   flexShrink: 0,
                 }}
               />
-              Next: fuel at {nextStop.name}
-              {nextStop.distance_km != null ? ` · in ${formatKm(nextStop.distance_km, units)}` : ''}
+              Next: {fuelStopLabel(nextStop.distance_km, units)}
             </div>
           )}
 

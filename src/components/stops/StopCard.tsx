@@ -3,7 +3,7 @@
 import type { ForcedStopReason, StopType } from '@/types/trip';
 import Distance from '@/components/Distance';
 import { useUnits } from '@/components/UnitsContext';
-import { forcedStopLine } from '@/lib/forcedStopReason';
+import { forcedStopLine, fuelStopLabel } from '@/lib/forcedStopReason';
 import { FuelIcon, PlaceIcon } from '@/components/icons';
 import { buildGoHereUrl } from '@/lib/maps';
 
@@ -65,6 +65,9 @@ export default function StopCard({
 }: StopCardProps) {
   const display = STOP_DISPLAY[stopType] ?? STOP_DISPLAY.other;
   const { units } = useUnits();
+  // A fuel stop's label carries its distance ("Fuel stop · 212 km"); Google's
+  // station name is never stored or shown.
+  const fuel = stopType === 'fuel';
   const forcedLine = forcedStopLine(stopType, forcedReason, units);
 
   const href =
@@ -129,9 +132,9 @@ export default function StopCard({
               textOverflow: 'ellipsis',
             }}
           >
-            {name}
+            {fuel ? fuelStopLabel(distanceFromStartKm, units) : name}
           </div>
-          {distanceFromStartKm != null && (
+          {!fuel && distanceFromStartKm != null && (
             <div
               style={{
                 fontSize: 10.5,

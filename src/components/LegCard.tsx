@@ -13,6 +13,9 @@ import {
   orderNavSegments,
 } from '@/lib/maps';
 import { useNextStop } from '@/lib/useNextStop';
+import { fuelStopLabel } from '@/lib/forcedStopReason';
+import { useUnits } from '@/components/UnitsContext';
+import type { UnitsPref } from '@/lib/units';
 import Spinner from './Spinner';
 import StopsSection from './StopsSection';
 import Distance from './Distance';
@@ -26,8 +29,13 @@ import { DisclosureIcon, ExternalLinkIcon, InfoIcon, WarningIcon } from '@/compo
  * label says which app and the glyph says it leaves — "Route to" implied
  * turn-by-turn inside a product that has never had any.
  */
-function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `${seg.label} in Google Maps`;
+function navButtonLabel(
+  seg: { label: string; stopType?: string; distanceKm?: number | null },
+  units: UnitsPref
+): string {
+  // A fuel stop is "Fuel stop · 212 km", whatever name the row carries.
+  const name = seg.stopType === 'fuel' ? fuelStopLabel(seg.distanceKm, units) : seg.label;
+  return `${name} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -103,6 +111,7 @@ export default function LegCard({
   autoSourceFuel = false,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
+  const { units } = useUnits();
   const isRestDay = leg.leg_type === 'rest';
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
 
@@ -792,7 +801,7 @@ export default function LegCard({
                       data-testid="nav-stop-link"
                       data-nav-stop-type={seg.stopType ?? 'other'}
                       data-nav-next={seg.isNext ? 'true' : undefined}
-                      title={navButtonLabel(seg)}
+                      title={navButtonLabel(seg, units)}
                       style={{
                         ...buttonStyle(),
                         gap: 8,
@@ -804,7 +813,7 @@ export default function LegCard({
                       }}
                     >
                       <ExternalLinkIcon />
-                      {navButtonLabel(seg)}
+                      {navButtonLabel(seg, units)}
                       {seg.isNext ? (
                         <span
                           style={{

@@ -11,6 +11,9 @@ import {
   orderNavSegments,
 } from "@/shared/lib/maps";
 import { useNextStop } from "@/shared/lib/useNextStop";
+import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
+import { useUnits } from "@/lib/units";
+import type { UnitsPref } from "@/shared/lib/units";
 import { useDeviceLocation } from "@/lib/location";
 import StopsSection from "@/components/StopsSection";
 import { Distance, Spinner } from "@/components/ui";
@@ -33,8 +36,13 @@ const FUEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
  * which app and the glyph says it leaves; "Route to" implied turn-by-turn
  * inside a product that has never had any.
  */
-function navButtonLabel(seg: { label: string; stopType?: string }): string {
-  return `${seg.label} in Google Maps`;
+function navButtonLabel(
+  seg: { label: string; stopType?: string; distanceKm?: number | null },
+  units: UnitsPref
+): string {
+  // A fuel stop is "Fuel stop · 212 km", whatever name the row carries.
+  const name = seg.stopType === "fuel" ? fuelStopLabel(seg.distanceKm, units) : seg.label;
+  return `${name} in Google Maps`;
 }
 
 interface LegCardProps {
@@ -106,6 +114,7 @@ export default function LegCard({
   onNoteEditorFocus,
 }: LegCardProps) {
   const api = useMemo(() => tripApi(tripId), [tripId]);
+  const { units } = useUnits();
   const isRestDay = leg.leg_type === "rest";
   const driveHours = leg.drive_time_minutes ? (leg.drive_time_minutes / 60).toFixed(1) : null;
 
@@ -598,7 +607,7 @@ export default function LegCard({
                       onPress={() => openUrl(seg.url)}
                       accessibilityRole="button"
                       accessibilityLabel={
-                        seg.isNext ? `${navButtonLabel(seg)} — next stop` : navButtonLabel(seg)
+                        seg.isNext ? `${navButtonLabel(seg, units)} — next stop` : navButtonLabel(seg, units)
                       }
                       testID={seg.isNext ? "nav-stop-link-next" : "nav-stop-link"}
                       style={[
@@ -608,7 +617,7 @@ export default function LegCard({
                       ]}
                     >
                       <ExternalLinkIcon color={theme.accent300} />
-                      <Text style={styles.navButtonText}>{navButtonLabel(seg)}</Text>
+                      <Text style={styles.navButtonText}>{navButtonLabel(seg, units)}</Text>
                       {seg.isNext ? <Text style={styles.navNextChip}>NEXT</Text> : null}
                     </Pressable>
                   ))}
