@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { auth } from '@/server/auth';
 import { isAdmin } from '@/server/auth/guards';
-import { listAllUsers, type UserSort } from '@/server/repos/admin';
+import { listAllUsers, USER_SORTS, type UserSort } from '@/server/repos/admin';
+import { fmtUsd } from '../tiles';
 import AppNavbar from '@/components/AppNavbar';
 import styles from '../admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
@@ -64,11 +65,20 @@ interface PageProps {
   };
 }
 
-const VALID_SORTS: UserSort[] = ['joined_desc', 'joined_asc', 'name_asc', 'name_desc'];
-
 function parseSort(s: string | undefined): UserSort {
-  return VALID_SORTS.includes(s as UserSort) ? (s as UserSort) : 'joined_desc';
+  return USER_SORTS.find((v) => v === s) ?? 'joined_desc';
 }
+
+/**
+ * The three filters the dashboard opens this page with. Each narrows the list
+ * to users who have any (spend, activity, failures) and ranks them by it.
+ */
+const FILTERS: Array<{ sort: UserSort; label: string }> = [
+  { sort: 'joined_desc', label: 'Newest' },
+  { sort: 'spend_desc', label: 'Top spend' },
+  { sort: 'active_desc', label: 'Most recent use' },
+  { sort: 'errors_desc', label: 'Errors' },
+];
 
 export default async function AdminUsersPage({ searchParams }: PageProps) {
   // The web app is off for everyone but the admin (iOS-first, 2026-08-28).
@@ -169,6 +179,25 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           </h1>
         </header>
 
+        <nav className={styles.pills} aria-label="Filter" data-testid="user-filters">
+          {FILTERS.map((f) => (
+            <Link
+              key={f.sort}
+              href={url({ sort: f.sort, page: 1 })}
+              className={f.sort === sort ? styles.pillActive : styles.pill}
+              aria-current={f.sort === sort ? 'page' : undefined}
+            >
+              {f.label}
+            </Link>
+          ))}
+        </nav>
+        {sort === 'spend_desc' && (
+          <p className={styles.subtle}>
+            Spend is our list-price estimate from <code>usage_events</code> (Anthropic only) — right for ranking, low against the
+            real bill.
+          </p>
+        )}
+
         {/* Search bar — plain GET form, no JS. */}
         <form
           method="GET"
@@ -232,7 +261,15 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
         <section style={card}>
           {result.rows.length === 0 ? (
             <div style={{ fontSize: 13, color: 'var(--tp-subtle)', padding: '8px 4px' }}>
-              {search ? `No users match "${search}".` : 'No users yet.'}
+              {search
+                ? `No users match "${search}".`
+                : sort === 'spend_desc'
+                  ? 'Nobody has spent anything yet.'
+                  : sort === 'errors_desc'
+                    ? 'No user has a failed call.'
+                    : sort === 'active_desc'
+                      ? 'No user activity recorded yet.'
+                      : 'No users yet.'}
             </div>
           ) : (
             <div className={styles.tableScroll}>
@@ -242,6 +279,10 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                     <th style={thStyle}>{sortHeader('User', 'name_asc', 'name_desc')}</th>
                     <th style={thStyle}>Email</th>
                     <th style={thStyle}>{sortHeader('Joined', 'joined_asc', 'joined_desc')}</th>
+                    <th style={thStyle}>Last active</th>
+                    <th style={{ ...thStyle, textAlign: 'right' }}>Trips</th>
+                    <th style={{ ...thStyle, textAlign: 'right' }}>Spend (est.)</th>
+                    <th style={{ ...thStyle, textAlign: 'right' }}>Errors</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -275,6 +316,22 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                         >
                           {fmtRel(u.createdAt)}
                         </Link>
+                      </td>
+                      <td style={{ ...tdStyle, color: 'var(--tp-muted)' }}>
+                        {u.lastActiveAt ? fmtRel(u.lastActiveAt) : '—'}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.tripCount}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {u.spendMicrocents > 0 ? fmtUsd(u.spendMicrocents / 1e8) : '—'}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {u.errorCount > 0 ? (
+                          <Link href={`/admin/errors?userId=${u.id}`} className={styles.seeAllLink}>
+                            {u.errorCount}
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   ))}

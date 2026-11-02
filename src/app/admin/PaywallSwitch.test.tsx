@@ -123,13 +123,17 @@ describe('PaywallSwitch', () => {
 // test: mutation-checked on 2026-09-22 by swapping the element below for a
 // plain `<div>`, 9/9 green. `page.tsx` is an async server component that reads
 // the database, too heavy to render here; its source is the thing to pin.
-describe('/admin header', () => {
+// Since 2026-11-02 the switch lives on its own screen, /admin/paywall (the
+// homepage is tiles only); the pin moved with it. `adminPages.test.tsx` also
+// renders that page and checks the switch receives the live state.
+describe('/admin/paywall', () => {
   it('renders the pressable switch with the live state, not an inert pill', () => {
-    const src = readFileSync(join(__dirname, 'page.tsx'), 'utf8')
+    const src = readFileSync(join(__dirname, 'paywall', 'page.tsx'), 'utf8')
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    expect(src).toMatch(/^import PaywallSwitch from '\.\/PaywallSwitch';$/m);
-    expect(src).toMatch(/<PaywallSwitch\s+on=\{paywallOn\}\s*\/>/);
+    expect(src).toMatch(/^import PaywallSwitch from '\.\.\/PaywallSwitch';$/m);
+    expect(src).toMatch(/const on = await paywallEnabled\(\);/);
+    expect(src).toMatch(/<PaywallSwitch\s+on=\{on\}\s*\/>/);
   });
 });

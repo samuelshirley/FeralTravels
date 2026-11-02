@@ -5,6 +5,8 @@ import { isAdmin } from '@/server/auth/guards';
 import { listErrors, listErrorProviders } from '@/server/repos/admin';
 import AppNavbar from '@/components/AppNavbar';
 import AdminErrorLog from '../AdminErrorLog';
+import AdminTestErrorButton from '../AdminTestErrorButton';
+import { isHttpStatusClass, type HttpStatusClass } from '@/lib/httpStatusClass';
 import styles from '../admin.module.css';
 import { requireWebAccess } from '@/server/auth/webAccess';
 
@@ -39,8 +41,17 @@ interface PageProps {
     /** ISO date or N-day shorthand: '24h' | '7d' | '30d' | '' */
     since?: string;
     userId?: string;
+    /** HTTP status class read from the message: '4xx' | '5xx' | 'none'. */
+    status?: string;
   };
 }
+
+const STATUS_PILLS: Array<{ value: HttpStatusClass | ''; label: string }> = [
+  { value: '', label: 'All' },
+  { value: '5xx', label: '5xx — provider failed' },
+  { value: '4xx', label: '4xx — request refused' },
+  { value: 'none', label: 'No HTTP status' },
+];
 
 function parseSince(s: string | undefined): Date | null {
   if (!s) return null;
@@ -69,6 +80,7 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
   const sinceParam = searchParams.since ?? '';
   const since = parseSince(sinceParam);
   const userIdFilter = searchParams.userId?.trim() || null;
+  const statusClass: HttpStatusClass | null = isHttpStatusClass(searchParams.status) ? searchParams.status : null;
 
   const offset = (page - 1) * PAGE_SIZE;
 
@@ -80,6 +92,7 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
       search: search || null,
       since,
       userId: userIdFilter,
+      statusClass,
     }),
     listErrorProviders(),
   ]);
@@ -94,6 +107,7 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
     provider: string[];
     since: string;
     userId: string | null;
+    status: HttpStatusClass | '';
   }>): string {
     const params = new URLSearchParams();
     const nextPage = overrides.page ?? page;
@@ -101,11 +115,13 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
     const nextProviders = overrides.provider ?? providers;
     const nextSince = overrides.since ?? sinceParam;
     const nextUserId = overrides.userId !== undefined ? overrides.userId : userIdFilter;
+    const nextStatus = overrides.status !== undefined ? overrides.status : (statusClass ?? '');
     if (nextPage > 1) params.set('page', String(nextPage));
     if (nextQ) params.set('q', nextQ);
     if (nextProviders.length > 0) params.set('provider', nextProviders.join(','));
     if (nextSince) params.set('since', nextSince);
     if (nextUserId) params.set('userId', nextUserId);
+    if (nextStatus) params.set('status', nextStatus);
     const qs = params.toString();
     return qs ? `/admin/errors?${qs}` : '/admin/errors';
   }
@@ -169,6 +185,22 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
             JS errors or HTTP 5xx from our own routes.
           </p>
         </header>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <nav className={styles.pills} aria-label="HTTP status" data-testid="error-status-filter">
+            {STATUS_PILLS.map((p) => (
+              <Link
+                key={p.value || 'all'}
+                href={url({ status: p.value, page: 1 })}
+                className={(statusClass ?? '') === p.value ? styles.pillActive : styles.pill}
+                aria-current={(statusClass ?? '') === p.value ? 'page' : undefined}
+              >
+                {p.label}
+              </Link>
+            ))}
+          </nav>
+          <AdminTestErrorButton />
+        </div>
 
         {/* Filter form */}
         <form
@@ -250,6 +282,7 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
           {userIdFilter && (
             <input type="hidden" name="userId" value={userIdFilter} />
           )}
+          {statusClass && <input type="hidden" name="status" value={statusClass} />}
           <button
             type="submit"
             style={{
@@ -266,7 +299,7 @@ export default async function AdminErrorsPage({ searchParams }: PageProps) {
           >
             Apply
           </button>
-          {(search || providers.length > 0 || sinceParam || userIdFilter) && (
+          {(search || providers.length > 0 || sinceParam || userIdFilter || statusClass) && (
             <Link
               href="/admin/errors"
               style={{

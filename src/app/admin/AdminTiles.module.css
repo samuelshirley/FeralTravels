@@ -1,0 +1,105 @@
+/*
+ * The /admin homepage tiles. EVERY tile is exactly TILE_W × TILE_H (Sam,
+ * 2026-11-02): fixed grid tracks, fixed box, and text that ellipsizes instead
+ * of growing the tile. The full text is on the tile's `title` for hover.
+ *
+ * `adminTilesGuard.test.ts` reads this file: `.tile` must declare a fixed px
+ * width AND height that match the grid's track and row size, nothing may
+ * override them (no min-/max- sizes, no media query touching .tile or the
+ * grid tracks), and the component may not pass a `style` to a tile.
+ */
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sectionTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--tp-subtle);
+  margin: 0 0 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 172px);
+  grid-auto-rows: 112px;
+  gap: 12px;
+}
+
+.tile {
+  width: 172px;
+  height: 112px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 10px;
+  box-shadow: var(--tp-shadow-sm);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.tile:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--tp-shadow-md);
+}
+.tile:focus-visible {
+  outline: 2px solid var(--tp-primary);
+  outline-offset: 2px;
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--tp-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.value {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--tp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub {
+  margin-top: auto;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--tp-subtle);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+/* Tone colours the VALUE only — never the box, which stays one size and shape. */
+.tone_default .value { color: var(--tp-text); }
+.tone_good .value { color: var(--tp-success); }
+.tone_warn .value { color: #b26a00; }
+.tone_danger { border-color: #b3261e; }
+.tone_danger .value { color: #b3261e; }
+.tone_muted .value { color: var(--tp-muted); }
+
+.external {
+  margin-left: 4px;
+  color: var(--tp-primary);
+}

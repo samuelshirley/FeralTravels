@@ -285,15 +285,17 @@ describe('the compare section', () => {
   });
 });
 
-describe('/admin renders it', () => {
+// Since 2026-11-02 the switch lives on its own screen, /admin/classifier (the
+// homepage is tiles only); the pin moved with it.
+describe('/admin/classifier renders it', () => {
   it('with the live state, not a static pill', () => {
-    const src = readFileSync(join(__dirname, 'page.tsx'), 'utf8')
+    const src = readFileSync(join(__dirname, 'classifier', 'page.tsx'), 'utf8')
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    expect(src).toMatch(/^import JevSwitch from '\.\/JevSwitch';$/m);
-    expect(src).toMatch(/<JevSwitch\s+mode=\{jevMode\}/);
-    expect(src).toMatch(/compare=\{jevCompare\}/);
+    expect(src).toMatch(/^import JevSwitch from '\.\.\/JevSwitch';$/m);
+    expect(src).toMatch(/<JevSwitch\s+mode=\{mode\}/);
+    expect(src).toMatch(/compare=\{compare\}/);
     expect(src).toMatch(/getJevCompareStats\(7\)/);
   });
 });

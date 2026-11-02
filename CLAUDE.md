@@ -115,7 +115,9 @@ src/
     page.tsx          # PUBLIC landing (/), no auth; signin/ = the old root redirect
     api/              # REST endpoints (see API Routes)
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
-    admin/            # users/ vehicles/ chats/ errors/ announcements/ deleted/
+    admin/            # tiles ONLY (tiles.ts = the map, adminTilesGuard); each tile
+                      # opens a screen: signups/ users/ trips/ chats/ cost/ errors/
+                      # penny/ classifier/ paywall/ promo/ announcements/ test-users/
     login/  settings/  vehicle-setup/
     (legal)/          # PUBLIC — /privacy /terms /support. NO auth() in here.
     error.tsx         # The app's ONLY error boundary; branches on error.digest
@@ -133,6 +135,8 @@ src/
     repos/            # Data access layer (see Repos)
     payments/         # BOUNDED MODULE — index.ts is the only public surface
     jev/              # BOUNDED MODULE — Jev tier classifier; docs/design/jev.md
+    providerSpend/    # /admin money FROM THE PROVIDERS (Anthropic cost_report, Google
+                      # billing export); unset/failed says so, never our estimate
     auth/             # guards.ts admin.ts otp.ts test-endpoints.ts
                       # sessionStore.ts otp-email.ts magic-email.ts
   types/trip.ts       # Shared TypeScript types
@@ -220,7 +224,7 @@ backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
 capture-nominatim-fixtures.mjs check-env.sh
 check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
-extract-canonical-trip.ts generate-apple-client-secret.ts
+extract-canonical-trip.ts generate-apple-client-secret.ts google-billing-setup.sh
 iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
 lifetime-spend.ts
