@@ -134,6 +134,7 @@ export {
   redeemPromoCode,
   listPromoCodes,
   countOutstandingPromoCodes,
+  getPromoCodeStats,
   /**
    * The sign-in auto-claim. On this surface rather than imported directly for
    * the same reason redeem is: it is a way of BECOMING entitled, and the module

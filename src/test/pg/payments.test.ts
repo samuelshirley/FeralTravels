@@ -21,6 +21,7 @@ import {
   BREAKERS,
   claimPromoOnSignIn,
   createPromoCode,
+  getPromoCodeStats,
   getAccountVerdict,
   getSubscriptionRow,
   hasEntitlement,
@@ -200,6 +201,21 @@ describe('subscriptions via the RevenueCat webhook', () => {
 });
 
 describe('promo_codes', () => {
+  it('getPromoCodeStats counts issued, redeemed and still-claimable codes', async () => {
+    const now = new Date('2026-03-01T12:00:00Z');
+    const user = await seedUser('used@pg.test');
+    const used = await createPromoCode({ email: 'used@pg.test', createdBy: 'a@pg.test', grantMonths: 6 });
+    await createPromoCode({ email: 'open@pg.test', createdBy: 'a@pg.test', grantMonths: 12 });
+    await createPromoCode({
+      email: 'stale@pg.test',
+      createdBy: 'a@pg.test',
+      grantMonths: 6,
+      expiresAt: new Date('2026-02-01T00:00:00Z'),
+    });
+    await redeemPromoCode({ userId: user.id, email: 'used@pg.test', rawCode: used.code, now });
+    expect(await getPromoCodeStats(now)).toEqual({ issued: 3, redeemed: 1, open: 1 });
+  });
+
   it('a code is minted, redeemed once into a promo subscription, and audited', async () => {
     const user = await seedUser('friend@pg.test');
     const expiresAt = new Date('2027-01-01T00:00:00-05:00');

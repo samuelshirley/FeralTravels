@@ -301,6 +301,22 @@ export async function countOutstandingPromoCodes(): Promise<number> {
   return row?.n ?? 0;
 }
 
+/**
+ * Issued / redeemed / still-open counts, for the admin tile. "Open" means
+ * unredeemed and unexpired — a code that can still be claimed; expired ones are
+ * neither redeemed nor open, so the three need not sum.
+ */
+export async function getPromoCodeStats(now = new Date()) {
+  const [row] = await db
+    .select({
+      issued: sql<number>`count(*)::int`.mapWith(Number),
+      redeemed: sql<number>`count(*) FILTER (WHERE ${promoCodes.redeemedAt} IS NOT NULL)::int`.mapWith(Number),
+      open: sql<number>`count(*) FILTER (WHERE ${promoCodes.redeemedAt} IS NULL AND (${promoCodes.expiresAt} IS NULL OR ${promoCodes.expiresAt} > ${now.toISOString()}))::int`.mapWith(Number),
+    })
+    .from(promoCodes);
+  return { issued: row?.issued ?? 0, redeemed: row?.redeemed ?? 0, open: row?.open ?? 0 };
+}
+
 /** Postgres unique-violation SQLSTATE. Same check as `repos/pennyTurns.ts`. */
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === '23505';

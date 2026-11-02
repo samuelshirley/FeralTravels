@@ -2,6 +2,7 @@ import 'server-only';
 import { sql, desc, gte, eq, and, or, ilike, asc, inArray } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { INTERNAL_EMAIL_PATTERNS } from '@/lib/internalAccounts';
+import { statusClassPattern, type HttpStatusClass } from '@/lib/httpStatusClass';
 import {
   users,
   trips,
@@ -33,6 +34,41 @@ const isInternalUser = or(
 )!;
 const isRealUser = sql`NOT (${isInternalUser})`;
 
+const toDateOrNull = (v: unknown): Date | null =>
+  v == null ? null : v instanceof Date ? v : new Date(String(v));
+
+/**
+ * A user's last sign of life: the newest of their usage row (every Penny turn
+ * and every paid Google call writes one), their trip edits, and the web
+ * viewport heartbeat. There is no `last_seen` column; this reads the rows the
+ * app already writes. Correlated on the OUTER `users` row, so it only works in
+ * a query whose FROM is `users`. GREATEST ignores NULLs, so a user with no
+ * activity at all is NULL, not the epoch.
+ */
+// Qualified by hand: drizzle renders `${users.id}` as a bare "id", which
+// inside these subqueries binds to the INNER table's uuid id (measured:
+// `operator does not exist: text = uuid` on the first PGlite run).
+const OUTER_USER_ID = sql.raw('"users"."id"');
+const lastActiveAtSql = sql`GREATEST(
+  (SELECT MAX(ue.created_at) FROM usage_events ue WHERE ue.user_id = ${OUTER_USER_ID}),
+  (SELECT MAX(t.updated_at) FROM trips t WHERE t.user_id = ${OUTER_USER_ID}),
+  (SELECT MAX(v.updated_at) FROM user_viewport_time v WHERE v.user_id = ${OUTER_USER_ID})
+)`;
+const lastActiveAt = sql<Date | null>`${lastActiveAtSql}`.mapWith(toDateOrNull);
+const tripCountSql = sql<number>`(SELECT COUNT(*)::int FROM trips t WHERE t.user_id = ${OUTER_USER_ID} AND t.is_template = false)`.mapWith(Number);
+/** Anthropic list-price estimate, same accounting as the old Top spenders table. */
+const spendMicrocentsSql = sql<number>`(SELECT COALESCE(SUM(ue.cost_microcents), 0)::bigint FROM usage_events ue WHERE ue.user_id = ${OUTER_USER_ID} AND ue.provider = 'anthropic')`.mapWith(Number);
+const errorCountSql = sql<number>`(SELECT COUNT(*)::int FROM usage_events ue WHERE ue.user_id = ${OUTER_USER_ID} AND ue.success = false)`.mapWith(Number);
+
+/** Error-message predicates for a status class. 5xx wins a message that has both. */
+function statusClassWhere(cls: HttpStatusClass) {
+  const is4 = sql`${usageEvents.errorMessage} ~* ${statusClassPattern('4')}`;
+  const is5 = sql`${usageEvents.errorMessage} ~* ${statusClassPattern('5')}`;
+  if (cls === '5xx') return sql`COALESCE(${is5}, false)`;
+  if (cls === '4xx') return sql`COALESCE(${is4} AND NOT ${is5}, false)`;
+  return sql`NOT COALESCE(${is4} OR ${is5}, false)`;
+}
+
 export async function getAdminOverview() {
   const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -49,6 +85,7 @@ export async function getAdminOverview() {
     [{ newUsers7d }],
     [{ totalDeletedUsers }],
     [{ internalUsers }],
+    [{ activeUsers24h, activeUsers7d }],
   ] = await Promise.all([
     db.select({ totalUsers: sql<number>`COUNT(*)::int` }).from(users).where(isRealUser),
     db
@@ -84,6 +121,14 @@ export async function getAdminOverview() {
       .select({ internalUsers: sql<number>`COUNT(*)::int` })
       .from(users)
       .where(isInternalUser),
+    // Real users with any sign of life in the window — the DAU / WAU pair.
+    db
+      .select({
+        activeUsers24h: sql<number>`COUNT(*) FILTER (WHERE ${lastActiveAtSql} >= ${since24.toISOString()})::int`.mapWith(Number),
+        activeUsers7d: sql<number>`COUNT(*) FILTER (WHERE ${lastActiveAtSql} >= ${since7d.toISOString()})::int`.mapWith(Number),
+      })
+      .from(users)
+      .where(isRealUser),
   ]);
 
   return {
@@ -98,8 +143,101 @@ export async function getAdminOverview() {
     newUsers24h,
     newUsers7d,
     totalDeletedUsers,
+    activeUsers24h,
+    activeUsers7d,
   };
 }
+
+/**
+ * The signups since `hours` ago, newest first: who joined, whether they came
+ * back, and whether they made anything. Internal accounts are left out to
+ * match the signup count on the dashboard tile, and counted so the page can
+ * say how many were hidden.
+ */
+export async function listNewSignups(hours: number, limit = 100) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const [rows, [{ hiddenInternal }]] = await Promise.all([
+    db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        createdAt: users.createdAt,
+        lastActiveAt,
+        tripCount: tripCountSql,
+      })
+      .from(users)
+      .where(and(isRealUser, gte(users.createdAt, since)))
+      .orderBy(desc(users.createdAt))
+      .limit(limit),
+    db
+      .select({ hiddenInternal: sql<number>`COUNT(*)::int` })
+      .from(users)
+      .where(and(isInternalUser, gte(users.createdAt, since))),
+  ]);
+  return { rows, hiddenInternal, since };
+}
+
+export type NewSignupRow = Awaited<ReturnType<typeof listNewSignups>>['rows'][number];
+
+/**
+ * Failed-call counts by status class over a window — the Health tile. Uses the
+ * same predicates as the /admin/errors filter, so the tile's "N 5xx" is
+ * exactly the number of rows that filter shows.
+ */
+export async function getErrorCounts(hours: number) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const [row] = await db
+    .select({
+      total: sql<number>`COUNT(*)::int`.mapWith(Number),
+      c4xx: sql<number>`COUNT(*) FILTER (WHERE ${statusClassWhere('4xx')})::int`.mapWith(Number),
+      c5xx: sql<number>`COUNT(*) FILTER (WHERE ${statusClassWhere('5xx')})::int`.mapWith(Number),
+    })
+    .from(usageEvents)
+    .where(and(eq(usageEvents.success, false), gte(usageEvents.createdAt, since)));
+  return { total: row?.total ?? 0, c4xx: row?.c4xx ?? 0, c5xx: row?.c5xx ?? 0 };
+}
+
+/** How many trips had a chat message in the window, and when the last one was. */
+export async function getChatPulse(hours: number) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const [[window], [latest]] = await Promise.all([
+    db
+      .select({
+        trips: sql<number>`COUNT(DISTINCT ${chatHistory.tripId})::int`.mapWith(Number),
+        messages: sql<number>`COUNT(*)::int`.mapWith(Number),
+      })
+      .from(chatHistory)
+      .where(gte(chatHistory.createdAt, since)),
+    db
+      .select({ at: sql<Date | null>`MAX(${chatHistory.createdAt})`.mapWith(toDateOrNull) })
+      .from(chatHistory),
+  ]);
+  return { trips: window?.trips ?? 0, messages: window?.messages ?? 0, lastAt: latest?.at ?? null };
+}
+
+/** Non-template trips, most recently touched first, with owner and leg count. */
+export async function listAdminTrips(limit = 100) {
+  return db
+    .select({
+      id: trips.id,
+      name: trips.name,
+      userId: trips.userId,
+      userEmail: users.email,
+      userName: users.name,
+      legCount: sql<number>`(SELECT COUNT(*)::int FROM legs l WHERE l.trip_id = "trips"."id")`.mapWith(Number),
+      startDateParsed: trips.startDateParsed,
+      createdAt: trips.createdAt,
+      updatedAt: trips.updatedAt,
+    })
+    .from(trips)
+    .leftJoin(users, eq(users.id, trips.userId))
+    .where(eq(trips.isTemplate, false))
+    .orderBy(desc(trips.updatedAt))
+    .limit(limit);
+}
+
+export type AdminTripRow = Awaited<ReturnType<typeof listAdminTrips>>[number];
 
 const ADMIN_VEHICLES_LIST_LIMIT = 500;
 
@@ -146,34 +284,27 @@ export async function getAdminVehicleById(vehicleId: string) {
   return rows[0] ?? null;
 }
 
-export async function getRecentUsers(limit = 25) {
-  return db
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      image: users.image,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .orderBy(desc(users.createdAt))
-    .limit(limit);
-}
-
 export async function getRecentChatActivity(limit = 30) {
   return db
     .select({
       id: chatHistory.id,
       tripId: chatHistory.tripId,
+      tripName: trips.name,
+      userId: trips.userId,
+      userEmail: users.email,
       role: chatHistory.role,
       content: chatHistory.content,
       hasChanges: sql<boolean>`${chatHistory.changesMade} IS NOT NULL`,
       createdAt: chatHistory.createdAt,
     })
     .from(chatHistory)
+    .leftJoin(trips, eq(trips.id, chatHistory.tripId))
+    .leftJoin(users, eq(users.id, trips.userId))
     .orderBy(desc(chatHistory.createdAt))
     .limit(limit);
 }
+
+export type RecentChatRow = Awaited<ReturnType<typeof getRecentChatActivity>>[number];
 
 /**
  * Checks whether the Anthropic API has been failing recently.
@@ -209,45 +340,6 @@ export async function getAnthropicHealthAlert(): Promise<{
     lastError: rows[0]?.errorMessage ?? null,
     lastFailedAt: rows[0]?.createdAt ?? null,
   };
-}
-
-export async function getRecentErrors(limit = 50) {
-  return db
-    .select({
-      id: usageEvents.id,
-      createdAt: usageEvents.createdAt,
-      provider: usageEvents.provider,
-      errorMessage: usageEvents.errorMessage,
-      tripId: usageEvents.tripId,
-      userId: usageEvents.userId,
-      userEmail: users.email,
-      userName: users.name,
-    })
-    .from(usageEvents)
-    .leftJoin(users, eq(users.id, usageEvents.userId))
-    .where(eq(usageEvents.success, false))
-    .orderBy(desc(usageEvents.createdAt))
-    .limit(limit);
-}
-
-export async function getTopUsageUsers(hours: number, limit = 25) {
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-  return db
-    .select({
-      userId: usageEvents.userId,
-      email: users.email,
-      name: users.name,
-      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
-      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
-      inputTokens: sql<number>`COALESCE(SUM(${usageEvents.inputTokens}), 0)::int`,
-      outputTokens: sql<number>`COALESCE(SUM(${usageEvents.outputTokens}), 0)::int`,
-    })
-    .from(usageEvents)
-    .leftJoin(users, eq(users.id, usageEvents.userId))
-    .where(gte(usageEvents.createdAt, since))
-    .groupBy(usageEvents.userId, users.email, users.name)
-    .orderBy(desc(sql`SUM(${usageEvents.costMicrocents})`))
-    .limit(limit);
 }
 
 /**
@@ -302,25 +394,6 @@ export async function getTopUsersAllTime(limit = 25) {
 }
 
 /**
- * Aggregate spend by provider over a time window. Used by the dashboard
- * to surface Anthropic vs Google estimates side-by-side, with a note
- * that Google figures are estimates (free-tier credits typically zero
- * the actual bill).
- */
-export async function getProviderTotals(hours: number) {
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-  return db
-    .select({
-      provider: usageEvents.provider,
-      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
-      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
-    })
-    .from(usageEvents)
-    .where(gte(usageEvents.createdAt, since))
-    .groupBy(usageEvents.provider);
-}
-
-/**
  * All-time Anthropic spend total. Single number for the headline stat
  * card so the dashboard isn't only showing 24h/7d windows.
  */
@@ -340,13 +413,103 @@ export async function getAllTimeAnthropicSpend(): Promise<{
   return rows[0] ?? { microcents: 0, requests: 0, firstSeen: null };
 }
 
+export async function getTopUsageUsers(hours: number, limit = 25) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  return db
+    .select({
+      userId: usageEvents.userId,
+      email: users.email,
+      name: users.name,
+      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
+      inputTokens: sql<number>`COALESCE(SUM(${usageEvents.inputTokens}), 0)::int`,
+      outputTokens: sql<number>`COALESCE(SUM(${usageEvents.outputTokens}), 0)::int`,
+    })
+    .from(usageEvents)
+    .leftJoin(users, eq(users.id, usageEvents.userId))
+    .where(gte(usageEvents.createdAt, since))
+    .groupBy(usageEvents.userId, users.email, users.name)
+    .orderBy(desc(sql`SUM(${usageEvents.costMicrocents})`))
+    .limit(limit);
+}
+
+export async function getRecentUsers(limit = 25) {
+  return db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      image: users.image,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt))
+    .limit(limit);
+}
+
+export async function getRecentErrors(limit = 50) {
+  return db
+    .select({
+      id: usageEvents.id,
+      createdAt: usageEvents.createdAt,
+      provider: usageEvents.provider,
+      errorMessage: usageEvents.errorMessage,
+      tripId: usageEvents.tripId,
+      userId: usageEvents.userId,
+      userEmail: users.email,
+      userName: users.name,
+    })
+    .from(usageEvents)
+    .leftJoin(users, eq(users.id, usageEvents.userId))
+    .where(eq(usageEvents.success, false))
+    .orderBy(desc(usageEvents.createdAt))
+    .limit(limit);
+}
+
+/**
+ * Aggregate spend by provider over a time window. Used by the dashboard
+ * to surface Anthropic vs Google estimates side-by-side, with a note
+ * that Google figures are estimates (free-tier credits typically zero
+ * the actual bill).
+ */
+export async function getProviderTotals(hours: number) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  return db
+    .select({
+      provider: usageEvents.provider,
+      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)::int`,
+      microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)::bigint`,
+    })
+    .from(usageEvents)
+    .where(gte(usageEvents.createdAt, since))
+    .groupBy(usageEvents.provider);
+}
+
 // ============================================================================
 // Drill-in helpers — used by /admin/users, /admin/users/[id], /admin/errors,
 // /admin/chats/[tripId]. All return raw rows; Date conversion + serialization
 // happens in the page component.
 // ============================================================================
 
-export type UserSort = 'joined_desc' | 'joined_asc' | 'name_asc' | 'name_desc';
+export type UserSort =
+  | 'joined_desc'
+  | 'joined_asc'
+  | 'name_asc'
+  | 'name_desc'
+  /** The three filters: each narrows to users who have any, then ranks them. */
+  | 'spend_desc'
+  | 'active_desc'
+  | 'errors_desc';
+
+export const USER_SORTS: readonly UserSort[] = [
+  'joined_desc',
+  'joined_asc',
+  'name_asc',
+  'name_desc',
+  'spend_desc',
+  'active_desc',
+  'errors_desc',
+] as const;
 
 export async function listAllUsers(opts: {
   offset?: number;
@@ -359,18 +522,34 @@ export async function listAllUsers(opts: {
   const search = opts.search?.trim() || null;
   const sort: UserSort = opts.sort ?? 'joined_desc';
 
-  const where = search
+  const searchWhere = search
     ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`))
     : undefined;
+  const filterWhere =
+    sort === 'spend_desc'
+      ? sql`${spendMicrocentsSql} > 0`
+      : sort === 'active_desc'
+        ? sql`${lastActiveAtSql} IS NOT NULL`
+        : sort === 'errors_desc'
+          ? sql`${errorCountSql} > 0`
+          : undefined;
+  const where = and(searchWhere, filterWhere);
 
+  // Every ranking ends on created_at so ties page deterministically.
   const orderBy =
     sort === 'joined_asc'
-      ? asc(users.createdAt)
+      ? [asc(users.createdAt)]
       : sort === 'name_asc'
-        ? asc(users.name)
+        ? [asc(users.name), desc(users.createdAt)]
         : sort === 'name_desc'
-          ? desc(users.name)
-          : desc(users.createdAt);
+          ? [desc(users.name), desc(users.createdAt)]
+          : sort === 'spend_desc'
+            ? [desc(spendMicrocentsSql), desc(users.createdAt)]
+            : sort === 'active_desc'
+              ? [desc(lastActiveAtSql), desc(users.createdAt)]
+              : sort === 'errors_desc'
+                ? [desc(errorCountSql), desc(users.createdAt)]
+                : [desc(users.createdAt)];
 
   const [rows, [{ total }]] = await Promise.all([
     db
@@ -380,10 +559,14 @@ export async function listAllUsers(opts: {
         name: users.name,
         image: users.image,
         createdAt: users.createdAt,
+        lastActiveAt,
+        tripCount: tripCountSql,
+        spendMicrocents: spendMicrocentsSql,
+        errorCount: errorCountSql,
       })
       .from(users)
       .where(where)
-      .orderBy(orderBy)
+      .orderBy(...orderBy)
       .offset(offset)
       .limit(limit),
     db
@@ -553,6 +736,8 @@ export interface ListErrorsParams {
   search?: string | null;
   /** Lower bound on createdAt. */
   since?: Date | null;
+  /** HTTP status class read from the message — see `lib/httpStatusClass.ts`. */
+  statusClass?: HttpStatusClass | null;
 }
 
 export async function listErrors(opts: ListErrorsParams) {
@@ -571,6 +756,9 @@ export async function listErrors(opts: ListErrorsParams) {
   }
   if (opts.since) {
     conditions.push(gte(usageEvents.createdAt, opts.since));
+  }
+  if (opts.statusClass) {
+    conditions.push(statusClassWhere(opts.statusClass));
   }
   const where = and(...conditions);
 
