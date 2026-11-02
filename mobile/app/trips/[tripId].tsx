@@ -17,11 +17,12 @@ import TripHeader from "@/components/TripHeader";
 import { Centered, Spinner } from "@/components/ui";
 import PlanRequiredOverlay from "@/components/PlanRequiredOverlay";
 import { getMe, isAuthError, reportPosition, tripApi, type Me } from "@/lib/api";
-import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
+import { refreshEntitlement, rememberEntitlement, useEntitlement } from "@/lib/entitlement";
 import { DeviceLocationProvider, useDeviceLocation } from "@/lib/location";
 import { useKeyboardOpen } from "@/lib/useKeyboardOpen";
 import { usePennyRunning } from "@/shared/lib/pennyRunStore";
 import { rememberLastOpenTrip } from "@/shared/lib/lastOpenTrip";
+import { cacheKeys, revalidate, updateCached, useCached } from "@/shared/lib/resourceCache";
 import { theme } from "@/lib/theme";
 import type { LegWithDetails, POI, Trip } from "@/shared/types/trip";
 import { font } from "@/lib/typography";
@@ -63,23 +64,40 @@ export default function TripWorkspaceScreen() {
   // re-fire its effect — that was an infinite /api/trip refetch loop on web.
   const api = useMemo(() => tripApi(tripId), [tripId]);
 
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [legs, setLegs] = useState<LegWithDetails[]>([]);
-  const [pois, setPois] = useState<POI[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [meId, setMeId] = useState<string | null>(null);
+  /*
+   * The trip comes from the resource cache, NOT from screen state. Screen state
+   * starts empty on every mount, so re-opening a trip was "Loading trip…" for a
+   * full round trip every time (screen recording, 2026-10-22). Now a trip this
+   * phone has seen renders on the first frame, and the request below still
+   * goes out on every mount and refreshes it in place. "Loading trip" is only
+   * for a trip this phone has never had. shared/lib/resourceCache.ts.
+   */
+  const cachedTrip = useCached<Trip & { legs?: LegWithDetails[] }>(cacheKeys.trip(tripId));
+  const cachedPois = useCached<POI[]>(cacheKeys.pois(tripId));
+  const trip = cachedTrip ?? null;
+  const legs = useMemo<LegWithDetails[]>(
+    () => (Array.isArray(cachedTrip?.legs) ? cachedTrip.legs : []),
+    [cachedTrip]
+  );
+  const pois = cachedPois ?? EMPTY_POIS;
+  const [settled, setSettled] = useState(false);
+  const loading = !cachedTrip && !settled;
+  const cachedMe = useCached<Me & { id?: string | null }>(cacheKeys.me);
+  const meId = cachedMe?.id ?? null;
 
   const loadTrip = useCallback(async () => {
     try {
-      const [payload, poisData] = await Promise.all([api.getTrip(), api.listPois()]);
-      // The trip row IS the payload; legs ride along inside it. Guard on
-      // "legs" the way the web does — a malformed body must not blank a trip
-      // the user is already looking at.
-      if (payload && typeof payload === "object" && "legs" in payload) {
-        setTrip(payload);
-        setLegs(Array.isArray(payload.legs) ? payload.legs : []);
-      }
-      if (Array.isArray(poisData)) setPois(poisData);
+      await Promise.all([
+        // The trip row IS the payload; legs ride along inside it. Guard on
+        // "legs" the way the web does — a malformed body must not blank a trip
+        // the user is already looking at (`accept` keeps the held copy).
+        revalidate(
+          cacheKeys.trip(tripId),
+          () => api.getTrip(),
+          (payload) => !!payload && typeof payload === "object" && "legs" in payload
+        ),
+        revalidate(cacheKeys.pois(tripId), () => api.listPois(), (data) => Array.isArray(data)),
+      ]);
     } catch (err) {
       if (isAuthError(err)) {
         router.replace("/sign-in");
@@ -87,9 +105,9 @@ export default function TripWorkspaceScreen() {
       }
       console.error("Failed to load trip:", err);
     } finally {
-      setLoading(false);
+      setSettled(true);
     }
-  }, [api, router]);
+  }, [api, router, tripId]);
 
   useEffect(() => {
     void loadTrip();
@@ -110,18 +128,26 @@ export default function TripWorkspaceScreen() {
   // answers we fall back to `is_template`, which is the only way a non-owner
   // can reach this screen at all (the web 404s every other stranger) — so the
   // fallback is already correct for both cases that matter.
+  /*
+   * Carry a rename (Penny's, or the user's) into the cached trips list, so going
+   * back shows the new name on the first frame rather than the old one for a
+   * round trip. Only the name: the list's rows are a different shape from this
+   * payload, and the list's own refetch on focus settles everything else.
+   */
+  const tripName = cachedTrip?.name;
   useEffect(() => {
-    let cancelled = false;
-    getMe()
-      .then((me) => {
-        if (!cancelled) setMeId((me as Me & { id?: string | null }).id ?? null);
-      })
-      .catch((err) => {
-        if (isAuthError(err)) router.replace("/sign-in");
-      });
-    return () => {
-      cancelled = true;
-    };
+    if (!tripName) return;
+    updateCached<Trip[]>(cacheKeys.trips, (list) =>
+      list?.some((t) => t.id === tripId && t.name !== tripName)
+        ? list.map((t) => (t.id === tripId ? { ...t, name: tripName } : t))
+        : list
+    );
+  }, [tripId, tripName]);
+
+  useEffect(() => {
+    revalidate(cacheKeys.me, getMe).catch((err) => {
+      if (isAuthError(err)) router.replace("/sign-in");
+    });
   }, [router]);
 
   // Fuel is sourced lazily per day (LegCard's day-open effect), so the only
@@ -242,17 +268,10 @@ function Workspace({
    * and answered. It is a cached GET against a route that makes no Anthropic
    * call, and the server is the authority either way.
    */
-  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  const entitlement = useEntitlement();
   useEffect(() => {
     if (readonly) return;
-    let cancelled = false;
-    void (async () => {
-      const payload = await fetchEntitlement();
-      if (!cancelled && payload) setEntitlement(payload);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void refreshEntitlement();
   }, [readonly]);
   // Drives "open this in the list view": set when the user taps a leg or stop
   // marker on the map. The nonce makes repeat taps on the same target re-fire
@@ -270,6 +289,20 @@ function Workspace({
   tabRef.current = tab;
   const focusTargetRef = useRef(focusTarget);
   focusTargetRef.current = focusTarget;
+
+  /*
+   * A tab asked for AFTER mount. BottomNav on Settings pops back to this very
+   * screen (`router.dismissTo`) with `tab` in the params, so the lazy
+   * initializer above, which only runs once, never sees it. Apply it here,
+   * then clear it: otherwise a second "MAP" from Settings carries the same
+   * value as the first, the dependency does not change, and the switch is lost.
+   */
+  const router = useRouter();
+  useEffect(() => {
+    if (!requestedTab) return;
+    setTab(requestedTab);
+    router.setParams({ tab: undefined });
+  }, [requestedTab, router]);
 
   useEffect(() => {
     if (tab === "chat") setUnread(0);
@@ -420,7 +453,7 @@ function Workspace({
           <PlanRequiredOverlay
             entitlement={entitlement}
             onBackToPenny={() => setTab("chat")}
-            onEntitled={setEntitlement}
+            onEntitled={rememberEntitlement}
           />
         ) : null}
       </View>
@@ -468,6 +501,9 @@ function LoadingDots() {
     </View>
   );
 }
+
+/** One stable empty list, so a trip with no POIs does not re-render the map. */
+const EMPTY_POIS: POI[] = [];
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },

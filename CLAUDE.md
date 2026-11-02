@@ -268,7 +268,7 @@ reappears in `src/`.
 `penny-stop-edit.yaml`, `offer-code.yaml`, `purchase-sheet.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
 `support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml`,
 `chat-attach-photo.yaml`, `location-primer-allow.yaml`, `location-primer-deny.yaml`, `ai-consent.yaml`,
-`penny-try-again.yaml`
+`penny-try-again.yaml`, `back-is-back.yaml`
 (+ subflows `ai-consent-agree.yaml`, `ai-consent-if-asked.yaml`) — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
@@ -299,6 +299,10 @@ must be listed in exactly one (`maestroFlowParams.test.ts`).
 - **API routes are thin:** validate with Zod, call repo, return JSON.
 - **Penny tools** each export one function matching the Anthropic tool-use spec.
 - **Units:** user preference stored in DB, propagated via `UnitsContext`.
+- **Native server data lives in the resource cache** (`src/lib/resourceCache.ts`,
+  disk via `mobile/lib/cache.ts`, wiped by `clearToken`/`setToken`), never in
+  screen `useState`; going back is `router.dismissTo`, never `push`
+  (`resourceCacheGuard`, `navigationGuard`).
 - **Schema:** single file, `src/server/db/schema.ts`; Drizzle manages migrations.
 - **Auth:** edge-safe cookie check in root `middleware.ts`; real auth via
   `auth()` in server code. Mobile sends `Authorization: Bearer <token>` resolved

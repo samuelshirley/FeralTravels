@@ -9,6 +9,7 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CrosshairSimpleIcon,
+  FlagCheckeredIcon,
   GasPumpIcon,
   InfoIcon as PhosphorInfoIcon,
   MapPinIcon,
@@ -136,6 +137,11 @@ export function FuelIcon({ color, size = 14, weight = "fill" }: IconProps) {
 /** Was `📍` on a user-added stop. */
 export function PlaceIcon({ color, size = 14, weight = "fill" }: IconProps) {
   return <MapPinIcon color={color} size={size} weight={weight} />;
+}
+
+/** The trip's final destination on the map: the finish, not another day. */
+export function FinishFlagIcon({ color, size = 22, weight = "fill" }: IconProps) {
+  return <FlagCheckeredIcon color={color} size={size} weight={weight} />;
 }
 
 /** Was `▶` on a navigate action. */

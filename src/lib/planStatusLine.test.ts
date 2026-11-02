@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planStatusLine, type PlanStatus } from './planStatusLine';
+import { existingAccessNotice, planStatusLine, type PlanStatus } from './planStatusLine';
 import type { AccountState } from '@/types/entitlement';
 
 /**
@@ -202,5 +202,51 @@ describe('planStatusLine', () => {
       expect(l.length, state).toBeGreaterThan(0);
       expect(l, state).not.toContain('undefined');
     }
+  });
+});
+
+describe('existingAccessNotice — the purchase sheet, opened by somebody who already has access', () => {
+  /**
+   * An Ambassador (promo) or comped account can open the plans — App Review
+   * must be able to, and its demo account is on a promo — but buying one starts
+   * billing on top of access they already have. The sheet says so above the
+   * plans. Apple-billed plans get nothing: switching between them is Apple's
+   * own upgrade/crossgrade, which its sheet explains.
+   */
+  const BILLING = 'A plan you buy now starts billing today.';
+
+  it('a promo names the Ambassador plan and when it ends', () => {
+    expect(existingAccessNotice(status({ source: 'promo', plan: null, currentPeriodEnd: NEXT_YEAR }), NOW)).toBe(
+      `You're on the Ambassador plan until 3 Sep 2027. ${BILLING}`
+    );
+    expect(
+      existingAccessNotice(status({ source: 'promo', plan: null, currentPeriodEnd: THIS_YEAR, state: 'cancelled_in_period' }), NOW)
+    ).toBe(`You're on the Ambassador plan until 3 Oct. ${BILLING}`);
+  });
+
+  it('a promo with no end date never prints "null"', () => {
+    expect(existingAccessNotice(status({ source: 'promo', plan: null, currentPeriodEnd: null }), NOW)).toBe(
+      `You're on the Ambassador plan. ${BILLING}`
+    );
+  });
+
+  it('comped and admin-granted accounts are told they already have access', () => {
+    expect(existingAccessNotice(status({ state: 'comped', source: null, plan: null, currentPeriodEnd: null }), NOW)).toBe(
+      `You already have access at no cost. ${BILLING}`
+    );
+    expect(existingAccessNotice(status({ source: 'admin', plan: null }), NOW)).toBe(
+      `You already have access at no cost. ${BILLING}`
+    );
+  });
+
+  it('nothing for Apple-billed plans, the free period, or any account without access', () => {
+    expect(existingAccessNotice(status({ source: 'apple_iap' }), NOW)).toBeNull();
+    // `fake` stands in for an Apple purchase in the E2E fixtures.
+    expect(existingAccessNotice(status({ source: 'fake' }), NOW)).toBeNull();
+    for (const state of ALL_STATES) {
+      if (state === 'subscribed' || state === 'subscribed_watch' || state === 'cancelled_in_period' || state === 'comped') continue;
+      expect(existingAccessNotice(status({ state, source: 'promo', plan: null }), NOW), state).toBeNull();
+    }
+    expect(existingAccessNotice(status({ state: 'trial', source: null, plan: null }), NOW)).toBeNull();
   });
 });

@@ -73,8 +73,16 @@ export default function BottomNav({
      * — a driver who has never opened a trip — the index is still the right
      * answer, and `tripTabDestination` owns that fallback.
      */
+    /*
+     * `dismissTo`, not `push`. From Settings the trip is normally still mounted
+     * right underneath, map camera and open days included; pushing built a
+     * SECOND copy of it, which started from "Loading trip" and a cold map. The
+     * pop lands on that same screen and hands it the tab in its params (the
+     * workspace switches on them); only when no workspace is in the stack does
+     * it replace this screen with one. `navigationGuard.test.ts`.
+     */
     if (!onChange) {
-      router.push(tripTabDestination(id, lastOpenTripId()));
+      router.dismissTo(tripTabDestination(id, lastOpenTripId()));
       return;
     }
     onChange(id);

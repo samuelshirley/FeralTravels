@@ -41,6 +41,7 @@ appId: ${APP_ID}
       COMPED: '0'
       CREATED_DAYS_AGO: '7'
       SUBSCRIPTION_STATUS: ''
+      SUBSCRIPTION_SOURCE: ''
 - stopApp
 - launchApp
 
@@ -83,6 +84,7 @@ appId: ${APP_ID}
       COMPED: '0'
       CREATED_DAYS_AGO: '7'
       SUBSCRIPTION_STATUS: active
+      SUBSCRIPTION_SOURCE: ''
 - stopApp
 - launchApp
 - extendedWaitUntil:

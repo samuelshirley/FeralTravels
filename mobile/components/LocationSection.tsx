@@ -35,8 +35,21 @@ import { font } from "@/lib/typography";
  */
 type PermState = "loading" | "granted" | "prompt" | "settings" | "unavailable";
 
+/**
+ * The last answer iOS gave, for this run of the app only. Seeds the switch so
+ * Settings does not draw it in "loading" on every visit; `read()` still asks
+ * on every mount and on every return to the foreground, so a change made in
+ * the Settings app is picked up exactly as before. Not persisted: a permission
+ * is the OS's to answer, and a week-old copy of it is not worth showing.
+ */
+let lastKnown: PermState = "loading";
+
 export default function LocationSection() {
-  const [state, setState] = useState<PermState>("loading");
+  const [state, setStateLocal] = useState<PermState>(lastKnown);
+  const setState = useCallback((next: PermState) => {
+    lastKnown = next;
+    setStateLocal(next);
+  }, []);
   const [busy, setBusy] = useState(false);
 
   const read = useCallback(async () => {
@@ -50,7 +63,7 @@ export default function LocationSection() {
     } catch {
       setState("unavailable");
     }
-  }, []);
+  }, [setState]);
 
   useEffect(() => {
     void read();

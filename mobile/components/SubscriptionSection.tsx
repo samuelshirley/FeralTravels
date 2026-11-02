@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { Card } from "@/components/ui";
 import PurchaseSheet from "@/components/PurchaseSheet";
-import { fetchEntitlement, type EntitlementPayload } from "@/lib/entitlement";
+import { refreshEntitlement, rememberEntitlement, useEntitlement } from "@/lib/entitlement";
 import { usePurchaseFlow } from "@/lib/purchaseFlow";
 import { planStatusLine } from "@/shared/lib/planStatusLine";
 import { theme } from "@/lib/theme";
@@ -80,17 +80,12 @@ import { font } from "@/lib/typography";
  * to find it.
  */
 export default function SubscriptionSection() {
-  const [entitlement, setEntitlement] = useState<EntitlementPayload | null>(null);
+  // The held verdict draws this card on arrival; the refresh replaces it.
+  const entitlement = useEntitlement();
   const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    void fetchEntitlement().then((payload) => {
-      if (!cancelled) setEntitlement(payload);
-    });
-    return () => {
-      cancelled = true;
-    };
+    void refreshEntitlement();
   }, []);
 
   const flow = usePurchaseFlow({
@@ -105,7 +100,7 @@ export default function SubscriptionSection() {
       // renewal date, so the status line below reads "Monthly plan — renews …"
       // the moment the sheet closes.
       setSheetOpen(false);
-      setEntitlement(fresh);
+      rememberEntitlement(fresh);
     },
   });
 

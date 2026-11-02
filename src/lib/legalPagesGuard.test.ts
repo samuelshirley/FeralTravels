@@ -138,6 +138,7 @@ const DEPENDENCIES: Record<string, { named: string } | { local: string }> = {
   'expo-auth-session': { named: 'Google' },
   'expo-constants': { local: 'build constants' },
   'expo-crypto': { local: 'PKCE, on device' },
+  'expo-file-system': { local: 'resource cache file, on device (Paths.cache)' },
   'expo-font': { local: 'font loading' },
   'expo-image-picker': { local: 'picks a photo; sending it is Penny, named as Anthropic' },
   'expo-linking': { local: 'opens URLs' },
