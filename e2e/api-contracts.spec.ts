@@ -176,7 +176,7 @@ test.afterAll(async () => {
  * is what the second user gets on the owner's ids.
  */
 interface Case {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: () => string;
   body?: () => unknown;
   /** Anonymous status. Default 401. */
@@ -192,6 +192,21 @@ const CASES: Record<string, Case> = {
   'GET admin/announcements': { method: 'GET', path: () => '/api/admin/announcements', admin: true, stranger: [403] },
   'POST admin/announcements': { method: 'POST', path: () => '/api/admin/announcements', body: () => ({}), admin: true, stranger: [403] },
   'PATCH admin/announcements': { method: 'PATCH', path: () => '/api/admin/announcements', body: () => ({}), admin: true, stranger: [403] },
+  'GET admin/feature-requests': { method: 'GET', path: () => '/api/admin/feature-requests', admin: true, stranger: [403] },
+  'POST admin/feature-requests': { method: 'POST', path: () => '/api/admin/feature-requests', body: () => ({ title: 'x' }), admin: true, stranger: [403] },
+  'PATCH admin/feature-requests/[id]': {
+    method: 'PATCH',
+    path: () => `/api/admin/feature-requests/${RANDOM_UUID}`,
+    body: () => ({ status: 'not_doing' }),
+    admin: true,
+    stranger: [403],
+  },
+  'DELETE admin/feature-requests/[id]': {
+    method: 'DELETE',
+    path: () => `/api/admin/feature-requests/${RANDOM_UUID}`,
+    admin: true,
+    stranger: [403],
+  },
   'GET admin/jev': { method: 'GET', path: () => '/api/admin/jev', admin: true, stranger: [403] },
   'POST admin/jev': { method: 'POST', path: () => '/api/admin/jev', body: () => ({ mode: 'on' }), admin: true, stranger: [403] },
   'POST admin/jev/user': { method: 'POST', path: () => '/api/admin/jev/user', body: () => ({}), admin: true, stranger: [403] },
@@ -228,6 +243,20 @@ const CASES: Record<string, Case> = {
     path: () => '/api/announcements/dismiss',
     body: () => ({ announcementId: RANDOM_UUID }),
     malformed: { body: { announcementId: 'not-a-uuid' } },
+  },
+  // Feature requests are global (admin-written); a vote is the caller's own
+  // row, so there is no stranger case. A malformed id is a 404, the same
+  // answer as an unknown one. Behaviour: e2e/feature-requests.spec.ts.
+  'GET feature-requests': { method: 'GET', path: () => '/api/feature-requests' },
+  'PUT feature-requests/[id]/vote': {
+    method: 'PUT',
+    path: () => `/api/feature-requests/${RANDOM_UUID}/vote`,
+    malformed: { path: () => '/api/feature-requests/not-a-uuid/vote', status: 404 },
+  },
+  'DELETE feature-requests/[id]/vote': {
+    method: 'DELETE',
+    path: () => `/api/feature-requests/${RANDOM_UUID}/vote`,
+    malformed: { path: () => '/api/feature-requests/not-a-uuid/vote', status: 404 },
   },
   'GET me': { method: 'GET', path: () => '/api/me' },
   'GET me/entitlement': { method: 'GET', path: () => '/api/me/entitlement' },

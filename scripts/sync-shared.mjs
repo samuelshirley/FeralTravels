@@ -113,6 +113,10 @@ export const SHARED_FILES = [
   // resends. One decision for both panels, keyed on the server's fallback flag,
   // never on her sentence (pennyTryAgainGuard.test.ts).
   ['src/lib/pennyFallbackRetry.ts', 'mobile/shared/lib/pennyFallbackRetry.ts'],
+  // Feature requests: the status list, the "voting closed" rule and code, and
+  // the row shape. The server refuses a vote and the app hides the button by
+  // the same `votingOpen`, so the two cannot disagree about a closed request.
+  ['src/lib/featureRequests.ts', 'mobile/shared/lib/featureRequests.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

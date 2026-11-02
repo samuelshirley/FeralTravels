@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { clearToken } from "@/lib/auth";
 import { getMe, listVehicles, type Me, type Vehicle } from "@/lib/api";
 import AccountButton from "@/components/AccountButton";
+import AccountMenu from "@/components/AccountMenu";
 import { useIdentity } from "@/lib/identity";
 import SupportModal from "@/components/SupportModal";
 import { theme, shadow } from "@/lib/theme";
@@ -76,7 +76,7 @@ export default function TripHeader({
   const signedInEmail = identity.email;
 
   const go = useCallback(
-    (path: "/trips" | "/settings") => {
+    (path: "/trips" | "/settings" | "/feature-requests") => {
       setMenuOpen(false);
       router.push(path);
     },
@@ -134,70 +134,21 @@ export default function TripHeader({
         />
       </View>
 
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        {/* Tap-anywhere-to-dismiss stands in for the web's outside-mousedown handler. */}
-        {/*
-          `accessible={false}`: a Pressable is an accessibility element and iOS
-          merges its whole subtree into one node, so this backdrop published
-          the entire menu as a single label ("SIGNED IN AS, …, Trips, Settings,
-          …") and none of the items existed separately — unactivatable under
-          VoiceOver, and invisible to Maestro. Same fix, same reason, as the
-          trips-list menu in app/trips/index.tsx. Touch is unaffected.
-        */}
-        <Pressable
-          style={styles.menuBackdrop}
-          onPress={() => setMenuOpen(false)}
-          accessible={false}
-        >
-          <View style={[styles.menu, { top: insets.top + 48 }]}>
-            {signedInEmail ? (
-              <View style={styles.menuIdentity}>
-                {/* Native counterpart of the web navbar's hover card: a phone
-                    has no hover, so the address is labelled here instead. */}
-                <Text style={styles.menuIdentityLabel}>SIGNED IN AS</Text>
-                <Text style={styles.menuEmail} numberOfLines={1}>
-                  {signedInEmail}
-                </Text>
-              </View>
-            ) : null}
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => go("/trips")}
-              testID="trip-menu-trips"
-              accessibilityRole="button"
-            >
-              <Text style={styles.menuItemText}>Trips</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.menuItem, styles.menuDivider]}
-              onPress={() => go("/settings")}
-              testID="trip-menu-settings"
-              accessibilityRole="button"
-            >
-              <Text style={styles.menuItemText}>Settings</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.menuItem, styles.menuDivider]}
-              onPress={() => {
-                setMenuOpen(false);
-                setSupportOpen(true);
-              }}
-              testID="trip-menu-support"
-              accessibilityRole="button"
-            >
-              <Text style={styles.menuItemText}>Contact Support</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.menuItem, styles.menuDivider]}
-              onPress={signOut}
-              testID="trip-menu-signout"
-              accessibilityRole="button"
-            >
-              <Text style={[styles.menuItemText, styles.menuItemDanger]}>Sign out</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
+      <AccountMenu
+        open={menuOpen}
+        top={insets.top + 48}
+        email={signedInEmail}
+        testIDPrefix="trip-menu"
+        onClose={() => setMenuOpen(false)}
+        onTrips={() => go("/trips")}
+        onSettings={() => go("/settings")}
+        onFeatureRequests={() => go("/feature-requests")}
+        onSupport={() => {
+          setMenuOpen(false);
+          setSupportOpen(true);
+        }}
+        onSignOut={signOut}
+      />
 
       <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
     </View>
@@ -279,30 +230,5 @@ const styles = StyleSheet.create({
 
   // Native-only: src/components/AppNavbar.tsx closes the menu on outside
   // mousedown with no visible scrim, so there is no web value to copy.
-  menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.15)" },
-  menu: {
-    position: "absolute",
-    right: 12,
-    width: 220,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: theme.radiusSm,
-    overflow: "hidden",
-    ...shadow.md,
-  },
-  menuIdentity: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
-  menuName: { fontSize: 13, fontFamily: font.semibold, color: theme.text },
-  menuIdentityLabel: {
-    fontFamily: font.regular,
-    fontSize: 10,
-    letterSpacing: 0.6,
-    color: theme.subtle,
-  },
-  menuEmail: { fontFamily: font.regular, fontSize: 11, color: theme.text, marginTop: 2 },
-  menuItem: { paddingHorizontal: 14, paddingVertical: 10 },
-  menuDivider: { borderTopWidth: 1, borderTopColor: theme.border },
-  menuItemText: { fontFamily: font.regular, fontSize: 13, color: theme.text },
-  menuItemDanger: { color: theme.danger },
 
 });

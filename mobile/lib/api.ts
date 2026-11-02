@@ -1,4 +1,5 @@
 import type { QuestionKind } from "@/shared/lib/onboardingForm";
+import type { FeatureRequestView, VoteResult } from "@/shared/lib/featureRequests";
 import { API_BASE_URL } from "@/lib/config";
 import { getToken, clearToken } from "@/lib/auth";
 import type {
@@ -22,7 +23,7 @@ import type {
  */
 
 interface ApiOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | undefined | null>;
   headers?: Record<string, string>;
@@ -319,6 +320,31 @@ export const activeAnnouncement = async (): Promise<Announcement | null> => {
 export const dismissAnnouncement = (announcementId: string) =>
   apiFetch("/api/announcements/dismiss", { body: { announcementId } });
 export const sendSupport = (message: string) => apiFetch("/api/support", { body: { message } });
+
+// ---------------------------------------------------------------------------
+// Feature requests
+// ---------------------------------------------------------------------------
+
+/** The list, already in display order (in progress, open by votes, not doing). */
+export const listFeatureRequests = async (): Promise<FeatureRequestView[]> => {
+  const res = await apiFetch<{ requests: FeatureRequestView[] }>("/api/feature-requests", {
+    // The screen draws its own "couldn't load" state with a retry.
+    skipGlobalErrorReport: true,
+  });
+  return res.requests;
+};
+
+/**
+ * Cast (`true`) or withdraw (`false`) this account's vote. PUT and DELETE,
+ * not a toggle: a retried request lands where it was meant to.
+ */
+export const setFeatureRequestVote = (id: string, vote: boolean) =>
+  apiFetch<VoteResult>(`/api/feature-requests/${encodeURIComponent(id)}/vote`, {
+    method: vote ? "PUT" : "DELETE",
+    // The screen reverts the tap and says why; the global toast would show
+    // the raw `voting_closed` code.
+    skipGlobalErrorReport: true,
+  });
 
 // ---------------------------------------------------------------------------
 // Trip-scoped helpers — mirrors tripApi() in src/lib/api.ts

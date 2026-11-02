@@ -130,6 +130,13 @@ export default function RootLayout() {
               name="settings"
               options={{ title: "Settings", headerBackTitle: "Back" }}
             />
+            {/*
+              Feature requests draws its OWN header ("‹ Back · Feature
+              requests"), not the native stack's: on iOS 27 the native back
+              button has rendered as an empty glass pill (Settings, 2026-10-22),
+              and a header the app draws cannot be emptied by UIKit.
+            */}
+            <Stack.Screen name="feature-requests" options={{ headerShown: false }} />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

@@ -116,6 +116,7 @@ src/
     api/              # REST endpoints (see API Routes)
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # users/ vehicles/ chats/ errors/ announcements/ deleted/
+                      # feature-requests/
     login/  settings/  vehicle-setup/
     (legal)/          # PUBLIC — /privacy /terms /support. NO auth() in here.
     error.tsx         # The app's ONLY error boundary; branches on error.digest
@@ -142,13 +143,15 @@ middleware.ts  scripts/  drizzle/  e2e/  mobile/
 ### API Routes
 
 ```
-api/admin/announcements api/admin/jev api/admin/jev/user api/admin/paywall
+api/admin/announcements api/admin/feature-requests
+api/admin/feature-requests/[id] api/admin/jev api/admin/jev/user api/admin/paywall
 api/admin/paywall/user
 api/admin/penny-lock api/admin/promo api/admin/subscription/reactivate
 api/admin/subscription/revoke api/admin/test-error api/admin/test-users
 api/analytics/client-error api/analytics/viewport-time
 api/announcements/active api/announcements/dismiss api/auth/[...nextauth]
-api/chat api/debug/fuel api/legs/[id]/fuel-stops
+api/chat api/debug/fuel api/feature-requests api/feature-requests/[id]/vote
+api/legs/[id]/fuel-stops
 api/legs/[id]/notes api/me
 api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
@@ -156,6 +159,7 @@ api/promo/redeem api/routes api/routes/[id]
 api/routes/[id]/links api/routes/[id]/select api/stops api/stops/[id]
 api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
 api/tasks/[id] api/test/announcement api/test/breakers api/test/cleanup
+api/test/feature-request
 api/test/deletion api/test/maps-link-stop api/test/otp api/test/promo
 api/test/seed api/test/subscription api/test/trip api/test/turn api/trip
 api/trip/replan api/trips api/trips/[id] api/trips/[id]/clone
@@ -166,7 +170,7 @@ api/vehicles api/vehicles/[id] api/webhooks/revenuecat
 **`api/test/*` are TEST-ONLY** (fixture DATA only), backed by
 `repos/testSupport.ts` — see the E2E auth note below for the three guards.
 
-### Schema (33 tables in `src/server/db/schema.ts`)
+### Schema (35 tables in `src/server/db/schema.ts`)
 
 Migration history, reasoning and traps: **`docs/design/schema.md`**. Read it
 before touching these — several carry non-obvious contracts (account deletion's
@@ -177,7 +181,7 @@ vehicles, trips, legs, costs, pois, links, gpxTrails, routes, routeLinks, stops,
 tasks, chatHistory, appMeta, usageEvents, userViewportTime, announcements,
 announcementDismissals, pennyTurns, deletedUsers, subscriptions,
 subscriptionEvents, usageAlerts, promoCodes, otpSendThrottle, breakerAlerts,
-ipRequestCounters, oauthProviderKeys
+ipRequestCounters, oauthProviderKeys, featureRequests, featureRequestVotes
 
 **Dormant columns** (present, unwired — don't re-wire without revisiting scope):
 `trips.trip_status`, `legs.status`, `trips.status`, `stops.photos`, the
@@ -186,7 +190,8 @@ ipRequestCounters, oauthProviderKeys
 ### Repos (`src/server/repos/`)
 
 trips, routes, stops, vehicles, users, tasks, pois, chat, usage, admin,
-announcements, pennyTurns, accountDeletion, appleTokens, oauthJwks, jev,
+announcements, featureRequests, pennyTurns, accountDeletion, appleTokens,
+oauthJwks, jev,
 testSupport (test-only). Delete an account ONLY via `src/server/deleteAccount.ts` — it
 revokes Sign in with Apple (App Review 5.1.1(v); `appleRevokeGuard`).
 
@@ -245,7 +250,7 @@ What each proves: **`docs/design/e2e-tests.md`**.
 
 legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion,
 subscriptions, vehicle-crud, announcement, breakers, api-contracts,
-fuel-cascade, money-limits — server contracts only.
+fuel-cascade, money-limits, feature-requests — server contracts only.
 The screens are Maestro flows on the phone (below) since 2026-09-27.
 
 **E2E auth: no session bypass exists.** Every authenticated spec signs in through
@@ -268,7 +273,7 @@ reappears in `src/`.
 `penny-stop-edit.yaml`, `offer-code.yaml`, `purchase-sheet.yaml`, `sign-out.yaml`, `stop-actions.yaml`,
 `support-form.yaml`, `units-metric.yaml`, `vehicle-edit-delete.yaml`,
 `chat-attach-photo.yaml`, `location-primer-allow.yaml`, `location-primer-deny.yaml`, `ai-consent.yaml`,
-`penny-try-again.yaml`
+`penny-try-again.yaml`, `feature-requests.yaml`
 (+ subflows `ai-consent-agree.yaml`, `ai-consent-if-asked.yaml`) — Maestro flows driving a real iOS
 simulator against the PR's own preview. **Start at
 `docs/design/ios-e2e-bringup.md`**: what is proven, what is not, and the traps
