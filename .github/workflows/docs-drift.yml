@@ -47,7 +47,7 @@ concurrency:
 jobs:
   review:
     name: Docs drift (review comment only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A missing key must not red the PR. This job is advisory: the things that
     # BLOCK a merge are the guard tests in the unit job.
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
