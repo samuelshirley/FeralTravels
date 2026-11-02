@@ -155,6 +155,13 @@ export default function RootLayout() {
               by UIKit. `nativeHeaderGuard.test.ts` keeps every route this way.
             */}
             <Stack.Screen name="settings" options={{ headerShown: false }} />
+            {/*
+              Feature requests draws its OWN header ("‹ Back · Feature
+              requests"), not the native stack's: on iOS 27 the native back
+              button has rendered as an empty glass pill (Settings, 2026-10-22),
+              and a header the app draws cannot be emptied by UIKit.
+            */}
+            <Stack.Screen name="feature-requests" options={{ headerShown: false }} />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

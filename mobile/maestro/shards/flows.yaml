@@ -1,8 +1,8 @@
 # Shard `flows`: the user journeys added by the test-everything effort
 # (2026-10-07) — sign-out, deleting a trip, removing a stop, editing and
 # deleting vehicles, switching units back, the support form, Apple's offer-code
-# button and the free-period plan line, the paywall screen, and the first-launch
-# intro's Create trip path. A shard of its own so PR wall-clock time does
+# button and the free-period plan line, the paywall screen, the first-launch
+# intro's Create trip path, and feature requests. A shard of its own so PR wall-clock time does
 # not grow by an existing shard's length. No Penny and no Google spend: every
 # state is seeded. Each flow seeds its OWN account (seed-account.js, a suffix
 # per flow), so none can disturb another and the order is for reading.
@@ -23,6 +23,7 @@ flows:
   - offer-code.yaml
   - paywall-no-trips.yaml
   - intro-create-trip.yaml
+  - feature-requests.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -35,3 +36,4 @@ executionOrder:
     - offer-code
     - paywall-no-trips
     - intro-create-trip
+    - feature-requests

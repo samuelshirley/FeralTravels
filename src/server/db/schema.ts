@@ -892,6 +892,66 @@ export const announcementDismissals = pgTable(
   })
 );
 
+// ── Feature requests ────────────────────────────────────────────────────────
+
+/**
+ * A feature request's state. An ENUM, not text: a typo'd status cannot be
+ * stored, so the app's sort and the "voting closed" rule never meet a value
+ * they do not know. Mirrored as `FEATURE_REQUEST_STATUSES` in
+ * `src/shared/featureRequests.ts` (`featureRequests.test.ts` pins the two).
+ */
+export const featureRequestStatusEnum = pgEnum('feature_request_status', [
+  'open',
+  'in_progress',
+  'not_doing',
+]);
+
+/**
+ * Feature requests, written by the admin only (`/admin/feature-requests`).
+ * Users read them and vote on them from the iOS app. `reply` is the admin's
+ * public answer — shown under the request in the app; on a `not_doing` row it
+ * is the reason. Deleting a row deletes its votes (cascade below).
+ */
+export const featureRequests = pgTable('feature_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull(),
+  body: text('body'),
+  status: featureRequestStatusEnum('status').notNull().default('open'),
+  reply: text('reply'),
+  replyUpdatedAt: timestamp('reply_updated_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * One row = one user's vote on one request.
+ *
+ * The composite PRIMARY KEY is the one-vote rule: a second vote by the same
+ * user on the same request cannot be stored, whatever the code above it does
+ * (a retried request, a double tap, two devices). Voting is
+ * `INSERT … ON CONFLICT DO NOTHING`. There is no count column anywhere — the
+ * count is `COUNT(*)` of these rows, so it cannot drift from them.
+ *
+ * Both foreign keys cascade: deleting an account removes its votes with no
+ * code in `deleteAccount.ts`, and deleting a request removes its votes.
+ */
+export const featureRequestVotes = pgTable(
+  'feature_request_votes',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => featureRequests.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.requestId] }),
+    requestIdx: index('feature_request_votes_request_idx').on(t.requestId),
+  })
+);
+
 // ── Penny turns ─────────────────────────────────────────────────────────────
 
 /** Lifecycle of one Penny replan turn. */

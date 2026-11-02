@@ -119,7 +119,7 @@ jobs:
   forecast:
     name: What merging this will ship
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
       group: mobile-forecast-${{ github.event.pull_request.number }}
@@ -217,7 +217,7 @@ jobs:
   ship:
     name: OTA, or a TestFlight build when the native surface moved
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured 2026-09: native runs took 84 and 74 minutes end to end, the
     # build step nearly all of it, against the old ceiling of 90. The deploy
     # wait can add up to 135 in front of it (WAIT_SECONDS below); a job killed

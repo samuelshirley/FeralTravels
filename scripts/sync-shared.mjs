@@ -129,6 +129,10 @@ export const SHARED_FILES = [
   ['src/lib/launchDestination.ts', 'mobile/shared/lib/launchDestination.ts'],
   ['src/lib/introUnits.ts', 'mobile/shared/lib/introUnits.ts'],
   ['src/lib/introFixture.ts', 'mobile/shared/lib/introFixture.ts'],
+  // Feature requests: the status list, the "voting closed" rule and code, and
+  // the row shape. The server refuses a vote and the app hides the button by
+  // the same `votingOpen`, so the two cannot disagree about a closed request.
+  ['src/lib/featureRequests.ts', 'mobile/shared/lib/featureRequests.ts'],
 ];
 // The mirror keeps `@/` specifiers working by rewriting them to relative paths.
 export function transform(source, destRel) {

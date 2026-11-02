@@ -7,6 +7,7 @@ import {
   ArrowsOutLineVerticalIcon,
   CalendarBlankIcon,
   CaretDownIcon,
+  CaretUpIcon,
   CaretLeftIcon,
   CaretRightIcon,
   CrosshairSimpleIcon,
@@ -198,4 +199,9 @@ export function CrosshairIcon({ color, size = 16, weight = "regular" }: IconProp
 /** A hand-off forward — the intro's "Create trip" (Nocturne 7e's `ArrowRight`). */
 export function ArrowRightIcon({ color, size = 16, weight = "regular" }: IconProps) {
   return <PhosphorArrowRightIcon color={color} size={size} weight={weight} />;
+}
+
+/** The feature-request vote button. Native only — the web has no such screen. */
+export function VoteIcon({ color, size = 16, weight = "bold" }: IconProps) {
+  return <CaretUpIcon color={color} size={size} weight={weight} />;
 }

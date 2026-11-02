@@ -158,7 +158,14 @@ jobs:
   # jobs (the iOS comment, fail-fast.mjs) leaves it out by name.
   fail-fast:
     name: Stop the run at the first failure
-    runs-on: ubuntu-latest
+    # ubuntu-24.04, NOT ubuntu-latest, on every Linux job in every workflow
+    # (2026-11-02). GitHub began rolling ubuntu-latest over to ubuntu-26.04,
+    # and Playwright 1.59.1 refuses to install Chromium there ("Playwright
+    # does not support chromium on ubuntu26.04-x64") — the E2E job died before
+    # its first test on PR #95 while a run an hour earlier got 24.04. A moving
+    # label is a CI result that changes with no commit; move the pin on purpose,
+    # together with a Playwright that supports the new image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +193,7 @@ jobs:
   # still concludes `success`, which is what the gate reads.
   decide:
     name: Decide scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
@@ -266,7 +273,7 @@ jobs:
   # project separately, so a red component spec is no harder to spot.
   unit:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # FIRST, before checkout: stamp the PREVIOUS E2E results comment as
@@ -336,7 +343,7 @@ jobs:
     # Expo type for tsc to have an opinion about.
     needs: decide
     if: needs.decide.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 15, not 10: two Metro bundles (the E12 check) ride along with tsc.
     timeout-minutes: 15
     steps:
@@ -402,7 +409,7 @@ jobs:
     # 2026-10-07, so decisionsRegisterGuard skips here and runs locally.)
     needs: [unit, decide]
     if: needs.decide.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       url: ${{ steps.deploy.outputs.url }}
@@ -1310,7 +1317,7 @@ jobs:
     name: iOS e2e (simulator)
     needs: [decide, ios-e2e]
     if: always() && needs.decide.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/download-artifact@v4
@@ -1448,7 +1455,7 @@ jobs:
     name: DB column coverage
     needs: [decide, preview, e2e, ios-e2e-summary]
     if: always() && needs.decide.outputs.docs_only != 'true' && needs.preview.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -1508,7 +1515,7 @@ jobs:
     name: Drop the preview database if the PR has closed
     needs: [decide, preview, e2e, ios-e2e, db-coverage]
     if: always() && needs.decide.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Is the PR still open?
