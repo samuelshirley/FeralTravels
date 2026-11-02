@@ -3,14 +3,16 @@ import { Animated, Easing } from "react-native";
 
 /**
  * One clock per preview. `t` runs 0 → LOOP_MS once per loop, linearly, on the
- * native driver; every element derives its opacity and transform from it with
- * `at(...)`, so a whole preview is one animation and cannot fall out of step.
+ * native driver. Everything lands by ~3.3 s and then HOLDS until the last
+ * 300 ms: the finished frame is the one a person reads, so it gets ~2.4 s of
+ * the loop (a 5 s loop left it 1.4 s). Every element derives its opacity and
+ * transform from it with `at(...)`, so a whole preview is one animation and cannot fall out of step.
  *
  * Inactive pages hold the first frame (an empty card, so swiping in does not
  * show a finished frame that then blanks and replays); Reduce Motion holds the
  * finished frame (HOLD_AT) and never starts the clock.
  */
-export const LOOP_MS = 5000;
+export const LOOP_MS = 6000;
 /** The moment every element has landed; the static frame for Reduce Motion. */
 export const HOLD_AT = 3600;
 

@@ -3,8 +3,11 @@
 # first question — then two relaunches proving the intro is a one-time thing.
 #
 # The pages are screenshotted (intro-1/2/3) so the CI artifact shows what a new
-# user sees; the previews loop, and each shot is taken ~4 s into its page, when
-# every element of the loop has landed.
+# user sees. The previews loop (components/intro/timeline.ts): everything lands
+# by ~3.3 s, then the finished frame holds still for ~2.4 s. Each shot follows
+# `waitForAnimationToEnd`, which returns when the screen stops changing — the
+# hold. Best effort, not an assertion: the first CI run used a fixed 4 s wait
+# against a 5 s loop and caught two pages at the start of their next loop.
 #
 # The account is SEEDED WITH A TRIP on purpose. `?next=new-trip` must create a
 # new trip even when the account already owns one, and land in that new
@@ -51,9 +54,9 @@ appId: ${APP_ID}
     text: 'Next'
 - assertNotVisible:
     id: 'signin-email'
-# The loop never "ends", so this is a bounded wait for the frame to land.
+# Returns at the loop's hold (the screen stops changing); bounded either way.
 - waitForAnimationToEnd:
-    timeout: 4000
+    timeout: 6000
 - takeScreenshot: intro-1
 
 # ── Page 2 ─────────────────────────────────────────────────────────────────
@@ -66,7 +69,7 @@ appId: ${APP_ID}
 - assertVisible:
     id: 'intro-have-account'
 - waitForAnimationToEnd:
-    timeout: 4000
+    timeout: 6000
 - takeScreenshot: intro-2
 
 # ── Page 3 ─────────────────────────────────────────────────────────────────
@@ -82,7 +85,7 @@ appId: ${APP_ID}
 - assertVisible:
     id: 'intro-have-account'
 - waitForAnimationToEnd:
-    timeout: 4000
+    timeout: 6000
 - takeScreenshot: intro-3
 
 # ── Create trip → sign-in ──────────────────────────────────────────────────
