@@ -8,8 +8,7 @@
 # and addresses only those ids. The vote button is one accessibility element
 # whose LABEL carries the count, so the count is asserted on the label.
 #
-# UNPROVEN: written from the source (2026-11-02) by a session that could not
-# reach a simulator. Run it locally before trusting a green or a red.
+# Passed on the CI simulator on its first run (PR #95, 2026-11-02).
 #
 # Its own account (suffix `fr`).
 appId: ${APP_ID}
