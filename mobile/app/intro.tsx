@@ -76,20 +76,24 @@ export default function IntroScreen() {
   );
 
   const leave = useCallback(
-    async (href: "/sign-in?next=new-trip&from=intro" | "/sign-in?from=intro") => {
+    (href: "/sign-in?next=new-trip&from=intro" | "/sign-in?from=intro") => {
       if (leaving.current) return;
       leaving.current = true;
-      try {
-        await setIntroSeen();
-      } catch (err) {
-        // The way on is never blocked by the keychain: a failed write only
-        // means the intro shows again next launch. Said, not swallowed.
+      /*
+       * Recorded first, but NOT awaited before navigating. A keychain write can
+       * stall: on CI run 41431447677 (location-primer-deny) securityd took
+       * 20 s to insert this item — SecItemAdd at 11:22:31.965, "inserted" at
+       * 11:22:51.594 — and with an `await` here the tap did nothing for those
+       * 20 s. The way on must never wait on the keychain. A failed write only
+       * means the intro shows again next launch; it is said, not swallowed.
+       */
+      setIntroSeen().catch((err: unknown) => {
         notify(
           err instanceof Error && err.message
             ? `Couldn't save that you've seen this: ${err.message}`
             : "Couldn't save that you've seen this."
         );
-      }
+      });
       router.push(href);
       // Back from sign-in returns here; let the exits work again.
       setTimeout(() => {
@@ -102,7 +106,7 @@ export default function IntroScreen() {
   const last = page === PAGES.length - 1;
   const onPrimary = () => {
     if (last) {
-      void leave("/sign-in?next=new-trip&from=intro");
+      leave("/sign-in?next=new-trip&from=intro");
       return;
     }
     scroller.current?.scrollTo({ x: (page + 1) * width, animated: !reducedMotion });
@@ -155,7 +159,7 @@ export default function IntroScreen() {
           style={styles.primary}
         />
         <Pressable
-          onPress={() => void leave("/sign-in?from=intro")}
+          onPress={() => leave("/sign-in?from=intro")}
           accessibilityRole="button"
           testID="intro-have-account"
           hitSlop={8}

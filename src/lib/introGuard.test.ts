@@ -197,7 +197,7 @@ describe('signing out does not show the intro again', () => {
 
   it('the flag is written when the user leaves the intro, by either exit, never on mount', () => {
     const intro = code(read('mobile/app/intro.tsx'));
-    // One write, inside `leave`, before the navigation.
+    // One write, inside `leave`, started before the navigation.
     expect(intro.match(/setIntroSeen\(\)/g)).toHaveLength(1);
     const leave = intro.slice(intro.indexOf('const leave = useCallback('));
     const leaveBody = leave.slice(0, leave.indexOf('\n  );\n'));
@@ -206,11 +206,24 @@ describe('signing out does not show the intro again', () => {
     expect(writeAt).toBeGreaterThan(-1);
     expect(pushAt).toBeGreaterThan(writeAt);
     // Both exits go through `leave`.
-    expect(intro).toMatch(/void leave\("\/sign-in\?next=new-trip&from=intro"\)/);
-    expect(intro).toMatch(/onPress=\{\(\) => void leave\("\/sign-in\?from=intro"\)\}/);
+    expect(intro).toMatch(/\bleave\("\/sign-in\?next=new-trip&from=intro"\)/);
+    expect(intro).toMatch(/onPress=\{\(\) => leave\("\/sign-in\?from=intro"\)\}/);
     // No effect writes it.
     for (const effect of intro.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n  \}, \[/g)) {
       expect(effect[1]).not.toMatch(/setIntroSeen|leave\(/);
     }
+  });
+
+  it('leaving never waits on the keychain write', () => {
+    // CI run 41431447677: securityd took 20 s to insert the flag, and an
+    // `await setIntroSeen()` before router.push made the exit a dead tap for
+    // those 20 s. The write is started, its failure reported, and the
+    // navigation happens regardless — nothing between the two may await.
+    const intro = code(read('mobile/app/intro.tsx'));
+    const leave = intro.slice(intro.indexOf('const leave = useCallback('));
+    const leaveBody = leave.slice(0, leave.indexOf('\n  );\n'));
+    expect(leaveBody).not.toMatch(/\bawait\b/);
+    expect(leaveBody).not.toMatch(/async\s*\(/);
+    expect(leaveBody).toMatch(/setIntroSeen\(\)\.catch\(/);
   });
 });
