@@ -14,7 +14,16 @@ import { FIXTURE_EMAIL_PATTERN } from '@/server/auth/test-endpoints';
  * email, because an entitlement check that string-matches is one typo away
  * from comping every address at a domain.
  */
-const COMPED_ALLOWLIST: ReadonlyArray<string> = ['samuelashirley@gmail.com'] as const;
+const COMPED_ALLOWLIST: ReadonlyArray<string> = [
+  'samuelashirley@gmail.com',
+  // The production canaries (docs/design/prod-canary.md): one account for
+  // scripts/prod-canary.mjs (GitHub Actions), one for the simulator run. Each
+  // lives past its seven-day trial, so without this the canary would page on
+  // day 8 for a paywall doing its job. Exact addresses, not a `+canary*`
+  // pattern: plus-addressing is public, and only these two are ours.
+  'samuelashirley+canary@gmail.com',
+  'samuelashirley+canary-ios@gmail.com',
+] as const;
 
 const COMPED_SET = new Set(COMPED_ALLOWLIST.map((e) => e.toLowerCase()));
 

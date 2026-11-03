@@ -37,6 +37,9 @@ const OURS = [
   'samuelashirley+4.9.26.9@gmail.com',
   'samuelashirley+6.2.26.1@gmail.com',
   'samuelashirley+8.9.26.1@gmail.com',
+  // The production canaries.
+  'samuelashirley+canary@gmail.com',
+  'samuelashirley+canary-ios@gmail.com',
 ];
 
 /** Other people, on every domain real signups have used — plus the owner's own gmail account, which counts as a user. */
@@ -78,6 +81,10 @@ const SPAM_VECTOR = [
   'samuelashirley+test@gmail.com',
   'samuelashirley+26.6.26.1.spam@gmail.com',
   'samuelashirley+2026-06-26@gmail.com',
+  'samuelashirley+canary2@gmail.com',
+  'samuelashirley+canary-ios2@gmail.com',
+  'samuelashirley+canaryios@gmail.com',
+  'samuelashirley+xcanary@gmail.com',
   'samuelashirley+.@gmail.com',
   // Someone else's plus-address is not ours.
   'someone+26.6.26.1@gmail.com',
