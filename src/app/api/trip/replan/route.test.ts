@@ -66,6 +66,7 @@ vi.mock('@/server/messageGate', () => ({ gateMessage: vi.fn() }));
 vi.mock('@/server/repos/users', async (orig) => ({
   ...(await orig<typeof import('@/server/repos/users')>()),
   getAiConsentAt: vi.fn(async () => new Date('2026-10-01T00:00:00Z')),
+  getAiConsent: vi.fn(async () => ({ at: new Date('2026-10-01T00:00:00Z'), version: 1 })),
 }));
 
 import { POST } from './route';

@@ -47,10 +47,16 @@ appId: ${APP_ID}
     visible:
       id: 'ai-consent-sheet'
     timeout: 20000
-- assertVisible: "Penny uses Anthropic's Claude"
+- assertVisible: "Penny uses Anthropic and TypeSafe"
 - assertVisible:
     id: 'ai-consent-body'
     text: '.*sent to Anthropic, which runs the Claude AI model.*'
+- assertVisible:
+    id: 'ai-consent-typesafe'
+    text: '.*may also be sent to TypeSafe, in the US.*'
+# A new account never saw the older sheet: no "what changed" line, plain "Not now".
+- assertNotVisible:
+    id: 'ai-consent-upgrade'
 - assertVisible:
     id: 'ai-consent-privacy'
     text: 'Privacy Policy'

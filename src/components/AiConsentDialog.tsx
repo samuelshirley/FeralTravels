@@ -4,18 +4,24 @@ import { buttonStyle } from '@/components/ui/buttonStyle';
 import { AI_CONSENT_COPY, PRIVACY_POLICY_PATH } from '@/lib/aiConsent';
 
 /**
- * "Penny uses Anthropic's Claude" on the web — the same sheet, copy and
+ * "Penny uses Anthropic and TypeSafe" on the web — the same sheet, copy and
  * answers as mobile/components/AiConsentSheet.tsx. A modal dialog with no
  * click-outside dismiss: the guideline asks for an explicit answer.
+ *
+ * `upgrade`: this account agreed to the older, Anthropic-only sheet. The sheet
+ * says what changed, and its decline reads "Anthropic only", because that is
+ * what it does — Penny keeps working on what was agreed.
  */
 export default function AiConsentDialog({
   saving,
   error,
+  upgrade = false,
   onAgree,
   onNotNow,
 }: {
   saving: boolean;
   error: string | null;
+  upgrade?: boolean;
   onAgree: () => void;
   onNotNow: () => void;
 }) {
@@ -50,8 +56,16 @@ export default function AiConsentDialog({
         <h2 id="ai-consent-title" style={{ margin: 0, fontSize: 18, color: 'var(--tp-text)' }}>
           {AI_CONSENT_COPY.title}
         </h2>
+        {upgrade && (
+          <p data-testid="ai-consent-upgrade" style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 600, color: 'var(--tp-text)' }}>
+            {AI_CONSENT_COPY.upgradeLead}
+          </p>
+        )}
         <p style={{ margin: '10px 0 0', fontSize: 14, lineHeight: 1.45, color: 'var(--tp-muted)' }}>
           {AI_CONSENT_COPY.body}
+        </p>
+        <p data-testid="ai-consent-typesafe" style={{ margin: '10px 0 0', fontSize: 14, lineHeight: 1.45, color: 'var(--tp-muted)' }}>
+          {AI_CONSENT_COPY.typeSafeBody}
         </p>
         <a
           href={PRIVACY_POLICY_PATH}
@@ -75,7 +89,7 @@ export default function AiConsentDialog({
             disabled={saving}
             style={{ ...buttonStyle('secondary'), flex: 1 }}
           >
-            {AI_CONSENT_COPY.notNow}
+            {upgrade ? AI_CONSENT_COPY.notNowUpgrade : AI_CONSENT_COPY.notNow}
           </button>
           <button
             type="button"

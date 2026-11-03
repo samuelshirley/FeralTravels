@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, type Me } from "@/lib/api";
 import {
+  AI_CONSENT_VERSION,
+  consentVersionFromMe,
   createAiConsentController,
   type AiConsentController,
   type AiConsentSnapshot,
 } from "@/shared/lib/aiConsent";
 
 /**
- * The one-time "Penny uses Anthropic's Claude" agreement (App Review
+ * The "Penny uses Anthropic and TypeSafe" agreement (App Review
  * 5.1.2(i)) for ChatPanel. The logic is the shared, unit-tested
  * `createAiConsentController` (shared/lib/aiConsent.ts); this only supplies
  * the two requests and re-renders on change. Mirrors
@@ -28,11 +30,11 @@ export function useAiConsent(enabled: boolean): AiConsentSnapshot & Omit<AiConse
   if (!controller.current) {
     controller.current = createAiConsentController({
       fetchConsent: async () =>
-        (await apiFetch<Me>("/api/me", { skipGlobalErrorReport: true })).ai_consent === true,
+        consentVersionFromMe(await apiFetch<Me>("/api/me", { skipGlobalErrorReport: true })),
       saveConsent: async () => {
         await apiFetch("/api/me/preferences", {
           method: "PATCH",
-          body: { ai_consent: true },
+          body: { ai_consent: true, ai_consent_version: AI_CONSENT_VERSION },
           skipGlobalErrorReport: true,
         });
       },

@@ -654,11 +654,16 @@ test.describe('API contracts — AI consent', () => {
       }
       expect((await paidUsage(fresh.email)).calls).toBe(before.calls);
 
-      // Agree exactly as the sheet does; /api/me now says so.
-      const agreed = await fresh.api.patch('/api/me/preferences', { data: { ai_consent: true } });
+      // Agree exactly as the sheet does (version 2: Anthropic and TypeSafe); /api/me now says so.
+      const agreed = await fresh.api.patch('/api/me/preferences', {
+        data: { ai_consent: true, ai_consent_version: 2 },
+      });
       expect(agreed.status(), await agreed.text()).toBe(200);
-      const after = (await (await fresh.api.get('/api/me')).json()) as { ai_consent: boolean };
-      expect(after.ai_consent).toBe(true);
+      const after = (await (await fresh.api.get('/api/me')).json()) as {
+        ai_consent: boolean;
+        ai_consent_version: number | null;
+      };
+      expect(after).toMatchObject({ ai_consent: true, ai_consent_version: 2 });
 
       // And the refusal is gone, at $0: replan replays a planted turn (the
       // money-limits idiom) instead of answering 403.
@@ -682,6 +687,17 @@ test.describe('API contracts — AI consent', () => {
   test('a decline is not a request: ai_consent false is 400', async () => {
     const res = await owner.api.patch('/api/me/preferences', { data: { ai_consent: false } });
     expect(res.status(), await res.text()).toBe(400);
+  });
+
+  test('only the current sheet version is accepted, and only with the agreement', async () => {
+    for (const data of [
+      { ai_consent: true, ai_consent_version: 3 },
+      { ai_consent: true, ai_consent_version: 1 },
+      { ai_consent_version: 2 },
+    ]) {
+      const res = await owner.api.patch('/api/me/preferences', { data });
+      expect(res.status(), `${JSON.stringify(data)}: ${await res.text()}`).toBe(400);
+    }
   });
 });
 
