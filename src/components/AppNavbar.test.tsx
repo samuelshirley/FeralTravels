@@ -141,4 +141,12 @@ describe('AppNavbar account button', () => {
     expect(screen.getByText('Sam Shirley')).toBeInTheDocument();
     expect(screen.getByText('sam@feraltravels.com')).toBeInTheDocument();
   });
+
+  it('offers Feature requests to every signed-in user, not only the admin', () => {
+    render(<AppNavbar user={OTP_USER} />);
+    fireEvent.click(screen.getByRole('button', { name: /account menu/i }));
+    const row = screen.getByRole('link', { name: 'Feature requests' });
+    expect(row).toHaveAttribute('href', '/feature-requests');
+    expect(screen.queryByRole('link', { name: 'Admin' })).toBeNull();
+  });
 });

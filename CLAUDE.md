@@ -117,7 +117,7 @@ src/
     trips/            # Trip list + [tripId] workspace (TripWorkspace.tsx)
     admin/            # users/ vehicles/ chats/ errors/ announcements/ deleted/
                       # feature-requests/
-    login/  settings/  vehicle-setup/
+    login/  settings/  vehicle-setup/  feature-requests/
     (legal)/          # PUBLIC — /privacy /terms /support. NO auth() in here.
     error.tsx         # The app's ONLY error boundary; branches on error.digest
   components/         # ChatPanel, TripMap, Itinerary, stops/, AppNavbar,
@@ -321,6 +321,8 @@ must be listed in exactly one (`maestroFlowParams.test.ts`).
 The incident behind each — the part that stops it being re-broken — is in
 **`docs/design/conventions.md`**. Load-bearing:
 
+- **Both platforms, always (Sam, 2026-11-03).** Every feature, screen and menu row ships on iOS AND
+  the web, with tests on both (Maestro + Playwright/component). `accountMenuParity.test.ts` holds the menus.
 - **Copy rule.** Every string on screen must tell the user something they cannot
   already see — no filler, no restating a button in a sentence. If a control
   needs a paragraph to be understood, the control is wrong. The exception is a

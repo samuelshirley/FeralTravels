@@ -17,7 +17,7 @@ import { font } from "@/lib/typography";
 import {
   optimisticVote,
   votingOpen,
-  VOTING_CLOSED_CODE,
+  voteFailure,
   type FeatureRequestView,
   type VoteResult,
 } from "@/shared/lib/featureRequests";
@@ -99,21 +99,12 @@ export default function FeatureRequestsScreen() {
           router.replace("/sign-in");
           return;
         }
-        if (err instanceof ApiError && err.status === 409 && err.message === VOTING_CLOSED_CODE) {
-          notify("Voting on this one has closed.");
-          void load();
-          return;
-        }
-        if (err instanceof ApiError && err.status === 404) {
-          notify("That request has been removed.");
-          void load();
-          return;
-        }
-        notify(
-          err instanceof ApiError && err.status === 0
-            ? "Your vote didn't go through. Check your connection and try again."
-            : "Your vote didn't go through. Try again."
-        );
+        const failure =
+          err instanceof ApiError
+            ? voteFailure(err.status, err.message)
+            : voteFailure(null, null);
+        notify(failure.message);
+        if (failure.reload) void load();
       }
     },
     [load, notify, patch, router]

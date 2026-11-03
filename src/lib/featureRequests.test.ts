@@ -3,6 +3,7 @@ import {
   compareFeatureRequests,
   optimisticVote,
   votingOpen,
+  voteFailure,
   type FeatureRequestView,
 } from './featureRequests';
 
@@ -54,5 +55,15 @@ describe('optimisticVote', () => {
 
   it('never goes below zero', () => {
     expect(optimisticVote({ voteCount: 0, votedByMe: true }, false)).toEqual({ voteCount: 0, votedByMe: false });
+  });
+});
+
+describe('voteFailure', () => {
+  it('closed and removed requests re-read the list; the rest do not', () => {
+    expect(voteFailure(409, 'voting_closed')).toEqual({ message: 'Voting on this one has closed.', reload: true });
+    expect(voteFailure(404, 'not_found')).toEqual({ message: 'That request has been removed.', reload: true });
+    expect(voteFailure(null, null).reload).toBe(false);
+    expect(voteFailure(0, null).message).toMatch(/connection/);
+    expect(voteFailure(500, 'boom')).toEqual({ message: "Your vote didn't go through. Try again.", reload: false });
   });
 });

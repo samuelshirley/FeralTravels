@@ -333,6 +333,21 @@ export default function AppNavbar({ user, tripName, tripsHref = '/trips', rightS
               >
                 Settings
               </Link>
+              <Link
+                href="/feature-requests"
+                onClick={() => setOpen(false)}
+                data-testid="account-menu-feature-requests"
+                style={{
+                  display: 'block',
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  color: 'var(--tp-text)',
+                  textDecoration: 'none',
+                  borderTop: '1px solid var(--tp-border)',
+                }}
+              >
+                Feature requests
+              </Link>
               {isAdmin && (
                 <Link
                   href="/admin"
