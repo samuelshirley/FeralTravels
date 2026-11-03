@@ -43,6 +43,7 @@ import { lockedAccounts } from '@/server/repos/users';
 import {
   countJevOverrides,
   getJevCompareStats,
+  getJevRouteStats,
   getJevStats,
   globalJevMode,
   jevConfigView,
@@ -143,7 +144,7 @@ export default async function AdminPage() {
    * "could not read" rather than as zeros — zero settled is a real, and very
    * different, answer. The mode read itself fails to OFF, like the gate's.
    */
-  const [jevMode, jevStats, jevCompare, jevOverrides] = await Promise.all([
+  const [jevMode, jevStats, jevCompare, jevRoutes, jevOverrides] = await Promise.all([
     globalJevMode(),
     getJevStats(7).catch((err) => {
       console.error('[admin] getJevStats failed', err);
@@ -151,6 +152,10 @@ export default async function AdminPage() {
     }),
     getJevCompareStats(7).catch((err) => {
       console.error('[admin] getJevCompareStats failed', err);
+      return null;
+    }),
+    getJevRouteStats(7).catch((err) => {
+      console.error('[admin] getJevRouteStats failed', err);
       return null;
     }),
     countJevOverrides().catch((err) => {
@@ -879,6 +884,7 @@ export default async function AdminPage() {
             config={jevConfig}
             stats={jevStats}
             compare={jevCompare}
+            routes={jevRoutes}
             overrides={jevOverrides}
             minMargin={JEV_MIN_MARGIN}
           />
