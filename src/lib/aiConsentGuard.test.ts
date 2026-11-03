@@ -58,6 +58,7 @@ const NO_USER_CONTENT: Record<string, string> = {
   'src/app/api/test/breakers/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/cleanup/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/deletion/route.ts': 'test fixture (testSupport → seededTranscript)',
+  'src/app/api/test/feature-request/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/maps-link-stop/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/otp/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/seed/route.ts': 'test fixture (testSupport → seededTranscript)',

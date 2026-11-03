@@ -14,6 +14,7 @@ import {
   getAnthropicHealthAlert,
 } from '@/server/repos/admin';
 import { getAnnouncementStats } from '@/server/repos/announcements';
+import { getFeatureRequestStats } from '@/server/repos/featureRequests';
 import {
   getGlobalUsage,
   microcentsToDollars,
@@ -176,6 +177,7 @@ export default async function AdminPage() {
     // sequential latency to the page render.
     googleBillable,
     announcementStats,
+    featureRequestStats,
   ] = await Promise.all([
     getAdminOverview(),
     getRecentUsers(15),
@@ -194,6 +196,7 @@ export default async function AdminPage() {
     getAnthropicHealthAlert(),
     getGoogleBillableThisMonth(),
     getAnnouncementStats(),
+    getFeatureRequestStats(),
   ]);
 
   const usd24 = usage24
@@ -282,6 +285,14 @@ export default async function AdminPage() {
       value: announcementStats.activeCount,
       sub: `${announcementStats.totalCount} total`,
       href: '/admin/announcements',
+    },
+    {
+      label: 'Feature requests',
+      value: `${featureRequestStats.open} open`,
+      // Votes counted on open + in-progress only: a Not doing request's votes
+      // are frozen and say nothing about what to build next.
+      sub: `${featureRequestStats.inProgress} in progress · ${featureRequestStats.votes} ${featureRequestStats.votes === 1 ? 'vote' : 'votes'}`,
+      href: '/admin/feature-requests',
     },
   ];
 

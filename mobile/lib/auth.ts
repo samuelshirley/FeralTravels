@@ -14,6 +14,13 @@ const TOKEN_KEY = "feraltravels.sessionToken";
  * so this is the ONLY identity the app can show in the account menu.
  */
 const EMAIL_KEY = "feraltravels.email";
+/**
+ * Set once this install has left the first-launch intro, by either exit
+ * (app/intro.tsx). It belongs to the DEVICE, not to an account, so
+ * `clearToken()` must never delete it: a user who signs out goes to /sign-in,
+ * not back through the intro (introGuard.test.ts).
+ */
+const INTRO_SEEN_KEY = "feraltravels.introSeen";
 
 type Listener = (token: string | null) => void;
 const listeners = new Set<Listener>();
@@ -79,4 +86,26 @@ export async function setSignedInEmail(email: string): Promise<void> {
   } catch {
     // Non-fatal: the account menu just shows no address.
   }
+}
+
+/**
+ * Whether this install has already left the intro. A keychain read that fails
+ * answers false, which costs at most one more look at the intro — the same
+ * fail-soft read `getToken` makes.
+ */
+export async function getIntroSeen(): Promise<boolean> {
+  try {
+    return (await SecureStore.getItemAsync(INTRO_SEEN_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Record that the intro was left. Throws when the keychain refuses the write,
+ * so the caller can surface it — but the intro's exits go on regardless (a
+ * failed write only means the intro shows again next launch).
+ */
+export async function setIntroSeen(): Promise<void> {
+  await SecureStore.setItemAsync(INTRO_SEEN_KEY, "1");
 }

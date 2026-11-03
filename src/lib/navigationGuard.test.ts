@@ -70,7 +70,9 @@ describe('back means back (no screen is rebuilt to go back to it)', () => {
     const src = read('mobile/components/TripHeader.tsx');
     const go = src.match(/const go = useCallback\(([\s\S]*?)\n  \);/)?.[1] ?? '';
     expect(go).toMatch(/if \(path === "\/trips"\) router\.dismissTo\("\/trips"\);/);
-    expect(src).toMatch(/onPress=\{\(\) => go\("\/trips"\)\}/);
+    // The menu is the shared AccountMenu since feature requests (2026-11-02):
+    // its Trips item is the `onTrips` prop.
+    expect(src).toMatch(/onTrips=\{\(\) => go\("\/trips"\)\}/);
   });
 
   it('BottomNav pops back into the trip instead of stacking another', () => {

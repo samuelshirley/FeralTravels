@@ -27,7 +27,7 @@ describe('the test database is built from schema.ts', () => {
       `select tablename from pg_tables where schemaname = 'public' order by tablename`,
     );
     expect(rows.map((r) => r.tablename)).toEqual(configs.map((c) => c.name).sort());
-    expect(rows).toHaveLength(33);
+    expect(rows).toHaveLength(35);
   });
 
   it("every foreign key has schema.ts's ON DELETE rule", async () => {

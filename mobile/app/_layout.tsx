@@ -117,6 +117,9 @@ export default function RootLayout() {
               answer here.
             */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
+            {/* First launch only (app/index.tsx -> shared/lib/launchDestination.ts).
+                Its pages and buttons are the whole screen; no header. */}
+            <Stack.Screen name="intro" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false }} />
             {/* trips/index draws its own header — see the note at the top of that file. */}
             <Stack.Screen name="trips/index" options={{ headerShown: false }} />
@@ -152,6 +155,13 @@ export default function RootLayout() {
               by UIKit. `nativeHeaderGuard.test.ts` keeps every route this way.
             */}
             <Stack.Screen name="settings" options={{ headerShown: false }} />
+            {/*
+              Feature requests draws its OWN header ("‹ Back · Feature
+              requests"), not the native stack's: on iOS 27 the native back
+              button has rendered as an empty glass pill (Settings, 2026-10-22),
+              and a header the app draws cannot be emptied by UIKit.
+            */}
+            <Stack.Screen name="feature-requests" options={{ headerShown: false }} />
           </Stack>
         </UnitsProvider>
       </ErrorProvider>

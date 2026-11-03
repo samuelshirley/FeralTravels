@@ -34,6 +34,8 @@ appId: ${APP_ID}
     timeout: 30000
 - assertNotVisible:
     id: 'signin-email'
+- assertNotVisible:
+    id: 'intro-page-1'
 - assertNotVisible: 'Not now'
 
 - tapOn:
@@ -46,13 +48,13 @@ appId: ${APP_ID}
 # Still waiting: the primer is gone, the dialog is up, launch has not routed.
 - assertNotVisible:
     id: 'signin-email'
+- assertNotVisible:
+    id: 'intro-page-1'
 
 - tapOn: '.*Allow While Using.*'
 
-# Answered — launch goes on.
-- extendedWaitUntil:
-    visible:
-      id: 'signin-email'
-    timeout: 30000
+# Answered — launch goes on: to the first-launch intro (a cleared keychain is
+# a fresh install), then sign-in.
+- runFlow: intro-have-account.yaml
 - assertNotVisible:
     id: 'location-primer'

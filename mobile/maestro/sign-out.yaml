@@ -43,6 +43,11 @@ appId: ${APP_ID}
     visible:
       id: 'signin-email'
     timeout: 30000
+# Signed out, not reinstalled: the intro was left once on this install and
+# clearToken() keeps that flag (introGuard.test.ts), so launch goes straight
+# to sign-in.
+- assertNotVisible:
+    id: 'intro-page-1'
 - assertNotVisible:
     text: '.*${output.account.tripName}.*'
 
@@ -75,3 +80,8 @@ appId: ${APP_ID}
     visible:
       id: 'signin-email'
     timeout: 30000
+# Signed out, not reinstalled: the intro was left once on this install and
+# clearToken() keeps that flag (introGuard.test.ts), so launch goes straight
+# to sign-in.
+- assertNotVisible:
+    id: 'intro-page-1'

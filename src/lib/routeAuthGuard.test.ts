@@ -66,7 +66,21 @@ const USER_SCOPED_REPO: Record<string, { reason: string; marker: RegExp }> = {
     reason: 'every vehicles repo call takes (userId, id) and matches on both',
     marker: /\w+\(userId, id(, \w+)?\)/,
   },
+  'feature-requests/[id]/vote': {
+    reason:
+      'a feature request is global (admin-written, every user reads it); the only row written is ' +
+      "the caller's own vote, keyed (userId, id) by the table's primary key",
+    marker: /setVote\(userId, id, vote\)/,
+  },
 };
+
+/**
+ * An ADMIN-only handler may address any id: there is no owner to check
+ * against, and `requireAdmin()` has already refused everyone else. Matched on
+ * the call itself, so a handler that merely mentions it in a comment (comments
+ * are stripped) or calls a weaker guard is still held to the ownership rule.
+ */
+const ADMIN_ONLY = /\brequireAdmin\(\)/;
 
 type Handler = { route: string; method: string; body: string };
 
@@ -172,6 +186,7 @@ describe('routeAuthGuard', () => {
       .filter((h) => {
         const body = withLocalHelpers(path.join(API_DIR, h.route, 'route.ts'), h.body);
         if (OWNERSHIP_CHECK.test(body)) return false;
+        if (h.route.startsWith('admin/') && ADMIN_ONLY.test(body)) return false;
         const scoped = USER_SCOPED_REPO[h.route];
         return !(scoped && scoped.marker.test(body));
       })

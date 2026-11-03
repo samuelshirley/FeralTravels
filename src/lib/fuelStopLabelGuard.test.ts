@@ -100,7 +100,10 @@ describe('every fuel-stop render site uses fuelStopLabel', () => {
     'mobile/components/StopsSection.tsx',
     'mobile/components/StopCard.tsx',
     'mobile/components/TripMap.tsx',
-    'mobile/components/LegCard.tsx',
+    // LegCard's Google Maps buttons and the day timeline's rows are drawn by
+    // these two since the first-launch intro shared them (2026-11-02).
+    'mobile/components/GoogleMapsNavButton.tsx',
+    'mobile/components/RouteTimelineRow.tsx',
     'mobile/components/TripCard.tsx',
   ];
   for (const site of SITES) {

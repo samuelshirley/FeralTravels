@@ -73,6 +73,7 @@ import PlanSummaryCard from "@/components/chat/PlanSummaryCard";
 import PennyPlanningVideo from "@/components/chat/PennyPlanningVideo";
 import { BlinkingCursor, TypingBubble } from "@/components/chat/Indicators";
 import { bubbleRadius, getGroupPosition } from "@/components/chat/format";
+import { bubbleStyles } from "@/components/chat/bubbleStyles";
 import { startTurnStream, type TurnStreamHandle } from "@/components/chat/turnStream";
 import { font } from "@/lib/typography";
 import AiConsentSheet from "@/components/AiConsentSheet";
@@ -2694,12 +2695,13 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
-  row: { maxWidth: "80%" },
+  // The bubble itself lives in chat/bubbleStyles.ts, shared with the intro.
+  row: bubbleStyles.row,
   queued: { opacity: 0.5 },
-  bubble: { paddingVertical: 8, paddingHorizontal: 14 },
-  bubbleUser: { backgroundColor: theme.primaryMuted },
-  bubbleAssistant: { backgroundColor: theme.surface },
-  bubbleText: { fontFamily: font.regular, fontSize: 14, color: theme.text, lineHeight: 21 },
+  bubble: bubbleStyles.bubble,
+  bubbleUser: bubbleStyles.bubbleUser,
+  bubbleAssistant: bubbleStyles.bubbleAssistant,
+  bubbleText: bubbleStyles.bubbleText,
   bubbleImages: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   bubbleImagesGap: { marginBottom: 8 },
   bubbleImage: { width: 160, height: 160, borderRadius: 6, resizeMode: "cover" },

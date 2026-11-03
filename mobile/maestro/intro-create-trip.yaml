@@ -1,0 +1,154 @@
+# The first-launch intro, end to end, on its main exit: three pages paged with
+# Next, "Create trip", sign-in by emailed code, and a NEW trip open on Penny's
+# first question — then two relaunches proving the intro is a one-time thing.
+#
+# The pages are screenshotted (intro-1/2/3) so the CI artifact shows what a new
+# user sees. The previews loop (components/intro/timeline.ts): everything lands
+# by ~3.3 s, then the finished frame holds still for ~2.4 s. Each shot follows
+# `waitForAnimationToEnd`, which returns when the screen stops changing — the
+# hold. Best effort, not an assertion: the first CI run used a fixed 4 s wait
+# against a 5 s loop and caught two pages at the start of their next loop.
+#
+# The account is SEEDED WITH A TRIP on purpose. `?next=new-trip` must create a
+# new trip even when the account already owns one, and land in that new
+# trip's chat — not on the list, and not in the seeded trip. The onboarding
+# headline only exists on an unplanned trip, and the seeded one is planned, so
+# seeing it proves which trip opened.
+#
+# No Penny turn and no Google call: the trip is created and its first question
+# is drawn from the onboarding snapshot; nothing is sent.
+#
+# Its own account (suffix `intro`): it signs in, and a sign-in code is
+# single-use.
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: intro
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+
+# A fresh install: no session, no intro flag.
+- clearKeychain
+- launchApp:
+    clearState: true
+    permissions:
+      location: never
+- assertNotVisible:
+    id: 'fatal-error-modal'
+
+# ── Page 1 ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: 'intro-page-1'
+    timeout: 30000
+- assertVisible:
+    id: 'intro-have-account'
+- assertVisible:
+    id: 'intro-primary'
+    text: 'Next'
+- assertNotVisible:
+    id: 'signin-email'
+# Returns at the loop's hold (the screen stops changing); bounded either way.
+- waitForAnimationToEnd:
+    timeout: 6000
+- takeScreenshot: intro-1
+
+# ── Page 2 ─────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'intro-primary'
+- extendedWaitUntil:
+    visible:
+      id: 'intro-page-2'
+    timeout: 10000
+- assertVisible:
+    id: 'intro-have-account'
+- waitForAnimationToEnd:
+    timeout: 6000
+- takeScreenshot: intro-2
+
+# ── Page 3 ─────────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'intro-primary'
+- extendedWaitUntil:
+    visible:
+      id: 'intro-page-3'
+    timeout: 10000
+- assertVisible:
+    id: 'intro-primary'
+    text: 'Create trip'
+- assertVisible:
+    id: 'intro-have-account'
+- waitForAnimationToEnd:
+    timeout: 6000
+- takeScreenshot: intro-3
+
+# ── Create trip → sign-in ──────────────────────────────────────────────────
+- tapOn:
+    id: 'intro-primary'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 15000
+# Reached FROM the intro, so the way back to it is there.
+- assertVisible:
+    id: 'signin-back'
+- runFlow:
+    file: sign-in-otp.yaml
+    env:
+      EMAIL: ${output.account.email}
+
+# ── A new trip, on Penny's first question ──────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 45000
+# TRIP_INTENT_LABEL (src/lib/onboardingForm.ts), as a regex: the label's text.
+- assertVisible:
+    id: 'onboarding-headline'
+    text: 'Where are we going\?.*'
+- assertVisible:
+    id: 'onboarding-progress'
+    text: '1 OF [0-9]+'
+- assertVisible:
+    id: 'chat-composer'
+- takeScreenshot: intro-4-first-question
+
+# ── Relaunch, still signed in: no intro ────────────────────────────────────
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: '.*${output.account.tripName}.*'
+    timeout: 30000
+- assertNotVisible:
+    id: 'intro-page-1'
+
+# ── Sign out, relaunch: sign-in, still no intro ────────────────────────────
+- tapOn: 'Account menu.*'
+- extendedWaitUntil:
+    visible: 'SIGNED IN AS'
+    timeout: 10000
+- tapOn:
+    id: 'account-menu-signout'
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 20000
+# Sign-out REPLACES to sign-in; there is no intro behind it to go back to.
+- assertNotVisible:
+    id: 'signin-back'
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: 'signin-email'
+    timeout: 30000
+# clearToken() emptied the session and kept the intro flag.
+- assertNotVisible:
+    id: 'intro-page-1'

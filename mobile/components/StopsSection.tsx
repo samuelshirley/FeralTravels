@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
 import { classifyFuelPlanError } from "@/shared/lib/fuelPlanErrorSemantics";
 import { buildGoHereUrl } from "@/shared/lib/maps";
-import { formatKm } from "@/shared/lib/units";
 import {
   forcedStopLine,
   fuelStopLabel,
@@ -14,15 +13,10 @@ import { useUnits } from "@/lib/units";
 import StopCard from "@/components/StopCard";
 import { useStopActions } from "@/components/useStopActions";
 import { Spinner } from "@/components/ui";
+import { RouteTimelineRowBody, timelineStyles } from "@/components/RouteTimelineRow";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
-import {
-  CloseIcon,
-  DisclosureIcon,
-  FuelIcon,
-  NavigateIcon,
-  PlaceIcon,
-} from "@/components/icons";
+import { CloseIcon, DisclosureIcon } from "@/components/icons";
 
 interface StopsSectionProps {
   tripId: string;
@@ -304,37 +298,20 @@ export default function StopsSection({
              * Mirrors src/components/StopsSection.tsx.
              */
             const rowBody = (
-              <>
-                <View style={[styles.marker, { borderColor: row.markerColor }]}>
-                  {row.isFuel ? (
-                    <FuelIcon color={row.markerColor} size={12} />
-                  ) : row.isEndpoint && row.kicker !== "START" ? (
-                    <PlaceIcon color={row.markerColor} size={12} />
-                  ) : row.stop ? (
-                    <PlaceIcon color={row.markerColor} size={12} />
-                  ) : null}
-                </View>
-
-                <View style={styles.timelineBody}>
-                  <Text style={styles.timelineKicker}>{row.kicker}</Text>
-                  <Text style={styles.timelineName} numberOfLines={1}>
-                    {row.name}
-                  </Text>
-                  {row.forcedLine ? (
-                    <Text style={styles.timelineForced}>{row.forcedLine}</Text>
-                  ) : null}
-                </View>
-
-                <Text style={styles.timelineDistance}>
-                  {row.distanceKm != null && !row.isFuel ? formatKm(row.distanceKm, units) : ""}
-                </Text>
-
-                {row.href ? (
-                  <View style={styles.timelineNav}>
-                    <NavigateIcon color={theme.accent300} size={15} />
-                  </View>
-                ) : null}
-              </>
+              <RouteTimelineRowBody
+                units={units}
+                row={{
+                  kicker: row.kicker,
+                  name: row.name,
+                  distanceKm: row.distanceKm,
+                  markerColor: row.markerColor,
+                  isFuel: row.isFuel,
+                  isEndpoint: row.isEndpoint,
+                  isStop: row.stop != null,
+                  forcedLine: row.forcedLine,
+                  hasLink: row.href != null,
+                }}
+              />
             );
             return (
               <View
@@ -472,53 +449,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.primary,
   },
   noticeButtonText: { fontSize: 11, fontFamily: font.semibold, color: theme.onPrimary },
-  timeline: { position: "relative" },
-  /* Inset by half a marker at each end so the line starts and stops INSIDE
-     the first and last rings rather than poking out of them. RN has no
-     gradient without another dependency, so this is the accent flat — the web
-     paints the same line as a gradient. */
-  timelineLine: {
-    position: "absolute",
-    left: 12,
-    top: 13,
-    bottom: 13,
-    width: 2,
-    borderRadius: 1,
-    backgroundColor: theme.primary,
-  },
-  timelineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 7,
-  },
-  marker: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 1,
-    // Opaque, so the connector passes behind rather than through.
-    backgroundColor: theme.bg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  timelineBody: { flex: 1, minWidth: 0 },
-  timelineKicker: {
-    fontSize: 9.5,
-    fontFamily: font.semibold,
-    letterSpacing: 1.3,
-    color: theme.subtle,
-  },
-  timelineName: { fontSize: 13.5, fontFamily: font.medium, color: theme.text },
-  timelineForced: { fontSize: 10.5, fontFamily: font.regular, color: theme.subtle, marginTop: 1 },
-  timelineDistance: {
-    fontSize: 10.5,
-    fontFamily: font.regular,
-    color: theme.subtle,
-    fontVariant: ["tabular-nums"],
-  },
-  timelineNav: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  timelineLink: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
+  // The row's look lives in RouteTimelineRow.tsx, shared with the intro.
+  timeline: timelineStyles.timeline,
+  timelineLine: timelineStyles.timelineLine,
+  timelineRow: timelineStyles.timelineRow,
+  timelineLink: timelineStyles.timelineLink,
   stopRow: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8 },
   // The web pulses a box-shadow ring; RN has no inset shadow, so the highlight
   // is a gold outline on the row instead.

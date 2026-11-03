@@ -73,7 +73,7 @@ permissions:
 jobs:
   deploy:
     name: Migrate prod + deploy to production
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The CI gate may wait up to 90 min (its WAIT_SECONDS), then migrate +
     # build + deploy take up to the 20 this job had before the gate waited.
     # mobile.yml's deploy wait is sized from this number.

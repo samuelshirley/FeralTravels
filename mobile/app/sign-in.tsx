@@ -11,14 +11,23 @@ import {
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import * as AppleAuthentication from "expo-apple-authentication";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Banner, Button, Card, Eyebrow } from "@/components/ui";
 import { LegalFooter } from "@/components/LegalLinks";
 import { theme } from "@/lib/theme";
-import { ApiError, requestOtp, verifyOtp, type SessionResult } from "@/lib/api";
+import {
+  ApiError,
+  createTrip,
+  reportToGlobalErrorSurface,
+  requestOtp,
+  verifyOtp,
+  type SessionResult,
+} from "@/lib/api";
 import { setToken, setSignedInEmail } from "@/lib/auth";
 import { font } from "@/lib/typography";
+import { ChevronLeftIcon } from "@/components/icons";
 import {
   appleAvailable,
   googleAvailable,
@@ -172,8 +181,48 @@ const ALREADY_SENT_NOTICE = "We already sent you a code — enter it below.";
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a fresh sign-in goes. `next=new-trip` is the intro's "Create trip":
+ * a new trip, opened on Penny's first question. Anything else is the trips
+ * list, as it always was.
+ */
+type SignInNext = "new-trip" | null;
+
+/**
+ * Create the intro's trip and say where its chat is. A 402 means this account
+ * cannot start a trip (past its free days, no plan): not an error — the trips
+ * list draws the plan overlay that says exactly that. Every other failure is
+ * reported, and the user still lands signed in, on the list.
+ */
+async function newTripDestination(): Promise<`/trips/${string}` | "/trips"> {
+  try {
+    const trip = await createTrip({ skipGlobalErrorReport: true });
+    return `/trips/${trip.id}?chat=1`;
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 402)) {
+      reportToGlobalErrorSurface(err, "/api/trips");
+    }
+    return "/trips";
+  }
+}
+
+function firstParam(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
 export default function SignInScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ next?: string | string[]; from?: string | string[] }>();
+  const next: SignInNext = firstParam(params.next) === "new-trip" ? "new-trip" : null;
+  /*
+   * The back caret is for the intro, and ONLY the intro. `router.canGoBack()`
+   * alone is not that signal: sign-out from inside a trip REPLACES the trip
+   * screen with this one, leaving the trips list underneath, so canGoBack is
+   * true there too and a caret would lead a signed-out user back into a list
+   * they can no longer load. The intro says where it came from.
+   */
+  const fromIntro = firstParam(params.from) === "intro";
 
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
@@ -205,9 +254,15 @@ export default function SignInScreen() {
       await setToken(result.token);
       // Only identity the app has — /api/me returns no PII.
       if (result.user?.email) await setSignedInEmail(result.user.email);
-      router.replace("/trips");
+      const destination = next === "new-trip" ? await newTripDestination() : "/trips";
+      // Nothing signed-out stays under the signed-in app: from the intro the
+      // stack is [intro, sign-in], and leaving it there would put the intro
+      // one swipe behind /trips. Dismissed only once the destination is known,
+      // so the intro never flashes back up while the trip is being created.
+      if (router.canDismiss()) router.dismissAll();
+      router.replace(destination);
     },
-    [router]
+    [router, next]
   );
 
   const goToCodeStep = useCallback((withNotice: string | null) => {
@@ -393,6 +448,18 @@ export default function SignInScreen() {
       style={styles.flex}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      {fromIntro && router.canGoBack() ? (
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={12}
+          testID="signin-back"
+          style={[styles.back, { top: insets.top + 8 }]}
+        >
+          <ChevronLeftIcon color={theme.text} size={20} />
+        </Pressable>
+      ) : null}
       <ScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
@@ -563,6 +630,16 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: theme.bg },
+  // 44pt target, over the scroll view so the centred card does not move.
+  back: {
+    position: "absolute",
+    left: 12,
+    zIndex: 1,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   scroll: {
     flexGrow: 1,
     justifyContent: "center",

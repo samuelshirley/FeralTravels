@@ -39,7 +39,7 @@ permissions:
 jobs:
   delete-neon-branch:
     name: Delete the PR's Neon branch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # continue-on-error: a PR closed before CI ever ran has no branch to
@@ -54,7 +54,7 @@ jobs:
 
   delete-stale-previews:
     name: Delete stale Vercel preview deployments
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Two PRs closing together would otherwise race to delete the same
     # deployments and warn about each other's 404s.

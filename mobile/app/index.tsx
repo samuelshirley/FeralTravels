@@ -9,7 +9,8 @@ import {
   type LaunchPermission,
   type LaunchLocationOutcome,
 } from "@/shared/lib/launchLocation";
-import { getToken } from "@/lib/auth";
+import { getIntroSeen, getToken } from "@/lib/auth";
+import { resolveLaunchDestination } from "@/shared/lib/launchDestination";
 import { listTrips } from "@/lib/api";
 import { fetchEntitlement } from "@/lib/entitlement";
 import { mostRecentlyActive } from "@/shared/lib/tripsListDates";
@@ -17,7 +18,7 @@ import { theme } from "@/lib/theme";
 
 /**
  * Entry gate: route to /trips when a stored session exists, /sign-in when
- * not. The token might be expired — apiFetch clears it on any 401 and the
+ * not — or, on a fresh install with no session, to the first-launch /intro. The token might be expired — apiFetch clears it on any 401 and the
  * screens bounce back here, so the gate stays dumb and fast.
  *
  * The gate paints nothing of its own but the splash. _layout holds the native splash
@@ -112,19 +113,23 @@ export default function Gate() {
   );
 }
 
-/** Where launch goes once the location question is settled. */
+/**
+ * Where launch goes once the location question is settled. The decision is
+ * shared/lib/launchDestination.ts (tested in the root suite): no token and the
+ * intro not yet seen -> /intro; no token -> /sign-in; a token -> wherever a
+ * blocked account belongs, else /trips. The intro is reachable from the
+ * no-token branch only, so a signed-in user never meets it.
+ */
 async function routeDestination(): Promise<Href> {
-  // getToken already swallows keychain failures and returns null, so a
-  // signed-out result is the worst case here — never a hang.
-  const token = await getToken();
-  if (!token) return "/sign-in";
-  const blocked = await Promise.race([
-    blockedDestination(),
-    new Promise<Href | null>((resolve) =>
-      setTimeout(() => resolve(null), LAUNCH_CHECK_TIMEOUT_MS)
-    ),
-  ]);
-  return blocked ?? "/trips";
+  const route = await resolveLaunchDestination({
+    // getToken already swallows keychain failures and returns null, so a
+    // signed-out result is the worst case here — never a hang.
+    hasToken: async () => (await getToken()) != null,
+    introSeen: getIntroSeen,
+    blockedDestination,
+    blockedTimeoutMs: LAUNCH_CHECK_TIMEOUT_MS,
+  });
+  return route as Href;
 }
 
 function toLaunchPermission(r: Location.LocationPermissionResponse): LaunchPermission {
@@ -174,7 +179,7 @@ function go(href: Href) {
  * direction costs one rejected request; being wrong in the other locks someone
  * out of the app they paid for.
  */
-async function blockedDestination(): Promise<Href | null> {
+async function blockedDestination(): Promise<string | null> {
   const verdict = await fetchEntitlement();
   if (!verdict || verdict.entitled) return null;
 

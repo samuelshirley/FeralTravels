@@ -2,7 +2,11 @@
 # One Maestro run on its own simulator and its own fixture account (see the
 # ios-e2e job in ci.yml). trip-itinerary runs FIRST: it reads the account's own
 # seeded trip and asserts the trips list, which the flows after it add trips to.
-# The rest seed what they look at (forced-stop-line on an account of its own).
+# The rest seed what they look at (forced-stop-line on an account of its own),
+# and feature-requests reaches the list from the trips list AND from inside a
+# trip (its own account, suffix `fr`). It is here, not in `flows`, because
+# `flows` already sends ten sign-in codes from one simulator and the server
+# allows ten an hour per IP (maestroOtpBudget.test.ts).
 #
 # `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
 # checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
@@ -13,6 +17,7 @@ flows:
   - maps-link-stop.yaml
   - rest-day-stop.yaml
   - penny-try-again.yaml
+  - feature-requests.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -22,3 +27,4 @@ executionOrder:
     - maps-link-stop
     - rest-day-stop
     - penny-try-again
+    - feature-requests

@@ -1,0 +1,136 @@
+# Feature requests, from both account menus: the trips list's and a trip's own
+# header menu. On the screen: an In progress request shows its badge and
+# Sam's reply; a vote counts and un-counts; a Not doing request shows its
+# reason and has no vote button.
+#
+# Feature requests are GLOBAL — every flow and spec on this preview sees every
+# row — so this seeds its own three (seed-feature-requests.js, tagged per run)
+# and addresses only those ids. The vote button is one accessibility element
+# whose LABEL carries the count, so the count is asserted on the label.
+#
+# Passed on the CI simulator on its first run (PR #95, 2026-11-02).
+#
+# Its own account (suffix `fr`).
+appId: ${APP_ID}
+---
+- runScript:
+    file: seed-account.js
+    env:
+      ACCOUNT_SUFFIX: fr
+      SEED_CANONICAL: '1'
+      FORCED_FUEL_STOP: ''
+      RANGE_KM: ''
+      JEV_MODE: ''
+      EXTRA_TRIP_KIND: ''
+      EXTRA_TRIP_NAME: ''
+- runScript: seed-feature-requests.js
+
+- runFlow:
+    file: sign-in.yaml
+    env:
+      EMAIL: ${output.account.email}
+      TRIP_NAME: ${output.account.tripName}
+
+# ── From the trips list ─────────────────────────────────────────────────────
+- tapOn: 'Account menu.*'
+- extendedWaitUntil:
+    visible: 'SIGNED IN AS'
+    timeout: 10000
+- tapOn:
+    id: 'account-menu-feature-requests'
+- extendedWaitUntil:
+    visible:
+      id: 'feature-requests-list'
+    timeout: 20000
+
+# In progress: the badge and the reply. In-progress rows sort first.
+- scrollUntilVisible:
+    element:
+      id: 'feature-request-in-progress-${output.fr.working}'
+    direction: DOWN
+    timeout: 30000
+- assertVisible:
+    text: 'Reply ${output.fr.tag} working'
+
+# Open: vote, then take it back.
+- scrollUntilVisible:
+    element:
+      id: 'feature-request-vote-${output.fr.open}'
+    direction: DOWN
+    timeout: 30000
+- assertVisible:
+    id: 'feature-request-vote-${output.fr.open}'
+    text: 'Vote\. 0 votes'
+- tapOn:
+    id: 'feature-request-vote-${output.fr.open}'
+- extendedWaitUntil:
+    visible:
+      id: 'feature-request-vote-${output.fr.open}'
+      text: 'Remove your vote\. 1 vote'
+    timeout: 15000
+- tapOn:
+    id: 'feature-request-vote-${output.fr.open}'
+- extendedWaitUntil:
+    visible:
+      id: 'feature-request-vote-${output.fr.open}'
+      text: 'Vote\. 0 votes'
+    timeout: 15000
+- assertNotVisible:
+    text: 'Your vote didn.t go through.*'
+
+# Not doing: the reason, and no vote button.
+- scrollUntilVisible:
+    element:
+      id: 'feature-request-closed-${output.fr.closed}'
+    direction: DOWN
+    timeout: 30000
+- assertVisible:
+    text: 'NOT DOING'
+- assertVisible:
+    text: 'Reason ${output.fr.tag} closed'
+- assertNotVisible:
+    id: 'feature-request-vote-${output.fr.closed}'
+
+# A vote survives leaving the screen: vote, go back, come back.
+- scrollUntilVisible:
+    element:
+      id: 'feature-request-vote-${output.fr.open}'
+    direction: UP
+    timeout: 30000
+- tapOn:
+    id: 'feature-request-vote-${output.fr.open}'
+- extendedWaitUntil:
+    visible:
+      id: 'feature-request-vote-${output.fr.open}'
+      text: 'Remove your vote\. 1 vote'
+    timeout: 15000
+- tapOn:
+    id: 'feature-requests-back'
+- extendedWaitUntil:
+    visible: '.*${output.account.tripName}.*'
+    timeout: 15000
+
+# ── From inside a trip ──────────────────────────────────────────────────────
+- tapOn:
+    text: '.*${output.account.tripName}.*'
+- extendedWaitUntil:
+    visible: 'LIST'
+    timeout: 30000
+- tapOn: 'Account menu.*'
+- extendedWaitUntil:
+    visible: 'SIGNED IN AS'
+    timeout: 10000
+- tapOn:
+    id: 'trip-menu-feature-requests'
+- extendedWaitUntil:
+    visible:
+      id: 'feature-requests-list'
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: 'feature-request-vote-${output.fr.open}'
+    direction: DOWN
+    timeout: 30000
+- assertVisible:
+    id: 'feature-request-vote-${output.fr.open}'
+    text: 'Remove your vote\. 1 vote'

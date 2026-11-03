@@ -8,6 +8,7 @@ import {
   legs,
   stops,
   announcements,
+  featureRequests,
   emailOtpCodes,
   deletedUsers,
   oauthTokenUses,
@@ -951,6 +952,34 @@ export async function cleanupAnnouncement(opts: {
       .set({ active: true })
       .where(inArray(announcements.id, opts.parkedIds));
   }
+}
+
+/**
+ * TEST-ONLY: seed one feature request in a given state.
+ *
+ * Nothing deletes these: the preview database is wiped on every push, and the
+ * rows a spec leaves behind are what the DB column-coverage job counts
+ * (scripts/column-coverage.ts). Feature requests are global, so every spec
+ * addresses only the ids it seeded — never "the list".
+ */
+export async function seedFeatureRequest(opts: {
+  title: string;
+  body?: string | null;
+  status?: 'open' | 'in_progress' | 'not_doing';
+  reply?: string | null;
+}): Promise<{ id: string }> {
+  assertEnabled();
+  const [row] = await db
+    .insert(featureRequests)
+    .values({
+      title: opts.title,
+      body: opts.body ?? null,
+      status: opts.status ?? 'open',
+      reply: opts.reply ?? null,
+      replyUpdatedAt: opts.reply ? new Date() : null,
+    })
+    .returning({ id: featureRequests.id });
+  return row;
 }
 
 /**
