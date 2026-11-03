@@ -2,7 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicApiKey } from "@/lib/anthropicKey";
 import { assertAiConsent, type AiConsentProof } from "@/server/aiConsent";
-import { logAnthropicUsageWithFallback } from "@/server/repos/usage";
+import { logAnthropicUsageWithFallback, logAnthropicUsageWithFallbackId } from "@/server/repos/usage";
 import { buildPennyContext, type PennyContext } from "@/lib/penny/context";
 import {
   ACTION_TOOL_NAMES,
@@ -707,6 +707,12 @@ export interface ReplanResult {
    * browser. See lib/penny/turnTrace.ts for the truncation and hashing rules.
    */
   turnTrace: TurnTrace;
+  /**
+   * The `usage_events` row holding this turn's Anthropic cost — the one row
+   * written for the whole turn's summed tokens. Null when that write failed.
+   * The Jev route measurement reads the turn's real cost from it.
+   */
+  usageEventId: number | null;
 }
 
 /**
@@ -1153,7 +1159,7 @@ export async function* replanStream(
       `[penny.replan] tripId=${tripId} input=${totalInputTokens} output=${totalOutputTokens} cacheWrite=${totalCacheCreationTokens} cacheRead=${totalCacheReadTokens} cacheHitRate=${cacheHitRate}`,
     );
 
-    const okFinal = await logAnthropicUsageWithFallback({
+    const finalAccounting = await logAnthropicUsageWithFallbackId({
       userId,
       tripId,
       model: MODEL,
@@ -1163,7 +1169,7 @@ export async function* replanStream(
       cacheReadInputTokens: totalCacheReadTokens,
       success: true,
     });
-    if (okFinal) anthropicAccountingPersisted = true;
+    if (finalAccounting.ok) anthropicAccountingPersisted = true;
     attemptedFinalAnthropicAccounting = true;
 
     yield {
@@ -1182,6 +1188,7 @@ export async function* replanStream(
         fuelPlanRan,
         toolTrace,
         turnTrace: buildTurnTrace(promptFingerprint(SYSTEM_PROMPT, TOOLS), tracedCalls),
+        usageEventId: finalAccounting.id,
       },
     };
   } finally {
