@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { fixturePost, signedInAccount, type SignedInAccount } from './fixtures/api';
+import { fixturePost, seedAccount, signedInAccount, type SignedInAccount } from './fixtures/api';
+import { login } from './fixtures/auth';
 
 /**
  * Feature requests over HTTP, as the iOS app asks (bearer token from the real
@@ -143,4 +144,42 @@ test('order: in progress first, then open by votes, then not doing', async () =>
   // working: 1 vote (in progress) · popular: 2 · quiet: 0 · closed: not doing
   const order = mine(await listFor(bob)).map((r) => r.id);
   expect(order).toEqual([ids.working, ids.popular, ids.quiet, ids.closed]);
+});
+
+/**
+ * The WEB screen, driven in a browser the way a desktop user reaches it: the
+ * account menu's "Feature requests" row (Sam, 2026-11-03: everything ships on
+ * iOS AND desktop). iOS is mobile/maestro/feature-requests.yaml.
+ */
+test('web: the account menu opens Feature requests, and a vote counts and survives a reload', async ({ page }) => {
+  test.setTimeout(120_000);
+  const account = await seedAccount();
+  await login(page, account.email);
+
+  await page.getByRole('button', { name: /account menu/i }).click();
+  await page.getByTestId('account-menu-feature-requests').click();
+  await expect(page).toHaveURL(/\/feature-requests$/);
+  await expect(page.getByRole('heading', { name: 'Feature requests' })).toBeVisible();
+
+  // In progress: the badge and the reply.
+  const working = page.getByTestId(`feature-request-${ids.working}`);
+  await expect(working.getByRole('img', { name: 'In progress' })).toBeVisible();
+  await expect(working.getByText('Working on it.')).toBeVisible();
+
+  // Open: vote (it is "popular", with alice's and bob's 2 already), then reload.
+  const button = page.getByTestId(`feature-request-vote-${ids.popular}`);
+  await expect(button).toHaveAttribute('aria-label', 'Vote. 2 votes');
+  await button.click();
+  await expect(button).toHaveAttribute('aria-label', 'Remove your vote. 3 votes');
+  await page.reload();
+  await expect(page.getByTestId(`feature-request-vote-${ids.popular}`)).toHaveAttribute(
+    'aria-label',
+    'Remove your vote. 3 votes',
+  );
+
+  // Not doing: the reason, and no vote button.
+  await expect(page.getByText('NOT DOING')).toBeVisible();
+  await expect(page.getByTestId(`feature-request-closed-${ids.closed}`)).toBeVisible();
+  await expect(page.getByTestId(`feature-request-vote-${ids.closed}`)).toHaveCount(0);
+  await expect(page.getByText('Booking stays with the campsite.')).toBeVisible();
 });

@@ -83,3 +83,26 @@ export function optimisticVote(
   if (row.votedByMe === vote) return { voteCount: row.voteCount, votedByMe: vote };
   return { voteCount: Math.max(0, row.voteCount + (vote ? 1 : -1)), votedByMe: vote };
 }
+
+/**
+ * What to say when a vote fails, and whether the list must be re-read. One
+ * rule for the iOS screen and the web page, so the two can never word the same
+ * failure differently. `status` is null (or 0) when the request never reached
+ * a server. A 401 is not handled here: each client sends the user to sign-in.
+ */
+export function voteFailure(
+  status: number | null,
+  code: string | null,
+): { message: string; reload: boolean } {
+  if (status === 409 && code === VOTING_CLOSED_CODE) {
+    return { message: 'Voting on this one has closed.', reload: true };
+  }
+  if (status === 404) return { message: 'That request has been removed.', reload: true };
+  if (status == null || status === 0) {
+    return {
+      message: "Your vote didn't go through. Check your connection and try again.",
+      reload: false,
+    };
+  }
+  return { message: "Your vote didn't go through. Try again.", reload: false };
+}
