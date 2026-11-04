@@ -1897,11 +1897,14 @@ function renderContextMessage(
   userMessage: string,
   resolvedMapsLinks: ResolvedMapsLink[] = [],
 ): string {
-  const contextJson = JSON.stringify(ctx, null, 2);
+  // Compact, never indented: this string is input tokens on every Penny turn,
+  // and indentation is pure whitespace the model does not need (24% of the
+  // characters on the canonical trip). `compactModelJsonGuard.test.ts` holds it.
+  const contextJson = JSON.stringify(ctx);
   const request = userMessage?.trim() || "(no text — see attached image(s))";
   const mapsBlock =
     resolvedMapsLinks.length > 0
-      ? `\n\n<resolved_maps_links>\n${JSON.stringify(resolvedMapsLinks, null, 2)}\n</resolved_maps_links>`
+      ? `\n\n<resolved_maps_links>\n${JSON.stringify(resolvedMapsLinks)}\n</resolved_maps_links>`
       : "";
   return `<context>\n${contextJson}\n</context>\n\nUser request: ${request}${mapsBlock}`;
 }
