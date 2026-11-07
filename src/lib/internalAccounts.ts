@@ -69,6 +69,11 @@ export const INTERNAL_EMAIL_PATTERNS: ReadonlyArray<string> = [
   // is the whole defence. A signup in any other shape gets counted, which is
   // the harmless direction.
   '^samuelashirley\\+[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}(\\.[0-9]{1,2})?@gmail\\.com$',
+
+  // The two production canaries (scripts/prod-canary.mjs and the simulator
+  // run, docs/design/prod-canary.md). Spelled out whole for the same reason
+  // as the dated shape: `+canary2` or `+canary-x` is a stranger.
+  '^samuelashirley\\+canary(-ios)?@gmail\\.com$',
 ];
 
 const INTERNAL_EMAIL_REGEXPS = INTERNAL_EMAIL_PATTERNS.map((p) => new RegExp(p, 'i'));
