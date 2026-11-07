@@ -30,16 +30,16 @@ import type { BlockReason } from '@/types/entitlement';
  */
 
 /**
- * Where the App Store button goes.
+ * Where the App Store button goes: the live listing.
  *
- * The numeric id is minted by App Store Connect at first submission, so it is
- * an env var rather than a hardcoded guess — a wrong id is a 404 in front of
- * the one screen whose entire job is to sell. Until it is set, the search URL
- * is a real, working Apple page that finds the app, which is a better failure
- * than a dead link.
+ * Hardcoded now that the id exists (approved Nov 2026). It used to read
+ * `NEXT_PUBLIC_APP_STORE_URL` with Apple's SEARCH page as the fallback, so the
+ * page would work before the id was minted — and the variable was never set,
+ * so production kept sending every "Get the app" tap to a search results page
+ * after the app went live (checked on feraltravels.com, 2026-11-07). The id is
+ * permanent, so a constant cannot drift the way an unset env var did.
  */
-export const APP_STORE_URL =
-  process.env.NEXT_PUBLIC_APP_STORE_URL || 'https://apps.apple.com/search?term=Feral%20Travels';
+export const APP_STORE_URL = 'https://apps.apple.com/us/app/feral-travels/id6807913556';
 
 /**
  * The label on the one web button that leaves the web.
