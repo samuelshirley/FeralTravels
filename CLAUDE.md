@@ -92,6 +92,12 @@ never run tests or seed fixtures against the prod database.
    `mobile.yml` ships nothing to a device (OTA or TestFlight) until it has.
 3. **PR closes** → `pr-cleanup.yml` drops the preview's Neon branch.
 
+**Production canary** — `prod-canary.yml` (twice daily, API) and
+`scripts/prod-canary-ios.sh` (simulator, launchd + a Claude scheduled task)
+plan Girona → Barcelona on PRODUCTION as `samuelashirley+canary[-ios]@gmail.com`:
+the one check that touches production's own keys (CI runs on `ANTHROPIC_API_KEY_CI`).
+The only sanctioned exception to "never test against prod" — **`docs/design/prod-canary.md`**.
+
 - **Branch protection on `main` requires a PR plus the `Decide scope` and `Unit
   tests` checks, up to date; force-push and deletion are blocked.** Admins can
   bypass it; the deploy gate then fails the deploy, leaving prod stale rather
@@ -233,7 +239,7 @@ ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
 lifetime-spend.ts
 make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
 pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
-prune-branches.sh
+prod-canary.mjs prod-canary-ios.sh prod-canary-token.sh prune-branches.sh
 reconcile-anthropic-spend.ts
 run-migrations.ts seed-demo-trip.ts seed-first-announcement.ts
 seed-migration-journal.ts serverOnlyStub.ts

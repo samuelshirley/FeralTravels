@@ -1,0 +1,202 @@
+# Production canary, part 2 of 2: sign in with the emailed code, plan
+# Girona → Barcelona the way a new user does, check the itinerary and the map,
+# and delete every trip on the account. See README.md here.
+#
+# NO launchApp: part 1 left the app on the verify screen, and relaunching would
+# throw that screen away.
+appId: ${APP_ID}
+---
+# One digit per box — sign-in.yaml explains the race a single inputText loses.
+- tapOn:
+    id: 'signin-code-0'
+- inputText: ${CODE.charAt(0)}
+- tapOn:
+    id: 'signin-code-1'
+- inputText: ${CODE.charAt(1)}
+- tapOn:
+    id: 'signin-code-2'
+- inputText: ${CODE.charAt(2)}
+- tapOn:
+    id: 'signin-code-3'
+- inputText: ${CODE.charAt(3)}
+- tapOn:
+    id: 'signin-code-4'
+- inputText: ${CODE.charAt(4)}
+- tapOn:
+    id: 'signin-code-5'
+- inputText: ${CODE.charAt(5)}
+
+# ── Land on a fresh trip ────────────────────────────────────────────────────
+# An account with no trips is taken straight into a new one (trips/index.tsx
+# auto-creates). One with a trip left by a run that died lands on the list
+# instead; start a new trip from there — the leftovers are deleted at the end.
+- extendedWaitUntil:
+    visible:
+      text: '(\+ New trip|Where are we going\?.*)'
+    timeout: 60000
+- assertNotVisible:
+    id: 'fatal-error-modal'
+- runFlow:
+    when:
+      visible: '\+ New trip'
+    commands:
+      - tapOn: '\+ New trip'
+- extendedWaitUntil:
+    visible:
+      id: 'onboarding-headline'
+    timeout: 30000
+
+# ── Onboarding ──────────────────────────────────────────────────────────────
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: 'Girona to Barcelona, one day'
+- tapOn:
+    id: 'chat-composer-send'
+# The consent sheet appears only until the account has agreed once.
+- runFlow:
+    when:
+      visible:
+        id: 'ai-consent-sheet'
+    file: ../ai-consent-agree.yaml
+- runFlow:
+    when:
+      visible: 'Where are you starting from?'
+    commands:
+      - tapOn:
+          id: 'chat-composer-input'
+      - inputText: 'Girona'
+      - tapOn:
+          id: 'chat-composer-send'
+- extendedWaitUntil:
+    visible: 'When are you setting off?'
+    timeout: 30000
+# Keyboard down so the chips are not under it (onboarding-handoff-plan.yaml).
+- tapOn:
+    point: '50%,25%'
+- waitForAnimationToEnd
+- tapOn: 'In a month'
+- extendedWaitUntil:
+    visible: 'How long do you want to drive each day\?'
+    timeout: 30000
+- waitForAnimationToEnd
+- tapOn: '6 h'
+# Units and the vehicle are asked only until the account has them — the first
+# run sets both, every later run skips straight to the hand-off.
+- extendedWaitUntil:
+    visible:
+      text: '(Do you want distances in metric.*|.*Trip is planned.*)'
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        text: 'Do you want distances in metric.*'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn: 'Metric (km)'
+      - extendedWaitUntil:
+          visible:
+            id: 'onboarding-vehicle-card'
+          timeout: 30000
+      - waitForAnimationToEnd
+      - tapOn:
+          id: 'onboarding-vehicle-name'
+      - inputText: 'Canary'
+      - tapOn: 'RANGE ON A TANK'
+      - tapOn: '500 km'
+      - tapOn:
+          id: 'onboarding-vehicle-submit'
+
+# ── The hand-off plans the trip (Anthropic + Google, on production) ─────────
+- extendedWaitUntil:
+    visible:
+      id: 'chat-plan-ready'
+    timeout: 300000
+- assertVisible:
+    text: '.*Trip is planned.*'
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+- assertNotVisible:
+    text: '^Error: .*'
+
+# ── Low tank: forces a real Places search (scripts/prod-canary.mjs header) ──
+- tapOn:
+    id: 'chat-composer-input'
+- inputText: "When I set off from Girona I will have only 40 km of fuel in the tank and I won't refuel before. Plan my fuel around that, don't ask me anything."
+- tapOn:
+    id: 'chat-composer-send'
+- waitForAnimationToEnd
+- tapOn:
+    point: '50%,30%'
+- extendedWaitUntil:
+    visible: 'Changes applied to trip'
+    timeout: 300000
+- extendedWaitUntil:
+    visible:
+      id: 'penny-status'
+      text: 'READY'
+    timeout: 120000
+
+# ── The itinerary shows the leg and a real station ──────────────────────────
+- runFlow:
+    when:
+      notVisible: 'LIST'
+    commands:
+      - tapOn:
+          point: '50%,30%'
+- tapOn: 'LIST'
+- extendedWaitUntil:
+    visible: 'ROUTE PLAN'
+    timeout: 30000
+- assertVisible:
+    text: '.*Girona.* → .*Barcelona.*'
+- runFlow:
+    when:
+      notVisible:
+        text: 'FUEL: .*'
+    commands:
+      - tapOn:
+          text: '.*Girona.* → .*Barcelona.*'
+- extendedWaitUntil:
+    notVisible: 'Planning fuel stops…'
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: 'FUEL: .*Opens in Google Maps'
+    direction: DOWN
+    timeout: 20000
+- assertNotVisible:
+    text: 'No fuel stations found.*'
+
+# ── The map draws (Maps JS key) ─────────────────────────────────────────────
+- tapOn: 'MAP'
+- extendedWaitUntil:
+    visible: 'Recenter the map on the whole route'
+    timeout: 30000
+- assertNotVisible: 'Map failed to load.'
+
+# ── Delete every trip on the account ────────────────────────────────────────
+# Relaunch lands on the list (delete-trip.yaml). Every card's delete button is
+# labelled "Delete trip <name>", so this also clears a run that died midway.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: 'EDIT TRIPS'
+    timeout: 30000
+- tapOn: 'EDIT TRIPS'
+- repeat:
+    while:
+      visible: 'Delete trip .*'
+    commands:
+      - tapOn: 'Delete trip .*'
+      - extendedWaitUntil:
+          visible: 'Delete trip?'
+          timeout: 10000
+      - tapOn:
+          id: 'trip-delete-confirm'
+      - extendedWaitUntil:
+          notVisible: 'Delete trip?'
+          timeout: 20000
+- assertNotVisible: 'Delete trip .*'

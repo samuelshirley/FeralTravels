@@ -169,7 +169,14 @@ test('web: the account menu opens Feature requests, and a vote counts and surviv
   // Open: vote (it is "popular", with alice's and bob's 2 already), then reload.
   const button = page.getByTestId(`feature-request-vote-${ids.popular}`);
   await expect(button).toHaveAttribute('aria-label', 'Vote. 2 votes');
+  // The label flips optimistically, so wait for the server's answer before reloading (a reload raced the PUT in CI).
+  const putDone = page.waitForResponse(
+    (r) => r.url().endsWith(`/api/feature-requests/${ids.popular}/vote`) && r.request().method() === 'PUT',
+  );
   await button.click();
+  const put = await putDone;
+  expect(put.status()).toBe(200);
+  expect(await put.json()).toEqual({ voteCount: 3, votedByMe: true });
   await expect(button).toHaveAttribute('aria-label', 'Remove your vote. 3 votes');
   await page.reload();
   await expect(page.getByTestId(`feature-request-vote-${ids.popular}`)).toHaveAttribute(
@@ -181,5 +188,8 @@ test('web: the account menu opens Feature requests, and a vote counts and surviv
   await expect(page.getByText('NOT DOING')).toBeVisible();
   await expect(page.getByTestId(`feature-request-closed-${ids.closed}`)).toBeVisible();
   await expect(page.getByTestId(`feature-request-vote-${ids.closed}`)).toHaveCount(0);
-  await expect(page.getByText('Booking stays with the campsite.')).toBeVisible();
+  // Retries re-seed, so the reply text alone is not unique: scope it to this run's row.
+  await expect(
+    page.getByTestId(`feature-request-${ids.closed}`).getByText('Booking stays with the campsite.'),
+  ).toBeVisible();
 });
