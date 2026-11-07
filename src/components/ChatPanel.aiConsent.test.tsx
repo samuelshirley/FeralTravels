@@ -25,6 +25,8 @@ const SNAPSHOT = {
 
 const server = vi.hoisted(() => ({
   consented: false,
+  /** The sheet version agreed to; with `consented` true and this null, a server from before versions. */
+  version: null as number | null,
   calls: [] as Array<{ path: string; method: string; body: unknown }>,
 }));
 
@@ -44,10 +46,15 @@ vi.mock('@/lib/api', () => {
     apiFetch: vi.fn(async (path: string, opts: { method?: string; body?: unknown } = {}) => {
       const method = opts.method ?? (opts.body ? 'POST' : 'GET');
       server.calls.push({ path, method, body: opts.body });
-      if (path === '/api/me') return { ai_consent: server.consented };
+      if (path === '/api/me') {
+        return server.version === null
+          ? { ai_consent: server.consented }
+          : { ai_consent: server.consented, ai_consent_version: server.version };
+      }
       if (path === '/api/me/preferences') {
         server.consented = true;
-        return { ok: true, ai_consent: true };
+        server.version = (opts.body as { ai_consent_version?: number }).ai_consent_version ?? 1;
+        return { ok: true, ai_consent: true, ai_consent_version: server.version };
       }
       if (path.includes('/onboarding') && method === 'GET') return SNAPSHOT;
       if (path.includes('/onboarding') && method === 'POST') {
@@ -65,6 +72,7 @@ vi.mock('@/components/UnitsContext', () => ({ useUnits: () => ({ units: 'metric'
 vi.mock('@/components/DeviceLocationContext', () => ({ useDeviceLocation: () => ({ place: null }) }));
 
 import ChatPanel from '@/components/ChatPanel';
+import { AI_CONSENT_COPY, AI_CONSENT_VERSION } from '@/lib/aiConsent';
 
 const onboardingPosts = () => server.calls.filter((c) => c.path.includes('/onboarding') && c.method === 'POST');
 const consentWrites = () => server.calls.filter((c) => c.path === '/api/me/preferences');
@@ -87,6 +95,7 @@ function typeAndSend(text: string) {
 describe('the AI consent dialog (web)', () => {
   beforeEach(() => {
     server.consented = false;
+    server.version = null;
     server.calls = [];
     // /api/me/entitlement: an entitled trial, so the paywall leaves the composer open.
     global.fetch = vi.fn(async () => new Response(JSON.stringify({ entitled: true, state: 'trial' }), { status: 200 })) as never;
@@ -99,8 +108,12 @@ describe('the AI consent dialog (web)', () => {
     typeAndSend('Girona to Lisbon');
 
     const dialog = await screen.findByTestId('ai-consent-sheet');
-    expect(dialog.textContent).toContain("Penny uses Anthropic's Claude");
+    expect(dialog.textContent).toContain('Penny uses Anthropic and TypeSafe');
     expect(dialog.textContent).toContain('your messages, any photos you attach, your trip details and your current location');
+    expect(screen.getByTestId('ai-consent-typesafe').textContent).toBe(AI_CONSENT_COPY.typeSafeBody);
+    // A new account is not told what "changed": it never saw the older sheet.
+    expect(screen.queryByTestId('ai-consent-upgrade')).toBeNull();
+    expect(screen.getByTestId('ai-consent-not-now').textContent).toBe('Not now');
     expect(onboardingPosts()).toEqual([]);
 
     fireEvent.click(screen.getByTestId('ai-consent-not-now'));
@@ -116,7 +129,10 @@ describe('the AI consent dialog (web)', () => {
     fireEvent.click(screen.getByTestId('ai-consent-review'));
     fireEvent.click(await screen.findByTestId('ai-consent-agree'));
     await waitFor(() => expect(consentWrites()).toHaveLength(1));
-    expect(consentWrites()[0]).toMatchObject({ method: 'PATCH', body: { ai_consent: true } });
+    expect(consentWrites()[0]).toMatchObject({
+      method: 'PATCH',
+      body: { ai_consent: true, ai_consent_version: AI_CONSENT_VERSION },
+    });
     await waitFor(() => expect(screen.queryByTestId('ai-consent-declined')).toBeNull());
 
     typeAndSend('Girona to Lisbon');
@@ -146,10 +162,50 @@ describe('the AI consent dialog (web)', () => {
 
   it('an account that already agreed is never shown the dialog', async () => {
     server.consented = true;
+    server.version = AI_CONSENT_VERSION;
     await renderFirstRun();
     typeAndSend('Girona to Lisbon');
     await waitFor(() => expect(onboardingPosts()).toHaveLength(1));
     expect(screen.queryByTestId('ai-consent-sheet')).toBeNull();
     expect(consentWrites()).toEqual([]);
+  });
+
+  it('an account on the Anthropic-only sheet is asked once; "Anthropic only" sends the answer and stores nothing', async () => {
+    server.consented = true;
+    server.version = 1;
+    await renderFirstRun();
+    typeAndSend('Girona to Lisbon');
+
+    await screen.findByTestId('ai-consent-sheet');
+    expect(screen.getByTestId('ai-consent-upgrade').textContent).toBe(AI_CONSENT_COPY.upgradeLead);
+    expect(screen.getByTestId('ai-consent-not-now').textContent).toBe('Anthropic only');
+    expect(onboardingPosts()).toEqual([]);
+
+    fireEvent.click(screen.getByTestId('ai-consent-not-now'));
+    // Penny keeps working on what was agreed: the answer goes, nothing is written,
+    // and the composer is NOT disabled.
+    await waitFor(() => expect(onboardingPosts()).toHaveLength(1));
+    expect(consentWrites()).toEqual([]);
+    expect(screen.queryByTestId('ai-consent-declined')).toBeNull();
+  });
+
+  it('an account on the Anthropic-only sheet that agrees stores version 2, then sends', async () => {
+    server.consented = true;
+    server.version = 1;
+    await renderFirstRun();
+    typeAndSend('Girona to Lisbon');
+    fireEvent.click(await screen.findByTestId('ai-consent-agree'));
+    await waitFor(() => expect(onboardingPosts()).toHaveLength(1));
+    expect(consentWrites()[0].body).toEqual({ ai_consent: true, ai_consent_version: AI_CONSENT_VERSION });
+    const order = server.calls.map((c) => `${c.method} ${c.path}`);
+    expect(order.indexOf('PATCH /api/me/preferences')).toBeLessThan(order.indexOf('POST /api/trips/t1/onboarding'));
+  });
+
+  it('a server from before versions ("ai_consent: true" alone) reads as the Anthropic-only sheet', async () => {
+    server.consented = true;
+    server.version = null;
+    await renderFirstRun();
+    typeAndSend('Girona to Lisbon');
+    await screen.findByTestId('ai-consent-upgrade');
   });
 });

@@ -1,0 +1,59 @@
+/* The Jev route measurement on /admin — beside the compare section. */
+.section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--tp-border);
+}
+
+.heading {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.line {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--tp-muted);
+  line-height: 1.6;
+}
+
+.error {
+  composes: line;
+  color: var(--tp-danger);
+}
+
+.table {
+  margin-top: 8px;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.th {
+  padding: 2px 10px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--tp-muted);
+}
+
+.thLeft {
+  composes: th;
+  text-align: left;
+}
+
+.td {
+  padding: 2px 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdLeft {
+  composes: td;
+  text-align: left;
+  font-weight: 600;
+}
+
+.money {
+  composes: td;
+  font-weight: 700;
+}

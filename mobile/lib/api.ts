@@ -219,6 +219,8 @@ export interface Me {
   timezone?: string | null;
   /** Agreed to Penny's content going to Anthropic (lib/useAiConsent.ts). */
   ai_consent?: boolean;
+  /** The newest consent sheet agreed to; null = none (shared/lib/aiConsent.ts). */
+  ai_consent_version?: number | null;
 }
 
 export const getMe = () => apiFetch<Me>("/api/me");

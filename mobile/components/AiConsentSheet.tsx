@@ -8,9 +8,12 @@ import { Spinner } from "@/components/ui";
 import { AI_CONSENT_COPY, PRIVACY_POLICY_PATH } from "@/shared/lib/aiConsent";
 
 /**
- * "Penny uses Anthropic's Claude" — asked once, before the first message,
- * photo or trip detail reaches Penny (App Review 5.1.2(i)). See
- * lib/useAiConsent.ts for when it opens and what each answer does.
+ * "Penny uses Anthropic and TypeSafe" — asked before the first message,
+ * photo or trip detail reaches Penny (App Review 5.1.2(i)), and once more for
+ * an account that agreed to the older, Anthropic-only sheet (`upgrade`): it
+ * says what changed, and its decline reads "Anthropic only" because that is
+ * what it does. See lib/useAiConsent.ts for when it opens and what each
+ * answer does.
  *
  * No backdrop dismiss: the guideline asks for an explicit answer, so the only
  * ways out are the two buttons (and the hardware back gesture, which is
@@ -20,11 +23,13 @@ import { AI_CONSENT_COPY, PRIVACY_POLICY_PATH } from "@/shared/lib/aiConsent";
 export default function AiConsentSheet({
   saving,
   error,
+  upgrade = false,
   onAgree,
   onNotNow,
 }: {
   saving: boolean;
   error: string | null;
+  upgrade?: boolean;
   onAgree: () => void;
   onNotNow: () => void;
 }) {
@@ -42,8 +47,16 @@ export default function AiConsentSheet({
           <Text testID="ai-consent-title" style={styles.title}>
             {AI_CONSENT_COPY.title}
           </Text>
+          {upgrade ? (
+            <Text testID="ai-consent-upgrade" style={styles.lead}>
+              {AI_CONSENT_COPY.upgradeLead}
+            </Text>
+          ) : null}
           <Text testID="ai-consent-body" style={styles.body}>
             {AI_CONSENT_COPY.body}
+          </Text>
+          <Text testID="ai-consent-typesafe" style={styles.body}>
+            {AI_CONSENT_COPY.typeSafeBody}
           </Text>
           <Pressable
             testID="ai-consent-privacy"
@@ -67,7 +80,9 @@ export default function AiConsentSheet({
               disabled={saving}
               style={[styles.button, styles.secondary, saving ? styles.off : null]}
             >
-              <Text style={styles.secondaryText}>{AI_CONSENT_COPY.notNow}</Text>
+              <Text style={styles.secondaryText}>
+                {upgrade ? AI_CONSENT_COPY.notNowUpgrade : AI_CONSENT_COPY.notNow}
+              </Text>
             </Pressable>
             <Pressable
               testID="ai-consent-agree"
@@ -104,6 +119,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   title: { fontFamily: font.bold, fontSize: 18, color: theme.text },
+  lead: { fontFamily: font.medium, fontSize: 14, lineHeight: 20, color: theme.text, marginTop: 10 },
   body: { fontFamily: font.regular, fontSize: 14, lineHeight: 20, color: theme.muted, marginTop: 10 },
   linkWrap: { alignSelf: "flex-start", marginTop: 10 },
   link: { fontFamily: font.medium, fontSize: 13, color: theme.accent400, textDecorationLine: "underline" },

@@ -1,6 +1,8 @@
 /**
  * Architectural guard for App Review 5.1.2(i): no server path sends a user's
- * content to Anthropic without that user's recorded agreement.
+ * content to ANY third-party AI — Anthropic through its SDK, TypeSafe (Jev)
+ * through plain fetch, or anything added later — without that user's
+ * recorded agreement to the consent sheet that names it.
  *
  * The mechanism is a PROOF (`src/server/aiConsent.ts`): `requireAiConsent`
  * mints one only for an account with `users.ai_consent_at` set, and every
@@ -24,10 +26,26 @@
  *      aiConsent.ts and in test files (whose doubles never reach a real sink:
  *      the runtime WeakSet check would throw if one did).
  *
+ *   5. EVERY OUTBOUND CALL IS CLASSIFIED (2026-11-03, when TypeSafe arrived
+ *      over plain fetch and the SDK-only scan above could not see it). Every
+ *      non-test file that makes a request to anywhere but our own origin is
+ *      listed either in AI_HTTP_SINKS — an AI provider, which must assert its
+ *      proof before the call, exactly like item 2 — or in OUTBOUND_NOT_AI with
+ *      what it calls. A new outbound file fails until someone decides which,
+ *      so a new AI provider cannot arrive as "just a fetch". Importing an AI
+ *      SDK package by value outside SINKS fails too.
+ *   6. EVERY FUNCTION THE JEV MODULE EXPORTS THAT CAN SEND DEMANDS A
+ *      `TypeSafeConsentProof`, and the routes that reach Jev ask for consent
+ *      like any other sink (item 3 walks to AI_HTTP_SINKS as well).
+ *
  * Mutation-checked when written (2026-10-20): deleting the
  * `requireAiConsent` line from either route, deleting `assertAiConsent` from
  * `estimateRange`, adding an unlisted `new Anthropic(` file, and adding a cast
- * in a non-test file each turned this red.
+ * in a non-test file each turned this red. Items 5 and 6 (2026-11-03):
+ * deleting `assertTypeSafeConsent` from `postSystemOne`, adding an unlisted
+ * file that fetches an absolute URL, importing `openai` in an unlisted file,
+ * dropping the proof parameter from `startJevCompare`, and adding an
+ * `as TypeSafeConsentProof` cast each turned it red.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -44,6 +62,34 @@ const SINKS = [
   'src/server/parseRangeEstimate.ts',
   'src/server/parseStartDate.ts',
 ];
+
+/**
+ * AI providers reached by plain HTTP rather than an SDK, and the assert each
+ * one's sending function must run before its request (item 5).
+ */
+const AI_HTTP_SINKS: Record<string, string> = {
+  'src/server/jev/client.ts': 'assertTypeSafeConsent',
+};
+
+/**
+ * Every other file that calls somewhere other than our own origin, and what it
+ * calls. None of these is an AI provider; each is named on /privacy where it
+ * receives personal data (`legalPagesGuard.test.ts`).
+ */
+const OUTBOUND_NOT_AI: Record<string, string> = {
+  'src/lib/api.ts': "the app's own API — buildUrl() over a same-origin path",
+  'src/lib/coordsResolve.ts': 'expands Google Maps short links',
+  'src/lib/google/directions.ts': 'Google Directions',
+  'src/lib/google/geocode.ts': 'Google Places (searchText)',
+  'src/lib/google/places.ts': 'Google Places (along-route search)',
+  'src/lib/osm/nominatim.ts': 'OpenStreetMap Nominatim',
+  'src/server/auth/appleDiscovery.ts': "Apple's sign-in key discovery",
+  'src/server/auth/appleTokens.ts': "Apple's token revoke endpoint",
+  'src/server/auth/jwksSource.ts': "Google's and Apple's sign-in public keys (JWKS)",
+};
+
+/** AI SDK packages. A value import of one outside SINKS is an unguarded AI call. */
+const AI_SDK_PACKAGES = /^(@anthropic-ai\/|openai$|@openai\/|@google\/(generative-ai|genai)$|@mistralai\/|cohere-ai$|groq-sdk$|replicate$|together-ai$|@huggingface\/inference$|ai$|@ai-sdk\/)/;
 
 /**
  * Routes that import a sink's module graph but cannot send a user's content:
@@ -65,10 +111,12 @@ const NO_USER_CONTENT: Record<string, string> = {
   'src/app/api/test/subscription/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/trip/route.ts': 'test fixture (testSupport → seededTranscript)',
   'src/app/api/test/turn/route.ts': 'test fixture (testSupport → seededTranscript)',
+  'src/app/api/admin/jev/route.ts': "admin: reads Jev's config status and flips the switch; sends no message",
+  'src/app/api/admin/jev/user/route.ts': "admin: sets one account's Jev mode; sends no message",
 };
 
 /** The calls that put user content into a prompt; the consent check must precede the first. */
-const ANTHROPIC_BOUND = /\b(submitAnswer|gateMessage|replanStream|replan|classifyMessage|scanFirstMessage|resolveStartDate|parseDateWithLLM|estimateRange)\(/;
+const ANTHROPIC_BOUND = /\b(submitAnswer|gateMessage|replanStream|replan|classifyMessage|scanFirstMessage|resolveStartDate|parseDateWithLLM|estimateRange|jevClassifyTier|startJevCompare)\(/;
 
 function rel(abs: string): string {
   return path.relative(ROOT, abs).split(path.sep).join('/');
@@ -133,7 +181,7 @@ const NEXT_HOP = (() => {
   }
   const next = new Map<string, string | null>();
   const queue: string[] = [];
-  for (const s of SINKS) {
+  for (const s of [...SINKS, ...Object.keys(AI_HTTP_SINKS)]) {
     const abs = path.join(ROOT, s);
     next.set(abs, null);
     queue.push(abs);
@@ -198,6 +246,130 @@ describe('AI consent guard — the sinks', () => {
   }
 });
 
+/** Each outbound call site in a file: the call and the first thing it is passed. */
+function outboundCalls(src: string): Array<{ at: number; call: string; firstArg: string }> {
+  const out: Array<{ at: number; call: string; firstArg: string }> = [];
+  const re = /(?<![\w$])(?:globalThis\.|window\.|r\.|deps\.)?(fetch|fetchImpl|doFetch)\s*\(|\bnew\s+(XMLHttpRequest|WebSocket|EventSource)\s*\(|\bhttps?\.(request|get)\s*\(/g;
+  for (const m of src.matchAll(re)) {
+    const after = src.slice(m.index! + m[0].length).replace(/^\s+/, '');
+    out.push({ at: m.index!, call: m[0].replace(/\s*\($/, ''), firstArg: after.slice(0, 40) });
+  }
+  return out;
+}
+
+/** A literal path on our own origin: '/api/…', "/x", `/api/${id}`. */
+const sameOrigin = (firstArg: string) => /^['"`]\//.test(firstArg);
+
+describe('AI consent guard — every outbound call is classified (item 5)', () => {
+  const outbound = FILES.map((f) => ({ file: rel(f), calls: outboundCalls(code(f)).filter((c) => !sameOrigin(c.firstArg)) })).filter(
+    (x) => x.calls.length > 0,
+  );
+
+  it('the scan finds the outbound files it must (it is not vacuous)', () => {
+    const names = outbound.map((o) => o.file);
+    expect(names).toContain('src/server/jev/client.ts');
+    expect(names).toContain('src/lib/google/places.ts');
+    expect(names).toContain('src/lib/osm/nominatim.ts');
+  });
+
+  it('every file that calls off-origin is an AI sink or a named non-AI service', () => {
+    const unknown = outbound
+      .map((o) => o.file)
+      .filter((f) => !(f in AI_HTTP_SINKS) && !(f in OUTBOUND_NOT_AI));
+    expect(
+      unknown,
+      'These files make requests to somewhere other than our own origin and are not classified. ' +
+        'If the destination is an AI provider, the sending function must demand a consent proof and ' +
+        'assert it before the request — then list the file in AI_HTTP_SINKS. Otherwise list it in ' +
+        'OUTBOUND_NOT_AI with what it calls (and name that service on /privacy if it receives personal data).',
+    ).toEqual([]);
+  });
+
+  it('no stale classification: every listed file still calls off-origin', () => {
+    const names = new Set(outbound.map((o) => o.file));
+    for (const f of [...Object.keys(AI_HTTP_SINKS), ...Object.keys(OUTBOUND_NOT_AI)]) {
+      expect(names.has(f), `${f} is classified but makes no off-origin call — remove it`).toBe(true);
+    }
+  });
+
+  for (const [sink, assertFn] of Object.entries(AI_HTTP_SINKS)) {
+    it(`${sink}: every request is behind ${assertFn}`, () => {
+      const src = code(path.join(ROOT, sink));
+      const calls = outboundCalls(src).filter((c) => !sameOrigin(c.firstArg));
+      expect(calls.length, `${sink}: found no request — the guard no longer sees it`).toBeGreaterThan(0);
+      for (const c of calls) {
+        const before = src.slice(0, c.at);
+        const decls = [...before.matchAll(/^(?:export\s+)?(?:async\s+)?function\*?\s+(\w+)/gm)];
+        const decl = decls[decls.length - 1];
+        expect(decl, `${sink}: ${c.call}( at ${c.at} is outside any function`).toBeTruthy();
+        const body = src.slice(decl!.index!, c.at);
+        expect(
+          body,
+          `${sink}: ${decl![1]}() makes a request without ${assertFn}( first — a user's message would ` +
+            'reach an AI provider without the user agreeing to the sheet that names it.',
+        ).toMatch(new RegExp(`\\b${assertFn}\\(`));
+      }
+    });
+  }
+
+  it('no AI SDK is imported (by value) outside the known SDK sinks', () => {
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      const src = code(f);
+      for (const m of src.matchAll(/^\s*import\s+(?!type\b)(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm)) {
+        if (AI_SDK_PACKAGES.test(m[1]) && !SINKS.includes(rel(f))) offenders.push(`${rel(f)} imports ${m[1]}`);
+      }
+      for (const m of src.matchAll(/\b(?:import|require)\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+        if (AI_SDK_PACKAGES.test(m[1]) && !SINKS.includes(rel(f))) offenders.push(`${rel(f)} loads ${m[1]}`);
+      }
+    }
+    expect(offenders, 'An AI SDK used outside SINKS is a send nobody checked consent for.').toEqual([]);
+  });
+
+  it('the classifier of call sites tells our origin from everyone else', () => {
+    const calls = outboundCalls(
+      "await fetch('/api/me'); await fetch(`/api/x/${id}`); await fetch(url); await fetchImpl(`${base}/v1`); new WebSocket('wss://x'); https.request(opts)",
+    );
+    expect(calls.map((c) => sameOrigin(c.firstArg))).toEqual([true, true, false, false, false, false]);
+  });
+});
+
+describe('AI consent guard — the Jev module (item 6)', () => {
+  const index = code(path.join(ROOT, 'src/server/jev/index.ts'));
+
+  it('every exported function that can reach the network demands a TypeSafeConsentProof', () => {
+    // Exported functions whose body reaches the client (directly, or through
+    // the module's own send/jevCompare helpers).
+    const exported = [...index.matchAll(/^export\s+(?:async\s+)?function\s+(\w+)\s*\(([\s\S]*?)\)\s*:/gm)];
+    /** The function's own body: from its first `{` to the matching `}`. */
+    const bodyOf = (from: number) => {
+      // `from` is just past the parameter list's `):`; return types here carry no braces.
+      const open = index.indexOf('{', from);
+      let depth = 0;
+      for (let i = open; i < index.length; i++) {
+        if (index[i] === '{') depth++;
+        else if (index[i] === '}' && --depth === 0) return index.slice(open, i + 1);
+      }
+      return index.slice(open);
+    };
+    const sending = exported.filter((m) => /\b(send|postSystemOne|jevCompare)\(/.test(bodyOf(m.index! + m[0].length)));
+    expect(sending.map((m) => m[1]).sort()).toEqual(['jevClassifyTier', 'startJevCompare']);
+    for (const m of sending) {
+      expect(m[2], `${m[1]}() can send a message to TypeSafe but takes no TypeSafeConsentProof`).toMatch(
+        /:\s*TypeSafeConsentProof\b/,
+      );
+    }
+  });
+
+  it('the client demands the proof and the user, and checks them first', () => {
+    const client = code(path.join(ROOT, 'src/server/jev/client.ts'));
+    expect(client).toMatch(/consent:\s*TypeSafeConsentProof,\s*userId:\s*string/);
+    const fn = client.slice(client.indexOf('export async function postSystemOne'));
+    const firstStatement = fn.slice(fn.indexOf('{') + 1).trim();
+    expect(firstStatement.startsWith('assertTypeSafeConsent(consent, userId);')).toBe(true);
+  });
+});
+
 describe('AI consent guard — the routes', () => {
   const reaching = ROUTES.map((r) => ({ route: rel(r), chain: chainToSink(r) })).filter((x) => x.chain);
 
@@ -242,9 +414,20 @@ describe('AI consent guard — the routes', () => {
 });
 
 describe('AI consent guard — the proof cannot be fabricated', () => {
-  it('`as AiConsentProof` appears only in aiConsent.ts', () => {
-    const casts = FILES.filter((f) => rel(f) !== 'src/server/aiConsent.ts' && /\bas\s+(unknown\s+as\s+)?AiConsentProof\b/.test(code(f))).map(rel);
-    expect(casts, 'A cast mints a proof without asking the user. Use requireAiConsent().').toEqual([]);
+  it('`as AiConsentProof` / `as TypeSafeConsentProof` appear only in aiConsent.ts', () => {
+    const casts = FILES.filter(
+      (f) => rel(f) !== 'src/server/aiConsent.ts' && /\bas\s+(unknown\s+as\s+)?(AiConsentProof|TypeSafeConsentProof)\b/.test(code(f)),
+    ).map(rel);
+    expect(casts, 'A cast mints a proof without asking the user. Use requireAiConsent() / typeSafeConsentFrom().').toEqual([]);
+  });
+
+  it('typeSafeConsentFrom mints only from a genuine proof of the version that names TypeSafe', () => {
+    const src = code(path.join(ROOT, 'src/server/aiConsent.ts'));
+    const start = src.indexOf('export function typeSafeConsentFrom');
+    const fn = src.slice(start, src.indexOf('\nexport', start + 1));
+    expect(fn).toMatch(/!MINTED\.has\(proof\)\) return null/);
+    expect(fn).toMatch(/proof\.version >= TYPESAFE_CONSENT_VERSION\)\) return null/);
+    expect(fn).toMatch(/MINTED_TYPESAFE\.add\(ts\)/);
   });
 
   it('requireAiConsent throws rather than returning a falsy verdict', () => {
