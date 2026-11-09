@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APP_STORE_CTA_LABEL, blockNoticeFor, SUPPORT_EMAIL } from './paywallCopy';
+import { APP_STORE_CTA_LABEL, APP_STORE_URL, blockNoticeFor, SUPPORT_EMAIL } from './paywallCopy';
 import { paywallCopy } from '@/server/payments/copy';
 import { planningCaption } from './planningCaption';
 import type { AccountVerdict } from '@/server/payments';
@@ -206,5 +206,15 @@ describe('user-facing copy never says the s-word', () => {
       expect(text).toMatch(/yearly/i);
       expect(text).not.toMatch(/[$€£]\s?\d/);
     }
+  });
+});
+
+describe('APP_STORE_URL', () => {
+  // Every "Get the app" button (landing, /get-the-app, the paywall) uses this.
+  // It must be the live listing, never Apple's search page — production sent
+  // taps to the search page after launch because the env var it used to read
+  // was never set (2026-11-07).
+  it('is the live App Store listing', () => {
+    expect(APP_STORE_URL).toBe('https://apps.apple.com/us/app/feral-travels/id6807913556');
   });
 });

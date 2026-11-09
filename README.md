@@ -65,7 +65,6 @@ AUTH_APPLE_ID / AUTH_APPLE_SECRET  web Sign in with Apple; the button renders on
                                  (the secret is a JWT that expires — regenerate with scripts/generate-apple-client-secret.ts)
 APPLE_APP_BUNDLE_ID              audience for native Apple identity tokens (defaults to com.feraltravels.ios)
 AUTH_GOOGLE_IOS_CLIENT_ID        audience for native Google identity tokens
-NEXT_PUBLIC_APP_STORE_URL        the web soft block's "Continue on iPhone"; falls back to an App Store search
 ```
 
 Optional: `ADMIN_EMAILS` (can only *restrict* the hardcoded allowlist), `REPLAN_REQUESTS_PER_HOUR`, `REPLAN_USD_CAP_PER_DAY`, `DELETED_USER_ENC_KEY` (makes deleted accounts' emails readable in `/admin/deleted`), `NOMINATIM_USER_AGENT` (reverse geocoding), the `GOOGLE_PLACES_FREE_CALLS_*` allowances (admin cost display), `SUBSCRIPTION_TESTING=1` (trial-state test accounts; ignored in production), `ANTHROPIC_ADMIN_KEY` (only for `scripts/anthropic-usage-report.ts`), `E2E_INBOX_DOMAIN` (the one e2e spec that reads a real inbox). `APPLE_REVIEW_SIGNIN` exists for the App Store review queue only and is unset on production.

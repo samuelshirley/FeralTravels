@@ -8,10 +8,8 @@ import { APP_STORE_URL } from '@/lib/paywallCopy';
  * page — /trips, /signin, an old link, a sign-in email — is sent here. They get
  * what the app is, where to sign in, and a button.
  *
- * The App Store link is `APP_STORE_URL`, which reads `NEXT_PUBLIC_APP_STORE_URL`
- * and falls back to Apple's SEARCH url until the listing id exists. A search
- * page that finds the app is a better failure than a 404 on a guessed id, and
- * it means this page needs no edit on the day the listing goes live.
+ * The App Store link is `APP_STORE_URL` (src/lib/paywallCopy.ts), the live
+ * listing.
  *
  * Deliberately server-rendered with no client JS: it is the page a reviewer, a
  * crawler and a stranger on a bad connection all get.
