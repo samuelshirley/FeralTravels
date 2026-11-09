@@ -301,9 +301,9 @@ test.describe('web app off', () => {
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     const cta = page.getByRole('link', { name: /App Store/i });
     await expect(cta).toBeVisible();
-    // Not asserted as the literal fallback: setting NEXT_PUBLIC_APP_STORE_URL
-    // to the real listing id later must not red this.
-    expect(new URL(await cta.getAttribute('href') ?? '').hostname).toContain('apple.com');
+    // The LISTING, not Apple's search page: production served the search URL
+    // for days after launch because an env var was never set (2026-11-07).
+    expect(await cta.getAttribute('href')).toBe('https://apps.apple.com/us/app/feral-travels/id6807913556');
   });
 
   /** A reviewer who lands here must still be able to reach the documents. */
