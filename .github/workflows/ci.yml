@@ -57,8 +57,8 @@
 # waits on them nor counts them. `DB column coverage` also runs after a cancel
 # (`always()`), report-only there, so the cleanup that waits for it still
 # runs. src/lib/ciFailFast.test.ts holds all of this.
-# A cancelled run concludes `cancelled`, which the deploy gate and auto-merge
-# both read as not green.
+# A cancelled run concludes `cancelled`, which the deploy gate reads as not
+# green.
 #
 # There is NO auth bypass anywhere: e2e signs in as fresh fixture users through
 # the real OTP flow, reading the code the app generated from the guarded
