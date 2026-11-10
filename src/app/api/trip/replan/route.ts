@@ -53,6 +53,7 @@ import { computePlanSummary } from '@/lib/penny/planSummary';
 import { actionToLegacyChange } from '@/lib/penny/legacyChange';
 import { countQueuedMutations } from '@/lib/penny/applyOutcome';
 import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
+import { rejectTurnBeforeDispatch } from '@/lib/penny/turnAtomicity';
 import {
   detectOverriddenLegEdits,
   overriddenEditsSummary,
@@ -682,44 +683,52 @@ async function runTurnWork(
             final.validatedActions
           );
 
-          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
-          for (const action of final.validatedActions) {
-            if (feasibilityGateBlocks && action.name === 'add_leg') {
+          // ALL-OR-NOTHING (trip 65972b73, see lib/penny/turnAtomicity.ts): a
+          // batch is one edit. If any pre-dispatch gate rejects any action,
+          // nothing dispatches — the old per-action skipping let the adds of a
+          // replacement land while its deletes were blocked, and continuity
+          // repair then chained the survivors into 0 km and 1,007 km days.
+          const turnRejection = rejectTurnBeforeDispatch({
+            actions: final.validatedActions,
+            blockedDeleteLegIds,
+            feasibilityBlocks: feasibilityGateBlocks,
+            feasibilityVerdict: final.feasibilityVerdict,
+          });
+          if (turnRejection) {
+            for (const row of turnRejection.rows) {
               failedCount += 1;
-              const row = {
-                action: 'add_leg',
-                error:
-                  final.feasibilityVerdict === 'over_budget'
-                    ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
-                    : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
-              } as const;
               failedActions.push(row);
               persistFailedCount += 1;
               persistFailedActions.push(row);
-              continue;
             }
-            // Block delete_leg actions that would create a contiguity gap
-            if (action.name === 'delete_leg' && blockedDeleteLegIds.has(action.input.leg_id)) {
-              failedCount += 1;
-              const row = {
-                action: 'delete_leg',
-                error:
-                  'Blocked: deleting this leg would break route continuity. ' +
-                  'The neighboring leg must be updated to close the gap first.',
-              };
-              failedActions.push(row);
-              persistFailedCount += 1;
-              persistFailedActions.push(row);
+            for (const legId of turnRejection.blockedDeleteLegIds) {
               logUsageEvent({
                 userId,
                 tripId,
                 provider: 'penny:contiguity-blocked-delete',
                 requests: 0,
                 success: false,
-                errorMessage: `delete_leg ${action.input.leg_id} blocked by pre-dispatch contiguity gate`,
+                errorMessage: `delete_leg ${legId} blocked by pre-dispatch contiguity gate; whole turn rejected`,
               }).catch(() => {});
-              continue;
             }
+            logUsageEvent({
+              userId,
+              tripId,
+              provider: 'penny:turn-rejected',
+              requests: 0,
+              success: false,
+              errorMessage:
+                `Rejected ${final.validatedActions.length} action(s) before dispatch: ${turnRejection.reason}`.slice(0, 500),
+            }).catch(() => {});
+          }
+
+          /** delete_leg ids this turn tried — continuity repair must never re-chain one. */
+          const attemptedDeleteLegIds = new Set(
+            final.validatedActions.flatMap((a) => (a.name === 'delete_leg' ? [a.input.leg_id] : [])),
+          );
+
+          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
+          for (const action of turnRejection ? [] : final.validatedActions) {
             try {
               await dispatchAction(action, tripId, userId, dispatchCtx);
               // submit_idea is a side-effect log, not a trip mutation — don't
@@ -792,7 +801,9 @@ async function runTurnWork(
           // response.
           if (appliedCount > 0) {
             try {
-              const repaired = await repairLegContinuity(tripId);
+              const repaired = await repairLegContinuity(tripId, {
+                frozenLegIds: attemptedDeleteLegIds,
+              });
               for (const r of repaired) {
                 // A repaired leg had its start chained (and usually re-routed),
                 // so its cached fuel plan is stale. Invalidate that leg's fuel
@@ -944,7 +955,11 @@ async function runTurnWork(
           // persisted message — and the payload the client/heal path renders —
           // matches what actually happened.
           let persistedResponse = final.response;
-          if (validatedQueuedCount > 0 && appliedCount === 0 && persistFailedCount > 0) {
+          if (turnRejection) {
+            persistedResponse +=
+              `\n\n⚠️ Correction: none of these changes were saved — ` +
+              `${turnRejection.reason}. Your plan is unchanged.`;
+          } else if (validatedQueuedCount > 0 && appliedCount === 0 && persistFailedCount > 0) {
             const firstError = persistFailedActions[0]?.error ?? 'unknown error';
             persistedResponse +=
               `\n\n⚠️ Correction: none of these changes could be saved — ` +
