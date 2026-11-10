@@ -220,6 +220,8 @@ it to the nearest town inside the daily cap so a day does not end in a hamlet;
 see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
+**A turn is all-or-nothing:** if any pre-dispatch gate rejects any action,
+nothing in the batch dispatches (`lib/penny/turnAtomicity.ts`).
 
 ### Scripts (`scripts/`)
 

@@ -22,7 +22,7 @@ import {
   type ContinuityRouteOutcome,
 } from '@/lib/penny/schedule';
 import { getDirections } from '@/lib/google/directions';
-import { inferInsertAfterSort } from '@/lib/penny/legPlacement';
+import { placeNewLeg } from '@/lib/penny/legPlacement';
 import { rangeRemainingAtLegStarts } from '@/lib/penny/fuelTankState';
 import {
   trips,
@@ -829,50 +829,30 @@ export async function addLeg(input: {
   /** GeoJSON LineString for the driving route — persisted at planning time. */
   geometry?: GeoJSONLineString | null;
 }): Promise<string> {
-  let sortOrder = input.sortOrder;
-  // Positional insert: place the new leg right after `afterLegId` and bump every
-  // later leg up by one so sort_order stays the route order. Done before the
-  // max+1 fallback so an explicit placement always wins.
-  if (input.afterLegId) {
-    const afterRows = await db
-      .select({ sortOrder: legs.sortOrder })
-      .from(legs)
-      .where(and(eq(legs.id, input.afterLegId), eq(legs.tripId, input.tripId)))
-      .limit(1);
-    if (afterRows[0]) {
-      const base = afterRows[0].sortOrder;
-      await db
-        .update(legs)
-        .set({ sortOrder: sql`${legs.sortOrder} + 1`, updatedAt: new Date() })
-        .where(and(eq(legs.tripId, input.tripId), gt(legs.sortOrder, base)));
-      sortOrder = base + 1;
-    }
+  // Placement is decided by ONE pure function shared with the pre-dispatch
+  // contiguity gate, so the gate simulates exactly the route this insert
+  // builds — see placeNewLeg in lib/penny/legPlacement.ts (trip 65972b73).
+  // `afterLegId` wins, then an explicit `sortOrder`, then geographic inference
+  // (a leg whose START matches an existing END goes right after it, not at the
+  // end where continuity repair would chain it into a monster day — the
+  // 3,383 km incident), then append.
+  const existing = await db
+    .select({ id: legs.id, sortOrder: legs.sortOrder, endLat: legs.endLat, endLng: legs.endLng })
+    .from(legs)
+    .where(eq(legs.tripId, input.tripId));
+  const placement = placeNewLeg(existing, {
+    afterLegId: input.afterLegId,
+    sortOrder: input.sortOrder,
+    startLat: input.startLat,
+    startLng: input.startLng,
+  });
+  if (placement.shiftAbove != null) {
+    await db
+      .update(legs)
+      .set({ sortOrder: sql`${legs.sortOrder} + 1`, updatedAt: new Date() })
+      .where(and(eq(legs.tripId, input.tripId), gt(legs.sortOrder, placement.shiftAbove)));
   }
-  if (sortOrder == null) {
-    const existing = await db
-      .select({ sortOrder: legs.sortOrder, endLat: legs.endLat, endLng: legs.endLng })
-      .from(legs)
-      .where(eq(legs.tripId, input.tripId));
-    // No explicit placement: infer it from geography before falling back to
-    // append. A leg whose START matches an existing leg's END belongs right
-    // after that leg — not at the end of the trip (where continuity repair
-    // would chain it to whatever the last leg is and manufacture a monster
-    // day; see lib/penny/legPlacement.ts for the 3,383 km incident).
-    const inferredAfterSort = inferInsertAfterSort(
-      existing,
-      input.startLat ?? null,
-      input.startLng ?? null,
-    );
-    if (inferredAfterSort != null) {
-      await db
-        .update(legs)
-        .set({ sortOrder: sql`${legs.sortOrder} + 1`, updatedAt: new Date() })
-        .where(and(eq(legs.tripId, input.tripId), gt(legs.sortOrder, inferredAfterSort)));
-      sortOrder = inferredAfterSort + 1;
-    } else {
-      sortOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1) + 1;
-    }
-  }
+  const sortOrder = placement.sortOrder;
 
   const [row] = await db
     .insert(legs)
@@ -1356,7 +1336,18 @@ export async function syncTripEndDateFromLegs(tripId: string): Promise<string | 
  */
 export async function repairLegContinuity(
   tripId: string,
+  opts: {
+    /**
+     * Legs this repair must NOT rewrite: the turn's attempted delete_legs. A
+     * leg a turn tried to delete is, by the turn's own account, wrong; chaining
+     * its start onto a new neighbour is how trip 65972b73 got Tarifa→Tarifa
+     * (0 km) and Girona→Écija (1,007 km). Left alone, a surviving one shows as
+     * an honest gap (checkLegContiguity logs it) instead of a fabricated day.
+     */
+    frozenLegIds?: ReadonlySet<string>;
+  } = {},
 ): Promise<ContinuityRepairOut[]> {
+  const frozen = opts.frozenLegIds ?? new Set<string>();
   const legRows = await db
     .select()
     .from(legs)
@@ -1386,7 +1377,9 @@ export async function repairLegContinuity(
     endName: l.endName,
   }));
 
-  const fixes = computeStartFixes(chain, undefined, anchorIndex);
+  const fixes = computeStartFixes(chain, undefined, anchorIndex).filter(
+    (f) => !frozen.has(legRows[f.index].id),
+  );
   const fixedIndices = new Set(fixes.map((f) => f.index));
 
   // Self-heal: a leg whose start was already chained on a previous run but whose
@@ -1414,6 +1407,7 @@ export async function repairLegContinuity(
   for (let i = anchorIndex + 1; i < legRows.length; i++) {
     if (fixedIndices.has(i)) continue;
     const l = legRows[i];
+    if (frozen.has(l.id)) continue;
     if (l.continuityWarning == null) continue;
     if (l.startLat == null || l.startLng == null || l.endLat == null || l.endLng == null) continue;
     targets.push({

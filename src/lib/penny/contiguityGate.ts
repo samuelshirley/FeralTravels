@@ -18,6 +18,7 @@
  */
 import type { ValidatedAction } from './tools';
 import { haversineKm } from './geo';
+import { placeNewLeg } from './legPlacement';
 
 /** Anything >50km between consecutive legs is a suspect gap. */
 export const LEG_GAP_THRESHOLD_KM = 50;
@@ -84,9 +85,8 @@ function simulate(
   skipDeleteOfId?: string | null,
 ): GateLeg[] {
   const legMap = new Map<string, GateLeg>();
-  for (const leg of currentLegs) legMap.set(leg.id, { ...leg });
+  for (const leg of currentLegs) legMap.set(leg.id, { ...leg, sortOrder: leg.sortOrder ?? 0 });
 
-  let maxSort = currentLegs.reduce((mx, l) => Math.max(mx, l.sortOrder ?? 0), 0);
   let syntheticIdCounter = 0;
 
   for (const action of actions) {
@@ -104,10 +104,33 @@ function simulate(
         break;
       }
       case 'add_leg': {
+        // Placed by the SAME function addLeg uses, so the simulated route is
+        // the route dispatch builds (after_leg_id, explicit sort_order,
+        // geographic inference, append — in that order). Before 2026-11-10 this
+        // was `sort_order ?? max+1`, and a valid detour read as a gap.
+        const placement = placeNewLeg(
+          [...legMap.values()].map((l) => ({
+            id: l.id,
+            sortOrder: l.sortOrder ?? 0,
+            endLat: l.endLat,
+            endLng: l.endLng,
+          })),
+          {
+            afterLegId: action.input.after_leg_id ?? null,
+            sortOrder: action.input.sort_order ?? null,
+            startLat: action.input.start_lat ?? null,
+            startLng: action.input.start_lng ?? null,
+          },
+        );
+        if (placement.shiftAbove != null) {
+          for (const l of legMap.values()) {
+            if ((l.sortOrder ?? 0) > placement.shiftAbove) l.sortOrder = (l.sortOrder ?? 0) + 1;
+          }
+        }
         const synId = `__synthetic_${syntheticIdCounter++}`;
         legMap.set(synId, {
           id: synId,
-          sortOrder: action.input.sort_order ?? ++maxSort,
+          sortOrder: placement.sortOrder,
           startLat: action.input.start_lat ?? null,
           startLng: action.input.start_lng ?? null,
           endLat: action.input.end_lat ?? null,
