@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import {
+  AI_CONSENT_VERSION,
+  consentVersionFromMe,
   createAiConsentController,
   type AiConsentController,
   type AiConsentSnapshot,
 } from '@/lib/aiConsent';
 
 /**
- * The web half of the "Penny uses Anthropic's Claude" agreement (App Review
+ * The web half of the "Penny uses Anthropic and TypeSafe" agreement (App Review
  * 5.1.2(i)) — the same shared controller the phone runs
  * (mobile/lib/useAiConsent.ts), with the web's `apiFetch`.
  */
@@ -24,11 +26,15 @@ export function useAiConsent(enabled: boolean): AiConsentSnapshot & Omit<AiConse
   if (!controller.current) {
     controller.current = createAiConsentController({
       fetchConsent: async () =>
-        (await apiFetch<{ ai_consent?: boolean }>('/api/me', { skipGlobalErrorReport: true })).ai_consent === true,
+        consentVersionFromMe(
+          await apiFetch<{ ai_consent?: boolean; ai_consent_version?: number | null }>('/api/me', {
+            skipGlobalErrorReport: true,
+          })
+        ),
       saveConsent: async () => {
         await apiFetch('/api/me/preferences', {
           method: 'PATCH',
-          body: { ai_consent: true },
+          body: { ai_consent: true, ai_consent_version: AI_CONSENT_VERSION },
           skipGlobalErrorReport: true,
         });
       },

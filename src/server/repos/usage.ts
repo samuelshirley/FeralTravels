@@ -35,7 +35,8 @@ export interface LogAnthropicUsageInput {
   errorMessage?: string | null;
 }
 
-export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
+/** Writes one `provider: 'anthropic'` row; returns its id (null if the insert returned none). */
+export async function logAnthropicUsage(input: LogAnthropicUsageInput): Promise<number | null> {
   const cacheCreate = input.cacheCreationInputTokens ?? 0;
   const cacheRead = input.cacheReadInputTokens ?? 0;
   const usd = estimateAnthropicCostUsd(
@@ -56,7 +57,7 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
   // columns so cache hit rate is recoverable per row. inputTokens is the pure
   // regular-input count (NOT cache tokens summed in). The costMicrocents field
   // already reflects the correctly-discounted USD across all three.
-  await db.insert(usageEvents).values({
+  const [row] = await db.insert(usageEvents).values({
     userId: input.userId,
     tripId: input.tripId ?? null,
     provider: 'anthropic',
@@ -69,7 +70,8 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
     costMicrocents: dollarsToMicrocents(usd),
     success: input.success ?? true,
     errorMessage: input.errorMessage ?? null,
-  });
+  }).returning({ id: usageEvents.id });
+  return row?.id ?? null;
 }
 
 /**
@@ -80,9 +82,20 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
 export async function logAnthropicUsageWithFallback(
   input: LogAnthropicUsageInput
 ): Promise<boolean> {
+  return (await logAnthropicUsageWithFallbackId(input)).ok;
+}
+
+/**
+ * `logAnthropicUsageWithFallback`, also returning the row's id — so a Penny
+ * turn can say WHICH `usage_events` row holds its measured cost (the Jev
+ * route measurement reads the cost from that row, never re-estimates it).
+ * Never throws.
+ */
+export async function logAnthropicUsageWithFallbackId(
+  input: LogAnthropicUsageInput
+): Promise<{ ok: boolean; id: number | null }> {
   try {
-    await logAnthropicUsage(input);
-    return true;
+    return { ok: true, id: await logAnthropicUsage(input) };
   } catch (err) {
     console.error('[usage] logAnthropicUsage failed', {
       userId: input.userId,
@@ -104,7 +117,7 @@ export async function logAnthropicUsageWithFallback(
         .join(' | ')
         .slice(0, 500),
     }).catch((e) => console.error('[usage] logUsageEvent (accounting fallback) failed:', e));
-    return false;
+    return { ok: false, id: null };
   }
 }
 

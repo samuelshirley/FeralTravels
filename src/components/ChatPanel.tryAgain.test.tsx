@@ -27,7 +27,7 @@ const LAST_STEP = {
 
 vi.mock('@/lib/api', () => ({
   apiFetch: vi.fn(async (path: string, opts: { method?: string } = {}) => {
-    if (path === '/api/me') return { ai_consent: true };
+    if (path === '/api/me') return { ai_consent: true, ai_consent_version: 2 };
     if (String(path).includes('/turns')) return { turn: null };
     if (String(path).includes('/onboarding')) {
       if ((opts.method ?? 'GET') === 'GET') return LAST_STEP;

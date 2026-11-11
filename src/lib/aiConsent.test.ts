@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AI_CONSENT_COPY,
+  AI_CONSENT_VERSION,
+  TYPESAFE_CONSENT_VERSION,
+  consentVersionFromMe,
   createAiConsentController,
+  statusForVersion,
   type AiConsentSnapshot,
 } from './aiConsent';
+import { buildClassifyContent, PREVIOUS_ASSISTANT_MAX_CHARS } from './pennyClassifierPrompt';
 
 /**
  * The consent sheet's logic, exactly as both panels run it (the phone through
@@ -13,11 +18,14 @@ import {
  * never swallowed; an account that already agreed is never asked.
  */
 
-function make(opts: { consented?: boolean | 'throws'; save?: 'ok' | 'throws' } = {}) {
+/** `true` = agreed to the current sheet, `false` = never agreed, a number = that version. */
+function make(opts: { consented?: boolean | number | 'throws'; save?: 'ok' | 'throws' } = {}) {
   const snapshots: AiConsentSnapshot[] = [];
-  const fetchConsent = vi.fn(async () => {
+  const fetchConsent = vi.fn(async (): Promise<number | null> => {
     if (opts.consented === 'throws') throw new Error('offline');
-    return opts.consented ?? false;
+    if (opts.consented === true) return AI_CONSENT_VERSION;
+    if (opts.consented === false || opts.consented === undefined) return null;
+    return opts.consented;
   });
   const saveConsent = vi.fn(async () => {
     if (opts.save === 'throws') throw new Error('offline');
@@ -122,13 +130,122 @@ describe('createAiConsentController', () => {
   });
 });
 
+describe('an account that agreed to the older, Anthropic-only sheet (version 1)', () => {
+  it('loads as `upgrade`, not `needed`: Penny is not switched off for it', async () => {
+    const { c } = make({ consented: 1 });
+    await c.load();
+    expect(c.get().status).toBe('upgrade');
+  });
+
+  it('is shown the current sheet at its next send, and Agree stores it and sends', async () => {
+    const { c, saveConsent } = make({ consented: 1 });
+    await c.load();
+    let result: boolean | undefined;
+    void c.ensure().then((r) => (result = r));
+    await tick();
+    expect(c.get().sheetOpen).toBe(true);
+    expect(result).toBeUndefined();
+    await c.agree();
+    await tick();
+    expect(saveConsent).toHaveBeenCalledTimes(1);
+    expect(result).toBe(true);
+    expect(c.get()).toMatchObject({ status: 'granted', sheetOpen: false });
+  });
+
+  it('"Anthropic only" lets the send go ahead, stores nothing, and does not ask again on this screen', async () => {
+    const { c, saveConsent } = make({ consented: 1 });
+    const pending = c.ensure();
+    await tick();
+    expect(c.get().sheetOpen).toBe(true);
+    c.notNow();
+    expect(await pending).toBe(true);
+    expect(saveConsent).not.toHaveBeenCalled();
+    // Still `upgrade` — not `declined`, so the composer stays enabled — and the
+    // next send on this screen is not held by the sheet again.
+    expect(c.get()).toMatchObject({ status: 'upgrade', sheetOpen: false });
+    expect(await c.ensure()).toBe(true);
+    expect(c.get().sheetOpen).toBe(false);
+  });
+
+  it('a new screen (a new controller) asks once more: "re-asked on the next chat"', async () => {
+    const first = make({ consented: 1 });
+    void first.c.ensure();
+    await tick();
+    first.c.notNow();
+    const second = make({ consented: 1 });
+    void second.c.ensure();
+    await tick();
+    expect(second.c.get().sheetOpen).toBe(true);
+  });
+});
+
+describe('versions', () => {
+  it('maps a stored version to a status', () => {
+    expect(statusForVersion(null)).toBe('needed');
+    expect(statusForVersion(0)).toBe('needed');
+    expect(statusForVersion(1)).toBe('upgrade');
+    expect(statusForVersion(AI_CONSENT_VERSION)).toBe('granted');
+    expect(statusForVersion(AI_CONSENT_VERSION + 1)).toBe('granted');
+  });
+
+  it('reads /api/me from a versioned server and from one that predates versions', () => {
+    expect(consentVersionFromMe({ ai_consent: true, ai_consent_version: 2 })).toBe(2);
+    expect(consentVersionFromMe({ ai_consent: true, ai_consent_version: 1 })).toBe(1);
+    // An older server: `ai_consent: true` alone can only mean the sheet it knew.
+    expect(consentVersionFromMe({ ai_consent: true })).toBe(1);
+    expect(consentVersionFromMe({ ai_consent: false, ai_consent_version: null })).toBeNull();
+    expect(consentVersionFromMe({})).toBeNull();
+  });
+
+  it('the current sheet is the one that names TypeSafe', () => {
+    expect(AI_CONSENT_VERSION).toBeGreaterThanOrEqual(TYPESAFE_CONSENT_VERSION);
+  });
+});
+
 describe('the consent copy', () => {
-  it('names the company, the model and every kind of data that goes', () => {
-    expect(AI_CONSENT_COPY.title).toBe("Penny uses Anthropic's Claude");
+  it('names both companies, the model and every kind of data that goes to Anthropic', () => {
+    expect(AI_CONSENT_COPY.title).toBe('Penny uses Anthropic and TypeSafe');
     for (const word of ['messages', 'photos', 'trip details', 'location', 'Anthropic', 'Claude']) {
       expect(AI_CONSENT_COPY.body).toContain(word);
     }
     expect(AI_CONSENT_COPY.agree).toBe('Agree');
     expect(AI_CONSENT_COPY.notNow).toBe('Not now');
+    expect(AI_CONSENT_COPY.notNowUpgrade).toBe('Anthropic only');
+  });
+
+  it('says what TypeSafe gets, where, and its training line only as TypeSafe states it', () => {
+    const t = AI_CONSENT_COPY.typeSafeBody;
+    expect(t).toContain('TypeSafe');
+    expect(t).toContain('in the US');
+    expect(t).toContain('TypeSafe says it doesn\'t train');
+    // Exactly what buildClassifyContent + tripVocabulary send: the message, the
+    // trip's name, the place and vehicle names on it, and the end of Penny's
+    // previous message.
+    for (const part of ['the text of each', "your trip's name", 'place and vehicle names', "the end of Penny's last reply"]) {
+      expect(t).toContain(part);
+    }
+    // And nothing it does not send.
+    for (const not of ['photo', 'location', 'date', 'distance', 'email']) {
+      expect(t.toLowerCase()).not.toContain(not);
+    }
+  });
+
+  it("is pinned to what buildClassifyContent actually sends — a new field fails here first", () => {
+    const sent = buildClassifyContent('MESSAGE', {
+      tripName: 'TRIPNAME',
+      places: ['PLACE_A', 'VEHICLE_NAME'],
+      previousAssistant: 'x'.repeat(PREVIOUS_ASSISTANT_MAX_CHARS + 50) + 'PENNY_END',
+    });
+    // Every line of the request is one of: the trip line, the names line,
+    // Penny's previous message, or the message. If a fifth kind appears, the
+    // TypeSafe sentence above no longer lists everything and must change.
+    const stripped = sent
+      .replace('Trip: TRIPNAME', '')
+      .replace('Places on it: PLACE_A, VEHICLE_NAME', '')
+      .replace(/Penny's previous message:\n…x+PENNY_END/, '')
+      .replace('Message:\nMESSAGE', '')
+      .trim();
+    expect(stripped).toBe('');
+    expect(sent).not.toContain('x'.repeat(PREVIOUS_ASSISTANT_MAX_CHARS + 1));
   });
 });

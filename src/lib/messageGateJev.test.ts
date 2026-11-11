@@ -19,6 +19,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *  5. COMPARE mode: Haiku decides every message exactly as mode off, Jev is
  *     asked at the same moment, and its answer is only written down — beside
  *     Haiku's tier, never instead of it. And /admin's reading of those rows.
+ *  6. CONSENT: nothing reaches TypeSafe for an account that has not agreed to
+ *     the sheet naming it (version 2). A version-1 account is Haiku only in
+ *     every mode — zero fetch calls — and so is a forged proof.
+ *  7. The ROUTE question (compare only): asked in the same request as the
+ *     tier, asked ALONE for a message the free rules let through, logged with
+ *     no user text, and never able to change a decision.
  */
 
 const h = vi.hoisted(() => {
@@ -61,6 +67,7 @@ vi.mock('@/server/payments', () => ({ GATE_PROVIDER: 'penny:gate' }));
 vi.mock('@/server/repos/users', () => ({
   getStrikeState: vi.fn(),
   setStrikeState: vi.fn(async () => undefined),
+  getAiConsent: vi.fn(),
 }));
 vi.mock('@/server/repos/usage', () => ({
   JEV_PROVIDER: 'jev',
@@ -77,7 +84,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 
 import { gateMessage, type GateOutcome } from '@/server/messageGate';
-import type { AiConsentProof } from '@/server/aiConsent';
+import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { classifyMessage } from '@/server/pennyClassifier';
 import {
   effectiveJevMode,
@@ -87,10 +94,13 @@ import {
   jevOverrideFromValue,
   resolveJevMode,
   summariseJevCompare,
+  summariseJevRoutes,
+  type JevRouteGroup,
 } from '@/server/repos/jev';
-import { getStrikeState, setStrikeState } from '@/server/repos/users';
+import { getAiConsent, getStrikeState, setStrikeState } from '@/server/repos/users';
 import { logUsageEvent } from '@/server/repos/usage';
 import { buildClassifyContent, CLASSIFY_SYSTEM } from '@/lib/pennyClassifierPrompt';
+import { JEV_ROUTE_CRITERIA, JEV_ROUTE_INSTRUCTIONS, JEV_ROUTES } from '@/lib/jevRoute';
 import { decideDeterministically, type MessageTier } from '@/lib/pennyGate';
 
 /** Nothing on the trip and no trip vocabulary, so it reaches the classifier. */
@@ -98,10 +108,21 @@ const MESSAGE = 'is there anywhere with a proper cheeseburger around here';
 const USER = 'user-1';
 const TRIP = '00000000-0000-0000-0000-000000000001';
 
-function jevBody(choice: string, probabilities: Record<string, number>) {
+/** A backend answers every question it was asked; a tier-only request just ignores `route`. */
+function jevBody(
+  choice: string,
+  probabilities: Record<string, number>,
+  route: { choice: string; probabilities: Record<string, number> } = {
+    choice: 'needs_penny',
+    probabilities: { needs_penny: 0.9, add_pasted_place: 0.05, replace_fuel_stop: 0.03, off_topic: 0.02 },
+  },
+) {
   return {
     model: 'laya-rl-agent',
-    answers: { tier: { type: 'choice', choice, probabilities, confidence: 0.1 } },
+    answers: {
+      tier: { type: 'choice', choice, probabilities, confidence: 0.1 },
+      route: { type: 'choice', ...route },
+    },
     usage: { input_tokens: 92, output_tokens: 0 },
   };
 }
@@ -119,8 +140,17 @@ function haikuSays(tier: MessageTier) {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-/** Stand-in proof: the classifier is mocked, so nothing verifies it here. */
-const CONSENT = Object.freeze({ userId: 'user-1' }) as unknown as AiConsentProof;
+/**
+ * A REAL proof, minted by `requireAiConsent` over the mocked consent read, for
+ * an account that agreed to the sheet naming TypeSafe (version 2) unless a
+ * test says otherwise. A cast would not do: the gate only asks Jev under a
+ * proof `src/server/aiConsent.ts` minted.
+ */
+let CONSENT: AiConsentProof;
+async function consentAt(version: number | null): Promise<AiConsentProof> {
+  vi.mocked(getAiConsent).mockResolvedValue({ at: new Date('2026-11-01T00:00:00Z'), version });
+  return requireAiConsent(USER);
+}
 
 function useFetch(impl: (url: string, init: RequestInit) => Promise<Response>) {
   fetchMock = vi.fn(impl);
@@ -142,7 +172,7 @@ function gateRow() {
   return calls[0][0];
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   h.inserted.length = 0;
   h.wheres.length = 0;
   h.state.failInsert = false;
@@ -157,6 +187,7 @@ beforeEach(() => {
   vi.stubEnv('CI', '');
   vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'on', source: 'global' });
   useFetch(ok(jevBody('T1', { T1: 0.95, T2: 0.03, T3: 0.02 })));
+  CONSENT = await consentAt(2);
 });
 
 afterEach(() => {
@@ -588,7 +619,10 @@ describe('compare mode: Haiku decides, Jev is only written down', () => {
     useFetch(
       ok({
         model: MESSAGE,
-        answers: { tier: { type: 'choice', choice: 'T2', probabilities: { T2: 1 }, note: MESSAGE } },
+        answers: {
+          tier: { type: 'choice', choice: 'T2', probabilities: { T2: 1 }, note: MESSAGE },
+          route: { type: 'choice', choice: 'off_topic', probabilities: { off_topic: 1 }, note: MESSAGE, why: MESSAGE },
+        },
         usage: { input_tokens: 5, output_tokens: 0 },
         echo: MESSAGE,
       }),
@@ -596,14 +630,248 @@ describe('compare mode: Haiku decides, Jev is only written down', () => {
     haikuSays('T2');
     await run();
     const [row] = jevRows();
-    expect(Object.keys(row.meta as object).sort()).toEqual(
-      [
-        'agree', 'choice', 'deferredReason', 'echoedModel', 'haikuTier', 'latencyMs',
-        'margin', 'mode', 'settled', 'source', 'top', 'wouldSettle',
-      ].sort(),
-    );
-    expect(row.meta).toMatchObject({ haikuTier: 'T2', agree: true, wouldSettle: false, echoedModel: null });
+    expect(Object.keys(row.meta as object).sort()).toEqual(COMPARE_KEYS);
+    expect(row.meta).toMatchObject({
+      haikuTier: 'T2',
+      agree: true,
+      wouldSettle: false,
+      echoedModel: null,
+      route: 'off_topic',
+      truth: 'off_topic',
+    });
     expect(JSON.stringify(row)).not.toContain('cheeseburger');
+  });
+
+  it('a backend that puts the message IN the route choice gets a null route, not the text', async () => {
+    useFetch(
+      ok({
+        model: 'm',
+        answers: {
+          tier: { type: 'choice', choice: 'T1', probabilities: { T1: 1 } },
+          route: { type: 'choice', choice: MESSAGE, probabilities: { [MESSAGE]: 1 } },
+        },
+        usage: { input_tokens: 5, output_tokens: 0 },
+      }),
+    );
+    haikuSays('T1');
+    await run();
+    const [row] = jevRows();
+    expect(row).toMatchObject({ success: false, meta: { route: null, routeConfident: false, choice: 'T1' } });
+    expect(JSON.stringify(row)).not.toContain('cheeseburger');
+  });
+});
+
+/** Every key a compare row's meta carries at write time. */
+const COMPARE_KEYS = [
+  'agree', 'choice', 'deferredReason', 'echoedModel', 'gateBy', 'haikuMicrocents', 'haikuTier',
+  'latencyMs', 'margin', 'mode', 'route', 'routeConfident', 'routeMargin', 'routeTop', 'settled',
+  'source', 'tierAsked', 'tierConfident', 'top', 'truth', 'wouldSettle',
+].sort();
+
+// ── Consent: nothing reaches TypeSafe without the sheet that names it ──────
+
+describe('consent version 1 (the Anthropic-only sheet): Jev is never called', () => {
+  it.each(['on', 'compare'] as const)('mode %s: zero fetch calls, no Jev row, Haiku decides', async (mode) => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode, source: 'global' });
+    CONSENT = await consentAt(null); // agreed before versions: reads as 1
+    expect(CONSENT.version).toBe(1);
+    haikuSays('T3');
+    const out = await run(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(jevRows()).toHaveLength(0);
+    expect(classifyMessage).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ tier: 'T3', reason: 'haiku T3', jevCompareEventId: null });
+    // The switch is not even read for an account TypeSafe may not see.
+    expect(effectiveJevMode).not.toHaveBeenCalled();
+  });
+
+  it('a message the free rules let through: no route question either', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+    CONSENT = await consentAt(1);
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
+    const out = await gateMessage({ userId: USER, tripId: TRIP, message: FREE_T1, consent: CONSENT });
+    expect(out).toMatchObject({ tier: 'T1', by: 'allow_rule' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(jevRows()).toHaveLength(0);
+  });
+
+  it('a forged proof (a cast, not minted) is treated as no TypeSafe consent', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+    CONSENT = Object.freeze({ userId: USER, version: 2 }) as unknown as AiConsentProof;
+    haikuSays('T1');
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(jevRows()).toHaveLength(0);
+  });
+
+  it('version 2 is what lets Jev be asked at all', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+    CONSENT = await consentAt(2);
+    haikuSays('T1');
+    await run();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── The route question (compare only, measurement only) ─────────────────────
+
+/** "fuel" is trip vocabulary: the free rules let it through with no classifier. */
+const FREE_T1 = 'find me a different fuel station for tomorrow';
+
+describe('the route question', () => {
+  beforeEach(() => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+  });
+
+  it('the free-rule fixture really is decided by the free rules', () => {
+    expect(decideDeterministically({ message: FREE_T1, tripNames: [], recentMessages: [] })).toMatchObject({
+      tier: 'T1',
+      by: 'allow_rule',
+    });
+  });
+
+  it('on the classifier path: ONE request carries the tier AND the route question', async () => {
+    haikuSays('T1');
+    await run();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(Object.keys(body.questions).sort()).toEqual(['route', 'tier']);
+    expect(body.questions.route.type).toBe('choice');
+    expect(body.questions.route.instructions).toBe(JEV_ROUTE_INSTRUCTIONS);
+    expect(body.questions.route.criteria).toEqual(JEV_ROUTE_CRITERIA);
+    expect(Object.keys(body.questions.route.criteria)).toEqual([...JEV_ROUTES]);
+    // The same state the tier question has always had — nothing more of the trip.
+    expect(body.state).toBe(buildClassifyContent(MESSAGE, { tripName: null, places: [] }));
+  });
+
+  it('Jev-first (mode on) still asks the tier question alone', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'on', source: 'global' });
+    await run();
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(Object.keys(body.questions)).toEqual(['tier']);
+  });
+
+  it('records the route, its confidence, the measured Haiku cost, and off_topic truth from Haiku', async () => {
+    useFetch(
+      ok(
+        jevBody('T2', { T1: 0.02, T2: 0.96, T3: 0.02 }, {
+          choice: 'off_topic',
+          probabilities: { off_topic: 0.93, needs_penny: 0.05, add_pasted_place: 0.01, replace_fuel_stop: 0.01 },
+        }),
+      ),
+    );
+    haikuSays('T2');
+    const out = await run();
+    expect(out.tier).toBe('T2');
+    expect(jevRows()[0]).toMatchObject({
+      inputTokens: 92,
+      meta: {
+        gateBy: 'classifier',
+        tierAsked: true,
+        choice: 'T2',
+        tierConfident: true,
+        haikuTier: 'T2',
+        haikuMicrocents: 135_200,
+        route: 'off_topic',
+        routeTop: 0.93,
+        routeMargin: 0.88,
+        routeConfident: true,
+        truth: 'off_topic',
+      },
+    });
+  });
+
+  it('a Haiku T1 leaves the truth to the turn (null until it ends)', async () => {
+    haikuSays('T1');
+    await run();
+    expect(jevRows()[0].meta).toMatchObject({ haikuTier: 'T1', truth: null });
+  });
+
+  it('a message the free rules let through: the ROUTE question alone, logged, the decision untouched', async () => {
+    useFetch(
+      ok({
+        model: 'jev-1.13.0',
+        answers: {
+          route: {
+            type: 'choice',
+            choice: 'replace_fuel_stop',
+            probabilities: { replace_fuel_stop: 0.9, needs_penny: 0.08, add_pasted_place: 0.01, off_topic: 0.01 },
+          },
+        },
+        usage: { input_tokens: 61, output_tokens: 0 },
+      }),
+    );
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 1, lockedUntil: null });
+    const out = await gateMessage({ userId: USER, tripId: TRIP, message: FREE_T1, consent: CONSENT });
+
+    expect(out).toMatchObject({ tier: 'T1', by: 'allow_rule', blocked: false });
+    expect(classifyMessage).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(Object.keys(body.questions)).toEqual(['route']);
+
+    const [row] = jevRows();
+    expect(Object.keys(row.meta as object).sort()).toEqual(COMPARE_KEYS);
+    expect(row).toMatchObject({
+      success: true,
+      inputTokens: 61,
+      model: 'jev-1.13.0',
+      meta: {
+        gateBy: 'allow_rule',
+        tierAsked: false,
+        choice: null,
+        haikuTier: null,
+        agree: false,
+        wouldSettle: false,
+        tierConfident: false,
+        haikuMicrocents: null,
+        route: 'replace_fuel_stop',
+        routeConfident: true,
+        truth: null,
+      },
+    });
+    expect(JSON.stringify(row)).not.toContain('fuel station');
+  });
+
+  it('Jev-first (mode on) does not ask anything about a message the free rules let through', async () => {
+    vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'on', source: 'global' });
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
+    await gateMessage({ userId: USER, tripId: TRIP, message: FREE_T1, consent: CONSENT });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a route answer cannot change any decision: every route, every Haiku tier', async () => {
+    for (const route of JEV_ROUTES) {
+      for (const tier of ['T1', 'T2', 'T3'] as const) {
+        vi.clearAllMocks();
+        h.inserted.length = 0;
+        vi.mocked(effectiveJevMode).mockResolvedValue({ mode: 'compare', source: 'global' });
+        useFetch(ok(jevBody(tier, { [tier]: 1 }, { choice: route, probabilities: { [route]: 1 } })));
+        haikuSays(tier);
+        const out = await run(1);
+        expect(out, `${route}/${tier}`).toMatchObject({ tier, reason: `haiku ${tier}`, blocked: tier !== 'T1' });
+      }
+    }
+  });
+
+  it('a route-only call that fails is one success:false row and the message goes through', async () => {
+    useFetch(async () => new Response('{}', { status: 529 }));
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
+    const out = await gateMessage({ userId: USER, tripId: TRIP, message: FREE_T1, consent: CONSENT });
+    expect(out).toMatchObject({ tier: 'T1', blocked: false });
+    expect(jevRows()).toHaveLength(1);
+    expect(jevRows()[0]).toMatchObject({ success: false, meta: { route: null, deferredReason: 'http_529' } });
+  });
+
+  it('a route-only call never waits past Jev\'s own timeout', async () => {
+    vi.stubEnv('JEV_TIMEOUT_MS', '30');
+    useFetch(() => new Promise<Response>(() => {}));
+    vi.mocked(getStrikeState).mockResolvedValue({ strikes: 0, lockedUntil: null });
+    const started = Date.now();
+    const out = await gateMessage({ userId: USER, tripId: TRIP, message: FREE_T1, consent: CONSENT });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(out.tier).toBe('T1');
+    expect(jevRows()[0]).toMatchObject({ success: false, meta: { deferredReason: 'timeout' } });
   });
 });
 
@@ -636,6 +904,8 @@ describe('the compare stats', () => {
 
     expect(whereSql(0)).toContain(`"usage_events"."meta"->>'mode' = 'compare'`);
     expect(whereSql(0)).toContain(`"usage_events"."provider" = $`);
+    // Route-only rows (free-rule messages) have no Haiku tier to compare.
+    expect(whereSql(0)).toContain(`COALESCE("usage_events"."meta"->>'tierAsked', 'true') = 'true'`);
     expect(whereSql(1)).toContain(`->>'mode' = 'compare'`);
 
     expect(s).toMatchObject({
@@ -673,5 +943,83 @@ describe('the compare stats', () => {
   it('Jev-first stats leave the compare rows out: Jev settled none of them', async () => {
     await getJevStats(7);
     expect(whereSql(0)).toContain(`COALESCE("usage_events"."meta"->>'mode', '') <> 'compare'`);
+  });
+});
+
+describe('the route stats (summariseJevRoutes)', () => {
+  const g = (patch: Partial<JevRouteGroup>): JevRouteGroup => ({
+    route: null,
+    routeConfident: false,
+    truth: null,
+    turnStatus: null,
+    tierAsked: false,
+    haikuTier: null,
+    choice: null,
+    tierConfident: false,
+    dayParseKind: null,
+    dayMatch: null,
+    n: 1,
+    pennyCostRows: 0,
+    pennyMicrocents: 0,
+    haikuMicrocents: 0,
+    ...patch,
+    // A group's tokens are its rows' SUM, as the SQL reads them: 70 a call.
+    inputTokens: 70 * (patch.n ?? 1),
+  });
+
+  it('precision and coverage per route, and dollars only from correct, confident routes', () => {
+    const s = summariseJevRoutes(
+      [
+        // Right, confident, costed: $0.08 + $0.10 of Penny avoided.
+        g({ route: 'add_pasted_place', routeConfident: true, truth: 'add_pasted_place', turnStatus: 'done', n: 2, pennyCostRows: 2, pennyMicrocents: 18_000_000 }),
+        // Right but NOT confident: counts toward the truth, not the route or the dollars.
+        g({ route: 'add_pasted_place', routeConfident: false, truth: 'add_pasted_place', turnStatus: 'done', pennyCostRows: 1, pennyMicrocents: 9_000_000 }),
+        // Confident and wrong.
+        g({ route: 'add_pasted_place', routeConfident: true, truth: 'needs_penny', turnStatus: 'done', pennyCostRows: 1, pennyMicrocents: 9_000_000 }),
+        // No truth yet: ungraded, out of every rate.
+        g({ route: 'replace_fuel_stop', routeConfident: true, truth: null, turnStatus: null }),
+        // Errored turn: out, and counted as such.
+        g({ route: 'replace_fuel_stop', routeConfident: true, truth: null, turnStatus: 'error' }),
+        // No route answer at all.
+        g({ route: null }),
+      ],
+      7,
+    );
+    const add = s.intents.find((i) => i.route === 'add_pasted_place')!;
+    expect(add).toMatchObject({ routedConfident: 3, correctConfident: 2, truthCount: 3, costedRows: 2 });
+    expect(add.avoidedUsd).toBeCloseTo(0.18, 10);
+    expect(s).toMatchObject({ compared: 7, answered: 6, graded: 4, ungraded: 1, erroredTurns: 1, avgInputTokens: 70 });
+    expect(s.intents.find((i) => i.route === 'replace_fuel_stop')).toMatchObject({ routedConfident: 0, avoidedUsd: 0 });
+  });
+
+  it('case 1: confident T2/T3 against Haiku, and the gate-only saving from the measured Haiku calls', () => {
+    const s = summariseJevRoutes(
+      [
+        g({ tierAsked: true, choice: 'T3', tierConfident: true, haikuTier: 'T3', truth: 'off_topic', route: 'off_topic', routeConfident: true, n: 3, haikuMicrocents: 405_600 }),
+        g({ tierAsked: true, choice: 'T2', tierConfident: true, haikuTier: 'T1', truth: null, route: 'needs_penny' }),
+        g({ tierAsked: true, choice: 'T2', tierConfident: true, haikuTier: 'T3', truth: 'off_topic', route: 'off_topic', routeConfident: true, haikuMicrocents: 135_200 }),
+        // Not confident: not a confident refusal.
+        g({ tierAsked: true, choice: 'T3', tierConfident: false, haikuTier: 'T3', truth: 'off_topic' }),
+      ],
+      7,
+    );
+    expect(s.gateOnly).toMatchObject({ confidentRefusals: 5, agreed: 3, haikuSaidT1: 1, otherRefusalTier: 1 });
+    expect(s.gateOnly.avoidedUsd).toBeCloseTo(0.004056, 10);
+    // The route view of the same rows: off_topic routes graded by Haiku's refusal.
+    const off = s.intents.find((i) => i.route === 'off_topic')!;
+    expect(off).toMatchObject({ routedConfident: 4, correctConfident: 4, truthCount: 4 });
+    expect(off.avoidedUsd).toBeCloseTo(0.005408, 10);
+  });
+
+  it('case 2: the free day parse against the day Penny chose', () => {
+    const s = summariseJevRoutes(
+      [
+        g({ route: 'add_pasted_place', truth: 'add_pasted_place', turnStatus: 'done', dayParseKind: 'day_number', dayMatch: true, n: 4 }),
+        g({ route: 'add_pasted_place', truth: 'add_pasted_place', turnStatus: 'done', dayParseKind: 'date', dayMatch: false }),
+        g({ route: 'add_pasted_place', truth: 'add_pasted_place', turnStatus: 'done', dayParseKind: 'none', dayMatch: null, n: 2 }),
+      ],
+      7,
+    );
+    expect(s.day).toEqual({ graded: 5, matched: 4, byKind: { day_number: 4, date: 1, none: 2 } });
   });
 });

@@ -595,7 +595,7 @@ export default function ChatPanel({
   const deviceCity = cityFromPlace(devicePlace);
   const attachImagesAllowed = !isOnboarding;
   /*
-   * "Penny uses Anthropic's Claude" (App Review 5.1.2(i)). `ensure()` is
+   * "Penny uses Anthropic and TypeSafe" (App Review 5.1.2(i)). `ensure()` is
    * awaited before anything that sends to Penny — the composer, every setup
    * answer and suggestion, the send engine — and "Not now" disables the
    * composer with a way back. Mirrors mobile/components/ChatPanel.tsx. The
@@ -3465,6 +3465,7 @@ export default function ChatPanel({
           <AiConsentDialog
             saving={aiConsent.saving}
             error={aiConsent.error}
+            upgrade={aiConsent.status === 'upgrade'}
             onAgree={() => void aiConsent.agree()}
             onNotNow={aiConsent.notNow}
           />

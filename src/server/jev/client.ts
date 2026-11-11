@@ -1,3 +1,5 @@
+import { assertTypeSafeConsent, type TypeSafeConsentProof } from '@/server/aiConsent';
+
 import type { JevConfig } from './config';
 import type { SystemOneRequest } from './question';
 
@@ -12,6 +14,16 @@ import type { SystemOneRequest } from './question';
  *
  * Error text never includes the response body — a misbehaving backend could
  * echo the driver's message back, and these strings are logged.
+ *
+ * ── Consent, structurally ──
+ *
+ * The body is a driver's message, sent to TypeSafe. So this function DEMANDS a
+ * `TypeSafeConsentProof` — minted only for an account that agreed to the
+ * consent sheet naming TypeSafe (`src/server/aiConsent.ts`) — and checks it,
+ * for this user, before the request exists. That check is the one exception to
+ * "nothing here throws": a missing or forged proof is a programming error, and
+ * the request must not go. `aiConsentGuard.test.ts` holds that every outbound
+ * AI fetch sits behind such an assert.
  */
 
 export type JevCallResult =
@@ -29,9 +41,12 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 export async function postSystemOne(
   config: JevConfig,
   request: SystemOneRequest,
+  consent: TypeSafeConsentProof,
+  userId: string,
   fetchImpl: FetchLike = fetch,
   clock: () => number = Date.now
 ): Promise<JevCallResult> {
+  assertTypeSafeConsent(consent, userId);
   const started = clock();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
