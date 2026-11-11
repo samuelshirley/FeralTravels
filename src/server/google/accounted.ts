@@ -4,6 +4,7 @@ import { getDirections, type DirectionsOptions, type DirectionsResponse } from '
 import { geocodePlace, type GeocodeOptions, type GeocodeResult } from '@/lib/google/geocode';
 import { searchFuelAlongRoute, type FuelStation, type SearchAlongRouteDeps } from '@/lib/google/places';
 import { logGoogleApiUsage, logGooglePlacesUsage } from '@/server/repos/usage';
+import { assertNoTurnTransaction } from '@/server/db/turnScope';
 
 /**
  * The ONLY way server code calls a paid Google API.
@@ -47,6 +48,7 @@ export async function getDirectionsAccounted(
   options: DirectionsOptions = {},
   who: CallerRef = {},
 ): Promise<DirectionsResponse> {
+  assertNoTurnTransaction('Google Directions');
   try {
     const res = await getDirections(origin, destination, options);
     record(
@@ -83,6 +85,7 @@ export async function searchFuelAlongRouteAccounted(
   who: CallerRef = {},
   deps?: SearchAlongRouteDeps,
 ): Promise<FuelStation[]> {
+  assertNoTurnTransaction('Google Places (fuel along route)');
   try {
     const stations = await searchFuelAlongRoute(encodedPolyline, deps);
     record(
@@ -121,6 +124,7 @@ export async function geocodePlaceAccounted(
   opts: GeocodeOptions = {},
   who: CallerRef = {},
 ): Promise<GeocodeResult> {
+  assertNoTurnTransaction('Google Places (geocode)');
   const res = await geocodePlace(query, opts);
   // `unavailable` with no key never reached Google, so it costs nothing and is
   // not counted — counting it would inflate the only number here anyone trusts.

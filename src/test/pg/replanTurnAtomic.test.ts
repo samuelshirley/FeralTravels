@@ -13,7 +13,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
  *
  * Through the REAL replan route over PGlite, with the REAL repos, gate,
  * schedule rebuild and continuity repair. Only auth, the spend limits, the
- * model loop and Google Directions are stand-ins (Directions returns a
+ * model loop and the raw Directions HTTP call are stand-ins (Directions returns a
  * straight line at 1.2× the great-circle distance, so nothing reaches Google).
  *
  * The legs are trip 65972b73's turn-1 plan as it was served to the browser,
@@ -49,12 +49,12 @@ vi.mock('@/server/payments', async (orig) => ({
 }));
 vi.mock('@/server/ipLimit', () => ({ assertIpAllowed: vi.fn(async () => undefined) }));
 vi.mock('@/server/pennyFallbackAlert', () => ({ reportPennyFallback: vi.fn() }));
-vi.mock('@/server/google/accounted', async (orig) => {
-  const real = await orig<typeof import('@/server/google/accounted')>();
+vi.mock('@/lib/google/directions', async (orig) => {
+  const real = await orig<typeof import('@/lib/google/directions')>();
   const { haversineKm } = await import('@/lib/penny/geo');
   return {
     ...real,
-    getDirectionsAccounted: vi.fn(
+    getDirections: vi.fn(
       async (o: { lat: number; lng: number }, d: { lat: number; lng: number }) => {
         const km = Math.round(haversineKm(o.lat, o.lng, d.lat, d.lng) * 1.2 * 10) / 10;
         return {

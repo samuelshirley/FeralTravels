@@ -1178,6 +1178,19 @@ async function selectedWaypointsForLeg(
 }
 
 /**
+ * Write a leg's driving geometry (or clear it). The replan route calls this
+ * AFTER a Penny turn commits, so the paid Directions call behind it never runs
+ * inside the turn transaction (src/server/db/turnScope.ts). A leg deleted in
+ * the meantime is simply not matched.
+ */
+export async function setLegGeometry(
+  legId: string,
+  geometry: GeoJSONLineString | null,
+): Promise<void> {
+  await db.update(legs).set({ geometry, updatedAt: new Date() }).where(eq(legs.id, legId));
+}
+
+/**
  * Re-route a single drive leg through its selected pass-through stops and persist
  * the resulting distance / drive time / geometry. Call this after any change to a
  * leg's endpoints OR its selected stops, so the stored route always reflects the
@@ -1891,7 +1904,14 @@ export async function applyTripProgress(input: {
   nextLegId?: string | null;
   /** ISO date the next leg should fall on (e.g. "tomorrow"); defaults to today. */
   resumeDateISO?: string | null;
-}): Promise<{ currentLegId: string | null; reroutedLeg: boolean }> {
+  /**
+   * Re-route the re-pointed leg now (default). The replan route passes false
+   * from inside a Penny turn transaction, where a paid Directions call is
+   * forbidden (src/server/db/turnScope.ts), and re-routes `repointedLegId`
+   * after commit instead.
+   */
+  rerouteNow?: boolean;
+}): Promise<{ currentLegId: string | null; reroutedLeg: boolean; repointedLegId: string | null }> {
   const legRows = await db
     .select()
     .from(legs)
@@ -1917,6 +1937,7 @@ export async function applyTripProgress(input: {
   }
 
   let reroutedLeg = false;
+  let repointedLegId: string | null = null;
   if (nextLegId) {
     const leg = legRows.find((l) => l.id === nextLegId)!;
     if ((leg.legType ?? 'drive') !== 'rest') {
@@ -1935,7 +1956,8 @@ export async function applyTripProgress(input: {
         if (dest) set.title = `${input.placeName} → ${dest}`;
       }
       await db.update(legs).set(set).where(eq(legs.id, nextLegId));
-      reroutedLeg = await rerouteLeg(nextLegId);
+      repointedLegId = nextLegId;
+      if (input.rerouteNow !== false) reroutedLeg = await rerouteLeg(nextLegId);
     }
   }
 
@@ -1955,7 +1977,7 @@ export async function applyTripProgress(input: {
     })
     .where(eq(trips.id, input.tripId));
 
-  return { currentLegId: nextLegId, reroutedLeg };
+  return { currentLegId: nextLegId, reroutedLeg, repointedLegId };
 }
 
 

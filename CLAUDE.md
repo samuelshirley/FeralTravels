@@ -221,7 +221,8 @@ see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
 **A turn is all-or-nothing:** if any pre-dispatch gate rejects any action,
-nothing in the batch dispatches (`lib/penny/turnAtomicity.ts`).
+nothing in the batch dispatches (`lib/penny/turnAtomicity.ts`), and dispatch is
+one DB transaction — no Google call inside it (`server/db/turnScope.ts`).
 
 ### Scripts (`scripts/`)
 
