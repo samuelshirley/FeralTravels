@@ -410,14 +410,20 @@ function nextVehicleOnboardingQuestion(
     };
   }
 
-  const total = questions.length;
-
   if (!vehicle) {
     return {
       question: questions[0] as Question,
-      progress: { current: 1, total },
+      progress: { current: 1, total: questions.length },
     };
   }
+
+  // The counter counts the steps THIS trip shows: a half that is still missing,
+  // or one this trip already asked. A name the opening message supplied was
+  // never a step, so "range" is 1 of 1, not 2 of 2 (appletest follow-up).
+  const counted = questions.filter(
+    (q) => !vehicleHasProfileValue(vehicle, q.key) || askedLabels.has(q.label),
+  );
+  const total = counted.length;
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
@@ -426,7 +432,7 @@ function nextVehicleOnboardingQuestion(
     if (!resolved) {
       return {
         question: q as Question,
-        progress: { current: i + 1, total },
+        progress: { current: counted.indexOf(q) + 1, total },
       };
     }
   }
@@ -654,12 +660,27 @@ export function intentScanNote(read: {
   dailyDriveHours: number | null;
   startISO: string | null;
   units: UnitsPref;
+  /** The vehicle this trip will use, when the opening message named one. */
+  vehicle?: { name: string; rangeKm: number | null } | null;
 }): string | undefined {
   const acknowledged: string[] = [];
   if (read.originPlace) acknowledged.push(`starting from ${read.originPlace}`);
   if (read.dailyDriveHours != null) acknowledged.push(`${read.dailyDriveHours} h of driving a day`);
   if (read.startISO) {
     acknowledged.push(`setting off ${formatDate(parseISODate(read.startISO), read.units)}`);
+  }
+  if (read.vehicle) {
+    // Says WHICH vehicle the plan will use and its range — the thing the
+    // driver cannot otherwise see until the plan is built (appletest,
+    // 2026-11-10: a saved Hilux was used silently over the Sprinter named).
+    const r = read.vehicle.rangeKm;
+    const range =
+      r == null
+        ? ''
+        : read.units === 'imperial'
+          ? ` (${Math.round(kmToMi(r)!)} mi on a tank)`
+          : ` (${r} km on a tank)`;
+    acknowledged.push(`driving the ${read.vehicle.name}${range}`);
   }
   return acknowledged.length > 0 ? `Got it — ${acknowledged.join(', ')}.` : undefined;
 }
@@ -689,10 +710,25 @@ async function progressFor(
   // a partial vehicle (name, no range) takes the single steps that remain.
   let vehicleStepsAhead = 1;
   if (!vehicle) {
-    const owned = await listVehiclesForUser(userId);
-    const only = owned.length === 1 ? owned[0] : null;
-    if (only && vehicleHasProfileValue(only, 'name') && !vehicleHasProfileValue(only, 'range_km')) {
-      vehicleStepsAhead = buildOnboardingSteps('metric').length;
+    // The trip's OWN vehicle first: one the opening message named is already
+    // attached, and its missing halves are exactly the vehicle steps left — 0
+    // when it is complete, 1 when only its range is missing.
+    const [t] = await db
+      .select({ vehicleId: trips.vehicleId })
+      .from(trips)
+      .where(eq(trips.id, tripId))
+      .limit(1);
+    const attached = t?.vehicleId ? await getVehicleForUser(userId, t.vehicleId) : null;
+    if (attached) {
+      const nameMissing = !vehicleHasProfileValue(attached, 'name');
+      const rangeMissing = !vehicleHasProfileValue(attached, 'range_km');
+      vehicleStepsAhead = nameMissing && rangeMissing ? 1 : (nameMissing ? 1 : 0) + (rangeMissing ? 1 : 0);
+    } else {
+      const owned = await listVehiclesForUser(userId);
+      const only = owned.length === 1 ? owned[0] : null;
+      if (only && vehicleHasProfileValue(only, 'name') && !vehicleHasProfileValue(only, 'range_km')) {
+        vehicleStepsAhead = buildOnboardingSteps('metric').length;
+      }
     }
   }
   return computeOnboardingProgress({
@@ -937,6 +973,40 @@ export async function getOnboardingSnapshot(
   return { state: 'done', question: null, vehicles: [], progress: null };
 }
 
+/**
+ * The vehicle the opening message named becomes THIS trip's vehicle.
+ *
+ * WHY (appletest, 2026-11-10): "Sprinter 4x4, 700km range" planned on the
+ * account's saved Hilux (500 km). The scan had no vehicle field, and
+ * `vehicle_new` attached the account's only vehicle and finished — the stated
+ * range went nowhere and nothing said so.
+ *
+ * - A vehicle of the same name (case-insensitive) is reused, never duplicated.
+ *   A stated range is written to it: the driver just told us, and the receipt
+ *   says it back. Onboarding is one of the two places range may be written.
+ * - Otherwise a new row is created. `addVehicle` makes it the default only
+ *   when it is the account's first vehicle; an existing default is left
+ *   alone (the trip uses the named vehicle; the account default is a
+ *   Settings decision).
+ * - No range (or one not trusted — no unit and no units chosen) ⇒ the row has
+ *   a name only, and `vehicle_new` asks just the range half.
+ */
+async function adoptNamedVehicle(
+  userId: string,
+  name: string,
+  rangeKm: number | null,
+): Promise<VehicleApi> {
+  const owned = await listVehiclesForUser(userId);
+  const match = owned.find((v) => v.name.trim().toLowerCase() === name.toLowerCase());
+  if (match) {
+    if (rangeKm != null && match.range_km !== rangeKm) {
+      return (await updateVehicle(userId, match.id, { range_km: rangeKm })) ?? match;
+    }
+    return match;
+  }
+  return addVehicle(userId, { name, range_km: rangeKm });
+}
+
 // ---------------------------------------------------------------------------
 // Submit answer
 // ---------------------------------------------------------------------------
@@ -996,7 +1066,10 @@ export async function submitAnswer(
     // or prefill those questions. The LLM only transcribes; every field is
     // re-validated below. Never throws — an all-null result just means we fall
     // through to asking everything as before.
-    const scan = await scanFirstMessage(text, { userId, tripId, consent });
+    // A unitless range ("700 range") follows the units already chosen; with
+    // none chosen yet it is not guessed.
+    const unitsKnown = await getRawUnitsPref(userId);
+    const scan = await scanFirstMessage(text, { userId, tripId, consent, unitsPref: unitsKnown });
 
     // Record the opening Q/A bubble.
     await writeQA(tripId, TRIP_INTENT_QUESTION, text, text);
@@ -1005,7 +1078,13 @@ export async function submitAnswer(
     // driver confirms it on the vehicle step, so it waits in onboardingScan
     // rather than being committed here). See OnboardingScan.
     const scanStash: OnboardingScan = {};
-    if (scan.rangeKm != null) scanStash.range_km = scan.rangeKm;
+    // A named vehicle is adopted now and attached to the trip (see
+    // adoptNamedVehicle); its range, if stated, is written with it. A range
+    // with NO vehicle named keeps the old confirm-on-the-card prefill.
+    const namedVehicle = scan.vehicleName
+      ? await adoptNamedVehicle(userId, scan.vehicleName, scan.rangeKm)
+      : null;
+    if (scan.rangeKm != null && !namedVehicle) scanStash.range_km = scan.rangeKm;
 
     // An EXACT start date in the opening message ("leaving tomorrow", "next
     // Saturday") is applied now and its question SKIPPED — the headline fix. A
@@ -1029,6 +1108,7 @@ export async function submitAnswer(
       pendingIntent: text,
       onboardingScan: Object.keys(scanStash).length > 0 ? scanStash : null,
       ...(scan.dailyDriveHours != null ? { dailyDriveHours: scan.dailyDriveHours } : {}),
+      ...(namedVehicle ? { vehicleId: namedVehicle.id } : {}),
       updatedAt: new Date(),
     };
 
@@ -1036,14 +1116,13 @@ export async function submitAnswer(
       patch.startDate = scan.startDatePhrase ?? text;
       patch.startDateParsed = exactIso;
     }
-    // Only a date needs formatting, so only a date pays for the units read.
-    const unitsForFmt: UnitsPref =
-      exactIso && (await getRawUnitsPref(userId)) != null ? await getUnitsPref(userId) : 'metric';
+    const unitsForFmt: UnitsPref = unitsKnown ?? 'metric';
     const note = intentScanNote({
       originPlace: scan.originPlace,
       dailyDriveHours: scan.dailyDriveHours,
       startISO: exactIso,
       units: unitsForFmt,
+      vehicle: namedVehicle ? { name: namedVehicle.name, rangeKm: namedVehicle.range_km } : null,
     });
 
     // Next: origin unless the message named one, then the date unless the

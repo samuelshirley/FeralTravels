@@ -55,7 +55,14 @@ const SCAN_TOOL: Anthropic.Tool = {
     'clearly stated. Do NOT guess.',
   input_schema: {
     type: 'object',
-    required: ['start_date_phrase', 'origin_place', 'daily_drive_hours', 'range_km'],
+    required: [
+      'start_date_phrase',
+      'origin_place',
+      'daily_drive_hours',
+      'vehicle_name',
+      'range_value',
+      'range_unit',
+    ],
     properties: {
       daily_drive_hours: {
         type: ['integer', 'null'],
@@ -83,14 +90,28 @@ const SCAN_TOOL: Anthropic.Tool = {
           'Do NOT resolve it to a date — just extract the phrase. null when no start ' +
           'time is mentioned at all.',
       },
-      range_km: {
-        type: ['integer', 'null'],
+      vehicle_name: {
+        type: ['string', 'null'],
         description:
-          'The driver’s usual driving range between refuels, in WHOLE ' +
-          'kilometers, ONLY if they explicitly stated it (e.g. "about 400km on a tank", ' +
-          '"I refuel every 300 km", "comfortable for 250 miles" → convert to ~402). ' +
-          'Convert from miles when the driver used miles. null when no range/refuel ' +
-          'distance is stated. Do NOT infer from vehicle make/model here.',
+          'The vehicle the driver said they are driving, copied as they named it ' +
+          '("Sprinter 4x4", "our VW California", "the Hilux"), ONLY if they named one. ' +
+          'Drop words like "our"/"the"/"my". null when no vehicle is named. Never infer ' +
+          'a vehicle from the trip, a brand of tyre, or anything not stated.',
+      },
+      range_value: {
+        type: ['number', 'null'],
+        description:
+          'The distance the driver said the vehicle goes on a tank / between refuels, as ' +
+          'the bare NUMBER they wrote ("700km range" → 700, "about 450 miles a tank" → 450, ' +
+          '"I refuel every 300 km" → 300). Do NOT convert units. null when no such ' +
+          'distance is stated. Do NOT infer it from the vehicle make/model.',
+      },
+      range_unit: {
+        type: ['string', 'null'],
+        enum: ['km', 'mi', null],
+        description:
+          'The unit the driver used for range_value: "km" or "mi". null when they wrote ' +
+          'a number with no unit, or when range_value is null.',
       },
     },
   },
@@ -108,6 +129,8 @@ export interface OnboardingScanResult {
   originPlace: string | null;
   /** Hours of driving a day the driver asked for, in band, or null. */
   dailyDriveHours: number | null;
+  /** The vehicle the driver named, verbatim and bounded, or null. */
+  vehicleName: string | null;
 }
 
 /** An all-null scan result (no signal / no key / error). */
@@ -118,6 +141,7 @@ function emptyResult(): OnboardingScanResult {
     startDatePhrase: null,
     originPlace: null,
     dailyDriveHours: null,
+    vehicleName: null,
   };
 }
 
@@ -146,9 +170,53 @@ export function validateScannedRange(rawRange: unknown): {
   return { rangeKm: validateRangeKm(rawRange) };
 }
 
+/** Same bound as `POST /api/vehicles` — one rule for what a vehicle name is. */
+export const MAX_VEHICLE_NAME_CHARS = 100;
+
+/**
+ * Validate the vehicle name the model returned: single line, non-empty, within
+ * the vehicles API bound. Pure — exported for unit testing.
+ */
+export function validateScannedVehicleName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\s+/g, ' ').trim();
+  if (!t || t.length > MAX_VEHICLE_NAME_CHARS) return null;
+  return t;
+}
+
+const KM_PER_MI = 1.609344;
+
+/**
+ * Turn the number + unit the driver wrote into a validated range in km. The
+ * MODEL never converts: it copies the number and the unit, and the conversion
+ * is arithmetic here. A number with no unit takes the user's chosen units; with
+ * no units chosen yet it is NOT guessed — null, and the range is asked. The
+ * result goes through `validateRangeKm`, the same band the vehicle card uses.
+ */
+export function resolveScannedRangeKm(
+  rawValue: unknown,
+  rawUnit: unknown,
+  unitsPref: 'metric' | 'imperial' | null,
+): number | null {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue) || rawValue <= 0) return null;
+  const unit =
+    rawUnit === 'km' || rawUnit === 'mi'
+      ? rawUnit
+      : unitsPref === 'imperial'
+        ? 'mi'
+        : unitsPref === 'metric'
+          ? 'km'
+          : null;
+  if (!unit) return null;
+  const km = Math.round(unit === 'mi' ? rawValue * KM_PER_MI : rawValue);
+  return validateRangeKm(km);
+}
+
 interface ScanOpts {
   /** Injectable clock for tests + relative-date anchoring. */
   now?: Date;
+  /** The user's chosen units, or null when not chosen yet — a unitless range follows it. */
+  unitsPref?: 'metric' | 'imperial' | null;
   /** For usage accounting; logging is skipped when absent. */
   userId?: string;
   tripId?: string;
@@ -185,8 +253,10 @@ export async function scanFirstMessage(
     `- origin_place: only a STARTING point the driver named; a destination alone ` +
     `means null.\n` +
     `- daily_drive_hours: only an explicit hours-per-day of driving; null otherwise.\n` +
-    `- ranges: only when an actual distance-per-tank or refuel distance is stated; ` +
-    `convert miles to km; leave null otherwise.`;
+    `- vehicle_name: only a vehicle the driver named; null otherwise.\n` +
+    `- range_value / range_unit: only when an actual distance-per-tank or refuel ` +
+    `distance is stated; copy the number and its unit as written, do NOT convert; ` +
+    `null otherwise.`;
 
   let resp: Anthropic.Message;
   try {
@@ -235,10 +305,13 @@ export async function scanFirstMessage(
     start_date_phrase?: unknown;
     origin_place?: unknown;
     daily_drive_hours?: unknown;
-    range_km?: unknown;
+    vehicle_name?: unknown;
+    range_value?: unknown;
+    range_unit?: unknown;
   };
 
-  const { rangeKm } = validateScannedRange(input.range_km);
+  const rangeKm = resolveScannedRangeKm(input.range_value, input.range_unit, opts.unitsPref ?? null);
+  const vehicleName = validateScannedVehicleName(input.vehicle_name);
   const originPlace = validateScannedOrigin(input.origin_place);
   // The same band the pace step itself accepts; out of band is treated as unsaid.
   const dailyDriveHours = parseDailyDriveHours(input.daily_drive_hours);
@@ -260,5 +333,5 @@ export async function scanFirstMessage(
     if (!startDate) startDatePhrase = null;
   }
 
-  return { startDate, rangeKm, startDatePhrase, originPlace, dailyDriveHours };
+  return { startDate, rangeKm, startDatePhrase, originPlace, dailyDriveHours, vehicleName };
 }
