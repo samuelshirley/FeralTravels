@@ -21,12 +21,10 @@
  * route then reports every queued action as not saved, and appends a
  * server-authored correction to Penny's already-streamed prose.
  *
- * Not covered here, said plainly: an action that passes every gate and then
- * THROWS during dispatch (a DB error, a Directions failure inside a repo).
- * The dispatch path spans many repos on the shared client and paid Google
- * calls, so it cannot run in one transaction today; continuity repair is told
- * the turn's attempted deletes (`frozenLegIds`) so it never re-chains one of
- * them into a 0 km day.
+ * An action that passes every gate and then THROWS during dispatch is the
+ * other half: the route dispatches inside ONE database transaction
+ * (src/server/db/turnScope.ts), rolls the whole batch back, and reports it
+ * with `rejectionFromDispatchFailure` — same rows, same correction line.
  */
 import type { ValidatedAction } from './tools';
 
@@ -86,5 +84,36 @@ export function rejectTurnBeforeDispatch(input: {
     reason,
     rows,
     blockedDeleteLegIds: blockedDeletes.map((a) => a.input.leg_id),
+  };
+}
+
+/**
+ * The batch passed every gate, then action `failedIndex` threw inside the turn
+ * transaction, so the whole batch was rolled back. Same shape and wording as a
+ * gate rejection, so the route reports both the same way.
+ */
+export function rejectionFromDispatchFailure(
+  actions: ReadonlyArray<ValidatedAction>,
+  failedIndex: number,
+  message: string,
+): TurnRejection {
+  const failed = actions[failedIndex];
+  const reason = `saving ${failed?.name ?? 'a change'} failed (${message})`;
+  return {
+    reason,
+    rows: actions.flatMap((a, i) =>
+      a.name === 'submit_idea'
+        ? []
+        : [
+            {
+              action: a.name,
+              error:
+                i === failedIndex
+                  ? `${message} Nothing from this edit was saved.`
+                  : `Not applied: ${reason}, so nothing from this edit was saved.`,
+            },
+          ],
+    ),
+    blockedDeleteLegIds: [],
   };
 }

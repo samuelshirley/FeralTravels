@@ -2,6 +2,7 @@ import 'server-only';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
+import { scopedDb } from './turnScope';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -26,6 +27,11 @@ function makeClient() {
 const client = global.__pgClient ?? makeClient();
 if (process.env.NODE_ENV !== 'production') global.__pgClient = client;
 
-export const db = drizzle(client, { schema, logger: false });
+const rootDb = drizzle(client, { schema, logger: false });
+/**
+ * Every repo writes through this. Inside a Penny turn transaction it IS that
+ * transaction (see ./turnScope.ts); everywhere else it is the root client.
+ */
+export const db = scopedDb(rootDb);
 export type DB = typeof db;
 export { schema };

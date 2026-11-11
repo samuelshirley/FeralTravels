@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { sql } from 'drizzle-orm';
 import * as schema from '@/server/db/schema';
+import { scopedDb } from '@/server/db/turnScope';
 
 /**
  * A real, in-process Postgres (PGlite) carrying the real schema, for the repo
@@ -39,7 +40,9 @@ export function testDb() {
 /** The shape of `@/server/db/client`, backed by PGlite. */
 export async function clientModule() {
   const { db } = await testDb();
-  return { db, schema };
+  // Scoped exactly as client.ts scopes postgres-js, so a turn transaction
+  // behaves here as it does in production.
+  return { db: scopedDb(db), schema };
 }
 
 /** Empties every table. Cheap enough to run before each test. */

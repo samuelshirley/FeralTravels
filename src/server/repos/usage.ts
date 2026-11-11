@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/server/db/client';
+import { deferUntilSettled } from '@/server/db/turnScope';
 import { usageEvents } from '@/server/db/schema';
 import { and, eq, gte, ne, sql, desc } from 'drizzle-orm';
 import {
@@ -56,20 +57,22 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput) {
   // columns so cache hit rate is recoverable per row. inputTokens is the pure
   // regular-input count (NOT cache tokens summed in). The costMicrocents field
   // already reflects the correctly-discounted USD across all three.
-  await db.insert(usageEvents).values({
-    userId: input.userId,
-    tripId: input.tripId ?? null,
-    provider: 'anthropic',
-    model: input.model,
-    inputTokens: input.inputTokens,
-    outputTokens: input.outputTokens,
-    cacheCreationInputTokens: cacheCreate,
-    cacheReadInputTokens: cacheRead,
-    requests: 1,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId,
+      tripId: input.tripId ?? null,
+      provider: 'anthropic',
+      model: input.model,
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      cacheCreationInputTokens: cacheCreate,
+      cacheReadInputTokens: cacheRead,
+      requests: 1,
+      costMicrocents: dollarsToMicrocents(usd),
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 /**
@@ -123,15 +126,17 @@ export async function logUsageEvent(input: {
   success?: boolean;
   errorMessage?: string | null;
 }) {
-  await db.insert(usageEvents).values({
-    userId: input.userId ?? null,
-    tripId: input.tripId ?? null,
-    provider: input.provider,
-    model: input.model ?? null,
-    requests: input.requests ?? 1,
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId ?? null,
+      tripId: input.tripId ?? null,
+      provider: input.provider,
+      model: input.model ?? null,
+      requests: input.requests ?? 1,
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 // Google Places API (New) per-call list price in USD, keyed by the SKU stored
@@ -189,18 +194,20 @@ export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
   if (input.requests <= 0) return;
   const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[input.endpoint] ?? 0.032;
   const usd = perCall * input.requests;
-  await db.insert(usageEvents).values({
-    userId: input.userId,
-    tripId: input.tripId ?? null,
-    provider: 'google-places',
-    model: input.endpoint,
-    inputTokens: 0,
-    outputTokens: 0,
-    requests: input.requests,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId,
+      tripId: input.tripId ?? null,
+      provider: 'google-places',
+      model: input.endpoint,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests: input.requests,
+      costMicrocents: dollarsToMicrocents(usd),
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 /**
@@ -239,18 +246,20 @@ export async function logGoogleApiUsage(input: {
       ? GOOGLE_DIRECTIONS_ADVANCED_PER_CALL_USD
       : GOOGLE_DIRECTIONS_PER_CALL_USD;
   const usd = perCall * requests;
-  await db.insert(usageEvents).values({
-    userId: input.userId ?? null,
-    tripId: input.tripId ?? null,
-    provider: input.provider,
-    model: null,
-    inputTokens: 0,
-    outputTokens: 0,
-    requests,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId ?? null,
+      tripId: input.tripId ?? null,
+      provider: input.provider,
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests,
+      costMicrocents: dollarsToMicrocents(usd),
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 /** Sum cost + count requests for a user in the trailing N hours. Used for rate limiting. */
