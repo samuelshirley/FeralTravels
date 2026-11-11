@@ -50,6 +50,7 @@ import {
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
+  CITY_HINT_BY_REGION,
 } from "@/shared/lib/onboardingForm";
 import { onboardingPhase as deriveOnboardingPhase } from "@/shared/lib/onboardingPhase";
 import { planningCaption } from "@/shared/lib/planningCaption";
@@ -1951,7 +1952,7 @@ export default function ChatPanel({
             >
               <MapPinSimpleArea size={22} color={theme.accent300} />
               <View style={styles.cityRowCopy}>
-                <Text style={styles.cityRowText}>Name a city — Lisbon, Girona, Tromsø…</Text>
+                <Text style={styles.cityRowText}>{onboardingQuestion.cityHint ?? CITY_HINT_BY_REGION.europe}</Text>
                 <Text style={styles.cityRowSub}>or just start typing</Text>
               </View>
             </Pressable>

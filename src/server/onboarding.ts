@@ -24,6 +24,9 @@ import {
   TRIP_DATE_LABEL,
   TRIP_INTENT_LABEL,
   TRIP_INTENT_PROMPTS,
+  TRIP_INTENT_PROMPTS_BY_REGION,
+  CITY_HINT_BY_REGION,
+  type PromptRegion,
   TRIP_ORIGIN_LABEL,
   TRIP_PACE_LABEL,
   DAILY_DRIVE_HOURS_MAX,
@@ -114,6 +117,11 @@ export interface Question {
    */
   prompts?: string[];
   /**
+   * The "just name a city" row shown above `prompts`. Regional, like the
+   * prompts, so it comes from the server; a client renders it, never its own.
+   */
+  cityHint?: string;
+  /**
    * One line under the chips explaining where a `defaultValue` came from, e.g.
    * that the date was read out of the user's own message. Rendered small and
    * quiet; omitted when nothing was inferred.
@@ -147,7 +155,30 @@ export const TRIP_INTENT_QUESTION: Question = {
   placeholder: 'Where to?',
   multiline: true,
   prompts: [...TRIP_INTENT_PROMPTS],
+  cityHint: CITY_HINT_BY_REGION.europe,
 };
+
+/**
+ * Swap the trip-intent question's examples for the user's region. The ONE
+ * place the region is applied — the route calls it on every snapshot it
+ * returns (GET and the POST's `next`), so no internal step has to know.
+ * Any other question passes through untouched.
+ */
+export function localizeOnboardingSnapshot(
+  snapshot: OnboardingSnapshot,
+  region: PromptRegion,
+): OnboardingSnapshot {
+  const q = snapshot.question;
+  if (!q || q.key !== TRIP_INTENT_QUESTION.key) return snapshot;
+  return {
+    ...snapshot,
+    question: {
+      ...q,
+      prompts: [...TRIP_INTENT_PROMPTS_BY_REGION[region]],
+      cityHint: CITY_HINT_BY_REGION[region],
+    },
+  };
+}
 
 /**
  * Where the trip starts — asked right after the intent, and ONLY when the

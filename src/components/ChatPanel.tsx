@@ -54,6 +54,7 @@ import {
   intentPlaceholder,
   isTapToAnswerKind,
   locksComposer,
+  CITY_HINT_BY_REGION,
   type QuestionKind,
 } from '@/lib/onboardingForm';
 import { onboardingPhase as deriveOnboardingPhase } from '@/lib/onboardingPhase';
@@ -212,6 +213,8 @@ interface OnboardingFormQuestion {
    * `options`, which are answers. See the server type for why both exist.
    */
   prompts?: string[];
+  /** The regional "just name a city" row above `prompts` — server-chosen. */
+  cityHint?: string;
   /** One quiet line explaining where a `defaultValue` came from. */
   footnote?: string;
 }
@@ -2475,7 +2478,7 @@ export default function ChatPanel({
             >
               <MapPinSimpleArea size={22} weight="regular" aria-hidden />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span>Name a city — Lisbon, Girona, Tromsø…</span>
+                <span>{onboardingQuestion.cityHint ?? CITY_HINT_BY_REGION.europe}</span>
                 <span style={{ fontSize: 11.5, color: 'var(--tp-subtle)' }}>
                   or just start typing
                 </span>

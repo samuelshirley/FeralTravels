@@ -5,21 +5,27 @@ import {
   assertTripOwnedByUser,
   errorResponse,
 } from '@/server/auth/guards';
-import { getOnboardingSnapshot, submitAnswer } from '@/server/onboarding';
+import { getOnboardingSnapshot, localizeOnboardingSnapshot, submitAnswer } from '@/server/onboarding';
+import { promptRegionForCountry } from '@/lib/onboardingForm';
+
+/** Vercel sets this on every request; absent locally, which reads as Europe. */
+function regionOf(req: Request) {
+  return promptRegionForCountry(req.headers.get('x-vercel-ip-country'));
+}
 import { requireAiConsent } from '@/server/aiConsent';
 import { parseUUID } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(req: Request, ctx: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
     const tripId = parseUUID(ctx.params.id);
     if (!tripId) return Response.json({ error: 'Invalid trip id' }, { status: 400 });
     await assertTripOwnedByUser(tripId, userId);
     const snapshot = await getOnboardingSnapshot(tripId, userId);
-    return Response.json(snapshot);
+    return Response.json(localizeOnboardingSnapshot(snapshot, regionOf(req)));
   } catch (err) {
     return errorResponse(err);
   }
@@ -70,7 +76,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     // a stranger still gets the ownership 403 and a bad body its 400.
     const consent = await requireAiConsent(userId);
     const result = await submitAnswer(tripId, userId, body, consent);
-    return Response.json(result);
+    return Response.json({ ...result, next: localizeOnboardingSnapshot(result.next, regionOf(req)) });
   } catch (err) {
     return errorResponse(err);
   }
