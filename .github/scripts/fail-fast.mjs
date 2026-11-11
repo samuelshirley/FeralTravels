@@ -24,9 +24,8 @@
  * ── Shape ──────────────────────────────────────────────────────────────────
  *
  * `decide` is pure (jobs → cancel | wait | done) and `watch` takes an `io`
- * whose `gh(args)` is the only way out of the process — the same arrangement
- * as auto-merge.mjs — so src/lib/ciFailFast.test.ts drives both against a
- * stubbed GitHub.
+ * whose `gh(args)` is the only way out of the process, so
+ * src/lib/ciFailFast.test.ts drives both against a stubbed GitHub.
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';

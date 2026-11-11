@@ -78,10 +78,16 @@ npm run db:studio    # DB browser
 The full pipeline and its accepted sharp edges:
 **`docs/design/deploy-pipeline.md`**. Read it before changing CI.
 
-**Production has NO real users yet**, and will not until Sam says the app is
-launched, in words. Never weigh "this would affect N production accounts" as a
-reason to slow down or pick the cautious option. It is still live infrastructure:
-never run tests or seed fixtures against the prod database.
+**Production is LIVE with real users (Sam, 2026-11-02).** Never run tests or
+seed fixtures against the prod database.
+
+**Sam merges every PR by hand — there is no auto-merge (removed 2026-11-09;
+its workflow had been disabled since 2026-10-07).** Never add `hold`, draft
+status or any other merge-blocking step to a PR. To bring auto-merge back,
+revert the commit that removed it. **Check the live system, not its
+description:** before acting on how CI, deploys or production behave, read the
+real state (GitHub API, Vercel, the DB) — a comment or doc saying how it works
+is a lead, not a fact.
 
 1. **Open a PR into `main`.** `ci.yml` runs unit tests, deploys a tested preview
    on an ephemeral Neon branch (prod's schema: migrations rehearsed on a private
