@@ -235,6 +235,27 @@ describe('/privacy names every third party that receives personal data (5.1.1(i)
     expect(privacy).toMatch(/The app asks your permission before anything is sent to Anthropic/);
   });
 
+  it('names TypeSafe while the Jev module exists: what it gets, why, where, for how long, and that the app asks', () => {
+    // TypeSafe is reached by plain fetch to a host set in the environment, so
+    // neither the dependency list nor HOSTS can see it. The module is the tell.
+    expect(fs.existsSync(path.join(ROOT, 'src/server/jev/client.ts'))).toBe(true);
+    expect(namesRecipient('TypeSafe')).toBe(true);
+    const item = recipients.slice(recipients.indexOf('<strong>TypeSafe</strong>'));
+    const entry = item.slice(0, item.indexOf('</li>'));
+    // What: exactly what buildClassifyContent sends, and what it does not.
+    expect(entry).toMatch(/the text of a message/);
+    expect(entry).toMatch(/trip&apos;s name, the place and vehicle names/);
+    expect(entry).toMatch(/end of Penny&apos;s previous reply/);
+    expect(entry).toMatch(/does not get your photos, your\s+location, your email address or your name/);
+    // Why, where, the transfer, the vendor's own training and retention statements.
+    expect(entry).toMatch(/sorts the messages you send Penny/);
+    expect(entry).toMatch(/TypeSafe is in the US/);
+    expect(entry).toMatch(/standard contractual clauses/);
+    expect(entry).toMatch(/TypeSafe says it does not train/);
+    expect(entry).toMatch(/as long as reasonably necessary/);
+    expect(entry).toMatch(/The app asks your permission before anything is sent to TypeSafe/);
+  });
+
   it('says what RevenueCat receives, and that Apple takes the payment', () => {
     expect(privacy).toMatch(/RevenueCat.*account's ID/);
     expect(privacy).toMatch(/purchase events/);

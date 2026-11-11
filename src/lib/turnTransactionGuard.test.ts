@@ -20,7 +20,8 @@ import { describe, expect, it } from 'vitest';
  *     rollback) with nothing to say so.
  *  2. client.ts exports the SCOPED db, and the PGlite harness scopes exactly
  *     the same way, so the transaction tests exercise production semantics.
- *  3. Every usage_events write is deferred until the transaction settles —
+ *  3. Every usage_events write in app code (usage.ts, repos/jev.ts, …) is
+ *     deferred until the transaction settles —
  *     accounting records spend that happened; it must survive a rollback.
  *  4. Every paid Google wrapper refuses to run inside a turn transaction, and
  *     dispatch itself makes no Google call: paid calls run after commit.
@@ -92,12 +93,34 @@ describe('a Penny turn transaction cannot be written around', () => {
     expect(read('src/test/pg/harness.ts')).toMatch(/return \{ db: scopedDb\(db\), schema \};/);
   });
 
-  it('every usage_events write is deferred until the turn transaction settles', () => {
-    const src = read('src/server/repos/usage.ts');
-    const writes = src.match(/db\s*\.\s*(insert|update|delete)\(/g) ?? [];
-    const deferred = src.match(/deferUntilSettled\(\(\) =>\s*db\s*\.\s*(insert|update|delete)\(/g) ?? [];
-    expect(writes.length).toBeGreaterThan(0);
-    expect(deferred.length).toBe(writes.length);
+  it('every usage_events write in app code is deferred until the turn transaction settles', () => {
+    // Accounting records something that happened (spend, a logged idea, a Jev
+    // measurement); a rolled-back turn must not erase it. Not just usage.ts:
+    // main's Jev compare rows (repos/jev.ts, #100) write usage_events too.
+    const ALLOWED: Record<string, string> = {
+      // Anonymises rows as part of deleting an account, inside that delete's
+      // own transaction — it must roll back with it.
+      'src/server/repos/accountDeletion.ts': 'part of the account-deletion transaction',
+      // Fixture data behind E2E_TEST_ENDPOINTS / test accounts — never a turn.
+      'src/server/repos/testSupport.ts': 'test fixtures only',
+      'src/server/payments/testAccounts.ts': 'test accounts only',
+    };
+    const undeferred: string[] = [];
+    let writers = 0;
+    for (const f of appFiles) {
+      if (ALLOWED[f]) continue;
+      const src = read(f);
+      for (const m of src.matchAll(/\.\s*(insert|update|delete)\(\s*usageEvents\s*\)/g)) {
+        writers += 1;
+        // The write's own expression must open with `deferUntilSettled(() =>`.
+        const before = src.slice(Math.max(0, m.index! - 80), m.index!);
+        if (!/deferUntilSettled\(\(\) =>\s*db\s*$/.test(before)) {
+          undeferred.push(`${f}:${src.slice(0, m.index!).split('\n').length}`);
+        }
+      }
+    }
+    expect(writers).toBeGreaterThanOrEqual(8);
+    expect(undeferred).toEqual([]);
   });
 
   it('every paid Google wrapper refuses to run inside a turn transaction', () => {

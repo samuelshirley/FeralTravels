@@ -73,17 +73,18 @@ export function assertNoTurnTransaction(what: string): void {
 }
 
 /**
- * Run `write` outside any turn transaction: now, if none is open; otherwise
- * queued and run once the transaction settles, commit or rollback. Errors in a
- * queued write are logged, never thrown into the turn.
+ * Run `write` outside any turn transaction: now, if none is open — returning
+ * its result (e.g. an inserted row's id) — otherwise queued and run once the
+ * transaction settles, commit or rollback, returning null. Errors in a queued
+ * write are logged, never thrown into the turn.
  */
-export async function deferUntilSettled(write: () => Promise<unknown>): Promise<void> {
+export async function deferUntilSettled<T>(write: () => Promise<T>): Promise<T | null> {
   const s = openStore();
   if (s) {
     s.deferred.push(write);
-    return;
+    return null;
   }
-  await write();
+  return write();
 }
 
 type Transactional = {

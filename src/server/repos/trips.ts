@@ -388,6 +388,73 @@ export async function listTripsForUser(userId: string) {
   });
 }
 
+/**
+ * The date of day 1 as the itinerary shows it: the trip's start date, or —
+ * once the driver has reported progress — the date that puts the current leg
+ * on its anchor day (today, in the owner's zone, unless an anchor is stored).
+ * One definition for `getTripFull` and `getTripDayFrame`, so "day 3" means the
+ * same calendar day to both.
+ */
+export function effectiveTripStartISO(input: {
+  startDateParsed: string | null;
+  currentLegId: string | null;
+  progressAnchorDate: string | null;
+  /** Leg ids in `sort_order`. */
+  legIds: readonly string[];
+  ownerTimezone: string | null;
+  now?: Date;
+}): string | null {
+  if (input.currentLegId) {
+    const currentRank = input.legIds.indexOf(input.currentLegId);
+    if (currentRank >= 0) {
+      const anchor = input.progressAnchorDate ?? todayISOInZone(input.ownerTimezone, input.now);
+      return legDateISO(anchor, -currentRank);
+    }
+  }
+  return input.startDateParsed;
+}
+
+/**
+ * What a "day N" / "tomorrow" / "Nov 14" in a message needs to be turned into
+ * a leg: the legs in day order, the date of day 1, and today in the owner's
+ * zone. Read for the Jev route measurement (`src/server/jevTurnTruth.ts`).
+ */
+export async function getTripDayFrame(
+  tripId: string,
+  now: Date = new Date()
+): Promise<{ legIds: string[]; startISO: string | null; todayISO: string } | null> {
+  const [trip] = await db
+    .select({
+      startDateParsed: trips.startDateParsed,
+      currentLegId: trips.currentLegId,
+      progressAnchorDate: trips.progressAnchorDate,
+      timezone: users.timezone,
+    })
+    .from(trips)
+    .leftJoin(users, eq(users.id, trips.userId))
+    .where(eq(trips.id, tripId))
+    .limit(1);
+  if (!trip) return null;
+  const legRows = await db
+    .select({ id: legs.id })
+    .from(legs)
+    .where(eq(legs.tripId, tripId))
+    .orderBy(asc(legs.sortOrder));
+  const legIds = legRows.map((l) => l.id);
+  return {
+    legIds,
+    startISO: effectiveTripStartISO({
+      startDateParsed: trip.startDateParsed,
+      currentLegId: trip.currentLegId,
+      progressAnchorDate: trip.progressAnchorDate,
+      legIds,
+      ownerTimezone: trip.timezone,
+      now,
+    }),
+    todayISO: todayISOInZone(trip.timezone, now),
+  };
+}
+
 export async function getTripFull(tripId: string): Promise<TripWithLegs | null> {
   const tripRows = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (tripRows.length === 0) return null;
@@ -515,14 +582,13 @@ export async function getTripFull(tripId: string): Promise<TripWithLegs | null> 
   // remaining legs from "now", which is what makes the itinerary reflect reality
   // after the driver reports falling short of a leg. With no progress set we use
   // the trip's real start date exactly as before.
-  let effectiveStartISO = trip.start_date_parsed;
-  if (trip.current_leg_id) {
-    const currentRank = legRows.findIndex((l) => l.id === trip.current_leg_id);
-    if (currentRank >= 0) {
-      const anchor = trip.progress_anchor_date ?? todayISOInZone(ownerTz);
-      effectiveStartISO = legDateISO(anchor, -currentRank);
-    }
-  }
+  const effectiveStartISO = effectiveTripStartISO({
+    startDateParsed: trip.start_date_parsed,
+    currentLegId: trip.current_leg_id,
+    progressAnchorDate: trip.progress_anchor_date,
+    legIds: legRows.map((l) => l.id),
+    ownerTimezone: ownerTz,
+  }) ?? trip.start_date_parsed; // never null here: start_date_parsed is NOT NULL
 
   /*
    * Range left in the tank at the START of each day.

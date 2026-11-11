@@ -1,5 +1,5 @@
 # SUBFLOW — run right after the first thing a fresh account sends to Penny (a
-# setup answer, a chip, a message). The "Penny uses Anthropic's Claude" sheet
+# setup answer, a chip, a message). The "Penny uses Anthropic and TypeSafe" sheet
 # (App Review 5.1.2(i)) MUST be on screen: this asserts it, its copy and its
 # privacy link, then agrees, and the send it held goes ahead. One place, so a
 # copy or testID change is one edit. Not listed in a shard (it runs inside the
@@ -13,10 +13,13 @@ appId: ${APP_ID}
     visible:
       id: 'ai-consent-sheet'
     timeout: 20000
-- assertVisible: "Penny uses Anthropic's Claude"
+- assertVisible: "Penny uses Anthropic and TypeSafe"
 - assertVisible:
     id: 'ai-consent-body'
     text: '.*your messages, any photos you attach, your trip details and your current location are sent to Anthropic.*'
+- assertVisible:
+    id: 'ai-consent-typesafe'
+    text: '.*may also be sent to TypeSafe, in the US.*'
 - assertVisible:
     id: 'ai-consent-privacy'
 - tapOn:

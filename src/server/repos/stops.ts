@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { stops } from '@/server/db/schema';
 import type {
@@ -18,6 +18,20 @@ export async function getStopsForLeg(legId: string): Promise<Stop[]> {
     .where(eq(stops.legId, legId))
     .orderBy(asc(stops.sortOrder), asc(stops.id));
   return rows.map(rowMappers.stopRow);
+}
+
+/**
+ * The type of each of these stops, by id — read BEFORE a Penny turn's actions
+ * are dispatched, so a `delete_stop` can still be told apart (fuel or not)
+ * after the row is gone. Ids that match nothing are absent from the map.
+ */
+export async function getStopTypes(ids: readonly string[]): Promise<Map<string, StopType>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: stops.id, stopType: stops.stopType })
+    .from(stops)
+    .where(inArray(stops.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, r.stopType as StopType]));
 }
 
 export async function getStop(id: string): Promise<Stop | null> {

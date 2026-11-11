@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: 'What Feral Travels collects, why, who else sees it, and how to delete all of it.',
 };
 
-const UPDATED = '20 October 2026';
+const UPDATED = '3 November 2026';
 const CONTACT = 'sam@feraltravels.com';
 
 /**
@@ -40,6 +40,16 @@ const CONTACT = 'sam@feraltravels.com';
  *                 device_location), server/onboarding.ts → parseStartDate,
  *                 parseRangeEstimate, onboardingIntentScan; server/messageGate.ts.
  *                 No email or name is in any of those payloads.
+ *   TypeSafe    — server/jev/client.ts, from server/messageGate.ts only, and only
+ *                 with the Jev switch on (compare or Jev first) for an account
+ *                 that agreed to consent sheet v2. The body is exactly
+ *                 lib/pennyClassifierPrompt.ts buildClassifyContent(): the
+ *                 message, the trip name, ≤ 40 names from tripVocabulary() (day
+ *                 titles, start/end places, stop names, the vehicle name) and
+ *                 the last 400 characters of Penny's previous message. Vendor
+ *                 terms as of Oct 2026: US-hosted; DPA with EU SCCs; does not
+ *                 train on input; keeps personal data "as long as reasonably
+ *                 necessary"; zero retention only on enterprise plans.
  *   RevenueCat  — mobile/lib/purchases.ts `Purchases.logIn(users.id)`; nothing
  *                 else is set on the customer. Webhook: api/webhooks/revenuecat.
  *   Apple       — StoreKit (the charge), mobile/lib/oauth.ts (Sign in with
@@ -159,6 +169,18 @@ export default function PrivacyPage() {
           questions when they&apos;re typed in your own words, like a start date or how far
           your vehicle goes. It does not get your email address or your name.{' '}
           <strong>The app asks your permission before anything is sent to Anthropic</strong>,
+          and nothing goes until you say yes.
+        </li>
+        <li>
+          <strong>TypeSafe</strong> — sorts the messages you send Penny: whether one is about
+          your trip, and what kind of change it asks for. When that is switched on, it gets
+          the text of a message, with your trip&apos;s name, the place and vehicle names on
+          it, and the end of Penny&apos;s previous reply. It does not get your photos, your
+          location, your email address or your name. TypeSafe is in the US, and the transfer
+          relies on the standard contractual clauses in its data processing agreement.
+          TypeSafe says it does not train on what it is sent, and that it keeps personal data
+          as long as reasonably necessary.{' '}
+          <strong>The app asks your permission before anything is sent to TypeSafe</strong>,
           and nothing goes until you say yes.
         </li>
         <li>

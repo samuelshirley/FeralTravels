@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The gate hands Penny's previous message to every decider that judges the
@@ -28,14 +28,17 @@ vi.mock('@/server/repos/chat', () => ({ previousAssistantRow: vi.fn() }));
 vi.mock('@/server/repos/users', () => ({
   getStrikeState: vi.fn(async () => ({ strikes: 0, lockedUntil: null })),
   setStrikeState: vi.fn(async () => undefined),
+  // The account agreed to the sheet naming TypeSafe (version 2), so the real
+  // `requireAiConsent` mints a proof Jev may be asked under.
+  getAiConsent: vi.fn(async () => ({ at: new Date('2026-11-01T00:00:00Z'), version: 2 })),
 }));
 vi.mock('@/server/repos/usage', () => ({ logUsageEvent: vi.fn(async () => undefined) }));
 vi.mock('@/server/pennyClassifier', () => ({ classifyMessage: vi.fn() }));
 vi.mock('@/server/repos/jev', () => ({ effectiveJevMode: vi.fn(), logJevUsage: vi.fn(async () => undefined) }));
-vi.mock('@/server/jev', () => ({ jevClassifyTier: vi.fn(), startJevClassifyTier: vi.fn() }));
+vi.mock('@/server/jev', () => ({ jevClassifyTier: vi.fn(), startJevCompare: vi.fn() }));
 
 import { gateMessage } from './messageGate';
-import type { AiConsentProof } from '@/server/aiConsent';
+import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { previousAssistantRow } from '@/server/repos/chat';
 import { logUsageEvent } from '@/server/repos/usage';
 import { classifyMessage } from '@/server/pennyClassifier';
@@ -44,10 +47,13 @@ import { jevClassifyTier } from '@/server/jev';
 
 const PENNY = 'I can push the start back a day, so day 1 is Saturday. Want me to do that?';
 /**
- * A stand-in proof. The classifier is mocked, so `assertAiConsent` never sees
- * it; what this file checks is that the gate hands it on untouched.
+ * A real proof, minted by `requireAiConsent` over the mocked consent read.
+ * What this file checks is that the gate hands it on untouched.
  */
-const CONSENT = Object.freeze({ userId: 'u1' }) as unknown as AiConsentProof;
+let CONSENT: AiConsentProof;
+beforeAll(async () => {
+  CONSENT = await requireAiConsent('u1');
+});
 const run = (message: string) => gateMessage({ userId: 'u1', tripId: 't1', message, consent: CONSENT });
 
 function gateRowText() {
@@ -110,6 +116,9 @@ describe("Penny's previous message reaches the classifiers", () => {
     vi.mocked(previousAssistantRow).mockResolvedValue({ content: PENNY, fellBack: false });
     await run(MESSAGE);
     expect(vi.mocked(jevClassifyTier).mock.calls[0][1]).toMatchObject({ previousAssistant: PENNY });
+    // ...under a TypeSafe proof for this user, never the Anthropic one.
+    expect(vi.mocked(jevClassifyTier).mock.calls[0][2]).not.toBe(CONSENT);
+    expect(vi.mocked(jevClassifyTier).mock.calls[0][3]).toBe('u1');
     expect(vi.mocked(classifyMessage).mock.calls[0][1]).toMatchObject({ previousAssistant: PENNY });
   });
 });

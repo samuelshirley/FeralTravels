@@ -481,7 +481,7 @@ export default function ChatPanel({
   const [vehicleRange, setVehicleRange] = useState("");
   const attachImagesAllowed = !isOnboarding && !readonly;
   /*
-   * "Penny uses Anthropic's Claude" (App Review 5.1.2(i)). `ensure()` is
+   * "Penny uses Anthropic and TypeSafe" (App Review 5.1.2(i)). `ensure()` is
    * awaited before anything that sends to Penny — the composer, every setup
    * answer and chip, the engine below — so the sheet is the first thing a new
    * account meets, and "Not now" leaves Penny's composer disabled with a way
@@ -2499,6 +2499,7 @@ export default function ChatPanel({
         <AiConsentSheet
           saving={aiConsent.saving}
           error={aiConsent.error}
+          upgrade={aiConsent.status === "upgrade"}
           onAgree={() => void aiConsent.agree()}
           onNotNow={aiConsent.notNow}
         />

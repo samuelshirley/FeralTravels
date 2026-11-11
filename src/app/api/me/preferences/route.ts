@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { requireUserId, errorResponse } from '@/server/auth/guards';
 import { recordAiConsent, setUnitsPref, setUserTimezone } from '@/server/repos/users';
+import { AI_CONSENT_VERSION } from '@/lib/aiConsent';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,16 @@ const patchSchema = z.object({
    * nothing and the absence of a timestamp is the refusal.
    */
   ai_consent: z.literal(true).optional(),
+  /**
+   * Which sheet that Agree was on. Only the CURRENT version is accepted, and
+   * only beside `ai_consent: true`. Absent = 1: an app build from before
+   * versions showed the Anthropic-only sheet, and its Agree must not grant
+   * anything that sheet did not name (TypeSafe).
+   */
+  ai_consent_version: z.literal(AI_CONSENT_VERSION).optional(),
+}).refine((b) => b.ai_consent_version === undefined || b.ai_consent === true, {
+  message: 'ai_consent_version needs ai_consent: true',
+  path: ['ai_consent_version'],
 });
 
 /**
@@ -40,12 +51,16 @@ export async function PATCH(req: Request) {
     if (body.timezone !== undefined) {
       timezone = await setUserTimezone(userId, body.timezone);
     }
-    if (body.ai_consent === true) await recordAiConsent(userId);
+    if (body.ai_consent === true) {
+      await recordAiConsent(userId, new Date(), body.ai_consent_version ?? 1);
+    }
     return Response.json({
       ok: true,
       units_pref: body.units_pref ?? null,
       timezone,
-      ...(body.ai_consent === true ? { ai_consent: true } : {}),
+      ...(body.ai_consent === true
+        ? { ai_consent: true, ai_consent_version: body.ai_consent_version ?? 1 }
+        : {}),
     });
   } catch (err) {
     return errorResponse(err);
