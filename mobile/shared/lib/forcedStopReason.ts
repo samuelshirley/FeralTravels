@@ -8,6 +8,7 @@
  */
 import type { ForcedStopReason, StopType } from '../types/trip';
 import { formatKm, type UnitsPref } from '../lib/units';
+import { namedFuelStopLabel } from '../lib/stationName';
 
 /**
  * The name Finn stores on every fuel stop. Google's station name is never
@@ -73,12 +74,18 @@ export function stopRowAccessibilityLabel(
     distanceKm: number | null;
     forcedLine: string | null;
     stopType: StopType;
+    /** A station name the driver tapped for (never stored) — said instead of "Fuel stop". */
+    stationName?: string | null;
   },
   units: UnitsPref
 ): string {
   const head =
     row.stopType === 'fuel'
-      ? `${row.kicker}: ${fuelStopLabel(row.distanceKm, units)}.`
+      ? `${row.kicker}: ${
+          row.stationName
+            ? namedFuelStopLabel(row.stationName, row.distanceKm, units)
+            : fuelStopLabel(row.distanceKm, units)
+        }.`
       : row.distanceKm != null
         ? `${row.kicker}: ${row.name}, ${formatKm(row.distanceKm, units)}.`
         : `${row.kicker}: ${row.name}.`;

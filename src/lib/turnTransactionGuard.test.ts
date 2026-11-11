@@ -127,6 +127,7 @@ describe('a Penny turn transaction cannot be written around', () => {
     const src = read('src/server/google/accounted.ts');
     const fns = [...src.matchAll(/export async function (\w+)\([\s\S]*?\): Promise<[^>]+>\s*\{\n\s*(.*)\n/g)];
     expect(fns.map((m) => m[1]).sort()).toEqual([
+      'fetchPlaceDisplayNameAccounted',
       'geocodePlaceAccounted',
       'getDirectionsAccounted',
       'searchFuelAlongRouteAccounted',
@@ -146,6 +147,8 @@ describe('a Penny turn transaction cannot be written around', () => {
     expect(src.slice(open, call)).not.toMatch(/\n\s{14}\}\);/);
 
     const body = src.slice(src.indexOf('async function dispatchAction('));
-    expect(body).not.toMatch(/(getDirectionsAccounted|geocodePlaceAccounted|searchFuelAlongRouteAccounted)\(/);
+    expect(body).not.toMatch(
+      /(getDirectionsAccounted|geocodePlaceAccounted|searchFuelAlongRouteAccounted|fetchPlaceDisplayNameAccounted)\(/,
+    );
   });
 });

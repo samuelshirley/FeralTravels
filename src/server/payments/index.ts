@@ -42,7 +42,13 @@ export {
   productById,
 } from './constants';
 export type { ProductId } from './constants';
-export { resolveAccountState, trialDaysRemaining, trialEndsAt, dailyReplanCapUsd } from './states';
+export {
+  resolveAccountState,
+  trialDaysRemaining,
+  trialEndsAt,
+  dailyReplanCapUsd,
+  subscriberDailyCapUsd,
+} from './states';
 export type { AccountState, AccountVerdict, AccountFacts, BlockReason } from './states';
 export { applySubscriptionEvent, decideFromEvent, isKnownEventType } from './webhook';
 export type { WebhookOutcome, WebhookResult, WebhookDeps, EventDecision } from './webhook';

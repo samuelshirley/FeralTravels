@@ -31,6 +31,7 @@ const RAW = [
   { defined_in: 'src/lib/google/directions.ts', symbol: 'getDirections' },
   { defined_in: 'src/lib/google/places.ts', symbol: 'searchFuelAlongRoute' },
   { defined_in: 'src/lib/google/geocode.ts', symbol: 'geocodePlace' },
+  { defined_in: 'src/lib/google/placeDetails.ts', symbol: 'fetchPlaceDisplayName' },
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

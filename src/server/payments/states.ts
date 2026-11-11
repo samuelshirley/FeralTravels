@@ -222,6 +222,15 @@ export function trialDaysRemaining(now: Date, createdAt: Date): number {
 }
 
 /**
+ * The SUBSCRIBER daily $ cap, after the `REPLAN_USD_CAP_PER_DAY` env override.
+ * One definition for every spend path that checks the daily cap (the replan
+ * route, the station-name lookup), so they cannot read different numbers.
+ */
+export function subscriberDailyCapUsd(): number {
+  return parseFloat(process.env.REPLAN_USD_CAP_PER_DAY || String(REPLAN_USD_CAP_PER_DAY));
+}
+
+/**
  * Which daily Anthropic cap applies to this account.
  *
  * Pure, and taking the subscriber cap as an argument so the route's existing

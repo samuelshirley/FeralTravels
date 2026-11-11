@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import type { FuelStatus, Stop, StopType } from "@/shared/types/trip";
@@ -16,7 +16,9 @@ import { Spinner } from "@/components/ui";
 import { RouteTimelineRowBody, timelineStyles } from "@/components/RouteTimelineRow";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
-import { CloseIcon, DisclosureIcon } from "@/components/icons";
+import { CloseIcon, DisclosureIcon, InfoIcon } from "@/components/icons";
+import { apiFetch } from "@/lib/api";
+import { loadStationName, type StationNameState } from "@/shared/lib/stationName";
 
 interface StopsSectionProps {
   tripId: string;
@@ -111,6 +113,20 @@ export default function StopsSection({
     !restDay && !isPast && (fuelLoading || fuelStatus === "computing" || fuelStatus === "pending");
   const fuelErrorCategory = classifyFuelPlanError(fuelPlanError);
 
+  /*
+   * A fuel station's NAME, on a tap (Sam, 2026-11-11) — mirrors
+   * src/components/StopsSection.tsx. Fetched by place_id when asked for, kept
+   * only in this card's state while it is open — never the resource cache,
+   * never AsyncStorage (stationNameGuard.test.ts). A failure keeps "Fuel stop ·
+   * N km" and says why underneath.
+   */
+  const [stationNames, setStationNames] = useState<Record<string, StationNameState>>({});
+  const showStationName = useCallback(async (stopId: string) => {
+    setStationNames((prev) => ({ ...prev, [stopId]: { status: "loading" } }));
+    const next = await loadStationName((path) => apiFetch(path), stopId);
+    setStationNames((prev) => ({ ...prev, [stopId]: next }));
+  }, []);
+
   // --- Sort stops for display: by distance from start, then type ---
   const sortedStops = useMemo(() => {
     return [...activeStops].sort((a, b) => {
@@ -146,6 +162,12 @@ export default function StopsSection({
       stop: Stop | null;
       /** Finn's forced-stop reason, worded in the user's units; null otherwise. */
       forcedLine: string | null;
+      /** The station name the driver tapped for; null until then. Never stored. */
+      stationName: string | null;
+      /** A fuel stop Google can name (it has a place id) and whose name is not shown yet. */
+      canName: boolean;
+      /** Why a requested station name is missing; null otherwise. */
+      nameNote: string | null;
     };
 
     const rows: Row[] = [];
@@ -164,11 +186,15 @@ export default function StopsSection({
         href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
         stop: null,
         forcedLine: null,
+        stationName: null,
+        canName: false,
+        nameNote: null,
       });
     }
 
     for (const stop of sortedStops) {
       const fuel = stop.stop_type === "fuel";
+      const named = fuel ? stationNames[String(stop.id)] : undefined;
       rows.push({
         key: String(stop.id),
         kicker: fuel ? "FUEL" : "STOP",
@@ -181,6 +207,9 @@ export default function StopsSection({
         href: mapsHref(stop.lat, stop.lng, { placeId: stop.place_id }),
         stop,
         forcedLine: forcedStopLine(stop.stop_type, stop.forced_reason, units),
+        stationName: named?.status === "ok" ? named.name : null,
+        canName: fuel && !!stop.place_id && named?.status !== "ok",
+        nameNote: named?.status === "failed" ? named.message : null,
       });
     }
 
@@ -197,11 +226,14 @@ export default function StopsSection({
         href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
         stop: null,
         forcedLine: null,
+        stationName: null,
+        canName: false,
+        nameNote: null,
       });
     }
 
     return rows;
-  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units]);
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units, stationNames]);
 
   if (restDay && activeStops.length === 0 && dismissedStops.length === 0) return null;
   // A base day is never fuel-planned; whatever fuel state it carries is not news.
@@ -310,6 +342,8 @@ export default function StopsSection({
                   isStop: row.stop != null,
                   forcedLine: row.forcedLine,
                   hasLink: row.href != null,
+                  stationName: row.stationName,
+                  nameNote: row.nameNote,
                 }}
               />
             );
@@ -333,6 +367,24 @@ export default function StopsSection({
                 ) : (
                   <View style={styles.timelineLink}>{rowBody}</View>
                 )}
+
+                {row.stop && row.canName ? (
+                  <Pressable
+                    onPress={() => void showStationName(String(row.stop!.id))}
+                    disabled={stationNames[String(row.stop.id)]?.status === "loading"}
+                    accessibilityRole="button"
+                    accessibilityLabel="Show station name"
+                    testID="fuel-stop-name"
+                    hitSlop={6}
+                    style={styles.removeButton}
+                  >
+                    {stationNames[String(row.stop.id)]?.status === "loading" ? (
+                      <Spinner size="small" />
+                    ) : (
+                      <InfoIcon color={theme.subtle} size={14} />
+                    )}
+                  </Pressable>
+                ) : null}
 
                 {row.stop && !readonly ? (
                   <Pressable

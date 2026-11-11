@@ -21,7 +21,7 @@ import {
 import {
   assertPennyGateOpen,
   dailyReplanCapUsd,
-  REPLAN_USD_CAP_PER_DAY,
+  subscriberDailyCapUsd,
 } from '@/server/payments';
 import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
@@ -159,9 +159,7 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
  * picks, from the verdict, and the env override lowers both rather than only
  * this one. See the reasoning on both numbers in `payments/constants.ts`.
  */
-const SUBSCRIBER_USD_CAP_PER_DAY = parseFloat(
-  process.env.REPLAN_USD_CAP_PER_DAY || String(REPLAN_USD_CAP_PER_DAY)
-);
+const SUBSCRIBER_USD_CAP_PER_DAY = subscriberDailyCapUsd();
 const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '120', 10);
 
 export const runtime = 'nodejs';

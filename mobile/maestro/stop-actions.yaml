@@ -6,8 +6,9 @@
 # nothing renders them), so there is nothing to tap. Their routes are covered
 # over HTTP by e2e/api-contracts.spec.ts.
 #
-# $0: the seeded forced fuel stop's leg has its fuel cache stamped fresh, so
+# Near $0: the seeded forced fuel stop's leg has its fuel cache stamped fresh, so
 # opening the day makes no Places search, and deleting a stop replans nothing.
+# The station-name tap makes one Place Details request for an id Google rejects.
 #
 # UNPROVEN: written from the source (2026-10-07) by a session that could not
 # reach a simulator. Run it locally before trusting a green or a red.
@@ -55,6 +56,22 @@ appId: ${APP_ID}
       text: 'Remove Fuel stop . 95 km'
     direction: DOWN
     timeout: 20000
+
+# ── The station name, on a tap (Sam, 2026-11-11) ────────────────────────────
+# Google's terms forbid storing a station's name, so it is fetched by place id
+# when the driver taps for it. The seeded stop's place id is one Google does
+# not know, so this run always ends on the FALLBACK: the label stays "Fuel
+# stop · 95 km" — never a blank — and the card says why. (A real id ends on
+# the name instead; the PGlite and component tests cover that branch.) One
+# Place Details call per run, rejected by Google.
+- tapOn:
+    id: 'fuel-stop-name'
+- extendedWaitUntil:
+    visible:
+      id: 'fuel-stop-name-error'
+    timeout: 20000
+- assertVisible: '.*load the station name.*'
+- assertVisible: 'Remove Fuel stop . 95 km'
 
 - tapOn: 'Remove Fuel stop . 95 km'
 - extendedWaitUntil:

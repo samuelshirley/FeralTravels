@@ -164,7 +164,7 @@ api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
 api/promo/redeem api/routes api/routes/[id]
 api/routes/[id]/links api/routes/[id]/select api/stops api/stops/[id]
-api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
+api/stops/[id]/place-name api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
 api/tasks/[id] api/test/announcement api/test/breakers api/test/cleanup
 api/test/feature-request
 api/test/deletion api/test/maps-link-stop api/test/otp api/test/promo
@@ -221,6 +221,8 @@ it to the nearest town inside the daily cap so a day does not end in a hamlet;
 see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
+**A station's name is never stored** (Maps ToS §3.2.3): fetched by `place_id` on a
+tap, `api/stops/[id]/place-name` (`stationNameGuard.test.ts`).
 **A turn is all-or-nothing:** if any pre-dispatch gate rejects any action,
 nothing in the batch dispatches (`lib/penny/turnAtomicity.ts`), and dispatch is
 one DB transaction — no Google call inside it (`server/db/turnScope.ts`).

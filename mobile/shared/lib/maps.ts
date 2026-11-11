@@ -135,6 +135,8 @@ export type LegDirectionsStopInput = {
   source: string | null;
   distance_from_start_km?: number | null;
   sort_order?: number | null;
+  /** Google place id, when the stop has one — the nav link opens THAT place. */
+  place_id?: string | null;
 };
 
 /** A resolved waypoint with coords and name. */
@@ -144,6 +146,7 @@ export type ResolvedWaypoint = {
   name: string;
   stopType?: string;
   distanceKm?: number | null;
+  placeId?: string | null;
 };
 
 /** Filter & sort stops into the set that appear in directions URLs. */
@@ -174,6 +177,7 @@ function resolveDirectionsStops(stops: LegDirectionsStopInput[]): ResolvedWaypoi
       name: s.name,
       stopType: s.stop_type,
       distanceKm: s.distance_from_start_km ?? null,
+      placeId: s.place_id ?? null,
     }));
 }
 
@@ -339,11 +343,18 @@ export function buildSegmentedNavUrls(input: {
   const segments: NavSegment[] = [];
   for (const dest of destinations) {
     // No origin → Google Maps uses device GPS = always shows "Start" button.
-    const url = buildNavUrl(
+    const coordsUrl = buildNavUrl(
       { end_lat: dest.lat, end_lng: dest.lng },
       undefined,
       { navigate: true }
     );
+    // A stop with a place id opens THAT place (a named station), not a pin at
+    // its coordinates — the same rule as `buildGoHereUrl` for the STOPS rows.
+    // Free: the id is already on the row (persona test, 2026-11-10).
+    const url =
+      coordsUrl && dest.placeId
+        ? `${coordsUrl}&${new URLSearchParams({ destination_place_id: dest.placeId }).toString()}`
+        : coordsUrl;
     if (url) {
       segments.push({ label: dest.name, url, stopType: dest.stopType, distanceKm: dest.distanceKm });
     }

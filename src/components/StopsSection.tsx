@@ -9,12 +9,13 @@ import { apiFetch } from '@/lib/api';
 import { buildGoHereUrl } from '@/lib/maps';
 import { formatKm } from '@/lib/units';
 import { forcedStopLine, fuelStopLabel } from '@/lib/forcedStopReason';
+import { loadStationName, namedFuelStopLabel, type StationNameState } from '@/lib/stationName';
 import { useUnits } from '@/components/UnitsContext';
 import { StopCard } from './stops';
 import { useStopActions } from './stops/useStopActions';
 import Spinner from './Spinner';
 import { buttonStyle } from '@/components/ui/buttonStyle';
-import { CloseIcon, FuelIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
+import { CloseIcon, FuelIcon, InfoIcon, NavigateIcon, PlaceIcon } from '@/components/icons';
 
 interface StopsSectionProps {
   tripId: string;
@@ -126,6 +127,20 @@ export default function StopsSection({
   const setupReturnTarget = pathname?.startsWith('/') ? pathname : `/trips/${tripId}`;
   const vehicleSetupHref = `/vehicle-setup?returnTo=${encodeURIComponent(setupReturnTarget)}`;
 
+  /*
+   * A fuel station's NAME, on a tap (Sam, 2026-11-11). Google's terms forbid
+   * storing it, so it is fetched by place_id when asked for and kept only here,
+   * in this card's state, for as long as the card is open — never in the
+   * resource cache, never in storage (stationNameGuard.test.ts). A failure
+   * keeps "Fuel stop · N km" and says why underneath.
+   */
+  const [stationNames, setStationNames] = useState<Record<string, StationNameState>>({});
+  const showStationName = useCallback(async (stopId: string) => {
+    setStationNames((prev) => ({ ...prev, [stopId]: { status: 'loading' } }));
+    const next = await loadStationName((path) => apiFetch(path), stopId);
+    setStationNames((prev) => ({ ...prev, [stopId]: next }));
+  }, []);
+
   // --- Sort stops for display: by distance from start, then type ---
   const sortedStops = useMemo(() => {
     return [...activeStops].sort((a, b) => {
@@ -163,6 +178,10 @@ export default function StopsSection({
       stop: Stop | null;
       /** Finn's forced-stop reason, worded in the user's units; null otherwise. */
       forcedLine: string | null;
+      /** A fuel stop Google can name (it has a place id) and whose name is not shown yet. */
+      canName: boolean;
+      /** Why a requested station name is missing; null otherwise. */
+      nameNote: string | null;
     };
 
     const rows: Row[] = [];
@@ -180,15 +199,22 @@ export default function StopsSection({
         href: mapsHref(legStartCoords?.lat, legStartCoords?.lng),
         stop: null,
         forcedLine: null,
+        canName: false,
+        nameNote: null,
       });
     }
 
     for (const stop of sortedStops) {
       const fuel = stop.stop_type === 'fuel';
+      const named = fuel ? stationNames[String(stop.id)] : undefined;
       rows.push({
         key: String(stop.id),
         kicker: fuel ? 'FUEL' : 'STOP',
-        name: fuel ? fuelStopLabel(stop.distance_from_start_km, units) : stop.name,
+        name: !fuel
+          ? stop.name
+          : named?.status === 'ok'
+            ? namedFuelStopLabel(named.name, stop.distance_from_start_km, units)
+            : fuelStopLabel(stop.distance_from_start_km, units),
         distanceKm: stop.distance_from_start_km,
         isFuel: fuel,
         markerColor: fuel ? 'var(--tp-primary)' : 'var(--tp-muted)',
@@ -196,6 +222,8 @@ export default function StopsSection({
         href: mapsHref(stop.lat, stop.lng, { placeId: stop.place_id }),
         stop,
         forcedLine: forcedStopLine(stop.stop_type, stop.forced_reason, units),
+        canName: fuel && !!stop.place_id && named?.status !== 'ok',
+        nameNote: named?.status === 'failed' ? named.message : null,
       });
     }
 
@@ -211,11 +239,13 @@ export default function StopsSection({
         href: mapsHref(legEndCoords?.lat, legEndCoords?.lng),
         stop: null,
         forcedLine: null,
+        canName: false,
+        nameNote: null,
       });
     }
 
     return rows;
-  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units]);
+  }, [legStartName, legStartCoords, legEndName, legEndCoords, legDistanceKm, sortedStops, units, stationNames]);
 
   if (restDay && activeStops.length === 0 && dismissedStops.length === 0) return null;
   // A base day is never fuel-planned; whatever fuel state it carries is not news.
@@ -403,6 +433,11 @@ export default function StopsSection({
                       {row.forcedLine}
                     </div>
                   )}
+                  {row.nameNote && (
+                    <div data-testid="fuel-stop-name-error" style={{ fontSize: 10.5, color: 'var(--tp-subtle)', marginTop: 1 }}>
+                      {row.nameNote}
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -474,6 +509,38 @@ export default function StopsSection({
                   </a>
                 ) : (
                   <div style={rowStyle}>{rowBody}</div>
+                )}
+
+                {row.stop && row.canName && (
+                  <button
+                    type="button"
+                    data-testid="fuel-stop-name"
+                    disabled={stationNames[String(row.stop.id)]?.status === 'loading'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void showStationName(String(row.stop!.id));
+                    }}
+                    aria-label="Show station name"
+                    title="Show station name"
+                    style={{
+                      flexShrink: 0,
+                      width: 26,
+                      height: 26,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--tp-subtle)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {stationNames[String(row.stop.id)]?.status === 'loading' ? (
+                      <Spinner size={10} thickness={2} color="var(--tp-subtle)" />
+                    ) : (
+                      <InfoIcon size={14} />
+                    )}
+                  </button>
                 )}
 
                 {row.stop && !readonly && (

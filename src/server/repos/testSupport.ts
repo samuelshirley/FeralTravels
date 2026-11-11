@@ -413,6 +413,9 @@ export async function seedFixture(opts: {
  * Display data, not a plan Finn would make: the 412 km gap is chosen so it
  * converts to a whole 256 mi for the imperial spec.
  */
+/** A place id in Google's shape that names no place (stop-actions.yaml). */
+export const FIXTURE_UNKNOWN_PLACE_ID = 'ChIJFixtureNoSuchPlace0000';
+
 async function seedForcedFuelStop(tripId: string): Promise<void> {
   const [first] = await db
     .select({ id: legs.id })
@@ -435,6 +438,10 @@ async function seedForcedFuelStop(tripId: string): Promise<void> {
     source: 'google',
     googleMapsUri: buildGoHereUrl(49.0464, 3.4031),
     sourceUrl: buildGoHereUrl(49.0464, 3.4031),
+    // Well-formed but unknown to Google, so the station-name tap
+    // (stop-actions.yaml) always ends on the fallback line — deterministic,
+    // whatever Google's data says about a real station.
+    placeId: FIXTURE_UNKNOWN_PLACE_ID,
     notes: "Top up here — next fuel is 412 km away, on the next day's drive.",
     forcedReason: { kind: 'next_day_fuel_far', gap_km: 412 },
   });
