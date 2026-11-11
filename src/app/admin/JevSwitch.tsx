@@ -3,6 +3,8 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import JevRouteSection, { type JevRouteStatsProps } from './JevRouteSection';
+
 /**
  * The deployment-wide Jev switch, and what Jev did with it.
  *
@@ -76,6 +78,8 @@ interface Props {
   stats: JevStatsProps | null;
   /** Null when the read failed. */
   compare: JevCompareProps | null;
+  /** The route measurement (compare only). Null when the read failed. */
+  routes: JevRouteStatsProps | null;
   overrides: Record<JevModeProp, number> | null;
   /** Jev's margin rule, passed in so the line cannot drift from the code. */
   minMargin: number;
@@ -165,7 +169,7 @@ export function JevCompareSection({ compare, show }: { compare: JevCompareProps 
   );
 }
 
-export default function JevSwitch({ mode, config, stats, compare, overrides, minMargin }: Props) {
+export default function JevSwitch({ mode, config, stats, compare, routes, overrides, minMargin }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -288,6 +292,8 @@ export default function JevSwitch({ mode, config, stats, compare, overrides, min
         compare={compare}
         show={mode === 'compare' || (overrides?.compare ?? 0) > 0}
       />
+
+      <JevRouteSection routes={routes} show={mode === 'compare' || (overrides?.compare ?? 0) > 0} />
 
       {error && (
         <p role="alert" style={{ ...line, color: 'var(--tp-danger)' }}>

@@ -84,9 +84,16 @@ vi.mock('@/server/onboardingIntentScan', async (orig) => {
 import { eq } from 'drizzle-orm';
 import { trips, chatHistory, pennyTurns, users } from '@/server/db/schema';
 import { createTrip } from '@/server/repos/trips';
-import { getAiConsentAt, recordAiConsent } from '@/server/repos/users';
-import { assertAiConsent, requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
-import { AI_CONSENT_REQUIRED_CODE } from '@/lib/aiConsent';
+import { getAiConsent, getAiConsentAt, recordAiConsent } from '@/server/repos/users';
+import {
+  assertAiConsent,
+  assertTypeSafeConsent,
+  requireAiConsent,
+  typeSafeConsentFrom,
+  type AiConsentProof,
+  type TypeSafeConsentProof,
+} from '@/server/aiConsent';
+import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_VERSION } from '@/lib/aiConsent';
 import { POST as onboardingPOST } from '@/app/api/trips/[id]/onboarding/route';
 import { POST as replanPOST } from '@/app/api/trip/replan/route';
 import { GET as meGET } from '@/app/api/me/route';
@@ -291,5 +298,136 @@ describe('/api/me and /api/me/preferences', () => {
     const res = await preferencesPATCH(jsonRequest('/api/me/preferences', 'PATCH', { ai_consent: false }));
     expect(res.status).toBe(400);
     expect(await getAiConsentAt(user.id)).toBeNull();
+  });
+});
+
+// ── Version 2: the sheet that names TypeSafe ────────────────────────────────
+
+describe('users.ai_consent_version — which sheet was agreed to', () => {
+  it('both columns are nullable, the time one a timestamptz', async () => {
+    const cols = await rawQuery<{ column_name: string; data_type: string; is_nullable: string }>(
+      `select column_name, data_type, is_nullable from information_schema.columns
+        where table_name = 'users' and column_name in ('ai_consent_version', 'ai_consent_version_at')
+        order by column_name`,
+    );
+    expect(cols).toEqual([
+      { column_name: 'ai_consent_version', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'ai_consent_version_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
+    ]);
+  });
+
+  it('an account that agreed before versions existed (version NULL) reads as version 1', async () => {
+    const user = await seedUser();
+    const { db } = await testDb();
+    // Exactly what migration 0049 leaves on a pre-existing row: the timestamp, no version.
+    await db.update(users).set({ aiConsentAt: new Date('2026-10-20T09:00:00Z') }).where(eq(users.id, user.id));
+    expect(await getAiConsent(user.id)).toEqual({ at: new Date('2026-10-20T09:00:00Z'), version: 1 });
+    expect((await requireAiConsent(user.id)).version).toBe(1);
+  });
+
+  it('a new account agreeing to version 2 records both moments and the version', async () => {
+    const user = await seedUser();
+    const at = new Date('2026-11-03T10:00:00Z');
+    await recordAiConsent(user.id, at, 2);
+    expect(await getAiConsent(user.id)).toEqual({ at, version: 2 });
+    const [row] = await rawQuery<{ ai_consent_version_at: Date }>(
+      `select ai_consent_version_at from users where id = $1`,
+      [user.id],
+    );
+    expect(new Date(row.ai_consent_version_at).toISOString()).toBe(at.toISOString());
+  });
+
+  it('a version-1 account upgrading keeps its FIRST agreement time and records when it agreed to 2', async () => {
+    const user = await seedUser();
+    const first = new Date('2026-10-20T09:00:00Z');
+    const second = new Date('2026-11-03T10:00:00Z');
+    await recordAiConsent(user.id, first);
+    expect(await getAiConsent(user.id)).toEqual({ at: first, version: 1 });
+    await recordAiConsent(user.id, second, 2);
+    expect(await getAiConsent(user.id)).toEqual({ at: first, version: 2 });
+  });
+
+  it('the version only rises: an old app build agreeing to version 1 cannot lower a 2', async () => {
+    const user = await seedUser();
+    await recordAiConsent(user.id, new Date('2026-11-03T10:00:00Z'), 2);
+    await recordAiConsent(user.id, new Date('2026-11-04T10:00:00Z'), 1);
+    expect((await getAiConsent(user.id)).version).toBe(2);
+  });
+
+  it('refuses a version that is not a positive integer', async () => {
+    const user = await seedUser();
+    await expect(recordAiConsent(user.id, new Date(), 0)).rejects.toThrow(/bad version/);
+    await expect(recordAiConsent(user.id, new Date(), 1.5)).rejects.toThrow(/bad version/);
+  });
+});
+
+describe('the TypeSafe proof', () => {
+  it('is minted only from a genuine proof of version ≥ 2', async () => {
+    const [v1, v2] = [await seedUser(), await seedUser()];
+    await recordAiConsent(v1.id);
+    await recordAiConsent(v2.id, new Date(), 2);
+
+    expect(typeSafeConsentFrom(await requireAiConsent(v1.id))).toBeNull();
+
+    const ts = typeSafeConsentFrom(await requireAiConsent(v2.id));
+    expect(ts).not.toBeNull();
+    expect(() => assertTypeSafeConsent(ts!, v2.id)).not.toThrow();
+  });
+
+  it('a forged Anthropic proof mints nothing, and a forged TypeSafe proof is refused at the sink', () => {
+    const forged = Object.freeze({ userId: 'u1', version: 2 }) as unknown as AiConsentProof;
+    expect(typeSafeConsentFrom(forged)).toBeNull();
+    const forgedTs = Object.freeze({ userId: 'u1' }) as unknown as TypeSafeConsentProof;
+    expect(() => assertTypeSafeConsent(forgedTs, 'u1')).toThrow(/missing or forged/);
+    expect(() => assertTypeSafeConsent(undefined as unknown as TypeSafeConsentProof, 'u1')).toThrow(/missing or forged/);
+  });
+
+  it("one user's TypeSafe proof does not carry another user's message", async () => {
+    const [a, b] = [await seedUser(), await seedUser()];
+    await recordAiConsent(a.id, new Date(), 2);
+    const ts = typeSafeConsentFrom(await requireAiConsent(a.id))!;
+    expect(() => assertTypeSafeConsent(ts, b.id)).toThrow(/another user/);
+  });
+
+  it('an Anthropic proof is not a TypeSafe proof, even for a version-2 account', async () => {
+    const user = await seedUser();
+    await recordAiConsent(user.id, new Date(), 2);
+    const anthropic = await requireAiConsent(user.id);
+    expect(() => assertTypeSafeConsent(anthropic as unknown as TypeSafeConsentProof, user.id)).toThrow(/missing or forged/);
+  });
+});
+
+describe('/api/me and PATCH /api/me/preferences with versions', () => {
+  it('reports the version; an agreement with no version (an old app build) records 1', async () => {
+    const user = await seedUser();
+    m.userId = user.id;
+    expect(await (await meGET()).json()).toMatchObject({ ai_consent: false, ai_consent_version: null });
+    const res = await preferencesPATCH(jsonRequest('/api/me/preferences', 'PATCH', { ai_consent: true }));
+    expect(await res.json()).toMatchObject({ ai_consent: true, ai_consent_version: 1 });
+    expect(await (await meGET()).json()).toMatchObject({ ai_consent: true, ai_consent_version: 1 });
+  });
+
+  it('records version 2 when the current sheet was agreed to', async () => {
+    const user = await seedUser();
+    m.userId = user.id;
+    const res = await preferencesPATCH(
+      jsonRequest('/api/me/preferences', 'PATCH', { ai_consent: true, ai_consent_version: AI_CONSENT_VERSION }),
+    );
+    expect(res.status).toBe(200);
+    expect(await (await meGET()).json()).toMatchObject({ ai_consent: true, ai_consent_version: 2 });
+  });
+
+  it('refuses a version that is not the current sheet, and a version without the agreement', async () => {
+    const user = await seedUser();
+    m.userId = user.id;
+    for (const body of [
+      { ai_consent: true, ai_consent_version: 3 },
+      { ai_consent: true, ai_consent_version: 1 },
+      { ai_consent_version: 2 },
+    ]) {
+      const res = await preferencesPATCH(jsonRequest('/api/me/preferences', 'PATCH', body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(await getAiConsent(user.id)).toEqual({ at: null, version: null });
   });
 });

@@ -25,23 +25,61 @@ export const AI_CONSENT_REQUIRED_MESSAGE =
   "Penny needs your OK before your messages are sent to Anthropic's Claude.";
 
 /**
- * The consent sheet. Names the company, the model and every kind of data that
- * goes, because naming them is the whole point of the guideline.
+ * The consent sheet's version. Bump it when the sheet starts naming a new
+ * recipient or a new kind of data, and the server re-asks every account that
+ * agreed to an older one (`users.ai_consent_version`, `src/server/aiConsent.ts`).
+ *
+ *   1 — Anthropic only (2026-10-20).
+ *   2 — Anthropic, and TypeSafe for sorting messages (2026-11-03).
+ *
+ * An account on an older version keeps what it agreed to: Penny still works
+ * for it, and nothing newer is sent until it agrees to the newer sheet.
+ */
+export const AI_CONSENT_VERSION = 2 as const;
+
+/** The first version whose sheet names TypeSafe. Below it, Jev is never called. */
+export const TYPESAFE_CONSENT_VERSION = 2 as const;
+
+/**
+ * The consent sheet. Names each company, and what each one gets, because
+ * naming them is the whole point of the guideline.
  *
  * "Anthropic doesn't use them to train its models" is checked, not assumed:
  * Anthropic's Commercial Terms (effective 2025-06-17), section B: "Anthropic
  * may not train models on Customer Content from Services." The app calls the
  * API under those terms. If they ever change, this sentence goes.
+ *
+ * TypeSafe's paragraph lists EXACTLY what `buildClassifyContent`
+ * (`src/lib/pennyClassifierPrompt.ts`) puts in a request, fed by
+ * `tripVocabulary` (`src/server/messageGate.ts`): the message, the trip's
+ * name, up to 40 names from the trip (day titles, start and end places, stop
+ * names, the vehicle's name) and the last 400 characters of Penny's previous
+ * message. Not photos, not the location, not dates or distances. If that
+ * function starts sending more, this sentence changes first
+ * (`aiConsent.test.ts` pins the list). Its training line is TypeSafe's own
+ * statement (October 2026) and is worded as one: "TypeSafe says".
  */
 export const AI_CONSENT_COPY = {
-  title: "Penny uses Anthropic's Claude",
+  title: 'Penny uses Anthropic and TypeSafe',
   body:
     'To plan your trip, your messages, any photos you attach, your trip details and your ' +
     'current location are sent to Anthropic, which runs the Claude AI model. Anthropic ' +
     "doesn't use them to train its models.",
+  typeSafeBody:
+    'To sort your messages, the text of each may also be sent to TypeSafe, in the US, with ' +
+    "your trip's name, its place and vehicle names, and the end of Penny's last reply. " +
+    "TypeSafe says it doesn't train on them.",
+  /** Above the body, only for an account that agreed to an older sheet: what changed. */
+  upgradeLead: 'Penny now also uses TypeSafe.',
   privacyLink: 'Privacy Policy',
   agree: 'Agree',
   notNow: 'Not now',
+  /**
+   * The decline button for an account that already agreed to Anthropic: it
+   * keeps Penny working on what was agreed, so it says that, rather than
+   * "Not now", which reads as switching Penny off.
+   */
+  notNowUpgrade: 'Anthropic only',
   /** Under Penny's disabled composer after "Not now". The link reopens the sheet. */
   declinedLine: "Penny can't plan until you agree to send your messages to Anthropic.",
   declinedAction: 'Review',
@@ -59,12 +97,16 @@ export const PRIVACY_POLICY_PATH = '/privacy';
  * so the root vitest project tests the logic the phone runs.
  *
  *   unknown  — not asked the server yet
- *   needed   — the server says this account has not agreed
- *   granted  — agreed; stored server-side, so never asked again anywhere
- *   declined — "Not now" on this screen: Penny's composer is disabled, with a
- *              one-line way back to the sheet
+ *   needed   — the server says this account has not agreed to anything
+ *   upgrade  — agreed to an OLDER sheet (Anthropic only). Penny works; the
+ *              current sheet is shown once per screen, at the next send, and
+ *              its decline ("Anthropic only") lets the send go ahead
+ *   granted  — agreed to the current sheet; stored server-side, so never
+ *              asked again anywhere
+ *   declined — "Not now" with nothing agreed, on this screen: Penny's
+ *              composer is disabled, with a one-line way back to the sheet
  */
-export type AiConsentStatus = 'unknown' | 'needed' | 'granted' | 'declined';
+export type AiConsentStatus = 'unknown' | 'needed' | 'upgrade' | 'granted' | 'declined';
 
 export interface AiConsentSnapshot {
   status: AiConsentStatus;
@@ -78,9 +120,11 @@ export interface AiConsentController {
   /** Read the server's answer once; a failure leaves the status `unknown`. */
   load(): Promise<void>;
   /**
-   * Resolves true once this account has agreed — at once if known, else after
-   * Agree is tapped AND the server stored it. False on Not now. Every send to
-   * Penny awaits this first.
+   * Resolves true once this account may send to Penny — at once if it agreed
+   * to the current sheet, else after Agree is tapped AND the server stored
+   * it. False on Not now with nothing agreed. An account on an older sheet
+   * resolves true either way: it is asked once, and its decline keeps what
+   * it agreed to. Every send to Penny awaits this first.
    */
   ensure(): Promise<boolean>;
   open(): void;
@@ -90,15 +134,29 @@ export interface AiConsentController {
   requiredByServer(): void;
 }
 
+/** Which status a stored version means. `null` = never agreed. */
+export function statusForVersion(version: number | null): AiConsentStatus {
+  if (version === null || !(version >= 1)) return 'needed';
+  return version >= AI_CONSENT_VERSION ? 'granted' : 'upgrade';
+}
+
 export function createAiConsentController(deps: {
-  /** True/false from `GET /api/me`'s `ai_consent`; throws when it cannot tell. */
-  fetchConsent: () => Promise<boolean>;
-  /** `PATCH /api/me/preferences { ai_consent: true }`; throws on failure. */
+  /**
+   * The newest sheet version this account agreed to (`GET /api/me`'s
+   * `ai_consent_version`), null if none; throws when it cannot tell.
+   */
+  fetchConsent: () => Promise<number | null>;
+  /**
+   * `PATCH /api/me/preferences { ai_consent: true, ai_consent_version:
+   * AI_CONSENT_VERSION }`; throws on failure.
+   */
   saveConsent: () => Promise<void>;
   onChange: (snapshot: AiConsentSnapshot) => void;
 }): AiConsentController {
   let state: AiConsentSnapshot = { status: 'unknown', sheetOpen: false, saving: false, error: null };
   let waiting: Array<(agreed: boolean) => void> = [];
+  /** An `upgrade` account is shown the newer sheet once per screen, not per send. */
+  let upgradeAsked = false;
 
   const set = (patch: Partial<AiConsentSnapshot>) => {
     state = { ...state, ...patch };
@@ -109,10 +167,10 @@ export function createAiConsentController(deps: {
     waiting = [];
     for (const resolve of resolvers) resolve(agreed);
   };
-  /** Null when the server could not answer: the sheet then asks instead. */
-  const ask = async (): Promise<boolean | null> => {
+  /** The status the server's answer means, or null when it could not answer. */
+  const ask = async (): Promise<AiConsentStatus | null> => {
     try {
-      return await deps.fetchConsent();
+      return statusForVersion(await deps.fetchConsent());
     } catch {
       // Not swallowed: an unanswered question is treated as "not agreed", so
       // the worst case is the sheet for someone who already agreed — and
@@ -121,27 +179,34 @@ export function createAiConsentController(deps: {
     }
   };
   const open = () => set({ sheetOpen: true, error: null });
+  /** Read through a function so TypeScript does not narrow it across an await. */
+  const current = (): AiConsentStatus => state.status;
+  const wait = () =>
+    new Promise<boolean>((resolve) => {
+      waiting.push(resolve);
+      open();
+    });
 
   return {
     get: () => state,
     async load() {
-      const agreed = await ask();
-      if (agreed === null || state.status !== 'unknown') return;
-      set({ status: agreed ? 'granted' : 'needed' });
+      const status = await ask();
+      if (status === null || state.status !== 'unknown') return;
+      set({ status });
     },
     async ensure() {
       if (state.status === 'granted') return true;
       if (state.status === 'unknown') {
-        const agreed = await ask();
-        if (agreed) {
-          set({ status: 'granted' });
-          return true;
-        }
+        const status = await ask();
+        // `load()` may have answered while this was asking; the first answer stands.
+        if (status !== null && current() === 'unknown') set({ status });
+        if (current() === 'granted') return true;
       }
-      return new Promise<boolean>((resolve) => {
-        waiting.push(resolve);
-        open();
-      });
+      if (state.status === 'upgrade') {
+        if (upgradeAsked) return true;
+        upgradeAsked = true;
+      }
+      return wait();
     },
     open,
     async agree() {
@@ -159,6 +224,13 @@ export function createAiConsentController(deps: {
     },
     notNow() {
       if (state.saving) return;
+      if (state.status === 'upgrade') {
+        // They keep what they agreed to: the send goes ahead, Anthropic only.
+        upgradeAsked = true;
+        set({ sheetOpen: false, error: null });
+        settle(true);
+        return;
+      }
       set({ status: 'declined', sheetOpen: false, error: null });
       settle(false);
     },
@@ -167,4 +239,14 @@ export function createAiConsentController(deps: {
       open();
     },
   };
+}
+
+/**
+ * The agreed version out of `GET /api/me`. A server from before versioning
+ * sends only `ai_consent: true`, which can only mean version 1 — the sheet it
+ * knew. Shared by both hooks so they cannot read it two ways.
+ */
+export function consentVersionFromMe(me: { ai_consent?: boolean; ai_consent_version?: number | null }): number | null {
+  if (typeof me.ai_consent_version === 'number' && me.ai_consent_version >= 1) return me.ai_consent_version;
+  return me.ai_consent === true ? 1 : null;
 }

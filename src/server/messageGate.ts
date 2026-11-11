@@ -1,5 +1,9 @@
-import type { AiConsentProof } from '@/server/aiConsent';
 import 'server-only';
+import {
+  typeSafeConsentFrom,
+  type AiConsentProof,
+  type TypeSafeConsentProof,
+} from '@/server/aiConsent';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { chatHistory, legs, stops, trips, vehicles } from '@/server/db/schema';
@@ -20,8 +24,13 @@ import {
   STRIKE_LOCK_MESSAGE,
 } from '@/lib/strikes';
 import { classifyMessage, type ClassifyContext } from './pennyClassifier';
-import { jevClassifyTier, startJevClassifyTier } from '@/server/jev';
-import { effectiveJevMode, logJevUsage, type JevModeSource } from '@/server/repos/jev';
+import { jevClassifyTier, startJevCompare } from '@/server/jev';
+import {
+  effectiveJevMode,
+  logJevCompare,
+  logJevUsage,
+  type JevModeSource,
+} from '@/server/repos/jev';
 
 /**
  * The message gate, assembled: is Penny paused for this account, what tier is
@@ -42,6 +51,13 @@ export interface GateOutcome {
   message: string | null;
   /** Set when this message tripped the third strike. */
   lockedUntil: Date | null;
+  /**
+   * The `usage_events` id of this message's Jev compare row, when compare
+   * mode asked Jev about it; null otherwise. The replan route links it to the
+   * Penny turn the message starts (`linkJevCompareToTurn`), so what Penny then
+   * did is recorded beside what Jev said. Measurement only.
+   */
+  jevCompareEventId: number | null;
 }
 
 /** How many of the account's recent messages count as "an exact repeat of". */
@@ -133,7 +149,15 @@ export async function gateMessage(input: {
   const now = input.now ?? new Date();
 
   if (input.isAdmin) {
-    return { tier: 'T1', by: 'allow_rule', reason: 'admin', blocked: false, message: null, lockedUntil: null };
+    return {
+      tier: 'T1',
+      by: 'allow_rule',
+      reason: 'admin',
+      blocked: false,
+      message: null,
+      lockedUntil: null,
+      jevCompareEventId: null,
+    };
   }
 
   const strike = await getStrikeState(input.userId);
@@ -147,6 +171,7 @@ export async function gateMessage(input: {
       blocked: true,
       message: STRIKE_LOCK_MESSAGE,
       lockedUntil: strike.lockedUntil,
+      jevCompareEventId: null,
     };
   }
 
@@ -170,20 +195,44 @@ export async function gateMessage(input: {
   // without what it replies to.
   const ctx: ClassifyContext = { tripName: vocab.tripName, places: vocab.names, previousAssistant };
 
+  /*
+   * TypeSafe sees nothing for an account that has not agreed to the consent
+   * sheet naming it (version ≥ 2): no proof, no Jev — compare and Jev-first
+   * both become Haiku only, exactly as with the switch off.
+   */
+  const typeSafe = typeSafeConsentFrom(input.consent);
+  let jevCompareEventId: number | null = null;
+
   if (!decision) {
+    let haikuMicrocents: number | null = null;
     const haiku = async (): Promise<GateDecision> => {
       const classified = await classifyMessage(input.message, ctx, input.userId, input.tripId, input.consent);
+      haikuMicrocents = classified.microcents;
       return { tier: classified.tier, by: classified.by, reason: classified.reason };
     };
-    const { mode, source } = await effectiveJevMode(input.userId);
-    if (mode === 'compare') {
+    const { mode, source } = typeSafe ? await effectiveJevMode(input.userId) : OFF;
+    if (mode === 'compare' && typeSafe) {
       // Haiku decides, exactly as with the switch off; Jev is only logged.
-      decision = await haikuComparedWithJev(input, ctx, source, haiku);
+      const compared = await haikuComparedWithJev(input, ctx, source, haiku, () => haikuMicrocents, typeSafe);
+      decision = compared.decision;
+      jevCompareEventId = compared.eventId;
     } else {
       // Jev may settle a confident T1 and nothing else; every other outcome,
       // and the switch being off, is Haiku exactly as before.
-      decision = mode === 'on' ? await jevSettles(input, ctx, source) : null;
+      decision = mode === 'on' && typeSafe ? await jevSettles(input, ctx, source, typeSafe) : null;
       if (!decision) decision = await haiku();
+    }
+  } else if (decision.tier === 'T1' && typeSafe) {
+    /*
+     * The free rules let it through, so no classifier runs and nothing is
+     * there to compare the tier with — but the ROUTE question is exactly
+     * about these messages (a Maps link, "a different gas station"). In
+     * compare mode Jev is asked that question alone, and the answer is only
+     * logged. The decision above stands untouched.
+     */
+    const { mode, source } = await effectiveJevMode(input.userId);
+    if (mode === 'compare') {
+      jevCompareEventId = await routeOnlyCompare(input, ctx, source, typeSafe);
     }
   }
 
@@ -208,6 +257,7 @@ export async function gateMessage(input: {
       blocked: true,
       message: STRIKE_LOCK_MESSAGE,
       lockedUntil: next.lockedUntil,
+      jevCompareEventId,
     };
   }
 
@@ -218,12 +268,17 @@ export async function gateMessage(input: {
     blocked: decision.tier !== 'T1',
     message: gateMessageFor(decision.tier),
     lockedUntil: null,
+    jevCompareEventId,
   };
 }
 
+/** No TypeSafe consent: the switch is not even read, and the mode is off. */
+const OFF = { mode: 'off', source: 'global' } as const satisfies { mode: string; source: JevModeSource };
+
 /**
- * Compare mode: Haiku decides, and Jev is asked the same question at the same
- * moment so its answer can be logged beside Haiku's.
+ * Compare mode: Haiku decides, and Jev is asked the same tier question — plus
+ * the route question, in the same request — at the same moment, so its
+ * answers can be logged beside Haiku's.
  *
  * The returned decision is HAIKU'S, always — the same tier, reason and strike
  * as mode off. Jev's outcome is read only to be written down, and it is read
@@ -236,20 +291,43 @@ async function haikuComparedWithJev(
   input: { userId: string; tripId: string; message: string },
   ctx: ClassifyContext,
   source: JevModeSource,
-  haiku: () => Promise<GateDecision>
-): Promise<GateDecision> {
-  const readJev = startJevClassifyTier(input.message, ctx);
+  haiku: () => Promise<GateDecision>,
+  haikuMicrocents: () => number | null,
+  typeSafe: TypeSafeConsentProof
+): Promise<{ decision: GateDecision; eventId: number | null }> {
+  const readJev = startJevCompare(input.message, ctx, typeSafe, input.userId, { askTier: true });
   const decision = await haiku();
   const outcome = await readJev();
-  await logJevUsage({
+  const eventId = await logJevCompare({
     userId: input.userId,
     tripId: input.tripId,
     source,
     outcome,
-    model: outcome.echoedModel,
-    compare: { haikuTier: decision.tier },
+    gate: { by: 'classifier', haikuTier: decision.tier, haikuMicrocents: haikuMicrocents() },
   });
-  return decision;
+  return { decision, eventId };
+}
+
+/**
+ * Compare mode, for a message the free rules already let through: Jev is
+ * asked the ROUTE question only, and the answer is logged. Bounded by Jev's
+ * own timeout (the reader's deadline), and it never changes the decision —
+ * there is nothing here it could change.
+ */
+async function routeOnlyCompare(
+  input: { userId: string; tripId: string; message: string },
+  ctx: ClassifyContext,
+  source: JevModeSource,
+  typeSafe: TypeSafeConsentProof
+): Promise<number | null> {
+  const outcome = await startJevCompare(input.message, ctx, typeSafe, input.userId, { askTier: false })();
+  return logJevCompare({
+    userId: input.userId,
+    tripId: input.tripId,
+    source,
+    outcome,
+    gate: { by: 'allow_rule', haikuTier: null, haikuMicrocents: null },
+  });
 }
 
 /**
@@ -269,9 +347,10 @@ async function haikuComparedWithJev(
 async function jevSettles(
   input: { userId: string; tripId: string; message: string },
   ctx: ClassifyContext,
-  source: JevModeSource
+  source: JevModeSource,
+  typeSafe: TypeSafeConsentProof
 ): Promise<GateDecision | null> {
-  const outcome = await jevClassifyTier(input.message, ctx);
+  const outcome = await jevClassifyTier(input.message, ctx, typeSafe, input.userId);
   await logJevUsage({
     userId: input.userId,
     tripId: input.tripId,

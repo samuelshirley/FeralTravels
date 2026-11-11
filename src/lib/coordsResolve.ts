@@ -99,6 +99,15 @@ function looksLikeMapsUrl(url: string): boolean {
   return parseCoords(url) !== null || needsServerResolution(url);
 }
 
+/**
+ * How many Maps links `resolveMapsLinksInMessage` would resolve in this
+ * message — the same detector and the same cap, with no network. The Jev
+ * route measurement records the count (never the links).
+ */
+export function countMapsLinksInMessage(message: string): number {
+  return extractUrlsFromText(message).filter(looksLikeMapsUrl).slice(0, MAX_MAPS_LINKS_PER_MESSAGE).length;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname;

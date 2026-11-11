@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { db } from '@/server/db/client';
 import { users } from '@/server/db/schema';
 import { asUnitsPref, type UnitsPref } from '@/lib/units';
@@ -175,28 +175,64 @@ export async function lockedAccounts(
 
 /**
  * When this account agreed to its content being sent to Anthropic, or null if
- * it has not. The only reader is `src/server/aiConsent.ts` (and `/api/me`, to
- * tell the client whether to show the sheet).
+ * it has not. Read by `src/server/aiConsent.ts` (through `getAiConsent`) and
+ * by `/api/me`, to tell the client whether to show the sheet.
  */
 export async function getAiConsentAt(userId: string): Promise<Date | null> {
-  const [row] = await db
-    .select({ aiConsentAt: users.aiConsentAt })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  return row?.aiConsentAt ?? null;
+  return (await getAiConsent(userId)).at;
 }
 
 /**
- * Record the agreement. Idempotent and first-write-wins: agreeing again (a
- * second device, a retried request) keeps the original moment, which is the
- * one that answers "when did they agree".
+ * The account's agreement: when it FIRST agreed to anything (`at`, null =
+ * never), and the newest consent sheet it agreed to (`version`, null = none).
+ * A row agreed before sheets had versions has `ai_consent_version` NULL and
+ * reads as version 1 — the Anthropic-only sheet it actually saw.
  */
-export async function recordAiConsent(userId: string, now: Date = new Date()): Promise<Date> {
+export async function getAiConsent(userId: string): Promise<{ at: Date | null; version: number | null }> {
+  const [row] = await db
+    .select({ at: users.aiConsentAt, version: users.aiConsentVersion })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const at = row?.at ?? null;
+  if (!at) return { at: null, version: null };
+  return { at, version: row?.version ?? 1 };
+}
+
+/**
+ * Record the agreement to sheet `version`. Idempotent:
+ *
+ *  - `ai_consent_at` is first-write-wins — agreeing again (a second device, a
+ *    retried request, a newer sheet) keeps the original moment, which is the
+ *    one that answers "when did they first agree".
+ *  - `ai_consent_version` only ever RISES, with `ai_consent_version_at` the
+ *    moment it did. An old app build still showing the Anthropic-only sheet
+ *    sends no version and records 1, so it can never grant TypeSafe — and can
+ *    never lower an account that already agreed to 2.
+ *
+ * Returns the first-agreement moment.
+ */
+export async function recordAiConsent(
+  userId: string,
+  now: Date = new Date(),
+  version = 1
+): Promise<Date> {
+  if (!Number.isInteger(version) || version < 1) {
+    throw new Error(`recordAiConsent: bad version ${version}`);
+  }
   await db
     .update(users)
     .set({ aiConsentAt: now })
     .where(and(eq(users.id, userId), isNull(users.aiConsentAt)));
+  await db
+    .update(users)
+    .set({ aiConsentVersion: version, aiConsentVersionAt: now })
+    .where(
+      and(
+        eq(users.id, userId),
+        sql`COALESCE(${users.aiConsentVersion}, CASE WHEN ${users.aiConsentAt} IS NULL THEN 0 ELSE 1 END) < ${version}`
+      )
+    );
   const recorded = await getAiConsentAt(userId);
   if (!recorded) throw new Error(`recordAiConsent: no user ${userId}`);
   return recorded;

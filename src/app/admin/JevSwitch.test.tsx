@@ -114,6 +114,7 @@ const base = {
   config: CONFIGURED,
   stats: STATS,
   compare: NO_COMPARE,
+  routes: null,
   overrides: { on: 0, compare: 0, off: 0 },
   minMargin: 0.2,
 };

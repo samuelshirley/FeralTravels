@@ -149,6 +149,15 @@ export const users = pgTable('users', {
    * through `PATCH /api/me/preferences`; a decline writes nothing.
    */
   aiConsentAt: timestamp('ai_consent_at', { withTimezone: true }),
+  /**
+   * The newest consent SHEET this account agreed to (`AI_CONSENT_VERSION` in
+   * `src/lib/aiConsent.ts`), and when. Null with `aiConsentAt` set means 1:
+   * the Anthropic-only sheet, from before versions existed — migration 0049
+   * changes no row. Version 2 names TypeSafe, and nothing reaches TypeSafe
+   * (Jev) for an account below it (`typeSafeConsentFrom`). Only ever raised.
+   */
+  aiConsentVersion: integer('ai_consent_version'),
+  aiConsentVersionAt: timestamp('ai_consent_version_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

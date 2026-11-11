@@ -26,6 +26,8 @@ import {
 import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
 import { gateMessage } from '@/server/messageGate';
+import { linkJevCompareToTurn } from '@/server/repos/jev';
+import { finishJevTurnTruth, prepareJevTurnTruth, recordJevTurnError } from '@/server/jevTurnTruth';
 import { requireAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { addChatMessage } from '@/server/repos/chat';
 import { planReadyText } from '@/lib/planReady';
@@ -237,6 +239,8 @@ export async function POST(req: Request) {
   /** The gate's verdict on THIS message, recorded on the user's chat row. */
   let gateTierForLog: 'T1' | 'T2' | 'T3' | null = null;
   let gateByForLog: string | null = null;
+  /** This message's Jev compare row, when compare mode asked Jev (measurement only). */
+  let jevCompareEventId: number | null = null;
   try {
     // requireEntitledUser, not requireUser: this is the route that spends
     // Anthropic money, so it is the one the paywall exists for. It throws a
@@ -391,6 +395,7 @@ export async function POST(req: Request) {
       }
       gateTierForLog = gate.tier;
       gateByForLog = gate.by;
+      jevCompareEventId = gate.jevCompareEventId;
     }
 
     // Durable turn record — the idempotency + concurrency + re-attach anchor.
@@ -419,6 +424,11 @@ export async function POST(req: Request) {
     if (!created) {
       return Response.json({ turn: queuedTurn });
     }
+
+    // Jev compare (measurement only): tie this message's compare row to the
+    // turn it starts, so what Penny does with it is recorded beside what Jev
+    // said — even if the turn queues and is drained by a later request.
+    if (jevCompareEventId !== null) await linkJevCompareToTurn(jevCompareEventId, queuedTurn.id);
 
     // Persist the user's bubble now so it shows in chat order immediately,
     // whether we run this turn now or queue it.
@@ -681,6 +691,11 @@ async function runTurnWork(
             gateLegs,
             final.validatedActions
           );
+
+          // Jev route measurement: read what can only be read BEFORE dispatch
+          // (a deleted stop's type). One indexed read and nothing else when
+          // this turn's message was not compared. Never throws.
+          const jevTruthPrep = await prepareJevTurnTruth(tripId, turnId, final.validatedActions);
 
           const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
           for (const action of final.validatedActions) {
@@ -1068,6 +1083,17 @@ async function runTurnWork(
              */
             resultMeta: { ...appliedPayload, turnTrace: final.turnTrace },
           });
+
+          // ...and what this turn actually did, graded against Jev's route.
+          await finishJevTurnTruth(jevTruthPrep, {
+            message,
+            toolTrace: final.toolTrace,
+            fuelPlanRan: final.fuelPlanRan,
+            validatedActions: final.validatedActions,
+            appliedActions,
+            failedCount,
+            usageEventId: final.usageEventId,
+          });
   } catch (err) {
     console.error('runTurnWork failed', err);
     // Best-effort: surface a chat bubble so the user knows the turn failed —
@@ -1093,6 +1119,7 @@ async function runTurnWork(
       turnId,
       err instanceof Error ? err.message : String(err)
     ).catch(() => {});
+    await recordJevTurnError(tripId, turnId);
     send({
       kind: 'error',
       message: err instanceof Error ? err.message : String(err),

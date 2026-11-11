@@ -42,10 +42,11 @@ which provider serves what; this has been wrong here before, expensively.
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
   resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
-- **Jev (optional, OFF by default):** a self-hosted typed-decision server for
-  the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
-  logged), JEV FIRST (it may settle only a confident T1, else Haiku) —
-  **`docs/design/jev.md`**.
+- **Jev (optional, OFF by default):** a typed-decision model (TypeSafe-hosted)
+  for the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
+  logged, plus a logged route question), JEV FIRST (it may settle only a
+  confident T1, else Haiku) — **`docs/design/jev.md`**. Called only under a
+  `TypeSafeConsentProof` (consent sheet v2, `src/server/aiConsent.ts`).
 - **Maps / geo:** Google — client JS, server Directions, Places (New)
   `searchText` for name→coords, Places Text Search along-route for Finn's
   stations. **These calls are PAID.** Coords→name is Nominatim: the Geocoding
@@ -237,6 +238,7 @@ backfill-anthropic-zero-cost-rows.ts backfill-google-maps-nav.ts
 capture-nominatim-fixtures.mjs check-env.sh
 check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
+enable-jev-compare.mjs
 extract-canonical-trip.ts generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs

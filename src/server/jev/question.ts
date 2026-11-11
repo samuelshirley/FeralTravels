@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 import type { MessageTier } from '@/lib/pennyGate';
 import {
+  JEV_ROUTE_CRITERIA,
+  JEV_ROUTE_INSTRUCTIONS,
+  JEV_ROUTES,
+  type JevRoute,
+} from '@/lib/jevRoute';
+import {
   buildClassifyContent,
   CLASSIFY_SYSTEM,
   CLASSIFY_TOOL,
@@ -48,13 +54,32 @@ export function tierCriteria(): Record<MessageTier, string> {
   return out as Record<MessageTier, string>;
 }
 
+export interface SystemOneQuestion {
+  type: 'choice';
+  instructions: string;
+  criteria: Record<string, string>;
+}
+
 export interface SystemOneRequest {
   model: string;
   state: string;
-  questions: Record<
-    string,
-    { type: 'choice'; instructions: string; criteria: Record<string, string> }
-  >;
+  questions: Record<string, SystemOneQuestion>;
+}
+
+function tierQuestion(): SystemOneQuestion {
+  return { type: 'choice', instructions: CLASSIFY_SYSTEM, criteria: tierCriteria() };
+}
+
+/**
+ * The route question — COMPARE MODE ONLY, and only ever logged
+ * (`src/lib/jevRoute.ts`). Its wording lives there, beside the definition of
+ * a right answer, so the question and its grading cannot drift apart.
+ */
+export const ROUTE_QUESTION_KEY = 'route';
+export const ROUTE_LABELS: readonly JevRoute[] = JEV_ROUTES;
+
+function routeQuestion(): SystemOneQuestion {
+  return { type: 'choice', instructions: JEV_ROUTE_INSTRUCTIONS, criteria: { ...JEV_ROUTE_CRITERIA } };
 }
 
 export function buildTierRequest(
@@ -65,12 +90,30 @@ export function buildTierRequest(
   return {
     model,
     state: buildClassifyContent(message, ctx),
+    questions: { [TIER_QUESTION_KEY]: tierQuestion() },
+  };
+}
+
+/**
+ * Compare mode's ONE request: the route question, plus the tier question when
+ * the message is on the classifier path (Haiku is being asked the same thing).
+ * Same `state` as the tier request — the message and nothing more of the trip
+ * than `buildClassifyContent` already sends — so asking the second question
+ * adds two short criteria lists, not a second copy of anything the driver
+ * wrote.
+ */
+export function buildCompareRequest(
+  message: string,
+  ctx: ClassifyContext,
+  model: string,
+  opts: { tier: boolean }
+): SystemOneRequest {
+  return {
+    model,
+    state: buildClassifyContent(message, ctx),
     questions: {
-      [TIER_QUESTION_KEY]: {
-        type: 'choice',
-        instructions: CLASSIFY_SYSTEM,
-        criteria: tierCriteria(),
-      },
+      ...(opts.tier ? { [TIER_QUESTION_KEY]: tierQuestion() } : {}),
+      [ROUTE_QUESTION_KEY]: routeQuestion(),
     },
   };
 }
