@@ -40,6 +40,12 @@ export interface OnboardingScan {
   date_skipped?: boolean;
   /** The opening message stated a daily driving time ("5 h days"); `trip_pace` was skipped. */
   pace_skipped?: boolean;
+  /**
+   * A range (km) the opening message stated with NO vehicle named, differing
+   * from the trip's complete default vehicle. Asked as one confirm tap
+   * ("Use 600 km for the Hilux?") on the vehicle step; cleared once answered.
+   */
+  range_confirm_km?: number | null;
 }
 
 // ── Nightly replan types ──────────────────────────────────────────────────

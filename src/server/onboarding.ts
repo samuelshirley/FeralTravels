@@ -5,6 +5,7 @@ import { chatHistory, trips, users } from '@/server/db/schema';
 import { addChatMessage } from '@/server/repos/chat';
 import {
   addVehicle,
+  getDefaultVehicleForUser,
   getVehicleForUser,
   listVehiclesForUser,
   updateVehicle,
@@ -16,6 +17,7 @@ import { resolveStartDate } from '@/server/parseStartDate';
 import { assertAiConsent, type AiConsentProof } from '@/server/aiConsent';
 import { estimateRange } from '@/server/parseRangeEstimate';
 import { scanFirstMessage } from '@/server/onboardingIntentScan';
+import { HttpError } from '@/server/auth/errors';
 import { miToKm, kmToMi } from '@/lib/units';
 import type { UnitsPref } from '@/lib/units';
 import type { OnboardingState, OnboardingScan } from '@/types/trip';
@@ -590,6 +592,36 @@ async function runRangeHelp(
   return { next: snap, answerLabel: text, didHandoff: false, note };
 }
 
+/** The key of the one-tap "use this range for your vehicle?" step. */
+export const RANGE_CONFIRM_KEY = 'range_confirm';
+
+/**
+ * Sam, 2026-11-11: a range the opening message stated with no vehicle named,
+ * on an account whose default vehicle is complete, is never silently ignored —
+ * it is asked once, in the user's units. Yes writes it to that vehicle; no
+ * keeps the saved one.
+ */
+function buildRangeConfirmQuestion(
+  vehicle: VehicleApi,
+  statedKm: number,
+  units: UnitsPref,
+): Question {
+  const show = (km: number) =>
+    units === 'imperial' ? `${Math.round(kmToMi(km)!)} mi` : `${km} km`;
+  return {
+    key: RANGE_CONFIRM_KEY,
+    kind: 'select',
+    label: `Use ${show(statedKm)} for the ${vehicle.name}?`,
+    options: [
+      { value: 'yes', label: `Yes, use ${show(statedKm)}` },
+      {
+        value: 'no',
+        label: vehicle.range_km != null ? `No, keep ${show(vehicle.range_km)}` : 'No',
+      },
+    ],
+  };
+}
+
 /**
  * If the upcoming vehicle question is a fuel-range field and the first-message
  * scan stashed an (already validated) value for it, prefill that value for the
@@ -722,7 +754,9 @@ async function progressFor(
     if (attached) {
       const nameMissing = !vehicleHasProfileValue(attached, 'name');
       const rangeMissing = !vehicleHasProfileValue(attached, 'range_km');
-      vehicleStepsAhead = nameMissing && rangeMissing ? 1 : (nameMissing ? 1 : 0) + (rangeMissing ? 1 : 0);
+      vehicleStepsAhead =
+        (nameMissing && rangeMissing ? 1 : (nameMissing ? 1 : 0) + (rangeMissing ? 1 : 0)) +
+        (scan?.range_confirm_km != null ? 1 : 0);
     } else {
       const owned = await listVehiclesForUser(userId);
       const only = owned.length === 1 ? owned[0] : null;
@@ -913,6 +947,15 @@ export async function getOnboardingSnapshot(
     const askedLabels = await loadAskedLabels(tripId);
     const unitsPref = await getUnitsPref(userId);
     const next = nextVehicleOnboardingQuestion(currentVehicle, askedLabels, unitsPref, scan);
+    const confirmKm = (trip.onboardingScan as OnboardingScan | null)?.range_confirm_km ?? null;
+    if (!next && currentVehicle && confirmKm != null) {
+      return {
+        state,
+        question: buildRangeConfirmQuestion(currentVehicle, confirmKm, unitsPref),
+        vehicles: [],
+        progress: await progressFor(tripId, userId, state, scan, { current: 1, total: 1 }),
+      };
+    }
     if (!next) {
       // All vehicle questions answered — complete onboarding. The scan stash
       // is NOT cleared here: `completeOnboarding` runs right after this on
@@ -1084,7 +1127,20 @@ export async function submitAnswer(
     const namedVehicle = scan.vehicleName
       ? await adoptNamedVehicle(userId, scan.vehicleName, scan.rangeKm)
       : null;
-    if (scan.rangeKm != null && !namedVehicle) scanStash.range_km = scan.rangeKm;
+    // A range with NO vehicle named: on an account whose default vehicle is
+    // complete, that vehicle is this trip's, and a DIFFERENT range is asked
+    // once as a confirm tap (never silently dropped — Sam, 2026-11-11). With
+    // no complete default it keeps the old confirm-on-the-card prefill.
+    let rangeOnlyVehicle: VehicleApi | null = null;
+    if (scan.rangeKm != null && !namedVehicle) {
+      const def = await getDefaultVehicleForUser(userId);
+      if (def && vehicleHasProfileValue(def, 'name') && vehicleHasProfileValue(def, 'range_km')) {
+        rangeOnlyVehicle = def;
+        if (def.range_km !== scan.rangeKm) scanStash.range_confirm_km = scan.rangeKm;
+      } else {
+        scanStash.range_km = scan.rangeKm;
+      }
+    }
 
     // An EXACT start date in the opening message ("leaving tomorrow", "next
     // Saturday") is applied now and its question SKIPPED — the headline fix. A
@@ -1108,7 +1164,11 @@ export async function submitAnswer(
       pendingIntent: text,
       onboardingScan: Object.keys(scanStash).length > 0 ? scanStash : null,
       ...(scan.dailyDriveHours != null ? { dailyDriveHours: scan.dailyDriveHours } : {}),
-      ...(namedVehicle ? { vehicleId: namedVehicle.id } : {}),
+      ...(namedVehicle
+        ? { vehicleId: namedVehicle.id }
+        : rangeOnlyVehicle
+          ? { vehicleId: rangeOnlyVehicle.id }
+          : {}),
       updatedAt: new Date(),
     };
 
@@ -1349,6 +1409,32 @@ export async function submitAnswer(
   if (state === 'vehicle_new') {
     const unitsPref = await getUnitsPref(userId);
     const questions = buildVehicleProfileQuestions(unitsPref);
+
+    // ---- The one-tap range confirm (see buildRangeConfirmQuestion) ----
+    if (input.questionKey === RANGE_CONFIRM_KEY) {
+      const stash = (trip.onboardingScan ?? {}) as OnboardingScan;
+      const statedKm = stash.range_confirm_km ?? null;
+      const vehicle = trip.vehicleId ? await getVehicleForUser(userId, trip.vehicleId) : null;
+      if (statedKm == null || !vehicle) throw new HttpError(409, 'There is no range to confirm.');
+      if (input.value !== 'yes' && input.value !== 'no') {
+        throw new HttpError(400, 'Answer yes or no.');
+      }
+      const asked = buildRangeConfirmQuestion(vehicle, statedKm, unitsPref);
+      if (input.value === 'yes') {
+        await updateVehicle(userId, vehicle.id, { range_km: statedKm });
+      }
+      const label = asked.options!.find((o) => o.value === input.value)!.label;
+      const { range_confirm_km: _answered, ...rest } = stash;
+      void _answered;
+      await db
+        .update(trips)
+        .set({ onboardingScan: Object.keys(rest).length > 0 ? rest : null, updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
+      await writeQA(tripId, asked, label, input.value);
+      const after = await getOnboardingSnapshot(tripId, userId);
+      if (after.state === 'done') return completeOnboarding(tripId, label);
+      return { next: after, answerLabel: label, didHandoff: false };
+    }
 
     /*
      * THE COMPOSITE CARD (frame 7e) — name and range in one submit.

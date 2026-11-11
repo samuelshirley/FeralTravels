@@ -89,11 +89,12 @@ function scanned(vehicle: Record<string, unknown>) {
   };
 }
 
-async function user(opts: { units?: 'metric' | 'imperial'; hilux?: boolean } = {}) {
+async function user(opts: { units?: 'metric' | 'imperial'; hilux?: boolean; second?: boolean } = {}) {
   const u = await seedUser();
   await recordAiConsent(u.id);
   if (opts.units) await setUnitsPref(u.id, opts.units);
   if (opts.hilux) await addVehicle(u.id, { name: 'Hilux', range_km: 500 });
+  if (opts.second) await addVehicle(u.id, { name: 'Golf', range_km: 800 });
   m.userId = u.id;
   const trip = await createTrip({ userId: u.id, name: `Veh ${crypto.randomUUID().slice(0, 8)}` });
   const { db } = await testDb();
@@ -113,7 +114,13 @@ async function answer(tripId: string, questionKey: string, value: unknown) {
   const body = (await res.json()) as {
     next: {
       state: string;
-      question: { key: string; defaultValue?: string } | null;
+      question: {
+        key: string;
+        kind?: string;
+        label?: string;
+        defaultValue?: string;
+        options?: Array<{ value: string; label: string }>;
+      } | null;
       progress?: { current: number; total: number } | null;
     };
     note?: string;
@@ -278,5 +285,103 @@ describe('a vehicle named in the first message is the one the trip uses', () => 
     const r2 = await answer(tripId, 'units_pref', 'metric');
     expect(r2.next.question?.key).toBe('range_km');
     expect(r2.next.progress).toEqual({ current: 3, total: 3 });
+  });
+});
+
+/*
+ * Sam, 2026-11-11: a range named with NO vehicle, on an account whose default
+ * vehicle is complete, is never silently ignored — one confirm tap, "Use 600 km
+ * for the Hilux?". Yes writes it to that vehicle; no keeps the saved range.
+ */
+describe('a range with no vehicle named, on an account with a complete default', () => {
+  const RANGE_ONLY = 'Munich to Nordkapp, leaving 2026-12-10, 6 h a day, about 600 km a tank.';
+
+  it('asks one confirm question in the user’s units', async () => {
+    const { tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+
+    const res = await answer(tripId, 'trip_intent', RANGE_ONLY);
+
+    expect(res.next.state).toBe('vehicle_new');
+    expect(res.next.question).toMatchObject({
+      key: 'range_confirm',
+      kind: 'select',
+      label: 'Use 600 km for the Hilux?',
+    });
+    expect(res.next.question?.options?.map((o) => o.value)).toEqual(['yes', 'no']);
+  });
+
+  it('yes writes the range to that vehicle and finishes', async () => {
+    const { userId, tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+    await answer(tripId, 'trip_intent', RANGE_ONLY);
+
+    const done = await answer(tripId, 'range_confirm', 'yes');
+
+    expect(done.next.state).toBe('done');
+    expect(await allVehicles(userId)).toEqual([['Hilux', 600, true]]);
+    expect(await tripVehicle(tripId)).toEqual({ name: 'Hilux', rangeKm: 600, isDefault: true });
+  });
+
+  it('no keeps the saved range and finishes', async () => {
+    const { userId, tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+    await answer(tripId, 'trip_intent', RANGE_ONLY);
+
+    const done = await answer(tripId, 'range_confirm', 'no');
+
+    expect(done.next.state).toBe('done');
+    expect(await allVehicles(userId)).toEqual([['Hilux', 500, true]]);
+  });
+
+  it('an imperial user is asked in miles', async () => {
+    const { tripId } = await user({ units: 'imperial', hilux: true });
+    m.scan = scanned({ range_value: 373, range_unit: 'mi' });
+    const res = await answer(tripId, 'trip_intent', RANGE_ONLY);
+    expect(res.next.question?.label).toBe('Use 373 mi for the Hilux?');
+  });
+
+  it('a range equal to the saved one asks nothing', async () => {
+    const { tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 500, range_unit: 'km' });
+    const res = await answer(tripId, 'trip_intent', RANGE_ONLY);
+    expect(res.next.state).toBe('done');
+  });
+
+  it('with several vehicles it asks about the DEFAULT one, and the trip uses it', async () => {
+    const { userId, tripId } = await user({ units: 'metric', hilux: true, second: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+    const res = await answer(tripId, 'trip_intent', RANGE_ONLY);
+    expect(res.next.question?.label).toBe('Use 600 km for the Hilux?');
+    await answer(tripId, 'range_confirm', 'yes');
+    expect(await allVehicles(userId)).toEqual([
+      ['Golf', 800, false],
+      ['Hilux', 600, true],
+    ]);
+    expect(await tripVehicle(tripId)).toMatchObject({ name: 'Hilux' });
+  });
+
+  it('an answer that is neither yes nor no is refused, and nothing is written', async () => {
+    const { userId, tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+    await answer(tripId, 'trip_intent', RANGE_ONLY);
+    const res = await onboardingPOST(
+      new Request(`https://example.test/api/trips/${tripId}/onboarding`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ questionKey: 'range_confirm', value: '600' }),
+      }),
+      { params: { id: tripId } },
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('Answer yes or no.');
+    expect(await allVehicles(userId)).toEqual([['Hilux', 500, true]]);
+  });
+
+  it('the step counter counts the confirm as the one step left', async () => {
+    const { tripId } = await user({ units: 'metric', hilux: true });
+    m.scan = scanned({ range_value: 600, range_unit: 'km' });
+    const res = await answer(tripId, 'trip_intent', RANGE_ONLY);
+    expect(res.next.progress).toEqual({ current: 2, total: 2 });
   });
 });
