@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-// Plain ESM JS — same arrangement as autoMerge.test.ts.
+// Plain ESM JS, imported directly.
 import * as failFast from '../../.github/scripts/fail-fast.mjs';
 
 /**
@@ -535,7 +535,7 @@ describe('the leaked-preview cleanup job', () => {
 });
 
 describe('job names other things depend on are unchanged', () => {
-  it('branch protection and auto-merge read these', () => {
+  it('branch protection and ci.yml\'s own summary steps read these', () => {
     expect(jobById('decide').fields.name).toBe('Decide scope');
     expect(jobById('unit').fields.name).toBe('Unit tests');
     expect(jobById('preview').fields.name).toBe('Deploy tested preview');
