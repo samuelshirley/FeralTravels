@@ -40,17 +40,30 @@ export type StationNameState =
   | { status: 'failed'; message: string };
 
 /**
+ * Every station-name request opts out of the app's global error surface. The
+ * card's own line under "Fuel stop · N km" IS the error UI; the global one, on
+ * a 5xx, is the full-screen "silly error" modal (web ErrorNotifier, iOS
+ * lib/errors.tsx), which covered that line and failed stop-actions.yaml on
+ * PR #106 (2026-11-11): Google answers an unknown place id with 400, the route
+ * with 502. Passed HERE, not by each caller, so neither card can drop it —
+ * callers hand over `apiFetch` itself (stationNameGuard.test.ts).
+ */
+export const STATION_NAME_FETCH_OPTS = { skipGlobalErrorReport: true } as const;
+
+/**
  * Fetch one station's name for a card. Never throws and never yields a blank:
  * any failure — network, 4xx/5xx, a body without a name — becomes `failed`
  * with the line the card shows under the unchanged "Fuel stop · N km" label.
  * The caller keeps the result in component state only.
  */
 export async function loadStationName(
-  fetchJson: (path: string) => Promise<unknown>,
+  fetchJson: (path: string, opts: typeof STATION_NAME_FETCH_OPTS) => Promise<unknown>,
   stopId: string,
 ): Promise<StationNameState> {
   try {
-    const body = (await fetchJson(stationNamePath(stopId))) as { name?: unknown } | null;
+    const body = (await fetchJson(stationNamePath(stopId), STATION_NAME_FETCH_OPTS)) as {
+      name?: unknown;
+    } | null;
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
     return name
       ? { status: 'ok', name }

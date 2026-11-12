@@ -80,7 +80,9 @@ describe('a fuel stop’s station name (web)', () => {
     fireEvent.click(screen.getByTestId('fuel-stop-name'));
 
     await screen.findByText('Repsol Librilla A-7 · 89 km');
-    expect(api.fetch).toHaveBeenCalledWith('/api/stops/00000000-0000-4000-8000-0000000000f1/place-name');
+    expect(api.fetch).toHaveBeenCalledWith('/api/stops/00000000-0000-4000-8000-0000000000f1/place-name', {
+      skipGlobalErrorReport: true,
+    });
     expect(screen.queryByText('Fuel stop · 89 km')).toBeNull();
     expect(screen.queryByTestId('fuel-stop-name')).toBeNull();
     const link = screen.getByRole('link', { name: /in Google Maps/ });

@@ -137,7 +137,7 @@ export default function StopsSection({
   const [stationNames, setStationNames] = useState<Record<string, StationNameState>>({});
   const showStationName = useCallback(async (stopId: string) => {
     setStationNames((prev) => ({ ...prev, [stopId]: { status: 'loading' } }));
-    const next = await loadStationName((path) => apiFetch(path), stopId);
+    const next = await loadStationName(apiFetch, stopId);
     setStationNames((prev) => ({ ...prev, [stopId]: next }));
   }, []);
 

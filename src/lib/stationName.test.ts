@@ -17,7 +17,7 @@ describe('loadStationName', () => {
   it('asks the stop’s own route and returns the name', async () => {
     const fetchJson = vi.fn(async () => ({ name: '  Repsol Librilla A-7 ' }));
     expect(await loadStationName(fetchJson, 'stop-1')).toEqual({ status: 'ok', name: 'Repsol Librilla A-7' });
-    expect(fetchJson).toHaveBeenCalledWith('/api/stops/stop-1/place-name');
+    expect(fetchJson).toHaveBeenCalledWith('/api/stops/stop-1/place-name', { skipGlobalErrorReport: true });
   });
 
   it('a 502 becomes the unavailable line', async () => {

@@ -107,7 +107,11 @@ describe('a station name is never stored', () => {
     expect(web).toMatch(/data-testid="fuel-stop-name"/);
     expect(ios).toMatch(/testID="fuel-stop-name"/);
     for (const [f, src] of [['web', web], ['ios', ios]] as const) {
-      expect(src, f).toMatch(/loadStationName\(\(path\) => apiFetch\(path\), stopId\)/);
+      // `apiFetch` ITSELF, so the shared loader's { skipGlobalErrorReport: true }
+      // reaches it. A wrapper like `(path) => apiFetch(path)` drops the option
+      // and a 5xx puts the full-screen error modal over the card's own line —
+      // stop-actions.yaml failed exactly so on PR #106.
+      expect(src, f).toMatch(/loadStationName\(apiFetch, stopId\)/);
       expect(src, f).toMatch(/canName:\s*fuel && !!stop\.place_id/);
     }
     // iOS renders the name and the failure line through the shared row body.
