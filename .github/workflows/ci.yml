@@ -400,8 +400,9 @@ jobs:
   preview:
     name: Deploy tested preview
     # A docs-only PR skips the whole deployed half of this pipeline: no Neon
-    # branch, no Vercel preview, and — because `e2e` and
-    # `ios-e2e` both `needs: preview` — no Playwright run and no simulator.
+    # branch, no Vercel preview, and — because `e2e` and `ios-bundle` both
+    # `needs: preview`, and the iOS jobs carry the same `if:` — no Playwright
+    # run and no simulator.
     #
     # `unit` is deliberately NOT gated. Markdown in this repo is not inert:
     # claudeMdGuard reads CLAUDE.md as TEXT, so a docs-only PR is exactly the
@@ -879,10 +880,19 @@ jobs:
   #   ios-build   compiles the NATIVE app once, in parallel with the unit tests
   #               and the preview deploy (it needs neither), cached by native
   #               fingerprint, and hands it on as an artifact.
+  #   ios-bundle  builds THIS preview's JavaScript ONCE, on Linux, as soon as
+  #               the preview is up (2026-11-12; see the job).
   #   ios-e2e     one job per shard (mobile/maestro/shards/<name>.yaml), each on
-  #               its own runner and simulator: swap in a JS bundle built for
-  #               THIS preview, boot, then launch.yaml and the shard's flows in
-  #               ONE Maestro run (one driver start per shard, not per flow).
+  #               its own runner and simulator. It starts when ios-build is done
+  #               — NOT after the preview — boots and sets up while the preview
+  #               deploys, waits for ios-bundle at the last moment, swaps that
+  #               bundle into the app, then runs launch.yaml and the shard's
+  #               flows in ONE Maestro run (one driver start per shard).
+  #
+  #               Still `needs: ios-build`, and that is about runner slots: the
+  #               free plan runs five macOS jobs at once, ios-build is one, and
+  #               there are five shards. Starting the shards alongside ios-build
+  #               would queue one of them behind it.
   #   ios-e2e-summary
   #               keeps the one check name, `iOS e2e (simulator)`, and the one
   #               PR comment, whatever the shard count.
@@ -991,9 +1001,64 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # ── THIS preview's JavaScript, built once (2026-11-12) ─────────────────────
+  #
+  # Every shard used to run all of scripts/ios-rebundle.sh itself, after the
+  # preview was up: setup-node's npm cache (0m36-3m29 on macOS), `npm ci` in
+  # mobile/ (0m31-2m46) and a Metro bundle (0m48-2m29) — five times, on the
+  # critical path, on the slowest disks in the run. Here it is the `bundle`
+  # half, once, on Linux, where the same `npm ci` takes ~11s. The shards run the
+  # `apply` half, which needs no node_modules: Hermes bytecode with the SAME
+  # macOS hermesc as before (it travels in the artifact), the re-sign, and the
+  # host/placeholder proof re-run on the bundle actually installed.
+  #
+  # The artifact is named per attempt and the shards pick it by the time it was
+  # created, not by name — see .github/scripts/wait-for-ios-bundle.mjs for why
+  # a re-run could otherwise hand a shard a bundle for a dead preview.
+  ios-bundle:
+    name: iOS bundle (this preview's JavaScript)
+    needs: [decide, preview]
+    if: needs.decide.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+        working-directory: mobile
+
+      # Fails unless the JS carries the preview's host and not the placeholder
+      # the native app was compiled with; `apply` checks again on each shard.
+      - name: Build the bundle for this preview
+        env:
+          API_URL: ${{ needs.preview.outputs.url }}
+        run: |
+          set -euo pipefail
+          scripts/ios-rebundle.sh bundle ios-bundle "$API_URL"
+          # A tarball: upload-artifact drops the executable bit, and hermesc
+          # is a binary the shards run.
+          tar -czf ios-bundle.tgz -C ios-bundle .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-bundle-${{ github.run_attempt }}
+          path: ios-bundle.tgz
+          retention-days: 1
+          if-no-files-found: error
+
   ios-e2e:
     name: iOS e2e · ${{ matrix.shard }}
-    needs: [decide, preview, ios-build]
+    # NOT `preview`: the shard sets up while the preview deploys and waits for
+    # ios-bundle inside the job (see "Wait for this preview's bundle"). The
+    # docs-only gate is the `if:` below, since nothing upstream skips now.
+    needs: [decide, ios-build]
     if: needs.decide.outputs.docs_only != 'true'
     runs-on: macos-15
     # 60, not 40 (2026-11-12, PR #108). A slow macOS runner booted the simulator
@@ -1003,7 +1068,13 @@ jobs:
     # minutes from a false red. macOS minutes are free on this public repo; the
     # only cost of 60 is a slower red when something truly hangs.
     # maestroFlowParams.test.ts holds the floor.
-    timeout-minutes: 60
+    #
+    # 90 since the shards start before the preview (2026-11-12): the wait for
+    # the bundle is now inside this budget. The wait step is capped at 30, so
+    # 90 = that cap + the old 60, and starting earlier takes no time from the
+    # flows even on a run whose preview is at its own 20-minute limit.
+    # iosBundleWait.test.ts holds that sum.
+    timeout-minutes: 90
     strategy:
       # A red shard cancels the others (Sam, 2026-10-02 — see FAIL FAST in the
       # header). This used to be `false`, so every shard reported on the same
@@ -1060,67 +1131,24 @@ jobs:
           # The NEWEST runtime on the image, not the first iPhone simctl names
           # (an 18.5 one — a runtime the 26.2 driver was never built against).
           read -r UDID LABEL <<<"$(node scripts/pick-ios-simulator.mjs)"
-          echo "Booting $LABEL ($UDID)"
+          echo "[$(date -u +%H:%M:%S)] Booting $LABEL ($UDID)"
           xcrun simctl boot "$UDID"
+          echo "[$(date -u +%H:%M:%S)] simctl boot returned"
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
 
+      # Node for this job's own scripts, which use only Node's built-ins. NO npm
+      # cache and NO `npm ci` (2026-11-12): mobile/node_modules was needed only
+      # to bundle, which ios-bundle now does once on Linux. Restoring that cache
+      # alone took 0m36-3m29 here.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - name: Install app dependencies
-        run: npm ci
-        working-directory: mobile
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-sim-app
-
-      # The compiled app from ios-build, with a bundle built for THIS preview.
-      # ios-rebundle.sh fails the job if the bundle does not carry the preview's
-      # host, so a stale URL cannot reach a flow and look like a broken app.
-      - name: Put this preview's JavaScript into the app
-        env:
-          API_URL: ${{ needs.preview.outputs.url }}
-        run: |
-          set -euo pipefail
-          mkdir -p ios-app
-          tar -xzf ios-sim-app.tgz -C ios-app
-          scripts/ios-rebundle.sh ios-app/*.app "$API_URL"
-
-      - name: Wait for the simulator and install the app
-        run: |
-          set -euo pipefail
-          xcrun simctl bootstatus "$SIM_UDID" -b
-          xcrun simctl install "$SIM_UDID" ios-app/*.app
-          # ── Warm the simulator before Maestro touches it ────────────────
-          #
-          # 2026-09-07 (run 34101156123): Maestro's XCTest runner STALLED on a
-          # freshly booted simulator and the job died "iOS driver not ready in
-          # time" before launch.yaml ran. Every green run shows the driver up
-          # ~30s after launch on a simulator that has already run a process. So
-          # launch the app once and put it down: SpringBoard's first-boot work
-          # happens on our clock. Tolerant: launch.yaml reports it better.
-          xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
-          sleep 5
-          xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
-          # ── And warm the SETTINGS app ───────────────────────────────────
-          #
-          # settings-location.yaml asserts our screen goes away when the switch
-          # opens Settings, and com.apple.Preferences' cold first launch on a
-          # contended runner measured pass/fail/pass/fail across four runs
-          # (11s, 12.3s, 26s not enough). Paying it here was the fix. Cheap on a
-          # shard that does not need it.
-          xcrun simctl launch "$SIM_UDID" com.apple.Preferences || echo "::warning::Settings warm-up failed; settings-location may be slow"
-          sleep 3
-          xcrun simctl terminate "$SIM_UDID" com.apple.Preferences || true
 
       # PINNED, with the version as a JOB-level env so this key and the
       # installer read the SAME value — a key that disagreed with the pin would
       # serve a different Maestro, whose driver/Xcode mismatch presents as a
-      # timeout naming no version.
+      # timeout naming no version. Before the bundle wait, so it happens while
+      # the preview deploys.
       - name: Cache Maestro
         uses: actions/cache@v4
         with:
@@ -1137,6 +1165,94 @@ jobs:
           fi
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
           "$HOME/.maestro/bin/maestro" --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-sim-app
+
+      # The ONE thing a shard cannot do before the preview is up. Capped at 30
+      # minutes (the job's timeout is that plus the old 60). Fails at once,
+      # naming the job, if ios-bundle did not succeed.
+      - name: Wait for this preview's bundle
+        id: bundle
+        timeout-minutes: 30
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IOS_BUNDLE_DEADLINE_MINUTES: '28'
+        run: node .github/scripts/wait-for-ios-bundle.mjs
+
+      # By id, not name: the waiter chose the artifact THIS attempt's bundle
+      # job made.
+      - name: Download this preview's bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.bundle.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > ios-bundle.zip
+          mkdir -p ios-bundle
+          unzip -q ios-bundle.zip
+          tar -xzf ios-bundle.tgz -C ios-bundle
+          # The URL the bundle was built for IS the preview this shard tests:
+          # the fixture, the seeds and read-otp.js all take it from here, so the
+          # app and the runner cannot disagree about which deployment it is.
+          PREVIEW_URL="$(cat ios-bundle/api-url)"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "Testing against $PREVIEW_URL"
+
+      # The compiled app from ios-build, with the bundle built for THIS preview.
+      # `apply` fails the job if the installed bundle does not carry the
+      # preview's host, so a stale URL cannot reach a flow and look like a
+      # broken app.
+      - name: Put this preview's JavaScript into the app
+        run: |
+          set -euo pipefail
+          mkdir -p ios-app
+          tar -xzf ios-sim-app.tgz -C ios-app
+          scripts/ios-rebundle.sh apply ios-bundle ios-app/*.app
+
+      # TIMESTAMPED, command by command (2026-11-12). This step is bimodal —
+      # 0m30-1m07 or 6m02-8m07, at least one slow shard in each of three runs
+      # — and on core in run 43231772756 the 6m35s fell between
+      # `bootstatus` returning and the warm-up launch's pid, i.e. in
+      # `simctl install` and/or the first `simctl launch`. Which of the two was
+      # never measured. These lines measure it before anything is changed.
+      - name: Wait for the simulator and install the app
+        run: |
+          set -euo pipefail
+          t() { echo "[$(date -u +%H:%M:%S)] $*"; }
+          t "bootstatus: waiting"
+          xcrun simctl bootstatus "$SIM_UDID" -b
+          t "bootstatus: done; install: start"
+          xcrun simctl install "$SIM_UDID" ios-app/*.app
+          t "install: done"
+          # ── Warm the simulator before Maestro touches it ────────────────
+          #
+          # 2026-09-07 (run 34101156123): Maestro's XCTest runner STALLED on a
+          # freshly booted simulator and the job died "iOS driver not ready in
+          # time" before launch.yaml ran. Every green run shows the driver up
+          # ~30s after launch on a simulator that has already run a process. So
+          # launch the app once and put it down: SpringBoard's first-boot work
+          # happens on our clock. Tolerant: launch.yaml reports it better.
+          t "warm-up launch (app): start"
+          xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || echo "::warning::warm-up launch failed; launch.yaml will say why"
+          t "warm-up launch (app): returned"
+          sleep 5
+          xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+          t "terminate (app): done"
+          # ── And warm the SETTINGS app ───────────────────────────────────
+          #
+          # settings-location.yaml asserts our screen goes away when the switch
+          # opens Settings, and com.apple.Preferences' cold first launch on a
+          # contended runner measured pass/fail/pass/fail across four runs
+          # (11s, 12.3s, 26s not enough). Paying it here was the fix. Cheap on a
+          # shard that does not need it.
+          t "warm-up launch (Settings): start"
+          xcrun simctl launch "$SIM_UDID" com.apple.Preferences || echo "::warning::Settings warm-up failed; settings-location may be slow"
+          t "warm-up launch (Settings): returned"
+          sleep 3
+          xcrun simctl terminate "$SIM_UDID" com.apple.Preferences || true
+          t "terminate (Settings): done"
 
       # Same derivation as the preview and e2e jobs — computed, never passed
       # through job outputs, because GitHub drops outputs containing masked
@@ -1163,14 +1279,14 @@ jobs:
           # is involved. It deliberately does NOT hand over a code: one minted
           # here is replaced by the app's own send once the 60s resend cooldown
           # lapses. read-otp.js reads the live one from inside the flow.
-          node scripts/ios-e2e-fixture.mjs --base-url "${{ needs.preview.outputs.url }}" > fixture.env
+          node scripts/ios-e2e-fixture.mjs --base-url "$PREVIEW_URL" > fixture.env
           cat fixture.env >> "$GITHUB_ENV"
 
       - name: Run the flows
         id: flows
         env:
           # read-otp.js and the seed scripts call this deployment themselves.
-          E2E_BASE_URL: ${{ needs.preview.outputs.url }}
+          E2E_BASE_URL: ${{ env.PREVIEW_URL }}
           SHARD: ${{ matrix.shard }}
           # 240s, the budget Maestro uses in its own iOS CI. Headroom for a cold
           # runner, NOT the fix for a driver that never starts (that is Xcode).
