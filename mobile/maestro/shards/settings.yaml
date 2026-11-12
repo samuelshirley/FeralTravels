@@ -1,0 +1,22 @@
+# Shard `settings`: the Settings-side journeys split out of `flows` on
+# 2026-11-12 (PR #108), when nine flows in one shard ran past the job timeout
+# on a slow runner — switching units back, the support form, Apple's
+# offer-code button and the free-period plan line, the paywall screen with no
+# trips. No Penny and no Google spend: every state is seeded. Each flow seeds
+# its OWN account (seed-account.js, a suffix per flow), so none can disturb
+# another and the order is for reading.
+#
+# `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
+# checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
+flows:
+  - units-metric.yaml
+  - support-form.yaml
+  - offer-code.yaml
+  - paywall-no-trips.yaml
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - units-metric
+    - support-form
+    - offer-code
+    - paywall-no-trips

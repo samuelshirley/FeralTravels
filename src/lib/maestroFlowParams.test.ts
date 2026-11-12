@@ -280,9 +280,22 @@ describe('Maestro flow parameters', () => {
         }
       }
     }
-    // It found something to check: the flows shard seeds one account per flow.
-    const flowsShard = SHARDS.find((s) => s.name === 'flows');
-    expect(flowsShard?.flows.length).toBeGreaterThanOrEqual(8);
+    // It found something to check: the per-flow-account shards (`flows` and
+    // `settings`, split 2026-11-12) seed one account per flow between them.
+    const perFlow = SHARDS.filter((s) => s.name === 'flows' || s.name === 'settings');
+    expect(perFlow.map((s) => s.name).sort()).toEqual(['flows', 'settings']);
+    expect(perFlow.reduce((n, s) => n + s.flows.length, 0)).toBeGreaterThanOrEqual(9);
+  });
+
+  it('an iOS shard job has at least 60 minutes', () => {
+    // 40 cancelled a green `flows` shard at 40m13s on a slow runner (PR #108,
+    // 2026-11-12): simulator boot 7m34s instead of 40s, every flow 15-30%
+    // slower. Raising it costs nothing (free macOS minutes, public repo);
+    // trimming it back re-arms a false red on every slow runner.
+    const job = CI.slice(CI.indexOf('\n  ios-e2e:\n'));
+    const m = /\n    timeout-minutes: (\d+)\n/.exec(job);
+    expect(m, 'ios-e2e has no job-level timeout-minutes').not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(60);
   });
 
   it('ci.yml runs launch.yaml, then each shard through its own config', () => {

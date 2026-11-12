@@ -1,9 +1,12 @@
 # Shard `flows`: the user journeys added by the test-everything effort
 # (2026-10-07) — sign-out, deleting a trip, removing a stop, editing and
-# deleting vehicles, switching units back, the support form, Apple's offer-code
-# button and the free-period plan line, the paywall screen, the first-launch
-# intro's Create trip path. A shard of its own so PR wall-clock time does
-# not grow by an existing shard's length. No Penny and no Google spend: every
+# deleting vehicles, the first-launch intro's Create trip path. A shard of its
+# own so PR wall-clock time does not grow by an existing shard's length.
+#
+# SPLIT 2026-11-12 (PR #108): this shard held nine flows (~18 min of Maestro on
+# a normal runner, the longest shard) and was cancelled by the job timeout on a
+# slow one. Units, the support form, the offer code and the no-trips paywall
+# moved to `settings.yaml` — ~11 min here, ~7 there. No Penny and no Google spend: every
 # state is seeded. Each flow seeds its OWN account (seed-account.js, a suffix
 # per flow), so none can disturb another and the order is for reading.
 #
@@ -18,10 +21,6 @@ flows:
   - delete-trip.yaml
   - stop-actions.yaml
   - vehicle-edit-delete.yaml
-  - units-metric.yaml
-  - support-form.yaml
-  - offer-code.yaml
-  - paywall-no-trips.yaml
   - intro-create-trip.yaml
 executionOrder:
   continueOnFailure: true
@@ -30,8 +29,4 @@ executionOrder:
     - delete-trip
     - stop-actions
     - vehicle-edit-delete
-    - units-metric
-    - support-form
-    - offer-code
-    - paywall-no-trips
     - intro-create-trip
