@@ -61,13 +61,25 @@ const nextConfig = {
 
   // feraltravels.com/hotels is the hotel finder, a separate Vercel project
   // (github.com/samuelshirley/HotelFinder, basePath /hotels). Proxied, not
-  // redirected, so the URL stays on this domain. `:path*` also matches bare
-  // /hotels. Middleware runs first: /hotels is public in src/lib/paywallPaths.ts.
+  // redirected, so the URL stays on this domain. Middleware runs first: /hotels
+  // is public in src/lib/paywallPaths.ts.
+  //
+  // TWO rules, never one `/hotels/:path*` (2026-11-12, the redirect loop that
+  // shipped in #108). With an empty `:path*`, bare /hotels proxied to
+  // `…/hotels/` — trailing slash — which the hotel finder answers with
+  // `308 Location: /hotels`; that came back to the browser, which asked us for
+  // /hotels again, forever. Bare /hotels must map to bare /hotels, and the
+  // catch-all needs at least one segment (`:path+`). hotelsRewrite.test.ts
+  // holds the shape; e2e/hotels-proxy.spec.ts proves it on the preview.
   async rewrites() {
     return [
       {
-        source: '/hotels/:path*',
-        destination: 'https://hotel-finder-black.vercel.app/hotels/:path*',
+        source: '/hotels',
+        destination: 'https://hotel-finder-black.vercel.app/hotels',
+      },
+      {
+        source: '/hotels/:path+',
+        destination: 'https://hotel-finder-black.vercel.app/hotels/:path+',
       },
     ];
   },
