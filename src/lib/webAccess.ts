@@ -71,6 +71,8 @@ export const WEB_ALWAYS_ALLOWED = [
   '/manifest.json',
   '/icon-',
   '/sw.js',
+  // The hotel finder, a separate app behind a rewrite (see paywallPaths.ts).
+  '/hotels/',
 ] as const;
 
 /**
@@ -86,7 +88,7 @@ export const WEB_ALWAYS_ALLOWED = [
  * the day it is revived: without it, the landing page and its images would be
  * swapped for the download screen.
  */
-export const WEB_ALWAYS_ALLOWED_EXACT = ['/'] as const;
+export const WEB_ALWAYS_ALLOWED_EXACT = ['/', '/hotels'] as const;
 
 /**
  * True for a browser PAGE that the download screen should replace.
