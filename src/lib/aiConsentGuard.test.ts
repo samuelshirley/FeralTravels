@@ -82,6 +82,8 @@ const OUTBOUND_NOT_AI: Record<string, string> = {
   'src/lib/google/directions.ts': 'Google Directions',
   'src/lib/google/geocode.ts': 'Google Places (searchText)',
   'src/lib/google/places.ts': 'Google Places (along-route search)',
+  // Sends a station's place id only — no personal data.
+  'src/lib/google/placeDetails.ts': 'Google Places (place details: a station name by place id)',
   'src/lib/osm/nominatim.ts': 'OpenStreetMap Nominatim',
   'src/server/auth/appleDiscovery.ts': "Apple's sign-in key discovery",
   'src/server/auth/appleTokens.ts': "Apple's token revoke endpoint",

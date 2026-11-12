@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { formatKm, type UnitsPref } from "@/shared/lib/units";
 import { fuelStopLabel } from "@/shared/lib/forcedStopReason";
+import { namedFuelStopLabel } from "@/shared/lib/stationName";
 import { theme } from "@/lib/theme";
 import { font } from "@/lib/typography";
 import { FuelIcon, NavigateIcon, PlaceIcon } from "@/components/icons";
@@ -27,14 +28,26 @@ export interface RouteTimelineRowData {
   forcedLine: string | null;
   /** Draw the trailing drive glyph (the row opens Google Maps). */
   hasLink: boolean;
+  /**
+   * A fuel station's name the driver TAPPED for — fetched by place_id, held in
+   * the day card's state only, never stored (stationNameGuard.test.ts).
+   */
+  stationName?: string | null;
+  /** Why a requested station name is missing. */
+  nameNote?: string | null;
 }
 
 export function RouteTimelineRowBody({ row, units }: { row: RouteTimelineRowData; units: UnitsPref }) {
-  // A fuel row is always "Fuel stop · 212 km" — the label carries the
-  // distance, so the trailing distance is left blank for it. Decided HERE, not
-  // by each caller, so the real day card and the first-launch intro cannot
-  // disagree, and neither can show a Google station name.
-  const name = row.isFuel ? fuelStopLabel(row.distanceKm, units) : row.name;
+  // A fuel row is "Fuel stop · 212 km" — the label carries the distance, so
+  // the trailing distance is left blank for it. Decided HERE, not by each
+  // caller, so the real day card and the first-launch intro cannot disagree.
+  // The ONE exception is a name the driver tapped for (Sam, 2026-11-11):
+  // "Repsol Librilla · 212 km", fetched fresh and never stored.
+  const name = row.isFuel
+    ? row.stationName
+      ? namedFuelStopLabel(row.stationName, row.distanceKm, units)
+      : fuelStopLabel(row.distanceKm, units)
+    : row.name;
   return (
     <>
       <View style={[timelineStyles.marker, { borderColor: row.markerColor }]}>
@@ -53,6 +66,11 @@ export function RouteTimelineRowBody({ row, units }: { row: RouteTimelineRowData
           {name}
         </Text>
         {row.forcedLine ? <Text style={timelineStyles.timelineForced}>{row.forcedLine}</Text> : null}
+        {row.nameNote ? (
+          <Text style={timelineStyles.timelineForced} testID="fuel-stop-name-error">
+            {row.nameNote}
+          </Text>
+        ) : null}
       </View>
 
       <Text style={timelineStyles.timelineDistance}>

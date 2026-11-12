@@ -21,7 +21,7 @@ import {
 import {
   assertPennyGateOpen,
   dailyReplanCapUsd,
-  REPLAN_USD_CAP_PER_DAY,
+  subscriberDailyCapUsd,
 } from '@/server/payments';
 import { assertIpAllowed } from '@/server/ipLimit';
 import { MAX_MESSAGE_CHARS } from '@/lib/pennyGate';
@@ -45,7 +45,7 @@ import {
 import { addRoute, updateRoute, deleteRoute } from '@/server/repos/routes';
 import { deleteStop, updateStop, getStop } from '@/server/repos/stops';
 import { addTask, updateTask, getLegTripId } from '@/server/repos/tasks';
-import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rethrowTripNameConflict, rebuildTripSchedule, repairLegContinuity, rerouteLeg, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
+import { addLeg, deleteLeg, getTripFull, assertTripNameAvailable, rethrowTripNameConflict, rebuildTripSchedule, repairLegContinuity, rerouteLeg, setLegGeometry, autoNameTripFromSeason, applyTripProgress, syncTripEndDateFromLegs } from '@/server/repos/trips';
 import { updateVehicle, getVehicleForUser, getDefaultVehicleForUser } from '@/server/repos/vehicles';
 import { getUserUsageSummary, microcentsToDollars, logUsageEvent } from '@/server/repos/usage';
 import { getDirections } from '@/lib/google/directions';
@@ -55,6 +55,8 @@ import { computePlanSummary } from '@/lib/penny/planSummary';
 import { actionToLegacyChange } from '@/lib/penny/legacyChange';
 import { countQueuedMutations } from '@/lib/penny/applyOutcome';
 import { findGapCreatingDeletes, LEG_GAP_THRESHOLD_KM } from '@/lib/penny/contiguityGate';
+import { rejectTurnBeforeDispatch, rejectionFromDispatchFailure } from '@/lib/penny/turnAtomicity';
+import { runInTurnTransaction } from '@/server/db/turnScope';
 import {
   detectOverriddenLegEdits,
   overriddenEditsSummary,
@@ -157,9 +159,7 @@ function actionAffectsScheduleSummary(action: ValidatedAction): boolean {
  * picks, from the verdict, and the env override lowers both rather than only
  * this one. See the reasoning on both numbers in `payments/constants.ts`.
  */
-const SUBSCRIBER_USD_CAP_PER_DAY = parseFloat(
-  process.env.REPLAN_USD_CAP_PER_DAY || String(REPLAN_USD_CAP_PER_DAY)
-);
+const SUBSCRIBER_USD_CAP_PER_DAY = subscriberDailyCapUsd();
 const REPLAN_REQUESTS_PER_HOUR = parseInt(process.env.REPLAN_REQUESTS_PER_HOUR || '120', 10);
 
 export const runtime = 'nodejs';
@@ -694,73 +694,132 @@ async function runTurnWork(
 
           // Jev route measurement: read what can only be read BEFORE dispatch
           // (a deleted stop's type). One indexed read and nothing else when
-          // this turn's message was not compared. Never throws.
+          // this turn's message was not compared. Never throws. (main, #100)
           const jevTruthPrep = await prepareJevTurnTruth(tripId, turnId, final.validatedActions);
 
-          const dispatchCtx: ReplanDispatchCtx = { newLegIdsQueue: [], newLegs: [] };
-          for (const action of final.validatedActions) {
-            if (feasibilityGateBlocks && action.name === 'add_leg') {
-              failedCount += 1;
-              const row = {
-                action: 'add_leg',
-                error:
-                  final.feasibilityVerdict === 'over_budget'
-                    ? 'Plan rejected — exceeds your time budget. Penny should have asked you to extend the trip or drop a stop before saving.'
-                    : 'Plan rejected — Penny did not run the feasibility check before saving. Ask her to retry the plan.',
-              } as const;
-              failedActions.push(row);
-              persistFailedCount += 1;
-              persistFailedActions.push(row);
-              continue;
-            }
-            // Block delete_leg actions that would create a contiguity gap
-            if (action.name === 'delete_leg' && blockedDeleteLegIds.has(action.input.leg_id)) {
-              failedCount += 1;
-              const row = {
-                action: 'delete_leg',
-                error:
-                  'Blocked: deleting this leg would break route continuity. ' +
-                  'The neighboring leg must be updated to close the gap first.',
-              };
-              failedActions.push(row);
-              persistFailedCount += 1;
-              persistFailedActions.push(row);
+          // ALL-OR-NOTHING (trip 65972b73, see lib/penny/turnAtomicity.ts): a
+          // batch is one edit. If any pre-dispatch gate rejects any action,
+          // nothing dispatches — the old per-action skipping let the adds of a
+          // replacement land while its deletes were blocked, and continuity
+          // repair then chained the survivors into 0 km and 1,007 km days.
+          let turnRejection = rejectTurnBeforeDispatch({
+            actions: final.validatedActions,
+            blockedDeleteLegIds,
+            feasibilityBlocks: feasibilityGateBlocks,
+            feasibilityVerdict: final.feasibilityVerdict,
+          });
+          if (turnRejection) {
+            for (const legId of turnRejection.blockedDeleteLegIds) {
               logUsageEvent({
                 userId,
                 tripId,
                 provider: 'penny:contiguity-blocked-delete',
                 requests: 0,
                 success: false,
-                errorMessage: `delete_leg ${action.input.leg_id} blocked by pre-dispatch contiguity gate`,
+                errorMessage: `delete_leg ${legId} blocked by pre-dispatch contiguity gate; whole turn rejected`,
               }).catch(() => {});
-              continue;
             }
+          }
+
+          /** delete_leg ids this turn tried — continuity repair must never re-chain one. */
+          const attemptedDeleteLegIds = new Set(
+            final.validatedActions.flatMap((a) => (a.name === 'delete_leg' ? [a.input.leg_id] : [])),
+          );
+
+          const dispatchCtx: ReplanDispatchCtx = {
+            newLegIdsQueue: [],
+            newLegs: [],
+            geometryJobs: [],
+            rerouteJobs: [],
+          };
+          // ONE transaction for the whole batch (src/server/db/turnScope.ts):
+          // an action that passed every gate and then throws rolls back every
+          // action before it, instead of leaving half an edit under Penny's
+          // "Done". Accounting rows written meanwhile are kept (deferred to
+          // after the transaction settles); paid Google calls are forbidden
+          // inside it — leg geometry is fetched after commit, below.
+          if (!turnRejection) {
+            let failedIndex = -1;
             try {
-              await dispatchAction(action, tripId, userId, dispatchCtx);
-              // submit_idea is a side-effect log, not a trip mutation — don't
-              // count it as an applied change so it doesn't trigger the "Changes
-              // applied to trip" banner or a schedule/fuel recompute.
-              if (action.name !== 'submit_idea') {
-                appliedActions.push(action);
-                appliedCount += 1;
+              await runInTurnTransaction(db, async () => {
+                for (const [i, action] of final.validatedActions.entries()) {
+                  failedIndex = i;
+                  await dispatchAction(action, tripId, userId, dispatchCtx);
+                }
+                failedIndex = -1;
+              });
+              for (const action of final.validatedActions) {
+                // submit_idea is a side-effect log, not a trip mutation — don't
+                // count it as an applied change so it doesn't trigger the "Changes
+                // applied to trip" banner or a schedule/fuel recompute.
+                if (action.name !== 'submit_idea') {
+                  appliedActions.push(action);
+                  appliedCount += 1;
+                }
               }
             } catch (e) {
-              failedCount += 1;
               const msg = e instanceof Error ? e.message : String(e);
-              const row = { action: action.name, error: msg };
-              failedActions.push(row);
-              persistFailedCount += 1;
-              persistFailedActions.push(row);
-              console.error('Failed to apply validated action', action, e);
-              // Log each persist failure individually so they appear in admin errors
+              const at = failedIndex >= 0 ? failedIndex : final.validatedActions.length - 1;
+              const failed = final.validatedActions[at];
+              console.error('Turn rolled back: action failed in dispatch', failed, e);
               logUsageEvent({
                 userId,
                 tripId,
-                provider: `penny:persist-fail:${action.name}`,
+                provider: `penny:persist-fail:${failed?.name ?? 'commit'}`,
                 requests: 0,
                 success: false,
-                errorMessage: `${action.name}: ${msg}`.slice(0, 500),
+                errorMessage: `${failed?.name ?? 'commit'}: ${msg}`.slice(0, 500),
               }).catch(() => {});
+              turnRejection = rejectionFromDispatchFailure(final.validatedActions, at, msg);
+              // Nothing was written, so nothing needs geometry or a re-route.
+              dispatchCtx.geometryJobs = [];
+              dispatchCtx.rerouteJobs = [];
+            }
+          }
+
+          if (turnRejection) {
+            for (const row of turnRejection.rows) {
+              failedCount += 1;
+              failedActions.push(row);
+              persistFailedCount += 1;
+              persistFailedActions.push(row);
+            }
+            logUsageEvent({
+              userId,
+              tripId,
+              provider: 'penny:turn-rejected',
+              requests: 0,
+              success: false,
+              errorMessage:
+                `Rejected ${final.validatedActions.length} action(s): ${turnRejection.reason}`.slice(0, 500),
+            }).catch(() => {});
+          }
+
+          // Leg geometry, AFTER commit — the paid Directions call never runs
+          // inside the turn transaction, and a rolled-back turn makes none.
+          // Best-effort, as it always was: a failed route leaves geometry null.
+          for (const job of dispatchCtx.geometryJobs ?? []) {
+            try {
+              const dir = await getDirectionsAccounted(job.start, job.end, {}, { userId, tripId });
+              await setLegGeometry(
+                job.legId,
+                dir.ok && dir.polyline_points.length > 0
+                  ? {
+                      type: 'LineString',
+                      // GeoJSON uses [lng, lat] order
+                      coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
+                    }
+                  : null,
+              );
+            } catch (e) {
+              console.warn('[leg-geometry] post-commit fetch failed', job.legId, e);
+            }
+          }
+          for (const legId of dispatchCtx.rerouteJobs ?? []) {
+            try {
+              if (await rerouteLeg(legId)) await invalidateLegFuelCache(legId);
+            } catch (e) {
+              console.warn('[report-position] post-commit re-route failed', legId, e);
             }
           }
 
@@ -807,7 +866,9 @@ async function runTurnWork(
           // response.
           if (appliedCount > 0) {
             try {
-              const repaired = await repairLegContinuity(tripId);
+              const repaired = await repairLegContinuity(tripId, {
+                frozenLegIds: attemptedDeleteLegIds,
+              });
               for (const r of repaired) {
                 // A repaired leg had its start chained (and usually re-routed),
                 // so its cached fuel plan is stale. Invalidate that leg's fuel
@@ -959,7 +1020,11 @@ async function runTurnWork(
           // persisted message — and the payload the client/heal path renders —
           // matches what actually happened.
           let persistedResponse = final.response;
-          if (validatedQueuedCount > 0 && appliedCount === 0 && persistFailedCount > 0) {
+          if (turnRejection) {
+            persistedResponse +=
+              `\n\n⚠️ Correction: none of these changes were saved — ` +
+              `${turnRejection.reason}. Your plan is unchanged.`;
+          } else if (validatedQueuedCount > 0 && appliedCount === 0 && persistFailedCount > 0) {
             const firstError = persistFailedActions[0]?.error ?? 'unknown error';
             persistedResponse +=
               `\n\n⚠️ Correction: none of these changes could be saved — ` +
@@ -1283,38 +1348,18 @@ async function dispatchAction(
         placeName: d.place_name ?? null,
         nextLegId: d.next_leg_id ?? null,
         resumeDateISO: d.resume_date ?? null,
+        // The re-route is a paid Directions call: after commit, not in here.
+        rerouteNow: false,
       });
-      // Reporting position re-points + re-routes the upcoming drive leg, so its
-      // cached fuel plan (computed for the old start) is now stale. Invalidate
-      // THAT leg only — it re-sources lazily when the driver opens it. We never
-      // re-fan-out the whole trip (the old eager behaviour / cost sink).
-      if (progress.reroutedLeg && progress.currentLegId) {
-        await invalidateLegFuelCache(progress.currentLegId);
-      }
+      // Reporting position re-points the upcoming drive leg; it is re-routed
+      // after commit, and if that succeeds its stale fuel cache is invalidated
+      // (that leg only — never the old trip-wide re-fan-out / cost sink).
+      if (progress.repointedLegId) ctx.rerouteJobs?.push(progress.repointedLegId);
       return;
     }
 
     case 'add_leg': {
       const d = action.input;
-
-      // Fetch driving geometry at creation time so the UI never needs to call
-      // external APIs. This uses the same Google Directions API that get_route
-      // calls — the polyline is already cached if Penny just called get_route
-      // for these coords (24h LRU in directions.ts).
-      let geometry: GeoJSONLineString | null = null;
-      if (d.start_lat != null && d.start_lng != null && d.end_lat != null && d.end_lng != null) {
-        const dir = await getDirectionsAccounted(
-          { lat: d.start_lat, lng: d.start_lng },
-          { lat: d.end_lat, lng: d.end_lng },
-        );
-        if (dir.ok && dir.polyline_points.length > 0) {
-          geometry = {
-            type: 'LineString',
-            // GeoJSON uses [lng, lat] order
-            coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
-          };
-        }
-      }
 
       const newLegId = await addLeg({
         tripId,
@@ -1338,8 +1383,17 @@ async function dispatchAction(
         afterLegId: d.after_leg_id ?? null,
         segmentIndex: d.segment_index ?? null,
         segmentName: d.segment_name ?? null,
-        geometry,
+        // Fetched after the turn commits (ctx.geometryJobs) — never a paid
+        // call inside the turn transaction.
+        geometry: null,
       });
+      if (d.start_lat != null && d.start_lng != null && d.end_lat != null && d.end_lng != null) {
+        ctx.geometryJobs?.push({
+          legId: newLegId,
+          start: { lat: d.start_lat, lng: d.start_lng },
+          end: { lat: d.end_lat, lng: d.end_lng },
+        });
+      }
       ctx.newLegIdsQueue.push(newLegId);
       ctx.newLegs.push({
         id: newLegId,
@@ -1437,15 +1491,14 @@ async function dispatchAction(
         const eLat = data.end_lat ?? cur?.endLat;
         const eLng = data.end_lng ?? cur?.endLng;
         if (sLat != null && sLng != null && eLat != null && eLng != null) {
-          const dir = await getDirectionsAccounted({ lat: sLat, lng: sLng }, { lat: eLat, lng: eLng });
-          if (dir.ok && dir.polyline_points.length > 0) {
-            legUpdate.geometry = {
-              type: 'LineString',
-              coordinates: dir.polyline_points.map(([lat, lng]) => [lng, lat]),
-            };
-          } else {
-            legUpdate.geometry = null;
-          }
+          // The old polyline no longer matches; the new one is fetched after
+          // the turn commits (ctx.geometryJobs), never inside it.
+          legUpdate.geometry = null;
+          ctx.geometryJobs?.push({
+            legId: leg_id,
+            start: { lat: sLat, lng: sLng },
+            end: { lat: eLat, lng: eLng },
+          });
         }
       }
 

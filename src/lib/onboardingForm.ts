@@ -298,11 +298,39 @@ export const UNITS_LABEL =
 /** Penny's line above the composite name+range card (frame 7e). */
 export const VEHICLE_SETUP_LABEL = 'Last thing — what are you driving?';
 
+/**
+ * Which set of first-message examples a user sees. The app is scoped to
+ * Europe, the US and Canada; a US family shown "Paris to Stuttgart" reads it
+ * as "this isn't for me" before typing a word.
+ */
+export type PromptRegion = 'north_america' | 'europe';
+
+/** Countries (ISO 3166-1 alpha-2) that get the North American examples. */
+const NORTH_AMERICA = new Set(['US', 'CA']);
+
+/**
+ * The region for a request's country code — Vercel's `x-vercel-ip-country`.
+ * Unknown or missing (local dev, a proxy) falls back to Europe, which is what
+ * every user saw before this existed.
+ */
+export function promptRegionForCountry(country: string | null | undefined): PromptRegion {
+  return country && NORTH_AMERICA.has(country.trim().toUpperCase()) ? 'north_america' : 'europe';
+}
+
 /** The first-message prompt rows (frame 7b). Shapes to edit, never sent verbatim. */
-export const TRIP_INTENT_PROMPTS = [
-  'Paris to Stuttgart, 5 h days',
-  'Pyrenees loop with 3 rest days',
-] as const;
+export const TRIP_INTENT_PROMPTS_BY_REGION: Record<PromptRegion, readonly string[]> = {
+  europe: ['Paris to Stuttgart, 5 h days', 'Pyrenees loop with 3 rest days'],
+  north_america: ['Denver to Moab, 5 h days', 'Utah parks loop with 3 rest days'],
+};
+
+/** The "just name a city" row above the prompts. */
+export const CITY_HINT_BY_REGION: Record<PromptRegion, string> = {
+  europe: 'Name a city — Lisbon, Girona, Tromsø…',
+  north_america: 'Name a city — Denver, Moab, Banff…',
+};
+
+/** The European set — the default, and what a client without a hint renders. */
+export const TRIP_INTENT_PROMPTS = TRIP_INTENT_PROMPTS_BY_REGION.europe;
 
 /** True for either wording of the origin question. */
 export function isTripOriginLabel(label: string): boolean {

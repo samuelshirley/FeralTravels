@@ -491,6 +491,8 @@ export interface OnboardingQuestion {
    * `options`, which are answers to the question. See the server type.
    */
   prompts?: string[];
+  /** The regional "just name a city" row above `prompts` — server-chosen. */
+  cityHint?: string;
   /** One quiet line explaining where a `defaultValue` came from. */
   footnote?: string;
 }

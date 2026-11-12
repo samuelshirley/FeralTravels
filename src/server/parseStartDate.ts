@@ -166,7 +166,6 @@ export async function parseDateWithLLM(
       {
         model: DATE_MODEL,
         max_tokens: 128,
-        temperature: 0,
         system,
         tools: [DATE_TOOL],
         tool_choice: { type: 'tool', name: DATE_TOOL.name },

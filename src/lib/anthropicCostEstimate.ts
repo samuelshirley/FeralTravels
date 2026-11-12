@@ -15,6 +15,13 @@ const ANTHROPIC_PRICING_PER_MTOK: Record<string, { input: number; output: number
   // Measured from the Console's own billed line items 2026-09-09 (scripts/anthropic-usage-report.ts):
   // Haiku 4.5 bills $1.00 in / $5.00 out, not the Haiku 4 price the prefix matcher was giving it.
   'claude-haiku-4-5': { input: 1.0, output: 5.0 },
+  // Haiku 5.5 (platform.claude.com/docs/en/about-claude/pricing, 2026-11-12):
+  // $0.10 in / $0.50 out for prompts up to 100,000 tokens; cache writes $0.125
+  // and reads $0.01 are the 1.25× / 0.10× below. Over 100K a request pays 5×
+  // ($0.50 / $2.50) — NOT modelled: callers pass a whole Penny turn's summed
+  // tokens, so a per-request threshold cannot be applied to them. No single
+  // request this app makes is near 100K today.
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
   'claude-3-opus': { input: 15.0, output: 75.0 },
   'claude-opus-4': { input: 15.0, output: 75.0 },
 };

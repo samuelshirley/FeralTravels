@@ -8,24 +8,41 @@
  * When updating: bump the ID, then run the app's Anthropic-backed paths (Penny
  * chat + onboarding date parsing) once to confirm the new ID is accepted.
  *
- * Last reviewed: 2026-06-26.
+ * Last reviewed: 2026-11-12.
+ *
+ * Haiku 5.5 since 2026-11-12 (was claude-haiku-4-5-20251001), every call site.
+ * From the 4.6 generation on, an ID has no date suffix and is NOT an alias: the
+ * dateless ID is the pinned snapshot (platform.claude.com, "Model IDs and
+ * versioning"). Three API differences from 4.5 matter here, each now held by a
+ * test rather than by this comment:
+ *  - `temperature`, `top_p` and `top_k` must be omitted
+ *    (anthropicSamplingGuard.test.ts).
+ *  - Adaptive thinking is on by default. A forced `tool_choice` (every
+ *    extractor and the classifier) answers with the tool call and no thinking
+ *    block; Penny's loop is `auto`, so she may think, and thinking counts toward
+ *    `max_tokens`. Her loop already sends `response.content` back whole, which
+ *    keeps the thinking blocks a tool turn must carry.
+ *  - It bills $0.10 in / $0.50 out up to 100K prompt tokens, a tenth of 4.5, on
+ *    a tokenizer that counts the same text ~30% higher
+ *    (anthropicCostEstimate.ts; a model with no price there is a $0 row, which
+ *    no spend cap can see — modelPricingGuard.test.ts).
  */
 
 /** Penny's planning / tool-use model (chat + nightly replan). */
-// Haiku since 2026-09-09 (was claude-sonnet-4-6). Every token type bills at
+// Haiku since 2026-09-09 (was claude-sonnet-4-6); Haiku 5.5 since 2026-11-12. Every token type bills at
 // exactly one third of Sonnet's price; the Austin 14-leg turn measured $0.585 on
 // Sonnet. The rulebook in claude.ts was written against Sonnet's mistakes, so
 // the swap is an EXPERIMENT until the same prompts have been replayed and
 // compared — `toolTrace` in penny_turns.result_meta is what makes the runs
 // comparable.
-export const PENNY_MODEL = 'claude-haiku-4-5-20251001';
+export const PENNY_MODEL = 'claude-haiku-5-5';
 
 /**
  * Small, cheap, fast model for the onboarding date-text → ISO conversion. A
  * trivial extraction task, so it doesn't need Penny's planning model. Swap to
  * PENNY_MODEL if you'd rather track a single model ID.
  */
-export const DATE_PARSE_MODEL = 'claude-haiku-4-5-20251001';
+export const DATE_PARSE_MODEL = 'claude-haiku-5-5';
 
 /**
  * Small, cheap model for the onboarding "I don't know my range" helper: turns
@@ -33,7 +50,7 @@ export const DATE_PARSE_MODEL = 'claude-haiku-4-5-20251001';
  * conservative fuel-range estimate they then confirm. Same class of
  * trivial extraction/estimation task as the date parser.
  */
-export const RANGE_ESTIMATE_MODEL = 'claude-haiku-4-5-20251001';
+export const RANGE_ESTIMATE_MODEL = 'claude-haiku-5-5';
 
 /**
  * Small, cheap model for the onboarding "first-message intent scan": reads the
@@ -42,7 +59,7 @@ export const RANGE_ESTIMATE_MODEL = 'claude-haiku-4-5-20251001';
  * can be skipped or prefilled. Pure extraction — the same trivial class as the
  * date parser, and the LLM only converts; the server re-validates every field.
  */
-export const ONBOARDING_SCAN_MODEL = 'claude-haiku-4-5-20251001';
+export const ONBOARDING_SCAN_MODEL = 'claude-haiku-5-5';
 
 /**
  * The message-tier classifier: is this message about the trip, adjacent to it,
@@ -55,4 +72,4 @@ export const ONBOARDING_SCAN_MODEL = 'claude-haiku-4-5-20251001';
  * one-170th of the planning turn it is deciding whether to spend, which is the
  * entire argument for having it rather than guessing with keywords.
  */
-export const CLASSIFY_MODEL = 'claude-haiku-4-5-20251001';
+export const CLASSIFY_MODEL = 'claude-haiku-5-5';

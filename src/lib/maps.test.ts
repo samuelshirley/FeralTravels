@@ -162,6 +162,21 @@ describe('buildSegmentedNavUrls', () => {
     expect(u.searchParams.has('origin')).toBe(false);
   });
 
+  it("a stop's segment carries its place_id, so Maps opens the station, not a dropped pin", () => {
+    // Persona test, 2026-11-10: the "Fuel stop · 342 km in Google Maps" button
+    // sent bare coordinates while the STOPS row link sent destination_place_id.
+    const stops = [
+      { ...makeStop({ ...NANCY, name: 'Fuel stop', distance_from_start_km: 200 }), place_id: 'ChIJnancy' },
+      makeStop({ ...METZ, name: 'Metz fuel', distance_from_start_km: 300 }),
+    ] as LegDirectionsStopInput[];
+    const segments = buildSegmentedNavUrls({ legCoords: LEG_COORDS, endName: 'Strasbourg', stops })!;
+    const pid = (i: number) => new URL(segments[i].url).searchParams.get('destination_place_id');
+    expect(pid(0)).toBe('ChIJnancy');
+    expect(pid(1)).toBeNull(); // a stop without one keeps the coordinates
+    expect(pid(2)).toBeNull(); // the leg's destination has none
+    expect(new URL(segments[0].url).searchParams.get('destination')).toBe(`${NANCY.lat},${NANCY.lng}`);
+  });
+
   it('splits into N+1 segments for N intermediate stops', () => {
     const stops: LegDirectionsStopInput[] = [
       makeStop({ ...NANCY, name: 'Nancy fuel', distance_from_start_km: 200 }),

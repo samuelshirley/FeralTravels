@@ -1,0 +1,304 @@
+{
+ "_source": "Production trip 65972b73 (test account), Penny turn 2, 2026-11-10: the 11 legs before the turn and the 22 validated actions in dispatch order. Main blocked all 11 deletes; the adds dispatched; continuity repair produced X->X days.",
+ "before": [
+  {
+   "id": "94a21d32-1723-47bb-a85b-2bfb746f35e6",
+   "sortOrder": 0,
+   "startLat": 41.98328,
+   "startLng": 2.82471,
+   "endLat": 39.76506,
+   "endLng": -0.20327
+  },
+  {
+   "id": "0452c070-19f5-4126-8647-e427827ce986",
+   "sortOrder": 1,
+   "startLat": 39.76506,
+   "startLng": -0.20327,
+   "endLat": 38.5,
+   "endLng": -1.5
+  },
+  {
+   "id": "b1b44f7d-4472-422b-ae8b-81635da28c67",
+   "sortOrder": 2,
+   "startLat": 38.5,
+   "startLng": -1.5,
+   "endLat": 37.58569,
+   "endLng": -2.54246
+  },
+  {
+   "id": "0fa10d1c-1f37-4cd8-8ca0-576c5498af4a",
+   "sortOrder": 3,
+   "startLat": 37.58569,
+   "startLng": -2.54246,
+   "endLat": 36.01432,
+   "endLng": -5.60445
+  },
+  {
+   "id": "a03a3a33-47de-4d7d-9e4b-b966cbcec09d",
+   "sortOrder": 4,
+   "startLat": 36.01432,
+   "startLng": -5.60445,
+   "endLat": 36.01432,
+   "endLng": -5.60445
+  },
+  {
+   "id": "00f09579-bc78-4093-b05c-d416511690ac",
+   "sortOrder": 5,
+   "startLat": 36.01432,
+   "startLng": -5.60445,
+   "endLat": 37.32895,
+   "endLng": -6.82163
+  },
+  {
+   "id": "6bf66ea6-6de3-49d4-b426-f0db161ba712",
+   "sortOrder": 6,
+   "startLat": 37.32895,
+   "startLng": -6.82163,
+   "endLat": 37.10877,
+   "endLng": -8.67593
+  },
+  {
+   "id": "1540137b-bf44-4740-b3fb-586908ce186e",
+   "sortOrder": 7,
+   "startLat": 37.10884,
+   "startLng": -8.67598,
+   "endLat": 37.52611,
+   "endLng": -5.10751
+  },
+  {
+   "id": "84ea33de-0542-4841-8d49-bc18e1303c23",
+   "sortOrder": 8,
+   "startLat": 37.52611,
+   "startLng": -5.10751,
+   "endLat": 39.1681,
+   "endLng": -2.81561
+  },
+  {
+   "id": "860a0999-a203-4c08-877d-88dad2489983",
+   "sortOrder": 9,
+   "startLat": 39.1681,
+   "startLng": -2.81561,
+   "endLat": 40.46138,
+   "endLng": 0.40851
+  },
+  {
+   "id": "89ac87a7-5639-49cd-99ee-2416a6a09c59",
+   "sortOrder": 10,
+   "startLat": 40.46138,
+   "startLng": 0.40851,
+   "endLat": 41.98328,
+   "endLng": 2.82471
+  }
+ ],
+ "actions": [
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "94a21d32-1723-47bb-a85b-2bfb746f35e6"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "0452c070-19f5-4126-8647-e427827ce986"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "b1b44f7d-4472-422b-ae8b-81635da28c67"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "0fa10d1c-1f37-4cd8-8ca0-576c5498af4a"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "a03a3a33-47de-4d7d-9e4b-b966cbcec09d"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "00f09579-bc78-4093-b05c-d416511690ac"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "6bf66ea6-6de3-49d4-b426-f0db161ba712"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "1540137b-bf44-4740-b3fb-586908ce186e"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "84ea33de-0542-4841-8d49-bc18e1303c23"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "860a0999-a203-4c08-877d-88dad2489983"
+   }
+  },
+  {
+   "name": "delete_leg",
+   "input": {
+    "leg_id": "89ac87a7-5639-49cd-99ee-2416a6a09c59"
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Girona, Spain",
+    "end_name": "la Llosa, Spain",
+    "start_lat": 41.98328,
+    "start_lng": 2.82471,
+    "end_lat": 39.76506,
+    "end_lng": -0.20327,
+    "distance_km": 402.8,
+    "drive_time_minutes": 238
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Cúllar, Spain",
+    "end_name": "Tarifa, Spain",
+    "start_lat": 37.58569,
+    "start_lng": -2.54246,
+    "end_lat": 36.01432,
+    "end_lng": -5.60445,
+    "distance_km": 396.3,
+    "drive_time_minutes": 234
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Tarifa, Spain",
+    "end_name": "Trigueros, Spain",
+    "start_lat": 36.01432,
+    "start_lng": -5.60445,
+    "end_lat": 37.32895,
+    "end_lng": -6.82163,
+    "distance_km": 280.5,
+    "drive_time_minutes": 170
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Trigueros, Spain",
+    "end_name": "Lagos, Portugal",
+    "start_lat": 37.32895,
+    "start_lng": -6.82163,
+    "end_lat": 37.10307,
+    "end_lng": -8.67335,
+    "distance_km": 197.2,
+    "drive_time_minutes": 120
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Lagos, Portugal",
+    "end_name": "Lisbon, Portugal",
+    "start_lat": 37.10307,
+    "start_lng": -8.67335,
+    "end_lat": 38.72232,
+    "end_lng": -9.13933,
+    "distance_km": 300.7,
+    "drive_time_minutes": 175
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Lisbon, Portugal",
+    "end_name": "Porto, Portugal",
+    "start_lat": 38.72232,
+    "start_lng": -9.13933,
+    "end_lat": 41.15765,
+    "end_lng": -8.62803,
+    "distance_km": 334.5,
+    "drive_time_minutes": 211
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Porto, Portugal",
+    "end_name": "Zaratán, Spain",
+    "start_lat": 41.15784,
+    "start_lng": -8.62797,
+    "end_lat": 41.64917,
+    "end_lng": -4.76503,
+    "distance_km": 397.5,
+    "drive_time_minutes": 234
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Zaratán, Spain",
+    "end_name": "Alagón, Spain",
+    "start_lat": 41.64917,
+    "start_lng": -4.76503,
+    "end_lat": 41.77708,
+    "end_lng": -1.12283,
+    "distance_km": 397.4,
+    "drive_time_minutes": 234
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Alagón, Spain",
+    "end_name": "Girona, Spain",
+    "start_lat": 41.77708,
+    "start_lng": -1.12283,
+    "end_lat": 41.98328,
+    "end_lng": 2.82471,
+    "distance_km": 396.9,
+    "drive_time_minutes": 234
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "la Llosa, Spain",
+    "end_name": "Intermediate point, Spain",
+    "start_lat": 39.76506,
+    "start_lng": -0.20327,
+    "end_lat": 38.65,
+    "end_lng": -1.4,
+    "distance_km": 195,
+    "drive_time_minutes": 115
+   }
+  },
+  {
+   "name": "add_leg",
+   "input": {
+    "start_name": "Intermediate point, Spain",
+    "end_name": "Cúllar, Spain",
+    "start_lat": 38.65,
+    "start_lng": -1.4,
+    "end_lat": 37.58569,
+    "end_lng": -2.54246,
+    "distance_km": 213,
+    "drive_time_minutes": 126
+   }
+  }
+ ]
+}

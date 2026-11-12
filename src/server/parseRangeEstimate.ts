@@ -124,7 +124,6 @@ export async function estimateRange(
       {
         model: RANGE_ESTIMATE_MODEL,
         max_tokens: 128,
-        temperature: 0,
         system,
         tools: [RANGE_TOOL],
         tool_choice: { type: 'tool', name: RANGE_TOOL.name },
