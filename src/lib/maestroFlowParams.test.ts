@@ -280,9 +280,54 @@ describe('Maestro flow parameters', () => {
         }
       }
     }
-    // It found something to check: the flows shard seeds one account per flow.
-    const flowsShard = SHARDS.find((s) => s.name === 'flows');
-    expect(flowsShard?.flows.length).toBeGreaterThanOrEqual(8);
+    // It found something to check: the per-flow-account shards (`flows` and
+    // `settings`, split 2026-11-12) seed one account per flow between them.
+    const perFlow = SHARDS.filter((s) => s.name === 'flows' || s.name === 'settings');
+    expect(perFlow.map((s) => s.name).sort()).toEqual(['flows', 'settings']);
+    expect(perFlow.reduce((n, s) => n + s.flows.length, 0)).toBeGreaterThanOrEqual(9);
+  });
+
+  it('every clean (clearState) launch is wrapped in a retry, and nothing else is', () => {
+    // 2026-11-12, PR #108: on iOS `clearState` reinstalls the app, and on CI the
+    // launch after it sometimes reaches SpringBoard before the reinstall is
+    // registered — "Application com.feraltravels.ios is unknown to FrontBoard"
+    // (FBSOpenApplicationServiceErrorDomain code 1), 2 of 10 shards that day.
+    // The app never starts, so only that launch is retried; an assertion
+    // inside a retry would turn a regression into "flaky", so a retry may hold
+    // the launch and nothing else.
+    const flows = fs.readdirSync(FLOW_DIR).filter((f) => f.endsWith('.yaml'));
+    let wrapped = 0;
+    for (const f of flows) {
+      const lines = live(fs.readFileSync(path.join(FLOW_DIR, f), 'utf8')).split('\n');
+      lines.forEach((line, i) => {
+        if (!/^(\s*)- launchApp:\s*$/.test(line)) return;
+        const indent = line.indexOf('-');
+        const block: string[] = [];
+        for (let k = i + 1; k < lines.length && (lines[k].trim() === '' || lines[k].search(/\S/) > indent); k++) block.push(lines[k]);
+        if (!block.some((l) => /clearState:\s*true/.test(l))) return;
+        expect(indent, `${f}:${i + 1} launches with clearState outside a retry`).toBe(6);
+        expect(lines[i - 1]?.trim(), `${f}:${i + 1}`).toBe('commands:');
+        expect(lines[i - 2]?.trim(), `${f}:${i + 1}`).toMatch(/^maxRetries: [1-3]$/);
+        expect(lines[i - 3]?.trim(), `${f}:${i + 1}`).toBe('- retry:');
+        // The launch is the retry's ONLY command.
+        const after = lines.slice(i + 1 + block.length).find((l) => l.trim() !== '');
+        expect(after === undefined || after.search(/\S/) === 0, `${f}:${i + 1} retry holds more than the launch`).toBe(true);
+        wrapped++;
+      });
+    }
+    // It found something to check: five flows start from a clean install.
+    expect(wrapped).toBeGreaterThanOrEqual(5);
+  });
+
+  it('an iOS shard job has at least 60 minutes', () => {
+    // 40 cancelled a green `flows` shard at 40m13s on a slow runner (PR #108,
+    // 2026-11-12): simulator boot 7m34s instead of 40s, every flow 15-30%
+    // slower. Raising it costs nothing (free macOS minutes, public repo);
+    // trimming it back re-arms a false red on every slow runner.
+    const job = CI.slice(CI.indexOf('\n  ios-e2e:\n'));
+    const m = /\n    timeout-minutes: (\d+)\n/.exec(job);
+    expect(m, 'ios-e2e has no job-level timeout-minutes').not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(60);
   });
 
   it('ci.yml runs launch.yaml, then each shard through its own config', () => {

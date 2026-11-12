@@ -26,23 +26,34 @@ appId: ${APP_ID}
 # because nothing could be written in the first place. Fixing the build is what
 # exposed this, which is the usual shape: one broken thing hiding another.
 - clearKeychain
-- launchApp:
-    # A fresh install every run. Without this the keychain still holds the
-    # previous run's session token and the app lands on /trips, so the sign-in
-    # flow silently asserts nothing.
-    clearState: true
-    permissions:
-      # Location is asked AT LAUNCH, on the splash (primer -> iOS dialog), and
-      # launch waits for the answer. Pre-set to DENIED so that question is
-      # already settled and no flow that runs this one meets the primer; the
-      # location-primer-* flows are the ones that answer it themselves.
-      # `never`, not `deny`. Maestro validates this per-permission, and
-      # `location` is the special case: it takes always/inuse/never/
-      # location-always, while allow/deny/unset belong to 'all'. `deny`
-      # here is not ignored — it aborts the flow on its FIRST command
-      # with `wrong argument value`, which is what made layer 1 red
-      # before the app was even asked to render anything.
-      location: never
+# RETRIED: the clean launch only (Sam, 2026-11-12, PR #108). `clearState`
+# reinstalls the app on iOS, and on CI the launch that follows sometimes reaches
+# SpringBoard before the reinstall is registered: "Application
+# com.feraltravels.ios is unknown to FrontBoard" (FBSOpenApplicationServiceErrorDomain
+# code 1). The app is never started, so it is the harness, not the app; it hit
+# 2 of 10 shards on 2026-11-12 (core/onboarding-date-picker, account/vehicles).
+# Only this command is retried, so every assertion below still fails as before.
+# maestroFlowParams.test.ts fails if a clearState launch loses its retry.
+- retry:
+    maxRetries: 2
+    commands:
+      - launchApp:
+          # A fresh install every run. Without this the keychain still holds the
+          # previous run's session token and the app lands on /trips, so the sign-in
+          # flow silently asserts nothing.
+          clearState: true
+          permissions:
+            # Location is asked AT LAUNCH, on the splash (primer -> iOS dialog), and
+            # launch waits for the answer. Pre-set to DENIED so that question is
+            # already settled and no flow that runs this one meets the primer; the
+            # location-primer-* flows are the ones that answer it themselves.
+            # `never`, not `deny`. Maestro validates this per-permission, and
+            # `location` is the special case: it takes always/inuse/never/
+            # location-always, while allow/deny/unset belong to 'all'. `deny`
+            # here is not ignored — it aborts the flow on its FIRST command
+            # with `wrong argument value`, which is what made layer 1 red
+            # before the app was even asked to render anything.
+            location: never
 
 # The same guard launch.yaml carries, and for the same reason: this flow is
 # `runFlow`ed by chat-keyboard, screenshots and settings-location, so one

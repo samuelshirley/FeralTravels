@@ -25,18 +25,29 @@ appId: ${APP_ID}
 # because nothing could be written in the first place. Fixing the build is what
 # exposed this, which is the usual shape: one broken thing hiding another.
 - clearKeychain
-- launchApp:
-    # Same clean slate the real flows use: a keychain still holding a session
-    # token lands the app on /trips, and then this asserts nothing at all.
-    clearState: true
-    permissions:
-      # `never`, not `deny`. Maestro validates this per-permission, and
-      # `location` is the special case: it takes always/inuse/never/
-      # location-always, while allow/deny/unset belong to 'all'. `deny`
-      # here is not ignored — it aborts the flow on its FIRST command
-      # with `wrong argument value`, which is what made layer 1 red
-      # before the app was even asked to render anything.
-      location: never
+# RETRIED: the clean launch only (Sam, 2026-11-12, PR #108). `clearState`
+# reinstalls the app on iOS, and on CI the launch that follows sometimes reaches
+# SpringBoard before the reinstall is registered: "Application
+# com.feraltravels.ios is unknown to FrontBoard" (FBSOpenApplicationServiceErrorDomain
+# code 1). The app is never started, so it is the harness, not the app; it hit
+# 2 of 10 shards on 2026-11-12 (core/onboarding-date-picker, account/vehicles).
+# Only this command is retried, so every assertion below still fails as before.
+# maestroFlowParams.test.ts fails if a clearState launch loses its retry.
+- retry:
+    maxRetries: 2
+    commands:
+      - launchApp:
+          # Same clean slate the real flows use: a keychain still holding a session
+          # token lands the app on /trips, and then this asserts nothing at all.
+          clearState: true
+          permissions:
+            # `never`, not `deny`. Maestro validates this per-permission, and
+            # `location` is the special case: it takes always/inuse/never/
+            # location-always, while allow/deny/unset belong to 'all'. `deny`
+            # here is not ignored — it aborts the flow on its FIRST command
+            # with `wrong argument value`, which is what made layer 1 red
+            # before the app was even asked to render anything.
+            location: never
 
 # A SERVER ERROR MUST FAIL HERE, not three steps later as a missing selector.
 #

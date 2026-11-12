@@ -59,6 +59,13 @@ export const PUBLIC_PATH_PREFIXES = [
   '/manifest.json',
   '/icon-',
   '/sw.js',
+  // The hotel finder: a separate app (github.com/samuelshirley/HotelFinder)
+  // that next.config.js rewrites to. It is anonymous-first with its own
+  // cookies (hf_anon, hf_user, path=/hotels) and never reads Feral's session,
+  // so a gate here would only send its visitors to a login they cannot use.
+  // Middleware runs BEFORE rewrites, which is why the rewrite alone is not
+  // enough. `/hotels` itself is in PUBLIC_EXACT_PATHS.
+  '/hotels/',
 ] as const;
 
 /**
@@ -68,7 +75,7 @@ export const PUBLIC_PATH_PREFIXES = [
  * would match every path there is and quietly make the whole app public.
  * Mirrors `WEB_ALWAYS_ALLOWED_EXACT` in `webAccess.ts`.
  */
-export const PUBLIC_EXACT_PATHS = ['/'] as const;
+export const PUBLIC_EXACT_PATHS = ['/', '/hotels'] as const;
 
 /**
  * Paths a signed-in but unentitled user keeps.

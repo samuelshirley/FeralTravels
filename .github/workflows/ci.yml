@@ -996,7 +996,14 @@ jobs:
     needs: [decide, preview, ios-build]
     if: needs.decide.outputs.docs_only != 'true'
     runs-on: macos-15
-    timeout-minutes: 40
+    # 60, not 40 (2026-11-12, PR #108). A slow macOS runner booted the simulator
+    # in 7m34s instead of 40s and ran every flow 15-30% slower; `flows` was
+    # cancelled at 40m13s with one flow left, all eight before it green, and
+    # the other shards finished at 31-34 min. 40 left a normal 30-min shard ten
+    # minutes from a false red. macOS minutes are free on this public repo; the
+    # only cost of 60 is a slower red when something truly hangs.
+    # maestroFlowParams.test.ts holds the floor.
+    timeout-minutes: 60
     strategy:
       # A red shard cancels the others (Sam, 2026-10-02 — see FAIL FAST in the
       # header). This used to be `false`, so every shard reported on the same

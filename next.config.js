@@ -36,6 +36,17 @@ const nextConfig = {
         ],
       },
       {
+        // The hotel finder's hashed assets (served through the rewrite below)
+        // would otherwise get the site-wide no-store above.
+        source: '/hotels/_next/static/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+      {
         // Let hashed immutable assets keep long-lived caching
         source: '/_next/static/:path*',
         headers: [
@@ -44,6 +55,19 @@ const nextConfig = {
             value: 'public, max-age=31536000, immutable',
           },
         ],
+      },
+    ];
+  },
+
+  // feraltravels.com/hotels is the hotel finder, a separate Vercel project
+  // (github.com/samuelshirley/HotelFinder, basePath /hotels). Proxied, not
+  // redirected, so the URL stays on this domain. `:path*` also matches bare
+  // /hotels. Middleware runs first: /hotels is public in src/lib/paywallPaths.ts.
+  async rewrites() {
+    return [
+      {
+        source: '/hotels/:path*',
+        destination: 'https://hotel-finder-black.vercel.app/hotels/:path*',
       },
     ];
   },

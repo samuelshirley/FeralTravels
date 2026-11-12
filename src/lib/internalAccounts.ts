@@ -70,9 +70,10 @@ export const INTERNAL_EMAIL_PATTERNS: ReadonlyArray<string> = [
   // the harmless direction.
   '^samuelashirley\\+[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}(\\.[0-9]{1,2})?@gmail\\.com$',
 
-  // The two production canaries (scripts/prod-canary.mjs and the simulator
-  // run, docs/design/prod-canary.md). Spelled out whole for the same reason
-  // as the dated shape: `+canary2` or `+canary-x` is a stranger.
+  // The two production canary accounts. The canary itself was deleted
+  // (Sam, 2026-11-12), but both accounts still exist on production, so they
+  // stay out of the user count. Spelled out whole for the same reason as the
+  // dated shape: `+canary2` or `+canary-x` is a stranger.
   '^samuelashirley\\+canary(-ios)?@gmail\\.com$',
 ];
 

@@ -48,6 +48,20 @@ describe('paywall path allowlists', () => {
     }
   });
 
+  /**
+   * The hotel finder is a separate anonymous-first app behind a rewrite.
+   * Middleware runs before rewrites, so without this every signed-out visitor
+   * to feraltravels.com/hotels would be redirected away from it.
+   */
+  it('the hotel finder is public, and only under /hotels', () => {
+    for (const p of ['/hotels', '/hotels/', '/hotels/api/session', '/hotels/_next/static/x.js']) {
+      expect(isPublicPath(p), p).toBe(true);
+    }
+    for (const p of ['/hotelsx', '/hotels-admin', '/trips/hotels']) {
+      expect(isPublicPath(p), p).toBe(false);
+    }
+  });
+
   it('matches by prefix, not by substring', () => {
     // A path that merely CONTAINS "/privacy" is not the privacy page.
     expect(isPublicPath('/trips/privacy')).toBe(false);
