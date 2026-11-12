@@ -41,7 +41,7 @@ which provider serves what; this has been wrong here before, expensively.
   fixed code for App Store review, armed only by `APPLE_REVIEW_SIGNIN=1` and
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
-  resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
+  resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 5.5.
 - **Jev (optional, OFF by default):** a typed-decision model (TypeSafe-hosted)
   for the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
   logged, plus a logged route question), JEV FIRST (it may settle only a

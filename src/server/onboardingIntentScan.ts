@@ -264,7 +264,6 @@ export async function scanFirstMessage(
       {
         model: ONBOARDING_SCAN_MODEL,
         max_tokens: 256,
-        temperature: 0,
         system,
         tools: [SCAN_TOOL],
         tool_choice: { type: 'tool', name: SCAN_TOOL.name },

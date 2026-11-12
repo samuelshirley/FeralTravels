@@ -42,9 +42,12 @@ describe('model registry', () => {
     }
   });
 
-  it('pins exact dated model ids, never a floating alias', () => {
-    // `claude-haiku-4-5` without the date is a moving target: the app would
-    // change behaviour on Anthropic's schedule rather than on ours.
+  it('pins an exact model snapshot, never a floating alias', () => {
+    // `claude-haiku-4-5` without the date was a moving target: the app would
+    // change behaviour on Anthropic's schedule rather than on ours. From the
+    // 4.6 generation on there is no date — the dateless ID IS the snapshot
+    // ("Model IDs and versioning") — so a dateless ID is pinned only when its
+    // version is 4.6 or later.
     for (const id of [
       PENNY_MODEL,
       DATE_PARSE_MODEL,
@@ -52,7 +55,11 @@ describe('model registry', () => {
       ONBOARDING_SCAN_MODEL,
       CLASSIFY_MODEL,
     ]) {
-      expect(id).toMatch(/-\d{8}$/);
+      const m = /^claude-[a-z]+-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(id);
+      expect(m, id).not.toBeNull();
+      const [, major, minor = '0', date] = m!;
+      const version = Number(major) + Number(minor) / 10;
+      if (!date) expect(version, `${id} is a floating alias`).toBeGreaterThanOrEqual(4.6);
     }
   });
 });
