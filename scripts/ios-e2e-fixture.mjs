@@ -99,7 +99,7 @@ async function main() {
   //
   // OVERRIDABLE, with those literals as the defaults, for exactly one caller:
   // `ios-e2e-local.sh screenshots` seeds the same two canonical legs (Paris →
-  // Strasbourg → Stuttgart, real coordinates, real road geometry) under names a
+  // Strasbourg → Stuttgart, real coordinates, NO road geometry) under names a
   // customer could read. "E2E Fixture Trip" is the right name for a test and
   // the wrong one for an App Store listing, and the seed endpoint has always
   // taken all three as parameters — nothing about the graph changes.
@@ -128,6 +128,25 @@ async function main() {
     );
   }
 
+  // THE TRIP THE FLOW OPENS. Optional, and only `screenshots` asks for it:
+  // the two canonical legs above have real endpoints but NO road geometry, so
+  // the map draws them as TripMap's dashed straight-line fallback — which is
+  // what the App Store map shot showed until 2026-11-02. The twelve-leg
+  // canonical trip (Girona → Porto → Lisbon → Girona) carries real road
+  // geometry and Finn's real fuel stops with a FRESH cache, so opening its
+  // day 1 buys no Places search. Seeded alongside the two legs, reusing the
+  // same vehicle, and handed to the flow as TRIP_NAME / TRIP_ID.
+  let shownName = tripName;
+  let shownId = tripId;
+  const canonicalName = arg('canonical-trip-name', '');
+  if (canonicalName) {
+    const trip = await post('/api/test/trip', { email, name: canonicalName, kind: 'canonical' });
+    if (!trip.ok) throw new Error(`canonical trip seed failed (${trip.status}): ${trip.text}`);
+    shownName = canonicalName;
+    shownId = JSON.parse(trip.text || '{}').tripId ?? '';
+    if (!shownId) throw new Error(`canonical trip seed returned no tripId: ${trip.text}`);
+  }
+
   // The app's OWN send endpoint, not the web one — this is the route the
   // Expo sign-in screen calls, so a break in it fails here rather than
   // mysteriously inside a simulator.
@@ -145,7 +164,7 @@ async function main() {
     if (res.ok) {
       const body = JSON.parse(res.text || '{}');
       if (body.code) {
-        emit(email, tripName, tripId);
+        emit(email, shownName, shownId);
         return;
       }
       last = 'code not written yet';

@@ -119,6 +119,11 @@ USER_NAME="${E2E_USER_NAME:-E2E Fixture User}"
 # genuinely need one, so the image shows Finn doing the thing the app is for.
 RANGE_KM="${E2E_RANGE_KM:-}"
 
+# A second trip, the twelve-leg canonical one WITH real road geometry, that the
+# flow opens instead of the two legs above. EMPTY for the test flows; only
+# `screenshots` sets it — a store map of dashed straight lines is not the app.
+CANONICAL_TRIP_NAME="${E2E_CANONICAL_TRIP_NAME:-}"
+
 # Where Maestro puts a named `takeScreenshot`.
 #
 # NOT ours to choose. Maestro 2.10 sandboxes the command — an absolute path
@@ -732,7 +737,8 @@ run_flow() {
       --trip-name "$TRIP_NAME" \
       --vehicle-name "$VEHICLE_NAME" \
       --user-name "$USER_NAME" \
-      ${RANGE_KM:+--range-km "$RANGE_KM"} >"$OUT/fixture.env" \
+      ${RANGE_KM:+--range-km "$RANGE_KM"} \
+      ${CANONICAL_TRIP_NAME:+--canonical-trip-name "$CANONICAL_TRIP_NAME"} >"$OUT/fixture.env" \
       || die "Could not mint a fixture — is the server up? see $OUT/server.log"
     # Read it line by line rather than `.`-sourcing it.
     #
@@ -863,12 +869,21 @@ screenshots() {
   TRIP_NAME="Paris to Stuttgart"
   VEHICLE_NAME="The Hilux"
   USER_NAME="Sam"
-  # 300 km against a 489 km day 1: Finn must place a stop, and must attach the
-  # reason. That is the picture. See RANGE_KM above.
-  RANGE_KM="300"
+  # THE TRIP IN THE PICTURES is the twelve-leg canonical loop (Girona → Porto
+  # → Lisbon → Girona), not the two legs: those have no road geometry and the
+  # map drew them as dashed straight lines (the 2026-09 set). This one has real
+  # roads and seeded fuel stops — Girona → Burgos carries one at 404 km — so
+  # RANGE_KM is no longer shortened to force a stop. "Paris to Stuttgart" is
+  # still seeded and shows as a second card on the trips list.
+  CANONICAL_TRIP_NAME="Portugal loop"
 
   up
-  [ -d mobile/ios-build ] && [ -n "$(ls -d mobile/ios-build/*.app 2>/dev/null)" ] || build
+  # ALWAYS a fresh build, never "reuse whatever .app is lying about". On
+  # 2026-11-02 the set was photographed from a 2026-09-20 build: it called
+  # /api/gpx (removed 2026-10-07), so the itinerary shot carried a red
+  # "HTTP 404", and the map was six weeks of code behind. A store image of a
+  # build nobody ships is wrong by construction, so this cannot reuse one.
+  build
   install_app "$udid" "$model"
 
   # A STORE STATUS BAR, not whatever the simulator happens to show. Left alone
@@ -901,7 +916,7 @@ screenshots() {
   local stage
   stage="$(find "$OUT/maestro"/$MAESTRO_SHOT_GLOB -type d -maxdepth 0 2>/dev/null | head -1)"
   [ -n "$stage" ] && [ -n "$(ls "$stage"/*.png 2>/dev/null)" ] || die \
-    "The flow passed and produced no named PNG. Maestro sandboxes takeScreenshot to its own output folder, so the names in screenshots.yaml must be BARE (01-trips, not a path). Looked under $OUT/maestro/$MAESTRO_SHOT_GLOB."
+    "The flow passed and produced no named PNG. Maestro sandboxes takeScreenshot to its own output folder, so the names in screenshots.yaml must be BARE (01-map, not a path). Looked under $OUT/maestro/$MAESTRO_SHOT_GLOB."
 
   local kept=0 shot w h
   for shot in "$stage"/*.png; do
@@ -916,6 +931,12 @@ screenshots() {
   done
 
   ok "$kept screenshots at ${want_w}x${want_h} in $dest"
+
+  # IMAGE #1 IS FRAMED: brand background, the dog, a headline, the real map
+  # screen under them. Guideline 2.3.3 bans a bare splash as a screenshot but
+  # allows overlays on a real one. Raw capture kept in $dest/raw/.
+  node scripts/frame-store-screenshots.mjs "$dest" || die "Framing 01-map failed — the raw set is in $dest."
+  ok "01-map framed (raw capture in $dest/raw/)"
   printf "\n"
   ls -1 "$dest" | sed 's/^/  /'
   printf "\n"

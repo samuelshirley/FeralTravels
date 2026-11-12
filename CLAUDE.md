@@ -12,7 +12,8 @@
 ## MVP scope — hold the line
 
 **One line (Sam, 2026-06-26):** this is *simply a trip-planning app that finds
-cheap fuel along the way.* Anything beyond "plan the route → find cheap fuel on
+fuel along the way.* **No fuel PRICES** — tabled 2026-11-02 as too hard to do
+worldwide; never call it "cheap fuel" in copy or marketing. Anything beyond "plan the route → find fuel on
 it" is post-MVP — flag it before building. Full scope and what was cut:
 **`docs/design/mvp-scope.md`**.
 
@@ -244,7 +245,8 @@ capture-nominatim-fixtures.mjs check-env.sh
 check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 enable-jev-compare.mjs
-extract-canonical-trip.ts generate-apple-client-secret.ts
+extract-canonical-trip.ts frame-store-screenshots.mjs
+generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
 lifetime-spend.ts
