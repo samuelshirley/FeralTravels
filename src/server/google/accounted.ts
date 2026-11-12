@@ -3,7 +3,9 @@ import 'server-only';
 import { getDirections, type DirectionsOptions, type DirectionsResponse } from '@/lib/google/directions';
 import { geocodePlace, type GeocodeOptions, type GeocodeResult } from '@/lib/google/geocode';
 import { searchFuelAlongRoute, type FuelStation, type SearchAlongRouteDeps } from '@/lib/google/places';
+import { fetchPlaceDisplayName, type PlaceDetailsDeps } from '@/lib/google/placeDetails';
 import { logGoogleApiUsage, logGooglePlacesUsage } from '@/server/repos/usage';
+import { assertNoTurnTransaction } from '@/server/db/turnScope';
 
 /**
  * The ONLY way server code calls a paid Google API.
@@ -47,6 +49,7 @@ export async function getDirectionsAccounted(
   options: DirectionsOptions = {},
   who: CallerRef = {},
 ): Promise<DirectionsResponse> {
+  assertNoTurnTransaction('Google Directions');
   try {
     const res = await getDirections(origin, destination, options);
     record(
@@ -83,6 +86,7 @@ export async function searchFuelAlongRouteAccounted(
   who: CallerRef = {},
   deps?: SearchAlongRouteDeps,
 ): Promise<FuelStation[]> {
+  assertNoTurnTransaction('Google Places (fuel along route)');
   try {
     const stations = await searchFuelAlongRoute(encodedPolyline, deps);
     record(
@@ -121,6 +125,7 @@ export async function geocodePlaceAccounted(
   opts: GeocodeOptions = {},
   who: CallerRef = {},
 ): Promise<GeocodeResult> {
+  assertNoTurnTransaction('Google Places (geocode)');
   const res = await geocodePlace(query, opts);
   // `unavailable` with no key never reached Google, so it costs nothing and is
   // not counted — counting it would inflate the only number here anyone trusts.
@@ -139,4 +144,44 @@ export async function geocodePlaceAccounted(
     );
   }
   return res;
+}
+
+/**
+ * Place Details (New), field mask `displayName` — a fuel station's name, on a
+ * tap, counted as `place-details-pro`. The NAME IS NEVER LOGGED: the usage row
+ * carries the call and its cost, and a failure's message is the HTTP status,
+ * never anything Google returned (`stationNameGuard.test.ts`).
+ */
+export async function fetchPlaceDisplayNameAccounted(
+  placeId: string,
+  who: CallerRef = {},
+  deps?: PlaceDetailsDeps,
+): Promise<string> {
+  assertNoTurnTransaction('Google Places (place details)');
+  try {
+    const name = await fetchPlaceDisplayName(placeId, deps);
+    record(
+      logGooglePlacesUsage({
+        userId: who.userId ?? null,
+        tripId: who.tripId ?? null,
+        endpoint: 'place-details-pro',
+        requests: 1,
+      }),
+      'places place-details',
+    );
+    return name;
+  } catch (err) {
+    record(
+      logGooglePlacesUsage({
+        userId: who.userId ?? null,
+        tripId: who.tripId ?? null,
+        endpoint: 'place-details-pro',
+        requests: 1,
+        success: false,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      }),
+      'places place-details (failed)',
+    );
+    throw err;
+  }
 }

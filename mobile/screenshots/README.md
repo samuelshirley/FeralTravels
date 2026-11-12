@@ -22,12 +22,30 @@ Status.
 
 | File | Screen | Why it is in the set |
 |---|---|---|
-| `01-trips.png` | Trips list | It is a real tool with real trips |
-| `02-penny-chat.png` | Penny, after a real reply | The differentiator |
-| `03-itinerary.png` | Day 1 expanded, fuel stops loaded | The product actually working |
-| `04-map.png` | Route and stop markers | The visual anchor |
+| `01-map.png` | The canonical Portugal loop with real roads and fuel markers, **framed** — dog, headline, the screen | The image a shared App Store link shows in Messages, and the first in search |
+| `02-trips.png` | Trips list | It is a real tool with real trips |
+| `03-penny-chat.png` | Penny, after a real reply | The differentiator |
+| `04-itinerary.png` | Day 1 expanded, fuel stops loaded | The product actually working |
+
+**Why the map leads, framed (2026-11-02).** Sharing the App Store link in
+Messages shows a card whose big image is screenshot #1 (icon, name and subtitle
+sit in its footer — that is where the icon appears, and it cannot be set
+separately). It was the chat screen, cropped mid-message. `01-map` is now the
+real map capture framed by `scripts/frame-store-screenshots.mjs`: the splash
+art, "Adaptive route planning", and the screen in a device
+outline. Not the splash on its own — guideline 2.3.3 says screenshots must show
+the app in use, "not merely the title art, login page, or splash screen";
+overlays on a real screen are allowed. The unframed capture is kept in
+`raw/01-map.png`, so `node scripts/frame-store-screenshots.mjs mobile/screenshots/6.9`
+re-frames it without a simulator.
 
 ## The trip in them
+
+**Since 2026-11-02 the flow opens the twelve-leg canonical loop** ("Portugal
+loop": Girona → Porto → Lisbon → Girona, `src/server/fixtures/canonicalTrip.ts`),
+which has real road geometry and seeded fuel stops. The 2026-09 map showed
+dashed straight lines because the two legs described below have no geometry.
+They are still seeded and appear as a second card on the trips list.
 
 The same canonical two legs the test flows use — **Paris → Strasbourg →
 Stuttgart**, real coordinates and distances from `CANONICAL_TWO_LEGS` in

@@ -415,6 +415,14 @@ const CASES: Record<string, Case> = {
     stranger: [403],
   },
   'DELETE stops/[id]': { method: 'DELETE', path: () => `/api/stops/${ids.stop}`, stranger: [403] },
+  // A station name, fetched on a tap (never stored). Refusals only: the owner's
+  // happy path would be a paid Google call, proven over PGlite instead.
+  'GET stops/[id]/place-name': {
+    method: 'GET',
+    path: () => `/api/stops/${ids.stop}/place-name`,
+    malformed: { path: () => '/api/stops/not-a-uuid/place-name' },
+    stranger: [403],
+  },
   'POST stops/[id]/select': { method: 'POST', path: () => `/api/stops/${ids.stop}/select`, body: () => ({}), stranger: [403] },
   'POST stops/[id]/swap-primary': {
     method: 'POST',

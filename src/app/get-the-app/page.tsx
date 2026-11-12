@@ -16,7 +16,7 @@ import { APP_STORE_URL } from '@/lib/paywallCopy';
  */
 export const metadata: Metadata = {
   title: 'Feral Travels — get the app',
-  description: 'Feral Travels is an iPhone app that plans your road trip and finds cheap fuel along the route.',
+  description: 'Feral Travels is an iPhone app that plans your road trip and finds fuel stops along the route.',
 };
 
 export default function GetTheAppPage() {
@@ -52,7 +52,7 @@ export default function GetTheAppPage() {
         </h1>
 
         <p style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--tp-muted, #6b6b6b)', margin: '0 0 22px' }}>
-          Plan the route and find cheap fuel along it. Already have an account? Sign in on the app
+          Plan the route and find fuel stops along it. Already have an account? Sign in on the app
           with the same email.
         </p>
 

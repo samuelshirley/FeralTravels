@@ -3,6 +3,7 @@ import { and, eq, gte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { db } from '@/server/db/client';
+import { deferUntilSettled } from '@/server/db/turnScope';
 import { appMeta, usageEvents, users } from '@/server/db/schema';
 import { jevConfigStatus, type JevCompareOutcome, type JevTierOutcome } from '@/server/jev';
 
@@ -300,19 +301,22 @@ export async function logJevUsage(input: {
 }): Promise<void> {
   const o = input.outcome;
   try {
-    await db.insert(usageEvents).values({
-      userId: input.userId,
-      tripId: input.tripId,
-      provider: JEV_PROVIDER,
-      model: input.model,
-      inputTokens: o.inputTokens,
-      outputTokens: o.outputTokens,
-      requests: 1,
-      costMicrocents: 0,
-      success: o.success,
-      errorMessage: o.errorMessage === null ? null : o.errorMessage.slice(0, 200),
-      meta: jevUsageMeta(input.source, o),
-    });
+    // Accounting: deferred past an open Penny turn transaction (server/db/turnScope.ts).
+    await deferUntilSettled(() =>
+      db.insert(usageEvents).values({
+        userId: input.userId,
+        tripId: input.tripId,
+        provider: JEV_PROVIDER,
+        model: input.model,
+        inputTokens: o.inputTokens,
+        outputTokens: o.outputTokens,
+        requests: 1,
+        costMicrocents: 0,
+        success: o.success,
+        errorMessage: o.errorMessage === null ? null : o.errorMessage.slice(0, 200),
+        meta: jevUsageMeta(input.source, o),
+      }),
+    );
   } catch (err) {
     console.error('[repos/jev] could not record the Jev call', err);
   }
@@ -334,22 +338,25 @@ export async function logJevCompare(input: {
 }): Promise<number | null> {
   const o = input.outcome;
   try {
-    const [row] = await db
-      .insert(usageEvents)
-      .values({
-        userId: input.userId,
-        tripId: input.tripId,
-        provider: JEV_PROVIDER,
-        model: o.call.echoedModel,
-        inputTokens: o.call.inputTokens,
-        outputTokens: o.call.outputTokens,
-        requests: 1,
-        costMicrocents: 0,
-        success: o.call.success,
-        errorMessage: o.call.errorMessage === null ? null : o.call.errorMessage.slice(0, 200),
-        meta: jevCompareMeta(input.source, o, input.gate),
-      })
-      .returning({ id: usageEvents.id });
+    const rows = await deferUntilSettled(() =>
+      db
+        .insert(usageEvents)
+        .values({
+          userId: input.userId,
+          tripId: input.tripId,
+          provider: JEV_PROVIDER,
+          model: o.call.echoedModel,
+          inputTokens: o.call.inputTokens,
+          outputTokens: o.call.outputTokens,
+          requests: 1,
+          costMicrocents: 0,
+          success: o.call.success,
+          errorMessage: o.call.errorMessage === null ? null : o.call.errorMessage.slice(0, 200),
+          meta: jevCompareMeta(input.source, o, input.gate),
+        })
+        .returning({ id: usageEvents.id }),
+    );
+    const row = rows?.[0];
     return row?.id ?? null;
   } catch (err) {
     console.error('[repos/jev] could not record the Jev compare call', err);
@@ -642,10 +649,12 @@ export async function getJevCompareStats(days = 7): Promise<JevCompareStats> {
  */
 export async function linkJevCompareToTurn(eventId: number, turnId: string): Promise<void> {
   try {
-    await db
-      .update(usageEvents)
-      .set({ meta: sql`COALESCE(${usageEvents.meta}, '{}'::jsonb) || ${JSON.stringify({ pennyTurnId: turnId })}::jsonb` })
-      .where(and(eq(usageEvents.id, eventId), eq(usageEvents.provider, JEV_PROVIDER), isCompareRow));
+    await deferUntilSettled(() =>
+      db
+        .update(usageEvents)
+        .set({ meta: sql`COALESCE(${usageEvents.meta}, '{}'::jsonb) || ${JSON.stringify({ pennyTurnId: turnId })}::jsonb` })
+        .where(and(eq(usageEvents.id, eventId), eq(usageEvents.provider, JEV_PROVIDER), isCompareRow)),
+    );
   } catch (err) {
     console.error('[repos/jev] could not link the compare row to its turn', err);
   }
@@ -741,10 +750,12 @@ export async function recordJevTurnTruth(
 ): Promise<void> {
   try {
     const meta = jevTurnTruthMeta(truth, knownTools);
-    await db
-      .update(usageEvents)
-      .set({ meta: sql`COALESCE(${usageEvents.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` })
-      .where(and(eq(usageEvents.id, eventId), eq(usageEvents.provider, JEV_PROVIDER), isCompareRow));
+    await deferUntilSettled(() =>
+      db
+        .update(usageEvents)
+        .set({ meta: sql`COALESCE(${usageEvents.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` })
+        .where(and(eq(usageEvents.id, eventId), eq(usageEvents.provider, JEV_PROVIDER), isCompareRow)),
+    );
   } catch (err) {
     console.error('[repos/jev] could not record the turn truth on the compare row', err);
   }

@@ -28,7 +28,21 @@ import type { AddStopInput } from '@/lib/penny/tools/addStop';
  *   used by the non-consuming `add_stop`/`add_route` fallback so a stop lands on
  *   the right same-turn leg (several stops may share one leg).
  */
-export type ReplanDispatchCtx = { newLegIdsQueue: string[]; newLegs: NewLegRecord[] };
+/** A leg whose driving geometry is fetched AFTER the turn commits (no paid call inside it). */
+export type GeometryJob = {
+  legId: string;
+  start: { lat: number; lng: number };
+  end: { lat: number; lng: number };
+};
+
+export type ReplanDispatchCtx = {
+  newLegIdsQueue: string[];
+  newLegs: NewLegRecord[];
+  /** Filled by add_leg / update_leg; run by the replan route after commit. */
+  geometryJobs?: GeometryJob[];
+  /** Legs report_position re-pointed; re-routed (and fuel-invalidated) after commit. */
+  rerouteJobs?: string[];
+};
 
 export function assertLegOnTrip(legTripId: string, tripId: string): void {
   if (legTripId !== tripId) throw new ForbiddenError('Leg is not part of this trip');

@@ -97,7 +97,8 @@ appId: ${APP_ID}
 - tapOn:
     point: '50%,25%'
 - waitForAnimationToEnd
-- tapOn: 'Pyrenees loop with 3 rest days'
+# Either region's loop row: the server picks the set from the requester's IP country.
+- tapOn: '(Pyrenees|Utah parks) loop with 3 rest days'
 - extendedWaitUntil:
     visible:
       id: 'ai-consent-sheet'

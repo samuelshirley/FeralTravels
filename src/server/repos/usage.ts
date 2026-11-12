@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/server/db/client';
+import { deferUntilSettled } from '@/server/db/turnScope';
 import { usageEvents } from '@/server/db/schema';
 import { and, eq, gte, ne, sql, desc } from 'drizzle-orm';
 import {
@@ -57,21 +58,30 @@ export async function logAnthropicUsage(input: LogAnthropicUsageInput): Promise<
   // columns so cache hit rate is recoverable per row. inputTokens is the pure
   // regular-input count (NOT cache tokens summed in). The costMicrocents field
   // already reflects the correctly-discounted USD across all three.
-  const [row] = await db.insert(usageEvents).values({
-    userId: input.userId,
-    tripId: input.tripId ?? null,
-    provider: 'anthropic',
-    model: input.model,
-    inputTokens: input.inputTokens,
-    outputTokens: input.outputTokens,
-    cacheCreationInputTokens: cacheCreate,
-    cacheReadInputTokens: cacheRead,
-    requests: 1,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  }).returning({ id: usageEvents.id });
-  return row?.id ?? null;
+  // Deferred while a Penny turn transaction is open (src/server/db/turnScope.ts):
+  // spend survives a rollback. Outside one — every call site today: the model
+  // loop, the scan, the parsers — it runs now and returns the row id the Jev
+  // route measurement reads; queued, it returns null (no turn reads it then).
+  const rows = await deferUntilSettled(() =>
+    db
+      .insert(usageEvents)
+      .values({
+        userId: input.userId,
+        tripId: input.tripId ?? null,
+        provider: 'anthropic',
+        model: input.model,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        cacheCreationInputTokens: cacheCreate,
+        cacheReadInputTokens: cacheRead,
+        requests: 1,
+        costMicrocents: dollarsToMicrocents(usd),
+        success: input.success ?? true,
+        errorMessage: input.errorMessage ?? null,
+      })
+      .returning({ id: usageEvents.id }),
+  );
+  return rows?.[0]?.id ?? null;
 }
 
 /**
@@ -136,15 +146,17 @@ export async function logUsageEvent(input: {
   success?: boolean;
   errorMessage?: string | null;
 }) {
-  await db.insert(usageEvents).values({
-    userId: input.userId ?? null,
-    tripId: input.tripId ?? null,
-    provider: input.provider,
-    model: input.model ?? null,
-    requests: input.requests ?? 1,
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId ?? null,
+      tripId: input.tripId ?? null,
+      provider: input.provider,
+      model: input.model ?? null,
+      requests: input.requests ?? 1,
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 // Google Places API (New) per-call list price in USD, keyed by the SKU stored
@@ -155,9 +167,19 @@ export async function logUsageEvent(input: {
 // https://developers.google.com/maps/billing-and-pricing/pricing
 const GOOGLE_PLACES_PRICING_PER_CALL_USD: Record<string, number> = {
   'text-search': 0.032,
+  // Place Details (New), field mask `displayName` only — Pro SKU, $17 / 1,000.
+  // A fuel station's name, fetched on a tap and never stored.
+  'place-details-pro': 0.017,
 };
 
-export type GooglePlacesEndpoint = 'text-search';
+export type GooglePlacesEndpoint = 'text-search' | 'place-details-pro';
+
+/**
+ * Usage rows that do NOT count as a "Penny request" for the hourly cap: a
+ * station-name lookup is a tap on a stop card, not a message to Penny. Its
+ * COST still counts toward the daily $ cap like every other Google call.
+ */
+export const NOT_A_PENNY_REQUEST = { provider: 'google-places', model: 'place-details-pro' } as const;
 
 /**
  * Per-SKU monthly free-call allowance (Google gives each SKU its own, not a
@@ -172,6 +194,9 @@ export type GooglePlacesEndpoint = 'text-search';
 export const GOOGLE_PLACES_FREE_CALLS_PER_MONTH: Record<GooglePlacesEndpoint, number> = {
   'text-search': Number(
     process.env.GOOGLE_PLACES_FREE_CALLS_TEXT_SEARCH_PER_MONTH ?? 5000
+  ),
+  'place-details-pro': Number(
+    process.env.GOOGLE_PLACES_FREE_CALLS_PLACE_DETAILS_PRO_PER_MONTH ?? 5000
   ),
 };
 
@@ -202,18 +227,20 @@ export async function logGooglePlacesUsage(input: LogGooglePlacesUsageInput) {
   if (input.requests <= 0) return;
   const perCall = GOOGLE_PLACES_PRICING_PER_CALL_USD[input.endpoint] ?? 0.032;
   const usd = perCall * input.requests;
-  await db.insert(usageEvents).values({
-    userId: input.userId,
-    tripId: input.tripId ?? null,
-    provider: 'google-places',
-    model: input.endpoint,
-    inputTokens: 0,
-    outputTokens: 0,
-    requests: input.requests,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId,
+      tripId: input.tripId ?? null,
+      provider: 'google-places',
+      model: input.endpoint,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests: input.requests,
+      costMicrocents: dollarsToMicrocents(usd),
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 /**
@@ -252,18 +279,20 @@ export async function logGoogleApiUsage(input: {
       ? GOOGLE_DIRECTIONS_ADVANCED_PER_CALL_USD
       : GOOGLE_DIRECTIONS_PER_CALL_USD;
   const usd = perCall * requests;
-  await db.insert(usageEvents).values({
-    userId: input.userId ?? null,
-    tripId: input.tripId ?? null,
-    provider: input.provider,
-    model: null,
-    inputTokens: 0,
-    outputTokens: 0,
-    requests,
-    costMicrocents: dollarsToMicrocents(usd),
-    success: input.success ?? true,
-    errorMessage: input.errorMessage ?? null,
-  });
+  await deferUntilSettled(() =>
+    db.insert(usageEvents).values({
+      userId: input.userId ?? null,
+      tripId: input.tripId ?? null,
+      provider: input.provider,
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests,
+      costMicrocents: dollarsToMicrocents(usd),
+      success: input.success ?? true,
+      errorMessage: input.errorMessage ?? null,
+    }),
+  );
 }
 
 /** Sum cost + count requests for a user in the trailing N hours. Used for rate limiting. */
@@ -271,7 +300,9 @@ export async function getUserUsageSummary(userId: string, hours: number) {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   const rows = await db
     .select({
-      requests: sql<number>`COALESCE(SUM(${usageEvents.requests}), 0)`,
+      // A station-name lookup's cost counts (microcents below); its call is
+      // not a Penny request (NOT_A_PENNY_REQUEST).
+      requests: sql<number>`COALESCE(SUM(CASE WHEN ${usageEvents.provider} = ${NOT_A_PENNY_REQUEST.provider} AND ${usageEvents.model} = ${NOT_A_PENNY_REQUEST.model} THEN 0 ELSE ${usageEvents.requests} END), 0)`,
       microcents: sql<number>`COALESCE(SUM(${usageEvents.costMicrocents}), 0)`,
       inputTokens: sql<number>`COALESCE(SUM(${usageEvents.inputTokens}), 0)`,
       outputTokens: sql<number>`COALESCE(SUM(${usageEvents.outputTokens}), 0)`,

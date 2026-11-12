@@ -130,4 +130,65 @@ describe('findGapCreatingDeletes', () => {
     const blocked = findGapCreatingDeletes(legs, [del('C')]);
     expect(blocked.size).toBe(0);
   });
+
+  /*
+   * The gate must place a new leg exactly where dispatch will (addLeg in
+   * repos/trips.ts). Both now call ONE function, legPlacement.placeNewLeg; the
+   * old simulation appended every add at max+1 and ignored `after_leg_id` and
+   * the positional inference, so it judged a route the server would never
+   * build — and blocked valid edits as "gap-creating".
+   */
+  it('REGRESSION: a mid-route detour placed with after_leg_id is not a gap', () => {
+    // Replace C (62→63) with C1 (62→62.5) + C2 (62.5→63): C1 anchored after B,
+    // C2 chains off C1 by inference. Dispatch builds A B C1 C2 D E — contiguous.
+    const blocked = findGapCreatingDeletes(contiguousTrip(), [
+      del('C'),
+      addLegAction({ startLat: 62, endLat: 62.5, after_leg_id: 'B' }),
+      addLegAction({ startLat: 62.5, endLat: 63 }),
+    ]);
+    expect(blocked.size).toBe(0);
+  });
+
+  it('REGRESSION: an explicit sort_order followed by unplaced adds chains like dispatch', () => {
+    // A full replacement where Penny guessed a sort_order for the first new leg
+    // only. Dispatch puts it at 20 and chains the rest after it by inference;
+    // the old simulation put the rest at 5, 6, 7… — BEFORE it — and saw a gap.
+    const all = contiguousTrip();
+    const blocked = findGapCreatingDeletes(all, [
+      ...all.map((l) => del(l.id)),
+      addLegAction({ startLat: 60, endLat: 61, sort_order: 20 }),
+      addLegAction({ startLat: 61, endLat: 62 }),
+      addLegAction({ startLat: 62, endLat: 63 }),
+    ]);
+    expect(blocked.size).toBe(0);
+  });
+
+  it('still blocks a genuine gap when after_leg_id is honoured', () => {
+    // Replace C with a leg that does not reach D: a real hole.
+    const blocked = findGapCreatingDeletes(contiguousTrip(), [
+      del('C'),
+      addLegAction({ startLat: 62, endLat: 62.2, after_leg_id: 'B' }),
+    ]);
+    expect(blocked).toEqual(new Set(['C']));
+  });
 });
+
+function addLegAction(p: {
+  startLat: number;
+  endLat: number;
+  after_leg_id?: string;
+  sort_order?: number;
+}): ValidatedAction {
+  return {
+    name: 'add_leg',
+    input: {
+      title: 'new',
+      start_lat: p.startLat,
+      start_lng: 10,
+      end_lat: p.endLat,
+      end_lng: 10,
+      ...(p.after_leg_id ? { after_leg_id: p.after_leg_id } : {}),
+      ...(p.sort_order != null ? { sort_order: p.sort_order } : {}),
+    },
+  } as ValidatedAction;
+}

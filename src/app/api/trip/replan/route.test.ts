@@ -52,6 +52,7 @@ vi.mock('@/server/payments', () => ({
   assertPennyGateOpen: vi.fn(async () => undefined),
   dailyReplanCapUsd: () => 5,
   REPLAN_USD_CAP_PER_DAY: 5,
+  subscriberDailyCapUsd: () => 5,
 }));
 vi.mock('@/server/ipLimit', () => ({ assertIpAllowed: vi.fn(async () => undefined) }));
 vi.mock('@/server/repos/usage', () => ({

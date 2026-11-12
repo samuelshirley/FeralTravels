@@ -107,6 +107,7 @@ export const SHARED_FILES = [
   // The forced-fuel-stop line: both stop cards word Finn's reason through this
   // one function, so the two clients cannot disagree on it or on its units.
   ['src/lib/forcedStopReason.ts', 'mobile/shared/lib/forcedStopReason.ts'],
+  ['src/lib/stationName.ts', 'mobile/shared/lib/stationName.ts'],
   // The launch-time location question: primer -> Continue -> system dialog ->
   // wait for a real answer. Shared for the usual reason — the root vitest
   // project is the only test runner, and every branch of it is a way to strand

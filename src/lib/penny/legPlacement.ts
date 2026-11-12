@@ -56,3 +56,51 @@ export function inferInsertAfterSort(
   if (best == null || best >= maxSort) return null;
   return best;
 }
+
+export type PlaceableLeg = PlacementLeg & { id: string };
+
+export type NewLegPlacement = {
+  /** The new leg's sort_order. */
+  sortOrder: number;
+  /** Every existing leg with sort_order > this moves up by one first; null = no shift. */
+  shiftAbove: number | null;
+};
+
+/**
+ * Where a new leg lands — THE one answer, used by both the repo that inserts
+ * it (`addLeg` in repos/trips.ts) and the pre-dispatch contiguity gate that
+ * simulates the turn (`contiguityGate.ts`).
+ *
+ * WHY ONE FUNCTION (incident 2026-11-10, trip 65972b73): the gate kept its own
+ * idea of placement — `sort_order ?? max+1`, ignoring `after_leg_id` and the
+ * inference above — so it judged a route the server would never build. A
+ * mid-route detour anchored with `after_leg_id` looked, to the gate, like new
+ * legs appended at the END, i.e. a hole where the old leg used to be; it
+ * blocked the delete, and the turn's adds landed beside the leg they were meant
+ * to replace. Two copies of a rule drift; one cannot.
+ *
+ * Precedence mirrors what addLeg always did: `afterLegId` (when it names a leg
+ * on the trip) → explicit `sortOrder` (no shift) → geographic inference →
+ * append.
+ */
+export function placeNewLeg(
+  existing: ReadonlyArray<PlaceableLeg>,
+  input: {
+    afterLegId?: string | null;
+    sortOrder?: number | null;
+    startLat?: number | null;
+    startLng?: number | null;
+  },
+): NewLegPlacement {
+  if (input.afterLegId) {
+    const anchor = existing.find((l) => l.id === input.afterLegId);
+    if (anchor) return { sortOrder: anchor.sortOrder + 1, shiftAbove: anchor.sortOrder };
+  }
+  if (input.sortOrder != null) return { sortOrder: input.sortOrder, shiftAbove: null };
+  const inferred = inferInsertAfterSort(existing, input.startLat, input.startLng);
+  if (inferred != null) return { sortOrder: inferred + 1, shiftAbove: inferred };
+  return {
+    sortOrder: existing.reduce((m, l) => Math.max(m, l.sortOrder), -1) + 1,
+    shiftAbove: null,
+  };
+}

@@ -12,7 +12,8 @@
 ## MVP scope — hold the line
 
 **One line (Sam, 2026-06-26):** this is *simply a trip-planning app that finds
-cheap fuel along the way.* Anything beyond "plan the route → find cheap fuel on
+fuel along the way.* **No fuel PRICES** — tabled 2026-11-02 as too hard to do
+worldwide; never call it "cheap fuel" in copy or marketing. Anything beyond "plan the route → find fuel on
 it" is post-MVP — flag it before building. Full scope and what was cut:
 **`docs/design/mvp-scope.md`**.
 
@@ -41,7 +42,7 @@ which provider serves what; this has been wrong here before, expensively.
   fixed code for App Store review, armed only by `APPLE_REVIEW_SIGNIN=1` and
   removed after approval — `docs/design/ios-review-notes.md` §1.
 - **AI:** Anthropic SDK. Model IDs in one registry (`src/lib/models.ts`), API key
-  resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 4.5.
+  resolved in one place (`src/lib/anthropicKey.ts`). Penny runs on Haiku 5.5.
 - **Jev (optional, OFF by default):** a typed-decision model (TypeSafe-hosted)
   for the message-gate tier. Modes: HAIKU ONLY, COMPARE (Haiku decides, Jev only
   logged, plus a logged route question), JEV FIRST (it may settle only a
@@ -170,7 +171,7 @@ api/me/delete api/me/entitlement api/me/identity api/me/preferences
 api/mobile/oauth/exchange api/mobile/otp/send api/mobile/otp/verify api/pois
 api/promo/redeem api/routes api/routes/[id]
 api/routes/[id]/links api/routes/[id]/select api/stops api/stops/[id]
-api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
+api/stops/[id]/place-name api/stops/[id]/select api/stops/[id]/swap-primary api/support api/tasks
 api/tasks/[id] api/test/announcement api/test/breakers api/test/cleanup
 api/test/feature-request
 api/test/deletion api/test/maps-link-stop api/test/otp api/test/promo
@@ -227,6 +228,11 @@ it to the nearest town inside the daily cap so a day does not end in a hamlet;
 see `docs/design/penny-tools.md`. `add_stop` is locked
 to `'other'` (fuel rows come only from Finn); range writes to onboarding +
 Settings.
+**A station's name is never stored** (Maps ToS §3.2.3): fetched by `place_id` on a
+tap, `api/stops/[id]/place-name` (`stationNameGuard.test.ts`).
+**A turn is all-or-nothing:** if any pre-dispatch gate rejects any action,
+nothing in the batch dispatches (`lib/penny/turnAtomicity.ts`), and dispatch is
+one DB transaction — no Google call inside it (`server/db/turnScope.ts`).
 
 ### Scripts (`scripts/`)
 
@@ -239,7 +245,8 @@ capture-nominatim-fixtures.mjs check-env.sh
 check-preview-env.mjs claude-task.sh column-coverage.ts db-reset.ts
 decide-docs-only.mjs decide-mobile-release.mjs dump-trip.ts e2e-pr-summary.mjs
 enable-jev-compare.mjs
-extract-canonical-trip.ts generate-apple-client-secret.ts
+extract-canonical-trip.ts frame-store-screenshots.mjs
+generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
 lifetime-spend.ts
