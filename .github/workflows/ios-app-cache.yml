@@ -1,0 +1,61 @@
+# Keep a compiled iOS simulator app in `main`'s cache, so a PR's FIRST CI run
+# restores it instead of compiling for 14-20 minutes.
+#
+# A `pull_request` run's cache is scoped to that PR (`refs/pull/N/merge`) and
+# is invisible to every other PR; a PR can read only its own and its base
+# branch's. Nothing on `main` built the app, so every new PR compiled from
+# scratch while all five iOS shards waited (measured 2026-11-13: #109 14.5 min,
+# #110 20.4 min). This job runs the SAME composite action ci.yml's `ios-build`
+# runs — the key is defined there and only there — on `main`, where the save
+# lands under refs/heads/main and every PR can restore it.
+#
+# Ships nothing, deploys nothing, gates nothing: deploy-production.yml looks
+# for the `CI` workflow by name, and this is not it. A failure here only means
+# the next PR compiles cold, as before.
+name: iOS app cache
+
+on:
+  # A native change merged: the fingerprint moved, so build the new one now
+  # rather than in the next PR's critical path.
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/actions/ios-sim-app/**'
+      - '.github/workflows/ios-app-cache.yml'
+  # Daily, because the runner IMAGE is in the key: a macOS image rollout
+  # changes it with no commit at all, and caches unused for 7 days are evicted.
+  # On a hit it restores, skips the build and saves nothing — a few free
+  # minutes (the repository is public).
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two compiles of the same thing at once; a later merge queues rather
+# than cancelling a build that is fourteen minutes in.
+concurrency:
+  group: ios-app-cache
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and cache the simulator app on main
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build or restore the simulator app
+        id: app
+        uses: ./.github/actions/ios-sim-app
+
+      - name: Say what happened
+        run: |
+          if [ "${{ steps.app.outputs.cache-hit }}" = "true" ]; then
+            echo "Already cached on main: ${{ steps.app.outputs.key }}"
+          else
+            echo "Compiled; saving to main's cache as ${{ steps.app.outputs.key }}"
+          fi

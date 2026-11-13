@@ -909,85 +909,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - name: Install app dependencies
-        run: npm ci
-        working-directory: mobile
-
-      # ── The cache, and why this one is safe when the last one was not ──
-      #
-      # There was a `.app` cache once, removed on 2026-08-28: on a hit it
-      # skipped the whole build, bundle included, so the simulator would have
-      # launched an app pointed at a PREVIOUS PR's torn-down preview. The URL is
-      # inlined at BUNDLE time. The fix is to stop caching the bundle, not to
-      # stop caching the compile: this job builds against a placeholder host,
-      # and every shard runs `scripts/ios-rebundle.sh`, which replaces the
-      # bundle with one built for its own preview and FAILS if the result does
-      # not contain that preview's host or still contains the placeholder.
-      #
-      # Keyed on the native fingerprint (`@expo/fingerprint`: native deps,
-      # app config, config plugins, patches), the runner image and the Xcode
-      # that compiles it. A PR's cache is visible only to that PR and to `main`,
-      # so the first push of a PR compiles and every later push restores.
-      - name: Fingerprint the native app
-        id: fp
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-          HASH="$(npx fingerprint fingerprint:generate --platform ios | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).hash))")"
-          XCODE="$(xcodebuild -version | awk 'NR==1 {print $2}')"
-          echo "key=ios-sim-app-v1-${ImageOS}-${ImageVersion}-xcode${XCODE}-${HASH}" >> "$GITHUB_OUTPUT"
-          echo "Native fingerprint $HASH (Xcode $XCODE, image $ImageOS $ImageVersion)"
-
-      - name: Restore the compiled app
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: mobile/ios-build
-          key: ${{ steps.fp.outputs.key }}
-
-      # RELEASE, not Debug, and this is a correction rather than a preference.
-      # A Debug build contains NO JavaScript — it fetches its bundle from a Metro
-      # packager at launch, and nothing here runs one — so it came up on the red
-      # box "No script URL provided" every time (2026-09-01). Release is also the
-      # configuration the flows claim to test: `__DEV__` off, the JS that ships.
-      #
-      # Default Xcode (16.4, iOS 18.5 SDK), deliberately: that is the build that
-      # has been shipping. The shards select Xcode 26.2 for Maestro's driver,
-      # and an 18.5 app runs fine on a 26.2 simulator.
-      #
-      # NO EXTRA BUILD SETTINGS, measured: ONLY_ACTIVE_ARCH / index store / dwarf
-      # moved the build 14m06s → 14m46s, and the arch flag was a no-op (the four
-      # `-arch x86_64` lines are toolchain probes). And NO CODE_SIGNING_ALLOWED=NO:
-      # expo-secure-store needs the entitlements an unsigned build lacks, and
-      # sign-in died storing the session. A simulator build signs ad hoc.
-      - name: Build the app for the simulator
-        if: steps.cache.outputs.cache-hit != 'true'
-        env:
-          # A host that cannot resolve, so an app that somehow kept this bundle
-          # fails loudly — and ios-rebundle.sh refuses to hand it on anyway.
-          EXPO_PUBLIC_API_URL: https://ios-bundle-placeholder.invalid
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-          npx expo prebuild --platform ios --clean
-          # Derived, never hardcoded: prebuild names the workspace after
-          # app.config.js's `name`.
-          WORKSPACE="$(ls -d ios/*.xcworkspace | head -1)"
-          SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
-          echo "Building scheme $SCHEME from $WORKSPACE"
-          xcodebuild -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -derivedDataPath ios/build
-          mkdir -p ios-build
-          cp -R ios/build/Build/Products/Release-iphonesimulator/*.app ios-build/
+      # Fingerprint, cache and the Release build live in the composite action,
+      # shared with ios-app-cache.yml so `main` saves under the SAME key this
+      # job restores. A PR reads its own ref's cache and then `main`'s; the
+      # action's header says why `main` must have one.
+      - name: Build or restore the simulator app
+        uses: ./.github/actions/ios-sim-app
 
       # A tarball, not the directory: upload-artifact does not keep the
       # executable bit, and an .app whose binary lost it does not launch.
