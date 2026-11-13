@@ -1,6 +1,6 @@
-# Keep a compiled iOS simulator app, and Maestro, in `main`'s cache, so a PR's
-# FIRST CI run restores them instead of compiling for 14-20 minutes and
-# reinstalling Maestro in every shard.
+# Keep a compiled iOS simulator app in `main`'s cache, so a PR's FIRST CI run
+# restores it instead of compiling for 14-20 minutes. (Maestro was cached here
+# too for a day and removed: see the `Install Maestro` step in ci.yml.)
 #
 # A `pull_request` run's cache is scoped to that PR (`refs/pull/N/merge`) and
 # is invisible to every other PR; a PR can read only its own and its base
@@ -23,7 +23,6 @@ on:
     paths:
       - 'mobile/**'
       - '.github/actions/ios-sim-app/**'
-      - '.github/actions/maestro/**'
       - '.github/workflows/ios-app-cache.yml'
   # Daily, because the runner IMAGE is in the key: a macOS image rollout
   # changes it with no commit at all, and caches unused for 7 days are evicted.
@@ -47,22 +46,12 @@ jobs:
     name: Build and cache the simulator app on main
     runs-on: macos-15
     timeout-minutes: 45
-    env:
-      # The SAME pin as ci.yml's ios-e2e job — a different version here would
-      # warm a cache no shard asks for. iosAppCacheGuard.test.ts holds them equal.
-      MAESTRO_VERSION: 2.10.0
     steps:
       - uses: actions/checkout@v4
 
       - name: Build or restore the simulator app
         id: app
         uses: ./.github/actions/ios-sim-app
-
-      # Version-keyed only, so once saved it serves every PR until the pin moves.
-      - name: Restore or install Maestro
-        uses: ./.github/actions/maestro
-        with:
-          version: ${{ env.MAESTRO_VERSION }}
 
       - name: Say what happened
         run: |

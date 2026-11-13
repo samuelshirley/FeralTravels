@@ -1071,14 +1071,21 @@ jobs:
         with:
           node-version: '22'
 
-      # PINNED by the job-level MAESTRO_VERSION above; the action uses it for
-      # both the installer and the cache key, and `main` saves the same entry
-      # (ios-app-cache.yml). Before the bundle wait, so it happens while the
-      # preview deploys.
-      - name: Restore or install Maestro
-        uses: ./.github/actions/maestro
-        with:
-          version: ${{ env.MAESTRO_VERSION }}
+      # PINNED by the job-level MAESTRO_VERSION above, which the installer
+      # reads. Before the bundle wait, so it happens while the preview deploys.
+      #
+      # NOT CACHED, measured (2026-11-13). The install is 299 MB, and restoring
+      # it from the Actions cache on these runners took ~2 min when it worked
+      # and stalled at 0.3 MB/s when it did not (2m19s, then installed anyway,
+      # run 43418297050). A fresh install took 1.2-3.1 min. A cache that saves
+      # nothing on a good day and costs two minutes on a bad one is not one;
+      # iosAppCacheGuard.test.ts keeps it out.
+      - name: Install Maestro
+        run: |
+          set -euo pipefail
+          curl -Ls https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
 
       - uses: actions/download-artifact@v4
         with:
