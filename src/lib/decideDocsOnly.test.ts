@@ -114,7 +114,9 @@ describe('the CI workflow is wired to it', () => {
   /**
    * The iOS jobs are gated explicitly. `ios-build` depends only on `decide`
    * (it compiles while the preview deploys), so nothing upstream would skip
-   * it. And `ios-e2e-summary` runs `if: always()` so it can report a failed
+   * it — and since 2026-11-12 neither would anything skip the shards, which
+   * start after `ios-build` rather than after the preview and wait for
+   * `ios-bundle` inside the job, so their own `if:` is now the only gate. And `ios-e2e-summary` runs `if: always()` so it can report a failed
    * shard — `always()` overrides a skipped dependency, so without the gate
    * written into the same `if:` a docs-only PR would run it, find no shards,
    * and FAIL the run the deploy gate reads.
@@ -126,11 +128,12 @@ describe('the CI workflow is wired to it', () => {
       const next = ci.slice(start + 1).search(/\n {2}[a-z0-9_-]+:\n/);
       return ci.slice(start, next === -1 ? undefined : start + 1 + next);
     };
-    for (const name of ['ios-build', 'ios-e2e', 'ios-e2e-summary']) {
+    for (const name of ['ios-build', 'ios-bundle', 'ios-e2e', 'ios-e2e-summary']) {
       expect(job(name), name).toMatch(/\n {4}if: .*needs\.decide\.outputs\.docs_only != 'true'/);
     }
     expect(job('ios-e2e-summary')).toMatch(/\n {4}if: always\(\) && needs\.decide\.outputs\.docs_only != 'true'/);
-    expect(job('ios-e2e')).toMatch(/\n {4}needs: \[decide, preview, ios-build\]/);
+    expect(job('ios-e2e')).toMatch(/\n {4}needs: \[decide, ios-build\]/);
+    expect(job('ios-bundle')).toMatch(/\n {4}needs: \[decide, preview\]/);
   });
 
   it('does NOT gate the unit job — the docs guards live there', () => {

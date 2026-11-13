@@ -6,6 +6,12 @@
 # its OWN account (seed-account.js, a suffix per flow), so none can disturb
 # another and the order is for reading.
 #
+# ALSO, since 2026-11-13: the two first-run onboarding flows, moved from `core`
+# (then the longest shard at 15:17 of flows; this one was the shortest, 9:18).
+# They sign in to this shard's OWN fixture account (ci.yml mints one per shard)
+# and only add untitled trips to it, so they disturb nothing above. Projected
+# from that run's per-flow times: core ~12:08, settings ~12:27 (trips 12:47).
+#
 # `flows:` and `flowsOrder` must name the same set; src/lib/maestroFlowParams.test.ts
 # checks that, and that every flow in mobile/maestro/ belongs to exactly one shard.
 flows:
@@ -13,6 +19,8 @@ flows:
   - support-form.yaml
   - offer-code.yaml
   - paywall-no-trips.yaml
+  - onboarding-flash.yaml
+  - onboarding-date-picker.yaml
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -20,3 +28,5 @@ executionOrder:
     - support-form
     - offer-code
     - paywall-no-trips
+    - onboarding-flash
+    - onboarding-date-picker

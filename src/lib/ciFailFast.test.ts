@@ -150,7 +150,7 @@ const summaryComment = () => {
 describe('ci.yml fails fast through one watcher job', () => {
   it('the parser sees every job (so the checks below are not passing on nothing)', () => {
     expect(wf.jobs.map((j) => j.id)).toEqual([
-      'fail-fast', 'decide', 'unit', 'mobile', 'preview', 'e2e', 'ios-build', 'ios-e2e', 'ios-e2e-summary', 'db-coverage', 'drop-preview-db',
+      'fail-fast', 'decide', 'unit', 'mobile', 'preview', 'e2e', 'ios-build', 'ios-bundle', 'ios-e2e', 'ios-e2e-summary', 'db-coverage', 'drop-preview-db',
     ]);
     for (const j of wf.jobs) expect(j.steps.length, j.id).toBeGreaterThan(0);
   });

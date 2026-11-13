@@ -115,6 +115,7 @@ const DEPENDENCIES: Record<string, { named: string } | { local: string }> = {
   // web / server — package.json
   '@anthropic-ai/sdk': { named: 'Anthropic' },
   '@auth/drizzle-adapter': { local: 'stores sessions in our own database' },
+  '@fontsource-variable/inter': { local: 'font files, bundled and served from our own domain' },
   '@googlemaps/js-api-loader': { named: 'Google' },
   '@phosphor-icons/react': { local: 'icons, bundled' },
   '@tmcw/togeojson': { local: 'file parsing, in-process' },

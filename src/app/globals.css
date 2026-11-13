@@ -15,6 +15,18 @@
    the same reason as everything else in this file. */
 @import url('https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css');
 
+/* Arial, resized to Inter's metrics, so the swap to Inter moves no text. These
+   are the values next/font/google generated for this font in production
+   (2026-11-13); layout.tsx says why it is written out here and comes LAST. */
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  ascent-override: 90.49%;
+  descent-override: 22.56%;
+  line-gap-override: 0%;
+  size-adjust: 107.06%;
+}
+
 :root {
   /* ---------------------------------------------------------------------
    * Nocturne. Dark blue-grey ground, ONE blurple accent, Inter.
@@ -35,6 +47,8 @@
      can); it stops them being white. */
   color-scheme: dark;
 
+  /* --font-inter is Inter (Latin, preloaded), then 'Inter Variable' (its other
+     subsets), then 'Inter Fallback' — see src/app/layout.tsx. */
   --tp-font-sans: var(--font-inter), Helvetica, Arial, sans-serif;
 
   /* Ground and surfaces */
