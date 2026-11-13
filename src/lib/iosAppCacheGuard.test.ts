@@ -75,3 +75,36 @@ describe('the iOS app cache key has one definition, and main fills it', () => {
     expect(label(warm)).toBe(label(job(ci, 'ios-build')));
   });
 });
+
+/**
+ * Maestro, the same shape: the shards restore `maestro-<os>-<version>`, and
+ * `main` must save that exact entry. The version is the key, so every copy of
+ * the pin must agree — ci.yml's shard env (where it pairs with the Xcode the
+ * shards select), ios-app-cache.yml's, and `scripts/ios-e2e-local.sh`'s
+ * MAESTRO_PIN, which nothing held equal before this.
+ */
+describe('Maestro is cached under one key, and every pin agrees', () => {
+  const maestroAction = read('.github/actions/maestro/action.yml');
+  const local = read('scripts/ios-e2e-local.sh');
+  const USES_MAESTRO = /uses: \.\/\.github\/actions\/maestro\n\s+with:\n\s+version: \$\{\{ env\.MAESTRO_VERSION \}\}/;
+  const pin = (s: string, re: RegExp) => s.match(re)?.[1];
+
+  it('the action keys the cache on the version its installer uses', () => {
+    expect(maestroAction).toContain('key: maestro-${{ runner.os }}-${{ inputs.version }}');
+    expect(maestroAction).toMatch(/MAESTRO_VERSION: \$\{\{ inputs\.version \}\}/);
+    expect(maestroAction).not.toMatch(/actions\/cache\/restore@/);
+  });
+
+  it('the shards and the main job both go through the action, keying nothing themselves', () => {
+    expect(job(ci, 'ios-e2e')).toMatch(USES_MAESTRO);
+    expect(warm).toMatch(USES_MAESTRO);
+    for (const wf of [ci, warm]) expect(wf).not.toMatch(/key: maestro-/);
+  });
+
+  it('ci.yml, ios-app-cache.yml and ios-e2e-local.sh pin the same Maestro', () => {
+    const shards = pin(job(ci, 'ios-e2e'), /\n\s+MAESTRO_VERSION: (\S+)/);
+    expect(shards).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pin(warm, /\n\s+MAESTRO_VERSION: (\S+)/)).toBe(shards);
+    expect(pin(local, /\nMAESTRO_PIN="([^"]+)"/)).toBe(shards);
+  });
+});

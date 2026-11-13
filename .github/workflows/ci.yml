@@ -1071,27 +1071,14 @@ jobs:
         with:
           node-version: '22'
 
-      # PINNED, with the version as a JOB-level env so this key and the
-      # installer read the SAME value — a key that disagreed with the pin would
-      # serve a different Maestro, whose driver/Xcode mismatch presents as a
-      # timeout naming no version. Before the bundle wait, so it happens while
-      # the preview deploys.
-      - name: Cache Maestro
-        uses: actions/cache@v4
+      # PINNED by the job-level MAESTRO_VERSION above; the action uses it for
+      # both the installer and the cache key, and `main` saves the same entry
+      # (ios-app-cache.yml). Before the bundle wait, so it happens while the
+      # preview deploys.
+      - name: Restore or install Maestro
+        uses: ./.github/actions/maestro
         with:
-          path: ~/.maestro
-          key: maestro-${{ runner.os }}-${{ env.MAESTRO_VERSION }}
-
-      - name: Install Maestro
-        run: |
-          set -euo pipefail
-          if [ -x "$HOME/.maestro/bin/maestro" ]; then
-            echo "Maestro restored from cache"
-          else
-            curl -Ls https://get.maestro.mobile.dev | bash
-          fi
-          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
-          "$HOME/.maestro/bin/maestro" --version
+          version: ${{ env.MAESTRO_VERSION }}
 
       - uses: actions/download-artifact@v4
         with:
