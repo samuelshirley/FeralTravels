@@ -1,24 +1,46 @@
 import './globals.css';
 import { VIEWPORT_HINT_SCRIPT } from '@/lib/viewportHint';
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
+// Inter's six NON-Latin subsets (Latin Extended, Cyrillic, Greek, Vietnamese),
+// as `'Inter Variable'` faces with their unicode-ranges, so a browser fetches
+// one only when a page draws a character in it — Łódź, Plzeň, Αθήνα.
+import '@fontsource-variable/inter/wght.css';
 import { Analytics } from '@vercel/analytics/next';
 import ErrorNotifier from '@/components/ErrorNotifier';
 import ViewportTimeReporter from '@/components/ViewportTimeReporter';
 
 /**
- * Nocturne's face. Weights 700/800 are still loaded because 140 call sites
- * across `src/` still ask for them; the palette's rule is that hierarchy is
- * size and space rather than weight, so headings cap at 500 and 600 is kept
- * for the 9-11px kickers, badges and button labels. Those two faces come out
- * of this list once the per-screen sweep has removed the last of them —
- * dropping them now would silently synthesise bold in 140 places.
+ * Nocturne's face: Inter 4, SELF-HOSTED from `@fontsource-variable/inter`.
+ *
+ * It was `next/font/google`, which downloads the font CSS from Google during
+ * EVERY build. When Google's answer was not what its parser expected the build
+ * died — "An error occurred in `next/font`" — and that failed five runs between
+ * 2026-09-23 and 2026-11-13, two of them PRODUCTION deploys of main (11-02,
+ * 11-04), which left prod on the previous build. `fontSelfHostGuard.test.ts`
+ * keeps Google out of the build.
+ *
+ * The same font, measured against production on 2026-11-13: Google served the
+ * one variable file (Inter 4.001, `wght` 100-900, 518 glyphs) for all five
+ * weights, which is this package's `latin-wght` file. One file holds every
+ * weight, so the 700/800 that 140 call sites still ask for cost nothing
+ * extra; the palette's rule (hierarchy is size and space, headings cap at 500,
+ * 600 for the 9-11px kickers) is a style rule, not a loading one.
+ *
+ * Latin goes through next/font so it is still PRELOADED and hashed. The
+ * fallback is NOT next/font's generated one: that would sit second in the
+ * stack, and Arial has `ł`, so Latin Extended would draw in Arial before
+ * `'Inter Variable'` was asked. `'Inter Fallback'` (globals.css) carries the
+ * metrics next/font generated for this font, and comes last.
  */
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
+const inter = localFont({
+  src: '../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2',
+  weight: '100 900',
+  style: 'normal',
   display: 'swap',
   variable: '--font-inter',
+  adjustFontFallback: false,
+  fallback: ['Inter Variable', 'Inter Fallback'],
 });
 
 export const metadata: Metadata = {
