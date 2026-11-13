@@ -16,52 +16,33 @@
  * "Resend code" outside that subflow. launch.yaml, which CI runs first in every
  * shard, is counted too.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { limitFor } from './ipLimit';
+// One definition of "how many codes does this flow send", shared with CI's
+// re-run decision (scripts/maestro-rerun.mjs), so the two cannot disagree.
+import {
+  OTP_SENDS_PER_HOUR,
+  SIGN_IN_RETRY_RESERVE,
+  sendsOf,
+  shardFlows,
+} from '../../scripts/maestro-rerun.mjs';
 
 const DIR = path.join(process.cwd(), 'mobile', 'maestro');
-const SEND_FLOW = 'sign-in-otp.yaml';
-const SEND_TAP = /^- tapOn:\s*'(Email me a 6-digit code|Resend code)'/gm;
-
-function live(file: string): string {
-  return readFileSync(path.join(DIR, file), 'utf8')
-    .split('\n')
-    .filter((l) => !/^\s*#/.test(l))
-    .join('\n');
-}
-
-function subflows(src: string): string[] {
-  const out: string[] = [];
-  for (const m of src.matchAll(/^- runFlow:\s*(\S+\.yaml)\s*$/gm)) out.push(m[1]);
-  for (const m of src.matchAll(/^- runFlow:\s*\n\s+file:\s*(\S+\.yaml)\s*$/gm)) out.push(m[1]);
-  return out;
-}
-
-/** Sign-in codes one run of `file` sends. */
-export function sendsOf(file: string, seen: string[] = []): number {
-  if (file === SEND_FLOW) return 1;
-  if (seen.includes(file)) throw new Error(`runFlow cycle: ${[...seen, file].join(' → ')}`);
-  const src = live(file);
-  let n = [...src.matchAll(SEND_TAP)].length;
-  for (const sub of subflows(src)) n += sendsOf(sub, [...seen, file]);
-  return n;
-}
-
-function shardFlows(shard: string): string[] {
-  const src = readFileSync(path.join(DIR, 'shards', shard), 'utf8');
-  const block = src.split(/^executionOrder:/m)[0];
-  return [...block.matchAll(/^\s+- (\S+\.yaml)\s*$/gm)].map((m) => m[1]);
-}
 
 /**
  * Every shard file, read from disk. It was a hand-written list, and when
  * `settings.yaml` was split out of `flows` (2026-11-12) nobody added it, so the
- * one shard nothing counted was the next one to grow (2026-11-13).
+ * one shard nothing counted was the next one to grow (2026-11-13). `_rerun-*`
+ * files are written by CI at run time and never committed.
  */
-const SHARDS = readdirSync(path.join(DIR, 'shards')).filter((f) => f.endsWith('.yaml')).sort();
+const SHARDS = readdirSync(path.join(DIR, 'shards'))
+  .filter((f) => f.endsWith('.yaml') && !f.startsWith('_'))
+  .sort();
 const MAX = limitFor('otp_send').max;
+/** What a shard may plan for: sign-in-otp.yaml's one retry is kept in hand. */
+const PLANNED = MAX - SIGN_IN_RETRY_RESERVE;
 
 describe('Maestro sign-in code budget per shard', () => {
   it('counts what it should (the guard is not vacuous)', () => {
@@ -69,18 +50,21 @@ describe('Maestro sign-in code budget per shard', () => {
     expect(sendsOf('sign-out.yaml')).toBe(2);
     expect(sendsOf('launch.yaml')).toBe(0);
     expect(SHARDS).toContain('settings.yaml');
+    expect(OTP_SENDS_PER_HOUR, 'scripts/maestro-rerun.mjs must use the server\'s otp_send limit').toBe(MAX);
+    expect(SIGN_IN_RETRY_RESERVE).toBeGreaterThan(0);
     for (const s of SHARDS) expect(shardFlows(s).length, s).toBeGreaterThan(0);
   });
 
   for (const shard of SHARDS) {
-    it(`${shard} sends at most ${MAX} codes from its simulator`, () => {
+    it(`${shard} sends at most ${PLANNED} codes from its simulator, leaving one for sign-in's retry`, () => {
       const per = ['launch.yaml', ...shardFlows(shard)].map((f) => [f, sendsOf(f)] as const);
       const total = per.reduce((n, [, c]) => n + c, 0);
       expect(
         total,
         `${shard} sends ${total} sign-in codes (${per.filter(([, c]) => c).map(([f, c]) => `${f}:${c}`).join(', ')}); ` +
-          `the server allows ${MAX} an hour per IP. Move a flow to a shard with room.`,
-      ).toBeLessThanOrEqual(MAX);
+          `the server allows ${MAX} an hour per IP and sign-in-otp.yaml's retry may spend ` +
+          `${SIGN_IN_RETRY_RESERVE} more. Move a flow to a shard with room.`,
+      ).toBeLessThanOrEqual(PLANNED);
     });
   }
 });

@@ -26,7 +26,32 @@ appId: ${APP_ID}
 # fully clear of it and the tap below lands on the button. Read off the live
 # hierarchy, not assumed. If a smaller device ever puts the two in contact the
 # fix is to scroll the button into view, not to reinstate this.
-- tapOn: 'Email me a 6-digit code'
+#
+# THE SEND IS RETRIED ONCE, and this is the one place a Maestro `retry:` can
+# work. Twice (2026-11-03 paywall-no-trips, 2026-11-13 support-form) the send
+# never came back and "Check your email" never appeared; the app's request had
+# no timeout, so the spinner ran for good. lib/api.ts now gives up after 20s
+# and shows an error with the button live again, so a second tap is the same
+# thing a person would do. A failed `extendedWaitUntil` is a MaestroException,
+# which `retry` catches (unlike the launch failure sign-in.yaml cannot retry).
+#
+# The tap is `optional` so a send that answered LATE — the code screen is up
+# by the time the retry starts — falls straight through to the wait instead of
+# failing on a button that is gone. A missing button on the first attempt
+# still fails: the wait below never sees "Check your email". A second tap
+# inside the server's 60s cooldown answers 429, which the app shows as the
+# code screen ("We already sent you a code"), so the retry lands there too.
+# Its possible extra code is the reserve maestroOtpBudget.test.ts keeps per
+# shard.
+- retry:
+    maxRetries: 1
+    commands:
+      - tapOn:
+          text: 'Email me a 6-digit code'
+          optional: true
+      - extendedWaitUntil:
+          visible: 'Check your email'
+          timeout: 30000
 
 # The verify screen.
 #
@@ -44,10 +69,7 @@ appId: ${APP_ID}
 # appending, so the digit vanishes with no error anywhere. A person types far
 # too slowly to reach it, and a real paste or an iOS one-time-code autofill goes
 # down the spread branch and is unaffected — which is why this is fixed here
-# rather than in the app.
-- extendedWaitUntil:
-    visible: 'Check your email'
-    timeout: 30000
+# rather than in the app. (Reaching it is the retry block above.)
 
 # Read the code NOW, not before the run. The app only reaches this screen once
 # its own send has resolved, and that send may well have REPLACED the code a

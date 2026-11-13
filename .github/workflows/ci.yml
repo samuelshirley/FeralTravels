@@ -1227,6 +1227,17 @@ jobs:
           # "flaky". The retry is surfaced in the PR comment.
           DRIVER_TIMEOUT_SIGNATURE='iOS driver not ready in time'
           HARNESS_RETRIED=0
+          # A stuck or dead XCTest runner is cleared the same way before either
+          # retry: kill it, reboot the same UDID, warm the app once.
+          reset_simulator() {
+            pkill -f "xcodebuild test-without-building" || true
+            xcrun simctl shutdown "$SIM_UDID" || true
+            xcrun simctl boot "$SIM_UDID"
+            xcrun simctl bootstatus "$SIM_UDID" -b
+            xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || true
+            sleep 5
+            xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+          }
           run_launch() {
             maestro --device "$SIM_UDID" test mobile/maestro/launch.yaml \
               -e APP_ID=com.feraltravels.ios \
@@ -1243,13 +1254,7 @@ jobs:
             fi
             echo "::warning::launch.yaml: the XCTest driver never came up (attempt $attempt). Rebooting the simulator and retrying once."
             HARNESS_RETRIED=1
-            pkill -f "xcodebuild test-without-building" || true
-            xcrun simctl shutdown "$SIM_UDID" || true
-            xcrun simctl boot "$SIM_UDID"
-            xcrun simctl bootstatus "$SIM_UDID" -b
-            xcrun simctl launch "$SIM_UDID" com.feraltravels.ios || true
-            sleep 5
-            xcrun simctl terminate "$SIM_UDID" com.feraltravels.ios || true
+            reset_simulator
           done
           echo "harness_retried=$HARNESS_RETRIED" >> "$GITHUB_OUTPUT"
 
@@ -1266,17 +1271,44 @@ jobs:
           # src/lib/maestroFlowParams.test.ts fails if a flow references one no
           # runner supplies — Maestro does not fail on an undefined variable, it
           # silently fails to match.
-          maestro --device "$SIM_UDID" test mobile/maestro \
-            --config "mobile/maestro/shards/$SHARD.yaml" \
-            -e APP_ID=com.feraltravels.ios \
-            -e EMAIL="$EMAIL" \
-            -e TRIP_NAME="$TRIP_NAME" \
-            -e TRIP_ID="$TRIP_ID" \
-            -e BASE_URL="$E2E_BASE_URL" \
-            -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
-            --format junit \
-            --output "maestro-report-$SHARD.xml" \
-            --debug-output maestro-debug
+          run_flows() {
+            maestro --device "$SIM_UDID" test mobile/maestro \
+              --config "$1" \
+              -e APP_ID=com.feraltravels.ios \
+              -e EMAIL="$EMAIL" \
+              -e TRIP_NAME="$TRIP_NAME" \
+              -e TRIP_ID="$TRIP_ID" \
+              -e BASE_URL="$E2E_BASE_URL" \
+              -e TEST_SECRET="$E2E_TEST_ENDPOINTS_SECRET" \
+              --format junit \
+              --output "$2" \
+              --debug-output maestro-debug
+          }
+          if run_flows "mobile/maestro/shards/$SHARD.yaml" "maestro-report-$SHARD.xml"; then
+            exit 0
+          fi
+
+          # ONE RE-RUN OF THE FAILED FLOWS, on two simulator signatures only —
+          # the launch racing its reinstall ("unknown to FrontBoard"), and the
+          # XCTest driver dying mid-shard. scripts/maestro-rerun.mjs decides,
+          # reading the FAILED flows' own maestro.log and JUnit text (the
+          # console never prints the FrontBoard line), and refuses when the
+          # re-run would overspend this runner's sign-in codes. Any other
+          # failure is the app and fails the job, as it always has. The config
+          # goes in shards/ because Maestro resolves its `flows:` against the
+          # workspace exactly as for the real shard file.
+          RERUN_CONFIG="mobile/maestro/shards/_rerun-$SHARD.yaml"
+          if ! PLAN=$(node scripts/maestro-rerun.mjs "$SHARD" "maestro-report-$SHARD.xml" maestro-debug "$RERUN_CONFIG"); then
+            exit 1
+          fi
+          REASON=$(printf '%s\n' "$PLAN" | sed -n 's/^reason=//p')
+          FLOWS=$(printf '%s\n' "$PLAN" | sed -n 's/^flows=//p')
+          echo "::warning::$SHARD: $REASON. Re-running once: $FLOWS"
+          echo "harness_rerun=$REASON: $FLOWS" >> "$GITHUB_OUTPUT"
+          reset_simulator
+          # The first report keeps its failures for the record; the re-run's
+          # verdict is the step's exit code.
+          run_flows "$RERUN_CONFIG" "maestro-report-$SHARD-rerun.xml"
 
       # WHICH STEP FAILED, in the log, without downloading anything. The first
       # failing run said exactly "[Failed] chat-keyboard (28s)" and nothing
@@ -1338,9 +1370,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
           OUTCOME: ${{ steps.flows.outcome }}
           HARNESS_RETRIED: ${{ steps.flows.outputs.harness_retried }}
+          HARNESS_RERUN: ${{ steps.flows.outputs.harness_rerun }}
           ARTIFACT_URL: ${{ steps.recordings.outputs.artifact-url }}
         run: |
-          node -e "console.log(JSON.stringify({shard:process.env.SHARD,outcome:process.env.OUTCOME||'skipped',harnessRetried:process.env.HARNESS_RETRIED==='1',artifactUrl:process.env.ARTIFACT_URL||''}))" > "ios-shard-$SHARD.json"
+          node -e "console.log(JSON.stringify({shard:process.env.SHARD,outcome:process.env.OUTCOME||'skipped',harnessRetried:process.env.HARNESS_RETRIED==='1',harnessRerun:process.env.HARNESS_RERUN||'',artifactUrl:process.env.ARTIFACT_URL||''}))" > "ios-shard-$SHARD.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -1430,7 +1463,8 @@ jobs:
               const stopped = stoppedEarly && outcome !== 'success' && outcome !== 'failure';
               const label = stopped ? 'cancelled (stopped early)' : outcome;
               const link = r?.artifactUrl ? ` · [recordings](${r.artifactUrl})` : '';
-              const retry = r?.harnessRetried ? ' · ⚠️ harness retried once' : '';
+              const retry = (r?.harnessRetried ? ' · ⚠️ harness retried once' : '') +
+                (r?.harnessRerun ? ' · ⚠️ re-ran failed flows' : '');
               lines.push(`| \`${shard}\` | ${icon[stopped ? 'cancelled' : outcome] || '⚪'} ${label}${link}${retry} |`);
             }
             lines.push('');
@@ -1454,6 +1488,13 @@ jobs:
             // A harness retry is a fact about the runners: visible on green too.
             if (Object.values(results).some((r) => r.harnessRetried)) {
               lines.push('', '⚠️ **Harness retried once** on a shard: the XCTest driver did not come up on the first attempt (a simulator flake, not the app).');
+            }
+            // Named flow by flow: a re-run that went green can hide a bug that
+            // fails only sometimes, so whoever merges sees exactly what got a
+            // second go and why.
+            for (const shard of expected) {
+              const rerun = results[shard]?.harnessRerun;
+              if (rerun) lines.push('', `⚠️ **Re-ran failed flows once** on \`${shard}\` because ${rerun}. A flow that fails again still fails the shard.`);
             }
             lines.push('', `Built from \`${pr.head.sha.slice(0, 7)}\` · [CI run](${runUrl})`);
 

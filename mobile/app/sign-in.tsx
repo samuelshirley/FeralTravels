@@ -108,6 +108,9 @@ const ERROR_COPY: Record<string, string> = {
   ProviderNotConfigured:
     "That sign-in option isn't available yet. Please use your email to get a code.",
   InvalidRequest: "Something went wrong signing you in. Please try again.",
+  // Ours, not the server's: lib/api.ts gave up waiting (SIGN_IN_TIMEOUT_MS).
+  // Before it existed a stalled request left the button spinning for good.
+  Timeout: "The server didn't answer in time. Check your connection and try again.",
 };
 
 /**

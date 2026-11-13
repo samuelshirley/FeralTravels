@@ -332,7 +332,10 @@ describe('Maestro flow parameters', () => {
 
   it('ci.yml runs launch.yaml, then each shard through its own config', () => {
     expect(CI).toMatch(/test mobile\/maestro\/launch\.yaml/);
-    expect(CI).toMatch(/test mobile\/maestro \\\n\s+--config "mobile\/maestro\/shards\/\$SHARD\.yaml"/);
+    // run_flows takes the config as $1; the shard's own file is the first call
+    // (the second is maestroRerunGuard's one re-run of failed flows).
+    expect(CI).toMatch(/test mobile\/maestro \\\n\s+--config "\$1"/);
+    expect(CI).toMatch(/if run_flows "mobile\/maestro\/shards\/\$SHARD\.yaml"/);
     expect(CI).toContain("fs.readdirSync('mobile/maestro/shards')");
   });
 
