@@ -18,11 +18,18 @@ inputs:
 runs:
   using: composite
   steps:
+    # The INSTALL only, never `~/.maestro/tests`: Maestro writes every run's
+    # screenshots and logs there, and the shard saves the cache AFTER its
+    # flows, so the old entries were 299 MB of test output. Restoring one
+    # stalled at 0.3 MB/s on run 43418297050, gave up after 2m19s and
+    # installed anyway. `-v2` abandons those bloated entries.
     - name: Cache Maestro
       uses: actions/cache@v4
       with:
-        path: ~/.maestro
-        key: maestro-${{ runner.os }}-${{ inputs.version }}
+        path: |
+          ~/.maestro
+          !~/.maestro/tests
+        key: maestro-${{ runner.os }}-${{ inputs.version }}-v2
 
     # The installer reads MAESTRO_VERSION; a key that disagreed with it would
     # serve a different Maestro, whose driver/Xcode mismatch presents as a

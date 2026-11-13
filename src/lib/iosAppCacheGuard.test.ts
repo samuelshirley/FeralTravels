@@ -90,9 +90,16 @@ describe('Maestro is cached under one key, and every pin agrees', () => {
   const pin = (s: string, re: RegExp) => s.match(re)?.[1];
 
   it('the action keys the cache on the version its installer uses', () => {
-    expect(maestroAction).toContain('key: maestro-${{ runner.os }}-${{ inputs.version }}');
+    expect(maestroAction).toMatch(/key: maestro-\$\{\{ runner\.os \}\}-\$\{\{ inputs\.version \}\}(-v\d+)?\n/);
     expect(maestroAction).toMatch(/MAESTRO_VERSION: \$\{\{ inputs\.version \}\}/);
     expect(maestroAction).not.toMatch(/actions\/cache\/restore@/);
+  });
+
+  // Maestro writes every run's screenshots and logs to ~/.maestro/tests, and a
+  // shard saves the cache after its flows: caching the whole folder made 299 MB
+  // entries that stalled on restore and were slower than a fresh install.
+  it('caches the install, never the test output under ~/.maestro/tests', () => {
+    expect(maestroAction).toMatch(/path: \|\n\s+~\/\.maestro\n\s+!~\/\.maestro\/tests\n/);
   });
 
   it('the shards and the main job both go through the action, keying nothing themselves', () => {
