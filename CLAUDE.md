@@ -265,7 +265,7 @@ What each proves: **`docs/design/e2e-tests.md`**.
 
 legal-pages, web-blocked, oauth-exchange, login-otp, account-deletion,
 subscriptions, vehicle-crud, announcement, breakers, api-contracts,
-fuel-cascade, money-limits, feature-requests — server contracts only.
+fuel-cascade, money-limits, feature-requests, hotels-proxy — server contracts only.
 The screens are Maestro flows on the phone (below) since 2026-09-27.
 
 **E2E auth: no session bypass exists.** Every authenticated spec signs in through

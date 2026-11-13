@@ -11,10 +11,21 @@
 appId: ${APP_ID}
 ---
 - clearKeychain
-- launchApp:
-    clearState: true
-    permissions:
-      all: unset
+# RETRIED: the clean launch only (Sam, 2026-11-12, PR #108). `clearState`
+# reinstalls the app on iOS, and on CI the launch that follows sometimes reaches
+# SpringBoard before the reinstall is registered: "Application
+# com.feraltravels.ios is unknown to FrontBoard" (FBSOpenApplicationServiceErrorDomain
+# code 1). The app is never started, so it is the harness, not the app; it hit
+# 2 of 10 shards on 2026-11-12 (core/onboarding-date-picker, account/vehicles).
+# Only this command is retried, so every assertion below still fails as before.
+# maestroFlowParams.test.ts fails if a clearState launch loses its retry.
+- retry:
+    maxRetries: 2
+    commands:
+      - launchApp:
+          clearState: true
+          permissions:
+            all: unset
 
 - assertNotVisible:
     id: 'fatal-error-modal'
