@@ -16,7 +16,7 @@
  * "Resend code" outside that subflow. launch.yaml, which CI runs first in every
  * shard, is counted too.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { limitFor } from './ipLimit';
@@ -55,7 +55,12 @@ function shardFlows(shard: string): string[] {
   return [...block.matchAll(/^\s+- (\S+\.yaml)\s*$/gm)].map((m) => m[1]);
 }
 
-const SHARDS = ['account.yaml', 'ai.yaml', 'core.yaml', 'flows.yaml', 'trips.yaml'];
+/**
+ * Every shard file, read from disk. It was a hand-written list, and when
+ * `settings.yaml` was split out of `flows` (2026-11-12) nobody added it, so the
+ * one shard nothing counted was the next one to grow (2026-11-13).
+ */
+const SHARDS = readdirSync(path.join(DIR, 'shards')).filter((f) => f.endsWith('.yaml')).sort();
 const MAX = limitFor('otp_send').max;
 
 describe('Maestro sign-in code budget per shard', () => {
@@ -63,6 +68,7 @@ describe('Maestro sign-in code budget per shard', () => {
     expect(sendsOf('sign-in.yaml')).toBe(1);
     expect(sendsOf('sign-out.yaml')).toBe(2);
     expect(sendsOf('launch.yaml')).toBe(0);
+    expect(SHARDS).toContain('settings.yaml');
     for (const s of SHARDS) expect(shardFlows(s).length, s).toBeGreaterThan(0);
   });
 
