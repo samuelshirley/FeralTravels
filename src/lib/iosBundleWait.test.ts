@@ -194,7 +194,7 @@ describe('ci.yml is wired the way the waiter assumes', () => {
       return i;
     };
     const wait = at("- name: Wait for this preview's bundle");
-    for (const early of ['- name: Start booting a simulator', '- name: Restore or install Maestro', 'name: ios-sim-app']) {
+    for (const early of ['- name: Start booting a simulator', '- name: Install Maestro', 'name: ios-sim-app']) {
       expect(at(early), early).toBeLessThan(wait);
     }
     expect(wait).toBeLessThan(at("- name: Put this preview's JavaScript into the app"));

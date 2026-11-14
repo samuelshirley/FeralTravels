@@ -77,41 +77,34 @@ describe('the iOS app cache key has one definition, and main fills it', () => {
 });
 
 /**
- * Maestro, the same shape: the shards restore `maestro-<os>-<version>`, and
- * `main` must save that exact entry. The version is the key, so every copy of
- * the pin must agree — ci.yml's shard env (where it pairs with the Xcode the
- * shards select), ios-app-cache.yml's, and `scripts/ios-e2e-local.sh`'s
- * MAESTRO_PIN, which nothing held equal before this.
+ * Maestro is INSTALLED, never cached, and every copy of its pin agrees.
+ *
+ * It was cached for a day (2026-11-13) and it was a loss: the install is
+ * 299 MB, and restoring that from the Actions cache on macOS runners took
+ * ~2 min when it worked and stalled at 0.3 MB/s when it did not — 2m19s on
+ * run 43418297050 before it gave up and installed anyway. A fresh install took
+ * 1.2-3.1 min. (The same entry was first blamed on test output in
+ * ~/.maestro/tests; `main`'s save, which runs no tests, was 299 MB too.)
  */
-describe('Maestro is cached under one key, and every pin agrees', () => {
-  const maestroAction = read('.github/actions/maestro/action.yml');
+describe('Maestro is installed fresh, at one pinned version', () => {
   const local = read('scripts/ios-e2e-local.sh');
-  const USES_MAESTRO = /uses: \.\/\.github\/actions\/maestro\n\s+with:\n\s+version: \$\{\{ env\.MAESTRO_VERSION \}\}/;
   const pin = (s: string, re: RegExp) => s.match(re)?.[1];
 
-  it('the action keys the cache on the version its installer uses', () => {
-    expect(maestroAction).toMatch(/key: maestro-\$\{\{ runner\.os \}\}-\$\{\{ inputs\.version \}\}(-v\d+)?\n/);
-    expect(maestroAction).toMatch(/MAESTRO_VERSION: \$\{\{ inputs\.version \}\}/);
-    expect(maestroAction).not.toMatch(/actions\/cache\/restore@/);
+  it('no workflow caches ~/.maestro', () => {
+    for (const wf of [ci, warm]) {
+      expect(wf).not.toMatch(/path:[^\n]*\n?[^\n]*~\/\.maestro/);
+      expect(wf).not.toMatch(/key: maestro-/);
+    }
   });
 
-  // Maestro writes every run's screenshots and logs to ~/.maestro/tests, and a
-  // shard saves the cache after its flows: caching the whole folder made 299 MB
-  // entries that stalled on restore and were slower than a fresh install.
-  it('caches the install, never the test output under ~/.maestro/tests', () => {
-    expect(maestroAction).toMatch(/path: \|\n\s+~\/\.maestro\n\s+!~\/\.maestro\/tests\n/);
+  it("the shards install it, at the job's pin", () => {
+    const shard = job(ci, 'ios-e2e');
+    expect(shard).toMatch(/- name: Install Maestro\n\s+run: \|[\s\S]*?curl -Ls https:\/\/get\.maestro\.mobile\.dev \| bash/);
   });
 
-  it('the shards and the main job both go through the action, keying nothing themselves', () => {
-    expect(job(ci, 'ios-e2e')).toMatch(USES_MAESTRO);
-    expect(warm).toMatch(USES_MAESTRO);
-    for (const wf of [ci, warm]) expect(wf).not.toMatch(/key: maestro-/);
-  });
-
-  it('ci.yml, ios-app-cache.yml and ios-e2e-local.sh pin the same Maestro', () => {
+  it('ci.yml and ios-e2e-local.sh pin the same Maestro', () => {
     const shards = pin(job(ci, 'ios-e2e'), /\n\s+MAESTRO_VERSION: (\S+)/);
     expect(shards).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(pin(warm, /\n\s+MAESTRO_VERSION: (\S+)/)).toBe(shards);
     expect(pin(local, /\nMAESTRO_PIN="([^"]+)"/)).toBe(shards);
   });
 });

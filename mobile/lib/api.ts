@@ -30,7 +30,19 @@ interface ApiOptions {
   signal?: AbortSignal;
   /** Opt out of the global error surface when rendering inline error UI. */
   skipGlobalErrorReport?: boolean;
+  /**
+   * Give up after this long with `ApiError(0, "Timeout")`. Without one, a
+   * request that stalls (a weak signal, a dropped connection the OS has not
+   * noticed) never settles, and its spinner runs until the app is killed.
+   */
+  timeoutMs?: number;
 }
+
+/**
+ * The sign-in calls are small and quick when they work. Twenty seconds is far
+ * past a slow-but-alive network and well short of someone giving up.
+ */
+export const SIGN_IN_TIMEOUT_MS = 20_000;
 
 export class ApiError extends Error {
   status: number;
@@ -100,7 +112,23 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
   const isFormData =
     typeof FormData !== "undefined" && opts.body instanceof FormData;
 
+  // Our own controller, so the timeout can abort the request without taking
+  // over a caller's signal; a caller's abort is forwarded into it.
+  let timedOut = false;
+  const controller = opts.timeoutMs ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, opts.timeoutMs)
+    : null;
+  if (controller && opts.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+
   let res: Response;
+  let text: string;
   try {
     res = await fetch(url, {
       method: opts.method || (opts.body ? "POST" : "GET"),
@@ -115,10 +143,21 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
           : isFormData
             ? (opts.body as FormData)
             : JSON.stringify(opts.body),
-      signal: opts.signal,
+      signal: controller ? controller.signal : opts.signal,
     });
+    // Inside the try, and before the timer is cleared: a body that stalls
+    // halfway is the same hang as a request that never answers.
+    text = await res.text();
   } catch (err) {
-    // fetch threw = the request never reached a server (DNS, refused, offline).
+    if (timedOut) {
+      const wrapped = new ApiError(0, "Timeout", null);
+      if (!opts.skipGlobalErrorReport && globalErrorReporter) {
+        globalErrorReporter(wrapped, { path, status: null });
+      }
+      throw wrapped;
+    }
+    // fetch (or reading its body) threw = no usable answer from a server (DNS,
+    // refused, offline, dropped mid-response).
     // Surface WHERE we tried to go — "check your connection" alone hides the
     // most common dev mistake (wrong/unset EXPO_PUBLIC_API_URL).
     const detail = err instanceof Error ? err.message : String(err);
@@ -128,10 +167,11 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
       globalErrorReporter(wrapped, { path, status: null });
     }
     throw wrapped;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   let data: unknown = null;
-  const text = await res.text();
   if (text) {
     try {
       data = JSON.parse(text);
@@ -164,7 +204,11 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
 // ---------------------------------------------------------------------------
 
 export function requestOtp(email: string): Promise<{ ok: boolean }> {
-  return apiFetch("/api/mobile/otp/send", { body: { email }, skipGlobalErrorReport: true });
+  return apiFetch("/api/mobile/otp/send", {
+    body: { email },
+    skipGlobalErrorReport: true,
+    timeoutMs: SIGN_IN_TIMEOUT_MS,
+  });
 }
 
 export interface SessionResult {
@@ -177,6 +221,7 @@ export function verifyOtp(email: string, code: string): Promise<SessionResult> {
   return apiFetch("/api/mobile/otp/verify", {
     body: { email, code },
     skipGlobalErrorReport: true,
+    timeoutMs: SIGN_IN_TIMEOUT_MS,
   });
 }
 

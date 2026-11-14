@@ -56,6 +56,8 @@ push-*.sh
 # Local iOS e2e runs (scripts/ios-e2e-local.sh) — logs, JUnit, Maestro's debug
 # output and screenshots. Regenerated on every run and often large.
 mobile/maestro/.local-run/
+# CI's one-off config for re-running a shard's failed flows (scripts/maestro-rerun.mjs).
+mobile/maestro/shards/_rerun-*.yaml
 
 # Playwright MCP scratch output (screenshots, console logs, snapshots).
 .playwright-mcp/

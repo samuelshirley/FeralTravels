@@ -244,7 +244,7 @@ generate-apple-client-secret.ts
 iap-preflight.sh iap-webhook-secret.sh
 ios-e2e-fixture.mjs ios-e2e-local.sh ios-rebundle.sh ios-usage-strings.mjs
 lifetime-spend.ts
-make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
+maestro-rerun.mjs make-test-user.ts measure-message-gate.ts migrate-sqlite-to-neon.ts
 pick-ios-simulator.mjs pick-screenshot-simulator.mjs probe-oauth-providers.mjs
 prune-branches.sh
 reconcile-anthropic-spend.ts
